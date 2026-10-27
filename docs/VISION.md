@@ -144,9 +144,7 @@ here). That is one more reason to push only the notice.
 - **Agents replying forever.** T3's local messaging stays calm because a reply is plain text in
   the receiver's own thread; nothing goes back unless the agent deliberately sends again. t4 keeps
   that: no automatic replies, incoming messages queued rather than steering a running turn, and
-  AGENTS.md wording that asks for claims, not for chatting. A reply-depth limit and a pause the
-  human can see are the backstop. Tyler rejected (2026-10-26) rationing the messages an agent
-  starts on its own to a few an hour.
+  AGENTS.md wording that asks for claims, not for chatting. No limits or caps on top of that.
 - **Prompt injection.** Anyone with push access can now put text in front of your agent. That
   matches the trust model (a hackathon team), but messages never get to bypass the receiving
   user's permission mode; the envelope keeps their origin visible.
