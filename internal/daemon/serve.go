@@ -183,7 +183,8 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		return proto.Response{OK: true, Self: from, Claims: claimViews(d.openLocked(-1, "")), Seen: d.claimsTip, Note: note}
+		return proto.Response{OK: true, Self: from, Claims: claimViews(d.openLocked(-1, "")), Seen: d.tokenLocked(time.Now()),
+			Note: note}
 
 	case proto.OpClaim:
 		return d.claim(ctx, from, req)

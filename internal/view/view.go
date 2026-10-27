@@ -119,7 +119,7 @@ func ClaimResult(r proto.Response) string {
 		fmt.Fprintf(&b, "\nseen token for your next claim: %s\n", r.Seen)
 		return b.String()
 	}
-	b.WriteString("Nothing claimed. These open claims are newer than your seen token:\n")
+	b.WriteString("Nothing claimed. Your seen token didn't show these open claims:\n")
 	for _, c := range r.Unseen {
 		b.WriteString("  " + claimLine(c) + "\n")
 	}

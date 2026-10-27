@@ -84,6 +84,7 @@ type Daemon struct {
 	gone       map[string]time.Time // devices whose presence was deleted (said goodbye), and when
 	pending    []bus.Event          // what arrived while down, for sessions that reconnect
 	lastPollOK time.Time            // wall clock of the last successful sync
+	liveGen    int64                // generation for seen tokens; see refreshLiveLocked
 
 	advMu   sync.Mutex // serializes processing of fetched refs
 	writeMu sync.Mutex // serializes appends to this device's log
@@ -141,6 +142,10 @@ type claimRec struct {
 	seq      int
 	seenAt   time.Time // when this daemon first read the claim
 	released bool
+	// For seen tokens: whether the claim was live when last checked, and the generation at
+	// which it was first seen live, or came back from a lapse.
+	checked, live bool
+	liveSince     int64
 }
 
 type inMsg struct {
@@ -242,7 +247,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	d := &Daemon{
 		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
-		claimSeq: map[string]int{}, gone: map[string]time.Time{},
+		claimSeq: map[string]int{}, gone: map[string]time.Time{}, liveGen: now.UnixNano(),
 		kick: make(chan struct{}, 1), quit: make(chan struct{}),
 	}
 	device, err := loadDevice(dir)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -247,6 +248,57 @@ func (d *Daemon) tellLocked(sess, subject string) {
 	d.saveLocked()
 }
 
+// A seen token names the claims tip an agent was shown and a generation, so that claim can tell
+// what the agent wasn't shown: claims after that tip, and claims before it that were lapsed then
+// and have come back since (a laptop that woke). Tokens are this daemon's own, never on the bus.
+// The generation starts at the daemon's start time, so a token from an earlier daemon shows every
+// open claim again, which costs the agent one more look.
+
+// refreshLiveLocked records which claims are live now, and stamps each claim that came back from
+// a lapse with a new generation. Caller holds mu.
+func (d *Daemon) refreshLiveLocked(now time.Time) {
+	for _, c := range d.claims {
+		live := d.claimLiveLocked(c, now)
+		switch {
+		case live && !c.checked:
+			c.liveSince = d.started.UnixNano()
+		case live && !c.live:
+			d.liveGen++
+			c.liveSince = d.liveGen
+		}
+		c.checked, c.live = true, live
+	}
+}
+
+// tokenLocked returns a seen token for the claims as they stand. Caller holds mu.
+func (d *Daemon) tokenLocked(now time.Time) string {
+	if d.claimsTip == "" {
+		return "" // no claims yet; an empty token shows every claim made later
+	}
+	d.refreshLiveLocked(now)
+	return d.claimsTip + "." + strconv.FormatInt(d.liveGen, 36)
+}
+
+// unseenLocked returns the live claims, other than exclude's, that whoever holds token wasn't
+// shown. An empty or unknown token was shown nothing. Caller holds mu.
+func (d *Daemon) unseenLocked(token, exclude string, now time.Time) []*claimRec {
+	seq, gen := -1, int64(0)
+	if sha, g, ok := strings.Cut(token, "."); ok {
+		if s, known := d.claimSeq[sha]; known {
+			seq = s
+			gen, _ = strconv.ParseInt(g, 36, 64)
+		}
+	}
+	d.refreshLiveLocked(now)
+	var out []*claimRec
+	for _, c := range d.claims {
+		if c.ev.From != exclude && c.live && (c.seq > seq || c.liveSince > gen) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // openLocked returns the live claims after position seq, leaving out those made by exclude.
 func (d *Daemon) openLocked(seq int, exclude string) []*claimRec {
 	now := time.Now()
@@ -286,8 +338,8 @@ func claimView(e bus.Event) proto.ClaimView {
 	return proto.ClaimView{ID: e.ID, By: e.From, What: e.What, Paths: e.Paths, At: e.At}
 }
 
-// claim makes a claim for from, unless a live claim newer than the caller's seen token exists:
-// then it returns those, unclaimed, so the agent decides with them in view.
+// claim makes a claim for from, unless a live claim exists that the caller's seen token wasn't
+// shown: then it returns those, unclaimed, so the agent decides with them in view.
 func (d *Daemon) claim(ctx context.Context, from string, req proto.Request) proto.Response {
 	what := bus.OneLine(req.What, 200)
 	if what == "" {
@@ -311,29 +363,28 @@ func (d *Daemon) claim(ctx context.Context, from string, req proto.Request) prot
 	}
 	for range casAttempts {
 		d.mu.Lock()
+		now := time.Now()
 		tip := d.claimsTip
-		seq := -1
-		if s, ok := d.claimSeq[req.Seen]; ok && req.Seen != "" {
-			seq = s
-		}
-		unseen := d.openLocked(seq, from)
+		unseen := d.unseenLocked(req.Seen, from, now)
 		all := d.openLocked(-1, "")
-		ends := d.lapsedLocked(time.Now())
+		ends := d.lapsedLocked(now)
+		token := d.tokenLocked(now)
 		d.mu.Unlock()
 		if len(unseen) > 0 {
-			return proto.Response{OK: true, Self: from, Unseen: claimViews(unseen), Claims: claimViews(all), Seen: tip,
-				Note: "Nothing claimed: these claims are open and newer than your seen token."}
+			return proto.Response{OK: true, Self: from, Unseen: claimViews(unseen), Claims: claimViews(all), Seen: token,
+				Note: "Nothing claimed: these claims are open and your seen token didn't show them."}
 		}
 
 		e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Claim, From: from, At: time.Now().UTC(),
 			What: what, Paths: paths, Ends: ends}
-		sha, err := d.pushClaims(ctx, tip, e)
+		_, err := d.pushClaims(ctx, tip, e)
 		if err == nil {
 			d.mu.Lock()
 			all := d.openLocked(-1, "")
+			token := d.tokenLocked(time.Now())
 			d.mu.Unlock()
 			v := claimView(e)
-			return proto.Response{OK: true, Self: from, Claimed: &v, Claims: claimViews(all), Seen: sha}
+			return proto.Response{OK: true, Self: from, Claimed: &v, Claims: claimViews(all), Seen: token}
 		}
 		if !errors.Is(err, bus.ErrRejected) {
 			return fail("not claimed: " + err.Error())

@@ -168,8 +168,8 @@ func (s *server) tools(srv *mcp.Server) {
 			return result(view.Claims, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "claim", Description: "Claim a piece of work before starting it, so other agents don't build " +
-		"it too. Pass the seen token from your latest claims call. If an open claim newer than your token exists, nothing " +
-		"is claimed and you get those claims back with a new token."},
+		"it too. Pass the seen token from your latest claims call. If an open claim exists that your token didn't show, " +
+		"nothing is claimed and you get those claims back with a new token."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in claimIn) (*mcp.CallToolResult, any, error) {
 			resp, err := s.call(ctx, proto.Request{Op: proto.OpClaim, What: in.What, Paths: in.Paths, Seen: in.Seen})
 			return result(view.ClaimResult, resp, err)

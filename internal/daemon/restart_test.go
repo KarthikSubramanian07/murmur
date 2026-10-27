@@ -253,6 +253,42 @@ func TestClaimPastAnOutOfTouchDevice(t *testing.T) {
 	b.told("bbbbbb", "was ended by")
 }
 
+// A claim that comes back from a lapse is shown to an agent whose token was given while it was
+// lapsed, so nobody claims past it without having seen it.
+func TestClaimBackFromLapseIsShown(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.session("bbbbbb", "")
+	b.claimAs("bbbbbb", "search", "")
+	a.session("aaaaaa", "")
+	eventually(t, "a sees bob's claim", func() bool { return claimsBy(a, bob) == 1 })
+
+	b.offline(remote, true)
+	eventually(t, "the claim lapses on a", func() bool { return claimsBy(a, bob) == 0 })
+	tok := a.do(proto.Request{Op: proto.OpClaims, Session: "aaaaaa"}).Seen
+	b.offline(remote, false)
+	// Watch who, not claims: a claims call would hand out a fresh token.
+	eventually(t, "b fresh again on a", func() bool {
+		for _, dv := range a.do(proto.Request{Op: proto.OpWho}).Devices {
+			if dv.ID == b.self() && !dv.Stale {
+				return true
+			}
+		}
+		return false
+	})
+
+	r := a.claimAs("aaaaaa", "search too", tok)
+	if r.Claimed != nil || len(r.Unseen) != 1 || r.Unseen[0].By != bob {
+		t.Fatalf("claim with a token from the lapse: %+v", r)
+	}
+	if c := a.claimAs("aaaaaa", "search too", r.Seen); c.Claimed == nil {
+		t.Fatalf("claim with bob's in view: %+v", c)
+	}
+	if n := claimsBy(b, bob); n != 1 {
+		t.Fatalf("a's claim ended bob's live claim")
+	}
+}
+
 // A daemon back from an outage judges from fresh presence before it claims, so it doesn't take
 // a live device for gone and end its claims.
 func TestReaderBackFromOutageSeesLiveClaims(t *testing.T) {

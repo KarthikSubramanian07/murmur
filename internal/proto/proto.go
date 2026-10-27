@@ -77,9 +77,9 @@ type Response struct {
 	Devices []Device `json:"devices,omitempty"`
 
 	Claims  []ClaimView `json:"claims,omitempty"`  // open claims
-	Unseen  []ClaimView `json:"unseen,omitempty"`  // claim: open claims newer than the caller's token
+	Unseen  []ClaimView `json:"unseen,omitempty"`  // claim: open claims the caller's token didn't show
 	Claimed *ClaimView  `json:"claimed,omitempty"` // claim: the claim just made
-	Seen    string      `json:"seen,omitempty"`    // the claims tip these results were read at
+	Seen    string      `json:"seen,omitempty"`    // a token for what these results showed, for claim
 
 	Messages []MessageView `json:"messages,omitempty"`
 	Events   []EventView   `json:"events,omitempty"`
