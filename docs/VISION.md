@@ -29,16 +29,10 @@ In rough order of value:
 
 1. **Claims.** Before starting something sizeable, an agent posts what it is taking ("auth flow,
    `src/auth/*`"). Before starting, agents check open claims. Most duplicate work disappears here.
-   Claims are explicit: an agent makes one on purpose. Logs are per device, so two agents can
-   claim the same thing within one sync interval; every device resolves that the same way
-   (earliest commit time, then device ID), and the loser is told it lost.
-2. **Overlap detection, with no model involved.** Each session's presence includes its branch and
-   changed files. The tool itself notices two sessions editing the same files and tells both
-   agents. It costs no tokens and works even when the agents forget to talk. It informs; it never
-   claims or blocks. Tyler rejected (2026-10-26) a claim-on-edit hook that claims a file before
-   each edit and can block a teammate's agent, as openhuddle does.
-3. **Presence.** Who is working, on what device, in which agent, on which branch, doing what.
-4. **Direct messages and broadcasts.** For what the first three can't settle.
+   An agent makes a claim on purpose; nothing claims for it. How claims stay race-free is under
+   "Claims are a compare-and-swap" below.
+2. **Presence.** Who is working, on what device, in which agent, on which branch, doing what.
+3. **Direct messages and broadcasts.** For what claims and presence can't settle.
 
 ## How it works
 
@@ -50,6 +44,7 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
 - Each device appends events to **its own ref**, `refs/t4/mesh/<deviceId>`: one empty commit per
   event, the payload in the commit message (a readable subject, a JSON body). One writer per ref
   means pushes never race. A message to another session sits in the sender's log, addressed to it.
+  Claims are the exception, on one shared ref (below).
 - Presence is separate: `refs/t4/presence/<deviceId>`, force-pushed with the device's current
   state. Heartbeats would otherwise flood the event log.
 - Custom refs, not branches, so CI and preview deploys (Actions, Vercel, Netlify) don't fire on
@@ -66,6 +61,25 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   when a SHA has changed. Delivery takes roughly 10–15 s, plenty for agents.
 - A repo is identified by its root commit, so SSH and HTTPS remotes, renames and worktrees all
   land in the same group.
+
+### Claims are a compare-and-swap
+
+Claims are the one thing per-device logs can't carry. Two agents could each claim the auth flow
+within one 10 s sync, each seeing no rival, and both start building. Settling it afterwards (by
+commit time, say) is too late, since the loser has already started, and commit times come from
+the clients' clocks.
+
+So claims go on **one shared ref**, `refs/t4/claims`, and GitHub orders them. A push to a ref is
+atomic and is rejected unless it builds on the ref's current tip, which makes the ref a
+compare-and-swap. The daemon builds the claim on the tip it last fetched and pushes:
+
+- Accepted: the claim holds, and the `claim` tool says so before the agent starts work.
+- Rejected: someone claimed first. The daemon fetches, and `claim` returns the claims the agent
+  hadn't seen. The agent decides with them in view: claim something else, coordinate, or retry.
+
+No claim is ever made without seeing every earlier one, and nobody has to be told later that
+they lost. Claims are rare, so contention on one ref is negligible. A claim ends when its session
+releases it or stops.
 
 ### One daemon per device, a thin MCP server per session
 
@@ -91,10 +105,16 @@ claim) for an agent to choose a recipient.
 ### Delivery differs by client
 
 Sending is an MCP tool call everywhere. Receiving is not, because MCP only answers when asked.
-Whatever the route, what reaches the agent is a **notice** ("2 new messages from bob-laptop/
-session-3"), never the message text. The agent reads the text by calling `inbox`, so it arrives
-as tool output, as data, not as something that looks like its user typing. The idea is
-crosstalk's.
+Whatever the route, what reaches the agent is a **notice**: always the sender and the subject,
+one line per message, never the body.
+
+```
+[t4] bob-laptop/session-3 (claude-code): "Are you changing the auth middleware?"
+```
+
+Every message has a subject for this reason. The body is one `inbox` call away, so it arrives as
+tool output, as data, not as something that looks like the user typing. Reading the body through
+a tool is crosstalk's idea.
 
 | Client | Notice delivered by | Can wake an idle agent |
 |---|---|---|
@@ -159,7 +179,7 @@ t4's difference.
   messages. The closest feature match. Days old, one author, many concepts.
 - **crosstalk** (epode-studio): encrypted rooms through a Cloudflare relay, eight clients. The best
   message delivery and safety design, the source of notice-only delivery above. Simultaneous
-  claims can both succeed; no file overlap detection; appears macOS-only.
+  claims can both succeed; appears macOS-only.
 - **walkie**: peer-to-peer chat between agents (Hyperswarm), the most used (≈253 stars). Messages
   only; no relay, so it can fail behind client isolation.
 - One machine only, so not comparable: polymatx/dibs, abevz/dibs, bcmyguest/huddle, parley
