@@ -31,6 +31,10 @@ func (d *Daemon) serve(ctx context.Context, ln net.Listener) {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				continue
 			}
+			// A daemon nobody can reach would still hold the clone's lock, so no replacement
+			// could start. Exit instead; the next client starts a new one.
+			d.log.Printf("accepting connections: %v; exiting", err)
+			d.stop()
 			return
 		}
 		d.bg.Add(1)
@@ -87,7 +91,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		agent = "unknown"
 	}
 	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession,
-		branch: branchOf(ctx, h.Cwd), started: time.Now()}
+		branch: branchOf(ctx, h.Cwd), started: time.Now(), reconnect: h.Reconnect}
 	d.mu.Lock()
 	if d.sessions[h.ID] != nil {
 		d.mu.Unlock()
@@ -105,21 +109,22 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStarted, From: addr,
 		At: time.Now().UTC(), Agent: agent, Branch: s.branch})
 
-	go func() {
-		<-ctx.Done()
-		conn.Close()
-	}()
+	stopWatch := context.AfterFunc(ctx, func() { conn.Close() })
 	io.Copy(io.Discard, r) // returns when the session's process closes the connection, or dies
+	stopWatch()
 
 	d.mu.Lock()
 	delete(d.sessions, h.ID)
+	d.lastActive = time.Now()
+	if ctx.Err() != nil {
+		// The daemon is stopping. The session may reconnect to the next one, so its inbox is
+		// kept; the goodbye ends this device's presence, and its claims with it.
+		d.mu.Unlock()
+		return
+	}
 	delete(d.st.Inbox, h.ID)
 	d.saveLocked()
-	d.lastActive = time.Now()
 	d.mu.Unlock()
-	if ctx.Err() != nil {
-		return // the daemon is stopping; its goodbye ends this device's presence, and the claims with it
-	}
 	d.log.Printf("session %s stopped", addr)
 	d.kickPresence()
 	// Still inside this connection's handler, so the daemon waits for these before exiting.

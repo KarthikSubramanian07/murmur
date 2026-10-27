@@ -17,9 +17,26 @@ import (
 func (d *Daemon) pollLoop(ctx context.Context) {
 	t := time.NewTicker(d.opt.Poll)
 	defer t.Stop()
+	d.mu.Lock()
+	catchUp := d.mode == modeCatchUp
+	d.mu.Unlock()
+	if catchUp {
+		// Sessions that were running before the crash reconnect within a second or two; give
+		// them that long, so what they missed reaches them.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(3 * time.Second):
+		}
+	}
 	failing := false
 	for {
 		err := d.pollOnce(ctx)
+		if err != nil && ctx.Err() == nil {
+			// A lock left by a killed git fails every fetch of its ref, and git doesn't always
+			// say so in words ("reference already exists"); clearing stale ones is cheap.
+			clearStaleLocks(d.opt.GitDir, d.log)
+		}
 		switch {
 		case err != nil && ctx.Err() == nil && !failing:
 			d.log.Printf("sync failed, retrying every %s: %v", d.opt.Poll, err)
@@ -58,11 +75,18 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	if err := d.repo.Fetch(ctx, changed); err != nil {
 		return err
 	}
+	wall := time.Now().Round(0)
 	d.mu.Lock()
 	for _, ref := range changed {
 		d.known[ref] = remote[ref]
 	}
-	first := !d.st.Initialized
+	if !d.lastPollOK.IsZero() && wall.Sub(d.lastPollOK) > d.opt.StaleAfter {
+		// This daemon was away (asleep, offline) long enough that its own observations say
+		// nothing about who is still here. Judge each peer afresh, as on first sight.
+		for _, p := range d.peers {
+			p.lastChange = firstSight(p.pres)
+		}
+	}
 	d.mu.Unlock()
 
 	for _, ref := range sortedKeys(remote) {
@@ -73,7 +97,7 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 				d.log.Printf("reading claims: %v", err)
 			}
 		case strings.HasPrefix(ref, brand.MeshPrefix):
-			d.advanceMesh(ctx, ref, sha, first)
+			d.advanceMesh(ctx, ref, sha)
 		case strings.HasPrefix(ref, brand.PresencePrefix):
 			d.updatePeer(ctx, ref, sha)
 		}
@@ -83,25 +107,39 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	defer d.mu.Unlock()
 	for dev := range d.peers {
 		if _, ok := remote[brand.PresencePrefix+dev]; !ok {
-			delete(d.peers, dev) // its daemon said goodbye
+			delete(d.peers, dev) // its daemon said goodbye, and its claims end now
+			d.gone[dev] = true
 		}
 	}
 	if _, ok := remote[brand.ClaimsRef]; !ok && d.claimsTip != "" {
 		d.log.Printf("the claims ref is gone from the remote; forgetting all claims")
 		d.resetClaimsLocked()
 	}
-	if first {
+	d.lastPollOK = wall
+	if d.mode != modeNormal || wall.Sub(d.st.LastSync) > time.Minute {
+		d.mode = modeNormal
 		d.st.Initialized = true
+		d.st.LastSync = wall
 		d.saveLocked()
 	}
 	return nil
 }
 
-// advanceMesh processes a device's log up to sha and delivers its messages. On the first sync
-// it only records the tip. Caller holds advMu.
-func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string, first bool) {
+// firstSight is when to treat a presence as last changed when this daemon has no observation
+// of its own: the writer's clock, trusted once.
+func firstSight(p bus.Presence) time.Time {
+	if now := time.Now(); p.At.Before(now) {
+		return p.At
+	}
+	return time.Now()
+}
+
+// advanceMesh processes a device's log up to sha and delivers its messages, as the sync mode
+// says. Caller holds advMu.
+func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 	d.mu.Lock()
 	prev := d.st.Processed[ref]
+	mode := d.mode
 	d.mu.Unlock()
 	if prev == sha {
 		return
@@ -112,7 +150,7 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string, first bool) {
 		d.saveLocked()
 		d.mu.Unlock()
 	}
-	if first {
+	if mode == modeSkip {
 		skipTo()
 		return
 	}
@@ -144,7 +182,7 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string, first bool) {
 		}
 		d.noteLocked(e.At, e.Line())
 		if e.Type == bus.Message {
-			d.deliverLocked(e)
+			d.deliverLocked(e, mode == modeCatchUp)
 		}
 	}
 	d.st.Processed[ref] = sha
@@ -152,8 +190,9 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string, first bool) {
 }
 
 // deliverLocked puts a message in the inbox of each session here it is addressed to. A session
-// gets only what arrives while it runs. Caller holds mu.
-func (d *Daemon) deliverLocked(e bus.Event) {
+// gets only what arrives while it runs; catching up after a crash, only sessions that were
+// running before it get anything. Caller holds mu.
+func (d *Daemon) deliverLocked(e bus.Event, catchUp bool) {
 	dev, sess := bus.SplitAddr(e.To)
 	var to []string
 	switch {
@@ -168,6 +207,9 @@ func (d *Daemon) deliverLocked(e bus.Event) {
 	}
 	for _, id := range to {
 		if bus.Addr(d.device, id) == e.From {
+			continue
+		}
+		if catchUp && (id == proto.CLISession || !d.sessions[id].reconnect) {
 			continue
 		}
 		box := append(d.st.Inbox[id], &inMsg{Event: e, Arrived: time.Now()})
@@ -199,14 +241,13 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	if bus.Decode(c.Message, &pres) != nil || pres.V != bus.Version || pres.Device != dev {
 		return
 	}
-	now := time.Now()
-	changed := now
-	if p == nil && pres.At.Before(now) {
-		// First sight, so there's no change of ours to time it by: trust the writer's clock once.
-		changed = pres.At
+	changed := time.Now()
+	if p == nil {
+		changed = firstSight(pres) // no change of ours to time it by
 	}
 	d.mu.Lock()
 	d.peers[dev] = &peer{pres: pres, sha: sha, lastChange: changed}
+	delete(d.gone, dev)
 	d.mu.Unlock()
 }
 
@@ -235,7 +276,7 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 			d.mu.Lock()
 			d.known[ref] = sha
 			d.mu.Unlock()
-			d.advanceMesh(ctx, ref, sha, false) // delivers to sessions on this device
+			d.advanceMesh(ctx, ref, sha) // delivers to sessions on this device
 			d.advMu.Unlock()
 			return nil
 		}
@@ -285,6 +326,14 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 	defer heartbeat.Stop()
 	retry := time.NewTimer(0) // publish once at start
 	defer retry.Stop()
+	// Don't announce sessions until claims that ended while this daemon was down are released,
+	// or reconnecting sessions would bring them back for a moment.
+	select {
+	case <-ctx.Done():
+		return
+	case <-d.ready:
+	case <-time.After(30 * time.Second):
+	}
 	failing := false
 	for {
 		select {
@@ -300,7 +349,30 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 			case <-time.After(300 * time.Millisecond):
 			}
 		}
-		err := d.publishPresence(ctx)
+		// Out of touch for longer than the stale limit (asleep, offline), other devices have seen
+		// this one's claims lapse. Release them for real before the presence that would bring
+		// them back goes out; if that can't be done yet, the presence waits too.
+		var err error
+		d.mu.Lock()
+		gap := time.Now().Round(0).Sub(d.lastPushOK)
+		away := !d.lastPushOK.IsZero() && gap > d.outOfTouch()
+		d.mu.Unlock()
+		if away && !d.lapseOwn(true, fmt.Sprintf("this device was out of touch for %s, so other devices saw its claims lapse",
+			gap.Round(time.Minute))) {
+			err = errors.New("releasing claims after being out of touch")
+		} else {
+			err = d.publishPresence(ctx)
+		}
+		if err == nil {
+			wall := time.Now().Round(0)
+			d.mu.Lock()
+			d.lastPushOK = wall
+			if wall.Sub(d.st.LastPresence) > time.Minute {
+				d.st.LastPresence = wall
+				d.saveLocked()
+			}
+			d.mu.Unlock()
+		}
 		switch {
 		case err != nil && ctx.Err() == nil:
 			if !failing {

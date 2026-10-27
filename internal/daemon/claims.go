@@ -116,18 +116,28 @@ func (d *Daemon) syncClaims(ctx context.Context) error {
 }
 
 // claimLiveLocked says whether a claim still holds. A claim ends when released, and lapses
-// when its session is gone: missing from its device's presence, or that presence stale.
-// Caller holds mu.
+// when its session is gone: missing from its device's presence, that presence stale or
+// deleted. A claim made from the CLI ends with the daemon it was made under. Caller holds mu.
+//
+// Lapsing is worked out by each reader, so the holder's daemon also releases claims that other
+// devices will have seen lapse (lapseOwn); otherwise a lapsed claim would come back when its
+// device did, behind seen tokens that never showed it.
 func (d *Daemon) claimLiveLocked(c *claimRec, now time.Time) bool {
 	if c.released {
 		return false
 	}
 	dev, sess := bus.SplitAddr(c.ev.From)
 	if dev == d.device {
-		return sess == proto.CLISession || d.sessions[sess] != nil
+		if sess == proto.CLISession {
+			return !c.ev.At.Before(d.started)
+		}
+		return d.sessions[sess] != nil
 	}
 	p := d.peers[dev]
 	if p == nil {
+		if d.gone[dev] {
+			return false
+		}
 		// No presence seen yet: give the device the same grace as a stale one.
 		return now.Sub(c.seenAt) < d.opt.StaleAfter
 	}
@@ -139,10 +149,62 @@ func (d *Daemon) claimLiveLocked(c *claimRec, now time.Time) bool {
 	}
 	for _, s := range p.pres.Sessions {
 		if s.ID == sess {
-			return true
+			// The CLI is always present; its claims are those made since its daemon started.
+			return sess != proto.CLISession || !c.ev.At.Before(s.Started)
 		}
 	}
 	return false
+}
+
+// lapseOwn releases this device's claims that other devices consider ended, and tells each
+// holder in its inbox. With all, that is every claim of this device: it was out of touch long
+// enough for its presence to go stale elsewhere. Without, it is only claims made from the CLI
+// under an earlier daemon. It reports whether everything that needed releasing was released.
+func (d *Daemon) lapseOwn(all bool, reason string) bool {
+	d.mu.Lock()
+	var ended []bus.Event
+	for _, c := range d.claims {
+		dev, sess := bus.SplitAddr(c.ev.From)
+		if c.released || dev != d.device {
+			continue
+		}
+		if all || sess == proto.CLISession && c.ev.At.Before(d.started) {
+			ended = append(ended, c.ev)
+		}
+	}
+	d.mu.Unlock()
+	if len(ended) == 0 {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(d.bgCtx, 2*time.Minute)
+	defer cancel()
+	ok := true
+	for _, e := range ended {
+		if r := d.release(ctx, e.From, e.ID); r.Error != "" {
+			d.log.Printf("releasing lapsed claim %s: %s", e.ID, r.Error)
+			ok = false
+			continue
+		}
+		why := reason
+		_, sess := bus.SplitAddr(e.From)
+		if sess == proto.CLISession && !all {
+			why = "claims made from the CLI end when its daemon stops"
+		}
+		d.log.Printf("released %s for %s: %s", e.ID, e.From, why)
+		d.mu.Lock()
+		d.tellLocked(sess, fmt.Sprintf("Your claim %s (%q) has ended: %s. Claim it again if you still want it.",
+			e.ID, e.What, why))
+		d.mu.Unlock()
+	}
+	return ok
+}
+
+// tellLocked puts a message from t4 itself in a session's inbox. Caller holds mu.
+func (d *Daemon) tellLocked(sess, subject string) {
+	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: brand.Name,
+		To: bus.Addr(d.device, sess), Subject: subject, At: time.Now().UTC()}
+	d.st.Inbox[sess] = append(d.st.Inbox[sess], &inMsg{Event: e, Arrived: time.Now()})
+	d.saveLocked()
 }
 
 // openLocked returns the live claims after position seq, leaving out those made by exclude.
@@ -301,7 +363,12 @@ func (d *Daemon) pushClaims(ctx context.Context, tip string, e bus.Event) (strin
 	d.mu.Lock()
 	d.known[brand.ClaimsRef] = sha
 	d.mu.Unlock()
-	return sha, d.advanceClaims(ctx, sha, false)
+	// The push landed, so the claim or release holds whatever happens next; a failure to read
+	// it back is caught up by the next sync.
+	if err := d.advanceClaims(ctx, sha, false); err != nil {
+		d.log.Printf("reading back claims after a push: %v", err)
+	}
+	return sha, nil
 }
 
 // releaseHeld releases every claim a stopped session held, so other devices see them end now

@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -12,3 +13,7 @@ const createNoWindow = 0x08000000
 func hideWindow(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 }
+
+// Windows has no interrupt to send another process; a cancelled git is killed, and the daemon
+// clears the locks such a kill can leave (see daemon.clearStaleLocks).
+var interrupt func(*os.Process) error

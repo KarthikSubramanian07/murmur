@@ -99,7 +99,7 @@ func (c *Client) load() bool {
 func (c *Client) ping(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	resp, err := c.roundTrip(ctx, proto.Request{Op: proto.OpPing})
+	resp, _, err := c.roundTrip(ctx, proto.Request{Op: proto.OpPing})
 	if err != nil {
 		return err
 	}
@@ -129,24 +129,32 @@ func (c *Client) start() error {
 		return err
 	}
 	defer logf.Close()
-	p, err := proc.StartDetached(exe, []string{"daemon", "--git-dir", c.GitDir}, c.GitDir, logf)
+	// Run in the clone's top directory, where git resolves a relative remote URL from. The
+	// daemon still never uses it as a working tree: every command it runs gets --git-dir.
+	cwd := c.GitDir
+	if filepath.Base(cwd) == ".git" {
+		cwd = filepath.Dir(cwd)
+	}
+	p, err := proc.StartDetached(exe, []string{"daemon", "--git-dir", c.GitDir}, cwd, logf)
 	if err != nil {
 		return err
 	}
 	return p.Release()
 }
 
-// Do sends one request. If the daemon has gone away, it reconnects (starting a new daemon when
-// Spawn is set) and tries once more.
+// Do sends one request. If the daemon couldn't be reached, it reconnects (starting a new daemon
+// when Spawn is set) and tries once more. Once a request has been sent it is never resent: the
+// daemon may have acted on it, and a second send or claim would happen twice.
 func (c *Client) Do(ctx context.Context, req proto.Request) (proto.Response, error) {
-	resp, err := c.roundTrip(ctx, req)
-	if err == nil {
-		return resp, nil
+	resp, sent, err := c.roundTrip(ctx, req)
+	if err == nil || sent || ctx.Err() != nil {
+		return resp, err
 	}
 	if cerr := c.connect(ctx); cerr != nil {
 		return proto.Response{}, fmt.Errorf("%v (reconnecting: %v)", err, cerr)
 	}
-	return c.roundTrip(ctx, req)
+	resp, _, err = c.roundTrip(ctx, req)
+	return resp, err
 }
 
 func dial(ctx context.Context, addr string) (net.Conn, error) {
@@ -156,14 +164,16 @@ func dial(ctx context.Context, addr string) (net.Conn, error) {
 	return dialer.DialContext(dctx, "tcp", addr)
 }
 
-func (c *Client) roundTrip(ctx context.Context, req proto.Request) (proto.Response, error) {
+// roundTrip sends one request and reads the response. sent reports whether the request was
+// written, after which the daemon may have acted on it.
+func (c *Client) roundTrip(ctx context.Context, req proto.Request) (resp proto.Response, sent bool, err error) {
 	info := c.current()
 	if info.Addr == "" {
-		return proto.Response{}, ErrNoDaemon
+		return proto.Response{}, false, ErrNoDaemon
 	}
 	conn, err := dial(ctx, info.Addr)
 	if err != nil {
-		return proto.Response{}, err
+		return proto.Response{}, false, err
 	}
 	defer conn.Close()
 	if dl, ok := ctx.Deadline(); ok {
@@ -173,17 +183,16 @@ func (c *Client) roundTrip(ctx context.Context, req proto.Request) (proto.Respon
 	}
 	req.Token = info.Token
 	if err := writeLine(conn, req); err != nil {
-		return proto.Response{}, err
+		return proto.Response{}, true, err
 	}
-	var resp proto.Response
 	line, err := bufio.NewReader(conn).ReadBytes('\n')
 	if err != nil {
-		return proto.Response{}, err
+		return proto.Response{}, true, err
 	}
 	if err := json.Unmarshal(line, &resp); err != nil {
-		return proto.Response{}, err
+		return proto.Response{}, true, err
 	}
-	return resp, nil
+	return resp, true, nil
 }
 
 // Hello registers a session and returns the connection that keeps it registered. The session

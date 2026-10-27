@@ -62,6 +62,9 @@ type Hello struct {
 	Agent         string `json:"agent"`
 	Cwd           string `json:"cwd"`
 	ClaudeSession string `json:"claudeSession,omitempty"`
+	// Reconnect says the session was registered with a daemon that went away, so it should get
+	// what that daemon would have delivered.
+	Reconnect bool `json:"reconnect,omitempty"`
 }
 
 // Response is the daemon's answer. Which fields are set depends on the op.

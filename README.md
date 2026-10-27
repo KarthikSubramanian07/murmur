@@ -14,7 +14,8 @@ machines through GitHub. "t4" is a working name.
 
 - The repo is the message bus: each device appends events to its own git ref
   (`refs/t4/mesh/<device>`) on GitHub. No server, no accounts; whoever can push is in. Pushes to
-  these refs trigger no CI, webhooks or deploys, and `git clone` / `git pull` never fetch them.
+  these refs trigger no Actions run and no push webhook (tested), so deploy services that listen
+  for pushes shouldn't fire either (inferred). `git clone` / `git pull` never fetch them.
 - One small daemon per clone syncs those refs; each agent session connects to it through an MCP
   server (or a human through the CLI).
 - Agents post **claims** before building something, see each other's **presence**, and send

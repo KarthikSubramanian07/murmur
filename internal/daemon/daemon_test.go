@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -31,6 +32,19 @@ func git(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// gitIn runs git with stdin, as a configured user.
+func gitIn(t *testing.T, dir, stdin string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(stdin)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func newRemote(t *testing.T) string {
 	root := t.TempDir()
 	remote := filepath.Join(root, "remote.git")
@@ -45,15 +59,21 @@ func newRemote(t *testing.T) string {
 type device struct {
 	t      *testing.T
 	gitDir string
+	stale  time.Duration
 	c      *client.Client
 	stop   func()
 }
 
-func newDevice(t *testing.T, remote string) *device {
+// newDevice clones remote and starts a daemon for the clone. stale, if given, overrides the
+// tests' short stale limit.
+func newDevice(t *testing.T, remote string, stale ...time.Duration) *device {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
-	d := &device{t: t, gitDir: filepath.Join(dir, ".git")}
+	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second}
+	if len(stale) > 0 {
+		d.stale = stale[0]
+	}
 	d.start()
 	return d
 }
@@ -64,8 +84,8 @@ func (d *device) start() {
 	go func() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: 100 * time.Millisecond,
-			Heartbeat: 500 * time.Millisecond, StaleAfter: 3 * time.Second, Idle: -1,
-			Log: log.New(io.Discard, "", 0)})
+			Heartbeat: 500 * time.Millisecond, StaleAfter: d.stale, Idle: -1,
+			Log: testLog()})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)
 		}
@@ -111,6 +131,14 @@ func (d *device) session(id, claude string) (string, net.Conn) {
 
 func (d *device) self() string {
 	return strings.TrimSuffix(d.do(proto.Request{Op: proto.OpPing}).Self, "/"+proto.CLISession)
+}
+
+// testLog discards daemon logs unless T4_TEST_LOG is set.
+func testLog() *log.Logger {
+	if os.Getenv("T4_TEST_LOG") != "" {
+		return log.New(os.Stderr, "daemon: ", log.Lmicroseconds)
+	}
+	return log.New(io.Discard, "", 0)
 }
 
 func eventually(t *testing.T, what string, cond func() bool) {

@@ -265,6 +265,9 @@ func (l *link) run(ctx context.Context) {
 			continue
 		}
 		backoff, inUse = time.Second, 0
+		l.mu.Lock()
+		l.hello.Reconnect = true // any later hello is a reconnection
+		l.mu.Unlock()
 		l.set(true, nil)
 		done := make(chan struct{})
 		go func() {

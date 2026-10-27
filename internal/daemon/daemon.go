@@ -80,6 +80,11 @@ type Daemon struct {
 	claimsTip  string
 	recent     []proto.EventView
 	lastActive time.Time
+	mode       syncMode
+	gone       map[string]bool // devices whose presence was deleted: they said goodbye
+	lastPollOK time.Time       // wall clock of the last successful sync
+	lastPushOK time.Time       // wall clock of the last successful presence push
+	lapseAll   bool            // at startup: this device's presence went stale while it was down
 
 	advMu   sync.Mutex // serializes processing of fetched refs
 	writeMu sync.Mutex // serializes appends to this device's log
@@ -89,6 +94,7 @@ type Daemon struct {
 	kick     chan struct{}
 	quit     chan struct{}
 	quitOnce sync.Once
+	ready    chan struct{} // closed once startup has released claims that ended while down
 
 	// bg tracks connection handlers and background writes, so Run returns only after they
 	// have; bgCtx is cancelled when the daemon starts shutting down.
@@ -99,7 +105,25 @@ type Daemon struct {
 type session struct {
 	id, agent, cwd, branch, doing, claudeSession string
 	started                                      time.Time
+	reconnect                                    bool // registered before, with a daemon that went away
 }
+
+// syncMode says what a sync does with events this daemon hasn't processed.
+type syncMode int
+
+const (
+	// modeSkip records every ref's tip without delivering anything: the first sync of a new
+	// clone, or after a clean exit or a long gap, when no session was running to receive it.
+	modeSkip syncMode = iota
+	// modeCatchUp delivers what arrived while the daemon was down, but only to sessions that
+	// were running before it went down: the first sync after a crash.
+	modeCatchUp
+	modeNormal
+)
+
+// catchUpLimit is the longest outage after which a restarted daemon still delivers what it
+// missed; past it, the sessions that were waiting have moved on.
+const catchUpLimit = 10 * time.Minute
 
 // peer is another device as its presence ref shows it.
 type peer struct {
@@ -130,6 +154,11 @@ type state struct {
 	Initialized bool                `json:"initialized"`
 	Processed   map[string]string   `json:"processed"` // mesh ref → last SHA delivered
 	Inbox       map[string][]*inMsg `json:"inbox"`     // session → unread messages
+	// CleanExit, LastSync and LastPresence let the next daemon tell a crash from a clean exit,
+	// and a short outage from one long enough that other devices saw this one go stale.
+	CleanExit    bool      `json:"cleanExit"`
+	LastSync     time.Time `json:"lastSync"`
+	LastPresence time.Time `json:"lastPresence"`
 }
 
 // Run runs a daemon until ctx is done, it is told to stop, or it has been idle too long.
@@ -174,6 +203,12 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.Idle > 0 {
 		go d.idleLoop(ctx)
 	}
+	d.bg.Add(1)
+	go func() {
+		defer d.bg.Done()
+		defer close(d.ready)
+		d.lapseOwn(d.lapseAll, "this device was offline long enough that other devices saw its claims lapse")
+	}()
 	select {
 	case <-ctx.Done():
 	case <-d.quit:
@@ -196,8 +231,8 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	d := &Daemon{
 		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
-		claimSeq: map[string]int{},
-		kick:     make(chan struct{}, 1), quit: make(chan struct{}),
+		claimSeq: map[string]int{}, gone: map[string]bool{},
+		kick: make(chan struct{}, 1), quit: make(chan struct{}), ready: make(chan struct{}),
 	}
 	device, err := loadDevice(dir)
 	if err != nil {
@@ -218,6 +253,16 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}
+	wall := now.Round(0)
+	if !d.st.Initialized || d.st.CleanExit || wall.Sub(d.st.LastSync) > catchUpLimit {
+		d.mode = modeSkip
+	} else {
+		d.mode = modeCatchUp
+	}
+	d.lapseAll = !d.st.LastPresence.IsZero() && wall.Sub(d.st.LastPresence) > d.outOfTouch()
+	d.st.CleanExit = false
+	d.saveLocked()
+	clearStaleLocks(opt.GitDir, d.log)
 	if err := d.restore(ctx); err != nil {
 		return nil, err
 	}
@@ -250,6 +295,11 @@ func (d *Daemon) restore(ctx context.Context) error {
 	return nil
 }
 
+// outOfTouch is how long without a successful presence push before this device treats its
+// claims as lapsed elsewhere. It is shorter than the stale limit, so the device releases them
+// before any reader could have seen them lapse and then seen them come back.
+func (d *Daemon) outOfTouch() time.Duration { return d.opt.StaleAfter * 5 / 6 }
+
 func (d *Daemon) meshRef() string     { return brand.MeshPrefix + d.device }
 func (d *Daemon) presenceRef() string { return brand.PresencePrefix + d.device }
 
@@ -264,7 +314,29 @@ func (d *Daemon) goodbye() {
 	if err := d.repo.Push(ctx, "", d.presenceRef(), bus.FastForward, ""); err != nil {
 		d.log.Printf("removing presence: %v", err)
 	}
+	d.mu.Lock()
+	d.st.CleanExit = true
+	d.saveLocked()
+	d.mu.Unlock()
 	d.log.Printf("stopped")
+}
+
+// clearStaleLocks removes .lock files under the bus refs. A git killed mid-write leaves one,
+// and every later fetch of that ref fails until it is gone. The daemon holds the clone's lock
+// and is the only writer of these refs, so one older than a few seconds is stale.
+func clearStaleLocks(gitDir string, l *log.Logger) {
+	root := filepath.Join(gitDir, filepath.FromSlash(brand.RefRoot))
+	filepath.WalkDir(root, func(path string, e os.DirEntry, err error) error {
+		if err != nil || e.IsDir() || !strings.HasSuffix(path, ".lock") {
+			return nil
+		}
+		if fi, err := e.Info(); err == nil && time.Since(fi.ModTime()) > 30*time.Second {
+			if os.Remove(path) == nil {
+				l.Printf("removed stale lock %s", path)
+			}
+		}
+		return nil
+	})
 }
 
 func (d *Daemon) idleLoop(ctx context.Context) {

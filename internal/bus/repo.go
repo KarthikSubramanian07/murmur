@@ -146,24 +146,35 @@ func (r *Repo) Push(ctx context.Context, sha, ref string, mode PushMode, expect 
 	}
 	args = append(args, sha+":"+ref)
 	out, err := r.Git.Run(ctx, "", args...)
+	var refused string
 	for _, line := range strings.Split(out, "\n") {
-		if !strings.HasPrefix(line, "!\t") {
-			continue
+		if strings.HasPrefix(line, "!\t") {
+			refused = strings.TrimSpace(line)
 		}
-		if !strings.Contains(line, "remote rejected") {
-			return ErrRejected // refused before sending: the ref had already moved
-		}
-		// The server refused. When two leased pushes race, the loser can pass the client-side
-		// check and still lose on the server, which reports it as a rejection ("reference
-		// already exists", "cannot lock ref"). If the ref moved, that is what happened.
-		if mode == Lease {
-			if now, lerr := r.RemoteRef(ctx, ref); lerr == nil && now != expect {
-				return ErrRejected
-			}
-		}
-		return fmt.Errorf("push to %s refused by the server: %s", ref, strings.TrimSpace(line))
 	}
-	return err
+	if err == nil && refused == "" {
+		return nil
+	}
+	// A failed push may still have landed: the server can update the ref and then fail to
+	// report it ("remote failed to report status"), or the connection can drop after. Calling
+	// that a failure would make the caller write the same event twice, so look.
+	now, lerr := r.RemoteRef(ctx, ref)
+	if lerr == nil && now == sha {
+		return nil
+	}
+	if refused == "" {
+		return err // network, auth: nothing was decided
+	}
+	if !strings.Contains(refused, "remote rejected") {
+		return ErrRejected // refused before sending: the ref had already moved
+	}
+	// The server refused. When two leased pushes race, the loser can pass the client-side
+	// check and still lose on the server, which reports it as a rejection ("reference already
+	// exists", "cannot lock ref"). If the ref moved, that is what happened.
+	if mode == Lease && lerr == nil && now != expect {
+		return ErrRejected
+	}
+	return fmt.Errorf("push to %s refused by the server: %s", ref, refused)
 }
 
 // LocalRefs returns the local copies of bus refs.

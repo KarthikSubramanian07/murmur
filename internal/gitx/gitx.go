@@ -5,11 +5,11 @@ package gitx
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // Git runs commands against one repository's git directory.
@@ -36,15 +36,6 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Err }
 
-// ExitCode is the command's exit status, or -1 if it didn't run to completion.
-func ExitCode(err error) int {
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		return ee.ExitCode()
-	}
-	return -1
-}
-
 // Run runs git with the given stdin and returns its stdout.
 func (g Git) Run(ctx context.Context, stdin string, args ...string) (string, error) {
 	return run(ctx, "", stdin, append([]string{"--git-dir=" + g.Dir}, args...)...)
@@ -58,6 +49,13 @@ func RunIn(ctx context.Context, dir string, args ...string) (string, error) {
 
 func run(ctx context.Context, dir, stdin string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
+	// A git killed outright can leave a ref's .lock file behind, and every later write to that
+	// ref fails until it is removed. Where the platform allows, interrupt it instead, so git
+	// removes its own locks, and kill it only if it hasn't exited soon after.
+	if interrupt != nil {
+		cmd.Cancel = func() error { return interrupt(cmd.Process) }
+		cmd.WaitDelay = 5 * time.Second
+	}
 	cmd.Dir = dir
 	// The daemon runs detached, with nobody to answer a prompt: fail instead of waiting.
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never")
