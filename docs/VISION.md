@@ -29,9 +29,14 @@ In rough order of value:
 
 1. **Claims.** Before starting something sizeable, an agent posts what it is taking ("auth flow,
    `src/auth/*`"). Before starting, agents check open claims. Most duplicate work disappears here.
+   Claims are explicit: an agent makes one on purpose. Logs are per device, so two agents can
+   claim the same thing within one sync interval; every device resolves that the same way
+   (earliest commit time, then device ID), and the loser is told it lost.
 2. **Overlap detection, with no model involved.** Each session's presence includes its branch and
    changed files. The tool itself notices two sessions editing the same files and tells both
-   agents. It costs no tokens and works even when the agents forget to talk.
+   agents. It costs no tokens and works even when the agents forget to talk. It informs; it never
+   claims or blocks. Tyler rejected (2026-10-26) a claim-on-edit hook that claims a file before
+   each edit and can block a teammate's agent, as openhuddle does.
 3. **Presence.** Who is working, on what device, in which agent, on which branch, doing what.
 4. **Direct messages and broadcasts.** For what the first three can't settle.
 
@@ -53,6 +58,10 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   This gets tested first; the fallback is `t4-mesh/<device>` branches with `[skip ci]`.
 - Writes use git plumbing (`commit-tree`, `push <sha>:<ref>`) and never touch the working tree or
   index, where humans and agents are working at the same moment.
+- beads (task tracking synced through `refs/dolt/data` on GitHub) shows custom refs hold up at
+  scale, and two of its bugs are warnings: `git push --mirror` from an ordinary clone deletes
+  custom refs on the remote (beads #5266), and checking an internal branch out in the user's repo
+  wiped tracked files (beads #6484).
 - Reading: poll `git ls-remote origin 'refs/t4/*'` about every 10 s, which is cheap; fetch only
   when a SHA has changed. Delivery takes roughly 10–15 s, plenty for agents.
 - A repo is identified by its root commit, so SSH and HTTPS remotes, renames and worktrees all
@@ -81,16 +90,20 @@ claim) for an agent to choose a recipient.
 
 ### Delivery differs by client
 
-Sending is an MCP tool call everywhere. Receiving is not, because MCP only answers when asked:
+Sending is an MCP tool call everywhere. Receiving is not, because MCP only answers when asked.
+Whatever the route, what reaches the agent is a **notice** ("2 new messages from bob-laptop/
+session-3"), never the message text. The agent reads the text by calling `inbox`, so it arrives
+as tool output, as data, not as something that looks like its user typing. The idea is
+crosstalk's.
 
-| Client | Receives by | Can wake an idle agent |
+| Client | Notice delivered by | Can wake an idle agent |
 |---|---|---|
-| T3 Code | T3 queues the message into the thread, as it does for local messages | Yes |
-| Claude Code | A hook checks the inbox after tool calls and prompts and adds new messages as context | No |
+| T3 Code | T3 queues the notice into the thread, as it does for local messages. The preferred route: when a session runs inside T3, use T3 | Yes |
+| Claude Code outside T3 | Its inbox socket (`CLAUDE_CODE_MESSAGING_SOCKET`), if it exists; otherwise a hook that checks after tool calls and prompts | With the socket, reportedly; with hooks, no |
 | Codex, others | AGENTS.md asks the agent to call `inbox` at task boundaries | No |
 
-An idle agent isn't building anything, so "only while working" mostly suffices. Codex's hook
-support is unchecked (2026-10-26).
+The Claude Code socket is crosstalk's claim, unverified here (2026-10-26), as is Codex's hook
+support.
 
 ### The envelope
 
@@ -101,18 +114,26 @@ and only the sending agent's choice of words gave it away. Locally that is harml
 sender is the user. Across devices the agent must know a teammate's agent is speaking, not its
 user. That is what lets it treat messages as information rather than instructions.
 
+The envelope goes on the `inbox` output, alongside the notice-only delivery above. crosstalk
+reports that Claude Code wraps every message pushed through its inbox socket in its own framing
+that presents the sender as the user's teammate, and that this can't be turned off (unverified
+here). That is one more reason to push only the notice.
+
 ## Risks and how the design meets them
 
 - **Agents replying forever.** T3's local messaging stays calm because a reply is plain text in
   the receiver's own thread; nothing goes back unless the agent deliberately sends again. t4 keeps
   that: no automatic replies, incoming messages queued rather than steering a running turn, and
-  AGENTS.md wording that asks for claims, not for chatting. A per-session rate cap, a reply-depth
-  limit and a pause the human can see are the backstop.
+  AGENTS.md wording that asks for claims, not for chatting. A reply-depth limit and a pause the
+  human can see are the backstop. Tyler rejected (2026-10-26) rationing the messages an agent
+  starts on its own to a few an hour.
 - **Prompt injection.** Anyone with push access can now put text in front of your agent. That
   matches the trust model (a hackathon team), but messages never get to bypass the receiving
   user's permission mode; the envelope keeps their origin visible.
 - **Leaked secrets.** Everything on the bus stays in repo history, readable by anyone with read
-  access, and agents do paste `.env` values. Outgoing messages are scanned for secrets.
+  access, and agents do paste `.env` values. Outgoing messages are scanned for secrets, starting
+  from openhuddle's patterns (`src/shared/scrub.js`; check its license first). The need is greater
+  here than for relay-based tools, whose messages expire: these stay in history.
 
 ## Why not peer-to-peer
 
@@ -126,6 +147,23 @@ of the transport, so a websocket relay can be added later if 10–15 s proves to
 T3-only would need changes inside T3 itself; from outside, an MCP server is the way in for every
 client, T3 included. The daemon and MCP layer cost little more than a T3-only build, and they are
 what makes Claude Code and Codex sessions first-class.
+
+## Prior art
+
+A survey on 2026-10-26 found a dozen tools in this space, nearly all from the last few months.
+None uses git as the transport: each needs a hub, a relay or a peer-to-peer network that someone
+runs or that hackathon Wi-Fi can block. That, and setup amounting to "have push access", is
+t4's difference.
+
+- **openhuddle**: a hub server plus Claude Code hooks; claims (automatic, on edit), presence,
+  messages. The closest feature match. Days old, one author, many concepts.
+- **crosstalk** (epode-studio): encrypted rooms through a Cloudflare relay, eight clients. The best
+  message delivery and safety design, the source of notice-only delivery above. Simultaneous
+  claims can both succeed; no file overlap detection; appears macOS-only.
+- **walkie**: peer-to-peer chat between agents (Hyperswarm), the most used (≈253 stars). Messages
+  only; no relay, so it can fail behind client isolation.
+- One machine only, so not comparable: polymatx/dibs, abevz/dibs, bcmyguest/huddle, parley
+  (auspex0).
 
 ## Build order
 
@@ -142,3 +180,4 @@ what makes Claude Code and Codex sessions first-class.
 - Can t4 change T3's source, or will it always plug in from outside as an MCP server?
 - Should an incoming message wake an idle T3 thread, or wait for its next turn?
 - Does anything (Actions, Vercel, Netlify, GitHub webhooks) react to pushes of custom refs?
+- Does Claude Code's inbox socket exist as crosstalk describes, and can it wake an idle session?
