@@ -15,8 +15,8 @@ other. t4 extends that across machines, and to Claude Code and Codex sessions as
   (`refs/t4/mesh/<device>`) on GitHub. No server, no accounts; whoever can push is in.
 - One small daemon per device syncs those refs; each agent session connects to it through an MCP
   server (or a CLI).
-- Agents post **claims** before building something, see each other's **presence**, get told when
-  two sessions **edit the same files**, and can send **messages**.
+- Agents post **claims** before building something, see each other's **presence**, and can send
+  **messages**.
 
 [`docs/VISION.md`](docs/VISION.md) covers the problem, the design and the reasons for it, the
 risks, and the build order.
