@@ -1,7 +1,7 @@
 # Vision: agents that find each other across a hackathon team
 
-Status: design, 2026-10-26. Nothing is built yet. "t4" is the repo's name and a working name for
-the tool; the product name is undecided (candidates: Huddle, Walkie, Backchannel, Dibs).
+Status: design, 2026-10-26; V1 is being built, in Go. "t4" is the repo's name and a working name
+for the tool; the product name is undecided (candidates: Huddle, Walkie, Backchannel, Dibs).
 
 ## The problem
 
@@ -47,20 +47,29 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   Claims are the exception, on one shared ref (below).
 - Presence is separate: `refs/t4/presence/<deviceId>`, force-pushed with the device's current
   state. Heartbeats would otherwise flood the event log.
-- Custom refs, not branches, so CI and preview deploys (Actions, Vercel, Netlify) don't fire on
-  every message, and `git clone` / `git pull` never fetch them. git-bug uses `refs/bugs/*` on
-  GitHub the same way. **Unverified:** that Actions and Vercel never trigger on non-branch refs.
-  This gets tested first; the fallback is `t4-mesh/<device>` branches with `[skip ci]`.
+- Custom refs, not branches, so CI and preview deploys don't fire on every message, and
+  `git clone` / `git pull` never fetch them. git-bug uses `refs/bugs/*` on GitHub the same way.
+  Tested on this repo on 2026-10-26: a push to `refs/t4/*` produced no `push` webhook delivery
+  and no Actions run, even when the pushed commit contained a workflow that runs on every push;
+  the same commit pushed to a branch produced both. Vercel and Netlify deploy from GitHub's push
+  webhooks, so they have nothing to react to (inferred, not tested with either).
 - Writes use git plumbing (`commit-tree`, `push <sha>:<ref>`) and never touch the working tree or
   index, where humans and agents are working at the same moment.
+- Bus commits carry git's empty tree, so they hold no files and fetching them brings nothing else
+  along. The daemon pushes them with `--no-verify` and doesn't sign them: a `pre-push` hook that
+  runs the test suite, or a signing prompt, on every message would make the bus unusable. These
+  commits only ever go to `refs/t4/*`, never to a branch.
 - beads (task tracking synced through `refs/dolt/data` on GitHub) shows custom refs hold up at
   scale, and two of its bugs are warnings: `git push --mirror` from an ordinary clone deletes
   custom refs on the remote (beads #5266), and checking an internal branch out in the user's repo
   wiped tracked files (beads #6484).
 - Reading: poll `git ls-remote origin 'refs/t4/*'` about every 10 s, which is cheap; fetch only
   when a SHA has changed. Delivery takes roughly 10–15 s, plenty for agents.
-- A repo is identified by its root commit, so SSH and HTTPS remotes, renames and worktrees all
-  land in the same group.
+- A device is one clone's daemon. Worktrees of a clone share its `.git`, so they share its daemon;
+  a second clone on the same machine is a second device. The device ID is the hostname plus four
+  random hex digits (`tyler-laptop-3f2a`), kept with the daemon's other state in `.git/t4/`, which
+  no commit or checkout ever touches. (An earlier draft grouped repos by root commit; per-clone
+  daemons don't need that.)
 
 ### Claims are a compare-and-swap
 
@@ -78,8 +87,18 @@ compare-and-swap. The daemon builds the claim on the tip it last fetched and pus
   hadn't seen. The agent decides with them in view: claim something else, coordinate, or retry.
 
 No claim is ever made without seeing every earlier one, and nobody has to be told later that
-they lost. Claims are rare, so contention on one ref is negligible. A claim ends when its session
-releases it or stops.
+they lost. Claims are rare, so contention on one ref is negligible.
+
+"Seen" is made exact by a token. The `claims` tool returns the open claims and a token naming the
+tip they were read from, and `claim` takes that token back. If any claim newer than the token is
+still open, `claim` returns it instead of claiming, so an agent can't claim past something it was
+never shown, even if that claim arrived after the agent's last look.
+
+A claim ends when its session releases it or stops; a session that stops cleanly releases its
+claims. A laptop that sleeps or loses its network can't, so a claim also lapses once its session
+is missing from its device's presence, or that presence is stale: unchanged for 6 minutes,
+against a heartbeat every 2. A reader measures staleness from when it saw the presence change,
+not from the writer's clock.
 
 ### One daemon per device, a thin MCP server per session
 
@@ -100,7 +119,16 @@ starts its own MCP server process (that is how Claude Code runs stdio MCP server
 to start launches the daemon. A session's MCP process lives exactly as long as the session, so
 when its connection drops the daemon announces `session.stopped`, even after a crash. Messages
 are addressed to `device/session`; presence carries enough description (agent, branch, current
-claim) for an agent to choose a recipient.
+claim) for an agent to choose a recipient. A session receives the messages that arrive while it
+runs; nothing sent before it started is replayed to it.
+
+Sessions reach the daemon over loopback TCP, on a random port written with a random token to
+`.git/t4/daemon.json`. A daemon with no sessions for 10 minutes exits, and its presence goes
+stale like any other.
+
+Claude Code gives its MCP servers and its hooks the same `CLAUDE_CODE_SESSION_ID`, matching the
+`session_id` a hook reads on stdin (seen in Claude Code 2.1.310, 2026-10-26). That is how a hook,
+a separate process, finds the session whose notices it should deliver.
 
 ### Delivery differs by client
 
@@ -122,8 +150,10 @@ a tool is crosstalk's idea.
 | Claude Code outside T3 | Its inbox socket (`CLAUDE_CODE_MESSAGING_SOCKET`), if it exists; otherwise a hook that checks after tool calls and prompts | With the socket, reportedly; with hooks, no |
 | Codex, others | AGENTS.md asks the agent to call `inbox` at task boundaries | No |
 
-The Claude Code socket is crosstalk's claim, unverified here (2026-10-26), as is Codex's hook
-support.
+The socket exists: Claude Code 2.1.310 sets `CLAUDE_CODE_MESSAGING_SOCKET` (a named pipe on
+Windows) and a token for it in every child process, MCP servers and hooks included (seen
+2026-10-26). Its protocol, and whether it wakes an idle session, are unverified, as is Codex's
+hook support. V1 uses the hook.
 
 ### The envelope
 
@@ -149,9 +179,11 @@ here). That is one more reason to push only the notice.
   matches the trust model (a hackathon team), but messages never get to bypass the receiving
   user's permission mode; the envelope keeps their origin visible.
 - **Leaked secrets.** Everything on the bus stays in repo history, readable by anyone with read
-  access, and agents do paste `.env` values. Outgoing messages are scanned for secrets, starting
-  from openhuddle's patterns (`src/shared/scrub.js`; check its license first). The need is greater
-  here than for relay-based tools, whose messages expire: these stay in history.
+  access, and agents do paste `.env` values. Everything a session sends (messages, claims, its
+  status line) is scanned first, and a match blocks the send rather than being redacted, so the
+  agent knows what happened. V1 has its own short list of patterns (cloud and API keys, tokens,
+  private keys); openhuddle's (`src/shared/scrub.js`) could extend it, license unchecked. The
+  need is greater here than for relay-based tools, whose messages expire: these stay in history.
 
 ## Why not peer-to-peer
 
@@ -183,10 +215,20 @@ t4's difference.
 - One machine only, so not comparable: polymatx/dibs, abevz/dibs, bcmyguest/huddle, parley
   (auspex0).
 
+## Built in Go
+
+One static binary per platform, `t4`, holds the daemon, MCP server, hook and CLI. A teammate
+installs one file and no runtime. Go cross-compiles for macOS, Linux and Windows from any one
+machine with no C toolchain, where Rust would need Apple's SDK and linker to build for macOS
+from elsewhere. Tyler chose between the two on 2026-10-26. The MCP server uses the official Go
+SDK (`modelcontextprotocol/go-sdk`, v1.8.0). The daemon runs the `git` binary rather than using
+a git library, so it gets each user's credential helpers, SSH config and URL rewrites for free.
+
 ## Build order
 
-1. Daemon, CLI and git transport, tested with two clones on one machine. First test: whether a
-   push to `refs/t4/*` triggers Actions on this repo.
+1. Daemon, CLI and git transport, tested with two clones on one machine, then between Tyler's
+   Windows laptop and his homeserver (macOS). The homeserver pushes with a deploy key for this
+   repo (added 2026-10-26). The test of custom refs against Actions and webhooks is done (above).
 2. MCP server and the Claude Code hook. The first useful version.
 3. T3: connect as an MCP server; a dedicated UI or waking idle threads later, if T3's source can
    be changed.
@@ -197,5 +239,6 @@ t4's difference.
 - The name.
 - Can t4 change T3's source, or will it always plug in from outside as an MCP server?
 - Should an incoming message wake an idle T3 thread, or wait for its next turn?
-- Does anything (Actions, Vercel, Netlify, GitHub webhooks) react to pushes of custom refs?
-- Does Claude Code's inbox socket exist as crosstalk describes, and can it wake an idle session?
+- What is the protocol of Claude Code's messaging socket, and can it wake an idle session?
+- Does GitHub rate-limit a `git ls-remote` every 10 s from each of a team's devices? Nothing
+  documents a limit for git traffic; none was hit in testing so far.

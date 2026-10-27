@@ -17,7 +17,8 @@ this file loads into every session, so it stays short and points into `docs/` fo
   into identifiers that would be hard to rename.
 - **session.** One agent conversation (a T3 thread, a Claude Code or Codex session). One device
   runs many.
-- **device.** One machine running the t4 daemon; it owns one ref, `refs/t4/mesh/<deviceId>`.
+- **device.** One clone's t4 daemon; the clone's worktrees share it, and a second clone on the
+  same machine is a second device. It owns one ref, `refs/t4/mesh/<deviceId>`.
 - **mesh, bus.** The set of `refs/t4/*` refs on the remote that carry events.
 
 ## Traps
