@@ -68,6 +68,14 @@ func (d *Daemon) advanceClaims(ctx context.Context, sha string, restoring bool) 
 			}
 			d.claims = append(d.claims, &claimRec{ev: e, seq: seq, seenAt: seen})
 			d.noteLocked(e.At, e.Line())
+			for _, id := range e.Ends {
+				if rec := d.findClaimLocked(id); rec != nil && !rec.released {
+					rec.released = true
+					if !restoring {
+						d.tellEndedLocked(rec.ev, e)
+					}
+				}
+			}
 		case bus.Release:
 			// Only the holder's own device can release a claim.
 			if rec := d.findClaimLocked(e.Claim); rec != nil && sameDevice(rec.ev.From, e.From) {
@@ -115,13 +123,15 @@ func (d *Daemon) syncClaims(ctx context.Context) error {
 	return d.advanceClaims(ctx, sha, false)
 }
 
-// claimLiveLocked says whether a claim still holds. A claim ends when released, and lapses
-// when its session is gone: missing from its device's presence, that presence stale or
-// deleted. A claim made from the CLI ends with the daemon it was made under. Caller holds mu.
+// claimLiveLocked says whether a claim still holds, as far as this daemon can tell. A claim ends
+// when it is released or a later claim ends it, and lapses when its session is gone: missing
+// from its device's presence, or that presence stale or deleted. A claim made from the CLI ends
+// with the daemon it was made under. Caller holds mu.
 //
-// Lapsing is worked out by each reader, so the holder's daemon also releases claims that other
-// devices will have seen lapse (lapseOwn); otherwise a lapsed claim would come back when its
-// device did, behind seen tokens that never showed it.
+// A lapse is one daemon's judgement, and it can be undone: a laptop that wakes brings its claims
+// back. That harms nobody unless someone claimed in the meantime without being shown them. So a
+// claim lists the claims its daemon judged lapsed (Event.Ends), and every daemon treats those as
+// ended for good: a lapse becomes final, and shared, the moment anyone claims past it.
 func (d *Daemon) claimLiveLocked(c *claimRec, now time.Time) bool {
 	if c.released {
 		return false
@@ -135,13 +145,14 @@ func (d *Daemon) claimLiveLocked(c *claimRec, now time.Time) bool {
 	}
 	p := d.peers[dev]
 	if p == nil {
-		if d.gone[dev] {
-			return false
+		if goneAt, ok := d.gone[dev]; ok && !c.seenAt.After(goneAt) {
+			return false // made before its device said goodbye
 		}
-		// No presence seen yet: give the device the same grace as a stale one.
+		// No presence seen yet, or a claim made since the goodbye (a restart): give the device
+		// the same grace as a stale one.
 		return now.Sub(c.seenAt) < d.opt.StaleAfter
 	}
-	if now.Sub(p.lastChange) > d.opt.StaleAfter {
+	if d.staleLocked(p) {
 		return false
 	}
 	if c.ev.At.After(p.pres.At) {
@@ -156,47 +167,76 @@ func (d *Daemon) claimLiveLocked(c *claimRec, now time.Time) bool {
 	return false
 }
 
-// lapseOwn releases this device's claims that other devices consider ended, and tells each
-// holder in its inbox. With all, that is every claim of this device: it was out of touch long
-// enough for its presence to go stale elsewhere. Without, it is only claims made from the CLI
-// under an earlier daemon. It reports whether everything that needed releasing was released.
-func (d *Daemon) lapseOwn(all bool, reason string) bool {
+// lapsedLocked lists the claims this daemon judges lapsed: not released, but not live either.
+// A claim made now ends them for everyone. Caller holds mu.
+func (d *Daemon) lapsedLocked(now time.Time) []string {
+	var ids []string
+	for _, c := range d.claims {
+		if !c.released && !d.claimLiveLocked(c, now) {
+			ids = append(ids, c.ev.ID)
+		}
+	}
+	return ids
+}
+
+// claimsHeldLocked counts the live claims held by addr. Caller holds mu.
+func (d *Daemon) claimsHeldLocked(addr string) int {
+	now, n := time.Now(), 0
+	for _, c := range d.claims {
+		if c.ev.From == addr && d.claimLiveLocked(c, now) {
+			n++
+		}
+	}
+	return n
+}
+
+// tellEndedLocked tells a session on this device that someone else's claim ended one of its
+// own, which happens when this device looked gone to the claimer. Caller holds mu.
+func (d *Daemon) tellEndedLocked(held, by bus.Event) {
+	dev, sess := bus.SplitAddr(held.From)
+	if dev != d.device {
+		return
+	}
+	switch {
+	case sess == proto.CLISession:
+		if held.At.Before(d.started) {
+			return // it ended with an earlier daemon anyway
+		}
+	case d.sessions[sess] == nil && time.Since(d.started) > 2*time.Minute:
+		return // the session is gone; just after a restart it may still reconnect
+	}
+	d.tellLocked(sess, fmt.Sprintf("Your claim %s (%q) was ended by %s's claim %s (%q), made while this device "+
+		"looked gone to the team (asleep, offline or restarting). Check claims, and talk to %s before carrying on.",
+		held.ID, held.What, by.From, by.ID, by.What, by.From))
+}
+
+// endOldCLIClaims releases claims made from the CLI under an earlier daemon. Every daemon
+// already treats them as ended; this records it, and tells the CLI's inbox.
+func (d *Daemon) endOldCLIClaims() {
 	d.mu.Lock()
-	var ended []bus.Event
+	var old []bus.Event
 	for _, c := range d.claims {
 		dev, sess := bus.SplitAddr(c.ev.From)
-		if c.released || dev != d.device {
-			continue
-		}
-		if all || sess == proto.CLISession && c.ev.At.Before(d.started) {
-			ended = append(ended, c.ev)
+		if !c.released && dev == d.device && sess == proto.CLISession && c.ev.At.Before(d.started) {
+			old = append(old, c.ev)
 		}
 	}
 	d.mu.Unlock()
-	if len(ended) == 0 {
-		return true
+	if len(old) == 0 {
+		return
 	}
 	ctx, cancel := context.WithTimeout(d.bgCtx, 2*time.Minute)
 	defer cancel()
-	ok := true
-	for _, e := range ended {
+	for _, e := range old {
 		if r := d.release(ctx, e.From, e.ID); r.Error != "" {
-			d.log.Printf("releasing lapsed claim %s: %s", e.ID, r.Error)
-			ok = false
+			d.log.Printf("releasing old CLI claim %s: %s", e.ID, r.Error)
 			continue
 		}
-		why := reason
-		_, sess := bus.SplitAddr(e.From)
-		if sess == proto.CLISession && !all {
-			why = "claims made from the CLI end when its daemon stops"
-		}
-		d.log.Printf("released %s for %s: %s", e.ID, e.From, why)
 		d.mu.Lock()
-		d.tellLocked(sess, fmt.Sprintf("Your claim %s (%q) has ended: %s. Claim it again if you still want it.",
-			e.ID, e.What, why))
+		d.tellLocked(proto.CLISession, fmt.Sprintf("Your claim %s (%q) has ended: claims made from the CLI end "+
+			"when its daemon stops. Claim it again if you still want it.", e.ID, e.What))
 		d.mu.Unlock()
 	}
-	return ok
 }
 
 // tellLocked puts a message from t4 itself in a session's inbox. Caller holds mu.
@@ -264,7 +304,9 @@ func (d *Daemon) claim(ctx context.Context, from string, req proto.Request) prot
 	}
 	d.claimMu.Lock()
 	defer d.claimMu.Unlock()
-	if err := d.syncClaims(ctx); err != nil {
+	// Judge from fresh presence as well as fresh claims: a daemon just back from being offline
+	// would otherwise take live devices for gone, and end their claims.
+	if err := d.pollOnce(ctx); err != nil {
 		return fail("not claimed: can't reach the remote to check claims: " + err.Error())
 	}
 	for range casAttempts {
@@ -276,6 +318,7 @@ func (d *Daemon) claim(ctx context.Context, from string, req proto.Request) prot
 		}
 		unseen := d.openLocked(seq, from)
 		all := d.openLocked(-1, "")
+		ends := d.lapsedLocked(time.Now())
 		d.mu.Unlock()
 		if len(unseen) > 0 {
 			return proto.Response{OK: true, Self: from, Unseen: claimViews(unseen), Claims: claimViews(all), Seen: tip,
@@ -283,7 +326,7 @@ func (d *Daemon) claim(ctx context.Context, from string, req proto.Request) prot
 		}
 
 		e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Claim, From: from, At: time.Now().UTC(),
-			What: what, Paths: paths}
+			What: what, Paths: paths, Ends: ends}
 		sha, err := d.pushClaims(ctx, tip, e)
 		if err == nil {
 			d.mu.Lock()
@@ -385,7 +428,9 @@ func (d *Daemon) releaseHeld(addr string) {
 	if len(held) == 0 {
 		return
 	}
-	ctx, cancel := context.WithTimeout(d.bgCtx, 2*time.Minute)
+	// Not cancelled when the daemon starts stopping: it waits for these, and a claim left
+	// unreleased would come back if a session with the same ID registered later.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(d.bgCtx), 20*time.Second)
 	defer cancel()
 	for _, id := range held {
 		if r := d.release(ctx, addr, id); r.Error != "" {

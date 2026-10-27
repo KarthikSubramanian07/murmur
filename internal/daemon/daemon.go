@@ -81,10 +81,9 @@ type Daemon struct {
 	recent     []proto.EventView
 	lastActive time.Time
 	mode       syncMode
-	gone       map[string]bool // devices whose presence was deleted: they said goodbye
-	lastPollOK time.Time       // wall clock of the last successful sync
-	lastPushOK time.Time       // wall clock of the last successful presence push
-	lapseAll   bool            // at startup: this device's presence went stale while it was down
+	gone       map[string]time.Time // devices whose presence was deleted (said goodbye), and when
+	pending    []bus.Event          // what arrived while down, for sessions that reconnect
+	lastPollOK time.Time            // wall clock of the last successful sync
 
 	advMu   sync.Mutex // serializes processing of fetched refs
 	writeMu sync.Mutex // serializes appends to this device's log
@@ -94,7 +93,6 @@ type Daemon struct {
 	kick     chan struct{}
 	quit     chan struct{}
 	quitOnce sync.Once
-	ready    chan struct{} // closed once startup has released claims that ended while down
 
 	// bg tracks connection handlers and background writes, so Run returns only after they
 	// have; bgCtx is cancelled when the daemon starts shutting down.
@@ -113,17 +111,21 @@ type syncMode int
 
 const (
 	// modeSkip records every ref's tip without delivering anything: the first sync of a new
-	// clone, or after a clean exit or a long gap, when no session was running to receive it.
+	// clone, or after a long gap, when no session is still waiting for what it missed.
 	modeSkip syncMode = iota
 	// modeCatchUp delivers what arrived while the daemon was down, but only to sessions that
-	// were running before it went down: the first sync after a crash.
+	// were running before it went down and reconnected: the first sync after a restart.
 	modeCatchUp
 	modeNormal
 )
 
 // catchUpLimit is the longest outage after which a restarted daemon still delivers what it
-// missed; past it, the sessions that were waiting have moved on.
-const catchUpLimit = 10 * time.Minute
+// missed; past it, the sessions that were waiting have moved on. catchUpWindow is how long after
+// starting it holds what it missed for sessions still reconnecting.
+const (
+	catchUpLimit  = 10 * time.Minute
+	catchUpWindow = 30 * time.Second
+)
 
 // peer is another device as its presence ref shows it.
 type peer struct {
@@ -154,11 +156,8 @@ type state struct {
 	Initialized bool                `json:"initialized"`
 	Processed   map[string]string   `json:"processed"` // mesh ref → last SHA delivered
 	Inbox       map[string][]*inMsg `json:"inbox"`     // session → unread messages
-	// CleanExit, LastSync and LastPresence let the next daemon tell a crash from a clean exit,
-	// and a short outage from one long enough that other devices saw this one go stale.
-	CleanExit    bool      `json:"cleanExit"`
-	LastSync     time.Time `json:"lastSync"`
-	LastPresence time.Time `json:"lastPresence"`
+	// LastSync tells the next daemon how long this one was down.
+	LastSync time.Time `json:"lastSync"`
 }
 
 // Run runs a daemon until ctx is done, it is told to stop, or it has been idle too long.
@@ -181,6 +180,13 @@ func Run(ctx context.Context, opt Options) error {
 	if err != nil {
 		return err
 	}
+	// Sync once before accepting sessions, so whatever this sync finds was sent before any of
+	// them registered: it is the backlog, and nothing a new session should get.
+	sctx, scancel := context.WithTimeout(ctx, 10*time.Second)
+	if err := d.pollOnce(sctx); err != nil {
+		d.log.Printf("first sync failed; retrying in the background: %v", err)
+	}
+	scancel()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -199,15 +205,20 @@ func Run(ctx context.Context, opt Options) error {
 	d.bgCtx = ctx
 	go d.serve(ctx, ln)
 	go d.pollLoop(ctx)
-	go d.presenceLoop(ctx)
+	// The presence loop is drained like other background work: a push still in flight when
+	// the goodbye deletes presence could otherwise land after it and bring the device back.
+	d.bg.Add(1)
+	go func() {
+		defer d.bg.Done()
+		d.presenceLoop(ctx)
+	}()
 	if opt.Idle > 0 {
 		go d.idleLoop(ctx)
 	}
 	d.bg.Add(1)
 	go func() {
 		defer d.bg.Done()
-		defer close(d.ready)
-		d.lapseOwn(d.lapseAll, "this device was offline long enough that other devices saw its claims lapse")
+		d.endOldCLIClaims()
 	}()
 	select {
 	case <-ctx.Done():
@@ -231,8 +242,8 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	d := &Daemon{
 		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
-		claimSeq: map[string]int{}, gone: map[string]bool{},
-		kick: make(chan struct{}, 1), quit: make(chan struct{}), ready: make(chan struct{}),
+		claimSeq: map[string]int{}, gone: map[string]time.Time{},
+		kick: make(chan struct{}, 1), quit: make(chan struct{}),
 	}
 	device, err := loadDevice(dir)
 	if err != nil {
@@ -254,14 +265,11 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		return nil, err
 	}
 	wall := now.Round(0)
-	if !d.st.Initialized || d.st.CleanExit || wall.Sub(d.st.LastSync) > catchUpLimit {
+	if !d.st.Initialized || wall.Sub(d.st.LastSync) > catchUpLimit {
 		d.mode = modeSkip
 	} else {
 		d.mode = modeCatchUp
 	}
-	d.lapseAll = !d.st.LastPresence.IsZero() && wall.Sub(d.st.LastPresence) > d.outOfTouch()
-	d.st.CleanExit = false
-	d.saveLocked()
 	clearStaleLocks(opt.GitDir, d.log)
 	if err := d.restore(ctx); err != nil {
 		return nil, err
@@ -295,11 +303,6 @@ func (d *Daemon) restore(ctx context.Context) error {
 	return nil
 }
 
-// outOfTouch is how long without a successful presence push before this device treats its
-// claims as lapsed elsewhere. It is shorter than the stale limit, so the device releases them
-// before any reader could have seen them lapse and then seen them come back.
-func (d *Daemon) outOfTouch() time.Duration { return d.opt.StaleAfter * 5 / 6 }
-
 func (d *Daemon) meshRef() string     { return brand.MeshPrefix + d.device }
 func (d *Daemon) presenceRef() string { return brand.PresencePrefix + d.device }
 
@@ -314,10 +317,6 @@ func (d *Daemon) goodbye() {
 	if err := d.repo.Push(ctx, "", d.presenceRef(), bus.FastForward, ""); err != nil {
 		d.log.Printf("removing presence: %v", err)
 	}
-	d.mu.Lock()
-	d.st.CleanExit = true
-	d.saveLocked()
-	d.mu.Unlock()
 	d.log.Printf("stopped")
 }
 
@@ -349,7 +348,9 @@ func (d *Daemon) idleLoop(ctx context.Context) {
 		case <-t.C:
 		}
 		d.mu.Lock()
-		idle := len(d.sessions) == 0 && time.Since(d.lastActive) > d.opt.Idle
+		// A claim made from the CLI ends with this daemon, so it stays up while one is held.
+		cliClaims := d.claimsHeldLocked(bus.Addr(d.device, proto.CLISession))
+		idle := len(d.sessions) == 0 && cliClaims == 0 && time.Since(d.lastActive) > d.opt.Idle
 		d.mu.Unlock()
 		if idle {
 			d.log.Printf("no sessions for %s; exiting", d.opt.Idle)

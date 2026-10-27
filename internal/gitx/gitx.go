@@ -54,8 +54,10 @@ func run(ctx context.Context, dir, stdin string, args ...string) (string, error)
 	// removes its own locks, and kill it only if it hasn't exited soon after.
 	if interrupt != nil {
 		cmd.Cancel = func() error { return interrupt(cmd.Process) }
-		cmd.WaitDelay = 5 * time.Second
 	}
+	// Without a WaitDelay, Wait also waits for grandchildren (git-remote-https, ssh) that hold
+	// the output pipes, so even a killed git could keep its caller blocked.
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Dir = dir
 	// The daemon runs detached, with nobody to answer a prompt: fail instead of waiting.
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never")

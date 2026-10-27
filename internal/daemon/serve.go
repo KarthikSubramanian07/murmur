@@ -100,6 +100,9 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	}
 	d.sessions[h.ID] = s
 	d.lastActive = time.Now()
+	if h.Reconnect {
+		d.catchUpLocked(h.ID)
+	}
 	d.mu.Unlock()
 
 	addr := bus.Addr(d.device, h.ID)
@@ -175,7 +178,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 
 	case proto.OpClaims:
 		var note string
-		if err := d.syncClaims(ctx); err != nil {
+		if err := d.pollOnce(ctx); err != nil {
 			note = "Couldn't reach the remote; these are the claims as last synced: " + err.Error()
 		}
 		d.mu.Lock()
@@ -290,7 +293,7 @@ func (d *Daemon) addressKnownLocked(dev, sess string) bool {
 		return sess == "" || sess == proto.CLISession || d.sessions[sess] != nil
 	}
 	p := d.peers[dev]
-	if p == nil || time.Since(p.lastChange) > d.opt.StaleAfter {
+	if p == nil || d.staleLocked(p) {
 		return false
 	}
 	if sess == "" {
@@ -366,7 +369,7 @@ func (d *Daemon) whoLocked(you string) []proto.Device {
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := proto.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, LastSeen: p.lastChange,
-			Stale: now.Sub(p.lastChange) > d.opt.StaleAfter}
+			Stale: d.staleLocked(p)}
 		for _, s := range p.pres.Sessions {
 			addr := bus.Addr(id, s.ID)
 			held := claimsBy(addr)

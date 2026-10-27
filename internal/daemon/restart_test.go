@@ -2,7 +2,6 @@ package daemon_test
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -141,37 +140,175 @@ func TestGoodbyeEndsClaimsAtOnce(t *testing.T) {
 	}
 }
 
-func TestClaimsReleasedAfterLongOutage(t *testing.T) {
+// newDeviceWith is newDevice with its own poll interval and stale limit.
+func newDeviceWith(t *testing.T, remote string, poll, stale time.Duration) *device {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "clone")
+	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
+	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: stale, poll: poll}
+	d.start()
+	return d
+}
+
+func claimsBy(d *device, addr string) int {
+	n := 0
+	for _, c := range d.openClaims() {
+		if c.By == addr {
+			n++
+		}
+	}
+	return n
+}
+
+func (d *device) claimAs(sess, what, seen string) proto.Response {
+	d.t.Helper()
+	return d.do(proto.Request{Op: proto.OpClaim, Session: sess, What: what, Seen: seen})
+}
+
+// told waits for a message from t4 itself in a session's inbox, containing text.
+func (d *device) told(sess, text string) {
+	d.t.Helper()
+	eventually(d.t, "a notice containing "+text, func() bool {
+		for _, m := range d.do(proto.Request{Op: proto.OpInbox, Session: sess}).Messages {
+			if strings.Contains(m.Subject, text) {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func (d *device) offline(remote string, off bool) {
+	url := remote
+	if off {
+		url = filepath.Join(filepath.Dir(remote), "nowhere.git")
+	}
+	git(d.t, filepath.Dir(d.gitDir), "config", "remote.origin.url", url)
+}
+
+// A claim made past a device that said goodbye ends that device's claims for good: when it
+// restarts and its session reconnects, the old claim stays ended, on every device, and the
+// holder is told.
+func TestClaimPastAGoneDeviceEndsItsClaims(t *testing.T) {
 	remote := newRemote(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
+	a, b := newDevice(t, remote, time.Minute), newDevice(t, remote, time.Minute)
 	bob, _ := b.session("bbbbbb", "")
-	if r := b.do(proto.Request{Op: proto.OpClaim, Session: "bbbbbb", What: "search"}); r.Claimed == nil {
+	if r := b.claimAs("bbbbbb", "search", ""); r.Claimed == nil {
 		t.Fatalf("claim: %+v", r)
 	}
-	eventually(t, "a sees the claim", func() bool { return len(a.openClaims()) == 1 })
+	eventually(t, "a sees bob's claim", func() bool { return claimsBy(a, bob) == 1 })
 
-	// b goes away for longer than the stale limit (faked by backdating its last presence push),
-	// while its session keeps running and reconnects when the daemon is back.
 	b.stop()
-	statePath := filepath.Join(b.gitDir, "t4", "state.json")
-	raw, err := os.ReadFile(statePath)
-	if err != nil {
-		t.Fatal(err)
+	eventually(t, "the goodbye ends it on a", func() bool { return claimsBy(a, bob) == 0 })
+	a.session("aaaaaa", "")
+	tok := a.do(proto.Request{Op: proto.OpClaims, Session: "aaaaaa"}).Seen
+	if r := a.claimAs("aaaaaa", "search", tok); r.Claimed == nil {
+		t.Fatalf("a's claim: %+v", r)
 	}
-	var st map[string]any
-	json.Unmarshal(raw, &st)
-	st["lastPresence"] = time.Now().Add(-time.Hour).UTC()
-	raw, _ = json.Marshal(st)
-	if err := os.WriteFile(statePath, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
+
 	b.start()
 	b.helloAgain("bbbbbb", true)
 	eventually(t, "a sees bob again", func() bool { return a.seesSession(bob) })
-	holds(t, "the claim staying ended", 2*time.Second, func() bool { return len(a.openClaims()) == 0 })
-	got := b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages
-	if len(got) != 1 || !strings.Contains(got[0].Subject, "has ended") {
-		t.Fatalf("bob wasn't told: %+v", got)
+	holds(t, "bob's old claim staying ended", 2*time.Second, func() bool { return claimsBy(a, bob) == 0 })
+	if n := claimsBy(b, bob); n != 0 {
+		t.Fatalf("b still counts bob's ended claim (%d)", n)
+	}
+	b.told("bbbbbb", "was ended by")
+}
+
+// A lapse nobody claimed past is undone: the claim holds again when its device is back.
+func TestUncontestedLapseIsUndone(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote, time.Minute), newDevice(t, remote, time.Minute)
+	bob, _ := b.session("bbbbbb", "")
+	b.claimAs("bbbbbb", "search", "")
+	eventually(t, "a sees bob's claim", func() bool { return claimsBy(a, bob) == 1 })
+	b.stop()
+	eventually(t, "the goodbye ends it on a", func() bool { return claimsBy(a, bob) == 0 })
+	b.start()
+	b.helloAgain("bbbbbb", true)
+	eventually(t, "the claim back", func() bool { return claimsBy(a, bob) == 1 })
+}
+
+// A device out of touch long enough looks gone. A claim made past it then ends its claims for
+// good, and once it is back its session is told.
+func TestClaimPastAnOutOfTouchDevice(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.session("bbbbbb", "")
+	b.claimAs("bbbbbb", "search", "")
+	eventually(t, "a sees bob's claim", func() bool { return claimsBy(a, bob) == 1 })
+
+	b.offline(remote, true)
+	eventually(t, "the claim lapses on a", func() bool { return claimsBy(a, bob) == 0 })
+	a.session("aaaaaa", "")
+	tok := a.do(proto.Request{Op: proto.OpClaims, Session: "aaaaaa"}).Seen
+	if r := a.claimAs("aaaaaa", "search", tok); r.Claimed == nil {
+		t.Fatalf("a's claim: %+v", r)
+	}
+	b.offline(remote, false)
+
+	eventually(t, "a sees bob again", func() bool { return a.seesSession(bob) })
+	holds(t, "bob's claim staying ended", 2*time.Second, func() bool { return claimsBy(a, bob) == 0 })
+	b.told("bbbbbb", "was ended by")
+}
+
+// A daemon back from an outage judges from fresh presence before it claims, so it doesn't take
+// a live device for gone and end its claims.
+func TestReaderBackFromOutageSeesLiveClaims(t *testing.T) {
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, 5*time.Second, 10*time.Second)
+	b := newDevice(t, remote, 10*time.Second)
+	bob, _ := b.session("bbbbbb", "")
+	b.claimAs("bbbbbb", "search", "")
+	a.session("aaaaaa", "")
+	eventually(t, "a sees bob's claim", func() bool { return claimsBy(a, bob) == 1 })
+
+	a.offline(remote, true)
+	time.Sleep(16 * time.Second) // past the stale limit; b keeps heartbeating meanwhile
+	a.offline(remote, false)
+
+	r := a.do(proto.Request{Op: proto.OpClaims, Session: "aaaaaa"})
+	if len(r.Claims) != 1 {
+		t.Fatalf("a was shown %d claims, want bob's", len(r.Claims))
+	}
+	if c := a.claimAs("aaaaaa", "search too", r.Seen); c.Claimed == nil {
+		t.Fatalf("a's claim, made with bob's in view: %+v", c)
+	}
+	if n := claimsBy(b, bob); n != 1 {
+		t.Fatalf("a's claim ended bob's live claim")
+	}
+}
+
+// After a restart, what arrived while the daemon was down reaches sessions that were running
+// before and reconnect, and nobody else.
+func TestRestartCatchesUpReconnectingSessions(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) })
+
+	b.stop()
+	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "direct, during the restart"})
+	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast, during the restart"})
+	b.start()
+	b.helloAgain("bbbbbb", true)
+	b.session("cccccc", "")
+
+	var got []string
+	eventually(t, "bob catches up", func() bool {
+		for _, m := range b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages {
+			got = append(got, m.Subject)
+		}
+		return len(got) >= 2
+	})
+	if len(got) != 2 {
+		t.Fatalf("bob got %q", got)
+	}
+	for _, sess := range []string{"cccccc", proto.CLISession} {
+		if ms := b.do(proto.Request{Op: proto.OpInbox, Session: sess}).Messages; len(ms) != 0 {
+			t.Fatalf("%s got %+v", sess, ms)
+		}
 	}
 }
 

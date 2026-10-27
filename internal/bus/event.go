@@ -43,6 +43,9 @@ type Event struct {
 
 	What  string   `json:"what,omitempty"`  // claim
 	Paths []string `json:"paths,omitempty"` // claim
+	// Ends, on a claim, lists the claims its daemon judged lapsed when it was made. Every
+	// daemon treats them as ended from then on, so a lapse can't be undone behind the claimer.
+	Ends  []string `json:"ends,omitempty"`
 	Claim string   `json:"claim,omitempty"` // release: the claim's ID
 }
 
@@ -57,7 +60,11 @@ func (e Event) Line() string {
 	case Message:
 		return fmt.Sprintf("%s -> %s: %s", e.From, e.To, e.Subject)
 	case Claim:
-		return fmt.Sprintf("%s claims %s: %s", e.From, e.ID, e.What)
+		line := fmt.Sprintf("%s claims %s: %s", e.From, e.ID, e.What)
+		if len(e.Ends) > 0 {
+			line += " (ending lapsed " + strings.Join(e.Ends, ", ") + ")"
+		}
+		return line
 	case Release:
 		return fmt.Sprintf("%s releases %s", e.From, e.Claim)
 	}

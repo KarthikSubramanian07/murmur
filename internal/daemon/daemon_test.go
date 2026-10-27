@@ -60,6 +60,7 @@ type device struct {
 	t      *testing.T
 	gitDir string
 	stale  time.Duration
+	poll   time.Duration
 	c      *client.Client
 	stop   func()
 }
@@ -70,7 +71,7 @@ func newDevice(t *testing.T, remote string, stale ...time.Duration) *device {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
-	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second}
+	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
 	if len(stale) > 0 {
 		d.stale = stale[0]
 	}
@@ -83,7 +84,7 @@ func (d *device) start() {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: 100 * time.Millisecond,
+		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
 			Heartbeat: 500 * time.Millisecond, StaleAfter: d.stale, Idle: -1,
 			Log: testLog()})
 		if err != nil {

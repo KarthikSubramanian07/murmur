@@ -17,18 +17,6 @@ import (
 func (d *Daemon) pollLoop(ctx context.Context) {
 	t := time.NewTicker(d.opt.Poll)
 	defer t.Stop()
-	d.mu.Lock()
-	catchUp := d.mode == modeCatchUp
-	d.mu.Unlock()
-	if catchUp {
-		// Sessions that were running before the crash reconnect within a second or two; give
-		// them that long, so what they missed reaches them.
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(3 * time.Second):
-		}
-	}
 	failing := false
 	for {
 		err := d.pollOnce(ctx)
@@ -80,13 +68,6 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	for _, ref := range changed {
 		d.known[ref] = remote[ref]
 	}
-	if !d.lastPollOK.IsZero() && wall.Sub(d.lastPollOK) > d.opt.StaleAfter {
-		// This daemon was away (asleep, offline) long enough that its own observations say
-		// nothing about who is still here. Judge each peer afresh, as on first sight.
-		for _, p := range d.peers {
-			p.lastChange = firstSight(p.pres)
-		}
-	}
 	d.mu.Unlock()
 
 	for _, ref := range sortedKeys(remote) {
@@ -108,7 +89,7 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	for dev := range d.peers {
 		if _, ok := remote[brand.PresencePrefix+dev]; !ok {
 			delete(d.peers, dev) // its daemon said goodbye, and its claims end now
-			d.gone[dev] = true
+			d.gone[dev] = time.Now()
 		}
 	}
 	if _, ok := remote[brand.ClaimsRef]; !ok && d.claimsTip != "" {
@@ -123,6 +104,13 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		d.saveLocked()
 	}
 	return nil
+}
+
+// staleLocked says whether a peer's presence went unchanged past the stale limit, as of this
+// daemon's last successful sync. A daemon that hasn't heard from the remote for a while (asleep,
+// offline) has no grounds to call anyone else gone. Caller holds mu.
+func (d *Daemon) staleLocked(p *peer) bool {
+	return !d.lastPollOK.IsZero() && d.lastPollOK.Sub(p.lastChange) > d.opt.StaleAfter
 }
 
 // firstSight is when to treat a presence as last changed when this daemon has no observation
@@ -190,34 +178,61 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 }
 
 // deliverLocked puts a message in the inbox of each session here it is addressed to. A session
-// gets only what arrives while it runs; catching up after a crash, only sessions that were
-// running before it get anything. Caller holds mu.
+// gets only what arrives while it runs. What arrived while the daemon was down (catchUp) goes
+// only to sessions that were running before and reconnect: those already back get it now, and
+// it is held for catchUpWindow for the rest (see catchUpLocked). Caller holds mu.
 func (d *Daemon) deliverLocked(e bus.Event, catchUp bool) {
-	dev, sess := bus.SplitAddr(e.To)
-	var to []string
-	switch {
-	case e.To == "*" || dev == d.device && sess == "":
-		to = append(sortedKeys(d.sessions), proto.CLISession)
-	case dev == d.device:
-		if sess == proto.CLISession || d.sessions[sess] != nil {
-			to = []string{sess}
-		} else {
-			d.log.Printf("message %s is for %s, which isn't running here; dropped", e.ID, e.To)
-		}
+	if catchUp {
+		d.pending = append(d.pending, e)
 	}
-	for _, id := range to {
-		if bus.Addr(d.device, id) == e.From {
+	ids := append(sortedKeys(d.sessions), proto.CLISession)
+	for _, id := range ids {
+		if !d.addressedLocked(e, id) {
 			continue
 		}
 		if catchUp && (id == proto.CLISession || !d.sessions[id].reconnect) {
 			continue
 		}
-		box := append(d.st.Inbox[id], &inMsg{Event: e, Arrived: time.Now()})
-		if len(box) > maxInbox {
-			box = box[len(box)-maxInbox:]
-		}
-		d.st.Inbox[id] = box
+		d.addInboxLocked(id, e)
 	}
+	if dev, sess := bus.SplitAddr(e.To); !catchUp && dev == d.device && sess != "" &&
+		sess != proto.CLISession && d.sessions[sess] == nil {
+		d.log.Printf("message %s is for %s, which isn't running here; dropped", e.ID, e.To)
+	}
+}
+
+// addressedLocked says whether e is for session id on this device: sent to it, to this device,
+// or to everyone, and not by it.
+func (d *Daemon) addressedLocked(e bus.Event, id string) bool {
+	addr := bus.Addr(d.device, id)
+	return e.From != addr && (e.To == "*" || e.To == d.device || e.To == addr)
+}
+
+func (d *Daemon) addInboxLocked(id string, e bus.Event) {
+	for _, m := range d.st.Inbox[id] {
+		if m.Event.ID == e.ID {
+			return
+		}
+	}
+	box := append(d.st.Inbox[id], &inMsg{Event: e, Arrived: time.Now()})
+	if len(box) > maxInbox {
+		box = box[len(box)-maxInbox:]
+	}
+	d.st.Inbox[id] = box
+}
+
+// catchUpLocked gives a session that reconnects after a restart what arrived for it while the
+// daemon was down. Caller holds mu.
+func (d *Daemon) catchUpLocked(id string) {
+	if time.Since(d.started) > catchUpWindow {
+		return
+	}
+	for _, e := range d.pending {
+		if d.addressedLocked(e, id) {
+			d.addInboxLocked(id, e)
+		}
+	}
+	d.saveLocked()
 }
 
 // updatePeer reads another device's presence. Caller holds advMu.
@@ -326,14 +341,6 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 	defer heartbeat.Stop()
 	retry := time.NewTimer(0) // publish once at start
 	defer retry.Stop()
-	// Don't announce sessions until claims that ended while this daemon was down are released,
-	// or reconnecting sessions would bring them back for a moment.
-	select {
-	case <-ctx.Done():
-		return
-	case <-d.ready:
-	case <-time.After(30 * time.Second):
-	}
 	failing := false
 	for {
 		select {
@@ -349,30 +356,7 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 			case <-time.After(300 * time.Millisecond):
 			}
 		}
-		// Out of touch for longer than the stale limit (asleep, offline), other devices have seen
-		// this one's claims lapse. Release them for real before the presence that would bring
-		// them back goes out; if that can't be done yet, the presence waits too.
-		var err error
-		d.mu.Lock()
-		gap := time.Now().Round(0).Sub(d.lastPushOK)
-		away := !d.lastPushOK.IsZero() && gap > d.outOfTouch()
-		d.mu.Unlock()
-		if away && !d.lapseOwn(true, fmt.Sprintf("this device was out of touch for %s, so other devices saw its claims lapse",
-			gap.Round(time.Minute))) {
-			err = errors.New("releasing claims after being out of touch")
-		} else {
-			err = d.publishPresence(ctx)
-		}
-		if err == nil {
-			wall := time.Now().Round(0)
-			d.mu.Lock()
-			d.lastPushOK = wall
-			if wall.Sub(d.st.LastPresence) > time.Minute {
-				d.st.LastPresence = wall
-				d.saveLocked()
-			}
-			d.mu.Unlock()
-		}
+		err := d.publishPresence(ctx)
 		switch {
 		case err != nil && ctx.Err() == nil:
 			if !failing {
@@ -388,7 +372,8 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 }
 
 func (d *Daemon) publishPresence(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	// Not cut short by shutdown: a push killed mid-flight can still land, after the goodbye.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
 	d.mu.Lock()
 	cwds := map[string]string{}
@@ -431,6 +416,9 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 func (d *Daemon) pruneInboxes() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if time.Since(d.started) > catchUpWindow {
+		d.pending = nil
+	}
 	if time.Since(d.started) < 2*time.Minute {
 		return
 	}

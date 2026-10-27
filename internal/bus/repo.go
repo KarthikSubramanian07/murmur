@@ -158,7 +158,10 @@ func (r *Repo) Push(ctx context.Context, sha, ref string, mode PushMode, expect 
 	// A failed push may still have landed: the server can update the ref and then fail to
 	// report it ("remote failed to report status"), or the connection can drop after. Calling
 	// that a failure would make the caller write the same event twice, so look.
-	now, lerr := r.RemoteRef(ctx, ref)
+	// The push's own deadline may be what failed it, so look with a fresh one.
+	lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	now, lerr := r.RemoteRef(lctx, ref)
 	if lerr == nil && now == sha {
 		return nil
 	}
