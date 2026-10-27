@@ -107,7 +107,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	fs, dir := flags("daemon")
 	gitDir := fs.String("git-dir", "", "the clone's git common dir (default: found from -C)")
 	poll := fs.Duration("poll", 0, "how often to check the remote (default 10s)")
-	idle := fs.Duration("idle", 0, "exit after this long with no sessions (default 10m; negative: never)")
+	idle := fs.Duration("idle", 0, "exit after this long with no sessions (default 10m; negative, e.g. -1s: never)")
 	fs.Parse(args)
 	if *gitDir == "" {
 		var err error

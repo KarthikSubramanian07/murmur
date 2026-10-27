@@ -129,8 +129,8 @@ func result(render func(proto.Response) string, resp proto.Response, err error) 
 }
 
 type (
-	noInput    struct{}
-	statusIn   struct {
+	noInput  struct{}
+	statusIn struct {
 		Doing string `json:"doing" jsonschema:"what you are working on now, in one line"`
 	}
 	claimIn struct {
