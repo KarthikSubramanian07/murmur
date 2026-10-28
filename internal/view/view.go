@@ -178,7 +178,10 @@ func Inbox(r proto.Response) string {
 		}
 		fmt.Fprintf(&b, "Subject: %s\n", m.Subject)
 		if body := strings.TrimSpace(m.Body); body != "" {
-			b.WriteString(body + "\n")
+			// Quoted line by line, so no line of it can pass for one of these headers.
+			for _, line := range strings.Split(body, "\n") {
+				b.WriteString("> " + strings.TrimRight(line, "\r") + "\n")
+			}
 		}
 		fmt.Fprintf(&b, "(Reply to %s.)\n", m.From)
 	}

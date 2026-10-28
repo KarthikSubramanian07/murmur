@@ -43,12 +43,12 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 // pollOnce lists the remote's bus refs and fetches and processes the ones that changed. The
 // listing is one cheap round trip; objects move only when something changed.
 func (d *Daemon) pollOnce(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
 	// A listing applied after a newer one would delete presence that has since appeared, and
 	// mark its device gone.
 	d.syncMu.Lock()
 	defer d.syncMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
 	remote, err := d.repo.ListRemote(ctx)
 	if err != nil {
 		return err
@@ -58,6 +58,16 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 
 	var changed []string
 	d.mu.Lock()
+	if d.backlog == nil {
+		// What the first listing shows is the backlog. A device that appears later is new, and
+		// its log is read normally from the start.
+		d.backlog = map[string]bool{}
+		for ref := range remote {
+			if d.mode != modeNormal && strings.HasPrefix(ref, brand.MeshPrefix) {
+				d.backlog[ref] = true
+			}
+		}
+	}
 	for ref, sha := range remote {
 		if d.known[ref] != sha {
 			changed = append(changed, ref)
@@ -81,13 +91,17 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			}
 		}
 	}
-	wall := time.Now().Round(0)
+	// Monotonic, like every observation staleness is judged by, so a jump of the wall clock
+	// makes nobody look gone; the wall clock only goes into state.json.
+	polled := time.Now()
+	wall := polled.Round(0)
 	d.mu.Lock()
 	for _, ref := range changed {
 		d.known[ref] = remote[ref]
 	}
 	d.mu.Unlock()
 
+	var unread []string
 	for _, ref := range sortedKeys(remote) {
 		sha := remote[ref]
 		switch {
@@ -101,8 +115,19 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			}
 			d.advanceMesh(ctx, ref, sha)
 		case strings.HasPrefix(ref, brand.PresencePrefix):
-			d.updatePeer(ctx, ref, sha)
+			if err := d.updatePeer(ctx, ref, sha); err != nil {
+				d.log.Printf("%v", err)
+				unread = append(unread, ref)
+			}
 		}
+	}
+	// A sync that didn't get to look at every device is no fresh look at any: it would make the
+	// ones it missed look stale, and claim, which judges from it, would end their claims.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(unread) > 0 {
+		return fmt.Errorf("couldn't read %s", strings.Join(unread, ", "))
 	}
 
 	d.mu.Lock()
@@ -117,10 +142,14 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		d.log.Printf("the claims ref is gone from the remote; forgetting all claims")
 		d.resetClaimsLocked()
 	}
-	d.lastPollOK = wall
-	if d.mode != modeNormal || wall.Sub(d.st.LastSync) > time.Minute {
+	d.lastPollOK = polled
+	switched := false
+	if d.mode != modeNormal && len(d.backlog) == 0 {
 		d.mode = modeNormal
 		d.st.Initialized = true
+		switched = true
+	}
+	if switched || d.mode == modeNormal && wall.Sub(d.st.LastSync) > time.Minute {
 		d.st.LastSync = wall
 		d.saveLocked()
 	}
@@ -141,17 +170,8 @@ func (d *Daemon) staleLocked(p *peer) bool {
 // really is gone takes 2 heartbeats longer to be called so by a reader that just started.
 func (d *Daemon) firstSight(p bus.Presence) time.Time {
 	now := time.Now()
-	floor := now.Add(-(d.opt.StaleAfter - 2*d.opt.Heartbeat))
-	if floor.After(now) {
-		floor = now
-	}
-	switch {
-	case p.At.After(now):
-		return now
-	case p.At.Before(floor):
-		return floor
-	}
-	return p.At
+	age := min(max(now.Sub(p.At), 0), max(d.opt.StaleAfter-2*d.opt.Heartbeat, 0))
+	return now.Add(-age) // from now, to keep a monotonic reading
 }
 
 // advanceMesh processes a device's log up to sha and delivers its messages, as the sync mode
@@ -159,14 +179,24 @@ func (d *Daemon) firstSight(p bus.Presence) time.Time {
 func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 	d.mu.Lock()
 	prev := d.st.Processed[ref]
-	mode := d.mode
+	mode := modeNormal
+	if d.backlog[ref] {
+		mode = d.mode
+	}
 	d.mu.Unlock()
+	settled := func() {
+		d.mu.Lock()
+		delete(d.backlog, ref)
+		d.mu.Unlock()
+	}
 	if prev == sha {
+		settled()
 		return
 	}
 	skipTo := func() {
 		d.mu.Lock()
 		d.st.Processed[ref] = sha
+		delete(d.backlog, ref)
 		d.saveLocked()
 		d.mu.Unlock()
 	}
@@ -188,8 +218,14 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 			return
 		}
 		if !ok {
-			if back, err := d.repo.IsAncestor(ctx, sha, prev); err != nil || back {
-				return // an older copy of a log already read past, or a fault to retry
+			back, err := d.repo.IsAncestor(ctx, sha, prev)
+			if err != nil {
+				d.log.Printf("reading %s: %v", ref, err)
+				return
+			}
+			if back {
+				settled() // an older copy of a log already read past
+				return
 			}
 			d.log.Printf("%s was rewritten; skipping its history rather than replaying it", ref)
 			skipTo()
@@ -206,7 +242,10 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 	defer d.mu.Unlock()
 	for _, c := range commits {
 		var e bus.Event
-		if bus.Decode(c.Message, &e) != nil || !e.Valid() {
+		if bus.Decode(c.Message, &e) != nil {
+			continue
+		}
+		if e.Clean(); !e.Valid() {
 			continue
 		}
 		if from, _ := bus.SplitAddr(e.From); from != dev {
@@ -220,13 +259,14 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		}
 	}
 	d.st.Processed[ref] = sha
+	delete(d.backlog, ref)
 	d.saveLocked()
 }
 
 // deliverLocked puts a message in the inbox of each session here it is addressed to. A session
 // gets only what arrives while it runs. What arrived while the daemon was down (modeCatchUp)
 // goes only to sessions that were running before and reconnect, and in modeSkip to nobody; in
-// both, a message sent straight to a session that has registered since is for it. Everything
+// both, what was sent after a session here started is for it. Everything
 // is held for catchUpWindow after the daemon starts, for sessions still reconnecting (see
 // catchUpLocked). Caller holds mu.
 func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) {
@@ -251,11 +291,11 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) {
 	}
 }
 
-// sentSinceLocked says whether e was sent straight to session id, here, since it started: its
-// sender saw it in presence. The minute allows for the sender's clock. Caller holds mu.
+// sentSinceLocked says whether e was sent after session id started, by the sender's clock, with
+// a minute's allowance for it. Caller holds mu.
 func (d *Daemon) sentSinceLocked(e bus.Event, id string) bool {
 	s := d.sessions[id]
-	return s != nil && e.To == bus.Addr(d.device, id) && !e.At.Before(s.started.Add(-time.Minute))
+	return s != nil && !e.At.Before(s.started.Add(-time.Minute))
 }
 
 // addressedLocked says whether e is for session id on this device: sent to it, to this device,
@@ -293,27 +333,34 @@ func (d *Daemon) catchUpLocked(id string) {
 	d.saveLocked()
 }
 
-// updatePeer reads another device's presence. Caller holds advMu.
-func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
+// updatePeer reads another device's presence. One it can't read is an error. One it reads but
+// can't make sense of (a newer version, say) still shows that the device is alive. Caller holds
+// advMu.
+func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) error {
 	dev := strings.TrimPrefix(ref, brand.PresencePrefix)
 	if dev == d.device {
-		return
+		return nil
 	}
 	d.mu.Lock()
 	p := d.peers[dev]
 	d.mu.Unlock()
 	if p != nil && p.sha == sha {
-		return
+		return nil
 	}
 	c, err := d.repo.ReadCommit(ctx, sha)
 	if err != nil {
-		d.log.Printf("reading %s: %v", ref, err)
-		return
+		return fmt.Errorf("reading %s: %w", ref, err)
 	}
 	var pres bus.Presence
 	if bus.Decode(c.Message, &pres) != nil || pres.V != bus.Version || pres.Device != dev {
-		return
+		if p != nil {
+			d.mu.Lock()
+			p.sha, p.lastChange = sha, time.Now()
+			d.mu.Unlock()
+		}
+		return nil
 	}
+	pres.Clean()
 	changed := time.Now()
 	if p == nil {
 		changed = d.firstSight(pres) // no change of ours to time it by
@@ -322,6 +369,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	d.peers[dev] = &peer{pres: pres, sha: sha, lastChange: changed}
 	delete(d.gone, dev)
 	d.mu.Unlock()
+	return nil
 }
 
 // appendEvent adds an event to this device's log on the remote. It returns once the push has

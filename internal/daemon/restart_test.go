@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +120,31 @@ func TestCLIClaimEndsWithItsDaemon(t *testing.T) {
 	eventually(t, "the notice", func() bool {
 		for _, m := range b.do(proto.Request{Op: proto.OpInbox}).Messages {
 			if strings.Contains(m.Subject, "has ended") {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// The human is told even when a claim made past the stopped device ended it first.
+func TestCLIClaimEndedWhileDownIsTold(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote, time.Minute), newDevice(t, remote, time.Minute)
+	if r := b.do(proto.Request{Op: proto.OpClaim, What: "landing page"}); r.Claimed == nil {
+		t.Fatalf("claim: %+v", r)
+	}
+	eventually(t, "a sees the claim", func() bool { return len(a.openClaims()) == 1 })
+	b.stop()
+	eventually(t, "the goodbye ends it on a", func() bool { return len(a.openClaims()) == 0 })
+	tok := a.do(proto.Request{Op: proto.OpClaims}).Seen
+	if r := a.do(proto.Request{Op: proto.OpClaim, What: "landing page", Seen: tok}); r.Claimed == nil {
+		t.Fatalf("a's claim: %+v", r)
+	}
+	b.start()
+	eventually(t, "the note", func() bool {
+		for _, m := range b.do(proto.Request{Op: proto.OpInbox}).Messages {
+			if m.Note && strings.Contains(m.Subject, "has ended") {
 				return true
 			}
 		}
@@ -431,11 +457,13 @@ func TestSiblingClaimAfterRestartSparesReconnectingClaims(t *testing.T) {
 	}
 }
 
-// When a daemon's first sync fails, sessions register before anything is settled. What is then
-// sent straight to them still reaches them; the backlog, broadcasts included, doesn't.
+// When a daemon's first sync fails, sessions register before anything is settled. What was then
+// sent after they started still reaches them; the backlog doesn't.
 func TestFirstSyncFailedStillDelivers(t *testing.T) {
 	remote := newRemote(t)
 	a := newDevice(t, remote)
+	pushEvent(t, remote, "refs/t4/mesh/old-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
+		From: "old-0001/x", At: time.Now().Add(-10 * time.Minute).UTC(), To: "*", Subject: "backlog"})
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
 	// Pushes go out, so presence is seen, but listing and fetching fail.
@@ -451,13 +479,14 @@ func TestFirstSyncFailedStillDelivers(t *testing.T) {
 	git(t, dir, "config", "remote.origin.url", remote)
 
 	var got []string
-	eventually(t, "bob gets the direct message", func() bool {
+	eventually(t, "bob gets both", func() bool {
 		for _, m := range b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages {
 			got = append(got, m.Subject)
 		}
-		return len(got) > 0
+		return len(got) >= 2
 	})
-	if len(got) != 1 || got[0] != "direct" {
-		t.Fatalf("bob got %q, want only the direct message", got)
+	sort.Strings(got)
+	if strings.Join(got, ",") != "broadcast,direct" {
+		t.Fatalf("bob got %q, want the broadcast and the direct message", got)
 	}
 }

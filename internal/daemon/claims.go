@@ -73,14 +73,17 @@ func (d *Daemon) advanceClaims(ctx context.Context, sha string, restoring bool) 
 		seq := len(d.claimSeq)
 		d.claimSeq[c.SHA] = seq
 		var e bus.Event
-		if bus.Decode(c.Message, &e) != nil || !e.Valid() {
+		if bus.Decode(c.Message, &e) != nil {
+			continue
+		}
+		if e.Clean(); !e.Valid() {
 			continue
 		}
 		switch e.Type {
 		case bus.Claim:
 			seen := now
 			if restoring && e.At.Before(now) {
-				seen = e.At
+				seen = now.Add(-now.Sub(e.At)) // from now, to keep a monotonic reading
 			}
 			rec := &claimRec{ev: e, seq: seq, seenAt: seen}
 			old := before[e.ID]
@@ -245,24 +248,15 @@ func (d *Daemon) tellEndedLocked(held, by bus.Event) {
 // endOldCLIClaims releases claims made from the CLI under an earlier daemon. Every daemon
 // already treats them as ended; this records it, and tells the CLI's inbox.
 func (d *Daemon) endOldCLIClaims() {
-	d.mu.Lock()
-	var old []bus.Event
-	for _, c := range d.claims {
-		dev, sess := bus.SplitAddr(c.ev.From)
-		if !c.released && dev == d.device && sess == proto.CLISession && c.ev.At.Before(d.started) {
-			old = append(old, c.ev)
-		}
-	}
-	d.mu.Unlock()
-	if len(old) == 0 {
+	if len(d.oldCLI) == 0 {
 		return
 	}
 	ctx, cancel := context.WithTimeout(d.bgCtx, 2*time.Minute)
 	defer cancel()
-	for _, e := range old {
+	for _, e := range d.oldCLI {
+		// A failed release changes nothing for others, who end these claims by rule.
 		if r := d.release(ctx, e.From, e.ID); r.Error != "" {
 			d.log.Printf("releasing old CLI claim %s: %s", e.ID, r.Error)
-			continue
 		}
 		d.mu.Lock()
 		d.tellLocked(proto.CLISession, fmt.Sprintf("Your claim %s (%q) has ended: claims made from the CLI end "+

@@ -222,6 +222,9 @@ func (r *Repo) IsAncestor(ctx context.Context, a, b string) (bool, error) {
 		if _, cerr := r.Git.Run(ctx, "", "cat-file", "-e", c); errors.As(cerr, &exit) && exit.ExitCode() == 1 {
 			return false, nil
 		}
+		if out, terr := r.Git.Run(ctx, "", "cat-file", "-t", c); terr == nil && strings.TrimSpace(out) != "commit" {
+			return false, nil // here, but not a commit, so no history to share
+		}
 	}
 	return false, err
 }

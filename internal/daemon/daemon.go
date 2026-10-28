@@ -58,7 +58,8 @@ var ErrRunning = errors.New("a daemon is already running for this clone")
 // maxInbox caps each session's unread messages; the oldest go first.
 const maxInbox = 200
 
-// Daemon is one running daemon. Lock order: writeMu or claimMu, then advMu, then mu.
+// Daemon is one running daemon. Lock order: claimMu, then syncMu, then advMu, then mu; or
+// writeMu, then advMu, then mu.
 type Daemon struct {
 	opt     Options
 	repo    *bus.Repo
@@ -84,8 +85,13 @@ type Daemon struct {
 	gone       map[string]time.Time // devices whose presence was deleted (said goodbye), and when
 	pending    []bus.Event          // what arrived while down, for sessions that reconnect
 	caughtUp   map[string]bool      // sessions already given pending
-	lastPollOK time.Time            // wall clock of the last successful sync
-	liveGen    int64                // generation for seen tokens; see refreshLiveLocked
+	oldCLI     []bus.Event          // CLI claims still open when the last daemon stopped
+	// backlog lists the mesh refs the first listing showed that haven't been read yet: they are
+	// read under the mode the daemon started in, and the mode turns normal once all have been.
+	// nil until that listing.
+	backlog    map[string]bool
+	lastPollOK time.Time // when the last successful sync fetched (monotonic)
+	liveGen    int64     // generation for seen tokens; see refreshLiveLocked
 
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
@@ -284,6 +290,16 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	if err := d.restore(ctx); err != nil {
 		return nil, err
 	}
+	// Taken before the first sync, which may end some of them for other reasons (a claim made
+	// past this device while it was down); they all ended with the last daemon either way.
+	d.mu.Lock()
+	for _, c := range d.claims {
+		dev, sess := bus.SplitAddr(c.ev.From)
+		if !c.released && dev == d.device && sess == proto.CLISession && c.ev.At.Before(d.started) {
+			d.oldCLI = append(d.oldCLI, c.ev)
+		}
+	}
+	d.mu.Unlock()
 	return d, nil
 }
 
@@ -307,7 +323,9 @@ func (d *Daemon) restore(ctx context.Context) error {
 	}
 	for ref, sha := range local {
 		if strings.HasPrefix(ref, brand.PresencePrefix) {
-			d.updatePeer(ctx, ref, sha)
+			if err := d.updatePeer(ctx, ref, sha); err != nil {
+				d.log.Printf("restoring: %v", err)
+			}
 		}
 	}
 	return nil
@@ -405,18 +423,7 @@ func slug(host string) string {
 	return s
 }
 
-// validName accepts device and session IDs: lowercase letters, digits and dashes.
-func validName(s string) bool {
-	if s == "" || len(s) > 40 {
-		return false
-	}
-	for _, r := range s {
-		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
-			return false
-		}
-	}
-	return true
-}
+func validName(s string) bool { return bus.ValidName(s) }
 
 func (d *Daemon) statePath() string { return filepath.Join(d.dir, "state.json") }
 
