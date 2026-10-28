@@ -47,8 +47,18 @@ func gitIn(t *testing.T, dir, stdin string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// newRemote makes a bare repo to stand in for GitHub. initArgs go to its git init; reftable
-// storage, say, holds ref names this machine's files can't, as GitHub does.
+// reftableRemote is newRemote with reftable storage, which, like GitHub, holds ref names this
+// machine's files can't. ok is false, and the remote an ordinary one, where git is older than
+// 2.45 and can't make one.
+func reftableRemote(t *testing.T) (remote string, ok bool) {
+	probe := t.TempDir()
+	if exec.Command("git", "init", "-q", "--bare", "--ref-format=reftable", filepath.Join(probe, "p.git")).Run() != nil {
+		return newRemote(t), false
+	}
+	return newRemote(t, "--ref-format=reftable"), true
+}
+
+// newRemote makes a bare repo to stand in for GitHub. initArgs go to its git init.
 func newRemote(t *testing.T, initArgs ...string) string {
 	root := t.TempDir()
 	remote := filepath.Join(root, "remote.git")
@@ -430,7 +440,7 @@ func TestForgedBusTextIsHeldToT4s(t *testing.T) {
 // a ref clashing with a device's old presence are passed over. Claims and messages still work,
 // and the backlog still empties, so a restart still catches up.
 func TestJunkRefsStopNothing(t *testing.T) {
-	remote := newRemote(t, "--ref-format=reftable")
+	remote, reftable := reftableRemote(t)
 	work := t.TempDir()
 	git(t, work, "init", "-q")
 	tree := git(t, work, "hash-object", "-t", "tree", "--stdin")
@@ -440,8 +450,9 @@ func TestJunkRefsStopNothing(t *testing.T) {
 		From: "t4", At: now, To: "*", Subject: "forged"})
 	pushEvent(t, remote, "refs/t4/mesh/BAD-0003", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
 		From: "BAD-0003/x", At: now, To: "*", Subject: "forged"})
-	for _, dev := range []string{"t4", "nul"} {
-		pushEvent(t, remote, "refs/t4/presence/"+dev, bus.Event{V: bus.Version})
+	pushEvent(t, remote, "refs/t4/presence/t4", bus.Event{V: bus.Version})
+	if reftable {
+		pushEvent(t, remote, "refs/t4/presence/nul", bus.Event{V: bus.Version}) // a name Windows can't store
 	}
 
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -471,4 +482,68 @@ func TestJunkRefsStopNothing(t *testing.T) {
 	eventually(t, "bob catches up", func() bool {
 		return len(b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages) == 1
 	})
+	// b deletes the ref under its own name, which kept its presence off the remote.
+	eventually(t, "b's presence back on a", func() bool { return a.seesSession(bob) })
+}
+
+// Junk forced over the claims ref and over a device's log stops neither: the next claim and the
+// next message build over it, and no claim is lost.
+func TestJunkOverClaimsAndLogs(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote, time.Minute), newDevice(t, remote, time.Minute)
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) })
+	if r := a.do(proto.Request{Op: proto.OpClaim, What: "search"}); r.Claimed == nil {
+		t.Fatalf("claim: %+v", r)
+	}
+	eventually(t, "b sees the claim", func() bool { return len(b.openClaims()) == 1 })
+
+	work := t.TempDir()
+	git(t, work, "init", "-q")
+	tree := git(t, work, "hash-object", "-t", "tree", "--stdin")
+	git(t, work, "push", "-q", "--force", remote, tree+":refs/t4/claims", tree+":refs/t4/mesh/"+a.self())
+	time.Sleep(time.Second) // both devices sync past the junk
+
+	if open := b.openClaims(); len(open) != 1 {
+		t.Fatalf("b's claims after the junk: %+v", open)
+	}
+	tok := b.do(proto.Request{Op: proto.OpClaims, Session: "bbbbbb"}).Seen
+	if r := b.claimAs("bbbbbb", "billing", tok); r.Claimed == nil {
+		t.Fatalf("claim over the junk: %+v", r)
+	}
+	eventually(t, "both claims on a", func() bool { return len(a.openClaims()) == 2 })
+
+	if r := a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "over the junk"}); r.Error != "" {
+		t.Fatalf("send over the junk: %s", r.Error)
+	}
+	eventually(t, "the message", func() bool {
+		return len(b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages) == 1
+	})
+}
+
+// A presence whose fetch keeps failing (here, a lock another git holds on the local copy) still
+// shows its device alive while the listing shows it moving, and stale once it stops.
+func TestUnfetchablePresenceStillCounts(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.session("bbbbbb", "")
+	b.claimAs("bbbbbb", "search", "")
+	eventually(t, "a sees bob's claim", func() bool { return claimsBy(a, bob) == 1 })
+
+	lock := filepath.Join(a.gitDir, filepath.FromSlash("refs/t4/presence/"+b.self())+".lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(lock)
+	holds(t, "bob's claim on a", 10*time.Second, func() bool { return claimsBy(a, bob) == 1 })
+	tok := a.do(proto.Request{Op: proto.OpClaims}).Seen
+	if r := a.do(proto.Request{Op: proto.OpClaim, What: "billing", Seen: tok}); r.Claimed == nil {
+		t.Fatalf("a's claim: %+v", r)
+	}
+	if n := claimsBy(b, bob); n != 1 {
+		t.Fatalf("a's claim ended bob's")
+	}
+
+	b.offline(remote, true)
+	eventually(t, "bob's claim lapses on a", func() bool { return claimsBy(a, bob) == 0 })
 }

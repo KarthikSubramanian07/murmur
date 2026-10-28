@@ -177,11 +177,15 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 
 	case proto.OpClaims:
 		var note string
-		if err := d.pollOnce(ctx); err != nil {
-			note = "Couldn't reach the remote; these are the claims as last synced: " + err.Error()
-		}
+		err := d.pollOnce(ctx)
 		d.mu.Lock()
 		defer d.mu.Unlock()
+		if err == nil {
+			err = d.claimsFetchErr
+		}
+		if err != nil {
+			note = "Couldn't reach the remote; these are the claims as last synced: " + err.Error()
+		}
 		return proto.Response{OK: true, Self: from, Claims: claimViews(d.openLocked(-1, "")), Seen: d.tokenLocked(time.Now()),
 			Note: note}
 

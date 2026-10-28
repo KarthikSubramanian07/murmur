@@ -116,7 +116,9 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			d.known[ref] = remote[ref]
 		}
 	}
+	d.claimsFetchErr = failed[brand.ClaimsRef]
 	d.mu.Unlock()
+	d.clearOwnJunk(listed)
 
 	for _, ref := range sortedKeys(remote) {
 		sha := remote[ref]
@@ -202,31 +204,54 @@ func readable(listed map[string]string) map[string]string {
 // listed SHA. Caller holds advMu.
 func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]string) map[string]error {
 	failed := map[string]error{}
-	if len(refs) == 0 || d.repo.Fetch(ctx, refs) == nil {
-		return failed
-	}
+	// A ref that failed before, at the same SHA, is fetched on its own, so it can't fail the
+	// rest, and at most once a minute, so it doesn't cost every poll.
+	var batch, alone []string
+	d.mu.Lock()
 	for _, ref := range refs {
-		if ctx.Err() != nil {
-			failed[ref] = ctx.Err()
-			continue
+		f, ok := d.unfetched[ref]
+		switch {
+		case !ok || f.sha != listed[ref]:
+			batch = append(batch, ref)
+		case time.Since(f.at) < time.Minute:
+			failed[ref] = errors.New("failed less than a minute ago")
+		default:
+			alone = append(alone, ref)
 		}
+	}
+	d.mu.Unlock()
+	if len(batch) > 0 && d.repo.Fetch(ctx, batch) != nil {
+		alone = append(alone, batch...)
+	}
+	for _, ref := range alone {
 		if err := d.repo.Fetch(ctx, []string{ref}); err != nil {
 			failed[ref] = err
 		}
 	}
-	if len(failed) > 0 && ctx.Err() == nil {
-		// One cause is a lock left by a killed git, which fails its ref's fetch until removed.
-		clearStaleLocks(d.opt.GitDir, d.log)
+	if ctx.Err() != nil {
+		return failed // cut short, which says nothing about the refs
+	}
+	retry := time.Now()
+	if len(failed) > 0 && clearStaleLocks(d.opt.GitDir, d.log) {
+		// A lock left by a killed git fails its ref's fetch until removed; with one gone, try
+		// again at the next poll rather than in a minute.
+		retry = time.Time{}
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for _, ref := range refs {
-		switch err := failed[ref]; {
-		case err == nil:
+	for _, ref := range alone {
+		if err := failed[ref]; err == nil {
 			delete(d.unfetched, ref)
-		case d.unfetched[ref] != listed[ref]:
-			d.log.Printf("fetching %s: %v", ref, err)
-			d.unfetched[ref] = listed[ref]
+		} else {
+			if d.unfetched[ref].sha != listed[ref] {
+				d.log.Printf("fetching %s: %v", ref, err)
+			}
+			d.unfetched[ref] = fetchFail{sha: listed[ref], at: retry}
+		}
+	}
+	for _, ref := range batch {
+		if failed[ref] == nil {
+			delete(d.unfetched, ref)
 		}
 	}
 	return failed
@@ -266,6 +291,15 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		d.mu.Unlock()
 	}
 	if prev == sha {
+		settled()
+		return
+	}
+	if ok, err := d.repo.IsCommit(ctx, sha); err != nil {
+		d.log.Printf("reading %s: %v", ref, err)
+		return
+	} else if !ok {
+		// Junk pushed over a log. Its owner builds over it with its next event, which then
+		// reads as the next commit after the last one read here.
 		settled()
 		return
 	}
@@ -482,12 +516,17 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 	if err != nil {
 		return err
 	}
+	lease := ""
 	for attempt := 0; ; attempt++ {
 		sha, err := d.repo.NewCommit(ctx, d.ownTip, msg)
 		if err != nil {
 			return err
 		}
-		err = d.repo.Push(ctx, sha, ref, bus.FastForward, "")
+		if lease == "" {
+			err = d.repo.Push(ctx, sha, ref, bus.FastForward, "")
+		} else {
+			err = d.repo.Push(ctx, sha, ref, bus.Lease, lease)
+		}
 		if err == nil {
 			d.ownTip = sha
 			if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
@@ -504,8 +543,6 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 		if !errors.Is(err, bus.ErrRejected) || attempt > 0 {
 			return err
 		}
-		// The remote's copy of this log is ahead of what this daemon knew: a restart before the
-		// first sync, or a copied .git. Build on the remote's tip instead.
 		tip, err := d.repo.RemoteRef(ctx, ref)
 		if err != nil {
 			return err
@@ -513,8 +550,63 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 		if err := d.repo.Fetch(ctx, []string{ref}); err != nil {
 			return err
 		}
+		if d.overOwnLog(ctx, tip) {
+			// Junk pushed over this log, or an older copy of it: replace it with the next event
+			// on top of what this daemon wrote, which readers take as a plain next commit.
+			lease = tip
+			continue
+		}
+		// The remote's copy of this log is ahead of what this daemon knew: a restart before the
+		// first sync, or a copied .git. Build on the remote's tip instead.
 		d.ownTip = tip
 	}
+}
+
+// overOwnLog says whether the remote's tip of this device's log is something to replace rather
+// than build on: not a commit, or one this daemon's own tip already contains. Caller holds writeMu.
+func (d *Daemon) overOwnLog(ctx context.Context, tip string) bool {
+	if tip == "" {
+		return false
+	}
+	if ok, err := d.repo.IsCommit(ctx, tip); err == nil && !ok {
+		return true // even with nothing written yet: junk is never something to build on
+	}
+	if d.ownTip == "" {
+		return false
+	}
+	back, err := d.repo.IsAncestor(ctx, tip, d.ownTip)
+	return err == nil && back
+}
+
+// clearOwnJunk deletes, in the background, refs on the remote under this device's own names
+// (presence/<device>/..., mesh/<device>/...). Nothing t4 writes lives there, and a ref there
+// stops this device from pushing its presence or log at all: the remote refuses the clash.
+func (d *Daemon) clearOwnJunk(listed map[string]string) {
+	if d.bgCtx == nil {
+		return // the first sync, before anything runs in the background; the next poll does it
+	}
+	var junk []string
+	for ref := range listed {
+		if strings.HasPrefix(ref, brand.PresencePrefix+d.device+"/") || strings.HasPrefix(ref, brand.MeshPrefix+d.device+"/") {
+			junk = append(junk, ref)
+		}
+	}
+	if len(junk) == 0 || d.bgCtx.Err() != nil {
+		return
+	}
+	d.bg.Add(1)
+	go func() {
+		defer d.bg.Done()
+		ctx, cancel := context.WithTimeout(d.bgCtx, time.Minute)
+		defer cancel()
+		for _, ref := range junk {
+			if err := d.repo.Push(ctx, "", ref, bus.FastForward, ""); err != nil {
+				d.log.Printf("deleting %s, which blocks this device's own refs: %v", ref, err)
+			} else {
+				d.log.Printf("deleted %s, which blocked this device's own refs", ref)
+			}
+		}
+	}()
 }
 
 // appendSoon appends an event in the background, for events nobody waits on.
@@ -563,6 +655,11 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 			}
 		}
 		err := d.publishPresence(ctx)
+		if ctx.Err() == nil {
+			d.mu.Lock()
+			d.presenceErr = err
+			d.mu.Unlock()
+		}
 		switch {
 		case err != nil && ctx.Err() == nil:
 			if !failing {

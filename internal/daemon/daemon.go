@@ -89,11 +89,18 @@ type Daemon struct {
 	// backlog lists the mesh refs the first listing showed that haven't been read yet: they are
 	// read under the mode the daemon started in, and the mode turns normal once all have been.
 	// nil until that listing.
-	backlog    map[string]bool
-	backlogAt  time.Time         // when the backlog was taken
-	unfetched  map[string]string // refs whose fetch failed, at the SHA that failed; logged once
-	lastPollOK time.Time         // when the last successful sync fetched (monotonic)
-	liveGen    int64             // generation for seen tokens; see refreshLiveLocked
+	backlog   map[string]bool
+	backlogAt time.Time            // when the backlog was taken
+	unfetched map[string]fetchFail // refs whose fetch failed, and how
+	// claimsOver is what the remote's claims ref holds when this daemon builds over it rather
+	// than on it: something not a commit, or a commit older than claimsTip. See claimLease.
+	claimsOver string
+	// claimsFetchErr is why this sync couldn't fetch the claims ref, if it couldn't.
+	claimsFetchErr error
+	// presenceErr is why the last presence push failed, if it did.
+	presenceErr error
+	lastPollOK  time.Time // when the last successful sync listed the remote (monotonic)
+	liveGen     int64     // generation for seen tokens; see refreshLiveLocked
 
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
@@ -147,6 +154,12 @@ type peer struct {
 	// machines' clocks.
 	listed     string
 	lastChange time.Time
+}
+
+// fetchFail is a ref whose fetch failed: at which listed SHA, when, and why.
+type fetchFail struct {
+	sha string
+	at  time.Time
 }
 
 type claimRec struct {
@@ -263,7 +276,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		claimSeq: map[string]int{}, gone: map[string]time.Time{}, liveGen: now.UnixNano(), caughtUp: map[string]bool{},
-		unfetched: map[string]string{},
+		unfetched: map[string]fetchFail{},
 		kick:      make(chan struct{}, 1), quit: make(chan struct{}),
 	}
 	device, err := loadDevice(dir)
@@ -321,6 +334,15 @@ func (d *Daemon) restore(ctx context.Context) error {
 		d.known[ref] = sha
 	}
 	d.ownTip = local[d.meshRef()]
+	if d.ownTip != "" {
+		if ok, _ := d.repo.IsCommit(ctx, d.ownTip); !ok {
+			// Junk pushed over this device's log: build on the last commit read from it instead.
+			d.ownTip = d.st.Processed[d.meshRef()]
+			if ok, _ := d.repo.IsCommit(ctx, d.ownTip); d.ownTip != "" && !ok {
+				d.ownTip = ""
+			}
+		}
+	}
 	if sha := local[brand.ClaimsRef]; sha != "" {
 		if err := d.advanceClaims(ctx, sha, true); err != nil {
 			d.log.Printf("restoring claims: %v", err)
@@ -354,7 +376,7 @@ func (d *Daemon) goodbye() {
 // clearStaleLocks removes .lock files under the bus refs. A git killed mid-write leaves one,
 // and every later fetch of that ref fails until it is gone. The daemon holds the clone's lock
 // and is the only writer of these refs, so one older than a few seconds is stale.
-func clearStaleLocks(gitDir string, l *log.Logger) {
+func clearStaleLocks(gitDir string, l *log.Logger) (removed bool) {
 	root := filepath.Join(gitDir, filepath.FromSlash(brand.RefRoot))
 	filepath.WalkDir(root, func(path string, e os.DirEntry, err error) error {
 		if err != nil || e.IsDir() || !strings.HasSuffix(path, ".lock") {
@@ -363,10 +385,12 @@ func clearStaleLocks(gitDir string, l *log.Logger) {
 		if fi, err := e.Info(); err == nil && time.Since(fi.ModTime()) > 30*time.Second {
 			if os.Remove(path) == nil {
 				l.Printf("removed stale lock %s", path)
+				removed = true
 			}
 		}
 		return nil
 	})
+	return removed
 }
 
 func (d *Daemon) idleLoop(ctx context.Context) {
@@ -396,7 +420,7 @@ func (d *Daemon) idleLoop(ctx context.Context) {
 func loadDevice(dir string) (string, error) {
 	path := filepath.Join(dir, "device")
 	if b, err := os.ReadFile(path); err == nil {
-		if id := strings.TrimSpace(string(b)); validName(id) {
+		if id := strings.TrimSpace(string(b)); bus.ValidDevice(id) {
 			return id, nil
 		}
 	}

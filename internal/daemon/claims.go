@@ -31,6 +31,24 @@ func (d *Daemon) advanceClaims(ctx context.Context, sha string, restoring bool) 
 	if prev == sha {
 		return nil
 	}
+	over := func(why string) error {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if d.claimsOver != sha {
+			d.claimsOver = sha
+			if why != "" {
+				d.log.Printf("the claims ref holds %s, %s; the next claim will build over it", sha, why)
+			}
+		}
+		return nil
+	}
+	// Junk pushed over the ref (a tree, say) would read as no claims at all, and nothing could be
+	// built on it. Keep what was read, and build over it: see claimLease.
+	if ok, err := d.repo.IsCommit(ctx, sha); err != nil {
+		return err
+	} else if !ok {
+		return over("which is not a commit")
+	}
 	rebuild := prev == ""
 	if prev != "" {
 		ok, err := d.repo.IsAncestor(ctx, prev, sha)
@@ -43,7 +61,7 @@ func (d *Daemon) advanceClaims(ctx context.Context, sha string, restoring bool) 
 				return err
 			}
 			if back {
-				return nil // an older copy of history already read
+				return over("") // an older copy of history already read
 			}
 			rebuild = true // the ref was rewritten; start over from what it says now
 		}
@@ -112,6 +130,7 @@ func (d *Daemon) advanceClaims(ctx context.Context, sha string, restoring bool) 
 		}
 	}
 	d.claimsTip = sha
+	d.claimsOver = ""
 	return nil
 }
 
@@ -388,15 +407,35 @@ func (d *Daemon) claim(ctx context.Context, from string, req proto.Request) prot
 	if err := d.pollOnce(ctx); err != nil {
 		return fail("not claimed: can't reach the remote to check claims: " + err.Error())
 	}
+	d.mu.Lock()
+	perr := d.presenceErr
+	d.mu.Unlock()
+	if perr != nil {
+		// Others judge this device's claims by its presence; one that isn't getting out would
+		// let the claim lapse for everyone within minutes. The last push may just predate the
+		// network coming back, so try once more before refusing.
+		perr = d.publishPresence(ctx)
+		d.mu.Lock()
+		d.presenceErr = perr
+		d.mu.Unlock()
+	}
+	if perr != nil {
+		return fail("not claimed: this device's presence isn't reaching the remote, so the team would soon see the " +
+			"claim as lapsed: " + perr.Error())
+	}
 	for range casAttempts {
 		d.mu.Lock()
 		now := time.Now()
-		tip := d.claimsTip
+		tip, lease, buildable := d.claimLeaseLocked()
 		unseen := d.unseenLocked(req.Seen, from, now)
 		all := d.openLocked(-1, "")
 		ends := d.lapsedLocked(now)
 		token := d.tokenLocked(now)
 		d.mu.Unlock()
+		if !buildable {
+			return fail("not claimed: the claims ref holds something that isn't a claim, and this daemon has no " +
+				"claims history to rebuild it from; another device's next claim will")
+		}
 		if len(unseen) > 0 {
 			return proto.Response{OK: true, Self: from, Unseen: claimViews(unseen), Claims: claimViews(all), Seen: token,
 				Note: "Nothing claimed: these claims are open and your seen token didn't show them."}
@@ -404,7 +443,7 @@ func (d *Daemon) claim(ctx context.Context, from string, req proto.Request) prot
 
 		e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Claim, From: from, At: time.Now().UTC(),
 			What: what, Paths: paths, Ends: ends}
-		_, err := d.pushClaims(ctx, tip, e)
+		_, err := d.pushClaims(ctx, tip, lease, e)
 		if err == nil {
 			d.mu.Lock()
 			all := d.openLocked(-1, "")
@@ -423,6 +462,22 @@ func (d *Daemon) claim(ctx context.Context, from string, req proto.Request) prot
 	return fail("not claimed: the claims ref kept changing; try again")
 }
 
+// claimLeaseLocked says what a claim or release is built on and what the remote must hold for it
+// to land. Normally both are claimsTip. When the remote holds something this daemon builds over
+// (claimsOver: junk, or an older commit), the push replaces that instead, on top of claimsTip:
+// for an older commit, a fast-forward that loses nothing. With junk there and nothing read to
+// build on, there is nothing to build: ok is false. Caller holds mu.
+func (d *Daemon) claimLeaseLocked() (parent, lease string, ok bool) {
+	parent, lease = d.claimsTip, d.claimsTip
+	if d.claimsOver != "" && d.known[brand.ClaimsRef] == d.claimsOver {
+		lease = d.claimsOver
+		if parent == "" {
+			return "", "", false
+		}
+	}
+	return parent, lease, true
+}
+
 // release ends a claim. Only the session that made it, or the CLI on its device, can.
 func (d *Daemon) release(ctx context.Context, by, id string) proto.Response {
 	d.claimMu.Lock()
@@ -433,10 +488,14 @@ func (d *Daemon) release(ctx context.Context, by, id string) proto.Response {
 	for range casAttempts {
 		d.mu.Lock()
 		rec := d.findClaimLocked(id)
-		tip := d.claimsTip
+		tip, lease, buildable := d.claimLeaseLocked()
 		d.mu.Unlock()
 		if rec == nil {
 			return fail("no claim " + id)
+		}
+		if !buildable {
+			return fail("not released: the claims ref holds something that isn't a claim; try again after another " +
+				"device's next claim")
 		}
 		if rec.released {
 			return proto.Response{OK: true, Self: by, Note: "claim " + id + " was already released"}
@@ -448,7 +507,7 @@ func (d *Daemon) release(ctx context.Context, by, id string) proto.Response {
 				id, rec.ev.From))
 		}
 		e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Release, From: by, At: time.Now().UTC(), Claim: id}
-		_, err := d.pushClaims(ctx, tip, e)
+		_, err := d.pushClaims(ctx, tip, lease, e)
 		if err == nil {
 			return proto.Response{OK: true, Self: by, Note: "released " + id}
 		}
@@ -462,18 +521,18 @@ func (d *Daemon) release(ctx context.Context, by, id string) proto.Response {
 	return fail("not released: the claims ref kept changing; try again")
 }
 
-// pushClaims appends e to the claims ref on top of tip, as a compare-and-swap. Caller holds
-// claimMu.
-func (d *Daemon) pushClaims(ctx context.Context, tip string, e bus.Event) (string, error) {
+// pushClaims appends e to the claims ref on top of parent, as a compare-and-swap: it lands only if
+// the remote still holds lease (see claimLeaseLocked). Caller holds claimMu.
+func (d *Daemon) pushClaims(ctx context.Context, parent, lease string, e bus.Event) (string, error) {
 	msg, err := bus.Encode(e, e.Line())
 	if err != nil {
 		return "", err
 	}
-	sha, err := d.repo.NewCommit(ctx, tip, msg)
+	sha, err := d.repo.NewCommit(ctx, parent, msg)
 	if err != nil {
 		return "", err
 	}
-	if err := d.repo.Push(ctx, sha, brand.ClaimsRef, bus.Lease, tip); err != nil {
+	if err := d.repo.Push(ctx, sha, brand.ClaimsRef, bus.Lease, lease); err != nil {
 		return "", err
 	}
 	if err := d.repo.UpdateLocal(ctx, brand.ClaimsRef, sha); err != nil {
