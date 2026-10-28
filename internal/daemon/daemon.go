@@ -90,10 +90,14 @@ type Daemon struct {
 	// read under the mode the daemon started in, and the mode turns normal once all have been.
 	// nil until that listing.
 	backlog   map[string]bool
-	backlogAt time.Time            // when the backlog was taken
-	unfetched map[string]fetchFail // refs whose fetch failed, and how
+	backlogAt time.Time // when the backlog was taken
+	// junked lists backlog refs whose tip was junk when read, hiding the history under it. When
+	// the owner builds over the junk, that history is still backlog, and is read as in modeSkip.
+	junked    map[string]bool
+	unfetched map[string]fetchFail // refs whose fetch failed, and when
+	junkTried map[string]time.Time // blocking refs clearOwnJunk last tried to delete, and when
 	// claimsOver is what the remote's claims ref holds when this daemon builds over it rather
-	// than on it: something not a commit, or a commit older than claimsTip. See claimLease.
+	// than on it: something not a commit, or a commit older than claimsTip. See claimLeaseLocked.
 	claimsOver string
 	// claimsFetchErr is why this sync couldn't fetch the claims ref, if it couldn't.
 	claimsFetchErr error
@@ -156,7 +160,8 @@ type peer struct {
 	lastChange time.Time
 }
 
-// fetchFail is a ref whose fetch failed: at which listed SHA, when, and why.
+// fetchFail is a ref whose fetch failed: at which listed SHA, and when. It is fetched again on
+// its own a minute after at; a zero at means at the next poll.
 type fetchFail struct {
 	sha string
 	at  time.Time
@@ -237,7 +242,12 @@ func Run(ctx context.Context, opt Options) error {
 	defer cancel()
 	d.bgCtx = ctx
 	go d.serve(ctx, ln)
-	go d.pollLoop(ctx)
+	// Tracked, as the syncs it runs start background work of their own (clearOwnJunk).
+	d.bg.Add(1)
+	go func() {
+		defer d.bg.Done()
+		d.pollLoop(ctx)
+	}()
 	// The presence loop is drained like other background work: a push still in flight when
 	// the goodbye deletes presence could otherwise land after it and bring the device back.
 	d.bg.Add(1)
@@ -276,8 +286,8 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		claimSeq: map[string]int{}, gone: map[string]time.Time{}, liveGen: now.UnixNano(), caughtUp: map[string]bool{},
-		unfetched: map[string]fetchFail{},
-		kick:      make(chan struct{}, 1), quit: make(chan struct{}),
+		unfetched: map[string]fetchFail{}, junked: map[string]bool{}, junkTried: map[string]time.Time{},
+		kick: make(chan struct{}, 1), quit: make(chan struct{}),
 	}
 	device, err := loadDevice(dir)
 	if err != nil {
@@ -335,8 +345,10 @@ func (d *Daemon) restore(ctx context.Context) error {
 	}
 	d.ownTip = local[d.meshRef()]
 	if d.ownTip != "" {
+		// Junk pushed over this device's log: build on the last commit read from it instead. On a
+		// failure to tell, the same: a tip that is behind gets its push refused, and the next
+		// try builds on the remote's.
 		if ok, _ := d.repo.IsCommit(ctx, d.ownTip); !ok {
-			// Junk pushed over this device's log: build on the last commit read from it instead.
 			d.ownTip = d.st.Processed[d.meshRef()]
 			if ok, _ := d.repo.IsCommit(ctx, d.ownTip); d.ownTip != "" && !ok {
 				d.ownTip = ""

@@ -33,17 +33,26 @@ func (d *Daemon) advanceClaims(ctx context.Context, sha string, restoring bool) 
 	}
 	over := func(why string) error {
 		d.mu.Lock()
-		defer d.mu.Unlock()
-		if d.claimsOver != sha {
-			d.claimsOver = sha
-			if why != "" {
-				d.log.Printf("the claims ref holds %s, %s; the next claim will build over it", sha, why)
+		fresh := d.claimsOver != sha
+		d.claimsOver = sha
+		d.mu.Unlock()
+		if !fresh {
+			return nil
+		}
+		if why != "" {
+			d.log.Printf("the claims ref holds %s, %s; the next claim will build over it", sha, why)
+		}
+		// The fetch put that on the local copy too, which the next daemon restores from: put back
+		// what was read, or a restart would lose it. The next fetch brings the remote's again.
+		if prev != "" {
+			if err := d.repo.UpdateLocal(ctx, brand.ClaimsRef, prev); err != nil {
+				d.log.Printf("keeping the claims read on the local claims ref: %v", err)
 			}
 		}
 		return nil
 	}
 	// Junk pushed over the ref (a tree, say) would read as no claims at all, and nothing could be
-	// built on it. Keep what was read, and build over it: see claimLease.
+	// built on it. Keep what was read, and build over it: see claimLeaseLocked.
 	if ok, err := d.repo.IsCommit(ctx, sha); err != nil {
 		return err
 	} else if !ok {
@@ -140,6 +149,18 @@ func (d *Daemon) resetClaimsLocked() {
 	d.claimsTip = ""
 }
 
+// claimsGoneLocked forgets the claims ref, gone from the remote: its claims, and any junk this
+// daemon meant to build over, which would otherwise block every claim with nothing left to build
+// on. The next claim starts the ref again. Caller holds mu.
+func (d *Daemon) claimsGoneLocked() {
+	if d.claimsTip != "" {
+		d.log.Printf("the claims ref is gone from the remote; forgetting all claims")
+	}
+	d.resetClaimsLocked()
+	d.claimsOver = ""
+	delete(d.known, brand.ClaimsRef)
+}
+
 // syncClaims brings the claims ref up to date with the remote, outside the poll cycle, so that
 // `claims` and `claim` work from the freshest view.
 func (d *Daemon) syncClaims(ctx context.Context) error {
@@ -151,7 +172,7 @@ func (d *Daemon) syncClaims(ctx context.Context) error {
 	defer d.advMu.Unlock()
 	if sha == "" {
 		d.mu.Lock()
-		d.resetClaimsLocked()
+		d.claimsGoneLocked()
 		d.mu.Unlock()
 		return nil
 	}
@@ -409,6 +430,7 @@ func (d *Daemon) claim(ctx context.Context, from string, req proto.Request) prot
 	}
 	d.mu.Lock()
 	perr := d.presenceErr
+	clearing := len(d.junkTried) > 0
 	d.mu.Unlock()
 	if perr != nil {
 		// Others judge this device's claims by its presence; one that isn't getting out would
@@ -420,8 +442,11 @@ func (d *Daemon) claim(ctx context.Context, from string, req proto.Request) prot
 		d.mu.Unlock()
 	}
 	if perr != nil {
-		return fail("not claimed: this device's presence isn't reaching the remote, so the team would soon see the " +
-			"claim as lapsed: " + perr.Error())
+		msg := "not claimed: this device's presence isn't reaching the remote, so the team would soon see the claim as lapsed"
+		if clearing {
+			msg += " (a ref blocking it is being deleted; try again in a few seconds)"
+		}
+		return fail(msg + ": " + perr.Error())
 	}
 	for range casAttempts {
 		d.mu.Lock()
@@ -535,11 +560,12 @@ func (d *Daemon) pushClaims(ctx context.Context, parent, lease string, e bus.Eve
 	if err := d.repo.Push(ctx, sha, brand.ClaimsRef, bus.Lease, lease); err != nil {
 		return "", err
 	}
+	// Under advMu, which a sync reading the claims ref holds, so the two don't race on the copy.
+	d.advMu.Lock()
+	defer d.advMu.Unlock()
 	if err := d.repo.UpdateLocal(ctx, brand.ClaimsRef, sha); err != nil {
 		d.log.Printf("updating local claims ref: %v", err)
 	}
-	d.advMu.Lock()
-	defer d.advMu.Unlock()
 	d.mu.Lock()
 	d.known[brand.ClaimsRef] = sha
 	d.mu.Unlock()

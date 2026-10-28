@@ -157,9 +157,8 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			d.gone[dev] = time.Now()
 		}
 	}
-	if _, ok := remote[brand.ClaimsRef]; !ok && d.claimsTip != "" {
-		d.log.Printf("the claims ref is gone from the remote; forgetting all claims")
-		d.resetClaimsLocked()
+	if _, ok := remote[brand.ClaimsRef]; !ok {
+		d.claimsGoneLocked()
 	}
 	d.lastPollOK = polled
 	switched := false
@@ -232,13 +231,19 @@ func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]str
 		return failed // cut short, which says nothing about the refs
 	}
 	retry := time.Now()
-	if len(failed) > 0 && clearStaleLocks(d.opt.GitDir, d.log) {
-		// A lock left by a killed git fails its ref's fetch until removed; with one gone, try
-		// again at the next poll rather than in a minute.
-		retry = time.Time{}
-	}
+	removed := len(failed) > 0 && clearStaleLocks(d.opt.GitDir, d.log)
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if removed {
+		// A lock left by a killed git fails its ref's fetch until removed; with one gone, try
+		// every ref that failed again at the next poll rather than in a minute. The lock is
+		// usually found stale a poll or more after the fetch it failed.
+		retry = time.Time{}
+		for ref, f := range d.unfetched {
+			f.at = retry
+			d.unfetched[ref] = f
+		}
+	}
 	for _, ref := range alone {
 		if err := failed[ref]; err == nil {
 			delete(d.unfetched, ref)
@@ -281,8 +286,11 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 	d.mu.Lock()
 	prev := d.st.Processed[ref]
 	mode := modeNormal
-	if d.backlog[ref] {
+	switch {
+	case d.backlog[ref]:
 		mode = d.mode
+	case d.junked[ref]:
+		mode = modeSkip
 	}
 	d.mu.Unlock()
 	settled := func() {
@@ -299,14 +307,21 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		return
 	} else if !ok {
 		// Junk pushed over a log. Its owner builds over it with its next event, which then
-		// reads as the next commit after the last one read here.
-		settled()
+		// reads as the next commit after the last one read here. Junk over the backlog hides
+		// history from before this daemon's first look, which mustn't read as new then.
+		d.mu.Lock()
+		if d.backlog[ref] {
+			d.junked[ref] = true
+		}
+		delete(d.backlog, ref)
+		d.mu.Unlock()
 		return
 	}
 	skipTo := func() {
 		d.mu.Lock()
 		d.st.Processed[ref] = sha
 		delete(d.backlog, ref)
+		delete(d.junked, ref)
 		d.saveLocked()
 		d.mu.Unlock()
 	}
@@ -370,6 +385,7 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 	}
 	d.st.Processed[ref] = sha
 	delete(d.backlog, ref)
+	delete(d.junked, ref)
 	d.saveLocked()
 }
 
@@ -578,19 +594,33 @@ func (d *Daemon) overOwnLog(ctx context.Context, tip string) bool {
 	return err == nil && back
 }
 
-// clearOwnJunk deletes, in the background, refs on the remote under this device's own names
-// (presence/<device>/..., mesh/<device>/...). Nothing t4 writes lives there, and a ref there
-// stops this device from pushing its presence or log at all: the remote refuses the clash.
+// clearOwnJunk deletes, in the background, refs on the remote that keep this device's own refs
+// off it, since the remote refuses a ref whose name clashes with another's: refs under this
+// device's names (presence/<device>/..., mesh/<device>/...), refs under the claims ref, and a
+// ref at presence or mesh itself, which blocks every device. Nothing t4 writes lives at any of
+// them. Each is tried at most once a minute, so a delete the remote refuses isn't pushed, and
+// logged, at every poll.
 func (d *Daemon) clearOwnJunk(listed map[string]string) {
 	if d.bgCtx == nil {
 		return // the first sync, before anything runs in the background; the next poll does it
 	}
 	var junk []string
+	d.mu.Lock()
+	for ref := range d.junkTried {
+		if _, ok := listed[ref]; !ok {
+			delete(d.junkTried, ref)
+		}
+	}
 	for ref := range listed {
-		if strings.HasPrefix(ref, brand.PresencePrefix+d.device+"/") || strings.HasPrefix(ref, brand.MeshPrefix+d.device+"/") {
+		blocking := ref+"/" == brand.PresencePrefix || ref+"/" == brand.MeshPrefix ||
+			strings.HasPrefix(ref, brand.ClaimsRef+"/") ||
+			strings.HasPrefix(ref, brand.PresencePrefix+d.device+"/") || strings.HasPrefix(ref, brand.MeshPrefix+d.device+"/")
+		if blocking && time.Since(d.junkTried[ref]) >= time.Minute {
+			d.junkTried[ref] = time.Now()
 			junk = append(junk, ref)
 		}
 	}
+	d.mu.Unlock()
 	if len(junk) == 0 || d.bgCtx.Err() != nil {
 		return
 	}
@@ -601,9 +631,10 @@ func (d *Daemon) clearOwnJunk(listed map[string]string) {
 		defer cancel()
 		for _, ref := range junk {
 			if err := d.repo.Push(ctx, "", ref, bus.FastForward, ""); err != nil {
-				d.log.Printf("deleting %s, which blocks this device's own refs: %v", ref, err)
+				d.log.Printf("deleting %s, which blocks the bus's own refs: %v", ref, err)
 			} else {
-				d.log.Printf("deleted %s, which blocked this device's own refs", ref)
+				d.log.Printf("deleted %s, which blocked the bus's own refs", ref)
+				d.kickPresence() // a presence push it blocked waits for its next retry otherwise
 			}
 		}
 	}()

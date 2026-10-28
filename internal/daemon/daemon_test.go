@@ -346,6 +346,14 @@ func TestBusNeverTouchesWorkingTree(t *testing.T) {
 	}
 }
 
+// junkTree makes a scratch repo and the empty tree in it: junk, pushed over a ref by hand.
+func junkTree(t *testing.T) (work, tree string) {
+	t.Helper()
+	work = t.TempDir()
+	git(t, work, "init", "-q")
+	return work, git(t, work, "hash-object", "-t", "tree", "--stdin")
+}
+
 // pushEvent writes e onto ref on the remote from outside t4, as anyone with push access could.
 func pushEvent(t *testing.T, remote, ref string, e bus.Event) {
 	t.Helper()
@@ -441,9 +449,7 @@ func TestForgedBusTextIsHeldToT4s(t *testing.T) {
 // and the backlog still empties, so a restart still catches up.
 func TestJunkRefsStopNothing(t *testing.T) {
 	remote, reftable := reftableRemote(t)
-	work := t.TempDir()
-	git(t, work, "init", "-q")
-	tree := git(t, work, "hash-object", "-t", "tree", "--stdin")
+	work, tree := junkTree(t)
 	git(t, work, "push", "-q", remote, tree+":refs/t4/presence/junk-0001", tree+":refs/t4/mesh/junk-0002")
 	now := time.Now().UTC()
 	pushEvent(t, remote, "refs/t4/mesh/t4", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
@@ -498,9 +504,7 @@ func TestJunkOverClaimsAndLogs(t *testing.T) {
 	}
 	eventually(t, "b sees the claim", func() bool { return len(b.openClaims()) == 1 })
 
-	work := t.TempDir()
-	git(t, work, "init", "-q")
-	tree := git(t, work, "hash-object", "-t", "tree", "--stdin")
+	work, tree := junkTree(t)
 	git(t, work, "push", "-q", "--force", remote, tree+":refs/t4/claims", tree+":refs/t4/mesh/"+a.self())
 	time.Sleep(time.Second) // both devices sync past the junk
 
@@ -519,6 +523,109 @@ func TestJunkOverClaimsAndLogs(t *testing.T) {
 	eventually(t, "the message", func() bool {
 		return len(b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages) == 1
 	})
+}
+
+// Deleting junk forced over the claims ref, as a person fixing it would, leaves claims working:
+// the next claim starts the ref again, on a daemon that read the junk and on one restarted since.
+func TestClaimsWorkOnceJunkIsDeleted(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote, time.Minute), newDevice(t, remote, time.Minute)
+	b.session("bbbbbb", "")
+	if r := a.do(proto.Request{Op: proto.OpClaim, What: "search"}); r.Claimed == nil {
+		t.Fatalf("claim: %+v", r)
+	}
+	eventually(t, "b sees the claim", func() bool { return len(b.openClaims()) == 1 })
+	work, tree := junkTree(t)
+	git(t, work, "push", "-q", "--force", remote, tree+":refs/t4/claims")
+	time.Sleep(time.Second) // both devices read the junk
+	git(t, work, "push", "-q", remote, ":refs/t4/claims")
+	time.Sleep(time.Second) // and see it gone
+
+	if r := a.do(proto.Request{Op: proto.OpClaim, What: "billing"}); r.Claimed == nil {
+		t.Fatalf("a's claim once the junk is deleted: %+v", r)
+	}
+	b.restart()
+	b.helloAgain("bbbbbb", true)
+	tok := b.do(proto.Request{Op: proto.OpClaims, Session: "bbbbbb"}).Seen
+	if r := b.claimAs("bbbbbb", "deploys", tok); r.Claimed == nil {
+		t.Fatalf("b's claim after a restart: %+v", r)
+	}
+}
+
+// Junk forced over the claims ref loses no claims when daemons restart (an idle exit, a reboot):
+// each keeps what it read, and builds over the junk as before.
+func TestJunkOverClaimsSurvivesRestart(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote, time.Minute), newDevice(t, remote, time.Minute)
+	alice, _ := a.session("aaaaaa", "")
+	b.session("bbbbbb", "")
+	if r := a.claimAs("aaaaaa", "search", ""); r.Claimed == nil {
+		t.Fatalf("claim: %+v", r)
+	}
+	eventually(t, "b sees the claim", func() bool { return claimsBy(b, alice) == 1 })
+	work, tree := junkTree(t)
+	git(t, work, "push", "-q", "--force", remote, tree+":refs/t4/claims")
+	time.Sleep(time.Second) // both devices read the junk
+
+	a.restart()
+	b.restart()
+	a.helloAgain("aaaaaa", true)
+	b.helloAgain("bbbbbb", true)
+	eventually(t, "b still sees a's claim", func() bool { return claimsBy(b, alice) == 1 })
+	tok := b.do(proto.Request{Op: proto.OpClaims, Session: "bbbbbb"}).Seen
+	if r := b.claimAs("bbbbbb", "billing", tok); r.Claimed == nil {
+		t.Fatalf("b's claim over the junk: %+v", r)
+	}
+	eventually(t, "both claims on a", func() bool { return len(a.openClaims()) == 2 })
+}
+
+// Junk over another device's log when a device first looks hides that log's history, which is
+// still backlog when the owner writes over the junk: only what was sent since a session here
+// started is delivered, not the history under it.
+func TestHistoryUnderJunkIsNotReplayed(t *testing.T) {
+	remote := newRemote(t)
+	ref := "refs/t4/mesh/hist-0001"
+	for _, s := range []string{"old one", "old two"} {
+		pushEvent(t, remote, ref, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "hist-0001/x",
+			At: time.Now().Add(-time.Hour).UTC(), To: "*", Subject: s})
+	}
+	work, tree := junkTree(t)
+	git(t, work, "fetch", "-q", remote, ref)
+	tip := git(t, work, "rev-parse", "FETCH_HEAD") // what the owner builds on, past the junk
+	git(t, work, "push", "-q", "--force", remote, tree+":"+ref)
+
+	c := newDevice(t, remote) // its first sync finds the junk
+	c.session("cccccc", "")
+	msg, err := bus.Encode(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "hist-0001/x",
+		At: time.Now().UTC(), To: "*", Subject: "new"}, "new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := gitIn(t, work, msg, "commit-tree", tree, "-p", tip)
+	git(t, work, "push", "-q", "--force", remote, next+":"+ref)
+
+	var got []proto.MessageView
+	eventually(t, "the new message", func() bool {
+		got = append(got, c.do(proto.Request{Op: proto.OpInbox, Session: "cccccc"}).Messages...)
+		return len(got) > 0
+	})
+	time.Sleep(500 * time.Millisecond)
+	got = append(got, c.do(proto.Request{Op: proto.OpInbox, Session: "cccccc"}).Messages...)
+	if len(got) != 1 || got[0].Subject != "new" {
+		t.Fatalf("inbox: %+v", got)
+	}
+}
+
+// A ref t4 never writes, at a name every device's refs clash with (presence itself, or one under
+// the claims ref), would keep every device's presence or claims off the remote. Daemons delete it.
+func TestBlockingRefsAreDeleted(t *testing.T) {
+	remote := newRemote(t)
+	work, tree := junkTree(t)
+	git(t, work, "push", "-q", remote, tree+":refs/t4/presence", tree+":refs/t4/claims/x")
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	eventually(t, "a's presence on b", func() bool { return b.seesSession(alice) })
+	eventually(t, "a claim", func() bool { return a.claimAs("aaaaaa", "search", "").Claimed != nil })
 }
 
 // A presence whose fetch keeps failing (here, a lock another git holds on the local copy) still

@@ -203,17 +203,22 @@ func (r *Repo) UpdateLocal(ctx context.Context, ref, sha string) error {
 }
 
 // IsCommit says whether sha names a commit here. Anything else (a tree pushed by hand, or an
-// object that isn't here) is not, and nothing can be built on it.
+// object that isn't here) is not, and nothing can be built on it. Any other failure is an error:
+// callers build over what isn't a commit, which on a passing fault would drop what is there.
 func (r *Repo) IsCommit(ctx context.Context, sha string) (bool, error) {
 	out, err := r.Git.Run(ctx, "", "cat-file", "-t", sha)
-	if err != nil {
-		var exit *exec.ExitError
-		if ctx.Err() == nil && errors.As(err, &exit) {
-			return false, nil
-		}
-		return false, err
+	if err == nil {
+		return strings.TrimSpace(out) == "commit", nil
 	}
-	return strings.TrimSpace(out) == "commit", nil
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	// cat-file -e exits 1, and only 1, for an object that isn't here.
+	var exit *exec.ExitError
+	if _, cerr := r.Git.Run(ctx, "", "cat-file", "-e", sha); errors.As(cerr, &exit) && exit.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
 }
 
 // IsAncestor reports whether a is an ancestor of b (or equal to it). A commit that isn't

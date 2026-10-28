@@ -180,11 +180,11 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		err := d.pollOnce(ctx)
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		if err == nil {
-			err = d.claimsFetchErr
-		}
-		if err != nil {
+		switch {
+		case err != nil:
 			note = "Couldn't reach the remote; these are the claims as last synced: " + err.Error()
+		case d.claimsFetchErr != nil:
+			note = "Couldn't fetch the claims ref; these are the claims as last synced: " + d.claimsFetchErr.Error()
 		}
 		return proto.Response{OK: true, Self: from, Claims: claimViews(d.openLocked(-1, "")), Seen: d.tokenLocked(time.Now()),
 			Note: note}
