@@ -63,9 +63,20 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		// its log is read normally from the start.
 		d.backlog = map[string]bool{}
 		for ref := range remote {
-			if d.mode != modeNormal && strings.HasPrefix(ref, brand.MeshPrefix) {
+			if _, ok := meshDevice(ref); ok && d.mode != modeNormal {
 				d.backlog[ref] = true
 			}
+		}
+	}
+	for ref := range d.backlog {
+		switch {
+		case remote[ref] == "":
+			delete(d.backlog, ref) // gone from the remote; nothing left to read
+		case time.Since(d.started) > catchUpLimit:
+			// Still unread after this long, it is history nobody is waiting for.
+			d.log.Printf("giving up on reading the backlog of %s; skipping it", ref)
+			d.st.Processed[ref] = remote[ref]
+			delete(d.backlog, ref)
 		}
 	}
 	for ref, sha := range remote {
@@ -101,7 +112,6 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	}
 	d.mu.Unlock()
 
-	var unread []string
 	for _, ref := range sortedKeys(remote) {
 		sha := remote[ref]
 		switch {
@@ -110,24 +120,17 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 				d.log.Printf("reading claims: %v", err)
 			}
 		case strings.HasPrefix(ref, brand.MeshPrefix):
-			if strings.TrimPrefix(ref, brand.MeshPrefix) == brand.Name {
-				continue // no device has that name; a log under it would only impersonate t4
+			if _, ok := meshDevice(ref); ok {
+				d.advanceMesh(ctx, ref, sha)
 			}
-			d.advanceMesh(ctx, ref, sha)
 		case strings.HasPrefix(ref, brand.PresencePrefix):
-			if err := d.updatePeer(ctx, ref, sha); err != nil {
-				d.log.Printf("%v", err)
-				unread = append(unread, ref)
-			}
+			d.updatePeer(ctx, ref, sha)
 		}
 	}
-	// A sync that didn't get to look at every device is no fresh look at any: it would make the
-	// ones it missed look stale, and claim, which judges from it, would end their claims.
+	// A sync cut short is no fresh look: claim, which judges from it, would act on what it
+	// didn't get to.
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-	if len(unread) > 0 {
-		return fmt.Errorf("couldn't read %s", strings.Join(unread, ", "))
 	}
 
 	d.mu.Lock()
@@ -154,6 +157,13 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		d.saveLocked()
 	}
 	return nil
+}
+
+// meshDevice names the device a mesh ref belongs to, and whether t4 reads it at all: not one
+// under a name no device can have, such as t4's own, which could only impersonate it.
+func meshDevice(ref string) (string, bool) {
+	dev := strings.TrimPrefix(ref, brand.MeshPrefix)
+	return dev, bus.ValidName(dev) && dev != brand.Name
 }
 
 // staleLocked says whether a peer's presence went unchanged past the stale limit, as of this
@@ -202,7 +212,7 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 	}
 	if mode == modeSkip {
 		// Nothing is delivered from the backlog, unless the first sync failed and sessions have
-		// registered since: what was sent straight to them came after they started.
+		// registered since: what was sent after they started is for them.
 		d.mu.Lock()
 		waiting := len(d.sessions) > 0
 		d.mu.Unlock()
@@ -333,32 +343,42 @@ func (d *Daemon) catchUpLocked(id string) {
 	d.saveLocked()
 }
 
-// updatePeer reads another device's presence. One it can't read is an error. One it reads but
-// can't make sense of (a newer version, say) still shows that the device is alive. Caller holds
-// advMu.
-func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) error {
+// updatePeer reads another device's presence. A presence that moved shows that its device is
+// alive even when it can't be read or understood (a passing git failure, a newer version, junk
+// pushed by hand): the peer's last change is still counted, so a reader never takes a device for
+// gone because of what it couldn't read, and never fails a sync over it. Caller holds advMu.
+func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	dev := strings.TrimPrefix(ref, brand.PresencePrefix)
-	if dev == d.device {
-		return nil
+	if dev == d.device || !bus.ValidName(dev) {
+		return
 	}
 	d.mu.Lock()
 	p := d.peers[dev]
 	d.mu.Unlock()
 	if p != nil && p.sha == sha {
-		return nil
+		return
+	}
+	moved := func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if p == nil {
+			// Never read: shown as present, its claims counted, until it is read or goes stale.
+			p = &peer{pres: bus.Presence{V: bus.Version, Device: dev, Host: "presence unreadable"}}
+			d.peers[dev] = p
+			delete(d.gone, dev)
+		}
+		p.sha, p.lastChange = sha, time.Now()
 	}
 	c, err := d.repo.ReadCommit(ctx, sha)
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", ref, err)
+		d.log.Printf("reading %s: %v", ref, err)
+		moved()
+		return
 	}
 	var pres bus.Presence
 	if bus.Decode(c.Message, &pres) != nil || pres.V != bus.Version || pres.Device != dev {
-		if p != nil {
-			d.mu.Lock()
-			p.sha, p.lastChange = sha, time.Now()
-			d.mu.Unlock()
-		}
-		return nil
+		moved()
+		return
 	}
 	pres.Clean()
 	changed := time.Now()
@@ -369,7 +389,6 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) error {
 	d.peers[dev] = &peer{pres: pres, sha: sha, lastChange: changed}
 	delete(d.gone, dev)
 	d.mu.Unlock()
-	return nil
 }
 
 // appendEvent adds an event to this device's log on the remote. It returns once the push has

@@ -241,8 +241,10 @@ func (d *Daemon) tellEndedLocked(held, by bus.Event) {
 	if sameDevice(by.From, held.From) {
 		when = "on this device, while your session wasn't connected to " + brand.Name
 	}
-	d.tellLocked(sess, fmt.Sprintf("Your claim %s (%q) was ended by %s's claim %s (%q), made %s. Check claims, "+
-		"and talk to %s before carrying on.", held.ID, held.What, by.From, by.ID, by.What, when, by.From))
+	// A note speaks as t4, outside the envelope around other agents' words, so it carries none of
+	// them: a claim's description is whatever its writer put there. IDs and addresses are checked.
+	d.tellLocked(sess, fmt.Sprintf("Your claim %s was ended by %s's claim %s, made %s. Check claims for what "+
+		"it covers, and talk to %s before carrying on.", held.ID, by.From, by.ID, when, by.From))
 }
 
 // endOldCLIClaims releases claims made from the CLI under an earlier daemon. Every daemon
@@ -259,8 +261,8 @@ func (d *Daemon) endOldCLIClaims() {
 			d.log.Printf("releasing old CLI claim %s: %s", e.ID, r.Error)
 		}
 		d.mu.Lock()
-		d.tellLocked(proto.CLISession, fmt.Sprintf("Your claim %s (%q) has ended: claims made from the CLI end "+
-			"when its daemon stops. Claim it again if you still want it.", e.ID, e.What))
+		d.tellLocked(proto.CLISession, fmt.Sprintf("Your claim %s has ended: claims made from the CLI end "+
+			"when its daemon stops. Claim it again if you still want it (t4 log shows what it was).", e.ID))
 		d.mu.Unlock()
 	}
 }

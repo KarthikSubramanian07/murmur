@@ -167,8 +167,8 @@ type inMsg struct {
 
 // state is what survives a restart, in state.json.
 type state struct {
-	// Initialized is set after the first sync. That sync records every ref's tip as processed
-	// without delivering anything: history from before this device joined isn't replayed.
+	// Initialized is set once the first syncs have read the backlog, recording every log's tip
+	// as processed without delivering it: history from before this device joined isn't replayed.
 	Initialized bool                `json:"initialized"`
 	Processed   map[string]string   `json:"processed"` // mesh ref → last SHA delivered
 	Inbox       map[string][]*inMsg `json:"inbox"`     // session → unread messages
@@ -323,9 +323,7 @@ func (d *Daemon) restore(ctx context.Context) error {
 	}
 	for ref, sha := range local {
 		if strings.HasPrefix(ref, brand.PresencePrefix) {
-			if err := d.updatePeer(ctx, ref, sha); err != nil {
-				d.log.Printf("restoring: %v", err)
-			}
+			d.updatePeer(ctx, ref, sha)
 		}
 	}
 	return nil

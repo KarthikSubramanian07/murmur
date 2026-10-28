@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Version is the format version every event and presence record carries. A reader skips
@@ -84,7 +85,7 @@ func (e Event) Valid() bool {
 	case SessionStarted, SessionStopped:
 		return true
 	case Message:
-		return validTo(e.To) && e.Subject != ""
+		return ValidTo(e.To) && e.Subject != ""
 	case Claim:
 		for _, id := range e.Ends {
 			if !validID(id) {
@@ -108,6 +109,7 @@ func (e *Event) Clean() {
 	for i, p := range e.Paths {
 		e.Paths[i] = OneLine(p, 200)
 	}
+	e.Body = Text(e.Body, MaxBody)
 }
 
 // Clean does for a presence what Event.Clean does for an event, and drops sessions whose IDs
@@ -159,8 +161,8 @@ func validAddr(a string) bool {
 	return ValidName(dev) && ValidName(sess)
 }
 
-// validTo accepts a recipient: everyone, a device, or a session.
-func validTo(to string) bool {
+// ValidTo accepts a recipient: everyone, a device, or a session.
+func ValidTo(to string) bool {
 	if to == "*" {
 		return true
 	}
@@ -208,11 +210,37 @@ func Decode(msg string, v any) error {
 	return json.Unmarshal([]byte(strings.TrimSpace(msg[i+2:])), v)
 }
 
-// OneLine collapses whitespace, newlines included, and cuts s to at most max runes.
+// MaxBody caps a message body. Everything on the bus stays in history for good.
+const MaxBody = 32 << 10
+
+// OneLine collapses whitespace, line breaks of every kind included, turns other control
+// characters (a terminal escape, say) into spaces, and cuts s to at most max runes.
 func OneLine(s string, max int) string {
-	s = strings.Join(strings.Fields(s), " ")
+	s = strings.Join(strings.FieldsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " ")
 	if r := []rune(s); len(r) > max {
 		s = string(r[:max-1]) + "…"
+	}
+	return s
+}
+
+// Text keeps a text's lines but writes every kind of line break as "\n", turns other control
+// characters but tabs into spaces, and cuts it to at most max bytes. Whoever shows it line by line
+// then sees the same lines everyone else does.
+func Text(s string, max int) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return r
+		case r == '\r' || r == '\v' || r == '\f' || r == 0x85 || r == 0x2028 || r == 0x2029:
+			return '\n'
+		case unicode.IsControl(r):
+			return ' '
+		}
+		return r
+	}, s)
+	if len(s) > max {
+		s = strings.ToValidUTF8(s[:max], "")
 	}
 	return s
 }

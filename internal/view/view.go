@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/t4/internal/brand"
+	"github.com/a-Fig/t4/internal/bus"
 	"github.com/a-Fig/t4/internal/proto"
 )
 
@@ -177,7 +178,7 @@ func Inbox(r proto.Response) string {
 			b.WriteString("To: everyone\n")
 		}
 		fmt.Fprintf(&b, "Subject: %s\n", m.Subject)
-		if body := strings.TrimSpace(m.Body); body != "" {
+		if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
 			// Quoted line by line, so no line of it can pass for one of these headers.
 			for _, line := range strings.Split(body, "\n") {
 				b.WriteString("> " + strings.TrimRight(line, "\r") + "\n")

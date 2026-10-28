@@ -16,8 +16,7 @@ import (
 	"github.com/a-Fig/t4/internal/scrub"
 )
 
-// maxBody caps a message body. Everything on the bus stays in history for good.
-const maxBody = 32 << 10
+const maxBody = bus.MaxBody
 
 func fail(msg string) proto.Response { return proto.Response{Error: msg} }
 
@@ -261,8 +260,8 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto.Response {
 	to := strings.TrimSpace(req.To)
 	subject := bus.OneLine(req.Subject, 120)
-	if to == "" || subject == "" {
-		return fail("a message needs a recipient (device/session, a device, or * for everyone) and a subject")
+	if !bus.ValidTo(to) || subject == "" {
+		return fail("a message needs a recipient (device/session, a device, or * for everyone; see who) and a subject")
 	}
 	if len(req.Body) > maxBody {
 		return fail(fmt.Sprintf("not sent: the body is over %d KB, and the bus keeps everything forever", maxBody>>10))
