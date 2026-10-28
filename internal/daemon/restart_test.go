@@ -306,7 +306,7 @@ func TestReaderBackFromOutageSeesLiveClaims(t *testing.T) {
 
 	r := a.do(proto.Request{Op: proto.OpClaims, Session: "aaaaaa"})
 	if len(r.Claims) != 1 {
-		t.Fatalf("a was shown %d claims, want bob's", len(r.Claims))
+		t.Fatalf("a was shown %d claims, want bob's: %+v", len(r.Claims), r)
 	}
 	if c := a.claimAs("aaaaaa", "search too", r.Seen); c.Claimed == nil {
 		t.Fatalf("a's claim, made with bob's in view: %+v", c)
@@ -380,4 +380,84 @@ func TestStaleLockIsCleared(t *testing.T) {
 		}
 		return false
 	})
+}
+
+// A message that lands after a restarted daemon's first sync, but before a session that was
+// running reconnects, still reaches it.
+func TestMessageBeforeReconnectIsCaughtUp(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) })
+	b.restart() // returns once the new daemon is listening
+	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "sent while bob reconnects"})
+	eventually(t, "b reads it", func() bool {
+		for _, ev := range b.do(proto.Request{Op: proto.OpLog}).Events {
+			if strings.Contains(ev.Line, "sent while bob reconnects") {
+				return true
+			}
+		}
+		return false
+	})
+	b.helloAgain("bbbbbb", true)
+	if got := b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages; len(got) != 1 {
+		t.Fatalf("bob got %d messages, want the one sent while he reconnected", len(got))
+	}
+}
+
+// Just after a restart, a session's claim doesn't end a sibling's that is still reconnecting.
+func TestSiblingClaimAfterRestartSparesReconnectingClaims(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote, time.Minute), newDevice(t, remote, time.Minute)
+	s1, _ := b.session("111111", "")
+	b.session("222222", "")
+	if r := b.claimAs("111111", "search", ""); r.Claimed == nil {
+		t.Fatalf("claim: %+v", r)
+	}
+	eventually(t, "a sees it", func() bool { return claimsBy(a, s1) == 1 })
+
+	b.restart()
+	b.helloAgain("222222", true)
+	tok := b.do(proto.Request{Op: proto.OpClaims, Session: "222222"}).Seen
+	if r := b.claimAs("222222", "billing", tok); r.Claimed == nil {
+		t.Fatalf("sibling's claim: %+v", r)
+	}
+	b.helloAgain("111111", true)
+	eventually(t, "s1's claim back on a", func() bool { return claimsBy(a, s1) == 1 })
+	for _, ev := range b.do(proto.Request{Op: proto.OpLog}).Events {
+		if strings.Contains(ev.Line, "ending lapsed") {
+			t.Fatalf("the sibling's claim ended something: %s", ev.Line)
+		}
+	}
+}
+
+// When a daemon's first sync fails, sessions register before anything is settled. What is then
+// sent straight to them still reaches them; the backlog, broadcasts included, doesn't.
+func TestFirstSyncFailedStillDelivers(t *testing.T) {
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	dir := filepath.Join(t.TempDir(), "clone")
+	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
+	// Pushes go out, so presence is seen, but listing and fetching fail.
+	git(t, dir, "config", "remote.origin.pushurl", remote)
+	git(t, dir, "config", "remote.origin.url", filepath.Join(filepath.Dir(remote), "nowhere.git"))
+	b := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
+	b.start()
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "a sees bob", func() bool { return a.seesSession(bob) })
+
+	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast"})
+	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "direct"})
+	git(t, dir, "config", "remote.origin.url", remote)
+
+	var got []string
+	eventually(t, "bob gets the direct message", func() bool {
+		for _, m := range b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages {
+			got = append(got, m.Subject)
+		}
+		return len(got) > 0
+	})
+	if len(got) != 1 || got[0] != "direct" {
+		t.Fatalf("bob got %q, want only the direct message", got)
+	}
 }

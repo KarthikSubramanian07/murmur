@@ -126,6 +126,7 @@ type MessageView struct {
 	Subject    string    `json:"subject"`
 	Body       string    `json:"body,omitempty"`
 	At         time.Time `json:"at"`
+	Note       bool      `json:"note,omitempty"` // from this device's daemon, about this session
 }
 
 // EventView is one line of `log`.

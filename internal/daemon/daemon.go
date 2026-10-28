@@ -83,9 +83,11 @@ type Daemon struct {
 	mode       syncMode
 	gone       map[string]time.Time // devices whose presence was deleted (said goodbye), and when
 	pending    []bus.Event          // what arrived while down, for sessions that reconnect
+	caughtUp   map[string]bool      // sessions already given pending
 	lastPollOK time.Time            // wall clock of the last successful sync
 	liveGen    int64                // generation for seen tokens; see refreshLiveLocked
 
+	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
 	writeMu sync.Mutex // serializes appends to this device's log
 	ownTip  string     // the remote's tip of this device's log, as last known; under writeMu
@@ -152,6 +154,9 @@ type inMsg struct {
 	Event   bus.Event `json:"event"`
 	Arrived time.Time `json:"arrived"`
 	Noticed bool      `json:"noticed"`
+	// Note marks a message this daemon wrote itself. It is set only here, never read from the
+	// bus, where anyone with push access could claim to be t4.
+	Note bool `json:"note,omitempty"`
 }
 
 // state is what survives a restart, in state.json.
@@ -247,7 +252,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	d := &Daemon{
 		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
-		claimSeq: map[string]int{}, gone: map[string]time.Time{}, liveGen: now.UnixNano(),
+		claimSeq: map[string]int{}, gone: map[string]time.Time{}, liveGen: now.UnixNano(), caughtUp: map[string]bool{},
 		kick: make(chan struct{}, 1), quit: make(chan struct{}),
 	}
 	device, err := loadDevice(dir)

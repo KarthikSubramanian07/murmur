@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -202,7 +203,8 @@ func (r *Repo) UpdateLocal(ctx context.Context, ref, sha string) error {
 }
 
 // IsAncestor reports whether a is an ancestor of b (or equal to it). A commit that isn't
-// present locally counts as not an ancestor.
+// present locally counts as not an ancestor. Any other failure is an error, so that a passing
+// fault isn't taken for rewritten history, which callers handle by starting over.
 func (r *Repo) IsAncestor(ctx context.Context, a, b string) (bool, error) {
 	_, err := r.Git.Run(ctx, "", "merge-base", "--is-ancestor", a, b)
 	if err == nil {
@@ -211,8 +213,17 @@ func (r *Repo) IsAncestor(ctx context.Context, a, b string) (bool, error) {
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
-	// Exit 1 is "not an ancestor"; anything else here is a missing object.
-	return false, nil
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		return false, nil
+	}
+	for _, c := range []string{a, b} {
+		// cat-file -e exits 1, and only 1, for an object that isn't here.
+		if _, cerr := r.Git.Run(ctx, "", "cat-file", "-e", c); errors.As(cerr, &exit) && exit.ExitCode() == 1 {
+			return false, nil
+		}
+	}
+	return false, err
 }
 
 // recordSep and fieldSep cannot appear in what t4 writes: subjects are collapsed to one line

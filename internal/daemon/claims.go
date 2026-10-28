@@ -33,8 +33,16 @@ func (d *Daemon) advanceClaims(ctx context.Context, sha string, restoring bool) 
 	}
 	rebuild := prev == ""
 	if prev != "" {
-		if ok, _ := d.repo.IsAncestor(ctx, prev, sha); !ok {
-			if back, _ := d.repo.IsAncestor(ctx, sha, prev); back {
+		ok, err := d.repo.IsAncestor(ctx, prev, sha)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			back, err := d.repo.IsAncestor(ctx, sha, prev)
+			if err != nil {
+				return err
+			}
+			if back {
 				return nil // an older copy of history already read
 			}
 			rebuild = true // the ref was rewritten; start over from what it says now
@@ -50,7 +58,14 @@ func (d *Daemon) advanceClaims(ctx context.Context, sha string, restoring bool) 
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	// A rebuild keeps what this daemon already knew about each claim: when it first saw it, what
+	// tokens it was shown under, and which ends it already reported.
+	var before map[string]*claimRec
 	if rebuild {
+		before = map[string]*claimRec{}
+		for _, c := range d.claims {
+			before[c.ev.ID] = c
+		}
 		d.resetClaimsLocked()
 	}
 	now := time.Now()
@@ -67,13 +82,19 @@ func (d *Daemon) advanceClaims(ctx context.Context, sha string, restoring bool) 
 			if restoring && e.At.Before(now) {
 				seen = e.At
 			}
-			d.claims = append(d.claims, &claimRec{ev: e, seq: seq, seenAt: seen})
-			d.noteLocked(e.At, e.Line())
+			rec := &claimRec{ev: e, seq: seq, seenAt: seen}
+			old := before[e.ID]
+			if old != nil {
+				rec.seenAt, rec.checked, rec.live, rec.liveSince = old.seenAt, old.checked, old.live, old.liveSince
+			} else {
+				d.noteLocked(e.At, e.Line())
+			}
+			d.claims = append(d.claims, rec)
 			for _, id := range e.Ends {
-				if rec := d.findClaimLocked(id); rec != nil && !rec.released {
-					rec.released = true
-					if !restoring {
-						d.tellEndedLocked(rec.ev, e)
+				if ended := d.findClaimLocked(id); ended != nil && !ended.released {
+					ended.released = true
+					if was := before[id]; !restoring && (was == nil || !was.released) {
+						d.tellEndedLocked(ended.ev, e)
 					}
 				}
 			}
@@ -81,7 +102,9 @@ func (d *Daemon) advanceClaims(ctx context.Context, sha string, restoring bool) 
 			// Only the holder's own device can release a claim.
 			if rec := d.findClaimLocked(e.Claim); rec != nil && sameDevice(rec.ev.From, e.From) {
 				rec.released = true
-				d.noteLocked(e.At, e.Line())
+				if was := before[e.Claim]; was == nil || !was.released {
+					d.noteLocked(e.At, e.Line())
+				}
 			}
 		}
 	}
@@ -142,7 +165,12 @@ func (d *Daemon) claimLiveLocked(c *claimRec, now time.Time) bool {
 		if sess == proto.CLISession {
 			return !c.ev.At.Before(d.started)
 		}
-		return d.sessions[sess] != nil
+		if d.sessions[sess] != nil {
+			return true
+		}
+		// Just after a restart, a session that held the claim under the last daemon may still
+		// reconnect; until then, a sibling's claim mustn't end it.
+		return c.ev.At.Before(d.started) && now.Sub(d.started) < catchUpWindow
 	}
 	p := d.peers[dev]
 	if p == nil {
@@ -206,9 +234,12 @@ func (d *Daemon) tellEndedLocked(held, by bus.Event) {
 	case d.sessions[sess] == nil && time.Since(d.started) > 2*time.Minute:
 		return // the session is gone; just after a restart it may still reconnect
 	}
-	d.tellLocked(sess, fmt.Sprintf("Your claim %s (%q) was ended by %s's claim %s (%q), made while this device "+
-		"looked gone to the team (asleep, offline or restarting). Check claims, and talk to %s before carrying on.",
-		held.ID, held.What, by.From, by.ID, by.What, by.From))
+	when := "while this device looked gone to the team (asleep, offline or restarting)"
+	if sameDevice(by.From, held.From) {
+		when = "on this device, while your session wasn't connected to " + brand.Name
+	}
+	d.tellLocked(sess, fmt.Sprintf("Your claim %s (%q) was ended by %s's claim %s (%q), made %s. Check claims, "+
+		"and talk to %s before carrying on.", held.ID, held.What, by.From, by.ID, by.What, when, by.From))
 }
 
 // endOldCLIClaims releases claims made from the CLI under an earlier daemon. Every daemon
@@ -244,7 +275,7 @@ func (d *Daemon) endOldCLIClaims() {
 func (d *Daemon) tellLocked(sess, subject string) {
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: brand.Name,
 		To: bus.Addr(d.device, sess), Subject: subject, At: time.Now().UTC()}
-	d.st.Inbox[sess] = append(d.st.Inbox[sess], &inMsg{Event: e, Arrived: time.Now()})
+	d.st.Inbox[sess] = append(d.st.Inbox[sess], &inMsg{Event: e, Arrived: time.Now(), Note: true})
 	d.saveLocked()
 }
 

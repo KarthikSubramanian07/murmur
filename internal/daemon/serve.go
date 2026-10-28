@@ -333,7 +333,7 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 		e := m.Event
 		agent, branch := d.sessionInfoLocked(e.From)
 		v := proto.MessageView{ID: e.ID, From: e.From, FromAgent: agent, FromBranch: branch, To: e.To,
-			Subject: e.Subject, At: e.At}
+			Subject: e.Subject, At: e.At, Note: m.Note}
 		if withBody {
 			v.Body = e.Body
 		}
