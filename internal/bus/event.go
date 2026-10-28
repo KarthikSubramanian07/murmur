@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/a-Fig/t4/internal/brand"
 )
 
 // Version is the format version every event and presence record carries. A reader skips
@@ -142,6 +144,23 @@ func ValidName(s string) bool {
 	return true
 }
 
+// ValidDevice accepts device IDs: valid names that every filesystem can hold as a ref (none of
+// Windows' reserved device names), other than t4's own, which only t4 itself speaks as. IDs t4
+// makes always pass: a hostname slug and 4 hex digits.
+func ValidDevice(s string) bool {
+	if !ValidName(s) || s == brand.Name {
+		return false
+	}
+	switch s {
+	case "con", "prn", "aux", "nul":
+		return false
+	}
+	if len(s) == 4 && (strings.HasPrefix(s, "com") || strings.HasPrefix(s, "lpt")) && s[3] >= '0' && s[3] <= '9' {
+		return false
+	}
+	return true
+}
+
 // validID accepts event IDs: lowercase hex digits, as NewID makes them.
 func validID(s string) bool {
 	if len(s) < 8 || len(s) > 40 {
@@ -158,7 +177,7 @@ func validID(s string) bool {
 // validAddr accepts a sender: device/session.
 func validAddr(a string) bool {
 	dev, sess := SplitAddr(a)
-	return ValidName(dev) && ValidName(sess)
+	return ValidDevice(dev) && ValidName(sess)
 }
 
 // ValidTo accepts a recipient: everyone, a device, or a session.
@@ -167,7 +186,7 @@ func ValidTo(to string) bool {
 		return true
 	}
 	if !strings.Contains(to, "/") {
-		return ValidName(to)
+		return ValidDevice(to)
 	}
 	return validAddr(to)
 }

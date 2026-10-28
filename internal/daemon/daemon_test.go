@@ -47,10 +47,12 @@ func gitIn(t *testing.T, dir, stdin string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func newRemote(t *testing.T) string {
+// newRemote makes a bare repo to stand in for GitHub. initArgs go to its git init; reftable
+// storage, say, holds ref names this machine's files can't, as GitHub does.
+func newRemote(t *testing.T, initArgs ...string) string {
 	root := t.TempDir()
 	remote := filepath.Join(root, "remote.git")
-	git(t, root, "init", "-q", "--bare", "--initial-branch=main", remote)
+	git(t, root, append([]string{"init", "-q", "--bare", "--initial-branch=main"}, append(initArgs, remote)...)...)
 	seed := filepath.Join(root, "seed")
 	git(t, root, "init", "-q", "--initial-branch=main", seed)
 	git(t, seed, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "init")
@@ -423,11 +425,12 @@ func TestForgedBusTextIsHeldToT4s(t *testing.T) {
 	}
 }
 
-// Junk on the remote, pushed by hand, stops nothing: a presence or log that isn't a commit, and
-// logs under names no device can have, are passed over. Claims and messages still work, and the
-// backlog still empties, so a restart still catches up.
+// Junk on the remote, pushed by hand, stops nothing: a presence or log that isn't a commit, logs
+// and presences under names no device can have (t4's own, one Windows can't store as a file), and
+// a ref clashing with a device's old presence are passed over. Claims and messages still work,
+// and the backlog still empties, so a restart still catches up.
 func TestJunkRefsStopNothing(t *testing.T) {
-	remote := newRemote(t)
+	remote := newRemote(t, "--ref-format=reftable")
 	work := t.TempDir()
 	git(t, work, "init", "-q")
 	tree := git(t, work, "hash-object", "-t", "tree", "--stdin")
@@ -437,6 +440,9 @@ func TestJunkRefsStopNothing(t *testing.T) {
 		From: "t4", At: now, To: "*", Subject: "forged"})
 	pushEvent(t, remote, "refs/t4/mesh/BAD-0003", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
 		From: "BAD-0003/x", At: now, To: "*", Subject: "forged"})
+	for _, dev := range []string{"t4", "nul"} {
+		pushEvent(t, remote, "refs/t4/presence/"+dev, bus.Event{V: bus.Version})
+	}
 
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	bob, _ := b.session("bbbbbb", "")
@@ -444,8 +450,21 @@ func TestJunkRefsStopNothing(t *testing.T) {
 	if r := a.do(proto.Request{Op: proto.OpClaim, What: "search"}); r.Claimed == nil {
 		t.Fatalf("claim: %+v", r)
 	}
+	for _, dv := range a.do(proto.Request{Op: proto.OpWho}).Devices {
+		if dv.ID == "t4" || dv.ID == "nul" {
+			t.Fatalf("who lists %s", dv.ID)
+		}
+	}
 
+	// b says goodbye, so its presence is deleted on the remote but a keeps a local copy; a ref
+	// under that name would clash with it if a fetched it.
+	bdev := b.self()
 	b.stop()
+	eventually(t, "the goodbye", func() bool { return !a.seesSession(bob) })
+	git(t, work, "push", "-q", remote, tree+":refs/t4/presence/"+bdev+"/x")
+	if r := a.do(proto.Request{Op: proto.OpClaim, What: "billing"}); r.Claimed == nil {
+		t.Fatalf("claim after the clashing ref: %+v", r)
+	}
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "during the restart"})
 	b.start()
 	b.helloAgain("bbbbbb", true)

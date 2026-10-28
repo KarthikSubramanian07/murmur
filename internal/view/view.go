@@ -181,7 +181,7 @@ func Inbox(r proto.Response) string {
 		if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
 			// Quoted line by line, so no line of it can pass for one of these headers.
 			for _, line := range strings.Split(body, "\n") {
-				b.WriteString("> " + strings.TrimRight(line, "\r") + "\n")
+				b.WriteString("> " + line + "\n")
 			}
 		}
 		fmt.Fprintf(&b, "(Reply to %s.)\n", m.From)

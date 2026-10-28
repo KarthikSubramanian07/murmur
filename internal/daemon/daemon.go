@@ -90,8 +90,10 @@ type Daemon struct {
 	// read under the mode the daemon started in, and the mode turns normal once all have been.
 	// nil until that listing.
 	backlog    map[string]bool
-	lastPollOK time.Time // when the last successful sync fetched (monotonic)
-	liveGen    int64     // generation for seen tokens; see refreshLiveLocked
+	backlogAt  time.Time         // when the backlog was taken
+	unfetched  map[string]string // refs whose fetch failed, at the SHA that failed; logged once
+	lastPollOK time.Time         // when the last successful sync fetched (monotonic)
+	liveGen    int64             // generation for seen tokens; see refreshLiveLocked
 
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
@@ -139,9 +141,11 @@ const (
 // peer is another device as its presence ref shows it.
 type peer struct {
 	pres bus.Presence
-	sha  string
-	// lastChange is when this daemon saw the presence change, on this machine's clock, so that
-	// staleness never compares two machines' clocks.
+	sha  string // the presence last read, or found unreadable
+	// listed is the presence SHA last seen in a listing, read or not. lastChange is when this
+	// daemon saw it change, on this machine's clock, so that staleness never compares two
+	// machines' clocks.
+	listed     string
 	lastChange time.Time
 }
 
@@ -259,7 +263,8 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		claimSeq: map[string]int{}, gone: map[string]time.Time{}, liveGen: now.UnixNano(), caughtUp: map[string]bool{},
-		kick: make(chan struct{}, 1), quit: make(chan struct{}),
+		unfetched: map[string]string{},
+		kick:      make(chan struct{}, 1), quit: make(chan struct{}),
 	}
 	device, err := loadDevice(dir)
 	if err != nil {
