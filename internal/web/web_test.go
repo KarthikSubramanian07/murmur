@@ -26,11 +26,13 @@ type fakeSource struct {
 	sets     int
 	cursor   string
 	unmuted  [][2]string
+	watched  []bool // what Watched said of each State call
 }
 
 func (f *fakeSource) State(ctx context.Context) (State, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.watched = append(f.watched, Watched(ctx))
 	return f.state, nil
 }
 
@@ -458,5 +460,29 @@ func TestPRURLMustBeHTTPS(t *testing.T) {
 	prs := pollPRs(t, h, func(p map[string]PR) bool { return len(p) > 0 })
 	if prs["web-page"].URL != "" {
 		t.Errorf("non-https PR URL passed through: %q", prs["web-page"].URL)
+	}
+}
+
+// A page in a tab nobody can see says so, and the source hears it: a daemon lets only a page
+// someone can see keep it running.
+func TestHiddenPageIsNotWatched(t *testing.T) {
+	src := newFake()
+	h := start(t, src, noPRs)
+	h.ok("GET", "/api/state", "")
+	req, _ := http.NewRequest("GET", h.srv.URL+"/api/state", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("X-Page-Hidden", "1")
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("hidden page's call: %d", resp.StatusCode)
+	}
+	src.mu.Lock()
+	defer src.mu.Unlock()
+	if !reflect.DeepEqual(src.watched, []bool{true, false}) {
+		t.Errorf("watched = %v, want [true false]: a visible page's call, then a hidden one's", src.watched)
 	}
 }

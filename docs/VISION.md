@@ -163,9 +163,12 @@ call.
   Nothing acts on them yet: waking is #25. A session's last-active time (#21) and mutes (#27)
   aren't built, so the page shows neither and refuses to unmute.
 - **Open page, running daemon.** The page asks for its state every 3 s, 15 s in a hidden tab. A
-  call that carries the token counts as an open page for 2 minutes, and an open page stops the
-  10-minute countdown the way a session does: a daemon with a tab open and no sessions exits about
-  12 minutes after the tab closes. A request without the token doesn't count.
+  call that carries the token, from a page someone can see, counts as an open page for 2 minutes,
+  and an open page stops the 10-minute countdown the way a session does: a daemon with no sessions
+  exits about 12 minutes after its page is closed or hidden (a background tab, a minimized window,
+  a locked screen). A hidden page marks its calls, so a tab forgotten in the background doesn't
+  keep the daemon, and its polling of GitHub, up for good (Opus review, 2026-10-29). A request
+  without the token doesn't count.
 
 ### When a session stays the same session
 

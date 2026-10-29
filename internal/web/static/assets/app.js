@@ -55,6 +55,8 @@ async function api(path, init = {}) {
   const token = ui.token;
   const headers = { Authorization: "Bearer " + token };
   if (init.body) headers["Content-Type"] = "application/json";
+  // A tab nobody can see still polls, but mustn't keep the daemon running for good.
+  if (document.hidden) headers["X-Page-Hidden"] = "1";
   const res = await fetch(path, { ...init, headers, cache: "no-store" });
   if (res.status === 401) throw new AuthError(token);
   if (!res.ok) {

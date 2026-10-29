@@ -73,12 +73,20 @@ func (p *page) call(method, path, token, body string) (int, string) {
 
 // status sends a GET and says how it was answered. Unlike call, it reports a daemon that isn't
 // there as an error, not a failure of the test.
-func (p *page) status(path, token string) (int, error) {
+func (p *page) status(path, token string) (int, error) { return p.statusOf(path, token, false) }
+
+// hiddenStatus is status for a page in a tab nobody can see, which says so with each call.
+func (p *page) hiddenStatus(path, token string) (int, error) { return p.statusOf(path, token, true) }
+
+func (p *page) statusOf(path, token string, hidden bool) (int, error) {
 	req, err := http.NewRequest("GET", p.base+path, nil)
 	if err != nil {
 		p.t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	if hidden {
+		req.Header.Set("X-Page-Hidden", "1")
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return 0, err
@@ -630,13 +638,19 @@ func (d *device) exited() bool {
 
 // A page that keeps calling the API keeps a daemon with no sessions from exiting, as a session
 // would; one that has stopped lets it go, and one whose calls don't carry the token never held it.
+// Nor does a page in a tab nobody can see: it goes on polling for as long as the browser runs, and
+// a tab forgotten in the background would keep the daemon, and its polling of GitHub, up for good.
 func TestOpenPageKeepsDaemonUp(t *testing.T) {
 	const idle, open = 3 * time.Second, 2 * time.Second
 	remote := newRemote(t)
 	timed := func(d *device) { d.idle, d.pageOpen = idle, open }
-	watched := newDeviceWith(t, remote, timed)
+	// The watched one last: each daemon's idle time runs from its start, and starting one takes a
+	// while on a loaded machine.
 	stranger := newDeviceWith(t, remote, timed)
-	pg, sg := watched.page(), stranger.page()
+	forgotten := newDeviceWith(t, remote, timed)
+	sg, fg := stranger.page(), forgotten.page()
+	watched := newDeviceWith(t, remote, timed)
+	pg := watched.page()
 
 	// Calls for longer than the idle time. Without a page open, the daemon would be gone by now.
 	var last time.Time
@@ -648,12 +662,18 @@ func TestOpenPageKeepsDaemonUp(t *testing.T) {
 		if code, err := sg.status("/api/state", "not-the-token"); err == nil && code != http.StatusUnauthorized {
 			t.Fatalf("a call without the token: %d", code)
 		}
+		if code, err := fg.hiddenStatus("/api/state", fg.token); err == nil && code != http.StatusOK {
+			t.Fatalf("a hidden page's call: %d", code)
+		}
 		if watched.exited() {
 			t.Fatalf("the daemon exited %s after the page's last call, with the page open", time.Since(last))
 		}
 	}
 	if !stranger.exited() {
 		t.Errorf("calls without the token kept a daemon up")
+	}
+	if !forgotten.exited() {
+		t.Errorf("a hidden page's calls kept a daemon up")
 	}
 
 	// The calls stop. The page counts as open for a while more, and the idle time runs from then.

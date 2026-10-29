@@ -6,7 +6,8 @@ import (
 )
 
 // Source is everything the page shows and changes. The daemon implements it; the page reaches
-// the daemon through nothing else.
+// the daemon through nothing else. Each method's ctx says, through Watched, whether the page that
+// called can be seen.
 type Source interface {
 	// State is this device, every device the daemon knows of with its sessions, and the mutes.
 	State(ctx context.Context) (State, error)

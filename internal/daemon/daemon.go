@@ -48,8 +48,8 @@ type Options struct {
 	// PageAddr is where the page for humans is served: 127.0.0.1:0, a random port on loopback.
 	// Anything that isn't on loopback is refused, as anyone on the network could reach the page.
 	PageAddr string
-	// PageOpen is how recently the page must have called its API to count as open, which keeps the
-	// daemon running like a session does: 2 min.
+	// PageOpen is how recently a page someone can see must have called its API to count as open,
+	// which keeps the daemon running like a session does: 2 min. A hidden tab's calls don't count.
 	PageOpen time.Duration
 	// PageMessages is how many messages the page can look back on: 500.
 	PageMessages int
@@ -135,8 +135,8 @@ type Daemon struct {
 	// namesChecked says the registry has been looked at since this daemon started, even if its
 	// tip is the one state.json recorded.
 	namesChecked bool
-	// lastPage is when the page last called its API, zero if it hasn't. msgs is the page's
-	// messages, oldest first, msgSeq the number of the newest and msgIDs the IDs in msgs.
+	// lastPage is when a page someone can see last called its API, zero if none has. msgs is the
+	// page's messages, oldest first, msgSeq the number of the newest and msgIDs the IDs in msgs.
 	lastPage time.Time
 	msgs     []pageMsg
 	msgSeq   uint64

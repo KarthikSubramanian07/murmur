@@ -75,7 +75,8 @@ func repoDir(gitDir string) string {
 }
 
 // pageSource is the daemon as the page sees it. The page's server calls it only for requests that
-// carry the daemon's token, so each call is proof that a page is open.
+// carry the daemon's token, so each call is proof that a page is open; one from a page someone can
+// see (web.Watched) keeps the daemon running.
 type pageSource struct{ d *Daemon }
 
 var _ web.Source = pageSource{}
@@ -88,7 +89,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	now := time.Now()
-	d.lastPage = now
+	d.pageSeenLocked(ctx, now)
 
 	self := web.Device{ID: d.device, Host: d.host, Owner: d.owner, Self: true, Reachable: true, LastSeen: now}
 	live := d.liveNamesLocked()
@@ -180,7 +181,7 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.lastPage = time.Now()
+	d.pageSeenLocked(ctx, time.Now())
 
 	after = min(after, d.msgSeq)
 	first := sort.Search(len(d.msgs), func(i int) bool { return d.msgs[i].seq > after })
@@ -244,7 +245,7 @@ func (d *Daemon) loadSettings() {
 }
 
 func (s pageSource) Settings(ctx context.Context) (web.Settings, error) {
-	s.d.pageCalled()
+	s.d.pageCalled(ctx)
 	s.d.setMu.Lock()
 	defer s.d.setMu.Unlock()
 	return s.d.settings.view(), nil
@@ -254,7 +255,7 @@ func (s pageSource) Settings(ctx context.Context) (web.Settings, error) {
 // the ones that were in force.
 func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Settings, error) {
 	d := s.d
-	d.pageCalled()
+	d.pageCalled(ctx)
 	if err := web.CheckSettings(set); err != nil {
 		return web.Settings{}, err
 	}
@@ -273,12 +274,21 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 
 // Unmute is for mutes (#27), which don't exist yet.
 func (s pageSource) Unmute(ctx context.Context, by, muted string) error {
-	s.d.pageCalled()
+	s.d.pageCalled(ctx)
 	return errors.New("mutes aren't built yet (#27), so there is nothing to unmute")
 }
 
-func (d *Daemon) pageCalled() {
+func (d *Daemon) pageCalled(ctx context.Context) {
 	d.mu.Lock()
-	d.lastPage = time.Now()
+	d.pageSeenLocked(ctx, time.Now())
 	d.mu.Unlock()
+}
+
+// pageSeenLocked notes a call from the page, which keeps the daemon running only if someone can
+// see the page: a tab left in the background goes on polling for as long as the browser runs.
+// Caller holds mu.
+func (d *Daemon) pageSeenLocked(ctx context.Context, now time.Time) {
+	if web.Watched(ctx) {
+		d.lastPage = now
+	}
 }

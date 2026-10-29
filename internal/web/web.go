@@ -105,8 +105,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "missing or wrong token")
 			return
 		}
+		if r.Header.Get(hiddenHeader) != "" {
+			r = r.WithContext(context.WithValue(r.Context(), hiddenKey{}, true))
+		}
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// hiddenHeader marks a call from a page nobody can see: a background tab, a minimized window, a
+// locked screen. Such a page goes on polling, slowly, so that it is current when it is looked at
+// again, and a tab forgotten for days would otherwise look like someone watching.
+const hiddenHeader = "X-Page-Hidden"
+
+type hiddenKey struct{}
+
+// Watched says whether the call ctx belongs to came from a page someone can see. The Source's
+// methods get that ctx, so a daemon can let only a watched page keep it running.
+func Watched(ctx context.Context) bool {
+	hidden, _ := ctx.Value(hiddenKey{}).(bool)
+	return !hidden
 }
 
 // hostOK accepts only a Host naming the loopback address and port the request arrived on. A
