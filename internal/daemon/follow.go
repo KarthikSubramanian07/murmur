@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/a-Fig/t4/internal/bus"
@@ -29,10 +30,15 @@ func (d *Daemon) uniqueKeyLocked(key, id string) string {
 
 // setNameLocked gives s its name, "" if it has none yet. A name that lands is also recorded as
 // held by s, the last to take it, and as s's own last: that is how a message for the session the
-// registry has the name down for finds s (see forwardLocked). Caller holds mu.
+// registry has the name down for finds s (see forwardLocked). s also takes what was kept for the
+// name (see adoptLocked). Caller holds mu.
 func (d *Daemon) setNameLocked(s *session, name string) {
 	s.name = name
-	if name == "" || d.st.NameHolders[name] == s.id && d.st.SessionNames[s.id] == name {
+	if name == "" {
+		return
+	}
+	adopted := d.adoptLocked(s, name)
+	if !adopted && d.st.NameHolders[name] == s.id && d.st.SessionNames[s.id] == name {
 		return
 	}
 	if d.st.NameHolders == nil {
@@ -43,6 +49,47 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 	}
 	d.st.NameHolders[name], d.st.SessionNames[s.id] = s.id, name
 	d.saveLocked()
+}
+
+// adoptLocked moves into s's inbox the inboxes kept for sessions stopped within StoppedInbox whose
+// last name was name, and says whether there were any. What is sent to a name whose sessions have
+// all stopped waits in a stopped session's inbox: the registry's address, or the last holder's,
+// to which forwardLocked sends it. But a conversation comes back as whichever session takes its
+// name next, which need be neither: the registry's own ID when Claude Code resumes it from the
+// command line (the server's ID is derived from the conversation's), or a third session that a
+// hook moves to it. Without this, what was forwarded to the last holder would wait for a session
+// that never returns. Caller holds mu.
+func (d *Daemon) adoptLocked(s *session, name string) bool {
+	box := d.st.Inbox[s.id]
+	seen := map[string]bool{}
+	for _, m := range box {
+		seen[m.Event.ID] = true
+	}
+	var from []string
+	for _, id := range sortedKeys(d.st.Stopped) {
+		if id == s.id || d.sessions[id] != nil || d.st.SessionNames[id] != name ||
+			time.Since(d.st.Stopped[id]) > d.opt.StoppedInbox || len(d.st.Inbox[id]) == 0 {
+			continue
+		}
+		for _, m := range d.st.Inbox[id] {
+			if !seen[m.Event.ID] {
+				seen[m.Event.ID] = true
+				box = append(box, m)
+			}
+		}
+		delete(d.st.Inbox, id)
+		from = append(from, bus.Addr(d.device, id))
+	}
+	if len(from) == 0 {
+		return false
+	}
+	sort.SliceStable(box, func(i, j int) bool { return box[i].Arrived.Before(box[j].Arrived) })
+	if len(box) > maxInbox {
+		box = box[len(box)-maxInbox:]
+	}
+	d.st.Inbox[s.id] = box
+	d.log.Printf("session %s, taking the name %s, took what was kept for it at %v", bus.Addr(d.device, s.id), name, from)
+	return true
 }
 
 // hookSessionsLocked finds the live sessions a hook speaks for, given the Claude Code session ID it

@@ -280,7 +280,11 @@ change and a daemon that knows no names delivers by it all the same.
   name and the last name each of its sessions held. A message for a session of this device that
   isn't running goes to the session that holds the name it last had, if that one is registered
   or stopped within `StoppedInbox`: whether it is sent by name or by `device/session`. It is one
-  hop. What was already in the retired inbox stays there.
+  hop. And a session that takes a name takes the inboxes kept for the sessions, stopped within
+  `StoppedInbox`, whose last name it was. A conversation comes back as whichever session takes its
+  name next: the registry's own ID when it is resumed from the command line, since the server's ID
+  is derived from the conversation's; the last holder, if its server restarts; or a third session
+  a hook moves to it. A message to the name waits for any of them (2026-10-29).
 - **V1 daemons.** They don't read the registry, and their presence has no names. Their sessions
   show without one and are reached at `device/session`, and they reach sessions named here the
   same way.

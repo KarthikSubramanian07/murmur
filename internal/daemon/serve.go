@@ -516,7 +516,6 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 	// registered it: the name is waiting here from the first moment, without the registry.
 	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession, branch: branch,
 		started: time.Now(), reconnect: h.Reconnect, key: key, clientPID: h.ClientPID}
-	d.setNameLocked(s, d.st.NameKeys[key])
 	if at, ok := d.st.Stopped[h.ID]; ok {
 		delete(d.st.Stopped, h.ID)
 		if time.Since(at) > d.opt.StoppedInbox {
@@ -526,6 +525,8 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 		}
 		d.saveLocked()
 	}
+	// After its own inbox is settled, which an expired stop empties: the name may bring more.
+	d.setNameLocked(s, d.st.NameKeys[key])
 	d.sessions[h.ID] = s
 	return s
 }

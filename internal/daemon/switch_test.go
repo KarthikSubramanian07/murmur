@@ -428,6 +428,55 @@ func TestMessageForARetiredIDGoesToTheHolder(t *testing.T) {
 	}
 }
 
+// #37 the other way back. Conversation X's name went to another session, which stopped too, and a
+// message sent to X's name meanwhile went on to that session's kept inbox. X is then resumed from
+// the command line, so its server has X in its environment and X's own t4 ID again, or a session
+// opened on something else follows a hook to X. Whichever takes X's name takes what was kept for it.
+func TestTheSessionThatTakesANameTakesWhatWasKeptForIt(t *testing.T) {
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
+	a.session("aaaaaa", "claude-sender")
+
+	first, conn1, _ := b.sessionPID("cccccc", "claude-x", procP)
+	nameX := b.named(first)
+	a.nameIs(first, nameX)
+	conn1.Close()
+	eventually(t, "the first to stop", func() bool { return busLines(b, first, "stopped") == 1 })
+
+	// /resume X in a process opened on a throwaway conversation; that session stops too.
+	second, conn2, _ := b.sessionPID("dddddd", "claude-throwaway", procQ)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-x", ClientPID: procQ})
+	b.nameIs(second, nameX)
+	conn2.Close()
+	eventually(t, "the second to stop", func() bool { return busLines(b, second, "stopped") == 1 })
+	eventually(t, "presence to empty", func() bool { return !a.seesSession(first) && !a.seesSession(second) })
+
+	a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "while X was gone"})
+	eventually(t, "delivery", func() bool { return logHas(b, "while X was gone") })
+
+	// claude --resume X.
+	_, conn1, _ = b.sessionPID("cccccc", "claude-x", procP)
+	b.nameIs(first, nameX)
+	b.noticed("claude-x", procP, "while X was gone")
+	if got := inboxOf(b, "cccccc"); len(got) != 1 || got[0] != "while X was gone" {
+		t.Fatalf("X, back under its own ID, has %v", got)
+	}
+
+	// It stops again, and a message waits in its own inbox. A third process, opened on a throwaway
+	// and resumed to X, takes the name and the message.
+	conn1.Close()
+	eventually(t, "the first to stop again", func() bool { return busLines(b, first, "stopped") == 2 })
+	a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "while X was gone again"})
+	eventually(t, "delivery", func() bool { return logHas(b, "while X was gone again") })
+	third, _, _ := b.sessionPID("eeeeee", "claude-throwaway-2", procQ)
+	// The hook that moves it is told at once.
+	if told := b.hook("claude-x", procQ); len(told) != 1 || told[0] != "while X was gone again" {
+		t.Fatalf("the hook that moved the third session to X was told %v", told)
+	}
+	b.nameIs(third, nameX)
+}
+
 // The real hook: a payload on stdin and CLAUDE_PID in its environment drive a switch end to end, and
 // the notice for the new conversation comes out on stdout.
 func TestHookRunDrivesASwitch(t *testing.T) {
