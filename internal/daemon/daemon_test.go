@@ -81,8 +81,15 @@ type device struct {
 	keep   time.Duration // StoppedInbox; likewise
 	names  io.Reader     // NameSource; nil takes crypto/rand's
 	retry  time.Duration // NameRetry; zero takes 200 ms
-	c      *client.Client
-	stop   func()
+	// The page for humans: Idle (zero: never exit), PageOpen, PageMessages and PageAddr, for the
+	// daemon's options of the same names; logTo, if set, takes the daemon's log.
+	idle, pageOpen time.Duration
+	pageMsgs       int
+	pageAddr       string
+	logTo          io.Writer
+	c              *client.Client
+	stop           func()
+	done           chan struct{} // closed when the daemon's Run has returned
 }
 
 // newDevice clones remote and starts a daemon for the clone. stale, if given, overrides the
@@ -115,14 +122,23 @@ func (d *device) start() {
 	if retry == 0 {
 		retry = 200 * time.Millisecond
 	}
+	idle := d.idle
+	if idle == 0 {
+		idle = -1
+	}
+	logger := testLog()
+	if d.logTo != nil {
+		logger = log.New(d.logTo, "", 0)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
+	d.done = done
 	go func() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
-			Heartbeat: 500 * time.Millisecond, StaleAfter: d.stale, Idle: -1,
+			Heartbeat: 500 * time.Millisecond, StaleAfter: d.stale, Idle: idle,
 			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry,
-			Log: testLog()})
+			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, Log: logger})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)
 		}
