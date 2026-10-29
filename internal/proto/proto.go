@@ -12,9 +12,6 @@ const (
 	OpHello   = "hello"
 	OpWho     = "who"
 	OpStatus  = "status"
-	OpClaims  = "claims"
-	OpClaim   = "claim"
-	OpRelease = "release"
 	OpSend    = "send"
 	OpInbox   = "inbox"
 	OpNotices = "notices"
@@ -22,8 +19,8 @@ const (
 	OpStop    = "stop"
 )
 
-// CLISession is the session ID of requests from the command line. It is always present on its
-// device, so a human can claim, send and read an inbox without an agent.
+// CLISession is the session ID of requests from the command line. It is always registered on its
+// device, so a human can send and read an inbox without an agent.
 const CLISession = "cli"
 
 // Info is what the daemon writes to daemon.json for clients to find it.
@@ -42,15 +39,11 @@ type Request struct {
 
 	Hello *Hello `json:"hello,omitempty"`
 
-	To      string   `json:"to,omitempty"`
-	Subject string   `json:"subject,omitempty"`
-	Body    string   `json:"body,omitempty"`
-	Doing   string   `json:"doing,omitempty"`
-	What    string   `json:"what,omitempty"`
-	Paths   []string `json:"paths,omitempty"`
-	Seen    string   `json:"seen,omitempty"`
-	Claim   string   `json:"claim,omitempty"`
-	Limit   int      `json:"limit,omitempty"`
+	To      string `json:"to,omitempty"`
+	Subject string `json:"subject,omitempty"`
+	Body    string `json:"body,omitempty"`
+	Doing   string `json:"doing,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
 
 	// ClaudeSession finds the session for the hook, which only knows Claude Code's ID for it.
 	ClaudeSession string `json:"claudeSession,omitempty"`
@@ -76,11 +69,6 @@ type Response struct {
 
 	Devices []Device `json:"devices,omitempty"`
 
-	Claims  []ClaimView `json:"claims,omitempty"`  // open claims
-	Unseen  []ClaimView `json:"unseen,omitempty"`  // claim: open claims the caller's token didn't show
-	Claimed *ClaimView  `json:"claimed,omitempty"` // claim: the claim just made
-	Seen    string      `json:"seen,omitempty"`    // a token for what these results showed, for claim
-
 	Messages []MessageView `json:"messages,omitempty"`
 	Events   []EventView   `json:"events,omitempty"`
 }
@@ -98,22 +86,12 @@ type Device struct {
 
 // SessionView is one session as `who` shows it.
 type SessionView struct {
-	Addr    string      `json:"addr"`
-	Agent   string      `json:"agent"`
-	Branch  string      `json:"branch,omitempty"`
-	Doing   string      `json:"doing,omitempty"`
-	Started time.Time   `json:"started"`
-	You     bool        `json:"you,omitempty"`
-	Claims  []ClaimView `json:"claims,omitempty"`
-}
-
-// ClaimView is one claim.
-type ClaimView struct {
-	ID    string    `json:"id"`
-	By    string    `json:"by"`
-	What  string    `json:"what"`
-	Paths []string  `json:"paths,omitempty"`
-	At    time.Time `json:"at"`
+	Addr    string    `json:"addr"`
+	Agent   string    `json:"agent"`
+	Branch  string    `json:"branch,omitempty"`
+	Doing   string    `json:"doing,omitempty"`
+	Started time.Time `json:"started"`
+	You     bool      `json:"you,omitempty"`
 }
 
 // MessageView is one received message. Notices carry no Body.
@@ -126,7 +104,6 @@ type MessageView struct {
 	Subject    string    `json:"subject"`
 	Body       string    `json:"body,omitempty"`
 	At         time.Time `json:"at"`
-	Note       bool      `json:"note,omitempty"` // from this device's daemon, about this session
 }
 
 // EventView is one line of `log`.

@@ -18,9 +18,9 @@ machines through GitHub. "t4" is a working name.
   for pushes shouldn't fire either (inferred). `git clone` / `git pull` never fetch them.
 - One small daemon per clone syncs those refs; each agent session connects to it through an MCP
   server (or a human through the CLI).
-- Agents post **claims** before building something, see each other's **presence**, and send
-  **messages**. A message shows up as a one-line notice (sender and subject); the agent reads the
-  body with the `inbox` tool.
+- Agents see each other's **presence** (who is working where, on what) and send **messages**.
+  A message shows up as a one-line notice (sender and subject); the agent reads the body with
+  the `inbox` tool.
 
 [`docs/VISION.md`](docs/VISION.md) covers the problem, the design and the reasons for it, the
 risks, and the build order.
@@ -37,11 +37,11 @@ go build -o ~/bin/t4 ./cmd/t4      # anywhere on PATH; t4.exe on Windows
 Then, once per project repo, one person runs `t4 init` in it and commits what it writes:
 `.mcp.json` (the MCP server for Claude Code), `.claude/settings.json` (the notice hook) and a
 section of `AGENTS.md`. Claude Code asks each teammate once whether to trust the MCP server.
-After that, agents use the `who`, `status`, `claims`, `claim`, `release`, `send` and `inbox`
-tools; nothing else needs starting.
+After that, agents use the `who`, `status`, `send` and `inbox` tools; nothing else needs
+starting.
 
-Humans get the same through the CLI (`t4 help`): `t4 who`, `t4 claims`, `t4 send <to>
-<subject> [body]`, `t4 inbox`, `t4 log`.
+Humans get the same through the CLI (`t4 help`): `t4 who`, `t4 send <to> <subject> [body]`,
+`t4 inbox`, `t4 log`.
 
 ## Working on t4
 

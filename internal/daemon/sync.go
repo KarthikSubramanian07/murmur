@@ -43,8 +43,7 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 // pollOnce lists the remote's bus refs and fetches and processes the ones that changed. The
 // listing is one cheap round trip; objects move only when something changed.
 func (d *Daemon) pollOnce(ctx context.Context) error {
-	// A listing applied after a newer one would delete presence that has since appeared, and
-	// mark its device gone.
+	// A listing applied after a newer one would drop presence that has since appeared.
 	d.syncMu.Lock()
 	defer d.syncMu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
@@ -117,7 +116,6 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			d.known[ref] = remote[ref]
 		}
 	}
-	d.claimsFetchErr = failed[brand.ClaimsRef]
 	d.mu.Unlock()
 	d.clearOwnJunk(listed)
 
@@ -132,10 +130,6 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			continue
 		}
 		switch {
-		case ref == brand.ClaimsRef:
-			if err := d.advanceClaims(ctx, sha, false); err != nil {
-				d.log.Printf("reading claims: %v", err)
-			}
 		case strings.HasPrefix(ref, brand.MeshPrefix):
 			if _, ok := meshDevice(ref); ok {
 				d.advanceMesh(ctx, ref, sha)
@@ -144,8 +138,8 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			d.updatePeer(ctx, ref, sha)
 		}
 	}
-	// A sync cut short is no fresh look: claim, which judges from it, would act on what it
-	// didn't get to.
+	// A sync cut short is no fresh look: staleness is judged up to the last successful sync, and
+	// this one didn't read every presence it listed.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -154,12 +148,8 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	defer d.mu.Unlock()
 	for dev := range d.peers {
 		if _, ok := remote[brand.PresencePrefix+dev]; !ok {
-			delete(d.peers, dev) // its daemon said goodbye, and its claims end now
-			d.gone[dev] = time.Now()
+			delete(d.peers, dev) // its daemon said goodbye
 		}
-	}
-	if _, ok := remote[brand.ClaimsRef]; !ok {
-		d.claimsGoneLocked()
 	}
 	d.lastPollOK = polled
 	switched := false
@@ -182,17 +172,17 @@ func meshDevice(ref string) (string, bool) {
 	return dev, bus.ValidDevice(dev)
 }
 
-// readable keeps the refs t4 reads: the claims ref, and each device's log and presence. Anything
-// else under the bus's root stays on the remote, unfetched: a name this machine can't store (one
-// Windows forbids, or one clashing with a local ref, as presence/<device>/x does with a device's
-// old presence) would otherwise fail every fetch, and with it every sync and every claim.
+// readable keeps the refs t4 reads: each device's log and presence. Anything else under the bus's
+// root stays on the remote, unfetched: a name this machine can't store (one Windows forbids, or
+// one clashing with a local ref, as presence/<device>/x does with a device's old presence) would
+// otherwise fail every fetch, and with it every sync.
 func readable(listed map[string]string) map[string]string {
 	refs := map[string]string{}
 	for ref, sha := range listed {
 		_, mesh := meshDevice(ref)
 		presence := strings.HasPrefix(ref, brand.PresencePrefix) &&
 			bus.ValidDevice(strings.TrimPrefix(ref, brand.PresencePrefix))
-		if ref == brand.ClaimsRef || mesh || presence {
+		if mesh || presence {
 			refs[ref] = sha
 		}
 	}
@@ -273,7 +263,7 @@ func (d *Daemon) staleLocked(p *peer) bool {
 // firstSight is when to treat a presence as last changed when this daemon has no observation
 // of its own. The writer's clock is trusted once, but never so far back that the device would be
 // judged stale before its next heartbeat could arrive: a peer whose clock runs slow would
-// otherwise look gone, and a claim made then would end its claims for good. A device that
+// otherwise look gone, and messages to it would warn that nobody may read them. A device that
 // really is gone takes 2 heartbeats longer to be called so by a reader that just started.
 func (d *Daemon) firstSight(p bus.Presence) time.Time {
 	now := time.Now()
@@ -501,13 +491,12 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	}
 	d.mu.Lock()
 	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed}
-	delete(d.gone, dev)
 	d.mu.Unlock()
 }
 
 // sawPresence records that a device's presence moved to sha without being read: tried and found
 // unreadable (tried), or not fetched at all. Either way the device is alive. A device never read
-// shows as present with its claims counted, until it is read or goes stale. Caller holds advMu.
+// shows as present, with no sessions, until it is read or goes stale. Caller holds advMu.
 func (d *Daemon) sawPresence(dev, sha string, tried bool) {
 	if dev == d.device || !bus.ValidDevice(dev) {
 		return
@@ -518,7 +507,6 @@ func (d *Daemon) sawPresence(dev, sha string, tried bool) {
 	if p == nil {
 		p = &peer{pres: bus.Presence{V: bus.Version, Device: dev, Host: "presence unreadable"}}
 		d.peers[dev] = p
-		delete(d.gone, dev)
 	}
 	if tried {
 		p.sha = sha // not worth reading again until it moves
@@ -610,16 +598,14 @@ func (d *Daemon) overOwnLog(ctx context.Context, tip string) (bool, error) {
 
 // clearOwnJunk deletes, in the background, refs on the remote that keep this device's own refs
 // off it, since the remote refuses a ref whose name clashes with another's: refs under this
-// device's names (presence/<device>/..., mesh/<device>/...), refs under the claims ref, and a
-// ref at presence or mesh itself, which blocks every device. Nothing t4 writes lives at any of
-// them. Each is tried at most once a minute, so a delete the remote refuses isn't pushed, and
-// logged, at every poll.
+// device's names (presence/<device>/..., mesh/<device>/...), and a ref at presence or mesh
+// itself, which blocks every device. Nothing t4 writes lives at any of them. Each is tried at
+// most once a minute, so a delete the remote refuses isn't pushed, and logged, at every poll.
 func (d *Daemon) clearOwnJunk(listed map[string]string) {
 	if d.bgCtx == nil {
 		return // the first sync, before anything runs in the background; the next poll does it
 	}
 	var junk []string
-	unblocks := false // whether any of them keeps this device's presence off the remote
 	d.mu.Lock()
 	for ref := range d.junkTried {
 		if _, ok := listed[ref]; !ok {
@@ -628,32 +614,20 @@ func (d *Daemon) clearOwnJunk(listed map[string]string) {
 	}
 	for ref := range listed {
 		blocking := ref+"/" == brand.PresencePrefix || ref+"/" == brand.MeshPrefix ||
-			strings.HasPrefix(ref, brand.ClaimsRef+"/") ||
 			strings.HasPrefix(ref, brand.PresencePrefix+d.device+"/") || strings.HasPrefix(ref, brand.MeshPrefix+d.device+"/")
 		if blocking && time.Since(d.junkTried[ref]) >= time.Minute {
 			d.junkTried[ref] = time.Now()
 			junk = append(junk, ref)
-			unblocks = unblocks || ref+"/" == brand.PresencePrefix || strings.HasPrefix(ref, brand.PresencePrefix+d.device+"/")
 		}
 	}
 	if len(junk) == 0 || d.bgCtx.Err() != nil {
 		d.mu.Unlock()
 		return
 	}
-	if unblocks {
-		d.unblocking++ // for claim's hint while the delete is in flight
-	}
 	d.mu.Unlock()
 	d.bg.Add(1)
 	go func() {
 		defer d.bg.Done()
-		if unblocks {
-			defer func() {
-				d.mu.Lock()
-				d.unblocking--
-				d.mu.Unlock()
-			}()
-		}
 		ctx, cancel := context.WithTimeout(d.bgCtx, time.Minute)
 		defer cancel()
 		for _, ref := range junk {
@@ -713,11 +687,6 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 			}
 		}
 		err := d.publishPresence(ctx)
-		if ctx.Err() == nil {
-			d.mu.Lock()
-			d.presenceErr = err
-			d.mu.Unlock()
-		}
 		switch {
 		case err != nil && ctx.Err() == nil:
 			if !failing {
@@ -753,16 +722,15 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			s.branch = b
 		}
 	}
-	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, At: time.Now().UTC()}
+	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, At: time.Now().UTC(),
+		Sessions: []bus.SessionInfo{}}
 	for _, s := range d.sortedSessionsLocked() {
 		pres.Sessions = append(pres.Sessions, bus.SessionInfo{
 			ID: s.id, Agent: s.agent, Branch: s.branch, Doing: s.doing, Started: s.started.UTC()})
 	}
-	// The CLI is always present, so claims a human makes from it hold while the daemon runs.
-	pres.Sessions = append(pres.Sessions, bus.SessionInfo{ID: proto.CLISession, Agent: "cli", Started: d.started.UTC()})
 	d.mu.Unlock()
 
-	msg, err := bus.Encode(pres, fmt.Sprintf("%s: %d sessions", d.device, len(pres.Sessions)-1))
+	msg, err := bus.Encode(pres, fmt.Sprintf("%s: %d sessions", d.device, len(pres.Sessions)))
 	if err != nil {
 		return err
 	}

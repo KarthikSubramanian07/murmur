@@ -120,7 +120,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	d.lastActive = time.Now()
 	if ctx.Err() != nil {
 		// The daemon is stopping. The session may reconnect to the next one, so its inbox is
-		// kept; the goodbye ends this device's presence, and its claims with it.
+		// kept; the goodbye deletes this device's presence.
 		d.mu.Unlock()
 		return
 	}
@@ -129,8 +129,6 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	d.mu.Unlock()
 	d.log.Printf("session %s stopped", addr)
 	d.kickPresence()
-	// Still inside this connection's handler, so the daemon waits for these before exiting.
-	d.releaseHeld(addr)
 	d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStopped, From: addr,
 		At: time.Now().UTC()})
 }
@@ -174,26 +172,6 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 		d.kickPresence()
 		return proto.Response{OK: true, Self: from, Note: "status set"}
-
-	case proto.OpClaims:
-		var note string
-		err := d.pollOnce(ctx)
-		d.mu.Lock()
-		defer d.mu.Unlock()
-		switch {
-		case err != nil:
-			note = "Couldn't reach the remote; these are the claims as last synced: " + err.Error()
-		case d.claimsFetchErr != nil:
-			note = "Couldn't fetch the claims ref; these are the claims as last synced: " + d.claimsFetchErr.Error()
-		}
-		return proto.Response{OK: true, Self: from, Claims: claimViews(d.openLocked(-1, "")), Seen: d.tokenLocked(time.Now()),
-			Note: note}
-
-	case proto.OpClaim:
-		return d.claim(ctx, from, req)
-
-	case proto.OpRelease:
-		return d.release(ctx, from, strings.TrimSpace(req.Claim))
 
 	case proto.OpSend:
 		return d.send(ctx, from, req)
@@ -300,7 +278,8 @@ func (d *Daemon) addressKnownLocked(dev, sess string) bool {
 	if p == nil || d.staleLocked(p) {
 		return false
 	}
-	if sess == "" {
+	// Every daemon delivers to its own CLI, which presence doesn't list.
+	if sess == "" || sess == proto.CLISession {
 		return true
 	}
 	for _, s := range p.pres.Sessions {
@@ -336,7 +315,7 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 		e := m.Event
 		agent, branch := d.sessionInfoLocked(e.From)
 		v := proto.MessageView{ID: e.ID, From: e.From, FromAgent: agent, FromBranch: branch, To: e.To,
-			Subject: e.Subject, At: e.At, Note: m.Note}
+			Subject: e.Subject, At: e.At}
 		if withBody {
 			v.Body = e.Body
 		}
@@ -345,29 +324,16 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 	return views
 }
 
-// whoLocked lists every device and session. The CLI shows only when it holds claims, or when
-// it is the one asking.
+// whoLocked lists every device and session. The CLI shows only when it is the one asking.
 func (d *Daemon) whoLocked(you string) []proto.Device {
-	now := time.Now()
-	claimsBy := func(addr string) []proto.ClaimView {
-		var out []proto.ClaimView
-		for _, c := range d.claims {
-			if c.ev.From == addr && d.claimLiveLocked(c, now) {
-				out = append(out, claimView(c.ev))
-			}
-		}
-		return out
-	}
-	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Self: true, LastSeen: now}
+	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Self: true, LastSeen: time.Now()}
 	for _, s := range d.sortedSessionsLocked() {
-		addr := bus.Addr(d.device, s.id)
-		self.Sessions = append(self.Sessions, proto.SessionView{Addr: addr, Agent: s.agent, Branch: s.branch,
-			Doing: s.doing, Started: s.started, You: s.id == you, Claims: claimsBy(addr)})
+		self.Sessions = append(self.Sessions, proto.SessionView{Addr: bus.Addr(d.device, s.id), Agent: s.agent,
+			Branch: s.branch, Doing: s.doing, Started: s.started, You: s.id == you})
 	}
-	cli := bus.Addr(d.device, proto.CLISession)
-	if held := claimsBy(cli); len(held) > 0 || you == proto.CLISession {
-		self.Sessions = append(self.Sessions, proto.SessionView{Addr: cli, Agent: "cli", Started: d.started,
-			You: you == proto.CLISession, Claims: held})
+	if you == proto.CLISession {
+		self.Sessions = append(self.Sessions, proto.SessionView{Addr: bus.Addr(d.device, proto.CLISession),
+			Agent: "cli", Started: d.started, You: true})
 	}
 	devices := []proto.Device{self}
 	for _, id := range sortedKeys(d.peers) {
@@ -375,13 +341,11 @@ func (d *Daemon) whoLocked(you string) []proto.Device {
 		dv := proto.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, LastSeen: p.lastChange,
 			Stale: d.staleLocked(p)}
 		for _, s := range p.pres.Sessions {
-			addr := bus.Addr(id, s.ID)
-			held := claimsBy(addr)
-			if s.ID == proto.CLISession && len(held) == 0 {
-				continue
+			if s.ID == proto.CLISession {
+				continue // V1 daemons list their CLI, which only claims needed
 			}
-			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: addr, Agent: s.Agent, Branch: s.Branch,
-				Doing: s.Doing, Started: s.Started, Claims: held})
+			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: bus.Addr(id, s.ID), Agent: s.Agent,
+				Branch: s.Branch, Doing: s.Doing, Started: s.Started})
 		}
 		devices = append(devices, dv)
 	}
