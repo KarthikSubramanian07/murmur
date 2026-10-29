@@ -236,3 +236,11 @@ func TestGenerateUniform(t *testing.T) {
 	check("adjective", adjectives, adjCounts)
 	check("noun", nouns, nounCounts)
 }
+
+// A list checked out with CRLF line endings must give the same words as one with LF.
+func TestParseCRLF(t *testing.T) {
+	lf, crlf := parse("amber\nbrisk\n"), parse("amber\r\nbrisk\r\n")
+	if len(crlf) != 2 || crlf[0] != "amber" || crlf[1] != "brisk" || len(lf) != len(crlf) {
+		t.Errorf("parse(CRLF) = %q, parse(LF) = %q", crlf, lf)
+	}
+}

@@ -41,7 +41,6 @@ arctic
 ardent
 aromatic
 artful
-artisan
 arty
 aspiring
 assorted
@@ -71,7 +70,6 @@ becoming
 bedecked
 beige
 beloved
-benign
 bespoke
 blinking
 blissful
@@ -320,7 +318,6 @@ etched
 eternal
 ethereal
 even
-evening
 evergreen
 everyday
 evident
@@ -360,7 +357,6 @@ flashy
 flat
 flawless
 flaxen
-fledgling
 fleecy
 fleet
 fleeting
@@ -527,7 +523,6 @@ joyous
 jubilant
 judicious
 jumbo
-just
 keen
 kind
 kindly
@@ -541,7 +536,6 @@ lakeside
 languid
 lanky
 large
-laser
 lasting
 laudable
 laughing
@@ -608,7 +602,6 @@ memorable
 merciful
 merry
 meteoric
-micro
 midnight
 mighty
 mild
@@ -625,7 +618,6 @@ moonless
 moonlike
 moonlit
 moorland
-morning
 mossy
 mottled
 moving
@@ -649,13 +641,11 @@ nippy
 noble
 nodding
 nomadic
-noon
 normal
 northern
 novel
 nubby
 nurturing
-nutty
 oaken
 obliging
 oblong
@@ -738,7 +728,6 @@ profound
 prolific
 promising
 prompt
-proto
 proud
 proven
 prudent
@@ -750,7 +739,6 @@ purple
 purring
 quaint
 qualified
-quantum
 quick
 quiet
 quilted
@@ -837,9 +825,6 @@ serene
 settled
 settling
 sewn
-shady
-shaggy
-shallow
 sheer
 shelled
 shimmery
@@ -873,7 +858,6 @@ sliding
 slight
 slim
 sloping
-sly
 small
 smart
 smiling
@@ -959,7 +943,6 @@ sugary
 suitable
 summery
 sunbaked
-sunkissed
 sunlike
 sunlit
 sunning
@@ -1039,7 +1022,6 @@ twinkling
 twinkly
 twirling
 twirly
-twisted
 ultimate
 ultra
 umber
