@@ -185,7 +185,10 @@ change and a daemon that knows no names delivers by it all the same.
   resume; different keys never share one. A daemon keeps the key-to-name map in its own state
   file, so the client's ID is never published. A resume of the same client session on another
   device is a new session there, with a new name. Two live sessions with one key, such as two MCP
-  servers in one conversation, would share a name, so the later is a session of its own.
+  servers in one conversation, would share a name, so the later is a session of its own. A key
+  that comes back under another ID while its old session is still in its grace takes the name
+  with it, and presence shows the name on the live session only, so a message to it isn't left
+  in an inbox about to stop (2026-10-29).
 - **Never reused, whatever happens to the registry.** A daemon keeps every name it has ever seen,
   in the registry's whole history or in any device's presence, and the set never shrinks, so a
   registry that is deleted, overwritten or force-pushed frees nothing. When the tip isn't a

@@ -627,3 +627,31 @@ func TestClientSessionIDIsNeverOnTheBus(t *testing.T) {
 		}
 	}
 }
+
+// A session whose key comes back under another ID while the old one is still in its grace takes
+// the name with it, and a peer sending to the name reaches the live session, not the one about to
+// stop, whose inbox nobody would read.
+func TestNameMovesToTheLiveSessionInTheGrace(t *testing.T) {
+	remote := newRemote(t)
+	a := newDevice(t, remote) // the default grace, 60 s: the old session outlasts the test
+	b := newDevice(t, remote)
+	const key = "claude-alice-0001"
+	old, conn := a.session("aaaaaa", key)
+	name := a.named(old)
+	conn.Close()
+	eventually(t, "the drop", func() bool { return a.do(proto.Request{Op: proto.OpNotices, ClaudeSession: key}).Self == "" })
+	newer, _ := a.session("aaaaab", key)
+	if got := a.nameOf(newer); got != name {
+		t.Fatalf("the session under its new ID is %q, was %q", got, name)
+	}
+	eventually(t, "b to show the name on the live session only", func() bool {
+		return b.nameOf(newer) == name && b.seesSession(old) && b.nameOf(old) == ""
+	})
+	r := b.do(proto.Request{Op: proto.OpSend, To: name, Subject: "by name"})
+	if r.Error != "" || r.Messages[0].To != newer {
+		t.Fatalf("send by name went to %+v, want %s", r, newer)
+	}
+	if got := inboxOf(a, "aaaaab"); len(got) != 1 || got[0] != "by name" {
+		t.Fatalf("the live session's inbox: %q", got)
+	}
+}

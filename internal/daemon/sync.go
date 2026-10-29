@@ -770,9 +770,22 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, At: time.Now().UTC(),
 		Sessions: []bus.SessionInfo{}}
+	// A name is an address, so one session at most carries it here. A session in its grace whose
+	// key has come back under another ID has handed its name on: a peer sending to the name must
+	// reach the live one, not the one about to stop.
+	live := map[string]bool{}
+	for _, s := range d.sessions {
+		if s.name != "" && s.dropped.IsZero() {
+			live[s.name] = true
+		}
+	}
 	for _, s := range d.sortedSessionsLocked() {
+		name := s.name
+		if !s.dropped.IsZero() && live[name] {
+			name = ""
+		}
 		pres.Sessions = append(pres.Sessions, bus.SessionInfo{
-			ID: s.id, Name: s.name, Agent: s.agent, Branch: s.branch, Doing: s.doing, Started: s.started.UTC()})
+			ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.doing, Started: s.started.UTC()})
 	}
 	d.mu.Unlock()
 
