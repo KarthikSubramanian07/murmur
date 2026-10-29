@@ -216,8 +216,10 @@ func TestPageStateShowsBothDevices(t *testing.T) {
 	if s.Started.IsZero() || time.Since(s.Started) > time.Minute {
 		t.Errorf("started %v", s.Started)
 	}
-	if !s.LastActive.IsZero() {
-		t.Errorf("last active %v; that is #21", s.LastActive)
+	// Last active is when the session registered or last asked the daemon for anything (#21): the
+	// status it set a moment ago.
+	if s.LastActive.IsZero() || time.Since(s.LastActive) > time.Minute || s.LastActive.Before(s.Started) || len(s.Committed) != 0 {
+		t.Errorf("last active %v, committed %v; it registered and set its status a moment ago", s.LastActive, s.Committed)
 	}
 
 	dv, s, ok = findSession(st, bobName)
@@ -229,6 +231,10 @@ func TestPageStateShowsBothDevices(t *testing.T) {
 	}
 	if s.Agent != "test" || s.Worktree != "" || s.Addr != bob {
 		t.Errorf("session there: %+v", s)
+	}
+	// Another device's session has the last-active time its presence carries, on this machine's clock.
+	if s.LastActive.IsZero() || time.Since(s.LastActive) > time.Minute {
+		t.Errorf("last active of the session there: %v", s.LastActive)
 	}
 	if dv.LastSeen.IsZero() || time.Since(dv.LastSeen) > time.Minute {
 		t.Errorf("the other device was last seen %v", dv.LastSeen)
@@ -712,7 +718,7 @@ func TestPageMessagesAfterAFailedFirstSync(t *testing.T) {
 	pushEvent(t, remote, "refs/t4/mesh/old-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
 		From: "old-0001/x", At: time.Now().Add(-10 * time.Minute).UTC(), To: "*", Subject: "backlog"})
 	dir := filepath.Join(t.TempDir(), "clone")
-	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
+	git(t, filepath.Dir(dir), "clone", "-q", "--no-hardlinks", remote, dir)
 	// Pushes go out, so presence is seen, but listing and fetching fail.
 	git(t, dir, "config", "remote.origin.pushurl", remote)
 	git(t, dir, "config", "remote.origin.url", filepath.Join(filepath.Dir(remote), "nowhere.git"))
