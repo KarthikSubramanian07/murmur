@@ -1,0 +1,35 @@
+# Every pull request runs the checks each change must pass, on GitHub's Linux machines, so a
+# change's verification doesn't wait on a laptop shared with other agents' test runs (#48).
+# Windows and macOS minutes cost more, so they aren't run here yet.
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.x'
+      # The tests make commits in scratch repositories.
+      - run: git config --global user.name t4-ci && git config --global user.email t4-ci@example.invalid
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "$out"; exit 1; fi
+      - run: go vet ./...
+      - run: go test -race -count=1 -timeout 40m ./...
