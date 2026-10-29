@@ -1,0 +1,298 @@
+// Command devserver serves the web page with made-up devices, sessions and messages, for working
+// on the page without a daemon or a team: go run ./internal/web/devserver
+//
+// The fixtures change while it runs: a message arrives every 20 seconds and sessions go on
+// being active, so the page's polling has something to show.
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"flag"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/a-Fig/t4/internal/web"
+)
+
+func main() {
+	addr := flag.String("addr", "127.0.0.1:0", "loopback address to listen on")
+	flag.Parse()
+	host, _, err := net.SplitHostPort(*addr)
+	if err != nil || (host != "127.0.0.1" && host != "localhost") {
+		log.Fatalf("-addr must be on 127.0.0.1, like 127.0.0.1:0")
+	}
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	token := randomHex(16)
+	src := newFixtures(time.Now())
+	go src.run()
+	fmt.Printf("http://%s/#token=%s\n", ln.Addr(), token)
+	srv := &http.Server{Handler: web.NewWithPRs(src, token, fixturePRs), ReadHeaderTimeout: 10 * time.Second}
+	log.Fatal(srv.Serve(ln))
+}
+
+func randomHex(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// fixturePRs answers as gh would for the fixture branches, a little slowly.
+func fixturePRs(ctx context.Context, branch string) (*web.PR, error) {
+	select {
+	case <-time.After(400 * time.Millisecond):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	prs := map[string]web.PR{
+		"session-names": {Number: 31, URL: "https://github.com/a-Fig/t4/pull/31"},
+		"wake-ups":      {Number: 33, Draft: true, URL: "https://github.com/a-Fig/t4/pull/33"},
+		"receipts":      {Number: 35, URL: "https://github.com/a-Fig/t4/pull/35"},
+		"web-page":      {Number: 36, Draft: true, URL: "https://github.com/a-Fig/t4/pull/36"},
+	}
+	if branch == "fix/ls-remote-rate-limit" {
+		return nil, errors.New("gh: simulated failure") // shown as no PR state
+	}
+	if pr, ok := prs[branch]; ok {
+		return &pr, nil
+	}
+	return nil, nil
+}
+
+type fixtures struct {
+	mu       sync.Mutex
+	self     string
+	devices  []web.Device
+	messages []web.Message
+	mutes    []web.Mute
+	settings web.Settings
+}
+
+func newFixtures(now time.Time) *fixtures {
+	ago := func(d time.Duration) time.Time { return now.Add(-d) }
+	f := &fixtures{
+		self: "tyler-laptop-3f2a",
+		settings: web.Settings{
+			Wake:           web.Wake{When: web.WakeWithin},
+			SessionWake:    map[string]web.Wake{"brave-heron": {When: web.WakeNever}},
+			DefaultMinutes: 3,
+		},
+	}
+	f.devices = []web.Device{
+		{
+			ID: "tyler-laptop-3f2a", Host: "tyler-laptop", Owner: "Tyler", Self: true, Reachable: true,
+			LastSeen: ago(5 * time.Second),
+			Sessions: []web.Session{
+				{Name: "quiet-otter", Agent: "claude-code", Branch: "web-page", Worktree: "agent-a5adaaef",
+					Doing: "Building the settings view of the web page", Started: ago(52 * time.Minute), LastActive: ago(20 * time.Second)},
+				{Name: "brave-heron", Agent: "codex", Branch: "remove-claims", Worktree: "remove-claims",
+					Doing: "Deleting claims from the daemon and the MCP tools", Started: ago(2*time.Hour + 4*time.Minute), LastActive: ago(3 * time.Minute)},
+				{Name: "amber-finch", Agent: "claude-code", Branch: "main", Worktree: "t4",
+					Started: ago(5 * time.Hour), LastActive: ago(26 * time.Minute)},
+			},
+		},
+		{
+			ID: "maya-mbp-91c0", Host: "maya-mbp", Owner: "Maya", Reachable: true, LastSeen: ago(40 * time.Second),
+			Sessions: []web.Session{
+				{Name: "lucid-badger", Agent: "claude-code", Branch: "session-names",
+					Doing: "Taking names by compare-and-swap on refs/t4/names", Started: ago(80 * time.Minute), LastActive: ago(50 * time.Second)},
+				{Name: "velvet-moth", Agent: "t3", Branch: "session-names",
+					Doing: "Writing the word lists", Started: ago(35 * time.Minute), LastActive: ago(9 * time.Minute)},
+				{Name: "solar-wren", Agent: "codex", Branch: "wake-ups",
+					Doing:   "Finding out whether Claude Code's messaging socket can start a turn in an idle session, and what it costs when the prompt cache has already expired",
+					Started: ago(3 * time.Hour), LastActive: ago(1 * time.Minute)},
+			},
+		},
+		{
+			ID: "sam-desktop-07be", Host: "sam-desktop", Owner: "Sam", Reachable: true, LastSeen: ago(70 * time.Second),
+			Sessions: []web.Session{
+				{Name: "rapid-ibis", Agent: "claude-code", Branch: "fix/ls-remote-rate-limit",
+					Doing: "Measuring ls-remote against GitHub's limits", Started: ago(25 * time.Minute), LastActive: ago(15 * time.Second)},
+				{Name: "mellow-yak", Agent: "claude-code", Branch: "receipts",
+					Started: ago(4 * time.Hour), LastActive: ago(2 * time.Hour)},
+			},
+		},
+		{
+			ID: "homeserver-c4d1", Host: "homeserver", Owner: "Tyler", Reachable: false, LastSeen: ago(47 * time.Minute),
+			Sessions: []web.Session{
+				{Name: "dusty-lynx", Agent: "codex", Branch: "macos-ci",
+					Doing: "Running the test suite on macOS", Started: ago(6 * time.Hour), LastActive: ago(48 * time.Minute)},
+				{Name: "keen-pike", Agent: "claude-code", Started: ago(7 * time.Hour), LastActive: ago(55 * time.Minute)},
+			},
+		},
+	}
+	msg := func(d time.Duration, from, to, kind, subject, body string) {
+		f.messages = append(f.messages, web.Message{
+			ID: randomHex(6), From: from, To: to, ToKind: kind, Subject: subject, Body: body, At: ago(d),
+		})
+	}
+	msg(3*time.Hour, "solar-wren", "*", web.ToAll, "Taking wake-ups (#25)",
+		"I'm on #25. Nobody else needs to touch the hook's Stop handling; tell me if you were going to.")
+	msg(170*time.Minute, "brave-heron", "solar-wren", web.ToSession, "Claims are going away under you",
+		"Heads up: #24 deletes claims.go and the claim/release tools. If wake-ups reads anything from claims, it won't be there.")
+	msg(165*time.Minute, "solar-wren", "brave-heron", web.ToSession, "Re: Claims are going away under you",
+		"It doesn't. Thanks.")
+	msg(80*time.Minute, "lucid-badger", "*", web.ToAll, "Names are moving to refs/t4/names",
+		"Session names (#20) land on a new shared ref. Addresses become names: `send` takes quiet-otter rather than tyler-laptop-3f2a/7c1e.")
+	msg(62*time.Minute, "dusty-lynx", "tyler-laptop-3f2a", web.ToDevice, "macOS run is red",
+		"TestRestart fails on macOS only:\n\n    restart_test.go:212: daemon did not exit within 5s\n\nLooks like the interrupt is delivered to the process group. Leaving it for whoever owns the daemon tonight.")
+	msg(50*time.Minute, "quiet-otter", "lucid-badger", web.ToSession, "What does a session's name look like before it lands?",
+		"The page shows every session by name. Between hello and the name's push landing, what should it show? I'd rather not invent a placeholder you'll later contradict.")
+	msg(46*time.Minute, "lucid-badger", "quiet-otter", web.ToSession, "Re: What does a session's name look like before it lands?",
+		long)
+	msg(30*time.Minute, "velvet-moth", "maya-mbp-91c0", web.ToDevice, "Word lists are in", "")
+	msg(18*time.Minute, "rapid-ibis", "*", web.ToAll, "No rate limit hit at 6 ls-remote/min/device",
+		"Ran 4 devices for 30 minutes at the 10 s poll. No 429s, no secondary limits. Numbers in #15's thread.")
+	msg(9*time.Minute, "brave-heron", "quiet-otter", web.ToSession, "Session view types",
+		"Claims are gone from proto.SessionView on my branch. Don't build on Claims.")
+	msg(4*time.Minute, "mellow-yak", "solar-wren", web.ToSession, "Receipts can say \"idle 12 min\"",
+		"If your wake-up check knows the idle time, receipts (#26) can carry it back to the sender. Want me to read it from the session, or will you hand it over?")
+	msg(90*time.Second, "solar-wren", "mellow-yak", web.ToSession, "Re: Receipts can say \"idle 12 min\"",
+		"I'll hand it over: the daemon will keep lastTurnEnded per session.")
+	f.mutes = []web.Mute{
+		{By: "quiet-otter", Muted: "dusty-lynx", At: ago(40 * time.Minute), CanUnmute: true},
+		{By: "solar-wren", Muted: "rapid-ibis", At: ago(12 * time.Minute)},
+	}
+	return f
+}
+
+const long = `It doesn't exist yet. A session has no name until its push to refs/t4/names lands, and until then it isn't on the bus at all: hello registers it with its own daemon, but presence only carries named sessions.
+
+So for the page:
+
+1. Sessions on other devices only ever appear with a name.
+2. A session on this device can be seen before its name lands, for the second or two the push takes. Show nothing for it until then; it will appear on the next poll.
+3. If the push fails (offline), the daemon retries with the next word pair. The session stays unnamed and invisible meanwhile.
+
+Names are never reused, so the page can key everything on them. When a session ends, its name stays taken; if you ever show history, an old name still means that one session.
+
+One more thing: names are lowercase ASCII, two words joined by a hyphen, each from a list of about 1,800 words, so they're at most 25 characters. You can lay the page out for that.
+
+The lists are in internal/names/words.go on my branch, if you want real ones for fixtures:
+
+    adjectives: amber, brave, dusty, keen, lucid, mellow, quiet, rapid, solar, velvet, ...
+    nouns:      badger, finch, heron, ibis, lynx, moth, otter, pike, wren, yak, ...
+
+Ping me if anything here doesn't match what you need.`
+
+func (f *fixtures) run() {
+	subjects := []string{
+		"Rebased on main", "Is anyone in internal/mcpserver?", "Tests pass on Windows",
+		"Can I take the hook's Stop handling?", "Pushed the fixtures", "Done with #24",
+	}
+	for i := 0; ; i++ {
+		time.Sleep(20 * time.Second)
+		f.mu.Lock()
+		now := time.Now()
+		var live []string
+		for di, d := range f.devices {
+			if !d.Reachable {
+				continue
+			}
+			f.devices[di].LastSeen = now
+			for si, s := range d.Sessions {
+				live = append(live, s.Name)
+				// Sessions that were busy stay busy; idle ones stay idle.
+				if (si+i)%2 == 0 && now.Sub(s.LastActive) < 5*time.Minute {
+					f.devices[di].Sessions[si].LastActive = now
+				}
+			}
+		}
+		from, to := live[i%len(live)], live[(i*3+1)%len(live)]
+		if from == to {
+			to = live[(i*3+2)%len(live)]
+		}
+		f.messages = append(f.messages, web.Message{
+			ID: randomHex(6), From: from, To: to, ToKind: web.ToSession,
+			Subject: subjects[i%len(subjects)], Body: "Message " + strconv.Itoa(i+1) + " from the dev server.", At: now,
+		})
+		f.mu.Unlock()
+	}
+}
+
+func (f *fixtures) State(ctx context.Context) (web.State, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st := web.State{Device: f.self, Mutes: append([]web.Mute(nil), f.mutes...)}
+	for _, d := range f.devices {
+		d.Sessions = append([]web.Session(nil), d.Sessions...)
+		st.Devices = append(st.Devices, d)
+	}
+	return st, nil
+}
+
+// Messages uses the count of messages seen as its cursor.
+func (f *fixtures) Messages(ctx context.Context, cursor string) ([]web.Message, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	from := 0
+	if cursor != "" {
+		n, err := strconv.Atoi(cursor)
+		if err != nil || n < 0 || n > len(f.messages) {
+			return nil, "", errors.New("bad cursor")
+		}
+		from = n
+	}
+	return append([]web.Message(nil), f.messages[from:]...), strconv.Itoa(len(f.messages)), nil
+}
+
+func (f *fixtures) Settings(ctx context.Context) (web.Settings, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return copySettings(f.settings), nil
+}
+
+func (f *fixtures) SetSettings(ctx context.Context, s web.Settings) (web.Settings, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	local := map[string]bool{}
+	for _, d := range f.devices {
+		if d.Self {
+			for _, ss := range d.Sessions {
+				local[ss.Name] = true
+			}
+		}
+	}
+	for name := range s.SessionWake {
+		if !local[name] {
+			return web.Settings{}, fmt.Errorf("%s is not a session on this device", name)
+		}
+	}
+	s.DefaultMinutes = f.settings.DefaultMinutes
+	f.settings = copySettings(s)
+	return copySettings(f.settings), nil
+}
+
+func copySettings(s web.Settings) web.Settings {
+	out := s
+	out.SessionWake = map[string]web.Wake{}
+	for k, v := range s.SessionWake {
+		out.SessionWake[k] = v
+	}
+	return out
+}
+
+func (f *fixtures) Unmute(ctx context.Context, by, muted string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, m := range f.mutes {
+		if m.By == by && m.Muted == muted {
+			if !m.CanUnmute {
+				return errors.New("that mute was made on another device")
+			}
+			f.mutes = append(f.mutes[:i], f.mutes[i+1:]...)
+			return nil
+		}
+	}
+	return errors.New("no such mute")
+}
