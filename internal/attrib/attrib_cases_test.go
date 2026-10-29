@@ -455,3 +455,29 @@ func TestManyAnnotatedTags(t *testing.T) {
 	}
 	caseWant(t, got, "new")
 }
+
+// A teammate whose clock runs an hour ahead pushes; the command pulls. Rule 3 alone lets the
+// fetched commit through, since its date is after the snapshot.
+func TestFutureDatedFetch(t *testing.T) {
+	t.Run("fast-forward", func(t *testing.T) {
+		up := caseRepo(t)
+		caseCommit(t, up, "base", caseHourAgo())
+		d := filepath.Join(t.TempDir(), "clone")
+		caseGit(t, up, "clone", "-q", up, d)
+		caseCommit(t, up, "from the future", caseDated(time.Now().Add(time.Hour)))
+		_, _, got := caseRun(t, d, func() { caseGit(t, d, "pull", "-q", "--ff-only") })
+		caseWant(t, got)
+	})
+	t.Run("merge", func(t *testing.T) {
+		up := caseRepo(t)
+		caseCommit(t, up, "base", caseHourAgo())
+		d := filepath.Join(t.TempDir(), "clone")
+		caseGit(t, up, "clone", "-q", up, d)
+		caseCommit(t, d, "local", caseHourAgo())
+		caseCommit(t, up, "from the future", caseDated(time.Now().Add(time.Hour)))
+		_, _, got := caseRun(t, d, func() { caseGit(t, d, "pull", "-q", "--no-rebase", "--no-edit") })
+		if len(got) != 1 || !strings.HasPrefix(got[0].Subject, "Merge") {
+			t.Errorf("credited %q, want only the merge commit", caseSubjects(got))
+		}
+	})
+}

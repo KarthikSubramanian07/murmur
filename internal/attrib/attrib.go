@@ -14,11 +14,12 @@ import (
 	"github.com/a-Fig/t4/internal/gitx"
 )
 
-// committerSlack is how far before Ref.Time a committer date may fall and still count as made
-// during the command. Git stores committer dates in whole seconds, truncated, so a commit made
-// just after the snapshot can carry a date up to a second earlier, and clocks disagree a little.
-// Two seconds covers both. The cost: a commit made in the two seconds before the snapshot counts
-// too, so if the command also fetches such a commit, it is credited.
+// committerSlack is how far a committer date may fall before the before snapshot's Time, or
+// after the after snapshot's, and still count as made during the command. Git stores committer
+// dates in whole seconds, truncated, so a commit made just after the snapshot can carry a date up
+// to a second earlier, and clocks disagree a little. Two seconds covers both. The cost: a commit
+// made in the two seconds before the snapshot counts too, so if the command also fetches such a
+// commit, it is credited.
 const committerSlack = 2 * time.Second
 
 // Ref is a worktree's HEAD, plus what Head saw of the repository's refs and when it looked. SHA
@@ -98,29 +99,37 @@ func Head(ctx context.Context, worktree string) (Ref, error) {
 //
 //  1. it is reachable from after;
 //  2. it is not reachable from any ref tip in before, whether or not the branch changed;
-//  3. its committer date is no earlier than before.Time less committerSlack.
+//  3. its committer date is no earlier than before.Time less committerSlack, and no later than
+//     after.Time plus committerSlack.
 //
 // Rule 2 keeps existing history out, including history a branch switch, merge, fast-forward or
 // rebase brings in from a branch that already existed. Rule 3 keeps out history fetched by the
 // command, such as a pull's teammate commits, which were committed before the command began.
+// Its upper end keeps out a fetched commit from a teammate whose clock runs ahead, dated after
+// the command ended; this machine's clock dated every commit the command made while it ran.
 // Amend, rebase, cherry-pick and pull --rebase all stamp a new committer date, so their results
 // pass rule 3. A push in the same command does not hide a commit: rule 2 looks only at before.
 //
 // Known limits. A commit that another writer makes to this HEAD's history during the command, and
 // that the same command fetches, passes all three rules and is credited. Writers that commit to
 // other branches are not credited, because their commits are not reachable from after. A fetched
-// commit whose committer clock runs far ahead also passes rule 3. A rewrite that reproduces an
-// existing commit exactly (same parent, tree, author and committer second) yields that commit's
-// SHA, which is a tip in before, so rule 2 drops it. All rare, and none handled.
+// commit whose date, from a clock running ahead, lands inside the command's span still passes
+// rule 3. A commit the command makes with a date set ahead (GIT_COMMITTER_DATE, or a container or
+// VM whose clock runs fast) fails it and is not credited. A rewrite that reproduces an existing
+// commit exactly (same parent, tree, author and committer second) yields that commit's SHA, which
+// is a tip in before, so rule 2 drops it. All rare, and none handled.
 func NewCommits(ctx context.Context, worktree string, before, after Ref) ([]Commit, error) {
 	if before.Time.IsZero() {
 		return nil, errors.New("attrib: before was not read by Head")
 	}
+	if after.Time.IsZero() {
+		return nil, errors.New("attrib: after was not read by Head")
+	}
 	if after.SHA == "" {
 		return nil, nil
 	}
-	// The tips go to git log on stdin, one per line. On the command line, a repository with a
-	// couple of thousand refs passes Windows' limit of about 32K characters and git cannot start.
+	// The tips go to git log on stdin, one per line. On the command line, about 780 refs at
+	// distinct commits pass Windows' limit of about 32K characters, and git cannot start.
 	// gitx.RunIn takes no stdin, so this finds the worktree's git directory and runs log there;
 	// that costs one more short process.
 	gitDir, err := gitx.RunIn(ctx, worktree, "rev-parse", "--absolute-git-dir")
@@ -148,12 +157,13 @@ func NewCommits(ctx context.Context, worktree string, before, after Ref) ([]Comm
 		return nil, fmt.Errorf("unexpected git log output: %q", out)
 	}
 	earliest := before.Time.Add(-committerSlack)
+	latest := after.Time.Add(committerSlack)
 	for i := 0; i < len(fields); i += 3 {
 		committed, err := strconv.ParseInt(fields[i+1], 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("unexpected committer date in git log output: %q", fields[i+1])
 		}
-		if time.Unix(committed, 0).Before(earliest) {
+		if at := time.Unix(committed, 0); at.Before(earliest) || at.After(latest) {
 			continue
 		}
 		commits = append(commits, Commit{SHA: fields[i], Subject: fields[i+2], Branch: after.Branch})

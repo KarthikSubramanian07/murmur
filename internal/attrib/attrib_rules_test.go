@@ -93,10 +93,27 @@ func TestCommitterSlackBoundary(t *testing.T) {
 	wantCommits(t, dir, before, head(t, dir), attrib.Commit{SHA: within, Subject: "within slack", Branch: "main"})
 }
 
+func TestCommitterSlackUpperBoundary(t *testing.T) {
+	dir := repo(t)
+	base := commit(t, dir, "base")
+	start := time.Date(2000, 1, 1, 12, 0, 0, 500_000_000, time.UTC)
+	end := start.Add(10 * time.Second)
+	// Both Refs built by hand, so only the dates are under test. The slack ends 2 s after end,
+	// at 12:00:12.5, and the stored second is what counts: 12:00:12 is kept and 12:00:13 is not.
+	before := attrib.Ref{SHA: base, Branch: "main", Time: start}
+	within := backdate(t, dir, "within slack", end.Add(1500*time.Millisecond))
+	backdate(t, dir, "too late", end.Add(2600*time.Millisecond))
+	after := attrib.Ref{SHA: git(t, dir, "rev-parse", "HEAD"), Branch: "main", Time: end}
+	wantCommits(t, dir, before, after, attrib.Commit{SHA: within, Subject: "within slack", Branch: "main"})
+}
+
 func TestNewCommitsRejectsRefWithoutTime(t *testing.T) {
 	dir := repo(t)
 	sha := commit(t, dir, "root")
 	if _, err := attrib.NewCommits(context.Background(), dir, attrib.Ref{SHA: sha, Branch: "main"}, head(t, dir)); err == nil {
 		t.Error("NewCommits accepted a before Ref that Head did not read")
+	}
+	if _, err := attrib.NewCommits(context.Background(), dir, head(t, dir), attrib.Ref{SHA: sha, Branch: "main"}); err == nil {
+		t.Error("NewCommits accepted an after Ref that Head did not read")
 	}
 }
