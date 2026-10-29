@@ -1,0 +1,9 @@
+adjectives.txt and nouns.txt were written from scratch for this package (Claude Sonnet 5.5,
+2026-10-28). No existing word list was copied, so there is no third-party source or license to
+record. Words were picked by hand and then filtered:
+
+- lowercase ASCII letters, 3 to 9 letters, sorted, no duplicates, nothing in both lists
+- dropped on purpose: first names (rose, ivy, hazel), brands and product names (jaguar, mustang,
+  swift), words that are offensive, violent, sexual, medical, political or religious in some
+  common reading, and words that are insulting in some common reading (sloth, weasel, baboon)
+- nouns lean concrete and easy to spell: animals, plants, objects, places in nature
