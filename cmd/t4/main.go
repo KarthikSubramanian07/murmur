@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -135,7 +136,8 @@ func redirectOutput(path string) error {
 	}
 	os.Stdout, os.Stderr = f, f
 	log.SetOutput(f)
-	return nil
+	// A panic trace is written to stderr, which here is the log: no other stderr reaches it.
+	return debug.SetCrashOutput(f, debug.CrashOptions{})
 }
 
 func runInit(ctx context.Context, args []string) error {

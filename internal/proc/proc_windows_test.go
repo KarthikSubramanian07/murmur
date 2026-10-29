@@ -4,6 +4,7 @@ package proc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -21,9 +22,12 @@ import (
 // The test binary re-executes itself in these modes, so a test can start a process in a job object
 // the way an agent's MCP server would, without a second program to build.
 const (
-	helperStart = "proc-helper-start" // args: log path, PowerShell path ("" for the real one)
-	helperSleep = "proc-helper-sleep" // args: optionally --log FILE, as a WMI start passes it
-	readyMarker = "proc helper: ready"
+	helperStart  = "proc-helper-start"  // args: log path, PowerShell path ("" for the real one)
+	helperSleep  = "proc-helper-sleep"  // args: optionally --log FILE, as a WMI start passes it
+	helperArgv   = "proc-helper-argv"   // args: arguments..., --log FILE; writes what it received to FILE
+	readyMarker  = "proc helper: ready" // followed by the sleeper's PID
+	envFindFails = "T4_PROC_TEST_FIND_FAILS"
+	envProbe     = "T4_PROC_TEST_PROBE"
 )
 
 func TestMain(m *testing.M) {
@@ -33,6 +37,8 @@ func TestMain(m *testing.M) {
 			helperStartMain(os.Args[2:])
 		case helperSleep:
 			helperSleepMain(os.Args[2:])
+		case helperArgv:
+			helperArgvMain(os.Args[2:])
 		}
 	}
 	os.Exit(m.Run())
@@ -67,6 +73,9 @@ func helperStartMain(args []string) {
 	if psExe != "" {
 		powershellPath = psExe
 	}
+	if os.Getenv(envFindFails) != "" {
+		findProcess = func(int) (*os.Process, error) { return nil, errors.New("process has exited") }
+	}
 
 	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
@@ -79,6 +88,11 @@ func helperStartMain(args []string) {
 	p, err := StartDetached(exe, []string{helperSleep}, filepath.Dir(logPath), logf)
 	if err != nil {
 		fail(err)
+	}
+	if p == nil {
+		fmt.Println("gone")
+		windows.CloseHandle(job)
+		os.Exit(0)
 	}
 	fmt.Println(p.Pid)
 	windows.CloseHandle(job)
@@ -95,8 +109,39 @@ func helperSleepMain(args []string) {
 		}
 		os.Stdout, os.Stderr = f, f
 	}
-	fmt.Println(readyMarker)
+	fmt.Printf("%s %d\n", readyMarker, os.Getpid())
 	time.Sleep(10 * time.Minute)
+	os.Exit(0)
+}
+
+// argvReport is what helperArgvMain writes: the arguments it got, its working directory and its
+// environment.
+type argvReport struct {
+	Args []string
+	Cwd  string
+	Env  []string
+}
+
+// helperArgvMain writes what it received to the file named after the last --log, so a test can
+// compare it with what it sent.
+func helperArgvMain(args []string) {
+	idx := -1
+	for i, a := range args {
+		if a == "--log" {
+			idx = i
+		}
+	}
+	if idx < 0 || idx+1 >= len(args) {
+		os.Exit(2)
+	}
+	cwd, _ := os.Getwd()
+	b, err := json.Marshal(argvReport{Args: args[:idx], Cwd: cwd, Env: os.Environ()})
+	if err != nil {
+		os.Exit(3)
+	}
+	if err := os.WriteFile(args[idx+1], b, 0o600); err != nil {
+		os.Exit(4)
+	}
 	os.Exit(0)
 }
 
@@ -121,6 +166,121 @@ func TestStartDetachedFallsBackInsideJob(t *testing.T) {
 	}
 	if !waitUntil(5*time.Second, func() bool { return !alive(pid) }) {
 		t.Fatalf("daemon %d survived a job close, but it started inside the job", pid)
+	}
+}
+
+// TestStartDetachedToleratesExitedWMIProcess checks that a WMI start whose process has already
+// exited is a success: StartDetached returns no process and no error, logs it, and does not fall
+// back into the job. The process WMI created is outside the job, so it is still running here.
+func TestStartDetachedToleratesExitedWMIProcess(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "daemon.log")
+	exe := copyTestBinary(t, "with space")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, exe, helperStart, logPath, "")
+	cmd.Env = append(os.Environ(), envFindFails+"=1")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("helper: %v\nlog:\n%s", err, readFile(logPath))
+	}
+	if got := strings.TrimSpace(string(out)); got != "gone" {
+		t.Fatalf("helper printed %q, want \"gone\"; log:\n%s", got, readFile(logPath))
+	}
+	waitForLog(t, logPath, readyMarker)
+	log := readFile(logPath)
+	if !strings.Contains(log, "had already exited") {
+		t.Errorf("log doesn't record the exited process:\n%s", log)
+	}
+	if strings.Contains(log, "inside the job") {
+		t.Errorf("fell back into the job after WMI had started the daemon:\n%s", log)
+	}
+	pid := sleeperPID(t, log)
+	t.Cleanup(func() { kill(pid) })
+	if !alive(pid) {
+		t.Fatalf("the WMI-started process %d is not running", pid)
+	}
+}
+
+// TestWMIPassesArgumentsDirectoryAndEnvironmentUnchanged starts a helper through WMI that reports
+// what it received. Each argument, the working directory and the environment must arrive exactly
+// as sent, whatever characters they hold.
+func TestWMIPassesArgumentsDirectoryAndEnvironmentUnchanged(t *testing.T) {
+	const tricky = `O'Brien & 100% (x) ’q’ ‘r‘ naïve 日本`
+	dir := filepath.Join(t.TempDir(), tricky)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	exe := copyTestBinary(t, tricky)
+	probe := `a & b %PATH% 'x' "y" ’ ‘ (z) ñ 日本`
+	t.Setenv(envProbe, probe)
+
+	args := []string{helperArgv, "plain", "with space", "a&b", "100%", "it's", `say "hi"`,
+		"(paren)", "’curly’", "‘x‘", "naïve 日本", `C:\trailing\`, ""}
+	logPath := filepath.Join(t.TempDir(), "argv.json")
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := startThroughWMI(exe, args, dir, f)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { kill(pid) })
+
+	var got argvReport
+	if !waitUntil(15*time.Second, func() bool {
+		b, err := os.ReadFile(logPath)
+		return err == nil && json.Unmarshal(b, &got) == nil
+	}) {
+		t.Fatalf("helper never reported; log:\n%s", readFile(logPath))
+	}
+
+	want := args[1:]
+	if len(got.Args) != len(want) {
+		t.Fatalf("got %d arguments %q, want %d %q", len(got.Args), got.Args, len(want), want)
+	}
+	for i := range want {
+		if got.Args[i] != want[i] {
+			t.Errorf("argument %d: got %q, want %q", i, got.Args[i], want[i])
+		}
+	}
+	if got.Cwd != dir {
+		t.Errorf("working directory: got %q, want %q", got.Cwd, dir)
+	}
+	env := make(map[string]bool, len(got.Env))
+	for _, kv := range got.Env {
+		env[kv] = true
+	}
+	if !env[envProbe+"="+probe] {
+		t.Errorf("environment variable %s didn't arrive unchanged", envProbe)
+	}
+	for _, kv := range os.Environ() {
+		if !env[kv] {
+			t.Errorf("environment entry %q didn't arrive", kv)
+		}
+	}
+}
+
+// TestParseWMIPID checks the PID the script prints: zero and anything that isn't a PID are errors.
+func TestParseWMIPID(t *testing.T) {
+	for _, tc := range []struct {
+		out string
+		pid int
+		ok  bool
+	}{
+		{"1234", 1234, true},
+		{"1234\r\n", 1234, true},
+		{"0", 0, false},
+		{"-5", 0, false},
+		{"", 0, false},
+		{"12 34", 0, false},
+		{"Win32_Process.Create returned 2", 0, false},
+	} {
+		pid, err := parseWMIPID(tc.out)
+		if (err == nil) != tc.ok || pid != tc.pid {
+			t.Errorf("parseWMIPID(%q) = %d, %v; want %d, ok=%v", tc.out, pid, err, tc.pid, tc.ok)
+		}
 	}
 }
 
@@ -176,7 +336,7 @@ func TestWindowsCommandLineRoundTrip(t *testing.T) {
 func startFromJobHelper(t *testing.T, psExe string) (int, string) {
 	t.Helper()
 	logPath := filepath.Join(t.TempDir(), "daemon.log")
-	exe := copyTestBinary(t)
+	exe := copyTestBinary(t, "with space")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, exe, helperStart, logPath, psExe).Output()
@@ -196,9 +356,9 @@ func startFromJobHelper(t *testing.T, psExe string) (int, string) {
 	return pid, logPath
 }
 
-// copyTestBinary copies this test binary into a directory whose path has a space, so every start
-// here quotes a path with a space in it, as the Desktop path does.
-func copyTestBinary(t *testing.T) string {
+// copyTestBinary copies this test binary into a directory of the given name under a temporary
+// directory, so the start quotes a path with a space or other awkward characters in it.
+func copyTestBinary(t *testing.T, dirName string) string {
 	t.Helper()
 	src, err := os.Executable()
 	if err != nil {
@@ -208,7 +368,7 @@ func copyTestBinary(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dst := filepath.Join(t.TempDir(), "with space", "proc.test.exe")
+	dst := filepath.Join(t.TempDir(), dirName, "proc.test.exe")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -216,6 +376,21 @@ func copyTestBinary(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dst
+}
+
+// sleeperPID reads the PID the sleeper printed after its readyMarker.
+func sleeperPID(t *testing.T, log string) int {
+	t.Helper()
+	for _, line := range strings.Split(log, "\n") {
+		if rest, ok := strings.CutPrefix(line, readyMarker+" "); ok {
+			pid, err := strconv.Atoi(strings.TrimSpace(rest))
+			if err == nil {
+				return pid
+			}
+		}
+	}
+	t.Fatalf("no sleeper PID in log:\n%s", log)
+	return 0
 }
 
 // alive reports whether the process with pid is still running.
