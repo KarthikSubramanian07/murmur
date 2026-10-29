@@ -361,7 +361,9 @@ function prLink(pr) {
 function sessionRow(d, s) {
   const active = when(s.lastActive);
   const started = when(s.started);
-  const pr = s.branch ? ui.state.prs?.[s.branch] : null;
+  // Own keys only: a branch named constructor or __proto__ would otherwise find Object's.
+  const prs = ui.state.prs || {};
+  const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
   const open = () => {
     ui.filter = s.name;
     go("messages");
@@ -376,6 +378,8 @@ function sessionRow(d, s) {
       "aria-label": s.name + ", messages",
       onclick: open,
       onkeydown: (e) => {
+        // Only keys aimed at the row: Enter on the PR link inside it opens the link.
+        if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           open();
