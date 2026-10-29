@@ -142,7 +142,8 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		s.clientPID = h.ClientPID
 		s.worktree = worktree
 		// The name is set again even when the key hasn't changed: while s was in its grace another
-		// session may have taken its key and name, and s, back, holds the name now.
+		// session may have taken its key and name, and s, back, holds the name now. As any taking
+		// of a name does, that also takes what was kept for the name (see adoptLocked).
 		s.key = key
 		d.setNameLocked(s, d.st.NameKeys[key])
 		s.dropped = time.Time{}

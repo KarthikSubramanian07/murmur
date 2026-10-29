@@ -105,6 +105,7 @@ const (
 	procP = 4242 // the Claude Code process of the sessions under test
 	procQ = 4343 // another one
 	procR = 4444 // a third
+	procS = 4545 // a fourth
 )
 
 // A /clear in a session: the MCP server still says conversation A, the hook says B. The session
@@ -584,31 +585,46 @@ func TestTakeoverInTheGraceHoldsTheNameAgain(t *testing.T) {
 	b.noticed("claude-x", procP, "for the second")
 }
 
-// #37 with two moves, which leave two retired IDs. X's first session stopped; a second took X,
-// moved on to Y and stopped; a third took Y. A send to X lands in the same place from this device
-// as from another, one hop from the address the registry has: the second, the last to hold X, and
-// not on to the third, which holds Y.
+// movedOn sets b up for #46. X's first session stops, so its kept inbox waits for X; a second
+// session, opened on a throwaway conversation, takes X with a /resume and then follows a /clear
+// to Y, so it holds X last but is called Y. The second is left running.
+func movedOn(t *testing.T, b *device) (first, second, nameX, nameY string, conn2 net.Conn) {
+	t.Helper()
+	first, conn1, _ := b.sessionPID("cccccc", "claude-x", procP)
+	nameX = b.named(first)
+	conn1.Close()
+	eventually(t, "the first to stop", func() bool { return busLines(b, first, "stopped") == 1 })
+
+	second, conn2, _ = b.sessionPID("dddddd", "claude-throwaway", procQ)
+	nameT := b.named(second)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-x", ClientPID: procQ})
+	b.nameIs(second, nameX)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y", ClientPID: procQ})
+	nameY = b.nameHeld(second, nameX, nameT)
+	return first, second, nameX, nameY, conn2
+}
+
+// resumedAs is a new process, opened on a throwaway conversation, that resumes conversation claude:
+// it returns what its hook is told as the session moves there.
+func (d *device) resumedAs(id, claude string, pid int) []string {
+	d.t.Helper()
+	d.sessionPID(id, "claude-throwaway-"+id, pid)
+	return d.hook(claude, pid)
+}
+
+// #37 and #46 with two moves, which leave two retired IDs. X's first session stopped; a second took
+// X, moved on to Y and stopped; a third took Y. A send to X lands in the same place from this device
+// as from another, at most one hop from the address the registry has. That is the first's kept
+// inbox: the second, the last to hold X, is called Y now, and the third holds Y. The next session to
+// take X takes both messages.
 func TestSendToANameIsForwardedOnceFromAnyDevice(t *testing.T) {
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
 	a.session("aaaaaa", "claude-sender")
-
-	first, conn1, _ := b.sessionPID("cccccc", "claude-x", procP)
-	nameX := b.named(first)
-	a.nameIs(first, nameX)
-	conn1.Close()
-	eventually(t, "the first to stop", func() bool { return busLines(b, first, "stopped") == 1 })
-
-	second, conn2, _ := b.sessionPID("dddddd", "claude-throwaway", procQ)
-	nameT := b.named(second)
-	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-x", ClientPID: procQ})
-	b.nameIs(second, nameX)
-	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y", ClientPID: procQ})
-	nameY := b.nameHeld(second, nameX, nameT)
+	first, second, nameX, nameY, conn2 := movedOn(t, b)
 	conn2.Close()
 	eventually(t, "the second to stop", func() bool { return busLines(b, second, "stopped") == 1 })
-
 	third, _, _ := b.sessionPID("eeeeee", "claude-throwaway-2", procR)
 	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y", ClientPID: procR})
 	b.nameIs(third, nameY)
@@ -625,9 +641,86 @@ func TestSendToANameIsForwardedOnceFromAnyDevice(t *testing.T) {
 	if got := b.do(proto.Request{Op: proto.OpInbox, Session: "eeeeee"}).Messages; len(got) != 0 {
 		t.Fatalf("the session that holds %s got %+v", nameY, got)
 	}
-	b.sessionPID("dddddd", "claude-throwaway", procQ)
-	if got := inboxWant(b, "dddddd", 2); strings.Join(sorted(got), ",") != "from another device,from this device" {
-		t.Fatalf("the last to hold %s has %q", nameX, got)
+	if told := b.resumedAs("ffffff", "claude-x", procS); strings.Join(sorted(told), ",") != "from another device,from this device" {
+		t.Fatalf("the next session to take %s was told %v", nameX, told)
+	}
+}
+
+// #46 through adoption. The last to hold X has moved to Y and stopped, and the session that holds Y
+// now restarts its server in its grace: taking Y again, it takes what was kept for Y, and nothing
+// sent for X may be among it. That waits for the next session to take X.
+func TestTakingANameAgainTakesNothingForAnother(t *testing.T) {
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 5*time.Second, 0)
+	first, second, nameX, nameY, conn2 := movedOn(t, b)
+	conn2.Close()
+	eventually(t, "the second to stop", func() bool { return busLines(b, second, "stopped") == 1 })
+	third, conn3, _ := b.sessionPID("eeeeee", "claude-throwaway-2", procR)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y", ClientPID: procR})
+	b.nameIs(third, nameY)
+
+	b.do(proto.Request{Op: proto.OpSend, To: first, Subject: "for X"})
+	eventually(t, "delivery", func() bool { return logHas(b, "for X") })
+	conn3.Close()
+	eventually(t, "the third to drop", func() bool {
+		return b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y"}).Self == ""
+	})
+	b.helloPID("eeeeee", "claude-y", procR)
+	if told := b.hook("claude-y", procR); len(told) != 0 {
+		t.Fatalf("the session called %s, back in its grace, was told %v", nameY, told)
+	}
+	if n := busLines(b, third, "stopped"); n != 0 {
+		t.Fatalf("the third stopped before its server came back; the test needs it back in its grace")
+	}
+	if told := b.resumedAs("ffffff", "claude-x", procS); len(told) != 1 || told[0] != "for X" {
+		t.Fatalf("the next session to take %s was told %v", nameX, told)
+	}
+}
+
+// #46 with the holder running. The last to hold X has moved to Y and is still running: a send to X,
+// from this device or another, is not its. It waits in X's first session's kept inbox, for the next
+// session to take X.
+func TestSendToANameSkipsARunningHolderThatMovedOn(t *testing.T) {
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
+	a.session("aaaaaa", "claude-sender")
+	first, second, nameX, nameY, _ := movedOn(t, b)
+	eventually(t, "presence", func() bool { return !a.seesSession(first) && a.nameOf(second) == nameY })
+
+	here := b.do(proto.Request{Op: proto.OpSend, To: nameX, Subject: "from this device"})
+	there := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "from another device"})
+	if here.Error != "" || there.Error != "" || here.Messages[0].To != first || there.Messages[0].To != first {
+		t.Fatalf("sent from this device: %+v; from another: %+v; want both sent to %s", here, there, first)
+	}
+	eventually(t, "delivery", func() bool { return logHas(b, "from another device") && logHas(b, "from this device") })
+	if told := b.hook("claude-y", procQ); len(told) != 0 {
+		t.Fatalf("the session called %s was told %v", nameY, told)
+	}
+	if told := b.resumedAs("eeeeee", "claude-x", procR); strings.Join(sorted(told), ",") != "from another device,from this device" {
+		t.Fatalf("the next session to take %s was told %v", nameX, told)
+	}
+}
+
+// #46 with the holder stopped. The last to hold X has moved to Y and stopped, and nobody holds Y.
+// A send to X here waits for X, not with the holder, whose kept inbox goes to the next session to
+// take Y.
+func TestSendToANameSkipsAStoppedHolderThatMovedOn(t *testing.T) {
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
+	_, second, nameX, nameY, conn2 := movedOn(t, b)
+	conn2.Close()
+	eventually(t, "the second to stop", func() bool { return busLines(b, second, "stopped") == 1 })
+
+	if r := b.do(proto.Request{Op: proto.OpSend, To: nameX, Subject: "for X"}); r.Error != "" {
+		t.Fatalf("send: %+v", r)
+	}
+	eventually(t, "delivery", func() bool { return logHas(b, "for X") })
+	if told := b.resumedAs("eeeeee", "claude-y", procR); len(told) != 0 {
+		t.Fatalf("the next session to take %s was told %v", nameY, told)
+	}
+	if told := b.resumedAs("ffffff", "claude-x", procS); len(told) != 1 || told[0] != "for X" {
+		t.Fatalf("the next session to take %s was told %v", nameX, told)
 	}
 }
 

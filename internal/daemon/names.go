@@ -177,10 +177,11 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 //
 // The record is for #37. The registry has the session a name was first given to, which may have
 // moved to another conversation since, and another session here may have taken the name after it.
-// The last holder is the answer if the name is still the last it took, or if it is running (a
-// session that left the name is reached under its new one). Otherwise the registry's address goes
-// on the bus as it is, as from any device, and delivery forwards it once (see forwardLocked):
-// forwarding it here too would make two hops of one. Caller holds mu.
+// The last holder is the answer if the name is still the last it took and it can receive, running
+// or not; one that has moved to another conversation is not the name's any more (#46). Otherwise
+// the registry's address goes on the bus as it is, as from any device, and delivery forwards it at
+// most once (see forwardLocked): forwarding it here too would make two hops of one.
+// Caller holds mu.
 func (d *Daemon) resolveNameLocked(name string) (addr string, ok bool) {
 	var dropped string
 	for _, s := range d.sortedSessionsLocked() {
@@ -195,8 +196,7 @@ func (d *Daemon) resolveNameLocked(name string) (addr string, ok bool) {
 	if dropped != "" {
 		return dropped, true
 	}
-	if h := d.st.NameHolders[name]; h != "" &&
-		(d.liveLocked(h) || d.st.SessionNames[h] == name && d.receivesLocked(h)) {
+	if h := d.st.NameHolders[name]; h != "" && d.st.SessionNames[h] == name && d.receivesLocked(h) {
 		return bus.Addr(d.device, h), true
 	}
 	for _, dev := range sortedKeys(d.peers) {

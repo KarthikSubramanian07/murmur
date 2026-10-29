@@ -169,16 +169,19 @@ func (d *Daemon) receivesLocked(id string) bool {
 // another. A message for the first session, retired now, reached nobody once the new one stopped.
 // This daemon knows who took the name last, so a message for a session here that isn't running (or
 // is in its grace) goes to the session that holds, or last held, the name that session had last,
-// if that session can receive it. It goes by the address alone, which is all a message on the bus
-// carries; docs/VISION.md ("A name held by another session") says what that misses.
-// Caller holds mu.
+// if that session can receive it and the name is still the last it took. A holder that has moved
+// to another conversation since gets nothing for the name it left (#46): the message stays in the
+// kept inbox, which the next session to take the name takes (see adoptLocked). It goes by the
+// address alone, which is all a message on the bus carries; docs/VISION.md ("A name held by
+// another session") says what that misses. Caller holds mu.
 func (d *Daemon) forwardLocked(to string) string {
 	dev, id := bus.SplitAddr(to)
 	if dev != d.device || id == "" || d.liveLocked(id) {
 		return ""
 	}
-	holder := d.st.NameHolders[d.st.SessionNames[id]]
-	if holder == "" || holder == id || !d.receivesLocked(holder) {
+	name := d.st.SessionNames[id]
+	holder := d.st.NameHolders[name]
+	if holder == "" || holder == id || d.st.SessionNames[holder] != name || !d.receivesLocked(holder) {
 		return ""
 	}
 	return bus.Addr(d.device, holder)
