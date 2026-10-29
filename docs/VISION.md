@@ -218,6 +218,9 @@ evidence is in #19.
   - *When it happens.* Setup installs the hook for `PostToolUse` and `UserPromptSubmit`, not
     `SessionStart`, so a session moves at the first tool call or prompt after the switch, not at
     the switch. Until then it shows its old name, and what is sent to that reaches it.
+  - *Subagents.* A subagent's hooks carry its parent session's `session_id` and `CLAUDE_PID`,
+    with `agent_id` set, so a subagent's tool calls don't move the session (seen on 2.1.312,
+    2026-10-29).
 - **Under T3 the session is the thread, not the provider's session under it.** The Claude
   session ID under one thread changes when the user switches Claude accounts, and has gone
   A → B → A. T3 gives MCP servers and hooks no way to learn the thread ID. The two ways that
