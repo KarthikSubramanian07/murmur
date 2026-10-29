@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/t4/internal/client"
+	"github.com/a-Fig/t4/internal/gitx"
 	"github.com/a-Fig/t4/internal/proto"
 	"github.com/a-Fig/t4/internal/view"
 )
@@ -100,6 +101,17 @@ func bracketOp(in input) string {
 	return ""
 }
 
+// findClone is the git common dir of the repository the hook runs in, which is what names its
+// daemon. It is read from the repository's files where it can be (gitx.Discover): a git process
+// here would add a tenth of a second or more to every tool call on Windows. Git is asked where it
+// can't.
+func findClone(ctx context.Context, cwd string) (string, error) {
+	if _, common, ok := gitx.Discover(cwd); ok {
+		return common, nil
+	}
+	return client.FindGitDir(ctx, cwd)
+}
+
 // Run reads a hook payload from stdin and writes the hook's answer, if any, to stdout.
 func Run(stdin io.Reader, stdout io.Writer) {
 	defer func() { recover() }()
@@ -123,7 +135,7 @@ func Run(stdin io.Reader, stdout io.Writer) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	gitDir, err := client.FindGitDir(ctx, in.Cwd)
+	gitDir, err := findClone(ctx, in.Cwd)
 	if err != nil {
 		return
 	}
