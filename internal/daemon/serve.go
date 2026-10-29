@@ -141,10 +141,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		s.agent, s.cwd, s.claudeSession, s.branch, s.reconnect = agent, h.Cwd, claude, branch, h.Reconnect
 		s.clientPID = h.ClientPID
 		s.worktree = worktree
-		if s.key != key {
-			s.key = key
-			d.setNameLocked(s, d.st.NameKeys[key])
-		}
+		// The name is set again even when the key hasn't changed: while s was in its grace another
+		// session may have taken its key and name, and s, back, holds the name now.
+		s.key = key
+		d.setNameLocked(s, d.st.NameKeys[key])
 		s.dropped = time.Time{}
 		close(s.takeover)
 		s.takeover = nil

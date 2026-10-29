@@ -510,6 +510,40 @@ func TestTheSessionThatTakesANameTakesWhatWasKeptForIt(t *testing.T) {
 	b.nameIs(third, nameX)
 }
 
+// #37 when a session takes back, in its grace, the name another session took meanwhile. A drops,
+// B takes A's key and name under another ID, B drops, and A's server comes back: A holds the name
+// again, so once B stops, a message for B is A's.
+func TestTakeoverInTheGraceHoldsTheNameAgain(t *testing.T) {
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 10*time.Second, 0)
+	dropped := func(what string) {
+		t.Helper()
+		eventually(t, what, func() bool {
+			return b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-x"}).Self == ""
+		})
+	}
+
+	first, conn1, _ := b.sessionPID("cccccc", "claude-x", procP)
+	nameX := b.named(first)
+	conn1.Close()
+	dropped("the first to drop")
+
+	second, conn2, _ := b.sessionPID("dddddd", "claude-x", procQ)
+	b.nameIs(second, nameX)
+	conn2.Close()
+	dropped("the second to drop")
+
+	b.helloPID("cccccc", "claude-x", procP)
+	b.nameIs(first, nameX)
+	eventually(t, "the second to stop", func() bool { return busLines(b, second, "stopped") == 1 })
+	if n := busLines(b, first, "stopped"); n != 0 {
+		t.Fatalf("the first stopped before its server came back; the test needs it back in its grace")
+	}
+
+	b.do(proto.Request{Op: proto.OpSend, To: second, Subject: "for the second"})
+	b.noticed("claude-x", procP, "for the second")
+}
+
 // The real hook: a payload on stdin and CLAUDE_PID in its environment drive a switch end to end, and
 // the notice for the new conversation comes out on stdout.
 func TestHookRunDrivesASwitch(t *testing.T) {
