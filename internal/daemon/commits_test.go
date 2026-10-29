@@ -311,23 +311,30 @@ func TestParallelCallsAndACallThatNeverEnds(t *testing.T) {
 	}
 }
 
-// The end of a call is judged in the worktree the call started in, wherever the hook is by then:
-// a call that ran cd into another worktree and committed there has no snapshot of that worktree
-// from before, so what it committed there isn't found.
-func TestEndInAnotherWorktreeIsJudgedWhereItStarted(t *testing.T) {
+// A call that ends with the hook in another worktree of the clone is judged in both: where it
+// started, and where it ended. The start's tips are the clone's, so the second worktree's history
+// is kept out, and only what the call made there is credited. A third worktree it never went to
+// is nobody's.
+func TestEndInAnotherWorktreeIsJudgedInBoth(t *testing.T) {
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	wt1 := a.linkedTree("wt-one", "feat-one")
 	wt2 := a.linkedTree("wt-two", "feat-two")
+	wt3 := a.linkedTree("wt-three", "feat-three")
 	alice, _ := a.claudeSession("aaaaaa", "claude-w", procP, wt1)
 	name := a.named(alice)
 
 	a.callStart("claude-w", procP, "toolu_w", wt1)
-	sha := commitFile(t, wt1, "one.txt")
-	commitFile(t, wt2, "two.txt")
+	one := commitFile(t, wt1, "one.txt")
+	two := commitFile(t, wt2, "two.txt")
+	commitFile(t, wt3, "three.txt")
 	a.callEnd("claude-w", procP, "toolu_w", wt2)
-	if got := commitSHAs(a.look("aaaaaa", name)); !slices.Equal(got, []string{sha}) {
-		t.Errorf("credited %v, want the commit of the worktree the call started in (%s)", got, sha)
+	det := a.look("aaaaaa", name)
+	if got := commitSHAs(det); !slices.Equal(got, []string{one, two}) {
+		t.Errorf("credited %v, want the commit in the worktree it started in (%s) and in the one it ended in (%s)", got, one, two)
+	}
+	if !slices.Equal(det.Committed, []string{"feat-two", "feat-one"}) {
+		t.Errorf("committed to %v, want [feat-two feat-one]", det.Committed)
 	}
 }
 

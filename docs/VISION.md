@@ -193,11 +193,14 @@ which session made a commit, so the daemon watches tool calls for them.
   key is the Claude session ID and the `tool_use_id`, since calls run in parallel. A snapshot is
   dropped after an hour, and the oldest goes once 128 are held, so a call whose end never comes (it
   was cancelled, the hook crashed) can't pile them up. A call with no snapshot credits nothing.
-- **Which worktree.** The one the call started in. A call that ends with the hook in another
-  worktree is judged where it started, since no snapshot of the other exists; a `cd` inside a Bash
-  call leaves the hook's working directory where it was (2.1.312), so this is rare. The hook finds
-  the clone from its working directory, and a call in another repository, or none, isn't watched.
-  A subagent's hooks carry the parent's session ID, so its commits are credited to the parent.
+- **Which worktree.** The one the call started in, and the one it ended in if that is another
+  worktree of the clone: the start's ref tips are the whole clone's, so they keep either
+  worktree's history out. A `cd` inside a Bash call leaves the hook's working directory where it
+  was (seen on 2.1.312, 2026-10-29), so a call ends elsewhere only when Claude Code itself has
+  moved, and what `cd ../other && git commit`, or `git -C ../other commit`, makes in another
+  worktree isn't credited. The hook finds the clone from its working directory, and a call in
+  another repository, or none, isn't watched. A subagent's hooks carry the parent's session ID,
+  so its commits are credited to the parent.
 - **What it costs.** A call that cannot run a command (`Read`, `Glob`, `Grep`, `Edit`, `Write`
   and the like, named in `internal/hook`) isn't bracketed. Any other tool is, MCP tools and
   subagents included. Measured 2026-10-29 on the Windows laptop, where one `git` process takes

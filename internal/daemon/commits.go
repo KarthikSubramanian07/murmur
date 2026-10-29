@@ -9,6 +9,7 @@ import (
 
 	"github.com/a-Fig/t4/internal/attrib"
 	"github.com/a-Fig/t4/internal/bus"
+	"github.com/a-Fig/t4/internal/gitx"
 	"github.com/a-Fig/t4/internal/proto"
 )
 
@@ -37,9 +38,8 @@ const (
 )
 
 // bracket is the start of a tool call: the worktree the hook ran in and what it looked like then.
-// The call's end is judged in this worktree, whatever directory the hook is in by then: a call that
-// ran cd into another worktree and committed there is not credited, as there is no snapshot of that
-// worktree from before.
+// The call's end is judged in this worktree, and also in the one the hook is in by then if that is
+// another worktree of the clone (see judgeEnd).
 type bracket struct {
 	cwd    string
 	before attrib.Ref
@@ -153,6 +153,10 @@ func (d *Daemon) toolEnd(ctx context.Context, req proto.Request) proto.Response 
 	}
 	d.ending++
 	d.mu.Unlock()
+	moved := ""
+	if req.Cwd != "" && req.Cwd != b.cwd && d.sameClone(req.GitDir) {
+		moved = req.Cwd
+	}
 	// Not cut short by shutdown, which waits for bg: a call that ended is still credited.
 	ctx = context.WithoutCancel(ctx)
 	d.bg.Add(1) // from a connection's goroutine, which bg counts, so never while bg drains to zero
@@ -163,7 +167,7 @@ func (d *Daemon) toolEnd(ctx context.Context, req proto.Request) proto.Response 
 			d.ending--
 			d.mu.Unlock()
 		}()
-		d.judgeEnd(ctx, b, sessions)
+		d.judgeEnd(ctx, b, moved, sessions)
 	}()
 	return proto.Response{OK: true}
 }
@@ -184,21 +188,23 @@ func (d *Daemon) settleEnds() {
 }
 
 // judgeEnd snapshots the worktree a call started in, and credits the sessions with the commits made
-// since its start.
-func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, sessions []*session) {
+// since its start. A call that ended with the hook in another worktree of the clone, moved, is
+// judged there too, against the same start: the start's tips are the whole clone's, so they keep
+// that worktree's history out as well as this one's.
+func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, moved string, sessions []*session) {
 	ctx, cancel := context.WithTimeout(ctx, d.snapshotLimit())
 	defer cancel()
-	after, err := snapshot(ctx, b.cwd)
-	if err != nil {
-		d.snapshotFailed("snapshotting after a tool call", err)
-		return
+	commits, ok := d.commitsSince(ctx, b.cwd, b.before)
+	if moved != "" && !sameWorktree(b.cwd, moved) {
+		more, _ := d.commitsSince(ctx, moved, b.before)
+		for _, c := range more {
+			if !slices.ContainsFunc(commits, func(o attrib.Commit) bool { return o.SHA == c.SHA }) {
+				commits = append(commits, c)
+			}
+		}
+		ok = ok || len(more) > 0
 	}
-	commits, err := attrib.NewCommits(ctx, b.cwd, b.before, after)
-	if err != nil {
-		d.snapshotFailed("finding the commits a tool call made", err)
-		return
-	}
-	if len(commits) == 0 {
+	if !ok || len(commits) == 0 {
 		return
 	}
 	d.mu.Lock()
@@ -208,6 +214,30 @@ func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, sessions []*session) 
 	if published {
 		d.kickPresence()
 	}
+}
+
+// commitsSince snapshots worktree and returns the commits made there since before. ok is false if
+// git failed, which is logged.
+func (d *Daemon) commitsSince(ctx context.Context, worktree string, before attrib.Ref) ([]attrib.Commit, bool) {
+	after, err := snapshot(ctx, worktree)
+	if err != nil {
+		d.snapshotFailed("snapshotting after a tool call", err)
+		return nil, false
+	}
+	commits, err := attrib.NewCommits(ctx, worktree, before, after)
+	if err != nil {
+		d.snapshotFailed("finding the commits a tool call made", err)
+		return nil, false
+	}
+	return commits, true
+}
+
+// sameWorktree says whether two directories are in one worktree, where that can be told without
+// git; where it can't, they are taken to be in two, which costs only a second look.
+func sameWorktree(a, b string) bool {
+	ga, _, okA := gitx.Discover(a)
+	gb, _, okB := gitx.Discover(b)
+	return okA && okB && filepath.Clean(ga) == filepath.Clean(gb)
 }
 
 // snapshotFailed logs a snapshot that couldn't be taken, at most once a minute: it would otherwise
