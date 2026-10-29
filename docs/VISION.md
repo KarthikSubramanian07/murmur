@@ -190,6 +190,33 @@ evidence is in #19.
   `/resume`d, it is wrong from the start. Hooks always see the live ID, and they get
   `CLAUDE_PID`, which is the MCP server's parent process. So the daemon learns the live ID from
   a hook and matches it to a connected session by that PID (#9).
+- **How the daemon follows the live ID (#9, built 2026-10-29).** The MCP server's hello carries
+  its parent PID and the hook's request carries `CLAUDE_PID`. On a hook request the sessions
+  whose PID is the hook's are the hook's, and each of them not yet on the hook's Claude ID moves
+  to it. The key follows the ID, so the session takes the name that key has had, or a new name
+  taken as any is (#20); it keeps its t4 ID, its inbox and its place on the bus, and nothing is
+  written there. Presence carries the new name, and the daemon's log says each switch in names
+  only, since Claude IDs are never published. Two servers in one Claude Code process both move,
+  and still don't share a name. A PID moves only the sessions that registered with it, so a hook
+  takes no session of another process. Where no session has the hook's PID (the hook has none,
+  the server gave none, a wrapper stands between Claude Code and the server), the sessions with
+  the hook's Claude ID are the hook's, as before PIDs were known; a hook that matches neither
+  gets nothing.
+  - *Reconnecting.* Every response carries the Claude ID the daemon holds for the calling
+    session, and the server sends it in later hellos instead of its environment's. A server that
+    registers again from the same PID as a session that has followed keeps the daemon's ID
+    whatever the hello says; a server of another PID is believed. A daemon that restarts between
+    a switch and the server's next call to it can still bring the stale ID back, until the next
+    hook corrects it.
+  - *The parent PID.* `t4 init` registers a bare `t4 mcp --agent claude-code` in `.mcp.json`, so
+    Claude Code starts it itself and the server's parent is the Claude Code process, unless `t4`
+    is a shell or batch shim, or the user wraps it. Seen 2026-10-29 on Windows, with a plain
+    Python server rather than t4: its parent was the `claude.exe` that `CLAUDE_PID` named, and a
+    `cmd.exe` stood between them only where the user's own config said `cmd /c`. A wrapper means
+    no PID match, so that session falls back to its Claude ID and doesn't follow.
+  - *When it happens.* Setup installs the hook for `PostToolUse` and `UserPromptSubmit`, not
+    `SessionStart`, so a session moves at the first tool call or prompt after the switch, not at
+    the switch. Until then it shows its old name, and what is sent to that reaches it.
 - **Under T3 the session is the thread, not the provider's session under it.** The Claude
   session ID under one thread changes when the user switches Claude accounts, and has gone
   A → B → A. T3 gives MCP servers and hooks no way to learn the thread ID. The two ways that
@@ -239,6 +266,20 @@ change and a daemon that knows no names delivers by it all the same.
   presence, then in the registry, so a message to a session that has stopped is kept for it like
   any other. A name nobody has is an error that says so. A device ID shaped like a name is read as
   a device if no session has that name.
+- **A name a session has left.** A session that followed Claude Code to another conversation
+  (#9) isn't called its old name any more, but the registry still has that name down for it, as
+  its address is its t4 ID, which doesn't change. A send to the old name reaches the session,
+  and says so: the name was its before it moved, and it is called something else now. The
+  alternative was an error saying the conversation ended; that would drop messages to a session
+  that is alive and could read them, and the sender could do nothing with the error but look up
+  the new name that the note gives it (2026-10-29).
+- **A name held by another session (#37).** A `/resume` back to an earlier conversation can put
+  its name on a session whose t4 ID isn't the one the registry has the name down for, and the
+  first session is then retired. A daemon records in its state file the last session to hold each
+  name and the last name each of its sessions held. A message for a session of this device that
+  isn't running goes to the session that holds the name it last had, if that one is registered
+  or stopped within `StoppedInbox`: whether it is sent by name or by `device/session`. It is one
+  hop. What was already in the retired inbox stays there.
 - **V1 daemons.** They don't read the registry, and their presence has no names. Their sessions
   show without one and are reached at `device/session`, and they reach sessions named here the
   same way.
