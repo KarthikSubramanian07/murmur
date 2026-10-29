@@ -267,22 +267,27 @@ func TestNonCommitRefs(t *testing.T) {
 
 func TestErrors(t *testing.T) {
 	dir := repo(t)
-	sha := commit(t, dir, "root")
+	commit(t, dir, "root")
 	if _, err := attrib.Head(context.Background(), t.TempDir()); err == nil {
 		t.Fatal("Head outside repository succeeded")
 	}
+	// Refs from Head with a bad SHA swapped in, so each case reaches git rather than stopping
+	// at NewCommits' check for a Ref that Head did not read.
+	ref := head(t, dir)
+	bad := ref
+	bad.SHA = strings.Repeat("1", 40)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := attrib.Head(ctx, dir); err == nil {
 		t.Fatal("Head with canceled context succeeded")
 	}
-	if _, err := attrib.NewCommits(ctx, dir, attrib.Ref{}, attrib.Ref{SHA: sha}); err == nil {
+	if _, err := attrib.NewCommits(ctx, dir, ref, ref); err == nil {
 		t.Fatal("NewCommits with canceled context succeeded")
 	}
-	if _, err := attrib.NewCommits(context.Background(), dir, attrib.Ref{SHA: strings.Repeat("1", 40)}, attrib.Ref{SHA: sha}); err == nil {
+	if _, err := attrib.NewCommits(context.Background(), dir, bad, ref); err == nil {
 		t.Fatal("NewCommits with invalid before succeeded")
 	}
-	if _, err := attrib.NewCommits(context.Background(), dir, attrib.Ref{}, attrib.Ref{SHA: strings.Repeat("1", 40)}); err == nil {
+	if _, err := attrib.NewCommits(context.Background(), dir, ref, bad); err == nil {
 		t.Fatal("NewCommits with invalid after succeeded")
 	}
 }
