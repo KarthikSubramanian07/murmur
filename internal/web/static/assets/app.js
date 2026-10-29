@@ -134,6 +134,27 @@ function devices() {
   return list;
 }
 
+// The latest name for each address the page has seen. A session works as device/session until its
+// name lands, and the page keeps messages from before that, so it goes by the address the bus
+// carried and puts in whatever the address is called now.
+const named = new Map();
+
+function learn(addr, name) {
+  if (addr && name && name !== addr) named.set(addr, name);
+}
+
+function nameOf(addr, shown) {
+  return (addr && named.get(addr)) || shown;
+}
+
+function fromName(m) {
+  return nameOf(m.fromAddr, m.from);
+}
+
+function toName(m) {
+  return m.toKind === "session" ? nameOf(m.toAddr, m.to) : m.to;
+}
+
 function findSession(name) {
   for (const d of ui.state?.devices || []) {
     for (const s of d.sessions || []) if (s.name === name) return { device: d, session: s };
@@ -390,19 +411,25 @@ function showDevice(id) {
 
 // Messages.
 
+// A session's messages: those it sent, and those it was sent, to it, its device or everyone.
 function visibleMessages() {
   const f = ui.filter;
   if (!f) return ui.messages;
   const device = findSession(f)?.device.id;
   return ui.messages.filter(
-    (m) => m.from === f || (m.toKind === "session" && m.to === f) || (m.toKind === "device" && m.to === device),
+    (m) =>
+      fromName(m) === f ||
+      (m.toKind === "session" && toName(m) === f) ||
+      (m.toKind === "device" && m.to === device) ||
+      m.toKind === "all",
   );
 }
 
 function recipient(m) {
   if (m.toKind === "all") return h("span", { class: "msg-to" }, icon("broadcast"), "Everyone");
   if (m.toKind === "device") return h("span", { class: "msg-to", title: "Every session on " + m.to }, icon("laptop"), h("span", { class: "truncate" }, m.to));
-  return h("span", { class: "msg-to", title: m.to }, h("span", { class: "truncate" }, m.to));
+  const to = toName(m);
+  return h("span", { class: "msg-to", title: to }, h("span", { class: "truncate" }, to));
 }
 
 function messagesPage() {
@@ -437,7 +464,8 @@ function messagesPage() {
 function messageRow(m) {
   const open = ui.expanded.has(m.id);
   const at = when(m.at);
-  const sender = findSession(m.from);
+  const from = fromName(m);
+  const sender = findSession(from);
   const toggle = () => {
     if (ui.expanded.has(m.id)) ui.expanded.delete(m.id);
     else ui.expanded.add(m.id);
@@ -453,7 +481,7 @@ function messageRow(m) {
       "button",
       { class: "msg-head", "data-key": "m-" + m.id, "aria-expanded": open ? "true" : "false", onclick: toggle },
       icon("chevronRight", "msg-chev"),
-      h("span", { class: "msg-from truncate", title: m.from }, m.from),
+      h("span", { class: "msg-from truncate", title: from }, from),
       icon("arrowRight", "arrow"),
       recipient(m),
       h("span", { class: "msg-subject", title: m.subject }, m.subject),
@@ -738,6 +766,8 @@ async function fetchMessages() {
     const r = await api("/api/messages?cursor=" + encodeURIComponent(ui.cursor));
     let added = 0;
     for (const m of r.messages || []) {
+      learn(m.fromAddr, m.from);
+      if (m.toKind === "session") learn(m.toAddr, m.to);
       if (ui.ids.has(m.id)) continue;
       ui.ids.add(m.id);
       ui.messages.push(m);
@@ -763,6 +793,7 @@ async function poll() {
   clearTimeout(timer);
   try {
     const [state] = await Promise.all([api("/api/state"), fetchMessages()]);
+    for (const d of state.devices || []) for (const s of d.sessions || []) learn(s.addr, s.name);
     ui.state = state;
     ui.conn = "ok";
   } catch (e) {
@@ -791,6 +822,7 @@ function start() {
   if (token !== ui.token) {
     Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null });
     ui.ids = new Set();
+    named.clear();
     last = "";
     polled = false;
   }

@@ -43,7 +43,10 @@ type Device struct {
 
 // Session is one agent session.
 type Session struct {
-	Name   string `json:"name"`  // two words, like quiet-otter; also its address
+	Name string `json:"name"` // two words, like quiet-otter; also its address
+	// Addr is its address on the bus, device/session. Name is Addr until the session has a name,
+	// which can land after its first messages; the page goes by Addr to tie the two together.
+	Addr   string `json:"addr,omitempty"`
 	Agent  string `json:"agent"` // claude-code, codex, ...
 	Branch string `json:"branch,omitempty"`
 	Doing  string `json:"doing,omitempty"` // the status line the session sets itself
@@ -63,6 +66,11 @@ type Message struct {
 	Subject string    `json:"subject"`
 	Body    string    `json:"body,omitempty"`
 	At      time.Time `json:"at"` // the sender's clock
+	// FromAddr and ToAddr are what the bus carried: the sender's device/session, and the
+	// recipient's device/session, device ID or "*". A name that lands later then reaches a
+	// message the page already holds.
+	FromAddr string `json:"fromAddr,omitempty"`
+	ToAddr   string `json:"toAddr,omitempty"`
 }
 
 // Message.ToKind values.

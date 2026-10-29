@@ -99,8 +99,9 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 		if !ss.dropped.IsZero() && live[ss.name] {
 			continue // its name went to the session that took over, which stands for the conversation
 		}
+		addr := bus.Addr(d.device, ss.id)
 		self.Sessions = append(self.Sessions, web.Session{
-			Name: nameOr(ss.name, bus.Addr(d.device, ss.id)), Agent: ss.agent, Branch: ss.branch,
+			Name: nameOr(ss.name, addr), Addr: addr, Agent: ss.agent, Branch: ss.branch,
 			Doing: ss.doing, Worktree: ss.worktree, Started: ss.started})
 	}
 	st := web.State{Device: d.device, Devices: []web.Device{self}}
@@ -112,8 +113,9 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 			if ps.ID == proto.CLISession {
 				continue // V1 daemons list their CLI
 			}
+			addr := bus.Addr(id, ps.ID)
 			dv.Sessions = append(dv.Sessions, web.Session{
-				Name: nameOr(ps.Name, bus.Addr(id, ps.ID)), Agent: ps.Agent, Branch: ps.Branch,
+				Name: nameOr(ps.Name, addr), Addr: addr, Agent: ps.Agent, Branch: ps.Branch,
 				Doing: ps.Doing, Started: ps.Started})
 		}
 		st.Devices = append(st.Devices, dv)
@@ -199,7 +201,8 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 	}
 	out := make([]web.Message, 0, len(d.msgs)-first)
 	for _, m := range d.msgs[first:] {
-		msg := web.Message{ID: m.e.ID, From: label(m.e.From), Subject: m.e.Subject, Body: m.e.Body, At: m.e.At}
+		msg := web.Message{ID: m.e.ID, From: label(m.e.From), Subject: m.e.Subject, Body: m.e.Body, At: m.e.At,
+			FromAddr: m.e.From, ToAddr: m.e.To}
 		switch {
 		case m.e.To == "*":
 			msg.To, msg.ToKind = "*", web.ToAll

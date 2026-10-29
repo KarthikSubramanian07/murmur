@@ -208,7 +208,8 @@ func TestPageStateShowsBothDevices(t *testing.T) {
 	if !dv.Self || dv.ID != a.self() || !dv.Reachable {
 		t.Errorf("this device: %+v", dv)
 	}
-	if s.Agent != "codex" || s.Branch != "feature-x" || s.Doing != "wiring the page" || s.Worktree != "feature-tree" {
+	if s.Agent != "codex" || s.Branch != "feature-x" || s.Doing != "wiring the page" || s.Worktree != "feature-tree" ||
+		s.Addr != alice {
 		t.Errorf("session here: %+v", s)
 	}
 	if s.Started.IsZero() || time.Since(s.Started) > time.Minute {
@@ -225,7 +226,7 @@ func TestPageStateShowsBothDevices(t *testing.T) {
 	if dv.Self || dv.ID != b.self() || !dv.Reachable {
 		t.Errorf("the other device: %+v", dv)
 	}
-	if s.Agent != "test" || s.Worktree != "" {
+	if s.Agent != "test" || s.Worktree != "" || s.Addr != bob {
 		t.Errorf("session there: %+v", s)
 	}
 	if dv.LastSeen.IsZero() || time.Since(dv.LastSeen) > time.Minute {
@@ -443,6 +444,7 @@ func TestPageMessages(t *testing.T) {
 	}
 	// One at a time, each on every page before the next is sent: the order across devices is the
 	// order each daemon read them in, which only a wait makes the order they were sent in.
+	// Each also carries the addresses the bus did, which stay put while a name can land later.
 	sent := []struct {
 		from       *device
 		sess       string
@@ -452,12 +454,14 @@ func TestPageMessages(t *testing.T) {
 		wantFrom   string
 		wantTo     string
 		wantToKind string
+		fromAddr   string
+		toAddr     string
 	}{
-		{a, "aaaaaa", bob, "first", "the first body", aName, bName, web.ToSession},
-		{b, "bbbbbb", aName, "second", "", bName, aName, web.ToSession}, // addressed by name
-		{a, "aaaaaa", "*", "third", "", aName, "*", web.ToAll},
-		{b, "bbbbbb", a.self(), "fourth", "to a device", bName, a.self(), web.ToDevice},
-		{c, "cccccc", bName, "fifth", "", cName, bName, web.ToSession},
+		{a, "aaaaaa", bob, "first", "the first body", aName, bName, web.ToSession, alice, bob},
+		{b, "bbbbbb", aName, "second", "", bName, aName, web.ToSession, bob, alice}, // addressed by name
+		{a, "aaaaaa", "*", "third", "", aName, "*", web.ToAll, alice, "*"},
+		{b, "bbbbbb", a.self(), "fourth", "to a device", bName, a.self(), web.ToDevice, bob, a.self()},
+		{c, "cccccc", bName, "fifth", "", cName, bName, web.ToSession, carol, bob},
 	}
 	for i, m := range sent {
 		send(m.from, m.sess, m.to, m.subject, m.body)
@@ -476,7 +480,8 @@ func TestPageMessages(t *testing.T) {
 		for i, m := range sent {
 			got := msgs[i]
 			if got.Subject != m.subject || got.Body != m.body || got.From != m.wantFrom || got.To != m.wantTo ||
-				got.ToKind != m.wantToKind || got.ID == "" || time.Since(got.At) > time.Minute {
+				got.ToKind != m.wantToKind || got.ID == "" || time.Since(got.At) > time.Minute ||
+				got.FromAddr != m.fromAddr || got.ToAddr != m.toAddr {
 				t.Errorf("page %c, message %d: %+v, want %+v", 'a'+n, i+1, got, m)
 			}
 		}
