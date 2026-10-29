@@ -41,7 +41,7 @@ After that, agents use the `who`, `status`, `send` and `inbox` tools; nothing el
 starting.
 
 Humans get the same through the CLI (`t4 help`): `t4 who`, `t4 send <to> <subject> [body]`,
-`t4 inbox`, `t4 log`.
+`t4 inbox`, `t4 log`. `t4 ui` opens a web page with the sessions and the messages between them.
 
 ## Working on t4
 
