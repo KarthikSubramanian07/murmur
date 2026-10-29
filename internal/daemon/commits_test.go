@@ -272,16 +272,28 @@ func TestParallelCallsAndACallThatNeverEnds(t *testing.T) {
 		t.Fatalf("two parallel calls saw one commit; credited %v, want it once", got)
 	}
 
-	// The same id from another conversation is another call: the key has the conversation in it.
+	// A commit made in one call that a second began after: the first call's end still finds it,
+	// as the two are paired by their ids and not by the session.
+	a.callStart("claude-p", procP, "toolu_q1", wt)
+	early := commitFile(t, wt, "early.txt")
+	a.callStart("claude-p", procP, "toolu_q2", wt)
+	a.callEnd("claude-p", procP, "toolu_q2", wt)
+	a.callEnd("claude-p", procP, "toolu_q1", wt)
+	if got := commitSHAs(a.look("aaaaaa", name)); !slices.Equal(got, []string{sha, early}) {
+		t.Fatalf("a commit made before the second of two overlapping calls began: credited %v, want %s then %s", got, sha, early)
+	}
+
+	// The same id from another conversation is another call: the key has the conversation in it. An
+	// end that comes again for a call already closed finds nothing to close, and credits nothing.
 	other, _ := a.claudeSession("cccccc", "claude-other", procQ, wt)
 	a.callStart("claude-other", procQ, "toolu_p1", wt)
-	a.callEnd("claude-p", procP, "toolu_p1", wt) // already closed; must not close the other's
 	commitFile(t, wt, "other.txt")
+	a.callEnd("claude-p", procP, "toolu_p1", wt) // already closed; must not close the other's
 	a.callEnd("claude-other", procQ, "toolu_p1", wt)
 	if got := a.look("cccccc", a.named(other)).Commits; len(got) != 1 {
 		t.Errorf("the other conversation's call was closed by a stranger's end: %+v", got)
 	}
-	if got := a.look("aaaaaa", name).Commits; len(got) != 1 {
+	if got := a.look("aaaaaa", name).Commits; len(got) != 2 {
 		t.Errorf("the other conversation's commit was credited to this one too: %+v", got)
 	}
 
@@ -294,8 +306,8 @@ func TestParallelCallsAndACallThatNeverEnds(t *testing.T) {
 	commitFile(t, wt, "while-open.txt")
 	a.callStart("claude-p", procP, "toolu_later", wt)
 	a.callEnd("claude-p", procP, "toolu_later", wt)
-	if got := a.look("aaaaaa", name).Commits; len(got) != 1 {
-		t.Errorf("credited %+v; only the first commit was made during a call that ended", got)
+	if got := a.look("aaaaaa", name).Commits; len(got) != 2 {
+		t.Errorf("credited %+v; only the first two commits were made during calls that ended", got)
 	}
 }
 

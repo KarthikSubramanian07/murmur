@@ -2,12 +2,14 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,7 +46,7 @@ func (d *Daemon) startReq(dir, toolUse string) proto.Request {
 	return proto.Request{Op: proto.OpToolStart, ClaudeSession: "claude-x", ToolUseID: toolUse, Cwd: dir, GitDir: d.opt.GitDir}
 }
 
-func TestStartedCallsAreCappedAndExpire(t *testing.T) {
+func TestStartedCallsAreCapped(t *testing.T) {
 	d, dir := bracketDaemon(t)
 	now := time.Now()
 	d.mu.Lock()
@@ -52,16 +54,12 @@ func TestStartedCallsAreCappedAndExpire(t *testing.T) {
 		// The most recently started has the highest i; "old-0" is the oldest.
 		d.brackets["claude-x/old-"+strconv.Itoa(i)] = &bracket{cwd: dir, before: attrib.Ref{}, at: now.Add(-time.Duration(maxBrackets-i) * time.Second)}
 	}
-	d.brackets["claude-x/ancient"] = &bracket{cwd: dir, at: now.Add(-bracketTTL - time.Minute)}
 	d.mu.Unlock()
 
 	d.toolStart(context.Background(), d.startReq(dir, "new"))
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if _, ok := d.brackets["claude-x/ancient"]; ok {
-		t.Errorf("a snapshot older than %v was kept", bracketTTL)
-	}
 	if _, ok := d.brackets["claude-x/new"]; !ok {
 		t.Fatal("the new call has no snapshot")
 	}
@@ -73,6 +71,48 @@ func TestStartedCallsAreCappedAndExpire(t *testing.T) {
 	}
 	if _, ok := d.brackets["claude-x/old-1"]; !ok {
 		t.Error("a snapshot was dropped that was not the oldest")
+	}
+}
+
+// A snapshot whose call never ended is dropped once it is older than bracketTTL, well short of the
+// cap.
+func TestStartedCallsExpire(t *testing.T) {
+	d, dir := bracketDaemon(t)
+	now := time.Now()
+	d.mu.Lock()
+	d.brackets["claude-x/ancient"] = &bracket{cwd: dir, at: now.Add(-bracketTTL - time.Minute)}
+	d.brackets["claude-x/running"] = &bracket{cwd: dir, at: now.Add(-bracketTTL + time.Minute)}
+	d.mu.Unlock()
+
+	d.toolStart(context.Background(), d.startReq(dir, "new"))
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if _, ok := d.brackets["claude-x/ancient"]; ok {
+		t.Errorf("a snapshot older than %v was kept", bracketTTL)
+	}
+	if _, ok := d.brackets["claude-x/running"]; !ok {
+		t.Errorf("a snapshot younger than %v was dropped", bracketTTL)
+	}
+}
+
+// A call that ends leaves no snapshot behind, whether or not it made a commit.
+func TestEndedCallsLeaveNoSnapshot(t *testing.T) {
+	d, dir := bracketDaemon(t)
+	held := func() int {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return len(d.brackets)
+	}
+	d.toolStart(context.Background(), d.startReq(dir, "t1"))
+	if held() != 1 {
+		t.Fatalf("%d snapshots after a start, want 1", held())
+	}
+	end := d.startReq(dir, "t1")
+	end.Op = proto.OpToolEnd
+	d.toolEnd(context.Background(), end)
+	if n := held(); n != 0 {
+		t.Errorf("%d snapshots after the call ended, want 0", n)
 	}
 }
 
@@ -208,5 +248,42 @@ func TestCreditedCommitsExpireWithTheInbox(t *testing.T) {
 	d.mu.Unlock()
 	if ghost {
 		t.Error("the commits of a session that is neither running nor stopped were kept")
+	}
+}
+
+// A commit is written to state.json as soon as it is credited, not at the next stop: a daemon that
+// is killed (a crash, a reboot) would otherwise lose what it had credited since it last wrote.
+func TestCreditedCommitIsSavedAtOnce(t *testing.T) {
+	d, dir := bracketDaemon(t)
+	ctx := context.Background()
+	d.toolStart(ctx, d.startReq(dir, "t1"))
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "during the call")
+	sha := run("rev-parse", "HEAD")
+	end := d.startReq(dir, "t1")
+	end.Op = proto.OpToolEnd
+	d.toolEnd(ctx, end)
+
+	b, err := os.ReadFile(d.statePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved struct {
+		Commits map[string][]commitRec `json:"commits"`
+	}
+	if err := json.Unmarshal(b, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if got := saved.Commits["aaaaaa"]; len(got) != 1 || got[0].SHA != sha || got[0].Branch != "main" {
+		t.Errorf("state.json has %+v after the call, want %s on main", got, sha)
 	}
 }
