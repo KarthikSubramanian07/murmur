@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +33,7 @@ type Ref struct {
 	Branch string
 	Time   time.Time
 	tips   []string // commit and annotated-tag object names, deduplicated
+	gitDir string   // the worktree's git directory where Head found it itself, "" where git did
 }
 
 // Commit is a newly reachable commit. Branch is the after snapshot's branch, since git commits
@@ -42,11 +45,78 @@ type Commit struct {
 }
 
 // Head reads this worktree's own HEAD, including in linked worktrees, and records every ref tip
-// (local branches, remote-tracking branches and tags) with the time it started. It runs three
-// git processes however many refs there are; the for-each-ref scan grows with the refs.
+// (local branches, remote-tracking branches and tags) with the time it started. Where it can read
+// HEAD itself, from the worktree's git directory (see gitx.Discover), it runs one git process, the
+// for-each-ref scan, which grows with the refs. Elsewhere, such as a reftable repository, it asks git
+// for HEAD too, and runs three. The hook waits for it before every tool call that could commit
+// (#21), and on Windows each git process costs a tenth of a second or more.
 func Head(ctx context.Context, worktree string) (Ref, error) {
 	// Read the clock before any ref: a commit made after this and not on a tip is one the command made.
 	ref := Ref{Time: time.Now()}
+	if gitDir, commonDir, ok := gitx.Discover(worktree); ok {
+		if symref, sha, ok := readHEAD(gitDir, commonDir); ok {
+			return headFromFile(ctx, worktree, gitDir, symref, sha, ref)
+		}
+	}
+	return headByGit(ctx, worktree, ref)
+}
+
+// readHEAD reads a worktree's HEAD file: the ref it names (refs/heads/main), or the commit it is
+// detached at. ok is false for anything else, and for a reftable repository, whose HEAD file only
+// holds a placeholder.
+func readHEAD(gitDir, commonDir string) (symref, sha string, ok bool) {
+	if _, err := os.Stat(filepath.Join(commonDir, "reftable")); err == nil {
+		return "", "", false
+	}
+	path := filepath.Join(gitDir, "HEAD")
+	if fi, err := os.Lstat(path); err != nil || !fi.Mode().IsRegular() || fi.Size() > 1024 {
+		return "", "", false
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", false
+	}
+	text := strings.TrimSpace(string(b))
+	if target, found := strings.CutPrefix(text, "ref:"); found {
+		target = strings.TrimSpace(target)
+		if !strings.HasPrefix(target, "refs/") || target == "refs/heads/.invalid" {
+			return "", "", false
+		}
+		return target, "", true
+	}
+	if (len(text) == 40 || len(text) == 64) && strings.Trim(text, "0123456789abcdef") == "" {
+		return "", text, true
+	}
+	return "", "", false
+}
+
+// headFromFile completes a Ref from what the HEAD file said, with one for-each-ref: the tips, and
+// the commit HEAD's branch is at. A branch that isn't among the refs is unborn, as headByGit has
+// it; a branch at anything but a commit is left to git to read.
+func headFromFile(ctx context.Context, worktree, gitDir, symref, sha string, ref Ref) (Ref, error) {
+	head, err := scanRefs(ctx, worktree, symref, &ref)
+	if err != nil {
+		return Ref{}, err
+	}
+	if symref == "" {
+		ref.SHA = sha
+	} else {
+		ref.Branch = strings.TrimPrefix(symref, "refs/heads/")
+		switch head.objectType {
+		case "":
+			// Unborn: a symbolic HEAD whose branch does not exist yet.
+		case "commit":
+			ref.SHA = head.objectName
+		default:
+			return headByGit(ctx, worktree, Ref{Time: ref.Time})
+		}
+	}
+	ref.gitDir = gitDir
+	return ref, nil
+}
+
+// headByGit is Head with git reading HEAD: three processes.
+func headByGit(ctx context.Context, worktree string, ref Ref) (Ref, error) {
 	// RunIn uses exec.CommandContext and the repository's git error/cancellation conventions.
 	branch, err := gitx.RunIn(ctx, worktree, "symbolic-ref", "--quiet", "HEAD")
 	if err != nil && !exitCode(err, 1) {
@@ -54,44 +124,56 @@ func Head(ctx context.Context, worktree string) (Ref, error) {
 	}
 	branch = strings.TrimSpace(branch)
 	ref.Branch = strings.TrimPrefix(branch, "refs/heads/")
-	out, err := gitx.RunIn(ctx, worktree, "for-each-ref", "--format=%(refname)%00%(objecttype)%00%(objectname)")
+	head, err := scanRefs(ctx, worktree, branch, &ref)
 	if err != nil {
 		return Ref{}, err
 	}
-	seen := make(map[string]bool)
-	addTip := func(sha string) {
-		if !seen[sha] {
-			seen[sha] = true
-			ref.tips = append(ref.tips, sha)
-		}
-	}
-	headExists := false
-	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		fields := strings.Split(strings.TrimSuffix(line, "\r"), "\x00")
-		if len(fields) != 3 {
-			return Ref{}, fmt.Errorf("unexpected git for-each-ref output: %q", line)
-		}
-		headExists = headExists || fields[0] == branch
-		switch fields[1] {
-		case "commit", "tag":
-			// An annotated tag is kept as the tag object, not peeled here: git log peels it,
-			// tags of tags included, and ignores one that ends at a tree or blob. Peeling each
-			// with rev-parse cost a process per tag, over a minute for 1,000 release tags.
-			addTip(fields[2])
-		}
-	}
 	sha, err := gitx.RunIn(ctx, worktree, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
 	if err != nil {
-		if exitCode(err, 1) && branch != "" && !headExists {
+		if exitCode(err, 1) && branch != "" && head.objectType == "" {
 			return ref, nil // A symbolic HEAD whose branch does not exist yet is unborn.
 		}
 		return Ref{}, err
 	}
 	ref.SHA = strings.TrimSpace(sha)
 	return ref, nil
+}
+
+// refLine is one ref as for-each-ref lists it.
+type refLine struct{ objectType, objectName string }
+
+// scanRefs records every ref tip in ref, and returns the line of the ref named branch, if there is
+// one (empty when branch is "" or doesn't exist).
+func scanRefs(ctx context.Context, worktree, branch string, ref *Ref) (refLine, error) {
+	out, err := gitx.RunIn(ctx, worktree, "for-each-ref", "--format=%(refname)%00%(objecttype)%00%(objectname)")
+	if err != nil {
+		return refLine{}, err
+	}
+	seen := make(map[string]bool)
+	var head refLine
+	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(strings.TrimSuffix(line, "\r"), "\x00")
+		if len(fields) != 3 {
+			return refLine{}, fmt.Errorf("unexpected git for-each-ref output: %q", line)
+		}
+		if branch != "" && fields[0] == branch {
+			head = refLine{fields[1], fields[2]}
+		}
+		switch fields[1] {
+		case "commit", "tag":
+			// An annotated tag is kept as the tag object, not peeled here: git log peels it,
+			// tags of tags included, and ignores one that ends at a tree or blob. Peeling each
+			// with rev-parse cost a process per tag, over a minute for 1,000 release tags.
+			if !seen[fields[2]] {
+				seen[fields[2]] = true
+				ref.tips = append(ref.tips, fields[2])
+			}
+		}
+	}
+	return head, nil
 }
 
 // NewCommits returns the commits a command made, oldest first in topological order. A commit is
@@ -132,9 +214,13 @@ func NewCommits(ctx context.Context, worktree string, before, after Ref) ([]Comm
 	// distinct commits pass Windows' limit of about 32K characters, and git cannot start.
 	// gitx.RunIn takes no stdin, so this finds the worktree's git directory and runs log there;
 	// that costs one more short process.
-	gitDir, err := gitx.RunIn(ctx, worktree, "rev-parse", "--absolute-git-dir")
-	if err != nil {
-		return nil, err
+	gitDir := after.gitDir
+	if gitDir == "" {
+		out, err := gitx.RunIn(ctx, worktree, "rev-parse", "--absolute-git-dir")
+		if err != nil {
+			return nil, err
+		}
+		gitDir = strings.TrimSpace(out)
 	}
 	var exclude strings.Builder
 	if before.SHA != "" {
