@@ -18,11 +18,20 @@ type pattern struct {
 	re   *regexp.Regexp
 }
 
+// patterns are tried in order and the first match names the error, so a more specific kind has
+// to come before a broader pattern that also matches it. An OpenRouter key (`sk-or-v1-` and 64
+// hex characters) is such a case: the broad OpenAI-style pattern matches it too, and would have
+// the error call it an OpenAI key. The OpenRouter pattern therefore sits above that one, the
+// same way the Anthropic pattern already does.
 var patterns = []pattern{
 	{"a private key", regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)},
 	{"an AWS access key", regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`)},
 	{"a GitHub token", regexp.MustCompile(`\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}|\bgithub_pat_[A-Za-z0-9_]{50,}`)},
+	{"a GitLab personal access token", regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{20,}`)},
+	{"an npm token", regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36}`)},
+	{"a Hugging Face token", regexp.MustCompile(`\bhf_[A-Za-z]{34,}`)},
 	{"an Anthropic API key", regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}`)},
+	{"an OpenRouter API key", regexp.MustCompile(`\bsk-or-v1-[0-9a-fA-F]{64}`)},
 	{"an OpenAI-style API key", regexp.MustCompile(`\bsk-(proj-|svcacct-)?[A-Za-z0-9_-]{32,}`)},
 	{"a Stripe key", regexp.MustCompile(`\b[rs]k_(live|test)_[A-Za-z0-9]{20,}`)},
 	{"a Slack token", regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,}`)},
