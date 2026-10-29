@@ -374,14 +374,19 @@ func TestPageNotServedDaemonRuns(t *testing.T) {
 		t.Errorf("the log doesn't say why: %q", log)
 	}
 
-	// An address that isn't on loopback is refused too: the page is for this machine.
-	var out2 syncBuf
-	e := newDeviceWith(t, newRemote(t), func(d *device) { d.pageAddr, d.logTo = "0.0.0.0:0", &out2 })
-	if _, err := e.c.PageURL(); err != client.ErrNoPage {
-		t.Errorf("page on 0.0.0.0: %v", err)
-	}
-	if log := out2.String(); !strings.Contains(log, "loopback") {
-		t.Errorf("the log doesn't say why: %q", log)
+	// An address that isn't on loopback is refused too: the page is for this machine. So is a
+	// loopback address other than 127.0.0.1, where the page's Host check would refuse every request
+	// made to the address daemon.json gave out.
+	for _, addr := range []string{"0.0.0.0:0", "[::1]:0", "127.0.0.2:0"} {
+		var out2 syncBuf
+		e := newDeviceWith(t, newRemote(t), func(d *device) { d.pageAddr, d.logTo = addr, &out2 })
+		if u, err := e.c.PageURL(); err != client.ErrNoPage {
+			t.Errorf("page on %s: %q, %v", addr, u, err)
+		}
+		if log := out2.String(); !strings.Contains(log, "127.0.0.1") {
+			t.Errorf("the log doesn't say why the page isn't on %s: %q", addr, log)
+		}
+		e.stop()
 	}
 }
 

@@ -28,14 +28,16 @@ import (
 const defaultWakeMinutes = 3
 
 // listenPage opens the page's port. It is never the sessions' port: those carry the daemon's
-// protocol, and the page speaks HTTP to a browser.
+// protocol, and the page speaks HTTP to a browser. Only 127.0.0.1 will do, not just any loopback
+// address: the page answers only requests addressed to 127.0.0.1 or localhost (web's Host check),
+// so on [::1] or 127.0.0.2 it would refuse everything sent to the address it gave out.
 func (d *Daemon) listenPage() (net.Listener, error) {
 	host, _, err := net.SplitHostPort(d.opt.PageAddr)
 	if err != nil {
 		return nil, err
 	}
-	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
-		return nil, fmt.Errorf("%s isn't a loopback address, and the page is for this machine only", d.opt.PageAddr)
+	if host != "127.0.0.1" {
+		return nil, fmt.Errorf("%s isn't on 127.0.0.1, the loopback address the page answers on", d.opt.PageAddr)
 	}
 	return net.Listen("tcp", d.opt.PageAddr)
 }

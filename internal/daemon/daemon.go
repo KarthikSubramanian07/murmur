@@ -46,7 +46,8 @@ type Options struct {
 	// doubles with each failure in a row.
 	NameRetry time.Duration
 	// PageAddr is where the page for humans is served: 127.0.0.1:0, a random port on loopback.
-	// Anything that isn't on loopback is refused, as anyone on the network could reach the page.
+	// A host other than 127.0.0.1 is refused: off loopback anyone on the network could reach the
+	// page, and on another loopback address the page's Host check would refuse every request.
 	PageAddr string
 	// PageOpen is how recently a page someone can see must have called its API to count as open,
 	// which keeps the daemon running like a session does: 2 min. A hidden tab's calls don't count.
