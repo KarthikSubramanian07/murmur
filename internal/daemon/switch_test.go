@@ -179,6 +179,39 @@ func TestSwitchAfterAThrowawayStart(t *testing.T) {
 	noNameTwice(t, readRegistry(t, remote))
 }
 
+// Hooks and servers from before PIDs, which send none: a hook without CLAUDE_PID finds a session
+// by its Claude ID and moves nothing with a new one, and a session whose server gave no PID is
+// found by its Claude ID, whatever PID a hook has, and never moved. Taken from the issue9-haiku
+// build's TestHookWithNoMatchMovesNothing, with the server's half added.
+func TestWithoutPIDsNothingMoves(t *testing.T) {
+	remote := newRemote(t)
+	b := newDevice(t, remote)
+	old, _, _ := b.sessionPID("bbbbbb", "claude-old-server", 0)
+	mine, _, _ := b.sessionPID("cccccc", "claude-mine", procP)
+	nameOld, nameMine := b.named(old), b.named(mine)
+	b.do(proto.Request{Op: proto.OpSend, To: nameOld, Subject: "for the old server"})
+	b.do(proto.Request{Op: proto.OpSend, To: nameMine, Subject: "for mine"})
+
+	b.noticed("claude-old-server", procQ, "for the old server")
+	b.noticed("claude-mine", 0, "for mine")
+	for _, h := range []struct {
+		claude string
+		pid    int
+	}{{"claude-elsewhere", procQ}, {"claude-elsewhere", 0}, {"claude-moved", 0}} {
+		if got := b.hook(h.claude, h.pid); len(got) != 0 {
+			t.Fatalf("hook %s from %d was told %v", h.claude, h.pid, got)
+		}
+	}
+	holds(t, "both names", time.Second, func() bool { return b.nameOf(old) == nameOld && b.nameOf(mine) == nameMine })
+
+	// The same session, from its own process, with a new ID: it moves.
+	b.hook("claude-moved", procP)
+	b.nameHeld(mine, nameMine, nameOld)
+	if got := b.nameOf(old); got != nameOld {
+		t.Fatalf("the old server's session was renamed to %s", got)
+	}
+}
+
 // A hook's ID and PID that match no session change nothing, and a PID never moves a session that
 // belongs to another process.
 func TestSwitchNeverTakesAnotherSession(t *testing.T) {
