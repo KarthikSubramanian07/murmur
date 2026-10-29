@@ -386,7 +386,8 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 }
 
 // deliverLocked puts a message in the inbox of each session here it is addressed to. A session
-// gets only what arrives while it runs. What arrived while the daemon was down (modeCatchUp)
+// gets only what arrives while it runs, or, if it stops, within StoppedInbox of that, in case it
+// comes back (see recipientsLocked). What arrived while the daemon was down (modeCatchUp)
 // goes only to sessions that were running before and reconnect, and in modeSkip to nobody; in
 // both, what was sent after a session here started is for it. Everything
 // is held for catchUpWindow after the daemon starts, for sessions still reconnecting (see
@@ -396,28 +397,52 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) {
 	if held {
 		d.pending = append(d.pending, e)
 	}
-	ids := append(sortedKeys(d.sessions), proto.CLISession)
-	for _, id := range ids {
+	for _, id := range d.recipientsLocked() {
 		if !d.addressedLocked(e, id) {
 			continue
 		}
-		if mode != modeNormal && !d.sentSinceLocked(e, id) &&
-			(mode == modeSkip || id == proto.CLISession || !d.sessions[id].reconnect) {
+		// A recipient not registered here is a stopped session, which may come back.
+		if s := d.sessions[id]; mode != modeNormal && !d.sentSinceLocked(e, id, mode) &&
+			(mode == modeSkip || id == proto.CLISession || s != nil && !s.reconnect) {
 			continue
 		}
 		d.addInboxLocked(id, e)
 	}
-	if dev, sess := bus.SplitAddr(e.To); mode == modeNormal && !held && dev == d.device && sess != "" &&
-		sess != proto.CLISession && d.sessions[sess] == nil {
+	dev, sess := bus.SplitAddr(e.To)
+	_, stopped := d.st.Stopped[sess]
+	if mode == modeNormal && !held && dev == d.device && sess != "" && sess != proto.CLISession &&
+		d.sessions[sess] == nil && !stopped {
 		d.log.Printf("message %s is for %s, which isn't running here; dropped", e.ID, e.To)
 	}
 }
 
-// sentSinceLocked says whether e was sent after session id started, by the sender's clock, with
-// a minute's allowance for it. Caller holds mu.
-func (d *Daemon) sentSinceLocked(e bus.Event, id string) bool {
+// recipientsLocked lists the sessions a message can be delivered to: those registered, which
+// includes any in their grace, those stopped within StoppedInbox, and the CLI. Caller holds mu.
+func (d *Daemon) recipientsLocked() []string {
+	ids := sortedKeys(d.sessions)
+	for _, id := range sortedKeys(d.st.Stopped) {
+		if d.sessions[id] == nil && time.Since(d.st.Stopped[id]) <= d.opt.StoppedInbox {
+			ids = append(ids, id)
+		}
+	}
+	return append(ids, proto.CLISession)
+}
+
+// sentSinceLocked says whether e was sent after session id started, by the sender's clock, with a
+// minute's allowance for it. In a catch-up, a session back from stopped counts from when it
+// stopped, which is what its kept inbox would have held had it not registered first. A skip
+// keeps to when it started, so what a long outage skips doesn't depend on which came first.
+// Caller holds mu.
+func (d *Daemon) sentSinceLocked(e bus.Event, id string, mode syncMode) bool {
 	s := d.sessions[id]
-	return s != nil && !e.At.Before(s.started.Add(-time.Minute))
+	if s == nil {
+		return false
+	}
+	from := s.started
+	if mode == modeCatchUp && !s.since.IsZero() {
+		from = s.since
+	}
+	return !e.At.Before(from.Add(-time.Minute))
 }
 
 // addressedLocked says whether e is for session id on this device: sent to it, to this device,
@@ -741,18 +766,26 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	return d.repo.Push(ctx, sha, d.presenceRef(), bus.Force, "")
 }
 
-// pruneInboxes drops inboxes left by sessions that didn't come back after a restart.
+// pruneInboxes drops the inboxes of sessions stopped longer than StoppedInbox, and those left by
+// sessions that didn't come back after a restart.
 func (d *Daemon) pruneInboxes() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if time.Since(d.started) > catchUpWindow {
 		d.pending = nil
 	}
+	for id, at := range d.st.Stopped {
+		if time.Since(at) > d.opt.StoppedInbox {
+			delete(d.st.Stopped, id)
+			delete(d.st.Inbox, id)
+			d.saveLocked()
+		}
+	}
 	if time.Since(d.started) < 2*time.Minute {
 		return
 	}
 	for id := range d.st.Inbox {
-		if id != proto.CLISession && d.sessions[id] == nil {
+		if _, stopped := d.st.Stopped[id]; id != proto.CLISession && d.sessions[id] == nil && !stopped {
 			delete(d.st.Inbox, id)
 			d.saveLocked()
 		}

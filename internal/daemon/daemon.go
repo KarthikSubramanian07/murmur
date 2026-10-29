@@ -32,7 +32,12 @@ type Options struct {
 	Heartbeat  time.Duration // how often to re-push presence when nothing changed; 2 min
 	StaleAfter time.Duration // presence unchanged this long means the device is gone; 6 min
 	Idle       time.Duration // exit after this long with no sessions; 10 min. Negative: never
-	Log        *log.Logger
+	// SessionGrace is how long a session whose connection dropped stays registered, for the same
+	// session ID to take it over: 60 s. Its MCP server restarts while the conversation carries on.
+	SessionGrace time.Duration
+	// StoppedInbox is how long a stopped session's inbox is kept for it to come back to: 24 h.
+	StoppedInbox time.Duration
+	Log          *log.Logger
 }
 
 func (o *Options) defaults() {
@@ -47,6 +52,12 @@ func (o *Options) defaults() {
 	}
 	if o.Idle == 0 {
 		o.Idle = 10 * time.Minute
+	}
+	if o.SessionGrace == 0 {
+		o.SessionGrace = time.Minute
+	}
+	if o.StoppedInbox == 0 {
+		o.StoppedInbox = 24 * time.Hour
 	}
 	if o.Log == nil {
 		o.Log = log.New(os.Stderr, "", log.LstdFlags)
@@ -110,6 +121,14 @@ type session struct {
 	id, agent, cwd, branch, doing, claudeSession string
 	started                                      time.Time
 	reconnect                                    bool // registered before, with a daemon that went away
+	// since is, for a session back within StoppedInbox, when it stopped: what was sent after that
+	// is its, however late this daemon reads it. Zero otherwise.
+	since time.Time
+	// dropped is when the session's connection dropped, zero while it is connected. Until the
+	// grace runs out the session stays registered, and a hello with its ID takes it over; that
+	// closes takeover, which the connection waiting out the grace is watching.
+	dropped  time.Time
+	takeover chan struct{}
 }
 
 // syncMode says what a sync does with events this daemon hasn't processed.
@@ -167,6 +186,9 @@ type state struct {
 	// them yet, and when that look was: what was sent before it is history, not to be delivered.
 	Junked map[string]time.Time `json:"junked,omitempty"`
 	Inbox  map[string][]*inMsg  `json:"inbox"` // session → unread messages
+	// Stopped holds the sessions that stopped, and when. Their inboxes are kept for StoppedInbox,
+	// in case the session comes back; they are the only inboxes kept for sessions not running.
+	Stopped map[string]time.Time `json:"stopped,omitempty"`
 	// LastSync tells the next daemon how long this one was down.
 	LastSync time.Time `json:"lastSync"`
 }
@@ -417,7 +439,8 @@ func validName(s string) bool { return bus.ValidName(s) }
 func (d *Daemon) statePath() string { return filepath.Join(d.dir, "state.json") }
 
 func (d *Daemon) loadState() error {
-	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{}}
+	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},
+		Stopped: map[string]time.Time{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -437,6 +460,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Inbox == nil {
 		d.st.Inbox = map[string][]*inMsg{}
+	}
+	if d.st.Stopped == nil {
+		d.st.Stopped = map[string]time.Time{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from t4 itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

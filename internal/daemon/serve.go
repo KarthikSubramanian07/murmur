@@ -79,7 +79,11 @@ func writeResp(conn net.Conn, resp proto.Response) {
 }
 
 // hello registers a session and holds its connection open until the session's process exits.
-// The connection closing is the session stopping, however the process ended.
+// The connection closing starts the grace: the session's MCP server restarts while its
+// conversation carries on, so the session stays registered, with its inbox, for SessionGrace, and
+// a hello with the same ID in that time takes it over without anything going on the bus. Only
+// when the grace runs out is the session stopped. Its inbox is then kept for StoppedInbox, for a
+// session that comes back.
 func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *proto.Hello) {
 	if h == nil || !validName(h.ID) || h.ID == proto.CLISession {
 		writeResp(conn, fail("hello needs a session ID of lowercase letters, digits and dashes"))
@@ -89,15 +93,29 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	if agent == "" {
 		agent = "unknown"
 	}
-	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession,
-		branch: branchOf(ctx, h.Cwd), started: time.Now(), reconnect: h.Reconnect}
+	branch := branchOf(ctx, h.Cwd)
 	d.mu.Lock()
-	if d.sessions[h.ID] != nil {
+	s := d.sessions[h.ID]
+	taken := false
+	switch {
+	case s != nil && s.dropped.IsZero():
 		d.mu.Unlock()
 		writeResp(conn, fail("session ID "+h.ID+" is in use"))
 		return
+	case s != nil:
+		// A session in its grace: this connection takes it over, with its inbox and its unread
+		// notices. Everyone else was never told it was gone.
+		taken = true
+		if s.agent != agent || s.branch != branch {
+			d.kickPresence() // what presence shows changed; otherwise nothing is written
+		}
+		s.agent, s.cwd, s.claudeSession, s.branch, s.reconnect = agent, h.Cwd, h.ClaudeSession, branch, h.Reconnect
+		s.dropped = time.Time{}
+		close(s.takeover)
+		s.takeover = nil
+	default:
+		s = d.newSessionLocked(h, agent, branch)
 	}
-	d.sessions[h.ID] = s
 	d.lastActive = time.Now()
 	if h.Reconnect {
 		d.catchUpLocked(h.ID)
@@ -105,32 +123,73 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	d.mu.Unlock()
 
 	addr := bus.Addr(d.device, h.ID)
-	d.log.Printf("session %s started (%s, %s)", addr, agent, s.branch)
-	writeResp(conn, proto.Response{OK: true, Self: addr})
-	d.kickPresence()
-	d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStarted, From: addr,
-		At: time.Now().UTC(), Agent: agent, Branch: s.branch})
+	if taken {
+		d.log.Printf("session %s reconnected", addr)
+		writeResp(conn, proto.Response{OK: true, Self: addr})
+	} else {
+		d.log.Printf("session %s started (%s, %s)", addr, agent, branch)
+		writeResp(conn, proto.Response{OK: true, Self: addr})
+		d.kickPresence()
+		d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStarted, From: addr,
+			At: time.Now().UTC(), Agent: agent, Branch: branch})
+	}
 
 	stopWatch := context.AfterFunc(ctx, func() { conn.Close() })
 	io.Copy(io.Discard, r) // returns when the session's process closes the connection, or dies
 	stopWatch()
 
 	d.mu.Lock()
-	delete(d.sessions, h.ID)
 	d.lastActive = time.Now()
 	if ctx.Err() != nil {
 		// The daemon is stopping. The session may reconnect to the next one, so its inbox is
 		// kept; the goodbye deletes this device's presence.
+		delete(d.sessions, h.ID)
 		d.mu.Unlock()
 		return
 	}
-	delete(d.st.Inbox, h.ID)
+	takeover := make(chan struct{})
+	s.dropped, s.takeover = time.Now(), takeover
+	d.mu.Unlock()
+
+	grace := time.NewTimer(d.opt.SessionGrace)
+	defer grace.Stop()
+	select {
+	case <-takeover:
+		return // a new connection carries the session on
+	case <-ctx.Done():
+		d.mu.Lock()
+		if s.takeover == takeover {
+			delete(d.sessions, h.ID)
+		}
+		d.mu.Unlock()
+		return
+	case <-grace.C:
+	}
+
+	d.mu.Lock()
+	if s.takeover != takeover {
+		d.mu.Unlock() // taken over just as the grace ran out
+		return
+	}
+	delete(d.sessions, h.ID)
+	d.lastActive = time.Now()
+	d.st.Stopped[h.ID] = time.Now().Round(0)
 	d.saveLocked()
 	d.mu.Unlock()
 	d.log.Printf("session %s stopped", addr)
 	d.kickPresence()
 	d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStopped, From: addr,
 		At: time.Now().UTC()})
+}
+
+// liveLocked says whether session id is connected: the CLI always is, a session in its grace or
+// stopped is not. Caller holds mu.
+func (d *Daemon) liveLocked(id string) bool {
+	if id == proto.CLISession {
+		return true
+	}
+	s := d.sessions[id]
+	return s != nil && s.dropped.IsZero()
 }
 
 func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
@@ -140,7 +199,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	}
 	d.mu.Lock()
 	d.lastActive = time.Now()
-	registered := sess == proto.CLISession || d.sessions[sess] != nil
+	registered := d.liveLocked(sess)
 	d.mu.Unlock()
 	if !registered && req.Op != proto.OpNotices && req.Op != proto.OpPing {
 		return fail("this session isn't registered with the daemon (it may have just restarted); try again in a few seconds")
@@ -223,7 +282,8 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			}
 		}
 	}
-	if id == "" {
+	// A session in its grace, or stopped, is told of its notices once it is back.
+	if id == "" || !d.liveLocked(id) {
 		return proto.Response{OK: true}
 	}
 	var fresh []*inMsg
@@ -256,8 +316,13 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		dev, sess := bus.SplitAddr(to)
 		d.mu.Lock()
 		known := d.addressKnownLocked(dev, sess)
+		_, stopped := d.st.Stopped[sess]
 		d.mu.Unlock()
-		if !known {
+		switch {
+		case known:
+		case dev == d.device && stopped:
+			note = to + " has stopped. The message waits for it, in case it comes back."
+		default:
 			note = to + " isn't in any device's presence right now, so nobody may read this. Check `who` for addresses."
 		}
 	}
@@ -350,4 +415,25 @@ func (d *Daemon) whoLocked(you string) []proto.Device {
 		devices = append(devices, dv)
 	}
 	return devices
+}
+
+// newSessionLocked registers a session that isn't registered. One that stopped within
+// StoppedInbox gets its inbox back, with what arrived while it was stopped, and keeps its claim on
+// what was sent since it stopped: a catch-up that reads a backlog ref only after the session has
+// registered again would otherwise take those messages for older than the session and drop them.
+// Past StoppedInbox, pruneInboxes is only late. Caller holds mu.
+func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch string) *session {
+	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession, branch: branch,
+		started: time.Now(), reconnect: h.Reconnect}
+	if at, ok := d.st.Stopped[h.ID]; ok {
+		delete(d.st.Stopped, h.ID)
+		if time.Since(at) > d.opt.StoppedInbox {
+			delete(d.st.Inbox, h.ID)
+		} else {
+			s.since = at
+		}
+		d.saveLocked()
+	}
+	d.sessions[h.ID] = s
+	return s
 }
