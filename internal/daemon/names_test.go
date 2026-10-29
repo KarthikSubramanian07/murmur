@@ -121,6 +121,21 @@ func (d *device) named(addr string) string {
 	return name
 }
 
+// inboxWant is inboxOf for several messages that arrive on their own schedules: it waits for n,
+// then for a moment more, in case there are others.
+func inboxWant(d *device, sess string, n int) []string {
+	var got []string
+	read := func() {
+		for _, m := range d.do(proto.Request{Op: proto.OpInbox, Session: sess}).Messages {
+			got = append(got, m.Subject)
+		}
+	}
+	eventually(d.t, "messages for "+sess, func() bool { read(); return len(got) >= n })
+	time.Sleep(500 * time.Millisecond)
+	read()
+	return got
+}
+
 // registry is refs/t4/names on the remote as read from outside t4.
 type registry struct {
 	tip      string
@@ -588,12 +603,12 @@ func TestUnknownNameErrorsAndOtherAddressesWork(t *testing.T) {
 			t.Fatalf("send to %s: %+v", to, r)
 		}
 	}
-	got := inboxOf(b, "bbbbbb")
+	got := inboxWant(b, "bbbbbb", 3)
 	sort.Strings(got)
 	if strings.Join(got, ",") != "address,device,everyone" {
 		t.Fatalf("bob's inbox: %q", got)
 	}
-	got = inboxOf(b, "")
+	got = inboxWant(b, "", 3)
 	sort.Strings(got)
 	if strings.Join(got, ",") != "cli,device,everyone" {
 		t.Fatalf("b's CLI inbox: %q", got)
