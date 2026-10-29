@@ -1,9 +1,10 @@
 # t4: notes for Claude Code
 
 t4 lets coding agents on different teammates' machines, in the same private repo, discover and
-message each other, with git refs on GitHub as the transport. It is at the design stage
-(2026-10-26): no code yet. `docs/VISION.md` is the design and its reasons; read it before
-proposing architecture, and change it when a decision changes.
+message each other, with git refs on GitHub as the transport. V1 exists (2026-10-26): one Go
+binary, `cmd/t4`, with its packages in `internal/`; `go test ./...` runs it all. `docs/VISION.md`
+is the design and its reasons; read it before proposing architecture, and change it when a
+decision changes. The name lives in `internal/brand`, so a rename is one file.
 
 ## Writing for whoever comes next
 
