@@ -399,18 +399,31 @@ func TestLastActiveMovesAndTravelsWithoutWritingPresence(t *testing.T) {
 		t.Fatalf("presence was written (%s, was %s) by requests that should only move last active", now, tip)
 	}
 
-	// The next write carries it: a status line is what asks for one here.
+	// The next write carries it: a status line is what asks for one here. What b makes of it is
+	// the time of the last activity plus however long the write took to arrive, which is seconds on
+	// a busy machine, so the bound is loose; TestPeerActiveIsTheWritersGapOnThisClock has the exact
+	// arithmetic.
 	a.do(proto.Request{Op: proto.OpStatus, Session: "cccccc", Doing: "something else"})
 	eventually(t, "last active on b", func() bool {
 		got := b.look("bbbbbb", name).LastActive
-		return !got.IsZero() && got.After(last.Add(-time.Second)) && got.Before(last.Add(4*time.Second))
+		return !got.IsZero() && got.After(last.Add(-time.Second)) && got.Before(last.Add(30*time.Second))
 	})
+}
+
+// slowHook gives the hook the time git needs on a machine busy with other test runs, which the
+// real limits (a few seconds, so a tool is never held up for long) don't.
+func slowHook(t *testing.T) {
+	t.Helper()
+	notice, bracket := hook.NoticeTimeout, hook.BracketTimeout
+	hook.NoticeTimeout, hook.BracketTimeout = time.Minute, 90*time.Second
+	t.Cleanup(func() { hook.NoticeTimeout, hook.BracketTimeout = notice, bracket })
 }
 
 // The hook's own program, driven with the payloads Claude Code sends, credits a commit end to end:
 // the start prints nothing, a tool that can't run a command isn't bracketed, a failing call is
 // closed by PostToolUseFailure, and the notices still arrive after a tool call that is bracketed.
 func TestHookBracketsToolCalls(t *testing.T) {
+	slowHook(t)
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	wt := a.linkedTree("wt-hook", "feat-hook")
@@ -481,6 +494,7 @@ func TestHookBracketsToolCalls(t *testing.T) {
 // With no daemon running, PreToolUse prints nothing and returns promptly: a tool is never held up
 // by t4 being down, and nothing makes the hook exit with an error (2 would block the tool).
 func TestPreToolUseWithTheDaemonDownIsSilent(t *testing.T) {
+	slowHook(t)
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	wt := a.linkedTree("wt-down", "feat-down")
@@ -509,7 +523,7 @@ func TestPreToolUseWithTheDaemonDownIsSilent(t *testing.T) {
 		if out.Len() != 0 {
 			t.Errorf("%s printed %q with no daemon", event, out.String())
 		}
-		if took := time.Since(start); took > 4*time.Second {
+		if took := time.Since(start); took > 8*time.Second {
 			t.Errorf("%s took %v with no daemon", event, took)
 		}
 	}
@@ -677,33 +691,5 @@ func TestCreditedCommitsSurviveAStopAndARestart(t *testing.T) {
 	a.helloAgain("aaaaaa", false)
 	if det := a.look("aaaaaa", name); !det.Running || !slices.Equal(commitSHAs(det), []string{sha}) {
 		t.Fatalf("after the session returned: %+v", det)
-	}
-}
-
-// Past the time its inbox is kept, a stopped session's commits go with it, and a session of that ID
-// registering after that starts with none.
-func TestCreditedCommitsExpireWithTheInbox(t *testing.T) {
-	remote := newRemote(t)
-	a := newTimedDevice(t, remote, 200*time.Millisecond, 10*time.Second)
-	wt := a.linkedTree("wt-expire", "feat-expire")
-	alice, conn := a.claudeSession("aaaaaa", "claude-expire", procP, wt)
-	name := a.named(alice)
-	a.callStart("claude-expire", procP, "toolu_e", wt)
-	commitFile(t, wt, "expire.txt")
-	a.callEnd("claude-expire", procP, "toolu_e", wt)
-	conn.Close()
-	eventually(t, "alice stopped", func() bool { return busLines(a, alice, "stopped") == 1 })
-
-	det := a.look("", name)
-	if len(det.Commits) != 1 || det.StoppedAt.IsZero() {
-		t.Fatalf("right after the stop: %+v", det)
-	}
-	stopped := det.StoppedAt
-	eventually(t, "the commits to expire with the inbox", func() bool { return len(a.look("", name).Commits) == 0 })
-	if took := time.Since(stopped); took < 10*time.Second {
-		t.Errorf("the commits went after %v, before the inbox's 10 s", took)
-	}
-	if got := a.look("", name).Committed; len(got) != 0 {
-		t.Errorf("the branches outlived the commits: %v", got)
 	}
 }

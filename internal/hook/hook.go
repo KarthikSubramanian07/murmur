@@ -5,7 +5,7 @@
 //
 // It never blocks or fails the agent: any problem, including no daemon running, means it
 // prints nothing and exits 0. Before a tool call it never prints anything at all, and the time it
-// can hold the call up is bounded by bracketTimeout.
+// can hold the call up is bounded by BracketTimeout.
 package hook
 
 import (
@@ -51,16 +51,17 @@ const (
 // PostToolUse, so a `git commit && git push` whose push failed still has its end seen.
 var events = map[string]bool{preTool: true, postTool: true, postFailure: true, "UserPromptSubmit": true, "SessionStart": true}
 
-const (
-	// noticeTimeout bounds the hook when it only fetches notices: it runs after the call, and a
-	// daemon that answers slowly is not worth waiting on.
-	noticeTimeout = 3 * time.Second
-	// bracketTimeout bounds a hook that brackets a tool call. The snapshot at the start has to be
-	// taken before the call runs, so PreToolUse waits for it; this is the most a call can be held
-	// up, and a snapshot that misses it just means no commits are credited for that call. The
-	// daemon's own limit on a snapshot is a little shorter.
-	bracketTimeout = 5 * time.Second
-)
+// NoticeTimeout bounds the hook when it only fetches notices: it runs after the call, and a daemon
+// that answers slowly is not worth waiting on.
+//
+// NoticeTimeout and BracketTimeout are variables so that tests on a loaded machine can raise them.
+var NoticeTimeout = 3 * time.Second
+
+// BracketTimeout bounds a hook that brackets a tool call. The snapshot at the start has to be taken
+// before the call runs, so PreToolUse waits for it; this is the most a call can be held up, and a
+// snapshot that misses it just means no commits are credited for that call. The daemon's own limit
+// on a snapshot (Options.SnapshotTimeout) is a little shorter.
+var BracketTimeout = 5 * time.Second
 
 // cannotRun are the tools that can't run a command, and so can't make a commit. The hook skips
 // bracketing them: a snapshot costs git processes, and these are the commonest calls. A tool not
@@ -116,9 +117,9 @@ func Run(stdin io.Reader, stdout io.Writer) {
 	if !wantNotices && op == "" {
 		return
 	}
-	timeout := noticeTimeout
+	timeout := NoticeTimeout
 	if op != "" {
-		timeout = bracketTimeout
+		timeout = BracketTimeout
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -144,7 +145,7 @@ func Run(stdin io.Reader, stdout io.Writer) {
 	}
 	var resp proto.Response
 	if wantNotices {
-		nctx, ncancel := context.WithTimeout(ctx, noticeTimeout)
+		nctx, ncancel := context.WithTimeout(ctx, NoticeTimeout)
 		resp, err = c.Do(nctx, proto.Request{Op: proto.OpNotices, ClaudeSession: in.SessionID, ClientPID: claudePID()})
 		ncancel()
 	}

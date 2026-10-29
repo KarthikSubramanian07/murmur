@@ -54,7 +54,10 @@ type Options struct {
 	PageOpen time.Duration
 	// PageMessages is how many messages the page can look back on: 500.
 	PageMessages int
-	Log          *log.Logger
+	// SnapshotTimeout bounds the git a snapshot of a tool call's worktree runs (#21): 4 s. Tests on a
+	// loaded machine raise it.
+	SnapshotTimeout time.Duration
+	Log             *log.Logger
 }
 
 func (o *Options) defaults() {

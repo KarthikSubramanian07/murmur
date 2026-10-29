@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/t4/internal/attrib"
+	"github.com/a-Fig/t4/internal/bus"
 	"github.com/a-Fig/t4/internal/proto"
 )
 
@@ -119,5 +120,93 @@ func TestStateFromBeforeCommitsLoads(t *testing.T) {
 	d.mu.Unlock()
 	if got := d.st.Commits["s1"]; len(got) != 1 || got[0].SHA != "abc" {
 		t.Errorf("credited %+v", got)
+	}
+}
+
+// Another device's last-active time is worked out from the gap its presence states between writing
+// and the activity, taken back from when this daemon saw the presence change, so the two machines'
+// clocks never meet.
+func TestPeerActiveIsTheWritersGapOnThisClock(t *testing.T) {
+	seen := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	// The writer's clock is three hours ahead of this one.
+	wrote := seen.Add(3 * time.Hour).Add(-2 * time.Second)
+	p := &peer{lastChange: seen}
+	p.pres.At = wrote
+	active := wrote.Add(-90 * time.Second)
+
+	got := peerActive(p, bus.SessionInfo{LastActive: active})
+	if want := seen.Add(-90 * time.Second); !got.Equal(want) {
+		t.Errorf("active %v, want %v: the 90 s gap taken back from when the presence was seen", got, want)
+	}
+	// An activity time after the write (clocks stepping) is no later than the write.
+	if got := peerActive(p, bus.SessionInfo{LastActive: wrote.Add(time.Minute)}); !got.Equal(seen) {
+		t.Errorf("active %v, want %v for a time after the write", got, seen)
+	}
+	if got := peerActive(p, bus.SessionInfo{}); !got.IsZero() {
+		t.Errorf("a presence without the time gave %v", got)
+	}
+	if got := peerActive(&peer{lastChange: seen}, bus.SessionInfo{LastActive: active}); !got.IsZero() {
+		t.Errorf("a presence without its own time gave %v", got)
+	}
+}
+
+// A stopped session's commits are kept exactly as long as its inbox: both go in the same sweep,
+// and a session of that ID that registers after the time is up starts with neither. (Worked out
+// on the daemon's own state, as the keep time in a running daemon is a race against how slow git
+// is on the machine.)
+func TestCreditedCommitsExpireWithTheInbox(t *testing.T) {
+	d, _ := bracketDaemon(t)
+	now := time.Now()
+	stop := func(ago time.Duration) {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		s := d.sessions["aaaaaa"]
+		if s != nil {
+			d.creditLocked([]*session{s}, []attrib.Commit{{SHA: "c1", Branch: "main"}}, now)
+			delete(d.sessions, "aaaaaa")
+		}
+		d.st.Stopped["aaaaaa"] = now.Add(-ago)
+		d.st.Inbox["aaaaaa"] = []*inMsg{{}}
+	}
+	kept := func() (inbox, commits bool) {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return len(d.st.Inbox["aaaaaa"]) > 0, len(d.st.Commits["aaaaaa"]) > 0
+	}
+
+	stop(30 * time.Minute) // the keep time is an hour
+	d.pruneInboxes()
+	if inbox, commits := kept(); !inbox || !commits {
+		t.Fatalf("inbox kept %v, commits kept %v, 30 minutes into an hour", inbox, commits)
+	}
+	stop(2 * time.Hour)
+	d.pruneInboxes()
+	if inbox, commits := kept(); inbox || commits {
+		t.Errorf("inbox kept %v, commits kept %v, two hours after the stop", inbox, commits)
+	}
+
+	// Expired but not yet swept, and the session comes back: it doesn't inherit the commits.
+	d.mu.Lock()
+	d.creditLocked([]*session{{id: "aaaaaa"}}, []attrib.Commit{{SHA: "c2", Branch: "main"}}, now)
+	d.st.Stopped["aaaaaa"] = now.Add(-2 * time.Hour)
+	d.newSessionLocked(&proto.Hello{ID: "aaaaaa", ClaudeSession: "claude-x", Cwd: "."}, "claude-code", "", "aaaaaa")
+	left := len(d.st.Commits["aaaaaa"])
+	d.mu.Unlock()
+	if left != 0 {
+		t.Errorf("a session back after its inbox expired has %d commits", left)
+	}
+
+	// Commits of a session that is neither running nor stopped are no one's, once the daemon has
+	// been up long enough to know no one is coming back for them.
+	d.mu.Lock()
+	d.st.Commits["ghost"] = []commitRec{{SHA: "c3"}}
+	d.started = now.Add(-3 * time.Minute)
+	d.mu.Unlock()
+	d.pruneInboxes()
+	d.mu.Lock()
+	_, ghost := d.st.Commits["ghost"]
+	d.mu.Unlock()
+	if ghost {
+		t.Error("the commits of a session that is neither running nor stopped were kept")
 	}
 }

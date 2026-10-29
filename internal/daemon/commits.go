@@ -31,8 +31,9 @@ const (
 	bracketTTL  = time.Hour
 	// maxCommits caps the commits kept for a session; the oldest go first.
 	maxCommits = 100
-	// snapshotTimeout bounds the git a snapshot runs, a little under what the hook waits for it.
-	snapshotTimeout = 4 * time.Second
+	// defaultSnapshotTimeout bounds the git a snapshot runs, a little under what the hook waits for
+	// it (Options.SnapshotTimeout).
+	defaultSnapshotTimeout = 4 * time.Second
 )
 
 // bracket is the start of a tool call: the worktree the hook ran in and what it looked like then.
@@ -53,6 +54,14 @@ type commitRec struct {
 	Branch  string    `json:"branch,omitempty"`
 	Subject string    `json:"subject,omitempty"`
 	At      time.Time `json:"at"`
+}
+
+// snapshotLimit is how long a snapshot may take: the option, or its default where it isn't set.
+func (d *Daemon) snapshotLimit() time.Duration {
+	if d.opt.SnapshotTimeout > 0 {
+		return d.opt.SnapshotTimeout
+	}
+	return defaultSnapshotTimeout
 }
 
 func bracketKey(req proto.Request) string { return req.ClaudeSession + "/" + req.ToolUseID }
@@ -96,7 +105,7 @@ func (d *Daemon) toolStart(ctx context.Context, req proto.Request) proto.Respons
 	if len(sessions) == 0 || req.ToolUseID == "" || req.Cwd == "" || !d.sameClone(req.GitDir) {
 		return proto.Response{OK: true}
 	}
-	ctx, cancel := context.WithTimeout(ctx, snapshotTimeout)
+	ctx, cancel := context.WithTimeout(ctx, d.snapshotLimit())
 	defer cancel()
 	before, err := attrib.Head(ctx, req.Cwd)
 	if err != nil {
@@ -137,7 +146,7 @@ func (d *Daemon) toolEnd(ctx context.Context, req proto.Request) proto.Response 
 	if b == nil || len(sessions) == 0 {
 		return proto.Response{OK: true}
 	}
-	ctx, cancel := context.WithTimeout(ctx, snapshotTimeout)
+	ctx, cancel := context.WithTimeout(ctx, d.snapshotLimit())
 	defer cancel()
 	after, err := attrib.Head(ctx, b.cwd)
 	if err != nil {
