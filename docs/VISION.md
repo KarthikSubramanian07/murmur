@@ -1,6 +1,7 @@
 # Vision: agents that find each other across a hackathon team
 
-Status: design, 2026-10-26; V1 is being built, in Go. "t4" is the repo's name and a working name
+Status: V1 works, in Go (2026-10-26); the next version, with names, a web page and wake-ups, is
+being built (2026-10-29). "t4" is the repo's name and a working name
 for the tool; the product name is undecided (candidates: Huddle, Walkie, Backchannel, Dibs).
 
 ## The problem
@@ -131,9 +132,37 @@ Sessions reach the daemon over loopback TCP, on a random port written with a ran
 `.git/t4/daemon.json`. A daemon with no sessions for 10 minutes exits. Any daemon that stops
 deletes its presence, so other devices drop it at their next sync rather than when it goes stale.
 
-Claude Code gives its MCP servers and its hooks the same `CLAUDE_CODE_SESSION_ID`, matching the
-`session_id` a hook reads on stdin (seen in Claude Code 2.1.310, 2026-10-26). That is how a hook,
-a separate process, finds the session whose notices it should deliver.
+### When a session stays the same session
+
+A session's name (#20) lasts as long as its client treats it as the same conversation, so it
+follows the client's own ID: a resume keeps the name, and `/clear` or a fork gets a new one
+(Tyler, 2026-10-28). Each client keeps and changes that ID at different moments. Researched
+2026-10-28 on Claude Code 2.1.310 and 2.1.312, T3 Code 0.1.2 and Codex CLI 0.164.0; the
+evidence is in #19.
+
+| Client | The ID | Kept across | New on | Where t4 can read it |
+|---|---|---|---|---|
+| Claude Code | session ID | compaction, every kind of resume, a killed process resumed | `/clear`, `--fork-session`, `/branch`, switching with `/resume` | A hook's `session_id` on stdin, always current |
+| T3 Code | thread ID | everything, for good | a fork, which is a new thread | Nowhere, as shipped |
+| Codex | `threadId` | compaction, every kind of resume | `/new`, `/clear`, a fork | `_meta.threadId` on every MCP `tools/call`, and a hook's `session_id` |
+
+- **Claude Code's MCP servers can't be trusted with the ID.** `CLAUDE_CODE_SESSION_ID` is set
+  once per MCP server process and never updates, so it goes stale after `/clear`, `/branch` or
+  switching with `/resume`. Under `claude -p --continue`, or when `claude` is opened and then
+  `/resume`d, it is wrong from the start. Hooks always see the live ID, and they get
+  `CLAUDE_PID`, which is the MCP server's parent process. So the daemon learns the live ID from
+  a hook and matches it to a connected session by that PID (#9).
+- **Under T3 the session is the thread, not the provider's session under it.** The Claude
+  session ID under one thread changes when the user switches Claude accounts, and has gone
+  A → B → A. T3 gives MCP servers and hooks no way to learn the thread ID. The two ways that
+  work today are unofficial: the agent reads it with T3's `t3_thread_configuration` and passes
+  it to t4, or t4 looks up the Claude session ID in T3's database. Tyler decided on 2026-10-28
+  not to change T3's source, so which of these t4 uses is open.
+- **Codex's MCP servers get a bare environment,** about 20 Windows core variables and no
+  `CODEX_*`, so the server learns its thread at its first tool call. Hooks under Codex inherit
+  the `CLAUDE_CODE_SESSION_ID` of any Claude Code session that started Codex, so that variable
+  doesn't prove a hook runs under Claude Code.
+- **Two live processes can hold one ID.** Claude Code lets a session be resumed twice at once.
 
 ### Delivery differs by client
 
@@ -157,8 +186,9 @@ a tool is crosstalk's idea.
 
 The socket exists: Claude Code 2.1.310 sets `CLAUDE_CODE_MESSAGING_SOCKET` (a named pipe on
 Windows) and a token for it in every child process, MCP servers and hooks included (seen
-2026-10-26). Its protocol, and whether it wakes an idle session, are unverified, as is Codex's
-hook support. V1 uses the hook: Claude Code adds a `PostToolUse` hook's `additionalContext` to
+2026-10-26). Its protocol, and whether it wakes an idle session, are unverified. Codex has
+Claude-style hooks too, `PostToolUse` among them, each run only once the user trusts it in
+`/hooks` (0.164.0, 2026-10-28); t4 doesn't install one yet. V1 uses the hook: Claude Code adds a `PostToolUse` hook's `additionalContext` to
 the conversation, which is how a notice reaches an agent mid-task (seen with 2.1.310, 2026-10-26).
 
 ### The envelope
@@ -235,15 +265,14 @@ a git library, so it gets each user's credential helpers, SSH config and URL rew
    Windows laptop and his homeserver (macOS). The homeserver pushes with a deploy key for this
    repo (added 2026-10-26). The test of custom refs against Actions and webhooks is done (above).
 2. MCP server and the Claude Code hook. The first useful version.
-3. T3: connect as an MCP server; a dedicated UI or waking idle threads later, if T3's source can
-   be changed.
+3. T3: connect as an MCP server. `t3 thread send`, run on the same machine, queues a message
+   into any thread and starts its turn, so waking an idle thread (#25) needs no change to T3.
 4. Codex specifics.
 
 ## Open questions
 
 - The name.
-- Can t4 change T3's source, or will it always plug in from outside as an MCP server?
-- Should an incoming message wake an idle T3 thread, or wait for its next turn?
+- How does t4 learn a T3 thread's ID: from the agent, or from T3's database? (See above.)
 - What is the protocol of Claude Code's messaging socket, and can it wake an idle session?
 - Does GitHub rate-limit a `git ls-remote` every 10 s from each of a team's devices? Nothing
   documents a limit for git traffic; none was hit in testing so far.
