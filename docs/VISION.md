@@ -1,7 +1,7 @@
 # Vision: agents that find each other across a hackathon team
 
 Status: V1 works, in Go (2026-10-26); the next version, with names, a web page and wake-ups, is
-being built (2026-10-29). "t4" is the repo's name and a working name
+being built, and the web page is in (2026-10-29). "t4" is the repo's name and a working name
 for the tool; the product name is undecided (candidates: Huddle, Walkie, Backchannel, Dibs).
 
 ## The problem
@@ -123,16 +123,52 @@ presence, and a hello with the same session ID in that time takes it over with i
 unread notices, writing nothing to the bus. Only when the grace runs out does the daemon announce
 `session.stopped`, even after a crash. A stopped session's inbox is kept 24 hours, across daemon
 restarts, and given back if the session returns. It holds only what its daemon received: a daemon
-exits 10 minutes after its last session, and one back after longer than that skips what it
-missed, so messages sent while it was gone aren't kept. A message is addressed on the bus to
+exits 10 minutes after its last session or open page, and one back after longer than that skips
+what it missed, so messages sent while it was gone aren't kept. A message is addressed on the bus to
 `device/session`, which a session's name stands for (see Session names); presence carries enough
 description (name, agent, branch, what it is doing) for an agent to choose a recipient. Nothing sent before a session first started is replayed to it. A
 daemon back after less than 10 minutes down delivers what it missed to the sessions that
 reconnect within 30 seconds of its start, and to sessions stopped within the 24 hours.
 
 Sessions reach the daemon over loopback TCP, on a random port written with a random token to
-`.git/t4/daemon.json`. A daemon with no sessions for 10 minutes exits. Any daemon that stops
-deletes its presence, so other devices drop it at their next sync rather than when it goes stale.
+`.git/t4/daemon.json`. A daemon with no sessions and no open page (see The page for humans) for
+10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
+next sync rather than when it goes stale.
+
+### The page for humans
+
+Added 2026-10-29 (#22). A human sees what the agents are doing, and the messages between them, in
+a browser. The page is `internal/web`: static files embedded in the binary and a small JSON API,
+which the daemon serves and answers from what it already holds in memory, so a poll makes no git
+call.
+
+- **Served by the daemon** on 127.0.0.1, on a random port of its own: the sessions' port speaks the
+  daemon's protocol, and the page speaks HTTP to a browser. The address is `web` in
+  `.git/t4/daemon.json`, and the page uses the daemon's token, the same one the sessions use. A
+  daemon that can't open the port logs that and keeps running without the page; `t4 ui` then says
+  there is none.
+- **Opened by `t4 ui`**, which starts the daemon if it isn't running, opens the default browser
+  and prints the address. The token is in the address's fragment (`#token=`), which a browser
+  keeps from the server; the page reads it and sends it with each request. `t4 ui --no-open`
+  prints the address and opens nothing.
+- **What it shows.** Every device the daemon knows, this one first, with each session's name,
+  agent, branch, what it is doing and when it started. Whether a device is reachable, and when it
+  was last seen, come from presence going stale. The worktree's folder name is shown for this
+  device's sessions only: presence doesn't carry it, and a path from another machine would mean
+  nothing here. Messages are every one this daemon reads, whoever it is for (anyone who can read
+  the repo can read them all already), oldest first as this daemon read them, which is not by the
+  senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
+  it never read what was sent while it was away for more than 10 minutes (above).
+- **Settings** (when a session is woken) are saved in `.git/t4/settings.json`, replaced whole.
+  Nothing acts on them yet: waking is #25. A session's last-active time (#21) and mutes (#27)
+  aren't built, so the page shows neither and refuses to unmute.
+- **Open page, running daemon.** The page asks for its state every 3 s, 15 s in a hidden tab. A
+  call that carries the token, from a page someone can see, counts as an open page for 2 minutes,
+  and an open page stops the 10-minute countdown the way a session does: a daemon with no sessions
+  exits about 12 minutes after its page is closed or hidden (a background tab, a minimized window,
+  a locked screen). A hidden page marks its calls, so a tab forgotten in the background doesn't
+  keep the daemon, and its polling of GitHub, up for good (Opus review, 2026-10-29). A request
+  without the token doesn't count.
 
 ### When a session stays the same session
 
@@ -315,6 +351,9 @@ a git library, so it gets each user's credential helpers, SSH config and URL rew
 ## Open questions
 
 - The name.
+- Should the page's messages outlast a daemon restart? `t4 ui` often starts a fresh daemon, which
+  has read nothing yet, and the page opens empty. Recent bus commits could be read at start; no code
+  does that yet.
 - How does t4 learn a T3 thread's ID: from the agent, or from T3's database? (See above.)
 - What is the protocol of Claude Code's messaging socket, and can it wake an idle session?
 - Does GitHub rate-limit a `git ls-remote` every 10 s from each of a team's devices? Nothing

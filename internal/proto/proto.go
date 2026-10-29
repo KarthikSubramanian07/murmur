@@ -29,6 +29,9 @@ type Info struct {
 	Token  string `json:"token"`
 	PID    int    `json:"pid"`
 	Device string `json:"device"`
+	// Web is the address the daemon serves the page for humans on, host:port on loopback. Empty
+	// when it couldn't be served, and for a daemon from before the page.
+	Web string `json:"web,omitempty"`
 }
 
 // Request is one call to the daemon.

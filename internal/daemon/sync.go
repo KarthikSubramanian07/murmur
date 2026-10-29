@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -385,6 +386,12 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 			d.noteLocked(e.At, e.Line())
 		}
 		if e.Type == bus.Message {
+			// A skip passes over history, but a ref read in one only after sessions registered
+			// (the first sync failed) also holds what was sent since this daemon started, which
+			// is new to it: by the sender's clock, with the minute deliverLocked allows.
+			if mode != modeSkip || !e.At.Before(d.started.Add(-time.Minute)) {
+				d.recordMessageLocked(e)
+			}
 			d.deliverLocked(e, mode)
 		}
 	}
@@ -773,12 +780,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must
 	// reach the live one, not the one about to stop.
-	live := map[string]bool{}
-	for _, s := range d.sessions {
-		if s.name != "" && s.dropped.IsZero() {
-			live[s.name] = true
-		}
-	}
+	live := d.liveNamesLocked()
 	for _, s := range d.sortedSessionsLocked() {
 		name := s.name
 		if !s.dropped.IsZero() && live[name] {
@@ -798,6 +800,18 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		return err
 	}
 	return d.repo.Push(ctx, sha, d.presenceRef(), bus.Force, "")
+}
+
+// liveNamesLocked is the names of the sessions that are connected, as opposed to waiting out their
+// grace. Caller holds mu.
+func (d *Daemon) liveNamesLocked() map[string]bool {
+	live := map[string]bool{}
+	for _, s := range d.sessions {
+		if s.name != "" && s.dropped.IsZero() {
+			live[s.name] = true
+		}
+	}
+	return live
 }
 
 // pruneInboxes drops the inboxes of sessions stopped longer than StoppedInbox, and those left by
@@ -833,6 +847,25 @@ func (d *Daemon) sortedSessionsLocked() []*session {
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].started.Before(list[j].started) })
 	return list
+}
+
+// worktreeOf names the folder of the worktree a session works in: the last part of its top
+// directory, never the path, which holds the user's name. "" if cwd isn't in a worktree.
+func worktreeOf(ctx context.Context, cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	out, err := gitx.RunIn(ctx, cwd, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return ""
+	}
+	top := filepath.Base(filepath.FromSlash(strings.TrimSpace(out)))
+	if top == "." || top == string(filepath.Separator) {
+		return ""
+	}
+	return bus.OneLine(top, 100)
 }
 
 // branchOf reads the branch checked out where a session works. It reads HEAD only; nothing
