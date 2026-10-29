@@ -14,6 +14,12 @@ import (
 
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	return gitEnv(t, dir, nil, args...)
+}
+
+// gitEnv is git with extra environment variables, such as GIT_COMMITTER_DATE.
+func gitEnv(t *testing.T, dir string, extra []string, args ...string) string {
+	t.Helper()
 	args = append([]string{"-C", dir, "-c", "user.name=Attribution Test", "-c", "user.email=attrib@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + filepath.ToSlash(filepath.Join(dir, "no-hooks"))}, args...)
 	cmd := exec.CommandContext(context.Background(), "git", args...)
 	// Keep temporary repositories independent of the caller's git environment and config.
@@ -23,6 +29,7 @@ func git(t *testing.T, dir string, args ...string) string {
 		}
 	}
 	cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull)
+	cmd.Env = append(cmd.Env, extra...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v: %s", args, err, out)
@@ -149,14 +156,14 @@ func TestNewCommits(t *testing.T) {
 		commit(t, dir, "topic one")
 		commit(t, dir, "topic two")
 		git(t, dir, "checkout", "-q", "main")
-		upstream := commit(t, dir, "upstream")
+		commit(t, dir, "upstream")
 		git(t, dir, "checkout", "-q", "topic")
 		before := head(t, dir)
 		git(t, dir, "rebase", "--keep-empty", "main")
 		after := head(t, dir)
 		one := git(t, dir, "rev-parse", "HEAD^")
+		// "upstream" was already on main, a tip in before, so the rebase does not credit it.
 		wantCommits(t, dir, before, after,
-			attrib.Commit{SHA: upstream, Subject: "upstream", Branch: "topic"},
 			attrib.Commit{SHA: one, Subject: "topic one", Branch: "topic"},
 			attrib.Commit{SHA: after.SHA, Subject: "topic two", Branch: "topic"})
 	})
