@@ -1,0 +1,225 @@
+package daemon
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"slices"
+	"time"
+
+	"github.com/a-Fig/t4/internal/attrib"
+	"github.com/a-Fig/t4/internal/bus"
+	"github.com/a-Fig/t4/internal/proto"
+)
+
+// Which commits are a session's, and when it was last active (#21). docs/VISION.md has the
+// reasons.
+//
+// Git doesn't record which session made a commit, so the daemon watches for them: the Claude Code
+// hook runs before and after every tool call that could commit, and the commits that appear in the
+// worktree between the two are the session's (package attrib decides which those are). A human or
+// another session committing in the same worktree during that call is credited too, and that is
+// accepted. A call that never ends, because it was cancelled or the hook failed, leaves a snapshot
+// behind; those are bounded, and expire.
+
+const (
+	// maxBrackets caps the snapshots of calls in flight, and bracketTTL says how long one waits
+	// for its call to end. A tool call can run for a long time (a subagent, a build), so an hour; an
+	// agent runs a handful of calls at once, so a hundred is far more than needed. Past the cap the
+	// oldest goes.
+	maxBrackets = 128
+	bracketTTL  = time.Hour
+	// maxCommits caps the commits kept for a session; the oldest go first.
+	maxCommits = 100
+	// snapshotTimeout bounds the git a snapshot runs, a little under what the hook waits for it.
+	snapshotTimeout = 4 * time.Second
+)
+
+// bracket is the start of a tool call: the worktree the hook ran in and what it looked like then.
+// The call's end is judged in this worktree, whatever directory the hook is in by then: a call that
+// ran cd into another worktree and committed there is not credited, as there is no snapshot of that
+// worktree from before.
+type bracket struct {
+	cwd    string
+	before attrib.Ref
+	at     time.Time
+}
+
+// commitRec is a commit credited to a session. It is local to this device. At is when the call that
+// made it ended, not the commit's own date. Branch is empty for a commit made on a detached HEAD:
+// it is kept, and shown, but names no branch, so it adds none to the session's list.
+type commitRec struct {
+	SHA     string    `json:"sha"`
+	Branch  string    `json:"branch,omitempty"`
+	Subject string    `json:"subject,omitempty"`
+	At      time.Time `json:"at"`
+}
+
+func bracketKey(req proto.Request) string { return req.ClaudeSession + "/" + req.ToolUseID }
+
+// sameClone says whether gitDir, the common dir the hook found for its working directory, is this
+// daemon's own: a call in another repository, or in none, is not this daemon's to watch.
+func (d *Daemon) sameClone(gitDir string) bool {
+	if gitDir == "" {
+		return false
+	}
+	if filepath.Clean(gitDir) == filepath.Clean(d.opt.GitDir) {
+		return true
+	}
+	a, err := os.Stat(gitDir)
+	if err != nil {
+		return false
+	}
+	b, err := os.Stat(d.opt.GitDir)
+	return err == nil && os.SameFile(a, b)
+}
+
+// touchHookLocked finds the sessions a hook request speaks for, as notices does, and notes that
+// they are active. Caller holds mu.
+func (d *Daemon) touchHookLocked(req proto.Request) []*session {
+	sessions := d.hookSessionsLocked(req.ClaudeSession, req.ClientPID)
+	now := time.Now()
+	for _, s := range sessions {
+		s.lastActive = now
+	}
+	return sessions
+}
+
+// toolStart snapshots the worktree the hook ran in, if the hook speaks for a session here. The
+// hook waits for the reply and the tool call starts when it has it, so the snapshot has to be taken
+// before replying: a commit made before it would count as old history. It replies OK whatever
+// happens, as the hook has nothing to do with an error.
+func (d *Daemon) toolStart(ctx context.Context, req proto.Request) proto.Response {
+	d.mu.Lock()
+	sessions := d.touchHookLocked(req)
+	d.mu.Unlock()
+	if len(sessions) == 0 || req.ToolUseID == "" || req.Cwd == "" || !d.sameClone(req.GitDir) {
+		return proto.Response{OK: true}
+	}
+	ctx, cancel := context.WithTimeout(ctx, snapshotTimeout)
+	defer cancel()
+	before, err := attrib.Head(ctx, req.Cwd)
+	if err != nil {
+		d.snapshotFailed("snapshotting before a tool call", err)
+		return proto.Response{OK: true}
+	}
+	now := time.Now()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for key, b := range d.brackets {
+		if now.Sub(b.at) > bracketTTL {
+			delete(d.brackets, key)
+		}
+	}
+	for len(d.brackets) >= maxBrackets {
+		oldest := ""
+		for key, b := range d.brackets {
+			if oldest == "" || b.at.Before(d.brackets[oldest].at) {
+				oldest = key
+			}
+		}
+		delete(d.brackets, oldest)
+	}
+	d.brackets[bracketKey(req)] = &bracket{cwd: req.Cwd, before: before, at: now}
+	return proto.Response{OK: true}
+}
+
+// toolEnd closes the call's bracket: it snapshots the worktree again, and credits the sessions the
+// hook speaks for with the commits that appeared since. A call with no bracket (its start was
+// skipped, expired, or came before a daemon restart) credits nothing.
+func (d *Daemon) toolEnd(ctx context.Context, req proto.Request) proto.Response {
+	key := bracketKey(req)
+	d.mu.Lock()
+	sessions := d.touchHookLocked(req)
+	b := d.brackets[key]
+	delete(d.brackets, key)
+	d.mu.Unlock()
+	if b == nil || len(sessions) == 0 {
+		return proto.Response{OK: true}
+	}
+	ctx, cancel := context.WithTimeout(ctx, snapshotTimeout)
+	defer cancel()
+	after, err := attrib.Head(ctx, b.cwd)
+	if err != nil {
+		d.snapshotFailed("snapshotting after a tool call", err)
+		return proto.Response{OK: true}
+	}
+	commits, err := attrib.NewCommits(ctx, b.cwd, b.before, after)
+	if err != nil {
+		d.snapshotFailed("finding the commits a tool call made", err)
+		return proto.Response{OK: true}
+	}
+	if len(commits) == 0 {
+		return proto.Response{OK: true}
+	}
+	d.mu.Lock()
+	published := d.creditLocked(sessions, commits, time.Now())
+	d.saveLocked()
+	d.mu.Unlock()
+	if published {
+		d.kickPresence()
+	}
+	return proto.Response{OK: true}
+}
+
+// snapshotFailed logs a snapshot that couldn't be taken, at most once a minute: it would otherwise
+// fill the log with a line per tool call, for a worktree that went away or a repository git can't
+// read.
+func (d *Daemon) snapshotFailed(what string, err error) {
+	d.mu.Lock()
+	quiet := time.Since(d.snapLogged) < time.Minute
+	if !quiet {
+		d.snapLogged = time.Now()
+	}
+	d.mu.Unlock()
+	if !quiet {
+		d.log.Printf("%s: %v", what, err)
+	}
+}
+
+// creditLocked records commits as made by sessions, each at most once per session: calls that
+// overlap, in parallel or because one is a subagent running others, see the same commits. It says
+// whether any session's list of branches changed, which presence then shows. Caller holds mu.
+func (d *Daemon) creditLocked(sessions []*session, commits []attrib.Commit, at time.Time) (branchesChanged bool) {
+	for _, s := range sessions {
+		before := d.committedLocked(s.id)
+		recs := d.st.Commits[s.id]
+		for _, c := range commits {
+			if !slices.ContainsFunc(recs, func(r commitRec) bool { return r.SHA == c.SHA }) {
+				recs = append(recs, commitRec{SHA: c.SHA, Branch: c.Branch, Subject: bus.OneLine(c.Subject, 120), At: at})
+			}
+		}
+		if len(recs) > maxCommits {
+			recs = slices.Clone(recs[len(recs)-maxCommits:])
+		}
+		d.st.Commits[s.id] = recs
+		if !slices.Equal(before, d.committedLocked(s.id)) {
+			branchesChanged = true
+		}
+	}
+	return branchesChanged
+}
+
+// committedLocked lists the branches session id has committed to, most recent commit first, at
+// most bus.MaxCommitted: what its presence shows. Caller holds mu.
+func (d *Daemon) committedLocked(id string) []string {
+	recs := d.st.Commits[id]
+	var out []string
+	for i := len(recs) - 1; i >= 0 && len(out) < bus.MaxCommitted; i-- {
+		if b := recs[i].Branch; b != "" && !slices.Contains(out, b) {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// peerActive is when a session on another device was last active, on this machine's clock, or zero
+// if its presence doesn't say. Presence holds the writer's clock at both the time of writing and the
+// last activity; their difference is right whatever the clocks say, and it is taken back from when
+// this daemon saw the presence change.
+func peerActive(p *peer, s bus.SessionInfo) time.Time {
+	if s.LastActive.IsZero() || p.pres.At.IsZero() {
+		return time.Time{}
+	}
+	return p.lastChange.Add(-max(p.pres.At.Sub(s.LastActive), 0))
+}

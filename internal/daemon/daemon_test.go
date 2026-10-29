@@ -81,6 +81,8 @@ type device struct {
 	keep   time.Duration // StoppedInbox; likewise
 	names  io.Reader     // NameSource; nil takes crypto/rand's
 	retry  time.Duration // NameRetry; zero takes 200 ms
+	// beat is the heartbeat; zero takes 500 ms.
+	beat time.Duration
 	// The page for humans: Idle (zero: never exit), PageOpen, PageMessages and PageAddr, for the
 	// daemon's options of the same names; logTo, if set, takes the daemon's log.
 	idle, pageOpen time.Duration
@@ -122,6 +124,10 @@ func (d *device) start() {
 	if retry == 0 {
 		retry = 200 * time.Millisecond
 	}
+	beat := d.beat
+	if beat == 0 {
+		beat = 500 * time.Millisecond
+	}
 	idle := d.idle
 	if idle == 0 {
 		idle = -1
@@ -136,7 +142,7 @@ func (d *device) start() {
 	go func() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
-			Heartbeat: 500 * time.Millisecond, StaleAfter: d.stale, Idle: idle,
+			Heartbeat: beat, StaleAfter: d.stale, Idle: idle,
 			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, Log: logger})
 		if err != nil {

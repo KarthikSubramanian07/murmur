@@ -61,7 +61,22 @@ func mcpConfig(top string) (string, error) {
 	return ".mcp.json: added the " + brand.MCPServer + " MCP server", writeJSON(path, cfg)
 }
 
-// claudeHooks adds the notice hook to the project's .claude/settings.json.
+// hookEvents are the Claude Code events the hook is installed on. The tool events take every tool,
+// with a matcher of "*": the hook itself skips those that can't commit. PreToolUse and
+// PostToolUseFailure are for finding the commits a call made (#21), and are what a repo set up by
+// an older version lacks.
+var hookEvents = []struct {
+	name    string
+	matcher string
+}{
+	{"PreToolUse", "*"},
+	{"PostToolUse", "*"},
+	{"PostToolUseFailure", "*"},
+	{"UserPromptSubmit", ""},
+}
+
+// claudeHooks adds the t4 hook to the project's .claude/settings.json, on each event it is missing
+// from.
 func claudeHooks(top string) (string, error) {
 	path := filepath.Join(top, ".claude", "settings.json")
 	cfg, err := readJSON(path)
@@ -73,26 +88,26 @@ func claudeHooks(top string) (string, error) {
 		hooks = map[string]any{}
 		cfg["hooks"] = hooks
 	}
-	added := false
-	for _, event := range []string{"PostToolUse", "UserPromptSubmit"} {
-		groups, _ := hooks[event].([]any)
+	var added []string
+	for _, ev := range hookEvents {
+		groups, _ := hooks[ev.name].([]any)
 		if hasCommand(groups, hookCommand) {
 			continue
 		}
 		group := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": hookCommand}}}
-		if event == "PostToolUse" {
-			group["matcher"] = "*"
+		if ev.matcher != "" {
+			group["matcher"] = ev.matcher
 		}
-		hooks[event] = append(groups, group)
-		added = true
+		hooks[ev.name] = append(groups, group)
+		added = append(added, ev.name)
 	}
-	if !added {
+	if len(added) == 0 {
 		return "", nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
-	return ".claude/settings.json: added the notice hook after tool calls and prompts", writeJSON(path, cfg)
+	return ".claude/settings.json: added the hook on " + strings.Join(added, ", "), writeJSON(path, cfg)
 }
 
 func hasCommand(groups []any, command string) bool {

@@ -807,8 +807,12 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		if !s.dropped.IsZero() && live[name] {
 			name = ""
 		}
-		pres.Sessions = append(pres.Sessions, bus.SessionInfo{
-			ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.doing, Started: s.started.UTC()})
+		info := bus.SessionInfo{ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.doing,
+			Started: s.started.UTC(), Committed: d.committedLocked(s.id)}
+		if !s.lastActive.IsZero() {
+			info.LastActive = s.lastActive.UTC()
+		}
+		pres.Sessions = append(pres.Sessions, info)
 	}
 	d.mu.Unlock()
 
@@ -847,6 +851,7 @@ func (d *Daemon) pruneInboxes() {
 		if time.Since(at) > d.opt.StoppedInbox {
 			delete(d.st.Stopped, id)
 			delete(d.st.Inbox, id)
+			delete(d.st.Commits, id)
 			d.saveLocked()
 		}
 	}
@@ -856,6 +861,13 @@ func (d *Daemon) pruneInboxes() {
 	for id := range d.st.Inbox {
 		if _, stopped := d.st.Stopped[id]; id != proto.CLISession && d.sessions[id] == nil && !stopped {
 			delete(d.st.Inbox, id)
+			d.saveLocked()
+		}
+	}
+	// Credited commits are kept as long as the session's inbox is.
+	for id := range d.st.Commits {
+		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {
+			delete(d.st.Commits, id)
 			d.saveLocked()
 		}
 	}
