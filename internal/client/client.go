@@ -139,6 +139,10 @@ func (c *Client) start() error {
 	if err != nil {
 		return err
 	}
+	// A nil process means the daemon was started and had already exited; connect polls for it.
+	if p == nil {
+		return nil
+	}
 	return p.Release()
 }
 

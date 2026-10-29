@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -105,7 +106,13 @@ func runDaemon(ctx context.Context, args []string) error {
 	gitDir := fs.String("git-dir", "", "the clone's git common dir (default: found from -C)")
 	poll := fs.Duration("poll", 0, "how often to check the remote (default 10s)")
 	idle := fs.Duration("idle", 0, "exit after this long with no sessions (default 10m; negative, e.g. -1s: never)")
+	logPath := fs.String("log", "", "append output to this file, not stderr (for starters that can't pass a handle)")
 	fs.Parse(args)
+	if *logPath != "" {
+		if err := redirectOutput(*logPath); err != nil {
+			return err
+		}
+	}
 	if *gitDir == "" {
 		var err error
 		if *gitDir, err = client.FindGitDir(ctx, *dir); err != nil {
@@ -118,6 +125,19 @@ func runDaemon(ctx context.Context, args []string) error {
 		return nil // another client started one first; that one serves
 	}
 	return err
+}
+
+// redirectOutput sends this process's stdout and stderr to the file, appending. WMI gives a process
+// no handles, so a starter that uses it names the log file instead.
+func redirectOutput(path string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	os.Stdout, os.Stderr = f, f
+	log.SetOutput(f)
+	// A panic trace is written to stderr, which here is the log: no other stderr reaches it.
+	return debug.SetCrashOutput(f, debug.CrashOptions{})
 }
 
 func runInit(ctx context.Context, args []string) error {

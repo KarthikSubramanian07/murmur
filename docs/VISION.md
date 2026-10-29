@@ -110,7 +110,9 @@ GitHub (refs/t4/*)
 One device runs many sessions, often across worktrees. The daemon is the only process that
 writes the device's ref and the only one polling GitHub; sessions connect to it. Each session
 starts its own MCP server process (that is how Claude Code runs stdio MCP servers), and the first
-to start launches the daemon. A session's MCP process can restart while its conversation carries
+to start launches the daemon. Under a job that forbids breakaway, as Codex's MCP servers are on
+Windows, the daemon is started through WMI so it outlives that session (2026-10-29). A session's
+MCP process can restart while its conversation carries
 on: T3 Code restarts it on every interrupt, after 30 minutes idle and on every app restart (one
 thread's restarted 8 times in about 2 days, 2026-10-28), and Claude Code on `/mcp` reconnect and
 on resume. So a dropped connection starts a 60-second grace (2026-10-28): the session stays in
