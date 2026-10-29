@@ -416,14 +416,16 @@ function showDevice(id) {
 // Messages.
 
 // A session's messages: those it sent, and those it was sent, to it, its device or everyone. The
-// filter is the session's address, which stays put when its name lands after it was chosen.
+// filter is the session's address, which stays put when its name lands after it was chosen. Once
+// it has a name, any address now called by that name is the same conversation: one that came back
+// under a new session ID keeps its name.
 function visibleMessages() {
   const f = ui.filter;
   if (!f) return ui.messages;
   const name = nameOf(f, f);
   const slash = f.indexOf("/");
   const device = slash > 0 ? f.slice(0, slash) : findSession(name)?.device.id;
-  const is = (addr, shown) => (addr ? addr === f : shown === name);
+  const is = (addr, shown) => (addr ? addr === f : shown === name) || (name !== f && nameOf(addr, shown) === name);
   return ui.messages.filter(
     (m) =>
       is(m.fromAddr, m.from) ||
