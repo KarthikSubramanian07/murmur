@@ -24,8 +24,8 @@ func TestReturnedSessionKeepsCatchUp(t *testing.T) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.newSessionLocked(&proto.Hello{ID: "bbbbbb"}, "claude-code", "")
-	d.newSessionLocked(&proto.Hello{ID: "cccccc"}, "claude-code", "")
+	d.newSessionLocked(&proto.Hello{ID: "bbbbbb"}, "claude-code", "", "bbbbbb")
+	d.newSessionLocked(&proto.Hello{ID: "cccccc"}, "claude-code", "", "cccccc")
 	d.deliverLocked(msg("bbbbbb"), modeCatchUp)
 	d.deliverLocked(msg("cccccc"), modeCatchUp)
 	if n := len(d.st.Inbox["bbbbbb"]); n != 1 {

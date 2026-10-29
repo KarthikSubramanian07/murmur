@@ -30,6 +30,9 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 			d.log.Printf("sync failed, retrying every %s: %v", d.opt.Poll, err)
 		case err == nil && failing:
 			d.log.Printf("sync working again")
+			// A session that couldn't take its name meanwhile would otherwise wait out a retry
+			// delay that grew while the remote was out of reach, up to maxNameBackoff.
+			d.kickNames()
 		}
 		failing = err != nil
 		select {
@@ -130,6 +133,8 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			continue
 		}
 		switch {
+		case ref == brand.NamesRef:
+			d.processNames(ctx, sha)
 		case strings.HasPrefix(ref, brand.MeshPrefix):
 			if _, ok := meshDevice(ref); ok {
 				d.advanceMesh(ctx, ref, sha)
@@ -137,6 +142,9 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		case strings.HasPrefix(ref, brand.PresencePrefix):
 			d.updatePeer(ctx, ref, sha)
 		}
+	}
+	if _, ok := remote[brand.NamesRef]; !ok {
+		d.processNames(ctx, "") // not on the remote
 	}
 	// A sync cut short is no fresh look: staleness is judged up to the last successful sync, and
 	// this one didn't read every presence it listed.
@@ -172,7 +180,8 @@ func meshDevice(ref string) (string, bool) {
 	return dev, bus.ValidDevice(dev)
 }
 
-// readable keeps the refs t4 reads: each device's log and presence. Anything else under the bus's
+// readable keeps the refs t4 reads: each device's log and presence, and the names registry.
+// Anything else under the bus's
 // root stays on the remote, unfetched: a name this machine can't store (one Windows forbids, or
 // one clashing with a local ref, as presence/<device>/x does with a device's old presence) would
 // otherwise fail every fetch, and with it every sync.
@@ -182,7 +191,7 @@ func readable(listed map[string]string) map[string]string {
 		_, mesh := meshDevice(ref)
 		presence := strings.HasPrefix(ref, brand.PresencePrefix) &&
 			bus.ValidDevice(strings.TrimPrefix(ref, brand.PresencePrefix))
-		if mesh || presence {
+		if mesh || presence || ref == brand.NamesRef {
 			refs[ref] = sha
 		}
 	}
@@ -516,6 +525,16 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	}
 	d.mu.Lock()
 	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed}
+	// A name in another device's presence is in use, whether or not the registry shows it yet.
+	seen := false
+	for _, s := range pres.Sessions {
+		if s.Name != "" && d.noteNameLocked(s.Name, bus.Addr(dev, s.ID)) {
+			seen = true
+		}
+	}
+	if seen {
+		d.saveLocked()
+	}
 	d.mu.Unlock()
 }
 
@@ -623,8 +642,9 @@ func (d *Daemon) overOwnLog(ctx context.Context, tip string) (bool, error) {
 
 // clearOwnJunk deletes, in the background, refs on the remote that keep this device's own refs
 // off it, since the remote refuses a ref whose name clashes with another's: refs under this
-// device's names (presence/<device>/..., mesh/<device>/...), and a ref at presence or mesh
-// itself, which blocks every device. Nothing t4 writes lives at any of them. Each is tried at
+// device's names (presence/<device>/..., mesh/<device>/...), refs under the registry's
+// (names/...), and a ref at presence or mesh itself, which blocks every device. Nothing t4 writes
+// lives at any of them. Each is tried at
 // most once a minute, so a delete the remote refuses isn't pushed, and logged, at every poll.
 func (d *Daemon) clearOwnJunk(listed map[string]string) {
 	if d.bgCtx == nil {
@@ -639,6 +659,7 @@ func (d *Daemon) clearOwnJunk(listed map[string]string) {
 	}
 	for ref := range listed {
 		blocking := ref+"/" == brand.PresencePrefix || ref+"/" == brand.MeshPrefix ||
+			strings.HasPrefix(ref, brand.NamesRef+"/") ||
 			strings.HasPrefix(ref, brand.PresencePrefix+d.device+"/") || strings.HasPrefix(ref, brand.MeshPrefix+d.device+"/")
 		if blocking && time.Since(d.junkTried[ref]) >= time.Minute {
 			d.junkTried[ref] = time.Now()
@@ -749,9 +770,22 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, At: time.Now().UTC(),
 		Sessions: []bus.SessionInfo{}}
+	// A name is an address, so one session at most carries it here. A session in its grace whose
+	// key has come back under another ID has handed its name on: a peer sending to the name must
+	// reach the live one, not the one about to stop.
+	live := map[string]bool{}
+	for _, s := range d.sessions {
+		if s.name != "" && s.dropped.IsZero() {
+			live[s.name] = true
+		}
+	}
 	for _, s := range d.sortedSessionsLocked() {
+		name := s.name
+		if !s.dropped.IsZero() && live[name] {
+			name = ""
+		}
 		pres.Sessions = append(pres.Sessions, bus.SessionInfo{
-			ID: s.id, Agent: s.agent, Branch: s.branch, Doing: s.doing, Started: s.started.UTC()})
+			ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.doing, Started: s.started.UTC()})
 	}
 	d.mu.Unlock()
 
