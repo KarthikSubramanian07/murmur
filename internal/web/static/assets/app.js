@@ -365,7 +365,7 @@ function sessionRow(d, s) {
   const prs = ui.state.prs || {};
   const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
   const open = () => {
-    ui.filter = s.name;
+    ui.filter = s.addr || s.name;
     go("messages");
   };
   return h(
@@ -415,15 +415,19 @@ function showDevice(id) {
 
 // Messages.
 
-// A session's messages: those it sent, and those it was sent, to it, its device or everyone.
+// A session's messages: those it sent, and those it was sent, to it, its device or everyone. The
+// filter is the session's address, which stays put when its name lands after it was chosen.
 function visibleMessages() {
   const f = ui.filter;
   if (!f) return ui.messages;
-  const device = findSession(f)?.device.id;
+  const name = nameOf(f, f);
+  const slash = f.indexOf("/");
+  const device = slash > 0 ? f.slice(0, slash) : findSession(name)?.device.id;
+  const is = (addr, shown) => (addr ? addr === f : shown === name);
   return ui.messages.filter(
     (m) =>
-      fromName(m) === f ||
-      (m.toKind === "session" && toName(m) === f) ||
+      is(m.fromAddr, m.from) ||
+      (m.toKind === "session" && is(m.toAddr, m.to)) ||
       (m.toKind === "device" && m.to === device) ||
       m.toKind === "all",
   );
@@ -438,6 +442,7 @@ function recipient(m) {
 
 function messagesPage() {
   const list = [...visibleMessages()].reverse();
+  const shown = ui.filter && nameOf(ui.filter, ui.filter);
   const filter =
     ui.filter &&
     h(
@@ -446,12 +451,12 @@ function messagesPage() {
       h(
         "span",
         { class: "chip" },
-        ui.filter,
+        shown,
         h("button", { "aria-label": "Show all messages", "data-key": "unfilter", onclick: () => ((ui.filter = null), render()) }, "×"),
       ),
     );
   if (list.length === 0) {
-    return h("div", { class: "page" }, filter, h("div", { class: "blank" }, ui.filter ? "No messages with " + ui.filter : "No messages"));
+    return h("div", { class: "page" }, filter, h("div", { class: "blank" }, ui.filter ? "No messages with " + shown : "No messages"));
   }
   return h(
     "div",
