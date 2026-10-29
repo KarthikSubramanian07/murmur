@@ -126,15 +126,23 @@ func NewCommits(ctx context.Context, worktree string, before, after Ref) ([]Comm
 	if after.SHA == "" {
 		return nil, nil
 	}
-	args := []string{"log", "--reverse", "--topo-order", "--no-show-signature", "--encoding=UTF-8", "--format=%H%x00%ct%x00%s", "-z", "--end-of-options", after.SHA}
+	// The tips go to git log on stdin, one per line. On the command line, a repository with a
+	// couple of thousand refs passes Windows' limit of about 32K characters and git cannot start.
+	// gitx.RunIn takes no stdin, so this finds the worktree's git directory and runs log there;
+	// that costs one more short process.
+	gitDir, err := gitx.RunIn(ctx, worktree, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return nil, err
+	}
+	var exclude strings.Builder
 	if before.SHA != "" {
-		args = append(args, "^"+before.SHA)
+		exclude.WriteString("^" + before.SHA + "\n")
 	}
 	for _, tip := range before.tips {
-		args = append(args, "^"+tip)
+		exclude.WriteString("^" + tip + "\n")
 	}
-	args = append(args, "--")
-	out, err := gitx.RunIn(ctx, worktree, args...)
+	repo := gitx.Git{Dir: strings.TrimSpace(gitDir)}
+	out, err := repo.Run(ctx, exclude.String(), "log", "--stdin", "--reverse", "--topo-order", "--no-show-signature", "--encoding=UTF-8", "--format=%H%x00%ct%x00%s", "-z", "--end-of-options", after.SHA, "--")
 	if err != nil {
 		return nil, err
 	}

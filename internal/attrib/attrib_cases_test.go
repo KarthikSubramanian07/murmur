@@ -424,3 +424,12 @@ func TestShallowClone(t *testing.T) {
 	_, _, got = caseRun(t, d2, func() { caseGit(t, d2, "pull", "-q", "--ff-only") })
 	caseWant(t, got)
 }
+
+// Windows caps a command line near 32K characters. 2,000 branches at distinct commits are
+// about 82K of "^sha" arguments if every tip goes on the command line.
+func TestManyBranches(t *testing.T) {
+	d := caseRepo(t)
+	caseFastImport(t, d, 2000, func(i int) string { return fmt.Sprintf("refs/heads/many/b%04d", i) }, false)
+	_, _, got := caseRun(t, d, func() { caseCommit(t, d, "new", nil) })
+	caseWant(t, got, "new")
+}
