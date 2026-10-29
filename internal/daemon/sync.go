@@ -386,7 +386,10 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 			d.noteLocked(e.At, e.Line())
 		}
 		if e.Type == bus.Message {
-			if mode != modeSkip {
+			// A skip passes over history, but a ref read in one only after sessions registered
+			// (the first sync failed) also holds what was sent since this daemon started, which
+			// is new to it: by the sender's clock, with the minute deliverLocked allows.
+			if mode != modeSkip || !e.At.Before(d.started.Add(-time.Minute)) {
 				d.recordMessageLocked(e)
 			}
 			d.deliverLocked(e, mode)

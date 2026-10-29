@@ -10,12 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/a-Fig/t4/internal/brand"
+	"github.com/a-Fig/t4/internal/bus"
 	"github.com/a-Fig/t4/internal/client"
 	"github.com/a-Fig/t4/internal/proto"
 	"github.com/a-Fig/t4/internal/web"
@@ -688,4 +690,40 @@ func TestSessionKeepsDaemonUpWithPage(t *testing.T) {
 	d := newDeviceWith(t, newRemote(t), func(d *device) { d.idle, d.pageOpen = time.Second, 500*time.Millisecond })
 	d.session("aaaaaa", "")
 	holds(t, "the daemon running with a session", 4*time.Second, func() bool { return !d.exited() })
+}
+
+// A daemon whose first sync failed reads the logs it then finds as history, skipping what was sent
+// before it started, but delivers what was sent since to the sessions registered meanwhile. The
+// page shows those messages too, and not the history.
+func TestPageMessagesAfterAFailedFirstSync(t *testing.T) {
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	pushEvent(t, remote, "refs/t4/mesh/old-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
+		From: "old-0001/x", At: time.Now().Add(-10 * time.Minute).UTC(), To: "*", Subject: "backlog"})
+	dir := filepath.Join(t.TempDir(), "clone")
+	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
+	// Pushes go out, so presence is seen, but listing and fetching fail.
+	git(t, dir, "config", "remote.origin.pushurl", remote)
+	git(t, dir, "config", "remote.origin.url", filepath.Join(filepath.Dir(remote), "nowhere.git"))
+	b := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
+	b.start()
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "a sees bob", func() bool { return a.seesSession(bob) })
+
+	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast"})
+	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "direct"})
+	git(t, dir, "config", "remote.origin.url", remote)
+
+	n := 0
+	eventually(t, "bob gets both", func() bool {
+		n += len(b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages)
+		return n >= 2
+	})
+	pg := b.page()
+	msgs, _ := pg.messages("")
+	got := subjects(msgs)
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, []string{"broadcast", "direct"}) {
+		t.Errorf("b's page shows %q, want the broadcast and the direct message and not the backlog", got)
+	}
 }
