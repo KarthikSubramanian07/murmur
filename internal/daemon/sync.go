@@ -77,6 +77,7 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			// Still unread after this long, it is history nobody is waiting for.
 			d.log.Printf("giving up on reading the backlog of %s; skipping it", ref)
 			d.st.Processed[ref] = remote[ref]
+			delete(d.st.Junked, ref)
 			delete(d.backlog, ref)
 		}
 	}
@@ -286,12 +287,10 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 	d.mu.Lock()
 	prev := d.st.Processed[ref]
 	mode := modeNormal
-	switch {
-	case d.backlog[ref]:
+	if d.backlog[ref] {
 		mode = d.mode
-	case d.junked[ref]:
-		mode = modeSkip
 	}
+	hidden, junked := d.st.Junked[ref]
 	d.mu.Unlock()
 	settled := func() {
 		d.mu.Lock()
@@ -307,11 +306,15 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		return
 	} else if !ok {
 		// Junk pushed over a log. Its owner builds over it with its next event, which then
-		// reads as the next commit after the last one read here. Junk over the backlog hides
-		// history from before this daemon's first look, which mustn't read as new then.
+		// reads as the next commit after the last one read here. On a log this device has
+		// never read, the junk hides history from before its first look, which mustn't read as
+		// new then: what was sent before that look (by the sender's clock, with a minute's
+		// allowance) is passed over, the rest read as usual. Saved, as a restart doesn't
+		// change what the history is.
 		d.mu.Lock()
-		if d.backlog[ref] {
-			d.junked[ref] = true
+		if _, ok := d.st.Junked[ref]; !ok && prev == "" && d.backlog[ref] {
+			d.st.Junked[ref] = d.backlogAt.Round(0)
+			d.saveLocked()
 		}
 		delete(d.backlog, ref)
 		d.mu.Unlock()
@@ -321,7 +324,7 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		d.mu.Lock()
 		d.st.Processed[ref] = sha
 		delete(d.backlog, ref)
-		delete(d.junked, ref)
+		delete(d.st.Junked, ref)
 		d.saveLocked()
 		d.mu.Unlock()
 	}
@@ -376,6 +379,9 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		if from, _ := bus.SplitAddr(e.From); from != dev {
 			continue // a device's log carries only its own sessions' events
 		}
+		if junked && e.At.Before(hidden.Add(-time.Minute)) {
+			continue // history the junk hid when this device first looked
+		}
 		if mode != modeSkip {
 			d.noteLocked(e.At, e.Line())
 		}
@@ -385,7 +391,7 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 	}
 	d.st.Processed[ref] = sha
 	delete(d.backlog, ref)
-	delete(d.junked, ref)
+	delete(d.st.Junked, ref)
 	d.saveLocked()
 }
 
@@ -566,7 +572,11 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 		if err := d.repo.Fetch(ctx, []string{ref}); err != nil {
 			return err
 		}
-		if d.overOwnLog(ctx, tip) {
+		over, err := d.overOwnLog(ctx, tip)
+		if err != nil {
+			return err
+		}
+		if over {
 			// Junk pushed over this log, or an older copy of it: replace it with the next event
 			// on top of what this daemon wrote, which readers take as a plain next commit.
 			lease = tip
@@ -579,19 +589,23 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 }
 
 // overOwnLog says whether the remote's tip of this device's log is something to replace rather
-// than build on: not a commit, or one this daemon's own tip already contains. Caller holds writeMu.
-func (d *Daemon) overOwnLog(ctx context.Context, tip string) bool {
+// than build on: not a commit, or one this daemon's own tip already contains. A failure to tell
+// is an error, so junk is never taken for a tip to build on. Caller holds writeMu.
+func (d *Daemon) overOwnLog(ctx context.Context, tip string) (bool, error) {
 	if tip == "" {
-		return false
+		return false, nil
 	}
-	if ok, err := d.repo.IsCommit(ctx, tip); err == nil && !ok {
-		return true // even with nothing written yet: junk is never something to build on
+	ok, err := d.repo.IsCommit(ctx, tip)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return true, nil // even with nothing written yet: junk is never something to build on
 	}
 	if d.ownTip == "" {
-		return false
+		return false, nil
 	}
-	back, err := d.repo.IsAncestor(ctx, tip, d.ownTip)
-	return err == nil && back
+	return d.repo.IsAncestor(ctx, tip, d.ownTip)
 }
 
 // clearOwnJunk deletes, in the background, refs on the remote that keep this device's own refs
@@ -605,6 +619,7 @@ func (d *Daemon) clearOwnJunk(listed map[string]string) {
 		return // the first sync, before anything runs in the background; the next poll does it
 	}
 	var junk []string
+	unblocks := false // whether any of them keeps this device's presence off the remote
 	d.mu.Lock()
 	for ref := range d.junkTried {
 		if _, ok := listed[ref]; !ok {
@@ -618,15 +633,27 @@ func (d *Daemon) clearOwnJunk(listed map[string]string) {
 		if blocking && time.Since(d.junkTried[ref]) >= time.Minute {
 			d.junkTried[ref] = time.Now()
 			junk = append(junk, ref)
+			unblocks = unblocks || ref+"/" == brand.PresencePrefix || strings.HasPrefix(ref, brand.PresencePrefix+d.device+"/")
 		}
 	}
-	d.mu.Unlock()
 	if len(junk) == 0 || d.bgCtx.Err() != nil {
+		d.mu.Unlock()
 		return
 	}
+	if unblocks {
+		d.unblocking++ // for claim's hint while the delete is in flight
+	}
+	d.mu.Unlock()
 	d.bg.Add(1)
 	go func() {
 		defer d.bg.Done()
+		if unblocks {
+			defer func() {
+				d.mu.Lock()
+				d.unblocking--
+				d.mu.Unlock()
+			}()
+		}
 		ctx, cancel := context.WithTimeout(d.bgCtx, time.Minute)
 		defer cancel()
 		for _, ref := range junk {

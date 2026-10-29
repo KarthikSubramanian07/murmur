@@ -579,41 +579,139 @@ func TestJunkOverClaimsSurvivesRestart(t *testing.T) {
 	eventually(t, "both claims on a", func() bool { return len(a.openClaims()) == 2 })
 }
 
-// Junk over another device's log when a device first looks hides that log's history, which is
-// still backlog when the owner writes over the junk: only what was sent since a session here
-// started is delivered, not the history under it.
-func TestHistoryUnderJunkIsNotReplayed(t *testing.T) {
-	remote := newRemote(t)
+// histUnderJunk puts two hour-old broadcasts on hist-0001's log and forces junk over it. It
+// returns a scratch repo, the junk, and the log's real tip, which the owner builds on.
+func histUnderJunk(t *testing.T, remote string) (work, tree, tip string) {
+	t.Helper()
 	ref := "refs/t4/mesh/hist-0001"
 	for _, s := range []string{"old one", "old two"} {
 		pushEvent(t, remote, ref, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "hist-0001/x",
 			At: time.Now().Add(-time.Hour).UTC(), To: "*", Subject: s})
 	}
-	work, tree := junkTree(t)
+	work, tree = junkTree(t)
 	git(t, work, "fetch", "-q", remote, ref)
-	tip := git(t, work, "rev-parse", "FETCH_HEAD") // what the owner builds on, past the junk
+	tip = git(t, work, "rev-parse", "FETCH_HEAD")
 	git(t, work, "push", "-q", "--force", remote, tree+":"+ref)
+	return work, tree, tip
+}
 
-	c := newDevice(t, remote) // its first sync finds the junk
-	c.session("cccccc", "")
+// ownerWritesOverJunk broadcasts subject from hist-0001, on tip, replacing the junk.
+func ownerWritesOverJunk(t *testing.T, remote, work, tree, tip, subject string) {
+	t.Helper()
 	msg, err := bus.Encode(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "hist-0001/x",
-		At: time.Now().UTC(), To: "*", Subject: "new"}, "new")
+		At: time.Now().UTC(), To: "*", Subject: subject}, subject)
 	if err != nil {
 		t.Fatal(err)
 	}
 	next := gitIn(t, work, msg, "commit-tree", tree, "-p", tip)
-	git(t, work, "push", "-q", "--force", remote, next+":"+ref)
+	git(t, work, "push", "-q", "--force", remote, next+":refs/t4/mesh/hist-0001")
+}
 
-	var got []proto.MessageView
-	eventually(t, "the new message", func() bool {
-		got = append(got, c.do(proto.Request{Op: proto.OpInbox, Session: "cccccc"}).Messages...)
-		return len(got) > 0
-	})
-	time.Sleep(500 * time.Millisecond)
-	got = append(got, c.do(proto.Request{Op: proto.OpInbox, Session: "cccccc"}).Messages...)
-	if len(got) != 1 || got[0].Subject != "new" {
-		t.Fatalf("inbox: %+v", got)
+// inboxOf collects what session sess (the CLI, if "") gets: everything until something comes,
+// and anything more for a while after.
+func inboxOf(d *device, sess string) []string {
+	var got []string
+	read := func() {
+		for _, m := range d.do(proto.Request{Op: proto.OpInbox, Session: sess}).Messages {
+			got = append(got, m.Subject)
+		}
 	}
+	who := sess
+	if who == "" {
+		who = "the CLI"
+	}
+	eventually(d.t, "a message for "+who, func() bool { read(); return len(got) > 0 })
+	time.Sleep(500 * time.Millisecond)
+	read()
+	return got
+}
+
+// Junk over another device's log when a device first looks hides that log's history, which
+// stays history when the owner writes over the junk: what is new is delivered as from any log,
+// to the CLI too, and the history isn't.
+func TestHistoryUnderJunkIsNotReplayed(t *testing.T) {
+	remote := newRemote(t)
+	work, tree, tip := histUnderJunk(t, remote)
+	c := newDevice(t, remote) // its first sync finds the junk
+	c.session("cccccc", "")
+	ownerWritesOverJunk(t, remote, work, tree, tip, "new")
+	if got := inboxOf(c, "cccccc"); len(got) != 1 || got[0] != "new" {
+		t.Fatalf("session's inbox: %q", got)
+	}
+	if got := inboxOf(c, ""); len(got) != 1 || got[0] != "new" {
+		t.Fatalf("CLI's inbox: %q", got)
+	}
+}
+
+// The same across a restart: the owner writes over the junk while the device is down, and a
+// session that reconnects gets only what is new.
+func TestHistoryUnderJunkStaysHistoryAcrossRestart(t *testing.T) {
+	remote := newRemote(t)
+	work, tree, tip := histUnderJunk(t, remote)
+	c := newDevice(t, remote)
+	c.session("cccccc", "")
+	time.Sleep(500 * time.Millisecond)
+	c.stop()
+	ownerWritesOverJunk(t, remote, work, tree, tip, "new")
+	c.start()
+	c.helloAgain("cccccc", true)
+	if got := inboxOf(c, "cccccc"); len(got) != 1 || got[0] != "new" {
+		t.Fatalf("inbox: %q", got)
+	}
+}
+
+// Junk a restart finds over a log this device had already read hides nothing it hadn't seen: the
+// owner's next message is delivered as usual, to the CLI too.
+func TestFreshMessageOverJunkAfterRestart(t *testing.T) {
+	remote := newRemote(t)
+	ref := "refs/t4/mesh/hist-0001"
+	pushEvent(t, remote, ref, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "hist-0001/x",
+		At: time.Now().Add(-time.Hour).UTC(), To: "*", Subject: "old"})
+	c := newDevice(t, remote) // reads the log in its first sync
+	time.Sleep(500 * time.Millisecond)
+	c.stop()
+	work, tree := junkTree(t)
+	git(t, work, "fetch", "-q", remote, ref)
+	tip := git(t, work, "rev-parse", "FETCH_HEAD")
+	git(t, work, "push", "-q", "--force", remote, tree+":"+ref)
+	c.start()
+	c.session("cccccc", "")
+	time.Sleep(500 * time.Millisecond)
+	ownerWritesOverJunk(t, remote, work, tree, tip, "new")
+	if got := inboxOf(c, ""); len(got) != 1 || got[0] != "new" {
+		t.Fatalf("CLI's inbox: %q", got)
+	}
+}
+
+// An older claims commit forced over the ref loses no claims across restarts either: each daemon
+// builds over it on the claims it read.
+func TestOlderClaimsCommitSurvivesRestart(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote, time.Minute), newDevice(t, remote, time.Minute)
+	alice, _ := a.session("aaaaaa", "")
+	b.session("bbbbbb", "")
+	r := a.claimAs("aaaaaa", "one", "")
+	if r.Claimed == nil {
+		t.Fatalf("claim: %+v", r)
+	}
+	first := git(t, filepath.Dir(remote), "--git-dir="+remote, "rev-parse", "refs/t4/claims")
+	if r := a.claimAs("aaaaaa", "two", r.Seen); r.Claimed == nil {
+		t.Fatalf("claim: %+v", r)
+	}
+	eventually(t, "b sees both", func() bool { return claimsBy(b, alice) == 2 })
+	git(t, filepath.Dir(remote), "--git-dir="+remote, "update-ref", "refs/t4/claims", first)
+	time.Sleep(time.Second) // both devices read the older commit
+
+	a.restart()
+	b.restart()
+	a.helloAgain("aaaaaa", true)
+	b.helloAgain("bbbbbb", true)
+	eventually(t, "b still sees both", func() bool { return claimsBy(b, alice) == 2 })
+	tok := b.do(proto.Request{Op: proto.OpClaims, Session: "bbbbbb"}).Seen
+	if r := b.claimAs("bbbbbb", "three", tok); r.Claimed == nil {
+		t.Fatalf("b's claim: %+v", r)
+	}
+	eventually(t, "all three on a", func() bool { return len(a.openClaims()) == 3 })
 }
 
 // A ref t4 never writes, at a name every device's refs clash with (presence itself, or one under

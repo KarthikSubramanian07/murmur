@@ -89,13 +89,11 @@ type Daemon struct {
 	// backlog lists the mesh refs the first listing showed that haven't been read yet: they are
 	// read under the mode the daemon started in, and the mode turns normal once all have been.
 	// nil until that listing.
-	backlog   map[string]bool
-	backlogAt time.Time // when the backlog was taken
-	// junked lists backlog refs whose tip was junk when read, hiding the history under it. When
-	// the owner builds over the junk, that history is still backlog, and is read as in modeSkip.
-	junked    map[string]bool
-	unfetched map[string]fetchFail // refs whose fetch failed, and when
-	junkTried map[string]time.Time // blocking refs clearOwnJunk last tried to delete, and when
+	backlog    map[string]bool
+	backlogAt  time.Time            // when the backlog was taken
+	unfetched  map[string]fetchFail // refs whose fetch failed, and when
+	junkTried  map[string]time.Time // blocking refs clearOwnJunk last tried to delete, and when
+	unblocking int                  // deletes in flight of refs keeping this device's presence off the remote
 	// claimsOver is what the remote's claims ref holds when this daemon builds over it rather
 	// than on it: something not a commit, or a commit older than claimsTip. See claimLeaseLocked.
 	claimsOver string
@@ -191,9 +189,12 @@ type inMsg struct {
 type state struct {
 	// Initialized is set once the first syncs have read the backlog, recording every log's tip
 	// as processed without delivering it: history from before this device joined isn't replayed.
-	Initialized bool                `json:"initialized"`
-	Processed   map[string]string   `json:"processed"` // mesh ref → last SHA delivered
-	Inbox       map[string][]*inMsg `json:"inbox"`     // session → unread messages
+	Initialized bool              `json:"initialized"`
+	Processed   map[string]string `json:"processed"` // mesh ref → last SHA delivered
+	// Junked holds the logs that were junk when this device first looked, with nothing read from
+	// them yet, and when that look was: what was sent before it is history, not to be delivered.
+	Junked map[string]time.Time `json:"junked,omitempty"`
+	Inbox  map[string][]*inMsg  `json:"inbox"` // session → unread messages
 	// LastSync tells the next daemon how long this one was down.
 	LastSync time.Time `json:"lastSync"`
 }
@@ -286,7 +287,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		claimSeq: map[string]int{}, gone: map[string]time.Time{}, liveGen: now.UnixNano(), caughtUp: map[string]bool{},
-		unfetched: map[string]fetchFail{}, junked: map[string]bool{}, junkTried: map[string]time.Time{},
+		unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), quit: make(chan struct{}),
 	}
 	device, err := loadDevice(dir)
@@ -467,7 +468,7 @@ func validName(s string) bool { return bus.ValidName(s) }
 func (d *Daemon) statePath() string { return filepath.Join(d.dir, "state.json") }
 
 func (d *Daemon) loadState() error {
-	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}}
+	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -481,6 +482,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Processed == nil {
 		d.st.Processed = map[string]string{}
+	}
+	if d.st.Junked == nil {
+		d.st.Junked = map[string]time.Time{}
 	}
 	if d.st.Inbox == nil {
 		d.st.Inbox = map[string][]*inMsg{}

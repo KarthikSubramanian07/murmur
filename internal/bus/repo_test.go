@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/a-Fig/t4/internal/bus"
@@ -40,4 +41,23 @@ func TestIsCommit(t *testing.T) {
 	if got, err := broken.IsCommit(ctx, commit); err == nil {
 		t.Errorf("a git that can't run answered %v", got)
 	}
+}
+
+// One Repo serves all of a daemon's goroutines, and the first commits can come at once (the
+// presence loop, a session's first event). Under -race this catches an unguarded cache.
+func TestNewCommitConcurrently(t *testing.T) {
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", "--bare", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	r := &bus.Repo{Git: gitx.Git{Dir: dir}, Name: "test", Email: "test@example.invalid"}
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Go(func() {
+			if _, err := r.NewCommit(context.Background(), "", "x"); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
 }

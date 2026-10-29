@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/a-Fig/t4/internal/brand"
@@ -45,12 +46,15 @@ type Repo struct {
 	// git identity being configured.
 	Name, Email string
 
+	treeMu    sync.Mutex // the daemon's goroutines all write through one Repo
 	emptyTree string
 }
 
 // EmptyTree returns the ID of git's empty tree, which every bus commit carries: bus commits
 // hold no files, so fetching them brings nothing else along.
 func (r *Repo) EmptyTree(ctx context.Context) (string, error) {
+	r.treeMu.Lock()
+	defer r.treeMu.Unlock()
 	if r.emptyTree != "" {
 		return r.emptyTree, nil
 	}
@@ -213,9 +217,14 @@ func (r *Repo) IsCommit(ctx context.Context, sha string) (bool, error) {
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
-	// cat-file -e exits 1, and only 1, for an object that isn't here.
+	// cat-file -e exits 1, and only 1, for an object that isn't here (or a git killed on
+	// Windows when ctx is cancelled).
+	_, cerr := r.Git.Run(ctx, "", "cat-file", "-e", sha)
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
 	var exit *exec.ExitError
-	if _, cerr := r.Git.Run(ctx, "", "cat-file", "-e", sha); errors.As(cerr, &exit) && exit.ExitCode() == 1 {
+	if errors.As(cerr, &exit) && exit.ExitCode() == 1 {
 		return false, nil
 	}
 	return false, err
@@ -237,8 +246,13 @@ func (r *Repo) IsAncestor(ctx context.Context, a, b string) (bool, error) {
 		return false, nil
 	}
 	for _, c := range []string{a, b} {
-		// cat-file -e exits 1, and only 1, for an object that isn't here.
-		if _, cerr := r.Git.Run(ctx, "", "cat-file", "-e", c); errors.As(cerr, &exit) && exit.ExitCode() == 1 {
+		// cat-file -e exits 1, and only 1, for an object that isn't here (or a git killed on
+		// Windows when ctx is cancelled).
+		_, cerr := r.Git.Run(ctx, "", "cat-file", "-e", c)
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if errors.As(cerr, &exit) && exit.ExitCode() == 1 {
 			return false, nil
 		}
 		if out, terr := r.Git.Run(ctx, "", "cat-file", "-t", c); terr == nil && strings.TrimSpace(out) != "commit" {

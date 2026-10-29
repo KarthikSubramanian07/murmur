@@ -43,7 +43,8 @@ func (d *Daemon) advanceClaims(ctx context.Context, sha string, restoring bool) 
 			d.log.Printf("the claims ref holds %s, %s; the next claim will build over it", sha, why)
 		}
 		// The fetch put that on the local copy too, which the next daemon restores from: put back
-		// what was read, or a restart would lose it. The next fetch brings the remote's again.
+		// what was read, or a restart would lose it. The next daemon's first sync fetches the
+		// remote's again; this one already knows it.
 		if prev != "" {
 			if err := d.repo.UpdateLocal(ctx, brand.ClaimsRef, prev); err != nil {
 				d.log.Printf("keeping the claims read on the local claims ref: %v", err)
@@ -430,7 +431,6 @@ func (d *Daemon) claim(ctx context.Context, from string, req proto.Request) prot
 	}
 	d.mu.Lock()
 	perr := d.presenceErr
-	clearing := len(d.junkTried) > 0
 	d.mu.Unlock()
 	if perr != nil {
 		// Others judge this device's claims by its presence; one that isn't getting out would
@@ -439,14 +439,16 @@ func (d *Daemon) claim(ctx context.Context, from string, req proto.Request) prot
 		perr = d.publishPresence(ctx)
 		d.mu.Lock()
 		d.presenceErr = perr
+		clearing := d.unblocking > 0
 		d.mu.Unlock()
+		if perr != nil && clearing {
+			return fail("not claimed: a ref keeping this device's presence off the remote is being deleted; try again " +
+				"in a few seconds: " + perr.Error())
+		}
 	}
 	if perr != nil {
-		msg := "not claimed: this device's presence isn't reaching the remote, so the team would soon see the claim as lapsed"
-		if clearing {
-			msg += " (a ref blocking it is being deleted; try again in a few seconds)"
-		}
-		return fail(msg + ": " + perr.Error())
+		return fail("not claimed: this device's presence isn't reaching the remote, so the team would soon see the " +
+			"claim as lapsed: " + perr.Error())
 	}
 	for range casAttempts {
 		d.mu.Lock()
