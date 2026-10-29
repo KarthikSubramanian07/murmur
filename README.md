@@ -35,13 +35,14 @@ go build -o ~/bin/t4 ./cmd/t4      # anywhere on PATH; t4.exe on Windows
 ```
 
 Then, once per project repo, one person runs `t4 init` in it and commits what it writes:
-`.mcp.json` (the MCP server for Claude Code), `.claude/settings.json` (the notice hook) and a
-section of `AGENTS.md`. Claude Code asks each teammate once whether to trust the MCP server.
-After that, agents use the `who`, `status`, `send` and `inbox` tools; nothing else needs
-starting.
+`.mcp.json` (the MCP server for Claude Code), `.claude/settings.json` (the hook, which delivers
+notices and watches for commits) and a section of `AGENTS.md`. Claude Code asks each teammate
+once whether to trust the MCP server. After that, agents use the `who`, `lookup`, `status`, `send` and `inbox` tools; nothing else needs
+starting. A repo set up by an earlier version needs `t4 init` run again for the new hook events.
 
 Humans get the same through the CLI (`t4 help`): `t4 who`, `t4 send <to> <subject> [body]`,
-`t4 inbox`, `t4 log`. `t4 ui` opens a web page with the sessions and the messages between them.
+`t4 inbox`, `t4 log`, and `t4 lookup <name>` for what is known of one session. `t4 ui` opens a
+web page with the sessions and the messages between them.
 
 ## Working on t4
 
