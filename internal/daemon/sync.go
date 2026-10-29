@@ -407,27 +407,29 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 // goes only to sessions that were running before and reconnect, and in modeSkip to nobody; in
 // both, what was sent after a session here started is for it. Everything
 // is held for catchUpWindow after the daemon starts, for sessions still reconnecting (see
-// catchUpLocked). Caller holds mu.
+// catchUpLocked). A message forwarded to the session that holds its recipient's name (see
+// forwardLocked) is the holder's if it is new enough for either: a backlog read after the holder
+// started still gives it what the recipient's kept inbox would have caught up on. Caller holds mu.
 func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) {
 	held := mode == modeCatchUp || mode == modeNormal && time.Since(d.started) <= catchUpWindow
 	if held {
 		d.pending = append(d.pending, e)
 	}
+	dev, sess := bus.SplitAddr(e.To)
+	fwd := d.forwardLocked(e.To)
 	for _, id := range d.recipientsLocked() {
 		if !d.addressedLocked(e, id) {
 			continue
 		}
-		// A recipient not registered here is a stopped session, which may come back.
-		if s := d.sessions[id]; mode != modeNormal && !d.sentSinceLocked(e, id, mode) &&
-			(mode == modeSkip || id == proto.CLISession || s != nil && !s.reconnect) {
+		if !d.inTimeLocked(e, id, mode) &&
+			!(fwd == bus.Addr(d.device, id) && d.receivesLocked(sess) && d.inTimeLocked(e, sess, mode)) {
 			continue
 		}
 		d.addInboxLocked(id, e)
 	}
-	dev, sess := bus.SplitAddr(e.To)
 	_, stopped := d.st.Stopped[sess]
 	if mode == modeNormal && !held && dev == d.device && sess != "" && sess != proto.CLISession &&
-		d.sessions[sess] == nil && !stopped && d.forwardLocked(e.To) == "" {
+		d.sessions[sess] == nil && !stopped && fwd == "" {
 		d.log.Printf("message %s is for %s, which isn't running here; dropped", e.ID, e.To)
 	}
 }
@@ -442,6 +444,18 @@ func (d *Daemon) recipientsLocked() []string {
 		}
 	}
 	return append(ids, proto.CLISession)
+}
+
+// inTimeLocked says whether e, read in a sync of this mode, is new enough for session id: anything
+// in a normal sync; from a backlog, what was sent after id started, and in a catch-up also what
+// arrived while the daemon was down, for a session that was running before and reconnected, or
+// one stopped, which may come back. Caller holds mu.
+func (d *Daemon) inTimeLocked(e bus.Event, id string, mode syncMode) bool {
+	if mode == modeNormal || d.sentSinceLocked(e, id, mode) {
+		return true
+	}
+	s := d.sessions[id] // nil for a stopped session
+	return mode == modeCatchUp && id != proto.CLISession && (s == nil || s.reconnect)
 }
 
 // sentSinceLocked says whether e was sent after session id started, by the sender's clock, with a

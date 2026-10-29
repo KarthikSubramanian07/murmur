@@ -283,11 +283,14 @@ change and a daemon that knows no names delivers by it all the same.
   name and the last name each of its sessions held. A message for a session of this device that
   isn't running goes to the session that holds the name it last had, if that one is registered
   or stopped within `StoppedInbox`: whether it is sent by name or by `device/session`. It is one
-  hop. And a session that takes a name takes the inboxes kept for the sessions, stopped within
-  `StoppedInbox`, whose last name it was. A conversation comes back as whichever session takes its
-  name next: the registry's own ID when it is resumed from the command line, since the server's ID
-  is derived from the conversation's; the last holder, if its server restarts; or a third session
-  a hook moves to it. A message to the name waits for any of them (2026-10-29).
+  hop. Read from a backlog after a restart, a forwarded message is the holder's if it is new
+  enough for either session, so what the stopped session's kept inbox would have caught up on
+  still arrives when the holder registered first. And a session that takes a name takes the
+  inboxes kept for the sessions, stopped within `StoppedInbox`, whose last name it was. A
+  conversation comes back as whichever session takes its name next: the registry's own ID when it
+  is resumed from the command line, since the server's ID is derived from the conversation's; the
+  last holder, if its server restarts; or a third session a hook moves to it. A message to the
+  name waits for any of them (2026-10-29).
   - *Sent by name on the name's own device,* a message goes to the name's last holder there, if
     the name is still the last that session took or it is running. Otherwise the registry's
     address goes on the bus as it would from any device, and is forwarded on delivery, so no
