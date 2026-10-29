@@ -10,6 +10,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/a-Fig/t4/internal/client"
@@ -34,6 +36,17 @@ type output struct {
 // Events the hook answers. Each can add context to the conversation without steering a turn.
 var events = map[string]bool{"PostToolUse": true, "UserPromptSubmit": true, "SessionStart": true}
 
+// claudePID is the Claude Code process this hook runs under, which Claude Code gives hooks as
+// CLAUDE_PID; 0 where it isn't set. The MCP server's parent is the same process, which is how the
+// daemon knows the hook's session ID is the one that server's session now has.
+func claudePID() int {
+	pid, err := strconv.Atoi(os.Getenv("CLAUDE_PID"))
+	if err != nil || pid <= 0 {
+		return 0
+	}
+	return pid
+}
+
 // Run reads a hook payload from stdin and writes the hook's answer, if any, to stdout.
 func Run(stdin io.Reader, stdout io.Writer) {
 	defer func() { recover() }()
@@ -54,7 +67,7 @@ func Run(stdin io.Reader, stdout io.Writer) {
 	if err != nil {
 		return
 	}
-	resp, err := c.Do(ctx, proto.Request{Op: proto.OpNotices, ClaudeSession: in.SessionID})
+	resp, err := c.Do(ctx, proto.Request{Op: proto.OpNotices, ClaudeSession: in.SessionID, ClientPID: claudePID()})
 	if err != nil || len(resp.Messages) == 0 {
 		return
 	}

@@ -69,7 +69,21 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	writeResp(conn, d.handle(ctx, req))
+	resp := d.handle(ctx, req)
+	resp.ClaudeSession = d.claudeSessionOf(req.Session)
+	writeResp(conn, resp)
+}
+
+// claudeSessionOf is the Claude Code session ID held for the session id, which an MCP server
+// asks for with every call: a hook may have corrected it since the server started. "" for the CLI,
+// the hook, and a session that isn't registered.
+func (d *Daemon) claudeSessionOf(id string) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if s := d.sessions[id]; s != nil {
+		return s.claudeSession
+	}
+	return ""
 }
 
 func writeResp(conn net.Conn, resp proto.Response) {
@@ -96,38 +110,43 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	}
 	branch := branchOf(ctx, h.Cwd)
 	worktree := worktreeOf(ctx, h.Cwd)
-	key := nameKey(h)
 	d.mu.Lock()
-	// Two live sessions of one client session (two MCP servers in it) would share a name, and
-	// a name is an address. The later one is a session of its own.
-	for _, o := range d.sessions {
-		if o.id != h.ID && o.key == key && o.dropped.IsZero() {
-			key += "/" + h.ID
-		}
-	}
 	s := d.sessions[h.ID]
-	taken := false
-	switch {
-	case s != nil && s.dropped.IsZero():
+	if s != nil && s.dropped.IsZero() {
 		d.mu.Unlock()
 		writeResp(conn, fail("session ID "+h.ID+" is in use"))
 		return
-	case s != nil:
+	}
+	// A session in its grace, taken over by a server of the same process, keeps the Claude ID a
+	// hook gave it: the server may be a new one, started with the ID its process had at first,
+	// which a /clear or a /resume since has made stale. A server of another process is trusted.
+	claude := h.ClaudeSession
+	sameProcess := s != nil && h.ClientPID != 0 && h.ClientPID == s.clientPID
+	if sameProcess && s.followed {
+		claude = s.claudeSession
+	}
+	// Two live sessions of one client session (two MCP servers in it) would share a name, and
+	// a name is an address. The later one is a session of its own.
+	key := d.uniqueKeyLocked(nameKey(claude, h.ID), h.ID)
+	taken := false
+	if s != nil {
 		// A session in its grace: this connection takes it over, with its inbox and its unread
 		// notices. Everyone else was never told it was gone.
 		taken = true
 		if s.agent != agent || s.branch != branch || s.key != key {
 			d.kickPresence() // what presence shows changed; otherwise nothing is written
 		}
-		s.agent, s.cwd, s.claudeSession, s.branch, s.reconnect = agent, h.Cwd, h.ClaudeSession, branch, h.Reconnect
+		s.agent, s.cwd, s.claudeSession, s.branch, s.reconnect = agent, h.Cwd, claude, branch, h.Reconnect
+		s.clientPID, s.followed = h.ClientPID, s.followed && sameProcess
 		s.worktree = worktree
 		if s.key != key {
-			s.key, s.name = key, d.st.NameKeys[key]
+			s.key = key
+			d.setNameLocked(s, d.st.NameKeys[key])
 		}
 		s.dropped = time.Time{}
 		close(s.takeover)
 		s.takeover = nil
-	default:
+	} else {
 		s = d.newSessionLocked(h, agent, branch, key)
 		s.worktree = worktree
 	}
@@ -135,19 +154,20 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	if h.Reconnect {
 		d.catchUpLocked(h.ID)
 	}
-	name := s.name
+	name, live := s.name, s.claudeSession
 	d.mu.Unlock()
 	if name == "" {
 		d.kickNames()
 	}
 
 	addr := bus.Addr(d.device, h.ID)
+	reply := proto.Response{OK: true, Self: addr, Name: name, NamePending: name == "", ClaudeSession: live}
 	if taken {
 		d.log.Printf("session %s reconnected", addr)
-		writeResp(conn, proto.Response{OK: true, Self: addr, Name: name, NamePending: name == ""})
+		writeResp(conn, reply)
 	} else {
 		d.log.Printf("session %s started (%s, %s)", addr, agent, branch)
-		writeResp(conn, proto.Response{OK: true, Self: addr, Name: name, NamePending: name == ""})
+		writeResp(conn, reply)
 		d.kickPresence()
 		d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStarted, From: addr,
 			At: time.Now().UTC(), Agent: agent, Branch: branch})
@@ -290,36 +310,45 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	return fail("unknown op " + req.Op)
 }
 
-// notices returns the session's messages it hasn't been told about yet, without bodies, and
-// marks them told. The hook calls it; the hook knows only Claude Code's session ID.
+// notices returns the messages of a session it hasn't been told about yet, without bodies, and
+// marks them told. The hook calls it; the hook knows only Claude Code's session ID, and its
+// process: with them, the sessions of that process follow the hook to the ID it reports (see
+// hookSessionsLocked), and a hook that matches nothing gets nothing.
 func (d *Daemon) notices(req proto.Request) proto.Response {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	id := req.Session
+	var ids []string
 	if req.ClaudeSession != "" {
-		id = ""
-		for _, s := range d.sessions {
-			if s.claudeSession == req.ClaudeSession {
-				id = s.id
-				break
+		for _, s := range d.hookSessionsLocked(req.ClaudeSession, req.ClientPID) {
+			ids = append(ids, s.id)
+		}
+	} else {
+		ids = []string{req.Session}
+	}
+	var self string
+	var fresh []*inMsg
+	for _, id := range ids {
+		// A session in its grace, or stopped, is told of its notices once it is back.
+		if id == "" || !d.liveLocked(id) {
+			continue
+		}
+		if self == "" {
+			self = bus.Addr(d.device, id)
+		}
+		for _, m := range d.st.Inbox[id] {
+			if !m.Noticed {
+				m.Noticed = true
+				fresh = append(fresh, m)
 			}
 		}
 	}
-	// A session in its grace, or stopped, is told of its notices once it is back.
-	if id == "" || !d.liveLocked(id) {
+	if self == "" {
 		return proto.Response{OK: true}
-	}
-	var fresh []*inMsg
-	for _, m := range d.st.Inbox[id] {
-		if !m.Noticed {
-			m.Noticed = true
-			fresh = append(fresh, m)
-		}
 	}
 	if len(fresh) > 0 {
 		d.saveLocked()
 	}
-	return proto.Response{OK: true, Self: bus.Addr(d.device, id), Messages: d.messageViewsLocked(fresh, false)}
+	return proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
 }
 
 func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto.Response {
@@ -336,15 +365,25 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	}
 	// A name is an address: it is turned into the session's device/session here, and that is what
 	// goes on the bus, so a daemon that doesn't know names delivers the message all the same.
-	var toName string
+	var toName, renamed string
 	if names.Valid(to) {
 		d.mu.Lock()
 		addr, ok := d.resolveNameLocked(to)
 		_, isDevice := d.peers[to]
 		isDevice = isDevice || to == d.device // a device may have an ID shaped like a name
+		var now string
+		if ok {
+			now, _, _ = d.sessionInfoLocked(addr)
+		}
 		d.mu.Unlock()
 		switch {
 		case ok:
+			// The registry keeps a name for good, and the session it was first given to survives a
+			// /clear or a /resume under a new name, so a name nobody holds now can still be that
+			// session's address. The message goes there, and the sender is told what to call it.
+			if now != "" && now != to {
+				renamed = fmt.Sprintf("%s was this session's name before it moved to another conversation; it is called %s now. The message was sent to it.", to, now)
+			}
 			to, toName = addr, to
 		case !isDevice:
 			return fail(fmt.Sprintf("no session is named %q. who shows the names in use.", to))
@@ -370,6 +409,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	if err := d.appendEvent(ctx, e); err != nil {
 		return fail("not sent: " + err.Error())
 	}
+	note = strings.TrimSpace(renamed + " " + note)
 	return proto.Response{OK: true, Self: from, Note: note,
 		Messages: []proto.MessageView{{ID: e.ID, From: from, To: to, ToName: toName, Subject: subject, At: e.At}}}
 }
@@ -473,7 +513,8 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 	// A key that has a name keeps it, whatever this session's ID, and whichever process
 	// registered it: the name is waiting here from the first moment, without the registry.
 	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession, branch: branch,
-		started: time.Now(), reconnect: h.Reconnect, key: key, name: d.st.NameKeys[key]}
+		started: time.Now(), reconnect: h.Reconnect, key: key, clientPID: h.ClientPID}
+	d.setNameLocked(s, d.st.NameKeys[key])
 	if at, ok := d.st.Stopped[h.ID]; ok {
 		delete(d.st.Stopped, h.ID)
 		if time.Since(at) > d.opt.StoppedInbox {

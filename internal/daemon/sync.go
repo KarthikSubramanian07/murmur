@@ -427,7 +427,7 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) {
 	dev, sess := bus.SplitAddr(e.To)
 	_, stopped := d.st.Stopped[sess]
 	if mode == modeNormal && !held && dev == d.device && sess != "" && sess != proto.CLISession &&
-		d.sessions[sess] == nil && !stopped {
+		d.sessions[sess] == nil && !stopped && d.forwardLocked(e.To) == "" {
 		d.log.Printf("message %s is for %s, which isn't running here; dropped", e.ID, e.To)
 	}
 }
@@ -462,10 +462,17 @@ func (d *Daemon) sentSinceLocked(e bus.Event, id string, mode syncMode) bool {
 }
 
 // addressedLocked says whether e is for session id on this device: sent to it, to this device,
-// or to everyone, and not by it.
+// or to everyone, and not by it. A message to a session that no longer holds its name is for the
+// session that does instead (see forwardLocked). Caller holds mu.
 func (d *Daemon) addressedLocked(e bus.Event, id string) bool {
 	addr := bus.Addr(d.device, id)
-	return e.From != addr && (e.To == "*" || e.To == d.device || e.To == addr)
+	if e.From == addr {
+		return false
+	}
+	if e.To == addr {
+		return d.forwardLocked(e.To) == ""
+	}
+	return e.To == "*" || e.To == d.device || d.forwardLocked(e.To) == addr
 }
 
 func (d *Daemon) addInboxLocked(id string, e bus.Event) {

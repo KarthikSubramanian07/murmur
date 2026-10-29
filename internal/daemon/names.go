@@ -10,7 +10,6 @@ import (
 	"github.com/a-Fig/t4/internal/brand"
 	"github.com/a-Fig/t4/internal/bus"
 	"github.com/a-Fig/t4/internal/names"
-	"github.com/a-Fig/t4/internal/proto"
 )
 
 // Session names (#20). A session's name is two words (quiet-otter), unique in the repo and never
@@ -37,11 +36,11 @@ const (
 // nameKey is what a session's name follows: the client's own session ID when it gives one, so that
 // a resume, or an MCP server restarting, is the same session; otherwise the ID t4 gave the session.
 // The kinds are kept apart so that no ID of one can equal an ID of the other.
-func nameKey(h *proto.Hello) string {
-	if h.ClaudeSession != "" {
-		return "claude:" + h.ClaudeSession
+func nameKey(claude, id string) string {
+	if claude != "" {
+		return "claude:" + claude
 	}
-	return "session:" + h.ID
+	return "session:" + id
 }
 
 // kickNames wakes the assigner.
@@ -197,6 +196,9 @@ func (d *Daemon) resolveNameLocked(name string) (addr string, ok bool) {
 		}
 	}
 	addr = d.st.Used[name]
+	if to := d.forwardLocked(addr); to != "" {
+		addr = to // first given to a session that has since retired, and held now by another
+	}
 	return addr, addr != ""
 }
 
@@ -366,7 +368,7 @@ func (d *Daemon) attemptName(ctx context.Context, w *wanted) error {
 		d.st.NameKeys[w.key] = rec.Name
 		for _, s := range d.sessions {
 			if s.key == w.key && s.name == "" {
-				s.name = rec.Name
+				d.setNameLocked(s, rec.Name)
 			}
 		}
 		d.noteLocked(rec.At, rec.Subject())

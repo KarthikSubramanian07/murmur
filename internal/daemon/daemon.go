@@ -180,6 +180,12 @@ type session struct {
 	takeover chan struct{}
 	// key is what the session's name follows (see nameKey); name is "" until it lands.
 	key, name string
+	// clientPID is the MCP server's parent process, 0 if its hello gave none. A hook run by the
+	// same process speaks for this session (see hookSessionsLocked).
+	clientPID int
+	// followed says claudeSession came from a hook, not from a hello: a hook always has the live
+	// ID, where an MCP server's environment may be stale (see hello).
+	followed bool
 }
 
 // syncMode says what a sync does with events this daemon hasn't processed.
@@ -248,6 +254,13 @@ type state struct {
 	Used map[string]string `json:"usedNames,omitempty"`
 	// NameKeys is the name each of this device's session keys was given, for good.
 	NameKeys map[string]string `json:"nameKeys,omitempty"`
+	// NameHolders is the session on this device that took each name last, and SessionNames the
+	// name each session took last: running or stopped, and never taken back. The registry records
+	// the session a name was first given to, which can have a different ID from the one that
+	// holds the name now; these two are how a message for the first is found its holder
+	// (see forwardLocked).
+	NameHolders  map[string]string `json:"nameHolders,omitempty"`
+	SessionNames map[string]string `json:"sessionNames,omitempty"`
 	// NamesTip is the registry's tip as last examined, readable or not: the lease for the next
 	// push. NamesGood is the last tip that was a commit and was read in full. NamesRepair says the
 	// registry lost names, and the next commit must be a new root holding every one.
@@ -536,7 +549,8 @@ func (d *Daemon) statePath() string { return filepath.Join(d.dir, "state.json") 
 
 func (d *Daemon) loadState() error {
 	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},
-		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{}}
+		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
+		NameHolders: map[string]string{}, SessionNames: map[string]string{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -565,6 +579,12 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.NameKeys == nil {
 		d.st.NameKeys = map[string]string{}
+	}
+	if d.st.NameHolders == nil {
+		d.st.NameHolders = map[string]string{}
+	}
+	if d.st.SessionNames == nil {
+		d.st.SessionNames = map[string]string{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from t4 itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

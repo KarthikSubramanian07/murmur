@@ -47,9 +47,7 @@ func Run(ctx context.Context, opt Options) error {
 		s.broken = err // serve anyway, so the agent sees why every tool fails
 	} else {
 		s.c = &client.Client{GitDir: gitDir, Spawn: true}
-		claude := os.Getenv("CLAUDE_CODE_SESSION_ID")
-		s.link = &link{c: s.c, hello: proto.Hello{ID: sessionID(claude), Agent: agentName(opt.Agent),
-			Cwd: cwd, ClaudeSession: claude}, changed: make(chan struct{})}
+		s.link = &link{c: s.c, hello: helloFor(opt.Agent, cwd), changed: make(chan struct{})}
 		go s.link.run(ctx)
 	}
 
@@ -57,6 +55,16 @@ func Run(ctx context.Context, opt Options) error {
 		&mcp.ServerOptions{Instructions: Instructions})
 	s.tools(srv)
 	return srv.Run(ctx, &mcp.StdioTransport{})
+}
+
+// helloFor is the registration this process makes. The Claude Code session ID in its environment
+// is only what it was when this process started: the daemon corrects it from the hook (see
+// link.learn). The parent's PID is the Claude Code process when Claude Code started this server
+// itself, and the hook's CLAUDE_PID is how the daemon pairs the two.
+func helloFor(agent, cwd string) proto.Hello {
+	claude := os.Getenv("CLAUDE_CODE_SESSION_ID")
+	return proto.Hello{ID: sessionID(claude), Agent: agentName(agent), Cwd: cwd, ClaudeSession: claude,
+		ClientPID: os.Getppid()}
 }
 
 // sessionID derives the session's ID from Claude Code's, when there is one, so the ID stays
@@ -109,6 +117,7 @@ func (s *server) call(ctx context.Context, req proto.Request) (proto.Response, e
 	if err != nil {
 		return resp, fmt.Errorf("can't reach the %s daemon: %w", brand.Name, err)
 	}
+	s.link.learn(resp.ClaudeSession)
 	if resp.Error != "" {
 		return resp, errors.New(resp.Error)
 	}
@@ -188,6 +197,19 @@ func (l *link) set(up bool, err error) {
 	l.changed = make(chan struct{})
 }
 
+// learn takes the Claude Code session ID the daemon holds for this session, which is the live one
+// once a hook has corrected it, for any later hello. Without it a reconnect, after the daemon
+// restarted, would bring back the ID this process's environment has, which went stale at the first
+// /clear. Only the Claude ID changes: the session's own ID is the one it registered with.
+func (l *link) learn(claude string) {
+	if claude == "" {
+		return
+	}
+	l.mu.Lock()
+	l.hello.ClaudeSession = claude
+	l.mu.Unlock()
+}
+
 // wait returns the session ID once registered, or the last error after timeout.
 func (l *link) wait(ctx context.Context, timeout time.Duration) (string, error) {
 	deadline := time.After(timeout)
@@ -218,7 +240,7 @@ func (l *link) run(ctx context.Context) {
 		l.mu.Lock()
 		h := l.hello
 		l.mu.Unlock()
-		conn, _, err := l.c.Hello(ctx, h)
+		conn, resp, err := l.c.Hello(ctx, h)
 		if err != nil {
 			l.set(false, err)
 			// The ID is taken: a previous server process for this session hasn't been noticed
@@ -243,6 +265,7 @@ func (l *link) run(ctx context.Context) {
 		l.mu.Lock()
 		l.hello.Reconnect = true // any later hello is a reconnection
 		l.mu.Unlock()
+		l.learn(resp.ClaudeSession)
 		l.set(true, nil)
 		done := make(chan struct{})
 		go func() {

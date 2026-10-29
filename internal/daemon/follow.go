@@ -1,0 +1,136 @@
+package daemon
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/a-Fig/t4/internal/bus"
+)
+
+// Following Claude Code's session ID (#9), and finding the holder of a name (#37).
+//
+// A Claude Code session's ID changes under it on /clear, /branch and a switch with /resume, and an
+// MCP server's copy never does, so the daemon learns the live ID from the hook, which always has
+// it, and pairs the hook with its sessions by process: the hook's CLAUDE_PID is the MCP server's
+// parent. A session that follows keeps its t4 ID and its inbox; its key, and so its name, change.
+// docs/VISION.md ("When a session stays the same session") has the reasons.
+
+// uniqueKeyLocked is key, unless another live session has it: two live sessions of one client
+// session (two MCP servers in it) would share a name, and a name is an address, so the later one
+// is a session of its own. Caller holds mu.
+func (d *Daemon) uniqueKeyLocked(key, id string) string {
+	for _, o := range d.sessions {
+		if o.id != id && o.key == key && o.dropped.IsZero() {
+			return key + "/" + id
+		}
+	}
+	return key
+}
+
+// setNameLocked gives s its name, "" if it has none yet. A name that lands is also recorded as
+// held by s, the last to take it, and as s's own last: that is how a message for the session the
+// registry has the name down for finds s (see forwardLocked). Caller holds mu.
+func (d *Daemon) setNameLocked(s *session, name string) {
+	s.name = name
+	if name == "" || d.st.NameHolders[name] == s.id && d.st.SessionNames[s.id] == name {
+		return
+	}
+	if d.st.NameHolders == nil {
+		d.st.NameHolders = map[string]string{}
+	}
+	if d.st.SessionNames == nil {
+		d.st.SessionNames = map[string]string{}
+	}
+	d.st.NameHolders[name], d.st.SessionNames[s.id] = s.id, name
+	d.saveLocked()
+}
+
+// hookSessionsLocked finds the live sessions a hook speaks for, given the Claude Code session ID it
+// reports and, if it has one, the PID of the Claude Code process it runs under.
+//
+// The sessions whose MCP servers that process started are the hook's, whatever ID they hold: the
+// hook's is the live one, so each moves to it (followLocked). The PID is what pairs them, and it
+// moves nothing between processes: only a session whose own PID is the hook's is touched. Where no
+// session is the process's, because the hook has no PID, the session's server gave none, or a
+// wrapper between them made the server's parent another process, the sessions with the hook's
+// Claude ID are the hook's, as they were before PIDs were known. A session in its grace is
+// neither: it is told of its notices once it is back. Caller holds mu.
+func (d *Daemon) hookSessionsLocked(claude string, pid int) []*session {
+	var ofProcess, ofID []*session
+	for _, s := range d.sortedSessionsLocked() {
+		if !s.dropped.IsZero() {
+			continue
+		}
+		if pid != 0 && s.clientPID == pid {
+			ofProcess = append(ofProcess, s)
+		}
+		if s.claudeSession == claude {
+			ofID = append(ofID, s)
+		}
+	}
+	if len(ofProcess) == 0 {
+		return ofID
+	}
+	for _, s := range ofProcess {
+		if s.claudeSession != claude {
+			d.followLocked(s, claude)
+		}
+	}
+	return ofProcess
+}
+
+// followLocked moves s to the Claude Code session ID claude, which a hook of its process reported.
+// Its key follows, and with it its name: the name that key has had, if it has had one (a /resume
+// back to an earlier conversation), otherwise a new one, taken as any is. Everyone else is told by
+// presence. Nothing goes on the bus: the session has not stopped or started. Caller holds mu.
+func (d *Daemon) followLocked(s *session, claude string) {
+	from := s.name
+	s.claudeSession, s.followed = claude, true
+	s.key = d.uniqueKeyLocked(nameKey(claude, s.id), s.id)
+	d.setNameLocked(s, d.st.NameKeys[s.key])
+	if s.name == "" {
+		d.kickNames()
+	}
+	d.kickPresence()
+
+	// The log is local, so it can say the names but not the Claude IDs, which are never published.
+	addr := bus.Addr(d.device, s.id)
+	shown := func(name string) string {
+		if name == "" {
+			return "(no name yet)"
+		}
+		return name
+	}
+	d.noteLocked(time.Now(), fmt.Sprintf("%s followed Claude Code to another conversation: %s -> %s",
+		addr, shown(from), shown(s.name)))
+	d.log.Printf("session %s followed Claude Code to another conversation (%s -> %s)", addr, shown(from), shown(s.name))
+}
+
+// receivesLocked says whether a message can be put in id's inbox: it is registered here, or it
+// stopped within StoppedInbox. Caller holds mu.
+func (d *Daemon) receivesLocked(id string) bool {
+	if d.sessions[id] != nil {
+		return true
+	}
+	at, ok := d.st.Stopped[id]
+	return ok && time.Since(at) <= d.opt.StoppedInbox
+}
+
+// forwardLocked says where a message for the address to goes instead, "" if it stays. The registry
+// records a name against the session it was first given to, and a session can later hold the name
+// under another ID: a /resume back to an earlier conversation from a session whose ID came from
+// another. A message for the first session, retired now, reached nobody once the new one stopped.
+// This daemon knows who took the name last, so a message for a session here that isn't running (or
+// is in its grace) goes to the session that holds, or last held, the name that session had last,
+// if that session can receive it. Caller holds mu.
+func (d *Daemon) forwardLocked(to string) string {
+	dev, id := bus.SplitAddr(to)
+	if dev != d.device || id == "" || d.liveLocked(id) {
+		return ""
+	}
+	holder := d.st.NameHolders[d.st.SessionNames[id]]
+	if holder == "" || holder == id || !d.receivesLocked(holder) {
+		return ""
+	}
+	return bus.Addr(d.device, holder)
+}
