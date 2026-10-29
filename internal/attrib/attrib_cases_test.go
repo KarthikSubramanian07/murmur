@@ -433,3 +433,25 @@ func TestManyBranches(t *testing.T) {
 	_, _, got := caseRun(t, d, func() { caseCommit(t, d, "new", nil) })
 	caseWant(t, got, "new")
 }
+
+// Release tags are annotated. A repo with 2,000 of them must not make Head slow: it runs before
+// and after every shell command an agent runs.
+func TestManyAnnotatedTags(t *testing.T) {
+	d := caseRepo(t)
+	caseFastImport(t, d, 2000, func(i int) string { return fmt.Sprintf("v0.%d", i) }, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	start := time.Now()
+	before, err := attrib.Head(ctx, d)
+	if err != nil {
+		t.Fatalf("Head with 2,000 annotated tags, after %v: %s", time.Since(start), caseShort(err))
+	}
+	t.Logf("Head with 2,000 annotated tags took %v", time.Since(start))
+	caseCommit(t, d, "new", nil)
+	after := caseHead(t, d)
+	got, err := attrib.NewCommits(ctx, d, before, after)
+	if err != nil {
+		t.Fatalf("NewCommits: %s", caseShort(err))
+	}
+	caseWant(t, got, "new")
+}

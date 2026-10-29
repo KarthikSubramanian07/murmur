@@ -29,7 +29,7 @@ type Ref struct {
 	SHA    string
 	Branch string
 	Time   time.Time
-	tips   []string
+	tips   []string // commit and annotated-tag object names, deduplicated
 }
 
 // Commit is a newly reachable commit. Branch is the after snapshot's branch, since git commits
@@ -41,8 +41,8 @@ type Commit struct {
 }
 
 // Head reads this worktree's own HEAD, including in linked worktrees, and records every ref tip
-// (local branches, remote-tracking branches and tags) with the time it started. Its for-each-ref
-// scan costs a little per call, and so does a commit peel for each annotated tag.
+// (local branches, remote-tracking branches and tags) with the time it started. It runs three
+// git processes however many refs there are; the for-each-ref scan grows with the refs.
 func Head(ctx context.Context, worktree string) (Ref, error) {
 	// Read the clock before any ref: a commit made after this and not on a tip is one the command made.
 	ref := Ref{Time: time.Now()}
@@ -75,18 +75,11 @@ func Head(ctx context.Context, worktree string) (Ref, error) {
 		}
 		headExists = headExists || fields[0] == branch
 		switch fields[1] {
-		case "commit":
+		case "commit", "tag":
+			// An annotated tag is kept as the tag object, not peeled here: git log peels it,
+			// tags of tags included, and ignores one that ends at a tree or blob. Peeling each
+			// with rev-parse cost a process per tag, over a minute for 1,000 release tags.
 			addTip(fields[2])
-		case "tag":
-			// Peel recursively, including tags of tags; tags of trees/blobs have no history.
-			sha, err := gitx.RunIn(ctx, worktree, "rev-parse", "--verify", "--quiet", "--end-of-options", fields[2]+"^{commit}")
-			if err != nil {
-				if exitCode(err, 1) {
-					continue
-				}
-				return Ref{}, err
-			}
-			addTip(strings.TrimSpace(sha))
 		}
 	}
 	sha, err := gitx.RunIn(ctx, worktree, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
