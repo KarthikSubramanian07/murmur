@@ -428,11 +428,19 @@ func (d *Daemon) recipientsLocked() []string {
 	return append(ids, proto.CLISession)
 }
 
-// sentSinceLocked says whether e was sent after session id started, by the sender's clock, with
-// a minute's allowance for it. Caller holds mu.
+// sentSinceLocked says whether e was sent after session id started, or for a session back from
+// stopped, after it stopped; by the sender's clock, with a minute's allowance for it. Caller holds
+// mu.
 func (d *Daemon) sentSinceLocked(e bus.Event, id string) bool {
 	s := d.sessions[id]
-	return s != nil && !e.At.Before(s.started.Add(-time.Minute))
+	if s == nil {
+		return false
+	}
+	from := s.started
+	if !s.since.IsZero() {
+		from = s.since
+	}
+	return !e.At.Before(from.Add(-time.Minute))
 }
 
 // addressedLocked says whether e is for session id on this device: sent to it, to this device,

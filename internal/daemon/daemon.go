@@ -121,6 +121,9 @@ type session struct {
 	id, agent, cwd, branch, doing, claudeSession string
 	started                                      time.Time
 	reconnect                                    bool // registered before, with a daemon that went away
+	// since is, for a session back within StoppedInbox, when it stopped: what was sent after that
+	// is its, however late this daemon reads it. Zero otherwise.
+	since time.Time
 	// dropped is when the session's connection dropped, zero while it is connected. Until the
 	// grace runs out the session stays registered, and a hello with its ID takes it over; that
 	// closes takeover, which the connection waiting out the grace is watching.

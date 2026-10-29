@@ -114,18 +114,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		close(s.takeover)
 		s.takeover = nil
 	default:
-		s = &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession, branch: branch,
-			started: time.Now(), reconnect: h.Reconnect}
-		d.sessions[h.ID] = s
-		// A session that stopped within StoppedInbox gets its inbox back, with what arrived while
-		// it was stopped. Past that, pruneInboxes is only late.
-		if at, ok := d.st.Stopped[h.ID]; ok {
-			delete(d.st.Stopped, h.ID)
-			if time.Since(at) > d.opt.StoppedInbox {
-				delete(d.st.Inbox, h.ID)
-			}
-			d.saveLocked()
-		}
+		s = d.newSessionLocked(h, agent, branch)
 	}
 	d.lastActive = time.Now()
 	if h.Reconnect {
@@ -426,4 +415,25 @@ func (d *Daemon) whoLocked(you string) []proto.Device {
 		devices = append(devices, dv)
 	}
 	return devices
+}
+
+// newSessionLocked registers a session that isn't registered. One that stopped within
+// StoppedInbox gets its inbox back, with what arrived while it was stopped, and keeps its claim on
+// what was sent since it stopped: a catch-up that reads a backlog ref only after the session has
+// registered again would otherwise take those messages for older than the session and drop them.
+// Past StoppedInbox, pruneInboxes is only late. Caller holds mu.
+func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch string) *session {
+	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession, branch: branch,
+		started: time.Now(), reconnect: h.Reconnect}
+	if at, ok := d.st.Stopped[h.ID]; ok {
+		delete(d.st.Stopped, h.ID)
+		if time.Since(at) > d.opt.StoppedInbox {
+			delete(d.st.Inbox, h.ID)
+		} else {
+			s.since = at
+		}
+		d.saveLocked()
+	}
+	d.sessions[h.ID] = s
+	return s
 }
