@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -735,5 +736,40 @@ func TestPageMessagesAfterAFailedFirstSync(t *testing.T) {
 	sort.Strings(got)
 	if !reflect.DeepEqual(got, []string{"broadcast", "direct"}) {
 		t.Errorf("b's page shows %q, want the broadcast and the direct message and not the backlog", got)
+	}
+}
+
+// The page's token is the daemon's, which also lets a program speak for this device's sessions,
+// so it stays where it was: not in the log, not readable by other users in daemon.json, and not
+// sent on as a Referer by anything the page links to.
+func TestPageTokenStaysPrivate(t *testing.T) {
+	var out syncBuf
+	d := newDeviceWith(t, newRemote(t), func(d *device) { d.logTo = &out })
+	pg := d.page()
+	pg.state()
+	if code, _ := pg.call("GET", "/api/state", "wrong", ""); code != http.StatusUnauthorized {
+		t.Errorf("a wrong token: %d", code)
+	}
+	if strings.Contains(out.String(), pg.token) {
+		t.Errorf("the log holds the token:\n%s", out.String())
+	}
+	if runtime.GOOS != "windows" { // where files are guarded by ACLs, not mode bits
+		fi, err := os.Stat(filepath.Join(d.gitDir, brand.StateDir, "daemon.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm()&0o077 != 0 {
+			t.Errorf("daemon.json is %v, readable by others", fi.Mode().Perm())
+		}
+	}
+	req, _ := http.NewRequest("GET", pg.base+"/", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.Header.Get("Referrer-Policy") != "no-referrer" || !strings.Contains(string(b), `name="referrer" content="no-referrer"`) {
+		t.Errorf("the page doesn't forbid Referers: %q", resp.Header.Get("Referrer-Policy"))
 	}
 }
