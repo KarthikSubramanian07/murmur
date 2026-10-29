@@ -144,7 +144,7 @@ func (c *Client) start() error {
 
 // Do sends one request. If the daemon couldn't be reached, it reconnects (starting a new daemon
 // when Spawn is set) and tries once more. Once a request has been sent it is never resent: the
-// daemon may have acted on it, and a second send or claim would happen twice.
+// daemon may have acted on it, and a second send would happen twice.
 func (c *Client) Do(ctx context.Context, req proto.Request) (proto.Response, error) {
 	resp, sent, err := c.roundTrip(ctx, req)
 	if err == nil || sent || ctx.Err() != nil {

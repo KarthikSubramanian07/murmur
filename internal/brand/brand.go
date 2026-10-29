@@ -14,8 +14,6 @@ const (
 	MeshPrefix = RefRoot + "mesh/"
 	// PresencePrefix + deviceID is a device's current state, force-pushed on every change.
 	PresencePrefix = RefRoot + "presence/"
-	// ClaimsRef is shared by every device and used as a compare-and-swap.
-	ClaimsRef = RefRoot + "claims"
 
 	// StateDir is the daemon's directory inside the git common dir.
 	StateDir = Name

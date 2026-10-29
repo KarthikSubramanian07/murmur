@@ -24,12 +24,9 @@ const (
 	SessionStarted = "session.started"
 	SessionStopped = "session.stopped"
 	Message        = "message"
-	Claim          = "claim"
-	Release        = "release"
 )
 
-// Event is one entry in a device's log, or on the claims ref. Fields beyond the first five
-// depend on Type.
+// Event is one entry in a device's log. Fields beyond the first five depend on Type.
 type Event struct {
 	V    int       `json:"v"`
 	ID   string    `json:"id"`
@@ -43,13 +40,6 @@ type Event struct {
 	To      string `json:"to,omitempty"` // message: device/session, device, or "*"
 	Subject string `json:"subject,omitempty"`
 	Body    string `json:"body,omitempty"`
-
-	What  string   `json:"what,omitempty"`  // claim
-	Paths []string `json:"paths,omitempty"` // claim
-	// Ends, on a claim, lists the claims its daemon judged lapsed when it was made. Every
-	// daemon treats them as ended from then on, so a lapse can't be undone behind the claimer.
-	Ends  []string `json:"ends,omitempty"`
-	Claim string   `json:"claim,omitempty"` // release: the claim's ID
 }
 
 // Line is the event as one readable line, used as the commit subject so that `git log` on a
@@ -62,19 +52,12 @@ func (e Event) Line() string {
 		return e.From + " stopped"
 	case Message:
 		return fmt.Sprintf("%s -> %s: %s", e.From, e.To, e.Subject)
-	case Claim:
-		line := fmt.Sprintf("%s claims %s: %s", e.From, e.ID, e.What)
-		if len(e.Ends) > 0 {
-			line += " (ending lapsed " + strings.Join(e.Ends, ", ") + ")"
-		}
-		return line
-	case Release:
-		return fmt.Sprintf("%s releases %s", e.From, e.Claim)
 	}
 	return e.From + " " + e.Type
 }
 
-// Valid reports whether a decoded event is one this version understands.
+// Valid reports whether a decoded event is one this version understands. A type it doesn't
+// know, from a newer version or an older one, is not: readers pass over it and read on.
 //
 // Anyone with push access can write the bus, and what it carries reaches agents' context, so a
 // reader holds each event to what t4 itself writes: IDs and addresses in their own alphabets
@@ -88,15 +71,6 @@ func (e Event) Valid() bool {
 		return true
 	case Message:
 		return ValidTo(e.To) && e.Subject != ""
-	case Claim:
-		for _, id := range e.Ends {
-			if !validID(id) {
-				return false
-			}
-		}
-		return e.What != ""
-	case Release:
-		return validID(e.Claim)
 	}
 	return false
 }
@@ -105,12 +79,8 @@ func (e Event) Valid() bool {
 // itself writes it. Bodies keep their lines; the reader's view marks them as quoted.
 func (e *Event) Clean() {
 	e.Subject = OneLine(e.Subject, 120)
-	e.What = OneLine(e.What, 200)
 	e.Agent = OneLine(e.Agent, 40)
 	e.Branch = OneLine(e.Branch, 100)
-	for i, p := range e.Paths {
-		e.Paths[i] = OneLine(p, 200)
-	}
 	e.Body = Text(e.Body, MaxBody)
 }
 
@@ -145,8 +115,8 @@ func ValidName(s string) bool {
 }
 
 // ValidDevice accepts device IDs: valid names that every filesystem can hold as a ref (none of
-// Windows' reserved device names), other than t4's own, which only t4 itself speaks as. IDs t4
-// makes always pass: a hostname slug and 4 hex digits.
+// Windows' reserved device names), other than t4's own, under which a message would pass for the
+// tool's own words. IDs t4 makes always pass: a hostname slug and 4 hex digits.
 func ValidDevice(s string) bool {
 	if !ValidName(s) || s == brand.Name {
 		return false

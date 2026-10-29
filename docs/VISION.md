@@ -27,12 +27,13 @@ lifting one would change it.
 
 In rough order of value:
 
-1. **Claims.** Before starting something sizeable, an agent posts what it is taking ("auth flow,
-   `src/auth/*`"). Before starting, agents check open claims. Most duplicate work disappears here.
-   An agent makes a claim on purpose; nothing claims for it. How claims stay race-free is under
-   "Claims are a compare-and-swap" below.
-2. **Presence.** Who is working, on what device, in which agent, on which branch, doing what.
-3. **Direct messages and broadcasts.** For what claims and presence can't settle.
+1. **Presence.** Who is working, on what device, in which agent, on which branch, doing what.
+2. **Direct messages and broadcasts.** For what presence can't settle.
+
+V1 also had claims: before starting something sizeable, an agent took it on a shared ref, and was
+shown any claim it hadn't seen. Tyler removed them on 2026-10-28 (#24): "Remove this feature. I
+don't want it. This is not part of scope." Daemons still running V1 keep writing
+`refs/t4/claims`, which later daemons don't read.
 
 ## How it works
 
@@ -44,9 +45,22 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
 - Each device appends events to **its own ref**, `refs/t4/mesh/<deviceId>`: one empty commit per
   event, the payload in the commit message (a readable subject, a JSON body). One writer per ref
   means pushes never race. A message to another session sits in the sender's log, addressed to it.
-  Claims are the exception, on one shared ref (below).
+- Per-device logs can't settle a race: two devices could each take the same session name (#20)
+  within one 10 s sync, each seeing no rival. What must be settled before anyone acts on it needs
+  one shared ref, which GitHub orders. A push to a ref is atomic, and with a lease
+  (`--force-with-lease`) it is refused unless the ref still holds what the pusher last fetched,
+  which makes the ref a compare-and-swap. A refused pusher fetches and decides again with what it
+  hadn't seen. V1's claims worked this way; in its test through GitHub (2026-10-26), two machines
+  pushed at the same instant three times, and each time exactly one push landed.
 - Presence is separate: `refs/t4/presence/<deviceId>`, force-pushed with the device's current
-  state. Heartbeats would otherwise flood the event log.
+  state when it changes and on a heartbeat every 2 minutes. Heartbeats would otherwise flood the
+  event log. A presence unchanged for 6 minutes is stale: its device's sessions may not get what
+  is sent to them, and `who` and `send` say so.
+- A reader measures staleness from when it saw a presence change, on its own monotonic clock, and
+  only up to its own last successful sync, so a reader that was itself asleep or offline doesn't
+  take everyone else for gone. Only a presence it has never seen change is dated by the writer's
+  clock, and never more than 2 minutes back, so a slow clock can't make a device look gone before
+  its next heartbeat.
 - Custom refs, not branches, so CI and preview deploys don't fire on every message, and
   `git clone` / `git pull` never fetch them. git-bug uses `refs/bugs/*` on GitHub the same way.
   Tested on this repo on 2026-10-26: a push to `refs/t4/*` produced no `push` webhook delivery
@@ -63,42 +77,22 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   scale, and two of its bugs are warnings: `git push --mirror` from an ordinary clone deletes
   custom refs on the remote (beads #5266), and checking an internal branch out in the user's repo
   wiped tracked files (beads #6484).
+- `mesh/<deviceId>` and `presence/<deviceId>` are the only names under `refs/t4/` t4 reads.
+  Device IDs are lowercase letters, digits and dashes, never a name Windows can't hold as a file.
+  Anything else there is left on the remote unfetched. Anyone who can push can write any of these
+  refs, so a reader holds what it reads to what t4 writes and builds over junk rather than on it.
+  The remote refuses a ref whose name clashes with another's, so a daemon deletes the refs that
+  would stop t4's own being pushed: those under its own names (`presence/<deviceId>/...`,
+  `mesh/<deviceId>/...`), and `refs/t4/mesh` or `refs/t4/presence` as refs themselves. t4 writes
+  nothing at any of them (found by the Opus reviews of V1, #8, 2026-10-28).
 - Reading: poll `git ls-remote origin 'refs/t4/*'` about every 10 s, which is cheap; fetch only
-  when a SHA has changed. Delivery takes roughly 10–15 s, plenty for agents.
+  when a SHA has changed. Delivery takes roughly 10–15 s, plenty for agents: V1 took about 12 s
+  from a Windows laptop to a macOS machine through GitHub (2026-10-26), 2 s of it the send.
 - A device is one clone's daemon. Worktrees of a clone share its `.git`, so they share its daemon;
   a second clone on the same machine is a second device. The device ID is the hostname plus four
   random hex digits (`tyler-laptop-3f2a`), kept with the daemon's other state in `.git/t4/`, which
   no commit or checkout ever touches. (An earlier draft grouped repos by root commit; per-clone
   daemons don't need that.)
-
-### Claims are a compare-and-swap
-
-Claims are the one thing per-device logs can't carry. Two agents could each claim the auth flow
-within one 10 s sync, each seeing no rival, and both start building. Settling it afterwards (by
-commit time, say) is too late, since the loser has already started, and commit times come from
-the clients' clocks.
-
-So claims go on **one shared ref**, `refs/t4/claims`, and GitHub orders them. A push to a ref is
-atomic and is rejected unless it builds on the ref's current tip, which makes the ref a
-compare-and-swap. The daemon builds the claim on the tip it last fetched and pushes:
-
-- Accepted: the claim holds, and the `claim` tool says so before the agent starts work.
-- Rejected: someone claimed first. The daemon fetches, and `claim` returns the claims the agent
-  hadn't seen. The agent decides with them in view: claim something else, coordinate, or retry.
-
-No claim is ever made without seeing every earlier one, and nobody has to be told later that
-they lost. Claims are rare, so contention on one ref is negligible.
-
-"Seen" is made exact by a token. The `claims` tool returns the open claims and a token naming the
-tip they were read from, and `claim` takes that token back. If any claim newer than the token is
-still open, `claim` returns it instead of claiming, so an agent can't claim past something it was
-never shown, even if that claim arrived after the agent's last look.
-
-A claim ends when its session releases it or stops; a session that stops cleanly releases its
-claims. A laptop that sleeps or loses its network can't, so a claim also lapses once its session
-is missing from its device's presence, or that presence is stale: unchanged for 6 minutes,
-against a heartbeat every 2. A reader measures staleness from when it saw the presence change,
-not from the writer's clock.
 
 ### One daemon per device, a thin MCP server per session
 
@@ -118,13 +112,15 @@ writes the device's ref and the only one polling GitHub; sessions connect to it.
 starts its own MCP server process (that is how Claude Code runs stdio MCP servers), and the first
 to start launches the daemon. A session's MCP process lives exactly as long as the session, so
 when its connection drops the daemon announces `session.stopped`, even after a crash. Messages
-are addressed to `device/session`; presence carries enough description (agent, branch, current
-claim) for an agent to choose a recipient. A session receives the messages that arrive while it
-runs; nothing sent before it started is replayed to it.
+are addressed to `device/session`; presence carries enough description (agent, branch, what it is
+doing) for an agent to choose a recipient. A session receives the messages that arrive while it
+runs; nothing sent before it started is replayed to it. A daemon back after less than 10 minutes
+down delivers what it missed only to the sessions that reconnect to it, within 30 seconds of its
+start. After longer, it skips what it missed, since no session is still waiting for it.
 
 Sessions reach the daemon over loopback TCP, on a random port written with a random token to
-`.git/t4/daemon.json`. A daemon with no sessions for 10 minutes exits, and its presence goes
-stale like any other.
+`.git/t4/daemon.json`. A daemon with no sessions for 10 minutes exits. Any daemon that stops
+deletes its presence, so other devices drop it at their next sync rather than when it goes stale.
 
 Claude Code gives its MCP servers and its hooks the same `CLAUDE_CODE_SESSION_ID`, matching the
 `session_id` a hook reads on stdin (seen in Claude Code 2.1.310, 2026-10-26). That is how a hook,
@@ -153,7 +149,8 @@ a tool is crosstalk's idea.
 The socket exists: Claude Code 2.1.310 sets `CLAUDE_CODE_MESSAGING_SOCKET` (a named pipe on
 Windows) and a token for it in every child process, MCP servers and hooks included (seen
 2026-10-26). Its protocol, and whether it wakes an idle session, are unverified, as is Codex's
-hook support. V1 uses the hook.
+hook support. V1 uses the hook: Claude Code adds a `PostToolUse` hook's `additionalContext` to
+the conversation, which is how a notice reaches an agent mid-task (seen with 2.1.310, 2026-10-26).
 
 ### The envelope
 
@@ -174,13 +171,13 @@ here). That is one more reason to push only the notice.
 - **Agents replying forever.** T3's local messaging stays calm because a reply is plain text in
   the receiver's own thread; nothing goes back unless the agent deliberately sends again. t4 keeps
   that: no automatic replies, incoming messages queued rather than steering a running turn, and
-  AGENTS.md wording that asks for claims, not for chatting. No limits or caps on top of that.
+  AGENTS.md wording that asks for coordination, not chatting. No limits or caps on top of that.
 - **Prompt injection.** Anyone with push access can now put text in front of your agent. That
   matches the trust model (a hackathon team), but messages never get to bypass the receiving
   user's permission mode; the envelope keeps their origin visible.
 - **Leaked secrets.** Everything on the bus stays in repo history, readable by anyone with read
-  access, and agents do paste `.env` values. Everything a session sends (messages, claims, its
-  status line) is scanned first, and a match blocks the send rather than being redacted, so the
+  access, and agents do paste `.env` values. Everything a session sends (its messages and status
+  line) is scanned first, and a match blocks the send rather than being redacted, so the
   agent knows what happened. V1 has its own short list of patterns (cloud and API keys, tokens,
   private keys); openhuddle's (`src/shared/scrub.js`) could extend it, license unchecked. The
   need is greater here than for relay-based tools, whose messages expire: these stay in history.
@@ -208,8 +205,7 @@ t4's difference.
 - **openhuddle**: a hub server plus Claude Code hooks; claims (automatic, on edit), presence,
   messages. The closest feature match. Days old, one author, many concepts.
 - **crosstalk** (epode-studio): encrypted rooms through a Cloudflare relay, eight clients. The best
-  message delivery and safety design, the source of notice-only delivery above. Simultaneous
-  claims can both succeed; appears macOS-only.
+  message delivery and safety design, the source of notice-only delivery above. Appears macOS-only.
 - **walkie**: peer-to-peer chat between agents (Hyperswarm), the most used (≈253 stars). Messages
   only; no relay, so it can fail behind client isolation.
 - One machine only, so not comparable: polymatx/dibs, abevz/dibs, bcmyguest/huddle, parley

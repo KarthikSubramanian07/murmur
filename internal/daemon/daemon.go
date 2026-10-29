@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -58,8 +59,8 @@ var ErrRunning = errors.New("a daemon is already running for this clone")
 // maxInbox caps each session's unread messages; the oldest go first.
 const maxInbox = 200
 
-// Daemon is one running daemon. Lock order: claimMu, then syncMu, then advMu, then mu; or
-// writeMu, then advMu, then mu.
+// Daemon is one running daemon. Lock order: syncMu, then advMu, then mu; or writeMu, then advMu,
+// then mu.
 type Daemon struct {
 	opt     Options
 	repo    *bus.Repo
@@ -76,16 +77,11 @@ type Daemon struct {
 	peers      map[string]*peer
 	known      map[string]string // local copy of each bus ref: ref → SHA last fetched
 	st         state
-	claims     []*claimRec
-	claimSeq   map[string]int // claims-ref commit → its position, for `seen` tokens
-	claimsTip  string
 	recent     []proto.EventView
 	lastActive time.Time
 	mode       syncMode
-	gone       map[string]time.Time // devices whose presence was deleted (said goodbye), and when
-	pending    []bus.Event          // what arrived while down, for sessions that reconnect
-	caughtUp   map[string]bool      // sessions already given pending
-	oldCLI     []bus.Event          // CLI claims still open when the last daemon stopped
+	pending    []bus.Event     // what arrived while down, for sessions that reconnect
+	caughtUp   map[string]bool // sessions already given pending
 	// backlog lists the mesh refs the first listing showed that haven't been read yet: they are
 	// read under the mode the daemon started in, and the mode turns normal once all have been.
 	// nil until that listing.
@@ -93,22 +89,12 @@ type Daemon struct {
 	backlogAt  time.Time            // when the backlog was taken
 	unfetched  map[string]fetchFail // refs whose fetch failed, and when
 	junkTried  map[string]time.Time // blocking refs clearOwnJunk last tried to delete, and when
-	unblocking int                  // deletes in flight of refs keeping this device's presence off the remote
-	// claimsOver is what the remote's claims ref holds when this daemon builds over it rather
-	// than on it: something not a commit, or a commit older than claimsTip. See claimLeaseLocked.
-	claimsOver string
-	// claimsFetchErr is why this sync couldn't fetch the claims ref, if it couldn't.
-	claimsFetchErr error
-	// presenceErr is why the last presence push failed, if it did.
-	presenceErr error
-	lastPollOK  time.Time // when the last successful sync listed the remote (monotonic)
-	liveGen     int64     // generation for seen tokens; see refreshLiveLocked
+	lastPollOK time.Time            // when the last successful sync listed the remote (monotonic)
 
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
 	writeMu sync.Mutex // serializes appends to this device's log
 	ownTip  string     // the remote's tip of this device's log, as last known; under writeMu
-	claimMu sync.Mutex // serializes compare-and-swaps on the claims ref
 
 	kick     chan struct{}
 	quit     chan struct{}
@@ -165,24 +151,10 @@ type fetchFail struct {
 	at  time.Time
 }
 
-type claimRec struct {
-	ev       bus.Event
-	seq      int
-	seenAt   time.Time // when this daemon first read the claim
-	released bool
-	// For seen tokens: whether the claim was live when last checked, and the generation at
-	// which it was first seen live, or came back from a lapse.
-	checked, live bool
-	liveSince     int64
-}
-
 type inMsg struct {
 	Event   bus.Event `json:"event"`
 	Arrived time.Time `json:"arrived"`
 	Noticed bool      `json:"noticed"`
-	// Note marks a message this daemon wrote itself. It is set only here, never read from the
-	// bus, where anyone with push access could claim to be t4.
-	Note bool `json:"note,omitempty"`
 }
 
 // state is what survives a restart, in state.json.
@@ -259,11 +231,6 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.Idle > 0 {
 		go d.idleLoop(ctx)
 	}
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		d.endOldCLIClaims()
-	}()
 	select {
 	case <-ctx.Done():
 	case <-d.quit:
@@ -286,8 +253,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	d := &Daemon{
 		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
-		claimSeq: map[string]int{}, gone: map[string]time.Time{}, liveGen: now.UnixNano(), caughtUp: map[string]bool{},
-		unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
+		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), quit: make(chan struct{}),
 	}
 	device, err := loadDevice(dir)
@@ -319,16 +285,6 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	if err := d.restore(ctx); err != nil {
 		return nil, err
 	}
-	// Taken before the first sync, which may end some of them for other reasons (a claim made
-	// past this device while it was down); they all ended with the last daemon either way.
-	d.mu.Lock()
-	for _, c := range d.claims {
-		dev, sess := bus.SplitAddr(c.ev.From)
-		if !c.released && dev == d.device && sess == proto.CLISession && c.ev.At.Before(d.started) {
-			d.oldCLI = append(d.oldCLI, c.ev)
-		}
-	}
-	d.mu.Unlock()
 	return d, nil
 }
 
@@ -356,11 +312,6 @@ func (d *Daemon) restore(ctx context.Context) error {
 			}
 		}
 	}
-	if sha := local[brand.ClaimsRef]; sha != "" {
-		if err := d.advanceClaims(ctx, sha, true); err != nil {
-			d.log.Printf("restoring claims: %v", err)
-		}
-	}
 	for ref, sha := range local {
 		if strings.HasPrefix(ref, brand.PresencePrefix) {
 			d.updatePeer(ctx, ref, sha)
@@ -375,8 +326,8 @@ func (d *Daemon) presenceRef() string { return brand.PresencePrefix + d.device }
 // stop asks Run to return.
 func (d *Daemon) stop() { d.quitOnce.Do(func() { close(d.quit) }) }
 
-// goodbye deletes this device's presence, so other devices drop it, and its claims lapse, at
-// their next sync instead of six minutes later.
+// goodbye deletes this device's presence, so other devices drop it at their next sync instead of
+// finding it stale six minutes later.
 func (d *Daemon) goodbye() {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -416,9 +367,7 @@ func (d *Daemon) idleLoop(ctx context.Context) {
 		case <-t.C:
 		}
 		d.mu.Lock()
-		// A claim made from the CLI ends with this daemon, so it stays up while one is held.
-		cliClaims := d.claimsHeldLocked(bus.Addr(d.device, proto.CLISession))
-		idle := len(d.sessions) == 0 && cliClaims == 0 && time.Since(d.lastActive) > d.opt.Idle
+		idle := len(d.sessions) == 0 && time.Since(d.lastActive) > d.opt.Idle
 		d.mu.Unlock()
 		if idle {
 			d.log.Printf("no sessions for %s; exiting", d.opt.Idle)
@@ -488,6 +437,15 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Inbox == nil {
 		d.st.Inbox = map[string][]*inMsg{}
+	}
+	// V1's daemons also put notes about claims in inboxes, as from t4 itself, which no address
+	// on the bus can be. This one writes none, and would show one as a teammate's message.
+	for sess, box := range d.st.Inbox {
+		if box = slices.DeleteFunc(box, func(m *inMsg) bool { return m.Event.From == brand.Name }); len(box) == 0 {
+			delete(d.st.Inbox, sess)
+		} else {
+			d.st.Inbox[sess] = box
+		}
 	}
 	return nil
 }
