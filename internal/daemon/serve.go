@@ -375,7 +375,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		isDevice = isDevice || to == d.device // a device may have an ID shaped like a name
 		var now string
 		if ok {
-			now, _, _ = d.sessionInfoLocked(addr)
+			now, _, _ = d.sessionInfoLocked(d.deliveredToLocked(addr))
 		}
 		d.mu.Unlock()
 		switch {
@@ -393,15 +393,16 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	}
 	var note string
 	if to != "*" {
-		dev, sess := bus.SplitAddr(to)
 		d.mu.Lock()
+		at := d.deliveredToLocked(to)
+		dev, sess := bus.SplitAddr(at)
 		known := d.addressKnownLocked(dev, sess)
 		_, stopped := d.st.Stopped[sess]
 		d.mu.Unlock()
 		switch {
 		case known:
 		case dev == d.device && stopped:
-			note = to + " has stopped. The message waits for it, in case it comes back."
+			note = at + " has stopped. The message waits for it, in case it comes back."
 		default:
 			note = to + " isn't in any device's presence right now, so nobody may read this. Check `who` for addresses."
 		}

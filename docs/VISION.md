@@ -288,6 +288,15 @@ change and a daemon that knows no names delivers by it all the same.
   name next: the registry's own ID when it is resumed from the command line, since the server's ID
   is derived from the conversation's; the last holder, if its server restarts; or a third session
   a hook moves to it. A message to the name waits for any of them (2026-10-29).
+  - *Sent by name on the name's own device,* a message goes to the name's last holder there, if
+    the name is still the last that session took or it is running. Otherwise the registry's
+    address goes on the bus as it would from any device, and is forwarded on delivery, so no
+    message is forwarded twice.
+  - *Sent from another device,* a message carries only the registry's address, so the hop goes by
+    that session's last name. If it moved to another conversation before it stopped and another
+    session took the name after it, the message waits with the conversation it moved to, not the
+    one named. Putting the name on message events would fix that; it is a bus format change,
+    Tyler's to decide, and not made (2026-10-29).
 - **V1 daemons.** They don't read the registry, and their presence has no names. Their sessions
   show without one and are reached at `device/session`, and they reach sessions named here the
   same way.

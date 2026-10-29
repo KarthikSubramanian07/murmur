@@ -104,6 +104,7 @@ func (d *device) nameIs(addr, want string) {
 const (
 	procP = 4242 // the Claude Code process of the sessions under test
 	procQ = 4343 // another one
+	procR = 4444 // a third
 )
 
 // A /clear in a session: the MCP server still says conversation A, the hook says B. The session
@@ -510,6 +511,45 @@ func TestTheSessionThatTakesANameTakesWhatWasKeptForIt(t *testing.T) {
 	b.nameIs(third, nameX)
 }
 
+// #37 when the registry's session for a name has moved on. Conversation X's first session followed
+// a /clear to Y and stopped, so the registry has X down for a session whose last name is Y. X was
+// resumed in another session, which stopped too. A send to X from this device goes to that one,
+// whose inbox the next session to take X takes, and not to the first, which keeps what it has for
+// Y. (From another device the message carries only the first's address, and stays there.)
+func TestSendToANameHereGoesToItsLastHolder(t *testing.T) {
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
+
+	first, conn1, _ := b.sessionPID("cccccc", "claude-x", procP)
+	nameX := b.named(first)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y", ClientPID: procP})
+	b.nameHeld(first, nameX)
+	conn1.Close()
+	eventually(t, "the first to stop", func() bool { return busLines(b, first, "stopped") == 1 })
+
+	second, conn2, _ := b.sessionPID("dddddd", "claude-throwaway", procQ)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-x", ClientPID: procQ})
+	b.nameIs(second, nameX)
+	conn2.Close()
+	eventually(t, "the second to stop", func() bool { return busLines(b, second, "stopped") == 1 })
+
+	r := b.do(proto.Request{Op: proto.OpSend, To: nameX, Subject: "for X"})
+	if r.Error != "" || r.Messages[0].To != second {
+		t.Fatalf("send to %s: %+v, want it sent to %s", nameX, r, second)
+	}
+
+	// X, resumed in a third process, is told at once; the first, back as Y, has nothing.
+	third, _, _ := b.sessionPID("eeeeee", "claude-throwaway-2", procR)
+	if told := b.hook("claude-x", procR); len(told) != 1 || told[0] != "for X" {
+		t.Fatalf("the session that took %s back was told %v", nameX, told)
+	}
+	b.nameIs(third, nameX)
+	b.sessionPID("cccccc", "claude-y", procP)
+	if got := b.do(proto.Request{Op: proto.OpInbox, Session: "cccccc"}).Messages; len(got) != 0 {
+		t.Fatalf("the first session, which moved on from %s, got %+v", nameX, got)
+	}
+}
+
 // #37 when a session takes back, in its grace, the name another session took meanwhile. A drops,
 // B takes A's key and name under another ID, B drops, and A's server comes back: A holds the name
 // again, so once B stops, a message for B is A's.
@@ -542,6 +582,53 @@ func TestTakeoverInTheGraceHoldsTheNameAgain(t *testing.T) {
 
 	b.do(proto.Request{Op: proto.OpSend, To: second, Subject: "for the second"})
 	b.noticed("claude-x", procP, "for the second")
+}
+
+// #37 with two moves, which leave two retired IDs. X's first session stopped; a second took X,
+// moved on to Y and stopped; a third took Y. A send to X lands in the same place from this device
+// as from another, one hop from the address the registry has: the second, the last to hold X, and
+// not on to the third, which holds Y.
+func TestSendToANameIsForwardedOnceFromAnyDevice(t *testing.T) {
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
+	a.session("aaaaaa", "claude-sender")
+
+	first, conn1, _ := b.sessionPID("cccccc", "claude-x", procP)
+	nameX := b.named(first)
+	a.nameIs(first, nameX)
+	conn1.Close()
+	eventually(t, "the first to stop", func() bool { return busLines(b, first, "stopped") == 1 })
+
+	second, conn2, _ := b.sessionPID("dddddd", "claude-throwaway", procQ)
+	nameT := b.named(second)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-x", ClientPID: procQ})
+	b.nameIs(second, nameX)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y", ClientPID: procQ})
+	nameY := b.nameHeld(second, nameX, nameT)
+	conn2.Close()
+	eventually(t, "the second to stop", func() bool { return busLines(b, second, "stopped") == 1 })
+
+	third, _, _ := b.sessionPID("eeeeee", "claude-throwaway-2", procR)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y", ClientPID: procR})
+	b.nameIs(third, nameY)
+	eventually(t, "presence", func() bool {
+		return !a.seesSession(first) && !a.seesSession(second) && a.nameOf(third) == nameY
+	})
+
+	there := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "from another device"})
+	here := b.do(proto.Request{Op: proto.OpSend, To: nameX, Subject: "from this device"})
+	if there.Error != "" || here.Error != "" || here.Messages[0].To != there.Messages[0].To {
+		t.Fatalf("sent from another device: %+v; from this one: %+v", there, here)
+	}
+	eventually(t, "delivery", func() bool { return logHas(b, "from another device") && logHas(b, "from this device") })
+	if got := b.do(proto.Request{Op: proto.OpInbox, Session: "eeeeee"}).Messages; len(got) != 0 {
+		t.Fatalf("the session that holds %s got %+v", nameY, got)
+	}
+	b.sessionPID("dddddd", "claude-throwaway", procQ)
+	if got := inboxWant(b, "dddddd", 2); strings.Join(sorted(got), ",") != "from another device,from this device" {
+		t.Fatalf("the last to hold %s has %q", nameX, got)
+	}
 }
 
 // The real hook: a payload on stdin and CLAUDE_PID in its environment drive a switch end to end, and
