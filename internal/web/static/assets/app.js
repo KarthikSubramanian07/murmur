@@ -504,6 +504,15 @@ const WAKE_CHOICES = [
   ["never", "Never"],
 ];
 
+// Minutes being typed are saved once the typing pauses. A choice made meanwhile, such as Never,
+// cancels them: they belong to the Within it replaced.
+const minuteEdits = new Map(); // a control's key → its timer
+
+function cancelMinutes(key) {
+  clearTimeout(minuteEdits.get(key));
+  minuteEdits.delete(key);
+}
+
 function wakeControl(key, wake, onChange, withDefault) {
   const def = ui.settings.defaultMinutes || 3;
   const choices = withDefault ? [["default", "Default"], ...WAKE_CHOICES] : WAKE_CHOICES;
@@ -519,6 +528,7 @@ function wakeControl(key, wake, onChange, withDefault) {
           "data-key": key + "-" + v,
           onclick: () => {
             if (v === current) return;
+            cancelMinutes(key);
             delete ui.rowErrors[key];
             onChange(v === "default" ? null : { when: v, minutes: v === "within" ? wake?.minutes || 0 : 0 });
           },
@@ -528,7 +538,6 @@ function wakeControl(key, wake, onChange, withDefault) {
     ),
   );
   if (current !== "within") return [seg];
-  let timer;
   const input = h("input", {
     type: "number",
     min: 1,
@@ -540,9 +549,10 @@ function wakeControl(key, wake, onChange, withDefault) {
     "data-key": key + "-minutes",
     value: wake.minutes ? String(wake.minutes) : null,
     oninput: (e) => {
-      clearTimeout(timer);
+      cancelMinutes(key);
       const raw = e.target.value.trim();
-      timer = setTimeout(() => {
+      const timer = setTimeout(() => {
+        minuteEdits.delete(key);
         const n = raw === "" ? 0 : Number(raw);
         if (!Number.isInteger(n) || n < 0 || n > 1440) {
           ui.rowErrors[key] = "Minutes must be a whole number from 1 to 1440.";
@@ -552,24 +562,48 @@ function wakeControl(key, wake, onChange, withDefault) {
         delete ui.rowErrors[key];
         onChange({ when: "within", minutes: n });
       }, 600);
+      minuteEdits.set(key, timer);
     },
   });
   return [seg, h("span", { class: "field" }, input), h("span", { class: "field-suffix" }, "min")];
 }
 
-async function saveSettings(next) {
-  const before = ui.settings;
+// Settings go to the daemon one request at a time, in order: each PUT is the whole settings, so
+// one that overtook an older one would be undone by it. Loads queue behind saves too. The page
+// shows the newest choice while it is on its way, and only the answer to the newest request is
+// shown; if that fails, the page goes back to what the daemon last confirmed.
+let settingsQueue = Promise.resolve();
+let settingsSeq = 0; // the newest save asked for
+let confirmed = null; // the settings as the daemon last gave them
+
+function queueSettings(job) {
+  const token = ui.token;
+  settingsQueue = settingsQueue
+    .then(() => (token === ui.token ? job() : null)) // a new token has started over
+    .catch((e) => console.error(e));
+}
+
+function saveSettings(next) {
+  const seq = ++settingsSeq;
   ui.settings = next;
   render();
-  try {
-    ui.settings = await api("/api/settings", { method: "PUT", body: JSON.stringify(next) });
-    ui.settingsError = "";
-  } catch (e) {
-    if (e instanceof AuthError) return deny(e.token);
-    ui.settings = before;
-    ui.settingsError = e.message;
-  }
-  render();
+  queueSettings(async () => {
+    try {
+      const saved = await api("/api/settings", { method: "PUT", body: JSON.stringify(next) });
+      confirmed = saved;
+      if (seq === settingsSeq) {
+        ui.settings = saved;
+        ui.settingsError = "";
+      }
+    } catch (e) {
+      if (e instanceof AuthError) return deny(e.token);
+      if (seq === settingsSeq) {
+        ui.settings = confirmed || ui.settings;
+        ui.settingsError = e.message;
+      }
+    }
+    render();
+  });
 }
 
 function settingsRow(key, title, description, control, extraClass = "") {
@@ -597,7 +631,7 @@ function settingsPage() {
         "wake",
         "Device default",
         "Whether a message from another session may wake an idle session.",
-        wakeControl("wake", set.wake, (w) => saveSettings({ ...set, wake: w || { when: "within" } }), false),
+        wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }), false),
       ),
       ...[...local]
         .sort((a, b) => a.name.localeCompare(b.name))
@@ -610,10 +644,12 @@ function settingsPage() {
               "wake-" + s.name,
               overrides[s.name] || null,
               (w) => {
-                const next = { ...overrides };
+                // From the settings as they are now: a pause in typing minutes can end after
+                // another choice was made.
+                const next = { ...(ui.settings.sessionWake || {}) };
                 if (w) next[s.name] = w;
                 else delete next[s.name];
-                saveSettings({ ...set, sessionWake: next });
+                saveSettings({ ...ui.settings, sessionWake: next });
               },
               true,
             ),
@@ -745,16 +781,22 @@ function setView(view) {
   render();
 }
 
-async function loadSettings() {
-  try {
-    ui.settings = await api("/api/settings");
-    ui.settingsError = "";
+function loadSettings() {
+  const seq = settingsSeq;
+  queueSettings(async () => {
+    try {
+      const got = await api("/api/settings");
+      confirmed = got;
+      if (seq === settingsSeq) {
+        ui.settings = got; // unless a save was asked for since, which the page shows instead
+        ui.settingsError = "";
+      }
+    } catch (e) {
+      if (e instanceof AuthError) return deny(e.token);
+      if (seq === settingsSeq) ui.settingsError = e.message;
+    }
     render();
-  } catch (e) {
-    if (e instanceof AuthError) return deny(e.token);
-    ui.settingsError = e.message;
-    render();
-  }
+  });
 }
 
 // deny gives up on a token the server refused, unless a newer one has replaced it meanwhile.
@@ -827,6 +869,8 @@ function start() {
     Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null });
     ui.ids = new Set();
     named.clear();
+    for (const key of [...minuteEdits.keys()]) cancelMinutes(key);
+    confirmed = null;
     last = "";
     polled = false;
   }
