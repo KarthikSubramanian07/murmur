@@ -34,7 +34,7 @@ Setup:
 
 For humans (each starts the clone's daemon if it isn't running):
   t4 who                        devices, sessions and what they're doing
-  t4 send <to> <subject> [body] to is device/session, a device, or '*'; body "-" reads stdin
+  t4 send <to> <subject> [body] to is a session's name, device/session, a device, or '*'; body "-" reads stdin
   t4 inbox                      read messages sent to this device's CLI
   t4 log [-n N]                 recent events on the bus
   t4 stop                       stop this clone's daemon

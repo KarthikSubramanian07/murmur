@@ -5,9 +5,11 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -37,7 +39,13 @@ type Options struct {
 	SessionGrace time.Duration
 	// StoppedInbox is how long a stopped session's inbox is kept for it to come back to: 24 h.
 	StoppedInbox time.Duration
-	Log          *log.Logger
+	// NameSource is where the randomness for session names comes from: crypto/rand's reader.
+	// Tests give two devices the same one, to make them pick the same name.
+	NameSource io.Reader
+	// NameRetry is how long the first retry after a failed name assignment waits: 15 s. It
+	// doubles with each failure in a row.
+	NameRetry time.Duration
+	Log       *log.Logger
 }
 
 func (o *Options) defaults() {
@@ -58,6 +66,12 @@ func (o *Options) defaults() {
 	}
 	if o.StoppedInbox == 0 {
 		o.StoppedInbox = 24 * time.Hour
+	}
+	if o.NameSource == nil {
+		o.NameSource = rand.Reader
+	}
+	if o.NameRetry == 0 {
+		o.NameRetry = 15 * time.Second
 	}
 	if o.Log == nil {
 		o.Log = log.New(os.Stderr, "", log.LstdFlags)
@@ -101,6 +115,9 @@ type Daemon struct {
 	unfetched  map[string]fetchFail // refs whose fetch failed, and when
 	junkTried  map[string]time.Time // blocking refs clearOwnJunk last tried to delete, and when
 	lastPollOK time.Time            // when the last successful sync listed the remote (monotonic)
+	// namesChecked says the registry has been looked at since this daemon started, even if its
+	// tip is the one state.json recorded.
+	namesChecked bool
 
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
@@ -108,6 +125,8 @@ type Daemon struct {
 	ownTip  string     // the remote's tip of this device's log, as last known; under writeMu
 
 	kick     chan struct{}
+	nameKick chan struct{} // wakes nameLoop, the only user of nameSrc
+	nameSrc  io.Reader
 	quit     chan struct{}
 	quitOnce sync.Once
 
@@ -126,6 +145,8 @@ type session struct {
 	// closes takeover, which the connection waiting out the grace is watching.
 	dropped  time.Time
 	takeover chan struct{}
+	// key is what the session's name follows (see nameKey); name is "" until it lands.
+	key, name string
 }
 
 // syncMode says what a sync does with events this daemon hasn't processed.
@@ -188,6 +209,18 @@ type state struct {
 	Stopped map[string]time.Time `json:"stopped,omitempty"`
 	// LastSync tells the next daemon how long this one was down.
 	LastSync time.Time `json:"lastSync"`
+
+	// Used is every session name this daemon has ever seen, in the registry's history or in
+	// another device's presence, with the session's address where known. It only grows.
+	Used map[string]string `json:"usedNames,omitempty"`
+	// NameKeys is the name each of this device's session keys was given, for good.
+	NameKeys map[string]string `json:"nameKeys,omitempty"`
+	// NamesTip is the registry's tip as last examined, readable or not: the lease for the next
+	// push. NamesGood is the last tip that was a commit and was read in full. NamesRepair says the
+	// registry lost names, and the next commit must be a new root holding every one.
+	NamesTip    string `json:"namesTip,omitempty"`
+	NamesGood   string `json:"namesGood,omitempty"`
+	NamesRepair bool   `json:"namesRepair,omitempty"`
 }
 
 // Run runs a daemon until ctx is done, it is told to stop, or it has been idle too long.
@@ -247,6 +280,11 @@ func Run(ctx context.Context, opt Options) error {
 		defer d.bg.Done()
 		d.presenceLoop(ctx)
 	}()
+	d.bg.Add(1)
+	go func() {
+		defer d.bg.Done()
+		d.nameLoop(ctx)
+	}()
 	if opt.Idle > 0 {
 		go d.idleLoop(ctx)
 	}
@@ -273,7 +311,8 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
-		kick: make(chan struct{}, 1), quit: make(chan struct{}),
+		kick: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
+		quit: make(chan struct{}),
 	}
 	device, err := loadDevice(dir)
 	if err != nil {
@@ -437,7 +476,7 @@ func (d *Daemon) statePath() string { return filepath.Join(d.dir, "state.json") 
 
 func (d *Daemon) loadState() error {
 	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},
-		Stopped: map[string]time.Time{}}
+		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -460,6 +499,12 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Stopped == nil {
 		d.st.Stopped = map[string]time.Time{}
+	}
+	if d.st.Used == nil {
+		d.st.Used = map[string]string{}
+	}
+	if d.st.NameKeys == nil {
+		d.st.NameKeys = map[string]string{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from t4 itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

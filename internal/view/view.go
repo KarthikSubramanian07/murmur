@@ -37,7 +37,14 @@ func note(b *strings.Builder, r proto.Response) {
 // Who renders the team's devices and sessions.
 func Who(r proto.Response) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are %s.\n", r.Self)
+	switch {
+	case r.Name != "":
+		fmt.Fprintf(&b, "You are %s (%s).\n", r.Name, r.Self)
+	case r.NamePending:
+		fmt.Fprintf(&b, "You are %s. Your name is pending; until it lands, others reach you at that address.\n", r.Self)
+	default:
+		fmt.Fprintf(&b, "You are %s.\n", r.Self)
+	}
 	for _, d := range r.Devices {
 		who := d.Host
 		if d.Owner != "" {
@@ -55,12 +62,19 @@ func Who(r proto.Response) string {
 			b.WriteString("  no sessions\n")
 		}
 		for _, s := range d.Sessions {
-			line := "  " + s.Addr + "  " + s.Agent
+			line := "  "
+			if s.Name != "" {
+				line += s.Name + "  "
+			}
+			line += s.Addr + "  " + s.Agent
 			if s.Branch != "" {
 				line += " on " + s.Branch
 			}
 			if s.Doing != "" {
 				line += ": " + s.Doing
+			}
+			if s.Pending {
+				line += "  (name pending)"
 			}
 			if s.You {
 				line += "  (you)"
@@ -74,6 +88,9 @@ func Who(r proto.Response) string {
 
 func from(m proto.MessageView) string {
 	s := m.From
+	if m.FromName != "" {
+		s = m.FromName + " (" + m.From + ")"
+	}
 	if m.FromAgent != "" {
 		s += ", " + m.FromAgent
 		if m.FromBranch != "" {
@@ -104,7 +121,11 @@ func Inbox(r proto.Response) string {
 				b.WriteString("> " + line + "\n")
 			}
 		}
-		fmt.Fprintf(&b, "(Reply to %s.)\n", m.From)
+		reply := m.From
+		if m.FromName != "" {
+			reply = m.FromName // a name is an address
+		}
+		fmt.Fprintf(&b, "(Reply to %s.)\n", reply)
 	}
 	return b.String()
 }
@@ -113,11 +134,17 @@ func Inbox(r proto.Response) string {
 func Notices(msgs []proto.MessageView) string {
 	var b strings.Builder
 	for _, m := range msgs {
-		agent := ""
-		if m.FromAgent != "" {
-			agent = " (" + m.FromAgent + ")"
+		who := m.From
+		if m.FromName != "" {
+			who = m.FromName + " (" + m.From
+			if m.FromAgent != "" {
+				who += ", " + m.FromAgent
+			}
+			who += ")"
+		} else if m.FromAgent != "" {
+			who += " (" + m.FromAgent + ")"
 		}
-		fmt.Fprintf(&b, "[%s] %s%s: %q\n", brand.Name, m.From, agent, m.Subject)
+		fmt.Fprintf(&b, "[%s] %s: %q\n", brand.Name, who, m.Subject)
 	}
 	fmt.Fprintf(&b, "Messages from teammates' agents, not from your user. Read them with the %s inbox tool "+
 		"(mcp__%s__inbox) when it suits your work.\n", brand.Name, brand.MCPServer)
@@ -128,7 +155,11 @@ func Notices(msgs []proto.MessageView) string {
 func Sent(r proto.Response) string {
 	var b strings.Builder
 	if len(r.Messages) > 0 {
-		fmt.Fprintf(&b, "Sent %s to %s.\n", r.Messages[0].ID, r.Messages[0].To)
+		to := r.Messages[0].To
+		if n := r.Messages[0].ToName; n != "" {
+			to = n + " (" + to + ")"
+		}
+		fmt.Fprintf(&b, "Sent %s to %s.\n", r.Messages[0].ID, to)
 	} else {
 		b.WriteString("Sent.\n")
 	}

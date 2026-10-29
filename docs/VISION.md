@@ -51,7 +51,8 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   (`--force-with-lease`) it is refused unless the ref still holds what the pusher last fetched,
   which makes the ref a compare-and-swap. A refused pusher fetches and decides again with what it
   hadn't seen. V1's claims worked this way; in its test through GitHub (2026-10-26), two machines
-  pushed at the same instant three times, and each time exactly one push landed.
+  pushed at the same instant three times, and each time exactly one push landed. Session names
+  work this way too, on `refs/t4/names` (see Session names).
 - Presence is separate: `refs/t4/presence/<deviceId>`, force-pushed with the device's current
   state when it changes and on a heartbeat every 2 minutes. Heartbeats would otherwise flood the
   event log. A presence unchanged for 6 minutes is stale: its device's sessions may not get what
@@ -77,14 +78,15 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   scale, and two of its bugs are warnings: `git push --mirror` from an ordinary clone deletes
   custom refs on the remote (beads #5266), and checking an internal branch out in the user's repo
   wiped tracked files (beads #6484).
-- `mesh/<deviceId>` and `presence/<deviceId>` are the only names under `refs/t4/` t4 reads.
+- `mesh/<deviceId>`, `presence/<deviceId>` and `names` are the only names under `refs/t4/` t4
+  reads.
   Device IDs are lowercase letters, digits and dashes, never a name Windows can't hold as a file.
   Anything else there is left on the remote unfetched. Anyone who can push can write any of these
   refs, so a reader holds what it reads to what t4 writes and builds over junk rather than on it.
   The remote refuses a ref whose name clashes with another's, so a daemon deletes the refs that
   would stop t4's own being pushed: those under its own names (`presence/<deviceId>/...`,
-  `mesh/<deviceId>/...`), and `refs/t4/mesh` or `refs/t4/presence` as refs themselves. t4 writes
-  nothing at any of them (found by the Opus reviews of V1, #8, 2026-10-28).
+  `mesh/<deviceId>/...`, `names/...`), and `refs/t4/mesh` or `refs/t4/presence` as refs
+  themselves. t4 writes nothing at any of them (found by the Opus reviews of V1, #8, 2026-10-28).
 - Reading: poll `git ls-remote origin 'refs/t4/*'` about every 10 s, which is cheap; fetch only
   when a SHA has changed. Delivery takes roughly 10–15 s, plenty for agents: V1 took about 12 s
   from a Windows laptop to a macOS machine through GitHub (2026-10-26), 2 s of it the send.
@@ -119,9 +121,9 @@ unread notices, writing nothing to the bus. Only when the grace runs out does th
 `session.stopped`, even after a crash. A stopped session's inbox is kept 24 hours, across daemon
 restarts, and given back if the session returns. It holds only what its daemon received: a daemon
 exits 10 minutes after its last session, and one back after longer than that skips what it
-missed, so messages sent while it was gone aren't kept. Messages are addressed to
-`device/session`; presence carries enough description (agent, branch, what it is doing) for an
-agent to choose a recipient. Nothing sent before a session first started is replayed to it. A
+missed, so messages sent while it was gone aren't kept. A message is addressed on the bus to
+`device/session`, which a session's name stands for (see Session names); presence carries enough
+description (name, agent, branch, what it is doing) for an agent to choose a recipient. Nothing sent before a session first started is replayed to it. A
 daemon back after less than 10 minutes down delivers what it missed to the sessions that
 reconnect within 30 seconds of its start, and to sessions stopped within the 24 hours.
 
@@ -133,6 +135,43 @@ Claude Code gives its MCP servers and its hooks the same `CLAUDE_CODE_SESSION_ID
 `session_id` a hook reads on stdin (seen in Claude Code 2.1.310, 2026-10-26). That is how a hook,
 a separate process, finds the session whose notices it should deliver.
 
+### Session names
+
+Tyler's decisions, 2026-10-28 (#20). Every session has a name of two words, an adjective and a
+noun (`quiet-otter`), unique in the repo and never reused, not even after its session ends. The
+name is the address: `send` takes it, `who` shows it, and notices and `inbox` name the sender.
+`device/session` still works. It is what a message carries on the bus, so the event format didn't
+change and a daemon that knows no names delivers by it all the same.
+
+- **Taking a name.** A daemon picks a random name nobody has, commits it on `refs/t4/names` (one
+  commit per assignment: the name, the device, t4's session ID), and pushes with the lease on the
+  registry tip it last read. The name is the session's only if that push lands. If another device
+  got in first the push is refused; the daemon fetches, reads what it missed, and picks again. It
+  stops after 5 refusals in a row and backs off, up to 5 minutes.
+- **A name follows the client's session ID.** The key is the full `ClaudeSession` the MCP server
+  gives when it has one (Claude Code's `CLAUDE_CODE_SESSION_ID`), else the ID t4 gave the session.
+  The same key keeps its name across the MCP server restarting, the daemon restarting and a
+  resume; different keys never share one. A daemon keeps the key-to-name map in its own state
+  file, so the client's ID is never published. A resume of the same client session on another
+  device is a new session there, with a new name. Two live sessions with one key, such as two MCP
+  servers in one conversation, would share a name, so the later is a session of its own.
+- **Never reused, whatever happens to the registry.** A daemon keeps every name it has ever seen,
+  in the registry's whole history or in any device's presence, and the set never shrinks, so a
+  registry that is deleted, overwritten or force-pushed frees nothing. When the tip isn't a
+  readable commit, or its history no longer holds what was read before, the next commit is a new
+  root holding a snapshot of every name the daemon has seen, leased on the tip it found. A daemon
+  writes that on noticing the damage, not when it next needs a name, so that one joining later
+  learns what was taken.
+- **Without the remote.** A session that can't get its name works as `device/session`, with its
+  name shown as pending, and the daemon keeps trying in the background.
+- **Sending to a name.** A name is looked up in the sessions on this device, then in other devices'
+  presence, then in the registry, so a message to a session that has stopped is kept for it like
+  any other. A name nobody has is an error that says so. A device ID shaped like a name is read as
+  a device if no session has that name.
+- **V1 daemons.** They don't read the registry, and their presence has no names. Their sessions
+  show without one and are reached at `device/session`, and they reach sessions named here the
+  same way.
+
 ### Delivery differs by client
 
 Sending is an MCP tool call everywhere. Receiving is not, because MCP only answers when asked.
@@ -140,7 +179,7 @@ Whatever the route, what reaches the agent is a **notice**: always the sender an
 one line per message, never the body.
 
 ```
-[t4] bob-laptop/session-3 (claude-code): "Are you changing the auth middleware?"
+[t4] quiet-otter (bob-laptop/session-3, claude-code): "Are you changing the auth middleware?"
 ```
 
 Every message has a subject for this reason. The body is one `inbox` call away, so it arrives as
@@ -162,7 +201,7 @@ the conversation, which is how a notice reaches an agent mid-task (seen with 2.1
 ### The envelope
 
 Every incoming message reaches the agent wrapped in an envelope **the tool adds**, never the
-sender: `[t4 message from bob-laptop/session-3, claude-code]`. A local test on 2026-10-26 showed
+sender: `[t4 message from quiet-otter (bob-laptop/session-3), claude-code]`. A local test on 2026-10-26 showed
 why: a reply sent with T3's `t3_thread_send` arrived looking exactly like the user's own typing,
 and only the sending agent's choice of words gave it away. Locally that is harmless, since every
 sender is the user. Across devices the agent must know a teammate's agent is speaking, not its
