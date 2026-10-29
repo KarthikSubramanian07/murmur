@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/a-Fig/t4/internal/brand"
+	"github.com/a-Fig/t4/internal/names"
 )
 
 // Version is the format version every event and presence record carries. A reader skips
@@ -92,6 +93,9 @@ func (p *Presence) Clean() {
 	var keep []SessionInfo
 	for _, s := range p.Sessions {
 		if ValidName(s.ID) {
+			if !names.Valid(s.Name) {
+				s.Name = ""
+			}
 			s.Agent = OneLine(s.Agent, 40)
 			s.Branch = OneLine(s.Branch, 100)
 			s.Doing = OneLine(s.Doing, 120)
@@ -174,6 +178,7 @@ type Presence struct {
 // SessionInfo is one session as its device's presence describes it.
 type SessionInfo struct {
 	ID      string    `json:"id"`
+	Name    string    `json:"name,omitempty"` // two words, like quiet-otter; absent until assigned
 	Agent   string    `json:"agent"`
 	Branch  string    `json:"branch,omitempty"`
 	Doing   string    `json:"doing,omitempty"`

@@ -65,7 +65,11 @@ type Response struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
 	Self  string `json:"self,omitempty"` // the caller's address
-	Note  string `json:"note,omitempty"`
+	// Name is the caller's name, and NamePending says it has none yet: the session works, and is
+	// addressed as Self until the name lands.
+	Name        string `json:"name,omitempty"`
+	NamePending bool   `json:"namePending,omitempty"`
+	Note        string `json:"note,omitempty"`
 
 	Devices []Device `json:"devices,omitempty"`
 
@@ -86,7 +90,11 @@ type Device struct {
 
 // SessionView is one session as `who` shows it.
 type SessionView struct {
-	Addr    string    `json:"addr"`
+	Addr string `json:"addr"`
+	// Name is the session's name; empty for a session of a daemon that doesn't give names, and,
+	// with Pending set, for one on this device still waiting for its own.
+	Name    string    `json:"name,omitempty"`
+	Pending bool      `json:"pending,omitempty"`
 	Agent   string    `json:"agent"`
 	Branch  string    `json:"branch,omitempty"`
 	Doing   string    `json:"doing,omitempty"`
@@ -98,9 +106,11 @@ type SessionView struct {
 type MessageView struct {
 	ID         string    `json:"id"`
 	From       string    `json:"from"`
+	FromName   string    `json:"fromName,omitempty"`
 	FromAgent  string    `json:"fromAgent,omitempty"`
 	FromBranch string    `json:"fromBranch,omitempty"`
-	To         string    `json:"to"`
+	To         string    `json:"to"` // the address the message was sent to, whatever it was sent by
+	ToName     string    `json:"toName,omitempty"`
 	Subject    string    `json:"subject"`
 	Body       string    `json:"body,omitempty"`
 	At         time.Time `json:"at"`
