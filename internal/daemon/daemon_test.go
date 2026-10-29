@@ -77,6 +77,8 @@ type device struct {
 	gitDir string
 	stale  time.Duration
 	poll   time.Duration
+	grace  time.Duration // SessionGrace; zero takes the daemon's default
+	keep   time.Duration // StoppedInbox; likewise
 	c      *client.Client
 	stop   func()
 }
@@ -95,6 +97,17 @@ func newDevice(t *testing.T, remote string, stale ...time.Duration) *device {
 	return d
 }
 
+// newTimedDevice is newDevice with a session grace and a stopped-inbox time.
+func newTimedDevice(t *testing.T, remote string, grace, keep time.Duration) *device {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "clone")
+	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
+	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond,
+		grace: grace, keep: keep}
+	d.start()
+	return d
+}
+
 func (d *device) start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -102,7 +115,7 @@ func (d *device) start() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
 			Heartbeat: 500 * time.Millisecond, StaleAfter: d.stale, Idle: -1,
-			Log: testLog()})
+			SessionGrace: d.grace, StoppedInbox: d.keep, Log: testLog()})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)
 		}
