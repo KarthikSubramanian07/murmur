@@ -272,6 +272,7 @@ func TestCreditedCommitIsSavedAtOnce(t *testing.T) {
 	end := d.startReq(dir, "t1")
 	end.Op = proto.OpToolEnd
 	d.toolEnd(ctx, end)
+	d.settleEnds()
 
 	b, err := os.ReadFile(d.statePath())
 	if err != nil {
@@ -285,5 +286,48 @@ func TestCreditedCommitIsSavedAtOnce(t *testing.T) {
 	}
 	if got := saved.Commits["aaaaaa"]; len(got) != 1 || got[0].SHA != sha || got[0].Branch != "main" {
 		t.Errorf("state.json has %+v after the call, want %s on main", got, sha)
+	}
+}
+
+// The end of a call is answered before its commits are found: the hook, and with it the agent and
+// the notices the hook brings, doesn't wait for git. What it committed is credited all the same, and
+// a lookup waits for it.
+func TestCallEndIsAnsweredBeforeGit(t *testing.T) {
+	d, dir := bracketDaemon(t)
+	ctx := context.Background()
+	d.toolStart(ctx, d.startReq(dir, "t1"))
+	cmd := exec.Command("git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "during")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+
+	release := make(chan struct{})
+	orig := snapshot
+	snapshot = func(ctx context.Context, wt string) (attrib.Ref, error) {
+		<-release
+		return orig(ctx, wt)
+	}
+	defer func() { snapshot = orig }()
+	end := d.startReq(dir, "t1")
+	end.Op = proto.OpToolEnd
+	answered := make(chan struct{})
+	go func() {
+		d.toolEnd(ctx, end)
+		close(answered)
+	}()
+	select {
+	case <-answered:
+	case <-time.After(3 * time.Second):
+		close(release)
+		<-answered
+		t.Fatal("the end of a call was answered only once its snapshot was taken")
+	}
+	close(release)
+	d.settleEnds()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if got := d.st.Commits["aaaaaa"]; len(got) != 1 || got[0].Subject != "during" {
+		t.Errorf("credited %+v, want the commit made during the call", got)
 	}
 }

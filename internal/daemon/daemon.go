@@ -149,6 +149,8 @@ type Daemon struct {
 	// tool-use ID (see toolStart). snapLogged is when a failed snapshot was last logged.
 	brackets   map[string]*bracket
 	snapLogged time.Time
+	// ending counts the calls whose end is being judged in the background (see toolEnd).
+	ending int
 
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs

@@ -27,6 +27,7 @@ func (d *Daemon) lookup(you string, req proto.Request) proto.Response {
 		limit = defaultLookupMessages
 	}
 	limit = min(limit, maxLookupMessages)
+	d.settleEnds()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	addr, err := d.lookupAddrLocked(strings.TrimSpace(req.Name))

@@ -56,6 +56,9 @@ type commitRec struct {
 	At      time.Time `json:"at"`
 }
 
+// snapshot is attrib.Head, which a test can slow down.
+var snapshot = attrib.Head
+
 // snapshotLimit is how long a snapshot may take: the option, or its default where it isn't set.
 func (d *Daemon) snapshotLimit() time.Duration {
 	if d.opt.SnapshotTimeout > 0 {
@@ -133,33 +136,70 @@ func (d *Daemon) toolStart(ctx context.Context, req proto.Request) proto.Respons
 	return proto.Response{OK: true}
 }
 
-// toolEnd closes the call's bracket: it snapshots the worktree again, and credits the sessions the
-// hook speaks for with the commits that appeared since. A call with no bracket (its start was
-// skipped, expired, or came before a daemon restart) credits nothing.
+// toolEnd closes the call's bracket, and answers at once: the hook, and with it the agent and the
+// notices the hook brings, would otherwise wait for git. It then snapshots the worktree again in
+// the background, and credits the sessions the hook speaks for with the commits that appeared
+// since. A call with no bracket (its start was skipped, expired, or came before a daemon restart)
+// credits nothing.
 func (d *Daemon) toolEnd(ctx context.Context, req proto.Request) proto.Response {
 	key := bracketKey(req)
 	d.mu.Lock()
 	sessions := d.touchHookLocked(req)
 	b := d.brackets[key]
 	delete(d.brackets, key)
-	d.mu.Unlock()
 	if b == nil || len(sessions) == 0 {
+		d.mu.Unlock()
 		return proto.Response{OK: true}
 	}
+	d.ending++
+	d.mu.Unlock()
+	// Not cut short by shutdown, which waits for bg: a call that ended is still credited.
+	ctx = context.WithoutCancel(ctx)
+	d.bg.Add(1) // from a connection's goroutine, which bg counts, so never while bg drains to zero
+	go func() {
+		defer d.bg.Done()
+		defer func() {
+			d.mu.Lock()
+			d.ending--
+			d.mu.Unlock()
+		}()
+		d.judgeEnd(ctx, b, sessions)
+	}()
+	return proto.Response{OK: true}
+}
+
+// settleEnds waits until no ended call is still being judged, or for as long as judging one may
+// take, so that what lookup says includes every call that has ended.
+func (d *Daemon) settleEnds() {
+	deadline := time.Now().Add(d.snapshotLimit() + time.Second)
+	for {
+		d.mu.Lock()
+		n := d.ending
+		d.mu.Unlock()
+		if n == 0 || time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// judgeEnd snapshots the worktree a call started in, and credits the sessions with the commits made
+// since its start.
+func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, sessions []*session) {
 	ctx, cancel := context.WithTimeout(ctx, d.snapshotLimit())
 	defer cancel()
-	after, err := attrib.Head(ctx, b.cwd)
+	after, err := snapshot(ctx, b.cwd)
 	if err != nil {
 		d.snapshotFailed("snapshotting after a tool call", err)
-		return proto.Response{OK: true}
+		return
 	}
 	commits, err := attrib.NewCommits(ctx, b.cwd, b.before, after)
 	if err != nil {
 		d.snapshotFailed("finding the commits a tool call made", err)
-		return proto.Response{OK: true}
+		return
 	}
 	if len(commits) == 0 {
-		return proto.Response{OK: true}
+		return
 	}
 	d.mu.Lock()
 	published := d.creditLocked(sessions, commits, time.Now())
@@ -168,7 +208,6 @@ func (d *Daemon) toolEnd(ctx context.Context, req proto.Request) proto.Response 
 	if published {
 		d.kickPresence()
 	}
-	return proto.Response{OK: true}
 }
 
 // snapshotFailed logs a snapshot that couldn't be taken, at most once a minute: it would otherwise

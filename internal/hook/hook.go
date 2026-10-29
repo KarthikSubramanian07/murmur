@@ -143,8 +143,8 @@ func Run(stdin io.Reader, stdout io.Writer) {
 	if err != nil {
 		return
 	}
-	// The end of a call is sent alongside the notices request, not before it: the daemon's second
-	// snapshot takes as long as the first did, and no call should wait for both.
+	// The end of a call is sent alongside the notices request. The daemon answers it at once and
+	// finds the call's commits after, so neither holds up the notices or the agent.
 	var wg sync.WaitGroup
 	if op != "" {
 		wg.Add(1)
