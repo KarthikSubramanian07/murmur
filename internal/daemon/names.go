@@ -10,7 +10,6 @@ import (
 	"github.com/a-Fig/t4/internal/brand"
 	"github.com/a-Fig/t4/internal/bus"
 	"github.com/a-Fig/t4/internal/names"
-	"github.com/a-Fig/t4/internal/proto"
 )
 
 // Session names (#20). A session's name is two words (quiet-otter), unique in the repo and never
@@ -37,11 +36,11 @@ const (
 // nameKey is what a session's name follows: the client's own session ID when it gives one, so that
 // a resume, or an MCP server restarting, is the same session; otherwise the ID t4 gave the session.
 // The kinds are kept apart so that no ID of one can equal an ID of the other.
-func nameKey(h *proto.Hello) string {
-	if h.ClaudeSession != "" {
-		return "claude:" + h.ClaudeSession
+func nameKey(claude, id string) string {
+	if claude != "" {
+		return "claude:" + claude
 	}
-	return "session:" + h.ID
+	return "session:" + id
 }
 
 // kickNames wakes the assigner.
@@ -172,8 +171,16 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	}
 }
 
-// resolveNameLocked finds the session called name: first from presence, which follows a session
-// whose ID changed, then from the registry, which also knows a session that has since stopped.
+// resolveNameLocked finds the session called name: in this device's sessions, then in its record
+// of who held each name last, then in other devices' presence, and last in the registry, which
+// also knows a session that has since stopped.
+//
+// The record is for #37. The registry has the session a name was first given to, which may have
+// moved to another conversation since, and another session here may have taken the name after it.
+// The last holder is the answer if the name is still the last it took and it can receive, running
+// or not; one that has moved to another conversation is not the name's any more (#46). Otherwise
+// the registry's address goes on the bus as it is, as from any device, and delivery forwards it at
+// most once (see forwardLocked): forwarding it here too would make two hops of one.
 // Caller holds mu.
 func (d *Daemon) resolveNameLocked(name string) (addr string, ok bool) {
 	var dropped string
@@ -188,6 +195,9 @@ func (d *Daemon) resolveNameLocked(name string) (addr string, ok bool) {
 	}
 	if dropped != "" {
 		return dropped, true
+	}
+	if h := d.st.NameHolders[name]; h != "" && d.st.SessionNames[h] == name && d.receivesLocked(h) {
+		return bus.Addr(d.device, h), true
 	}
 	for _, dev := range sortedKeys(d.peers) {
 		for _, s := range d.peers[dev].pres.Sessions {
@@ -366,7 +376,7 @@ func (d *Daemon) attemptName(ctx context.Context, w *wanted) error {
 		d.st.NameKeys[w.key] = rec.Name
 		for _, s := range d.sessions {
 			if s.key == w.key && s.name == "" {
-				s.name = rec.Name
+				d.setNameLocked(s, rec.Name)
 			}
 		}
 		d.noteLocked(rec.At, rec.Subject())

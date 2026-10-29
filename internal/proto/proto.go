@@ -50,6 +50,10 @@ type Request struct {
 
 	// ClaudeSession finds the session for the hook, which only knows Claude Code's ID for it.
 	ClaudeSession string `json:"claudeSession,omitempty"`
+	// ClientPID is the hook's CLAUDE_PID, the Claude Code process it runs under: with
+	// ClaudeSession, it tells the daemon which sessions that process's conversation has moved to
+	// a new Claude ID. 0 if the hook has none.
+	ClientPID int `json:"clientPid,omitempty"`
 }
 
 // Hello registers a session.
@@ -58,6 +62,9 @@ type Hello struct {
 	Agent         string `json:"agent"`
 	Cwd           string `json:"cwd"`
 	ClaudeSession string `json:"claudeSession,omitempty"`
+	// ClientPID is the MCP server's parent process, which is the Claude Code process when Claude
+	// Code starts the server itself: the hook's CLAUDE_PID is how the daemon links the two.
+	ClientPID int `json:"clientPid,omitempty"`
 	// Reconnect says the session was registered with a daemon that went away, so it should get
 	// what that daemon would have delivered.
 	Reconnect bool `json:"reconnect,omitempty"`
@@ -73,6 +80,10 @@ type Response struct {
 	Name        string `json:"name,omitempty"`
 	NamePending bool   `json:"namePending,omitempty"`
 	Note        string `json:"note,omitempty"`
+	// ClaudeSession is the Claude Code session ID the daemon holds for the calling session, which
+	// a hook may have corrected since the MCP server started. The server sends it in any later
+	// hello, in place of its environment's.
+	ClaudeSession string `json:"claudeSession,omitempty"`
 
 	Devices []Device `json:"devices,omitempty"`
 

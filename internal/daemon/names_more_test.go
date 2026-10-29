@@ -553,7 +553,8 @@ func TestSendByNameAcrossDevices(t *testing.T) {
 		t.Fatalf("carl's inbox: %q", got)
 	}
 
-	// Cleo stops and comes back under another ID; her name follows her there.
+	// Cleo stops and comes back under another ID; her name follows her there, and so does what she
+	// hadn't read (#37): the device's and everyone's messages from above.
 	cleoConn.Close()
 	eventually(t, "cleo stopped", func() bool { return !a.seesSession(cleo) })
 	cleo2, _ := c.session("ccccce", "claude-cleo")
@@ -564,7 +565,7 @@ func TestSendByNameAcrossDevices(t *testing.T) {
 	if r := send(cleoN, "to cleo again"); r.Messages[0].To != cleo2 {
 		t.Fatalf("sent to %s, want %s", r.Messages[0].To, cleo2)
 	}
-	if got := inboxOf(c, "ccccce"); len(got) != 1 || got[0] != "to cleo again" {
+	if got := inboxWant(c, "ccccce", 3); strings.Join(sorted(got), ",") != "device,everyone,to cleo again" {
 		t.Fatalf("cleo's new inbox: %q", got)
 	}
 
