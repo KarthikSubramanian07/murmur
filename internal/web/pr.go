@@ -9,15 +9,20 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // LookupPR finds the open pull request a branch heads: nil, nil if there is none.
 type LookupPR func(ctx context.Context, branch string) (*PR, error)
 
 // GH looks pull requests up with the gh CLI, run in dir so it finds the repository from the
-// clone's remotes and uses the user's own GitHub login.
+// clone's remotes and uses the user's own GitHub login. A branch lookupable refuses is not looked
+// up: it has no PR as far as the page is concerned.
 func GH(dir string) LookupPR {
 	return func(ctx context.Context, branch string) (*PR, error) {
+		if !lookupable(branch) {
+			return nil, nil
+		}
 		// --head=<branch>, in one argument, so no branch name can pass for a flag.
 		cmd := exec.CommandContext(ctx, "gh", "pr", "list", "--head="+branch, "--state", "open",
 			"--json", "number,isDraft,url")
@@ -129,12 +134,22 @@ func (c *prCache) refresh(branch string) {
 	e.pr, e.fetched, e.inflight = pr, time.Now(), false
 }
 
+// lookupable says whether a branch name may go on gh's command line. The name comes from the bus,
+// so anyone with push access chooses it. On Windows a gh that is a .cmd or .bat file (a shim, a
+// wrapper) runs under cmd.exe, which reads & | < > ^ % ! and quotes in its arguments as commands
+// and variables, and Go's quoting doesn't stop it: a branch named x&calc would run calc. So only
+// the characters branch names are usually made of are let through, which none of those are; a
+// branch named otherwise shows no PR.
 func lookupable(branch string) bool {
 	if branch == "" || len(branch) > maxBranch || strings.HasPrefix(branch, "-") {
 		return false
 	}
 	for _, r := range branch {
-		if r < 0x20 || r == 0x7f || r == ' ' {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune("-_./+@#", r):
+		case r > unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r)):
+		default:
 			return false
 		}
 	}
