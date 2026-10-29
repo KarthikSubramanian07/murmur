@@ -38,6 +38,8 @@ For humans (each starts the clone's daemon if it isn't running):
   t4 send <to> <subject> [body] to is a session's name, device/session, a device, or '*'; body "-" reads stdin
   t4 inbox                      read messages sent to this device's CLI
   t4 log [-n N]                 recent events on the bus
+  t4 ui [--no-open]             open the page showing sessions and messages in a browser; --no-open
+                                only prints its address
   t4 stop                       stop this clone's daemon
 
 Started by other programs:
@@ -69,6 +71,8 @@ func main() {
 		err = runInit(ctx, args)
 	case "who", "send", "inbox", "log", "stop":
 		err = runClient(ctx, cmd, args)
+	case "ui":
+		err = runUI(ctx, args, os.Stdout, browse)
 	case "version", "--version":
 		fmt.Println(brand.Command, version)
 	case "help", "-h", "--help":

@@ -95,6 +95,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		agent = "unknown"
 	}
 	branch := branchOf(ctx, h.Cwd)
+	worktree := worktreeOf(ctx, h.Cwd)
 	key := nameKey(h)
 	d.mu.Lock()
 	// Two live sessions of one client session (two MCP servers in it) would share a name, and
@@ -119,6 +120,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 			d.kickPresence() // what presence shows changed; otherwise nothing is written
 		}
 		s.agent, s.cwd, s.claudeSession, s.branch, s.reconnect = agent, h.Cwd, h.ClaudeSession, branch, h.Reconnect
+		s.worktree = worktree
 		if s.key != key {
 			s.key, s.name = key, d.st.NameKeys[key]
 		}
@@ -127,6 +129,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		s.takeover = nil
 	default:
 		s = d.newSessionLocked(h, agent, branch, key)
+		s.worktree = worktree
 	}
 	d.lastActive = time.Now()
 	if h.Reconnect {

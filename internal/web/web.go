@@ -209,7 +209,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := checkSettings(set); err != nil {
+	if err := CheckSettings(set); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -223,7 +223,9 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, saved)
 }
 
-func checkSettings(set Settings) error {
+// CheckSettings says whether settings are ones the page may set. The API makes this check before
+// calling the source; a source that also reads settings from elsewhere, a file say, makes it too.
+func CheckSettings(set Settings) error {
 	if !set.Wake.valid() {
 		return errors.New("wake: when must be always, within or never, and minutes 0 to 1440, given only with within")
 	}

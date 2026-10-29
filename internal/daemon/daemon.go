@@ -45,7 +45,15 @@ type Options struct {
 	// NameRetry is how long the first retry after a failed name assignment waits: 15 s. It
 	// doubles with each failure in a row.
 	NameRetry time.Duration
-	Log       *log.Logger
+	// PageAddr is where the page for humans is served: 127.0.0.1:0, a random port on loopback.
+	// Anything that isn't on loopback is refused, as anyone on the network could reach the page.
+	PageAddr string
+	// PageOpen is how recently the page must have called its API to count as open, which keeps the
+	// daemon running like a session does: 2 min.
+	PageOpen time.Duration
+	// PageMessages is how many messages the page can look back on: 500.
+	PageMessages int
+	Log          *log.Logger
 }
 
 func (o *Options) defaults() {
@@ -72,6 +80,15 @@ func (o *Options) defaults() {
 	}
 	if o.NameRetry == 0 {
 		o.NameRetry = 15 * time.Second
+	}
+	if o.PageAddr == "" {
+		o.PageAddr = "127.0.0.1:0"
+	}
+	if o.PageOpen == 0 {
+		o.PageOpen = 2 * time.Minute
+	}
+	if o.PageMessages == 0 {
+		o.PageMessages = 500
 	}
 	if o.Log == nil {
 		o.Log = log.New(os.Stderr, "", log.LstdFlags)
@@ -118,11 +135,21 @@ type Daemon struct {
 	// namesChecked says the registry has been looked at since this daemon started, even if its
 	// tip is the one state.json recorded.
 	namesChecked bool
+	// lastPage is when the page last called its API, zero if it hasn't. msgs is the page's
+	// messages, oldest first, msgSeq the number of the newest and msgIDs the IDs in msgs.
+	lastPage time.Time
+	msgs     []pageMsg
+	msgSeq   uint64
+	msgIDs   map[string]bool
 
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
 	writeMu sync.Mutex // serializes appends to this device's log
 	ownTip  string     // the remote's tip of this device's log, as last known; under writeMu
+
+	// setMu guards settings and settings.json. It is taken alone, never with another lock held.
+	setMu    sync.Mutex
+	settings pageSettings
 
 	kick     chan struct{}
 	nameKick chan struct{} // wakes nameLoop, the only user of nameSrc
@@ -140,6 +167,8 @@ type session struct {
 	id, agent, cwd, branch, doing, claudeSession string
 	started                                      time.Time
 	reconnect                                    bool // registered before, with a daemon that went away
+	// worktree is the name of the folder the session's worktree is in, found when it registered.
+	worktree string
 	// since is, for a session back within StoppedInbox, when it stopped: what was sent after that
 	// is its, however late this daemon reads it. Zero otherwise.
 	since time.Time
@@ -258,18 +287,38 @@ func Run(ctx context.Context, opt Options) error {
 		return err
 	}
 	defer ln.Close()
+	// A page that can't be served costs the page, not the daemon: sessions don't need it.
+	pageLn, err := d.listenPage()
+	if err != nil {
+		d.log.Printf("the page for humans isn't served: %v", err)
+	}
+	if pageLn != nil {
+		defer pageLn.Close()
+	}
 	infoPath := filepath.Join(dir, "daemon.json")
 	info := proto.Info{Addr: ln.Addr().String(), Token: d.token, PID: os.Getpid(), Device: d.device}
+	if pageLn != nil {
+		info.Web = pageLn.Addr().String()
+	}
 	if err := writeJSON(infoPath, info); err != nil {
 		return err
 	}
 	defer os.Remove(infoPath)
+	d.mu.Lock()
+	d.lastActive = time.Now() // the first sync may have taken a while; the idle time starts here
+	d.mu.Unlock()
 	d.log.Printf("device %s, remote %q, listening on %s", d.device, d.repo.Remote, info.Addr)
+	if info.Web != "" {
+		d.log.Printf("page for humans on %s", info.Web)
+	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	d.bgCtx = ctx
 	go d.serve(ctx, ln)
+	if pageLn != nil {
+		d.servePage(ctx, pageLn)
+	}
 	// Tracked, as the syncs it runs start background work of their own (clearOwnJunk).
 	d.bg.Add(1)
 	go func() {
@@ -315,7 +364,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
-		quit: make(chan struct{}),
+		quit: make(chan struct{}), msgIDs: map[string]bool{},
 	}
 	device, err := loadDevice(dir)
 	if err != nil {
@@ -336,6 +385,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}
+	d.loadSettings()
 	wall := now.Round(0)
 	if !d.st.Initialized || wall.Sub(d.st.LastSync) > catchUpLimit {
 		d.mode = modeSkip
@@ -428,10 +478,16 @@ func (d *Daemon) idleLoop(ctx context.Context) {
 		case <-t.C:
 		}
 		d.mu.Lock()
-		idle := len(d.sessions) == 0 && time.Since(d.lastActive) > d.opt.Idle
+		// An open page keeps the daemon up as a session does: the idle time counts from the last
+		// session going, or from the page no longer counting as open.
+		quiet := d.lastActive
+		if gone := d.lastPage.Add(d.opt.PageOpen); gone.After(quiet) {
+			quiet = gone
+		}
+		idle := len(d.sessions) == 0 && time.Since(quiet) > d.opt.Idle
 		d.mu.Unlock()
 		if idle {
-			d.log.Printf("no sessions for %s; exiting", d.opt.Idle)
+			d.log.Printf("no sessions and no page open for %s; exiting", d.opt.Idle)
 			d.stop()
 			return
 		}
