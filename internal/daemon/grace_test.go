@@ -55,10 +55,11 @@ func logHas(d *device, text string) bool {
 }
 
 // A connection that drops and comes back inside the grace is the same session: it never leaves
-// presence, nothing is written to the bus, and it keeps its inbox and its unread notices.
+// presence, nothing is written to the bus, and it keeps its inbox and its unread notices. The test
+// runs past the end of the first grace, so a stop written when that grace ends would show.
 func TestReconnectInGraceKeepsSession(t *testing.T) {
 	remote := newRemote(t)
-	a, b := newDevice(t, remote), newTimedDevice(t, remote, 10*time.Second, 0)
+	a, b := newDevice(t, remote), newTimedDevice(t, remote, 2*time.Second, 0)
 	bob, conn := b.session("bbbbbb", "claude-bob")
 	eventually(t, "presence", func() bool { return a.seesSession(bob) })
 	eventually(t, "bob's start on the bus", func() bool { return busLines(b, bob, "started") == 1 })
@@ -78,7 +79,9 @@ func TestReconnectInGraceKeepsSession(t *testing.T) {
 	if _, err := b.restartedMCP("bbbbbb", "claude-bob"); err != nil {
 		t.Fatalf("the same session registering again: %v", err)
 	}
-	holds(t, "bob in presence", time.Second, func() bool { return a.seesSession(bob) && b.seesSession(bob) })
+	holds(t, "bob in presence past the first grace", 3*time.Second, func() bool {
+		return a.seesSession(bob) && b.seesSession(bob)
+	})
 
 	if got := meshTip(t, b, remote, b.self()); got != tip {
 		t.Fatalf("something was written to the bus: %s -> %s", tip, got)
@@ -236,7 +239,7 @@ func storedFor(t *testing.T, d *device, id string) bool {
 // registering after that starts with nothing.
 func TestStoppedInboxExpires(t *testing.T) {
 	remote := newRemote(t)
-	a, b := newDevice(t, remote), newTimedDevice(t, remote, 200*time.Millisecond, 3*time.Second)
+	a, b := newDevice(t, remote), newTimedDevice(t, remote, 200*time.Millisecond, 8*time.Second)
 	bob, conn := b.session("bbbbbb", "")
 	eventually(t, "presence", func() bool { return a.seesSession(bob) })
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "never read"})
@@ -244,7 +247,7 @@ func TestStoppedInboxExpires(t *testing.T) {
 	conn.Close()
 	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 })
 
-	holds(t, "bob's inbox kept", time.Second, func() bool { return storedFor(t, b, "bbbbbb") })
+	holds(t, "bob's inbox kept", 2*time.Second, func() bool { return storedFor(t, b, "bbbbbb") })
 	eventually(t, "bob's inbox deleted", func() bool { return !storedFor(t, b, "bbbbbb") })
 
 	if _, err := b.restartedMCP("bbbbbb", ""); err != nil {

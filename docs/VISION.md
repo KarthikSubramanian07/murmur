@@ -114,18 +114,16 @@ to start launches the daemon. A session's MCP process can restart while its conv
 on: T3 Code restarts it on every interrupt, after 30 minutes idle and on every app restart (one
 thread's restarted 8 times in about 2 days, 2026-10-28), and Claude Code on `/mcp` reconnect and
 on resume. So a dropped connection starts a 60-second grace (2026-10-28): the session stays in
-presence and its messages keep queueing, and a hello with the same session ID in that time takes
-it over with its inbox and unread notices, writing nothing to the bus. Only when the grace runs
-out does the daemon announce `session.stopped`, even after a crash. A stopped session's inbox is
-kept 24 hours (2026-10-28) and survives a daemon restart; if the session comes back in that time
-(announced with `session.started` as usual) it gets what was sent to it meanwhile, and past 24
-hours the inbox is deleted. Messages are addressed to `device/session`; presence carries enough
-description (agent, branch, what it is doing) for an agent to choose a recipient. A session
-receives the messages that arrive while it runs, or while it is in its grace or stopped within
-the 24 hours; nothing sent before it first started is replayed to it. A daemon back after less
-than 10 minutes down delivers what it missed only to the sessions that reconnect to it, within 30
-seconds of its start, and to sessions stopped within the 24 hours. After longer, it skips what it
-missed, since no session is still waiting for it.
+presence, and a hello with the same session ID in that time takes it over with its inbox and
+unread notices, writing nothing to the bus. Only when the grace runs out does the daemon announce
+`session.stopped`, even after a crash. A stopped session's inbox is kept 24 hours, across daemon
+restarts, and given back if the session returns. It holds only what its daemon received: a daemon
+exits 10 minutes after its last session, and one back after longer than that skips what it
+missed, so messages sent while it was gone aren't kept. Messages are addressed to
+`device/session`; presence carries enough description (agent, branch, what it is doing) for an
+agent to choose a recipient. Nothing sent before a session first started is replayed to it. A
+daemon back after less than 10 minutes down delivers what it missed to the sessions that
+reconnect within 30 seconds of its start, and to sessions stopped within the 24 hours.
 
 Sessions reach the daemon over loopback TCP, on a random port written with a random token to
 `.git/t4/daemon.json`. A daemon with no sessions for 10 minutes exits. Any daemon that stops
