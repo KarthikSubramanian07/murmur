@@ -305,7 +305,13 @@ func TestSameKeyKeepsItsName(t *testing.T) {
 	name := a.named(alice)
 
 	conn.Close()
+	// The daemon may not have seen the drop yet, and answers "in use" until it has: the MCP server
+	// tries again, and so does the test.
 	conn2, err := a.restartedMCP("aaaaaa", "claude-alice-session-0001")
+	for end := time.Now().Add(10 * time.Second); err != nil && time.Now().Before(end); {
+		time.Sleep(50 * time.Millisecond)
+		conn2, err = a.restartedMCP("aaaaaa", "claude-alice-session-0001")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
