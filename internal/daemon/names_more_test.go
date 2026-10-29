@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/a-Fig/t4/internal/brand"
 	"github.com/a-Fig/t4/internal/bus"
 	"github.com/a-Fig/t4/internal/names"
 	"github.com/a-Fig/t4/internal/proto"
@@ -72,6 +74,22 @@ func (d *device) pushOffline(remote string, off bool) {
 		return
 	}
 	git(d.t, dir, "config", "--unset", "remote.origin.pushurl")
+}
+
+// namesState is the part of d's state.json that holds names.
+type namesState struct {
+	Used   map[string]string `json:"usedNames"`
+	Tip    string            `json:"namesTip"`
+	Repair bool              `json:"namesRepair"`
+}
+
+// namesState reads it; ok is false while the file is being replaced.
+func (d *device) namesState() (st namesState, ok bool) {
+	b, err := os.ReadFile(filepath.Join(d.gitDir, brand.StateDir, "state.json"))
+	if err != nil || json.Unmarshal(b, &st) != nil {
+		return st, false
+	}
+	return st, true
 }
 
 // registryCommits lists the registry's commits on the remote, oldest first, and a scratch repo
@@ -312,6 +330,51 @@ func TestRewoundRegistryFreesNoName(t *testing.T) {
 	bob, _ := b.session("bbbbbb", "claude-bob")
 	if got := b.named(bob); got != nthName(t, 31, 4) {
 		t.Fatalf("b is named %s; want the first name nobody had, %s (taken: %q)", got, nthName(t, 31, 4), taken)
+	}
+}
+
+// A registry rewound while its daemon can't push, and then added to by another writer before the
+// daemon is back, still gets the snapshot: the daemon must not take a plain new commit on the
+// damaged history for the repair it was waiting to make. Otherwise a name it saw is gone from the
+// registry for good, and a daemon joining later takes it.
+func TestRepairSurvivesACommitBeforeIt(t *testing.T) {
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.names, d.grace = seededNames(41), 300*time.Millisecond })
+	first, _ := a.session("aaaaa1", "claude-first")
+	n1 := a.named(first)
+	second, conn := a.session("aaaaa2", "claude-second")
+	n2 := a.named(second)
+	conn.Close()
+	eventually(t, "the second session stopped", func() bool { return !a.seesSession(second) })
+
+	a.pushOffline(remote, true)
+	work, shas := registryCommits(t, remote)
+	git(t, work, "push", "-q", "--force", remote, shas[0]+":refs/t4/names")
+	eventually(t, "a to see that the registry lost a name", func() bool {
+		st, ok := a.namesState()
+		return ok && st.Repair && st.Tip == shas[0]
+	})
+
+	// Another writer, which never knew n2, adds a name on the rewound registry.
+	outsider := nthName(t, 999, 1)
+	rec := bus.NameRecord{V: bus.Version, Name: outsider, Device: "peer-0001", Session: "x", At: time.Now().UTC()}
+	msg, err := bus.Encode(rec, rec.Subject())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pushMessage(t, remote, "refs/t4/names", msg)
+	_, after := registryCommits(t, remote)
+	eventually(t, "a to read the new commit", func() bool {
+		st, ok := a.namesState()
+		return ok && st.Tip == after[len(after)-1]
+	})
+
+	a.pushOffline(remote, false)
+	eventually(t, "a root snapshot of every name", func() bool { return tipIsSnapshot(t, remote, n1, n2, outsider) })
+	b := newDeviceWith(t, remote, func(d *device) { d.names = seededNames(41) }) // would pick n1, then n2
+	bob, _ := b.session("bbbbbb", "claude-bob")
+	if got := b.named(bob); got == n1 || got == n2 {
+		t.Fatalf("b took %s, which a had", got)
 	}
 }
 

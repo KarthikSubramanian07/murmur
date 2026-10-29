@@ -134,7 +134,8 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	}
 
 	d.mu.Lock()
-	changed := d.st.NamesTip != sha || d.st.NamesRepair
+	wasRepair := d.st.NamesRepair
+	changed := d.st.NamesTip != sha
 	for name, addr := range read {
 		if d.noteNameLocked(name, addr) {
 			changed = true
@@ -144,8 +145,11 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	if isCommit {
 		d.st.NamesGood = sha
 	}
-	d.st.NamesRepair = false
 	if disturbed {
+		// Only a history read from its start shows whether the registry holds every name. A
+		// read of what was added on top of a damaged one can't, so a repair still to be made
+		// stays to be made.
+		d.st.NamesRepair = false
 		for name := range d.st.Used {
 			if _, ok := read[name]; !ok {
 				d.st.NamesRepair = true
@@ -154,13 +158,16 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 		}
 	}
 	repair := d.st.NamesRepair
+	changed = changed || repair != wasRepair
 	d.namesChecked = true
 	if changed {
 		d.saveLocked()
 	}
 	d.mu.Unlock()
-	if repair {
+	if repair && !wasRepair {
 		d.log.Printf("the names registry lost names; writing a snapshot of every name in use")
+	}
+	if repair {
 		d.kickNames()
 	}
 }
