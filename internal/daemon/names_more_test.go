@@ -15,6 +15,7 @@ import (
 	"github.com/a-Fig/t4/internal/bus"
 	"github.com/a-Fig/t4/internal/names"
 	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/t4/internal/view"
 )
 
 // More tests of session names (#20), written to probe what names_test.go leaves open: names a
@@ -456,6 +457,37 @@ func TestNameOnlyInPresenceIsUsed(t *testing.T) {
 		t.Fatalf("a took %s, which b's presence shows", an)
 	}
 	eventually(t, "the registry to hold both", func() bool { return readRegistry(t, remote).holdsNames(an, pick.name) })
+}
+
+// Without the remote a session works, its name pending, and it gets one soon after the remote is
+// back, with no hello to prompt it: not only when a retry delay that grew while the remote was out
+// of reach runs out.
+func TestPendingNameLandsSoonAfterTheRemoteIsBack(t *testing.T) {
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.retry = 15 * time.Second })
+	b := newDevice(t, remote)
+	eventually(t, "a and b to see each other", func() bool { return a.seesDevices(2) && b.seesDevices(2) })
+	a.offline(remote, true)
+	alice, _ := a.session("aaaaaa", "claude-alice")
+	r := a.do(proto.Request{Op: proto.OpWho, Session: "aaaaaa"})
+	if r.Name != "" || !r.NamePending || r.Self != alice || !strings.Contains(view.Who(r), "name pending") {
+		t.Fatalf("who while offline: name %q, pending %v, self %q:\n%s", r.Name, r.NamePending, r.Self, view.Who(r))
+	}
+	if r := a.do(proto.Request{Op: proto.OpStatus, Session: "aaaaaa", Doing: "nameless"}); r.Error != "" {
+		t.Fatalf("status while offline: %s", r.Error)
+	}
+	if r := a.do(proto.Request{Op: proto.OpInbox, Session: "aaaaaa"}); r.Error != "" {
+		t.Fatalf("inbox while offline: %s", r.Error)
+	}
+	holds(t, "no name while the remote is out of reach", 1500*time.Millisecond, func() bool { return a.nameOf(alice) == "" })
+
+	a.offline(remote, false)
+	back := time.Now()
+	name := a.named(alice)
+	if took := time.Since(back); took > 6*time.Second {
+		t.Fatalf("the name landed %s after the remote was back", took.Round(100*time.Millisecond))
+	}
+	eventually(t, "b to show alice's name", func() bool { return b.nameOf(alice) == name })
 }
 
 // send by name reaches the named session and no other, on another device, on this one, and after

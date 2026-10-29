@@ -30,6 +30,9 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 			d.log.Printf("sync failed, retrying every %s: %v", d.opt.Poll, err)
 		case err == nil && failing:
 			d.log.Printf("sync working again")
+			// A session that couldn't take its name meanwhile would otherwise wait out a retry
+			// delay that grew while the remote was out of reach, up to maxNameBackoff.
+			d.kickNames()
 		}
 		failing = err != nil
 		select {

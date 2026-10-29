@@ -194,7 +194,8 @@ change and a daemon that knows no names delivers by it all the same.
   writes that on noticing the damage, not when it next needs a name, so that one joining later
   learns what was taken.
 - **Without the remote.** A session that can't get its name works as `device/session`, with its
-  name shown as pending, and the daemon keeps trying in the background.
+  name shown as pending, and the daemon keeps trying in the background, and at once when it can
+  reach the remote again.
 - **Sending to a name.** A name is looked up in the sessions on this device, then in other devices'
   presence, then in the registry, so a message to a session that has stopped is kept for it like
   any other. A name nobody has is an error that says so. A device ID shaped like a name is read as

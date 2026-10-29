@@ -80,6 +80,7 @@ type device struct {
 	grace  time.Duration // SessionGrace; zero takes the daemon's default
 	keep   time.Duration // StoppedInbox; likewise
 	names  io.Reader     // NameSource; nil takes crypto/rand's
+	retry  time.Duration // NameRetry; zero takes 200 ms
 	c      *client.Client
 	stop   func()
 }
@@ -110,13 +111,17 @@ func newTimedDevice(t *testing.T, remote string, grace, keep time.Duration) *dev
 }
 
 func (d *device) start() {
+	retry := d.retry
+	if retry == 0 {
+		retry = 200 * time.Millisecond
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
 			Heartbeat: 500 * time.Millisecond, StaleAfter: d.stale, Idle: -1,
-			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: 200 * time.Millisecond,
+			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry,
 			Log: testLog()})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)
