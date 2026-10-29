@@ -117,12 +117,14 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		writeResp(conn, fail("session ID "+h.ID+" is in use"))
 		return
 	}
-	// A session in its grace, taken over by a server of the same process, keeps the Claude ID a
-	// hook gave it: the server may be a new one, started with the ID its process had at first,
-	// which a /clear or a /resume since has made stale. A server of another process is trusted.
+	// A session in its grace, taken over by a server of the same process, keeps the Claude ID the
+	// daemon has for it: the server may be a new one, started with the ID its process had at first,
+	// which a /clear or a /resume since has made stale. The daemon's is never older. It came from a
+	// hook, or from a hello, which carries the environment's ID or one the daemon gave out, and
+	// a hook may have moved it since: after a daemon restart, a hello with the live ID is followed by
+	// a takeover with the stale one. A server of another process is trusted.
 	claude := h.ClaudeSession
-	sameProcess := s != nil && h.ClientPID != 0 && h.ClientPID == s.clientPID
-	if sameProcess && s.followed {
+	if s != nil && h.ClientPID != 0 && h.ClientPID == s.clientPID && s.claudeSession != "" {
 		claude = s.claudeSession
 	}
 	// Two live sessions of one client session (two MCP servers in it) would share a name, and
@@ -137,7 +139,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 			d.kickPresence() // what presence shows changed; otherwise nothing is written
 		}
 		s.agent, s.cwd, s.claudeSession, s.branch, s.reconnect = agent, h.Cwd, claude, branch, h.Reconnect
-		s.clientPID, s.followed = h.ClientPID, s.followed && sameProcess
+		s.clientPID = h.ClientPID
 		s.worktree = worktree
 		if s.key != key {
 			s.key = key

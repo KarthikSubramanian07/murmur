@@ -204,8 +204,9 @@ evidence is in #19.
   gets nothing.
   - *Reconnecting.* Every response carries the Claude ID the daemon holds for the calling
     session, and the server sends it in later hellos instead of its environment's. A server that
-    registers again from the same PID as a session that has followed keeps the daemon's ID
-    whatever the hello says; a server of another PID is believed. A daemon that restarts between
+    registers again from the same PID, within the grace, keeps the daemon's ID whatever the hello
+    says, whether a hook or a hello gave the daemon that ID; a server of another PID is believed.
+    A daemon that restarts between
     a switch and the server's next call to it can still bring the stale ID back, until the next
     hook corrects it.
   - *The parent PID.* `t4 init` registers a bare `t4 mcp --agent claude-code` in `.mcp.json`, so

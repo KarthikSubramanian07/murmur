@@ -265,6 +265,34 @@ func TestReconnectAfterASwitchKeepsTheLiveID(t *testing.T) {
 	}
 }
 
+// A daemon that restarts after a switch hears the live ID from the server, which learned it from
+// the daemon before. Later the server restarts within the grace (an /mcp reconnect), with the stale
+// ID still in its environment. The daemon's ID for a session of the same process stands, though no
+// hook has spoken since the restart.
+func TestStaleTakeoverAfterADaemonRestartKeepsTheLiveID(t *testing.T) {
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 10*time.Second, 0)
+	bob, _, _ := b.sessionPID("bbbbbb", "claude-a", procP)
+	nameA := b.named(bob)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-b", ClientPID: procP})
+	nameB := b.nameHeld(bob, nameA)
+
+	b.restart()
+	conn, resp := b.helloPID("bbbbbb", "claude-b", procP)
+	if resp.Name != nameB {
+		t.Fatalf("back after the restart as %q, want %s", resp.Name, nameB)
+	}
+	conn.Close()
+	eventually(t, "the drop", func() bool {
+		return b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-b"}).Self == ""
+	})
+	_, resp = b.helloPID("bbbbbb", "claude-a", procP)
+	if resp.ClaudeSession != "claude-b" || resp.Name != nameB {
+		t.Fatalf("a stale server got ID %q and name %q, want claude-b and %s", resp.ClaudeSession, resp.Name, nameB)
+	}
+	holds(t, "the live name", time.Second, func() bool { return b.nameOf(bob) == nameB })
+}
+
 // Two MCP servers in one Claude Code process, which is what a project and a user config for t4
 // make: both move to the conversation the hook reports, and since a name is an address the two do
 // not share one.

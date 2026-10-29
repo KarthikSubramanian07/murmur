@@ -183,9 +183,6 @@ type session struct {
 	// clientPID is the MCP server's parent process, 0 if its hello gave none. A hook run by the
 	// same process speaks for this session (see hookSessionsLocked).
 	clientPID int
-	// followed says claudeSession came from a hook, not from a hello: a hook always has the live
-	// ID, where an MCP server's environment may be stale (see hello).
-	followed bool
 }
 
 // syncMode says what a sync does with events this daemon hasn't processed.

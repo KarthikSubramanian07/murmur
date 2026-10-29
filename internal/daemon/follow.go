@@ -85,7 +85,7 @@ func (d *Daemon) hookSessionsLocked(claude string, pid int) []*session {
 // presence. Nothing goes on the bus: the session has not stopped or started. Caller holds mu.
 func (d *Daemon) followLocked(s *session, claude string) {
 	from := s.name
-	s.claudeSession, s.followed = claude, true
+	s.claudeSession = claude
 	s.key = d.uniqueKeyLocked(nameKey(claude, s.id), s.id)
 	d.setNameLocked(s, d.st.NameKeys[s.key])
 	if s.name == "" {
