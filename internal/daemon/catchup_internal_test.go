@@ -34,4 +34,9 @@ func TestReturnedSessionKeepsCatchUp(t *testing.T) {
 	if n := len(d.st.Inbox["cccccc"]); n != 0 {
 		t.Errorf("a session new here got %d messages sent before it started", n)
 	}
+	// After a long outage the backlog is skipped, whether or not the session came back first.
+	d.deliverLocked(msg("bbbbbb"), modeSkip)
+	if n := len(d.st.Inbox["bbbbbb"]); n != 1 {
+		t.Errorf("a skip gave the returned session a message: its inbox has %d, want 1", n)
+	}
 }

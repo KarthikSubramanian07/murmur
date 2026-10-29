@@ -402,7 +402,7 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) {
 			continue
 		}
 		// A recipient not registered here is a stopped session, which may come back.
-		if s := d.sessions[id]; mode != modeNormal && !d.sentSinceLocked(e, id) &&
+		if s := d.sessions[id]; mode != modeNormal && !d.sentSinceLocked(e, id, mode) &&
 			(mode == modeSkip || id == proto.CLISession || s != nil && !s.reconnect) {
 			continue
 		}
@@ -428,16 +428,18 @@ func (d *Daemon) recipientsLocked() []string {
 	return append(ids, proto.CLISession)
 }
 
-// sentSinceLocked says whether e was sent after session id started, or for a session back from
-// stopped, after it stopped; by the sender's clock, with a minute's allowance for it. Caller holds
-// mu.
-func (d *Daemon) sentSinceLocked(e bus.Event, id string) bool {
+// sentSinceLocked says whether e was sent after session id started, by the sender's clock, with a
+// minute's allowance for it. In a catch-up, a session back from stopped counts from when it
+// stopped, which is what its kept inbox would have held had it not registered first. A skip
+// keeps to when it started, so what a long outage skips doesn't depend on which came first.
+// Caller holds mu.
+func (d *Daemon) sentSinceLocked(e bus.Event, id string, mode syncMode) bool {
 	s := d.sessions[id]
 	if s == nil {
 		return false
 	}
 	from := s.started
-	if !s.since.IsZero() {
+	if mode == modeCatchUp && !s.since.IsZero() {
 		from = s.since
 	}
 	return !e.At.Before(from.Add(-time.Minute))
