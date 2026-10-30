@@ -303,10 +303,16 @@ type inMsg struct {
 	Noticed bool      `json:"noticed"`
 	// Pushing says the message is being delivered into its session as a turn, so the hook's notice
 	// and inbox leave it alone: it either arrives as the turn, and is gone from the inbox, or the
-	// delivery fails and it is theirs again. PushFailed says that delivery failed, or the message
-	// was too old to wake a session with (see pushMaxAge). Neither is kept over a restart.
+	// delivery fails and it is theirs again. PushFailed says that delivery failed. Neither is kept
+	// over a restart.
 	Pushing    bool `json:"-"`
 	PushFailed bool `json:"-"`
+	// Attempted says the message was handed to T3 or the socket, and it may be in the session's
+	// conversation, though the daemon doesn't know (see deliver.go). It is saved before the handoff
+	// and taken off only when the attempt provably went nowhere, so a restart in the middle of a
+	// delivery, or after one that failed, finds it, and the message is left to the hook's notice
+	// instead of being delivered a second time.
+	Attempted bool `json:"attempted,omitempty"`
 }
 
 // state is what survives a restart, in state.json.

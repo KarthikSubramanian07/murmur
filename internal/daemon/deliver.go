@@ -206,9 +206,10 @@ func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, 
 }
 
 // pushable says a message may still be delivered as a turn: it wasn't told to the session by the
-// hook, isn't on its way in already, hasn't failed, and isn't too old.
+// hook, isn't on its way in already, hasn't failed, wasn't handed over before (Attempted: not even
+// by a daemon that has since restarted), and isn't too old.
 func pushable(m *inMsg) bool {
-	return !m.Noticed && !m.Pushing && !m.PushFailed && time.Since(m.Arrived) <= pushMaxAge
+	return !m.Noticed && !m.Pushing && !m.PushFailed && !m.Attempted && time.Since(m.Arrived) <= pushMaxAge
 }
 
 // queuedForPushLocked says message m of session id is on its way in as a turn, or will be: the
@@ -263,7 +264,8 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 // if the first attempt never reached the way in (notReached): `t3 thread send` takes no key that
 // would make a repeat harmless, and the socket answers nothing, so a call that failed after it
 // started may have delivered the message, and a second one would make a second turn of it. A message
-// whose delivery failed that way is left to the hook's notice, which the agent still gets.
+// whose delivery failed that way is left to the hook's notice, which the agent still gets, and stays
+// so over a daemon restart (sendTurn marks it Attempted, and saves that, before the handoff).
 func (d *Daemon) deliver(ctx context.Context, j *pushJob) error {
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
@@ -304,11 +306,51 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 	}
 	switch j.via {
 	case viaT3:
-		return t3.Send(ctx, j.route.T3CLI, j.route.T3Home, j.route.T3Thread, j.text)
+		return d.attempt(j.msg, func() error {
+			return t3.Send(ctx, j.route.T3CLI, j.route.T3Home, j.route.T3Thread, j.text)
+		})
 	case viaSocket:
-		return msgsock.Send(ctx, j.route.MsgSocket, j.route.MsgToken, j.text)
+		return d.attempt(j.msg, func() error {
+			return msgsock.Send(ctx, j.route.MsgSocket, j.route.MsgToken, j.text)
+		})
 	}
 	return fmt.Errorf("no way to deliver by %s", j.via)
+}
+
+// attempt runs send, the handoff of message m, after marking m Attempted and saving the mark: the
+// daemon may stop at any point of the call, and the next one has to know the message may be there.
+// If the mark can't be saved nothing is sent, and the message is left to the hook's notice, as after
+// any failed delivery. The mark comes off again if send never reached the way in (notReached), as
+// nothing was sent. The save is to the file, which a restart of the process finds; a power cut may
+// lose it.
+func (d *Daemon) attempt(m *inMsg, send func() error) error {
+	if err := d.markAttempted(m, true); err != nil {
+		return err
+	}
+	err := send()
+	if notReached(err) {
+		d.markAttempted(m, false)
+	}
+	return err
+}
+
+// markAttempted sets m.Attempted to v and saves it. A mark that couldn't be saved is not kept, and
+// is an error; a mark that couldn't be taken off is logged, and left in the file, which errs the
+// safe way (a notice after a restart).
+func (d *Daemon) markAttempted(m *inMsg, v bool) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	m.Attempted = v
+	err := writeJSON(d.statePath(), d.st)
+	switch {
+	case err == nil:
+	case v:
+		m.Attempted = false
+		return fmt.Errorf("not delivering the message, as the mark that it was handed over can't be saved: %w", err)
+	default:
+		d.log.Printf("saving state: %v", err)
+	}
+	return nil
 }
 
 // finishPush records how a delivery went. A delivered message leaves the inbox, wherever it is by

@@ -4,10 +4,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/a-Fig/t4/internal/brand"
 	"github.com/a-Fig/t4/internal/proto"
 )
 
@@ -67,6 +69,88 @@ func TestADeliveryThatMayHaveLandedIsNotRepeated(t *testing.T) {
 		return len(notices) > 0
 	})
 	if notices[0] != "might have landed" {
+		t.Errorf("notices: %q", notices)
+	}
+}
+
+// The same holds over a restart of the daemon (#82): the memory of a delivery that may have landed
+// was in the daemon alone, so a daemon that started within the 15 minutes a message stays deliverable
+// sent the same turn again. The mark is saved before the handoff, so it is there whether the daemon
+// stopped after the call failed or in the middle of it, and the message is left to the notice.
+func TestADeliveryThatMayHaveLandedIsNotRepeatedAfterARestart(t *testing.T) {
+	route := func(exe string) proto.Route { return proto.Route{T3CLI: exe, T3Thread: "thread-bob"} }
+	for _, tc := range []struct {
+		name string
+		env  string // what makes the stand-in fail, or take its time, the first time
+		val  string
+		// failed says the daemon is restarted after the call has failed, not while it runs.
+		failed bool
+	}{
+		{"after the call failed", fakeT3FailEnv, "1", true},
+		{"in the middle of the call", fakeT3SleepEnv, "30s", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			remote := newRemote(t)
+			exe, calls := useFakeT3(t)
+			t.Setenv(tc.env, tc.val)
+			var out syncBuf
+			a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
+			alice, _ := a.session("aaaaaa", "")
+			bob, _ := b.sessionRoute("bbbbbb", "claude-bob", route(exe))
+			eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+
+			a.send("aaaaaa", bob, "might have landed", "body")
+			eventually(t, "the attempt", func() bool { return len(calls()) == 1 })
+			if tc.failed {
+				eventually(t, "the failure", func() bool { return strings.Contains(out.String(), "as a turn through T3 failed") })
+			}
+			// On disk now, while the call is still running if it is: a daemon that is killed finds the file as it is.
+			st, err := os.ReadFile(filepath.Join(b.gitDir, brand.StateDir, "state.json"))
+			if err != nil || !regexp.MustCompile(`"attempted":\s*true`).Match(st) {
+				t.Errorf("state.json doesn't say the message was handed over (%v):\n%s", err, st)
+			}
+
+			t.Setenv(tc.env, "") // T3 would take the message now, if it were sent again
+			b.restart()
+			b.sessionRoute("bbbbbb", "claude-bob", route(exe)) // the session's MCP server reconnects
+			holds(t, "no second call after the restart", 2*time.Second, func() bool { return len(calls()) == 1 })
+			var notices []string
+			eventually(t, "the notice", func() bool {
+				notices = append(notices, b.hook("claude-bob", 0)...)
+				return len(notices) > 0
+			})
+			if notices[0] != "might have landed" {
+				t.Errorf("notices: %q", notices)
+			}
+		})
+	}
+}
+
+// A message is not handed over unless the mark that it was has been saved: a mark that couldn't be
+// would leave a restart nothing to find, and the turn would be sent again. It is left to the notice,
+// as after any failed delivery (#82).
+func TestAMessageIsNotHandedOverWhenTheMarkCannotBeSaved(t *testing.T) {
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	var out syncBuf
+	a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+	// state.json is written by way of state.json.tmp: a directory there makes every save fail.
+	if err := os.Mkdir(filepath.Join(b.gitDir, brand.StateDir, "state.json.tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	a.send("aaaaaa", bob, "cannot be marked", "body")
+	eventually(t, "the refusal", func() bool { return strings.Contains(out.String(), "can't be saved") })
+	holds(t, "no call to t3", time.Second, func() bool { return len(calls()) == 0 })
+	var notices []string
+	eventually(t, "the notice", func() bool {
+		notices = append(notices, b.hook("claude-bob", 0)...)
+		return len(notices) > 0
+	})
+	if notices[0] != "cannot be marked" {
 		t.Errorf("notices: %q", notices)
 	}
 }

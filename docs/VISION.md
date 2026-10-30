@@ -633,6 +633,15 @@ A body past the limit is cut, as in `inbox`.
   MCP tool `t3_thread_send` has `clientRequestId`, the command line doesn't), and the messaging
   socket answers nothing, so a second call would deliver the message twice, as two turns. The cost
   is that a failure that was only a failure (T3 starting up, say) gets a notice and no second try.
+  The mark that a message was handed over ("attempted", in `state.json`) is saved before the
+  handoff, not after, so it holds when the daemon stops in the middle of the call or right after a
+  failed one; a daemon that starts again within the 15 minutes finds it and leaves the message to the
+  notice, where it would otherwise have sent the turn a second time (#82). The mark comes off only
+  when the call provably went nowhere, as above (that includes a `t3` call cancelled before it could
+  start). A mark that can't be saved stops the handoff: the message is a notice, as after any failed
+  delivery. The save is a write to the file, which a power cut can still lose. A crash between the
+  save and the handoff leaves the mark on a message that was never sent, which is the safe way
+  round: it is a notice, not a repeat.
   The other safe way is to look in T3's database for the message before trying again
   (`orchestration_v2_projection_messages`, by thread and text, or `t3 thread show --json`); it
   would keep the second try, and it relies on tables that are T3's own and may change in any

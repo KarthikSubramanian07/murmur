@@ -13,12 +13,14 @@ import (
 // that came back as a new session, and a client session's ID in T3 did to a delivery.
 
 // A message that waited in an inbox over a restart is delivered when the daemon is back, though
-// nothing new arrives to start a delivery: the first one failed because T3 wasn't there.
+// nothing new arrives to start a delivery: both tries failed because there was no `t3` to run. (A
+// delivery that got as far as running `t3` is not repeated after a restart: deliver_repeat_test.go.)
 func TestMessagesKeptOverARestartAreDeliveredWhenTheDaemonIsBack(t *testing.T) {
 	remote := newRemote(t)
-	exe, calls := useFakeT3(t)
-	t.Setenv(fakeT3FailEnv, "1")
-	a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+	exe, install, calls := lateT3(t)
+	var out syncBuf
+	a := newDevice(t, remote)
+	b := newDeviceWith(t, remote, func(d *device) { d.grace, d.keep, d.logTo = 300*time.Millisecond, time.Hour, &out })
 	alice, _ := a.session("aaaaaa", "")
 	bob, conn := b.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
@@ -26,11 +28,11 @@ func TestMessagesKeptOverARestartAreDeliveredWhenTheDaemonIsBack(t *testing.T) {
 	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.seesSession(bob) })
 
 	a.send("aaaaaa", bob, "while T3 was away", "wake up")
-	eventually(t, "the attempt to fail", func() bool { return len(calls()) == 1 })
+	eventually(t, "both tries to fail", func() bool { return strings.Contains(out.String(), "as a turn through T3 failed") })
 
-	t.Setenv(fakeT3FailEnv, "") // T3 is back, and so is the daemon
+	install() // T3 is back, and so is the daemon
 	b.restart()
-	eventually(t, "the delivery after the restart", func() bool { return len(calls()) == 2 })
+	eventually(t, "the delivery after the restart", func() bool { return len(calls()) == 1 })
 }
 
 // The hook doesn't tell a session of the messages queued behind the one being delivered: they are
