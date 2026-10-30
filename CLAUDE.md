@@ -2,9 +2,10 @@
 
 t4 lets coding agents on different teammates' machines, in the same private repo, discover and
 message each other, with git refs on GitHub as the transport. V1 exists (2026-10-26): one Go
-binary, `cmd/t4`, with its packages in `internal/`; `go test ./...` runs it all. `docs/VISION.md`
-is the design and its reasons; read it before proposing architecture, and change it when a
-decision changes. The name lives in `internal/brand`, so a rename is one file.
+binary, `cmd/t4`, with its packages in `internal/`; `go test ./...` runs it all, and every pull
+request runs it on a runner on Tyler's home server, a machine his production work shares
+(`docs/testing.md`). `docs/VISION.md` is the design and its reasons; read it before proposing
+architecture, and change it when a decision changes. The name lives in `internal/brand`, so a rename is one file.
 
 ## Writing for whoever comes next
 
