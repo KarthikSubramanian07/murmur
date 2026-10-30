@@ -408,8 +408,8 @@ a git library, so it gets each user's credential helpers, SSH config and URL rew
 ## Build order
 
 1. Daemon, CLI and git transport, tested with two clones on one machine, then between Tyler's
-   Windows laptop and his homeserver (macOS). The homeserver pushes with a deploy key for this
-   repo (added 2026-10-26). The test of custom refs against Actions and webhooks is done (above).
+   Windows laptop and a macOS machine. That machine pushed with a deploy key for this repo (added
+   2026-10-26). The test of custom refs against Actions and webhooks is done (above).
 2. MCP server and the Claude Code hook. The first useful version.
 3. T3: connect as an MCP server. `t3 thread send`, run on the same machine, queues a message
    into any thread and starts its turn, so waking an idle thread (#25) needs no change to T3.

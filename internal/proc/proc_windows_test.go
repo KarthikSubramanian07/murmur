@@ -311,9 +311,9 @@ func TestStartDetachedWithoutJob(t *testing.T) {
 // TestWindowsCommandLineRoundTrip checks that the command line handed to WMI splits back into the
 // same argv, including a path with spaces (the Desktop path has them) and awkward quoting.
 func TestWindowsCommandLineRoundTrip(t *testing.T) {
-	path := `C:\Users\smash\Desktop\Claude Work Space\t4\t4.exe`
+	path := `C:\Users\dev\Desktop\My Project\t4\t4.exe`
 	args := []string{
-		"daemon", "--git-dir", `C:\Users\smash\Desktop\Claude Work Space\t4\.git`,
+		"daemon", "--git-dir", `C:\Users\dev\Desktop\My Project\t4\.git`,
 		"--log", `C:\dir with "quotes"\ends with a slash\`,
 	}
 	got, err := windows.DecomposeCommandLine(windowsCommandLine(path, args))
