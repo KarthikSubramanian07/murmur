@@ -78,6 +78,13 @@ func TestHeadReadsTheSameAsGit(t *testing.T) {
 	sameHead(t, "orphan in a linked worktree", linked)
 	sameHead(t, "main worktree beside them", dir)
 
+	// A branch that is itself a symbolic ref: git names the branch it leads to.
+	hgit(t, dir, "symbolic-ref", "refs/heads/alias", "refs/heads/feature/with/slashes")
+	hgit(t, dir, "symbolic-ref", "HEAD", "refs/heads/alias")
+	sameHead(t, "on a branch that is a symbolic ref", dir)
+	hgit(t, dir, "symbolic-ref", "HEAD", "refs/heads/feature/with/slashes")
+	hgit(t, dir, "symbolic-ref", "--delete", "refs/heads/alias")
+
 	// A tree tag and a ref at a tree are no tips.
 	hgit(t, dir, "update-ref", "refs/custom/tree", hgit(t, dir, "rev-parse", "HEAD^{tree}"))
 	sameHead(t, "with a ref at a tree", dir)

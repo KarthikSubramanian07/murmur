@@ -92,7 +92,8 @@ func readHEAD(gitDir, commonDir string) (symref, sha string, ok bool) {
 
 // headFromFile completes a Ref from what the HEAD file said, with one for-each-ref: the tips, and
 // the commit HEAD's branch is at. A branch that isn't among the refs is unborn, as headByGit has
-// it; a branch at anything but a commit is left to git to read.
+// it; a branch at anything but a commit, or one that is itself a symbolic ref (git names the branch
+// at the end of the chain), is left to git to read.
 func headFromFile(ctx context.Context, worktree, gitDir, symref, sha string, ref Ref) (Ref, error) {
 	head, err := scanRefs(ctx, worktree, symref, &ref)
 	if err != nil {
@@ -102,6 +103,9 @@ func headFromFile(ctx context.Context, worktree, gitDir, symref, sha string, ref
 		ref.SHA = sha
 	} else {
 		ref.Branch = strings.TrimPrefix(symref, "refs/heads/")
+		if head.symref != "" {
+			return headByGit(ctx, worktree, Ref{Time: ref.Time})
+		}
 		switch head.objectType {
 		case "":
 			// Unborn: a symbolic HEAD whose branch does not exist yet.
@@ -139,13 +143,14 @@ func headByGit(ctx context.Context, worktree string, ref Ref) (Ref, error) {
 	return ref, nil
 }
 
-// refLine is one ref as for-each-ref lists it.
-type refLine struct{ objectType, objectName string }
+// refLine is one ref as for-each-ref lists it. symref is the ref it names, if it is a symbolic ref;
+// its object is then the one at the end of the chain.
+type refLine struct{ objectType, objectName, symref string }
 
 // scanRefs records every ref tip in ref, and returns the line of the ref named branch, if there is
 // one (empty when branch is "" or doesn't exist).
 func scanRefs(ctx context.Context, worktree, branch string, ref *Ref) (refLine, error) {
-	out, err := gitx.RunIn(ctx, worktree, "for-each-ref", "--format=%(refname)%00%(objecttype)%00%(objectname)")
+	out, err := gitx.RunIn(ctx, worktree, "for-each-ref", "--format=%(refname)%00%(objecttype)%00%(objectname)%00%(symref)")
 	if err != nil {
 		return refLine{}, err
 	}
@@ -156,11 +161,11 @@ func scanRefs(ctx context.Context, worktree, branch string, ref *Ref) (refLine, 
 			continue
 		}
 		fields := strings.Split(strings.TrimSuffix(line, "\r"), "\x00")
-		if len(fields) != 3 {
+		if len(fields) != 4 {
 			return refLine{}, fmt.Errorf("unexpected git for-each-ref output: %q", line)
 		}
 		if branch != "" && fields[0] == branch {
-			head = refLine{fields[1], fields[2]}
+			head = refLine{fields[1], fields[2], fields[3]}
 		}
 		switch fields[1] {
 		case "commit", "tag":
