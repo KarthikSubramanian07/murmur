@@ -467,7 +467,11 @@ change and a daemon that knows no names delivers by it all the same.
   readable commit, or its history no longer holds what was read before, the next commit is a new
   root holding a snapshot of every name the daemon has seen, leased on the tip it found. A daemon
   writes that on noticing the damage, not when it next needs a name, so that one joining later
-  learns what was taken.
+  learns what was taken. A listing that shows no registry, when the daemon has read one, is
+  checked again before it counts as a deletion: a sync lists the remote before it takes the lock
+  that records the daemon's own pushes, so it can predate the daemon's first name (#80,
+  2026-10-30; the first version took it for a deletion and replaced the registry's history with a
+  snapshot).
 - **Without the remote.** A session that can't get its name works as `device/session`, with its
   name shown as pending, and the daemon keeps trying in the background, and at once when it can
   reach the remote again.

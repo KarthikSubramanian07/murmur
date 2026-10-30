@@ -69,7 +69,8 @@ func (d *Daemon) noteNameLocked(name, addr string) bool {
 }
 
 // processNames reads the registry's tip into the set of used names. sha is the tip on the remote
-// and already fetched, "" if the ref isn't there. Caller holds advMu.
+// and already fetched, "" if the listing didn't show the ref (which it checks again, if this
+// daemon has read the registry before). Caller holds advMu.
 //
 // Anyone with push access can write any ref, so the tip may be junk, or a history that no longer
 // holds what this daemon read before. Nothing read is ever forgotten; but the registry then no
@@ -86,6 +87,37 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	fail := func(err error) {
 		if ctx.Err() == nil {
 			d.log.Printf("reading the names registry: %v", err)
+		}
+	}
+	if sha == "" && good != "" {
+		// A registry this daemon has read or written, and a listing that says it isn't there. A
+		// sync lists the remote before it takes advMu, so the listing can be older than this
+		// daemon's own push of the registry, which attemptName records under advMu: the first
+		// name, pushed and recorded while the sync waited for the lock. That is no deletion, and
+		// taking it for one sets the registry to be repaired, which replaces its history with a
+		// snapshot (#80). A listing that shows an older tip is mended by the fetch that follows
+		// it, which brings the current one; a listing without the registry has nothing to
+		// fetch, so ask the remote again. Anything this daemon recorded had landed before it was
+		// recorded, so a registry the remote doesn't show now was deleted.
+		cur, err := d.repo.RemoteRef(ctx, brand.NamesRef)
+		if err != nil {
+			fail(err)
+			return
+		}
+		if cur != "" {
+			if err := d.repo.Fetch(ctx, []string{brand.NamesRef}); err != nil {
+				fail(err)
+				return
+			}
+			// The fetch brings what is there now, which may be newer than what was just listed.
+			local, err := d.repo.LocalRefs(ctx)
+			if err != nil {
+				fail(err)
+				return
+			}
+			if sha = local[brand.NamesRef]; sha == "" {
+				sha = cur
+			}
 		}
 	}
 	isCommit := false
