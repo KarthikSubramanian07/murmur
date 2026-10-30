@@ -134,6 +134,34 @@ func TestOfflineReaderCallsNobodyStale(t *testing.T) {
 	holds(t, "b fresh on a once a is back", time.Second, func() bool { return a.fresh(bdev) })
 }
 
+// A daemon that starts after another device went quiet, longer ago than the stale limit, shows it
+// stale from the first time it lists it, not alive for one more stale period (#66).
+func TestNewDaemonShowsADeadDeviceStaleAtOnce(t *testing.T) {
+	remote := newRemote(t)
+	b := newDevice(t, remote)
+	bdev := b.self()
+	eventually(t, "b's presence on the remote", func() bool {
+		return strings.Contains(git(t, remote, "for-each-ref", "refs/t4/presence/"+bdev), bdev)
+	})
+	b.offline(remote, true) // no more heartbeats, and no goodbye
+	time.Sleep(2 * b.stale)
+
+	c := newDevice(t, remote)
+	var stale bool
+	eventually(t, "c lists b", func() bool {
+		for _, dv := range c.do(proto.Request{Op: proto.OpWho}).Devices {
+			if dv.ID == bdev {
+				stale = dv.Stale
+				return true
+			}
+		}
+		return false
+	})
+	if !stale {
+		t.Errorf("c's first listing of b, quiet for %s, shows it alive", 2*b.stale)
+	}
+}
+
 // After a restart, what arrived while the daemon was down reaches sessions that were running
 // before and reconnect, and nobody else.
 func TestRestartCatchesUpReconnectingSessions(t *testing.T) {

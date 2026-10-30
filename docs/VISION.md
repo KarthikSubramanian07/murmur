@@ -62,8 +62,12 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
 - A reader measures staleness from when it saw a presence change, on its own monotonic clock, and
   only up to its own last successful sync, so a reader that was itself asleep or offline doesn't
   take everyone else for gone. Only a presence it has never seen change is dated by the writer's
-  clock, and never more than 2 minutes back, so a slow clock can't make a device look gone before
-  its next heartbeat.
+  clock, from when the tip commit was written and never later than now. A daemon that has just
+  started sees every device's ref as new, so dating them from now showed devices dead for hours
+  as alive for the first 6 minutes, which is when a new session is most likely to ask `who`
+  (seen live, 2026-10-30). A writer whose clock runs more than 6 minutes slow looks stale until
+  its next heartbeat, at most 2 minutes, when the reader sees the presence change and times it
+  itself.
 - Custom refs, not branches, so CI and preview deploys don't fire on every message, and
   `git clone` / `git pull` never fetch them. git-bug uses `refs/bugs/*` on GitHub the same way.
   Tested on this repo on 2026-10-26: a push to `refs/t4/*` produced no `push` webhook delivery

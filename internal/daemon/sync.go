@@ -330,15 +330,17 @@ func (d *Daemon) staleLocked(p *peer) bool {
 	return !d.lastPollOK.IsZero() && d.lastPollOK.Sub(p.lastChange) > d.opt.StaleAfter
 }
 
-// firstSight is when to treat a presence as last changed when this daemon has no observation
-// of its own. The writer's clock is trusted once, but never so far back that the device would be
-// judged stale before its next heartbeat could arrive: a peer whose clock runs slow would
-// otherwise look gone, and messages to it would warn that nobody may read them. A device that
-// really is gone takes 2 heartbeats longer to be called so by a reader that just started.
-func (d *Daemon) firstSight(p bus.Presence) time.Time {
+// firstSight is when to treat a presence as last changed when this daemon has no observation of
+// its own: when its tip commit was written, by the writer's clock. Every device's ref is new to a
+// daemon that has just started, so dating them all from now would show a device that went quiet
+// hours ago as alive for the first StaleAfter, exactly when a session that has just started is
+// most likely to ask who is on (#66, seen live 2026-10-30). A clock that runs ahead can't make a
+// device look newer than now. One that runs behind makes a live device look stale until its next
+// heartbeat, at most a heartbeat later, when the daemon sees the presence change and times it
+// itself.
+func firstSight(written time.Time) time.Time {
 	now := time.Now()
-	age := min(max(now.Sub(p.At), 0), max(d.opt.StaleAfter-2*d.opt.Heartbeat, 0))
-	return now.Add(-age) // from now, to keep a monotonic reading
+	return now.Add(-max(now.Sub(written), 0)) // from now, to keep a monotonic reading
 }
 
 // advanceMesh processes a device's log up to sha and delivers its messages, as the sync mode
@@ -610,7 +612,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	pres.Clean()
 	changed := time.Now()
 	if p == nil {
-		changed = d.firstSight(pres) // no change of ours to time it by
+		changed = firstSight(c.Time) // no change of ours to time it by
 	}
 	d.mu.Lock()
 	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed}
