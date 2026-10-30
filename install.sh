@@ -53,9 +53,11 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
   # releases/latest/download needs no login only on a public repo; a private one is read through
   # the API. The API names assets by id, and sends the file itself from a redirect that must not
   # get the token (its storage host rejects a request that carries two kinds of credentials).
+  # curl runs with -q so that a user's .curlrc can't turn on following redirects with the token
+  # or printing request headers.
   api=https://api.github.com/repos/$repo/releases
   if [ -n "$tag" ]; then api=$api/tags/$tag; else api=$api/latest; fi
-  curl -fsS --retry 2 -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' \
+  curl -q -fsS --retry 2 -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' \
     -o "$tmp/release.json" "$api" ||
     die "could not read the release at $api (is the token valid, with access to $repo, and does the release exist? 'latest' skips prereleases; pin one with T4_VERSION. To download without a token, unset GITHUB_TOKEN)."
   fetch() {
@@ -70,17 +72,22 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
         if (name == want && id != "") { print id; exit }
       }')
     [ -n "$id" ] || die "the release has no asset named $1."
-    url=$(curl -fsS --retry 2 -o /dev/null -w '%{redirect_url}' -H "Authorization: Bearer $GITHUB_TOKEN" \
+    # The answer is either the file itself (200) or a redirect to it (3xx).
+    reply=$(curl -q -fsS --retry 2 -o "$tmp/$1" -w '%{http_code} %{redirect_url}' -H "Authorization: Bearer $GITHUB_TOKEN" \
       -H 'Accept: application/octet-stream' "https://api.github.com/repos/$repo/releases/assets/$id") ||
       die "could not start the download of $1."
-    [ -n "$url" ] || die "GitHub did not say where to download $1 from."
-    curl -fsS --retry 2 -L -o "$tmp/$1" "$url" || die "the download of $1 failed."
+    code=${reply%% *}
+    url=${reply#* }
+    if [ "$code" != 200 ]; then
+      [ -n "$url" ] || die "GitHub did not say where to download $1 from."
+      curl -q -fsS --retry 2 -L -o "$tmp/$1" "$url" || die "the download of $1 failed."
+    fi
   }
 else
   if [ -n "$tag" ]; then base=https://github.com/$repo/releases/download/$tag
   else base=https://github.com/$repo/releases/latest/download; fi
   fetch() {
-    curl -fsSL --retry 2 -o "$tmp/$1" "$base/$1" ||
+    curl -q -fsSL --retry 2 -o "$tmp/$1" "$base/$1" ||
       die "could not download $base/$1 (is the release published, and is $repo public? Otherwise set GITHUB_TOKEN)."
   }
 fi
@@ -109,9 +116,10 @@ cp "$tmp/$asset" "$dir/.t4.new.$$" || die "could not write to $dir."
 chmod 755 "$dir/.t4.new.$$"
 mv -f "$dir/.t4.new.$$" "$dir/t4" || die "could not put t4 at $dir/t4."
 
-# The rc file should hold the literal $HOME, not this shell's value of it.
+# The rc file should hold the literal $HOME, not this shell's value of it, and add the folder only
+# if it's missing, since a login profile that sources .bashrc runs this twice.
 # shellcheck disable=SC2016
-line='export PATH="$HOME/.local/bin:$PATH"'
+line='case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
 path_note=
 case ":$PATH:" in
   *":$dir:"*) ;;
@@ -133,7 +141,7 @@ $login"
       */fish)
         files=$HOME/.config/fish/conf.d/t4.fish
         # shellcheck disable=SC2016
-        line='set -gx PATH $HOME/.local/bin $PATH'
+        line='contains $HOME/.local/bin $PATH; or set -gx PATH $HOME/.local/bin $PATH'
         ;;
       *) files=$HOME/.profile ;;
     esac
@@ -141,6 +149,7 @@ $login"
     oldifs=$IFS
     IFS='
 '
+    set -f   # $files is split on newlines only; a glob character in HOME must not expand
     for f in $files; do
       if [ -f "$f" ] && grep -qF '# added by the t4 installer' "$f"; then continue; fi
       mkdir -p "$(dirname "$f")"
@@ -148,6 +157,7 @@ $login"
       changed="$changed $f"
     done
     IFS=$oldifs
+    set +f
     if [ -n "$changed" ]; then
       path_note="Added $dir to PATH in${changed}. Open a new terminal for it to take effect."
     else

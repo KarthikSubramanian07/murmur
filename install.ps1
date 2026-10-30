@@ -67,8 +67,19 @@
                 } catch {
                     throw "t4 install: could not start the download of ${name}: $($_.Exception.Message)"
                 }
-                $location = $response.Headers['Location']
-                $response.Close()
+                # The answer is either the file itself (200) or a redirect to it (3xx).
+                try {
+                    if ([int]$response.StatusCode -eq 200) {
+                        $file = [IO.File]::Create((Join-Path $tmp $name))
+                        try { $response.GetResponseStream().CopyTo($file) } finally { $file.Close() }
+                        return
+                    }
+                    $location = $response.Headers['Location']
+                } catch {
+                    throw "t4 install: the download of $name failed: $($_.Exception.Message)"
+                } finally {
+                    $response.Close()
+                }
                 if (-not $location) { throw "t4 install: GitHub did not say where to download $name from." }
                 try {
                     Invoke-WebRequest -UseBasicParsing -Uri $location -OutFile (Join-Path $tmp $name)

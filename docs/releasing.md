@@ -28,11 +28,8 @@ git push origin v0.1.0
 
 ## Installing from a release
 
-`install.sh` (macOS, Linux) and `install.ps1` (Windows) fetch the binary for the machine's OS and
-architecture, check it against `SHA256SUMS`, put it in `~/.local/bin` (`%USERPROFILE%\.local\bin`),
-and add that folder to the user's PATH if it isn't there. Neither needs sudo or an administrator.
-Each script's header lists its options: `T4_VERSION` to pin a release, `GITHUB_TOKEN` to download
-through the API from a private repo, `T4_REPO` to use another repo's releases.
+The README has the one-line installs, and each script's header lists its options. This is what
+those don't say:
 
 - **What the checksum proves.** The binaries and `SHA256SUMS` come from the same release, so the
   check catches a damaged or truncated download, not a release someone with write access tampered
@@ -47,8 +44,8 @@ through the API from a private repo, `T4_REPO` to use another repo's releases.
 
 ## While the repo is private
 
-The one-line installs in the README need `a-Fig/t4` to be public (#54); until then even the script
-can't be fetched without a login. On 2026-10-29 the way to install was:
+Until `a-Fig/t4` is public (#54), even the script can't be fetched without a login. On 2026-10-29
+the way to install was:
 
 ```sh
 gh api repos/a-Fig/t4/contents/install.sh -H 'Accept: application/vnd.github.raw' | GITHUB_TOKEN=$(gh auth token) sh
