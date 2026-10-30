@@ -8,8 +8,10 @@ Built for small teams at hackathons, on private repos.
 other. t4 extends that across machines, and to Claude Code and Codex sessions as well as T3's.
 
 **Status:** V1, 2026-10-26: the daemon, MCP server and Claude Code hook work between two machines
-through GitHub. From 2026-10-29 an agent joins a repo by itself, once its user says yes. "t4" is a
-working name.
+through GitHub. From 2026-10-29 an agent joins a repo by itself, once its user says yes, and a
+message reaches the other agent as a turn. On 2026-10-30 a Claude thread and a Codex thread in T3
+Code, in two clones, each joined after their user said yes and then talked with nobody typing: 15 s
+from question to answer. "t4" is a working name.
 
 ## How it works, in brief
 
@@ -63,10 +65,9 @@ Committing installs nothing for anyone.
 
 A teammate's agent that reads that section follows `join.md`: it asks its user whether to join, and
 says what joining does. If the user says yes, the agent does the rest itself: it installs t4 with
-a one-line command,
-runs `t4 join`, and tells the user whether to start a new session to get the tools (Claude Code
-and Codex each differ; `t4 join` prints which). If the user says no, nothing happens. Agents then
-use the `who`, `lookup`, `status`, `send` and `inbox` tools.
+a one-line command, runs `t4 join`, and tells the user whether to start a new session to get the
+tools (Claude Code and Codex each differ; `t4 join` prints which). If the user says no, nothing
+happens. Agents then use the `who`, `lookup`, `status`, `send` and `inbox` tools.
 
 Until a user has joined in a clone, t4 is silent there: the MCP server answers with no tools, and
 nothing is started or published. `docs/VISION.md` ("Joining a repo") says what `t4 join` writes and
