@@ -2,10 +2,22 @@
 # Stops this VM once the CI runner has had no job for 30 minutes: a stopped Spot VM bills only its
 # disk. The webhook service (Cloud Run, t4-ci-wake) starts it again when a job for it is queued.
 mark=/run/t4-last-busy          # /run is cleared at boot, so a fresh boot gets the full 30 minutes
+stopping=http://metadata.google.internal/computeMetadata/v1/instance/guest-attributes/t4/stopping
 [ -f "$mark" ] || touch "$mark"
 if pgrep -f Runner.Worker >/dev/null; then touch "$mark"; exit 0; fi
 idle=$(( $(date +%s) - $(stat -c %Y "$mark") ))
-if [ "$idle" -gt 1800 ]; then
-  logger "t4-idle-stop: no job for ${idle}s; stopping the VM"
-  shutdown -h now
+[ "$idle" -gt 1800 ] || exit 0
+
+# The VM shows RUNNING until its system has shut down, so t4-ci-wake can't see that it is stopping.
+# Say so first, in a guest attribute t4-ci-wake reads: a job queued from now on waits for the stop
+# and starts the VM again. One queued just before has 20 seconds to reach the runner.
+curl -sf -X PUT -H 'Metadata-Flavor: Google' --data "$(date +%s)" "$stopping" ||
+  logger "t4-idle-stop: couldn't mark the VM as stopping"
+sleep 20
+if pgrep -f Runner.Worker >/dev/null; then
+  curl -sf -X DELETE -H 'Metadata-Flavor: Google' "$stopping"
+  touch "$mark"
+  exit 0
 fi
+logger "t4-idle-stop: no job for ${idle}s; stopping the VM"
+shutdown -h now

@@ -36,11 +36,17 @@ a budget of $20 (2026-10-30); going past it is his to approve.
   (4 vCPUs, 16 GB), Ubuntu 24.04, a 20 GB disk, no service account. The runner on it is
   `gcp-linux-1`, with the label `t4-ci-linux`.
 - **Stopping.** A systemd timer runs `ci/linux-runner/t4-idle-stop` every 2 minutes. After 30
-  minutes without a job it shuts the VM down. A stopped VM bills only its disk.
+  minutes without a job it shuts the VM down. A stopped VM bills only its disk. A VM shutting itself
+  down shows RUNNING until its system has stopped, so the script first marks it stopping, in the
+  guest attribute `t4/stopping`. It then gives a job queued just before 20 seconds to reach the
+  runner, and stays up if one does.
 - **Starting.** The repo's webhook 705335778 sends every `workflow_job` event to the Cloud Run
   service `t4-ci-wake` (`ci/wake`). For a queued job that asks for `t4-ci-linux`, it starts the VM.
-  The job waits in the queue until the VM has booted and the runner connects. The service can only
-  read, start and resume that one VM (custom role `t4CiWake`, granted on the instance).
+  If the VM is marked stopping, it first waits for the stop. A start that fails, as a Spot VM's can
+  when the zone has no capacity, is tried again for up to 150 seconds. The job waits in the queue
+  until the VM has booted and the runner connects. The service can read, start and resume that one
+  VM and read its guest attributes (custom role `t4CiWake`, granted on the instance). It can also
+  read the project's operations (`t4CiWakeOps`), to learn whether a start worked.
 - **Spot.** Google can stop a Spot VM at any time, with 30 seconds' notice. A job running then
   fails and needs a re-run, which queues a new job, so the VM starts again.
 - **When a job stays queued.** Re-run it: the new job's webhook starts the VM. The webhook's
@@ -69,7 +75,7 @@ gcloud compute instances create t4-ci-linux-1 --zone=us-central1-a --machine-typ
   --provisioning-model=SPOT --instance-termination-action=STOP \
   --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud \
   --boot-disk-size=20GB --boot-disk-type=pd-balanced --no-service-account --no-scopes \
-  --labels=purpose=t4-ci
+  --metadata=enable-guest-attributes=TRUE --labels=purpose=t4-ci
 gcloud compute scp --recurse ci/linux-runner t4-ci-linux-1:~ --zone=us-central1-a
 gcloud compute ssh t4-ci-linux-1 --zone=us-central1-a --command='sudo bash linux-runner/setup.sh'
 ```
@@ -88,11 +94,15 @@ The wake service. A new project's default compute service account needed
 
 ```sh
 gcloud iam service-accounts create t4-ci-wake
-gcloud iam roles create t4CiWake --project=t4-ci-3690 \
-  --permissions=compute.instances.get,compute.instances.start,compute.instances.resume
+gcloud iam roles create t4CiWake --project=t4-ci-3690 --permissions=\
+compute.instances.get,compute.instances.start,compute.instances.resume,compute.instances.getGuestAttributes
 gcloud compute instances add-iam-policy-binding t4-ci-linux-1 --zone=us-central1-a \
   --member=serviceAccount:t4-ci-wake@t4-ci-3690.iam.gserviceaccount.com \
   --role=projects/t4-ci-3690/roles/t4CiWake
+gcloud iam roles create t4CiWakeOps --project=t4-ci-3690 --permissions=compute.zoneOperations.get
+gcloud projects add-iam-policy-binding t4-ci-3690 \
+  --member=serviceAccount:t4-ci-wake@t4-ci-3690.iam.gserviceaccount.com \
+  --role=projects/t4-ci-3690/roles/t4CiWakeOps
 gcloud run deploy t4-ci-wake --source ci/wake --region us-central1 \
   --service-account t4-ci-wake@t4-ci-3690.iam.gserviceaccount.com --allow-unauthenticated \
   --max-instances 1 --timeout 180 \

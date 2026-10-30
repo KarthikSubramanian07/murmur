@@ -17,12 +17,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -90,40 +92,142 @@ func signed(secret string, body []byte, sig string) bool {
 	return hmac.Equal(got, mac.Sum(nil))
 }
 
-// start starts the instance unless it is running already, and returns the state it found. An
-// instance that is stopping can't be started until it has stopped, which takes a few seconds, so it
-// waits for that, up to two minutes: a job queued while the VM stops itself would otherwise wait for
-// the next job to wake it.
+// The Compute Engine API, how often start looks again, and where tokens come from; tests change
+// them.
+var (
+	computeAPI = "https://compute.googleapis.com/compute/v1/"
+	every      = 5 * time.Second
+	token      = metadataToken
+)
+
+// start makes sure the instance is booting, or running and not about to stop, and returns the state
+// it found. Until ctx ends it waits for an instance that is stopping, and tries again after a start
+// that failed: a Spot VM can find no capacity.
+//
+// An instance that stops itself shows RUNNING until its system has shut down, so t4-idle-stop first
+// writes the guest attribute t4/stopping (the time, in Unix seconds), and deletes it if a job arrives
+// after all. A mark from before the instance's last start is left from an earlier stop.
 func start(ctx context.Context, instance string) (string, error) {
-	base := "https://compute.googleapis.com/compute/v1/" + instance
-	deadline := time.Now().Add(2 * time.Minute)
+	base := computeAPI + instance
+	found := ""
+	var failed error // the last start's, which says more than running out of time
+	why := func(err error) error {
+		if failed != nil && ctx.Err() != nil {
+			return fmt.Errorf("gave up; the last start failed: %w", failed)
+		}
+		return err
+	}
 	for {
 		var inst struct {
-			Status string `json:"status"`
+			Status    string `json:"status"`
+			LastStart string `json:"lastStartTimestamp"`
 		}
 		if err := call(ctx, "GET", base, &inst); err != nil {
-			return "", err
+			return found, why(err)
+		}
+		if found == "" {
+			found = inst.Status
 		}
 		switch inst.Status {
-		case "RUNNING", "PROVISIONING", "STAGING", "REPAIRING":
-			return inst.Status, nil
+		case "PROVISIONING", "STAGING", "REPAIRING":
+			return found, nil
+		case "RUNNING":
+			stopping, err := markedStopping(ctx, base, inst.LastStart)
+			if err != nil {
+				return found, why(err)
+			}
+			if !stopping {
+				return found, nil
+			}
+			if found == "RUNNING" {
+				found = "stopping"
+			}
 		case "TERMINATED", "STOPPED", "SUSPENDED":
 			op := base + "/start"
 			if inst.Status == "SUSPENDED" {
 				op = base + "/resume"
 			}
-			return inst.Status, call(ctx, "POST", op, nil)
-		}
-		if time.Now().After(deadline) { // STOPPING or SUSPENDING for too long
-			return inst.Status, fmt.Errorf("still %s after two minutes", inst.Status)
+			err := run(ctx, op)
+			if err == nil {
+				return found, nil
+			}
+			if ctx.Err() == nil {
+				failed = err
+				log.Printf("starting %s: %v; trying again", instance, err)
+			}
 		}
 		select {
 		case <-ctx.Done():
-			return inst.Status, ctx.Err()
-		case <-time.After(5 * time.Second):
+			return found, why(fmt.Errorf("still %s: %w", inst.Status, ctx.Err()))
+		case <-time.After(every):
 		}
 	}
 }
+
+// markedStopping says whether the instance's t4/stopping mark is newer than its last start.
+func markedStopping(ctx context.Context, base, lastStart string) (bool, error) {
+	var attrs struct {
+		Value struct {
+			Items []struct {
+				Value string `json:"value"`
+			} `json:"items"`
+		} `json:"queryValue"`
+	}
+	err := call(ctx, "GET", base+"/getGuestAttributes?queryPath=t4/stopping", &attrs)
+	if errors.Is(err, errNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	started, err := time.Parse(time.RFC3339Nano, lastStart)
+	if err != nil {
+		return false, nil // no start to compare with; better to start too early than wait for nothing
+	}
+	for _, it := range attrs.Value.Items {
+		if at, err := strconv.ParseInt(it.Value, 10, 64); err == nil && time.Unix(at, 0).After(started) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// run makes a request that returns an operation, and waits for the operation to finish: a start is
+// accepted at once and can fail afterwards.
+func run(ctx context.Context, url string) error {
+	var op struct {
+		Status   string `json:"status"`
+		SelfLink string `json:"selfLink"`
+		Error    *struct {
+			Errors []struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"errors"`
+		} `json:"error"`
+	}
+	if err := call(ctx, "POST", url, &op); err != nil {
+		return err
+	}
+	for op.Status != "DONE" {
+		if op.SelfLink == "" {
+			return fmt.Errorf("POST %s: an operation with no selfLink", url)
+		}
+		// wait returns when the operation is done, or after about two minutes.
+		if err := call(ctx, "POST", op.SelfLink+"/wait", &op); err != nil {
+			return err
+		}
+	}
+	if op.Error != nil {
+		var msgs []string
+		for _, e := range op.Error.Errors {
+			msgs = append(msgs, e.Code+": "+e.Message)
+		}
+		return fmt.Errorf("POST %s: %s", url, strings.Join(msgs, "; "))
+	}
+	return nil
+}
+
+var errNotFound = errors.New("not found")
 
 // call makes a Compute Engine API request as the service's own service account, decoding the reply
 // into out if it isn't nil.
@@ -143,6 +247,9 @@ func call(ctx context.Context, method, url string, out any) error {
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("%s %s: %w", method, url, errNotFound)
+	}
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("%s %s: %s: %s", method, url, resp.Status, b)
 	}
@@ -152,8 +259,8 @@ func call(ctx context.Context, method, url string, out any) error {
 	return nil
 }
 
-// token is an access token for the service account, from the metadata server.
-func token(ctx context.Context) (string, error) {
+// metadataToken is an access token for the service account, from the metadata server.
+func metadataToken(ctx context.Context) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET",
 		"http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", nil)
 	if err != nil {
