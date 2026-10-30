@@ -63,7 +63,7 @@ func main() {
 		// GitHub gives up on a delivery after 10 s, but this goes on until the VM is starting: the
 		// result matters, not GitHub's record of the delivery. So the work has its own deadline, and
 		// GitHub hanging up doesn't cancel it.
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 150*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Minute)
 		defer cancel()
 		state, err := start(ctx, instance)
 		if err != nil {
@@ -100,13 +100,16 @@ var (
 	token      = metadataToken
 )
 
-// start makes sure the instance is booting, or running and not about to stop, and returns the state
-// it found. Until ctx ends it waits for an instance that is stopping, and tries again after a start
-// that failed: a Spot VM can find no capacity.
+// start makes sure the instance is running and not about to stop, and returns the state it found.
+// Until ctx ends it waits for an instance that is stopping or still starting, and starts it again if
+// a start failed: a Spot VM's can when the zone has no capacity, after the start was accepted, and
+// the instance is then TERMINATED again.
 //
 // An instance that stops itself shows RUNNING until its system has shut down, so t4-idle-stop first
 // writes the guest attribute t4/stopping (the time, in Unix seconds), and deletes it if a job arrives
-// after all. A mark from before the instance's last start is left from an earlier stop.
+// after all. A mark from before the instance's last start is left from an earlier stop, and one more
+// than markFor old is taken for one t4-idle-stop failed to delete: a stop follows its mark within
+// about two minutes.
 func start(ctx context.Context, instance string) (string, error) {
 	base := computeAPI + instance
 	found := ""
@@ -129,8 +132,6 @@ func start(ctx context.Context, instance string) (string, error) {
 			found = inst.Status
 		}
 		switch inst.Status {
-		case "PROVISIONING", "STAGING", "REPAIRING":
-			return found, nil
 		case "RUNNING":
 			stopping, err := markedStopping(ctx, base, inst.LastStart)
 			if err != nil {
@@ -147,15 +148,13 @@ func start(ctx context.Context, instance string) (string, error) {
 			if inst.Status == "SUSPENDED" {
 				op = base + "/resume"
 			}
-			err := run(ctx, op)
-			if err == nil {
-				return found, nil
-			}
-			if ctx.Err() == nil {
+			// Done is not the end: the next look sees whether the instance came up.
+			if err := run(ctx, op); err != nil && ctx.Err() == nil {
 				failed = err
 				log.Printf("starting %s: %v; trying again", instance, err)
 			}
 		}
+		// Anything else (PROVISIONING, STAGING, STOPPING, ...) is on its way somewhere: look again.
 		select {
 		case <-ctx.Done():
 			return found, why(fmt.Errorf("still %s: %w", inst.Status, ctx.Err()))
@@ -164,7 +163,11 @@ func start(ctx context.Context, instance string) (string, error) {
 	}
 }
 
-// markedStopping says whether the instance's t4/stopping mark is newer than its last start.
+// markFor is how long a stopping mark counts.
+const markFor = 10 * time.Minute
+
+// markedStopping says whether the instance has a stopping mark newer than its last start, and newer
+// than markFor.
 func markedStopping(ctx context.Context, base, lastStart string) (bool, error) {
 	var attrs struct {
 		Value struct {
@@ -185,7 +188,8 @@ func markedStopping(ctx context.Context, base, lastStart string) (bool, error) {
 		return false, nil // no start to compare with; better to start too early than wait for nothing
 	}
 	for _, it := range attrs.Value.Items {
-		if at, err := strconv.ParseInt(it.Value, 10, 64); err == nil && time.Unix(at, 0).After(started) {
+		at, err := strconv.ParseInt(it.Value, 10, 64)
+		if t := time.Unix(at, 0); err == nil && t.After(started) && time.Since(t) < markFor {
 			return true, nil
 		}
 	}

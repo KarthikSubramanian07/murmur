@@ -47,6 +47,7 @@ type fake struct {
 	lastStart  string
 	mark       string // t4/stopping's value, or "" for none
 	failStarts int    // how many starts fail once their operation is done
+	waitFails  int    // how many starts' waits fail, after which the start fails late
 	starts     int
 }
 
@@ -73,11 +74,18 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"status": "RUNNING", "selfLink": f.srv.URL + "/op/" + strconv.Itoa(f.starts)})
 	case r.Method == "POST" && strings.HasPrefix(p, "/op/") && strings.HasSuffix(p, "/wait"):
 		n, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(p, "/op/"), "/wait"))
-		op := map[string]any{"status": "DONE"}
-		if n <= f.failStarts {
-			op["error"] = map[string]any{"errors": []any{map[string]string{"code": "ZONE_RESOURCE_POOL_EXHAUSTED", "message": "no capacity"}}}
+		switch {
+		case n <= f.waitFails:
+			f.statuses = []string{"PROVISIONING", "TERMINATED"}
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		case n <= f.failStarts:
+			json.NewEncoder(w).Encode(map[string]any{"status": "DONE", "error": map[string]any{"errors": []any{
+				map[string]string{"code": "ZONE_RESOURCE_POOL_EXHAUSTED", "message": "no capacity"}}}})
+		default:
+			f.statuses = []string{"STAGING", "RUNNING"}
+			f.lastStart = time.Now().Format(time.RFC3339Nano)
+			json.NewEncoder(w).Encode(map[string]any{"status": "DONE"})
 		}
-		json.NewEncoder(w).Encode(op)
 	default:
 		http.Error(w, "unexpected "+r.Method+" "+p, http.StatusBadRequest)
 	}
@@ -96,6 +104,17 @@ const vm = "projects/p/zones/z/instances/vm"
 
 func TestStartTriesAgainAfterAFailedStart(t *testing.T) {
 	f := &fake{statuses: []string{"TERMINATED"}, failStarts: 1}
+	useFake(t, f)
+	state, err := start(context.Background(), vm)
+	if err != nil || state != "TERMINATED" || f.starts != 2 {
+		t.Fatalf("start = %q, %v after %d starts; want TERMINATED, nil after 2", state, err, f.starts)
+	}
+}
+
+func TestStartWatchesAStartThroughToTheEnd(t *testing.T) {
+	// The wait for the first start fails, and that start then fails as well, after the instance
+	// showed PROVISIONING.
+	f := &fake{statuses: []string{"TERMINATED"}, waitFails: 1}
 	useFake(t, f)
 	state, err := start(context.Background(), vm)
 	if err != nil || state != "TERMINATED" || f.starts != 2 {
@@ -128,16 +147,24 @@ func TestStartWaitsForAVMThatIsStopping(t *testing.T) {
 }
 
 func TestStartLeavesARunningVM(t *testing.T) {
-	started := time.Now().Add(-time.Minute)
-	for name, mark := range map[string]string{
-		"no mark":                     "",
-		"a mark from an earlier stop": strconv.FormatInt(started.Add(-time.Hour).Unix(), 10),
+	now := time.Now()
+	unix := func(t time.Time) string { return strconv.FormatInt(t.Unix(), 10) }
+	for _, c := range []struct {
+		name            string
+		started, marked time.Time // marked zero: no mark
+	}{
+		{"no mark", now.Add(-time.Minute), time.Time{}},
+		{"a mark from an earlier stop", now.Add(-time.Minute), now.Add(-time.Hour)},
+		{"a mark nobody took back", now.Add(-time.Hour), now.Add(-markFor - time.Minute)},
 	} {
-		f := &fake{statuses: []string{"RUNNING", "TERMINATED"}, lastStart: started.Format(time.RFC3339Nano), mark: mark}
+		f := &fake{statuses: []string{"RUNNING", "TERMINATED"}, lastStart: c.started.Format(time.RFC3339Nano)}
+		if !c.marked.IsZero() {
+			f.mark = unix(c.marked)
+		}
 		useFake(t, f)
 		state, err := start(context.Background(), vm)
 		if err != nil || state != "RUNNING" || f.starts != 0 {
-			t.Errorf("%s: start = %q, %v after %d starts; want RUNNING, nil after 0", name, state, err, f.starts)
+			t.Errorf("%s: start = %q, %v after %d starts; want RUNNING, nil after 0", c.name, state, err, f.starts)
 		}
 	}
 }

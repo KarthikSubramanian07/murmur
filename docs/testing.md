@@ -38,12 +38,15 @@ a budget of $20 (2026-10-30); going past it is his to approve.
 - **Stopping.** A systemd timer runs `ci/linux-runner/t4-idle-stop` every 2 minutes. After 30
   minutes without a job it shuts the VM down. A stopped VM bills only its disk. A VM shutting itself
   down shows RUNNING until its system has stopped, so the script first marks it stopping, in the
-  guest attribute `t4/stopping`. It then gives a job queued just before 20 seconds to reach the
-  runner, and stays up if one does.
+  guest attribute `t4/stopping`. It then gives a job queued just before 90 seconds to reach the
+  runner (GitHub gives a runner 60 to take a job), and stays up and deletes the mark if one does.
+  If the mark can't be written, it tries again 2 minutes later, until the VM has been idle for 2
+  hours; then it stops the VM anyway.
 - **Starting.** The repo's webhook 705335778 sends every `workflow_job` event to the Cloud Run
   service `t4-ci-wake` (`ci/wake`). For a queued job that asks for `t4-ci-linux`, it starts the VM.
-  If the VM is marked stopping, it first waits for the stop. A start that fails, as a Spot VM's can
-  when the zone has no capacity, is tried again for up to 150 seconds. The job waits in the queue
+  If the VM is marked stopping, it first waits for the stop; a mark more than 10 minutes old is
+  ignored. It then watches until the VM is RUNNING, and starts it again if a start failed, as a Spot
+  VM's can when the zone has no capacity, for up to 5 minutes. The job waits in the queue
   until the VM has booted and the runner connects. The service can read, start and resume that one
   VM and read its guest attributes (custom role `t4CiWake`, granted on the instance). It can also
   read the project's operations (`t4CiWakeOps`), to learn whether a start worked.
@@ -105,7 +108,7 @@ gcloud projects add-iam-policy-binding t4-ci-3690 \
   --role=projects/t4-ci-3690/roles/t4CiWakeOps
 gcloud run deploy t4-ci-wake --source ci/wake --region us-central1 \
   --service-account t4-ci-wake@t4-ci-3690.iam.gserviceaccount.com --allow-unauthenticated \
-  --max-instances 1 --timeout 180 \
+  --max-instances 1 --timeout 330 \
   --set-env-vars "WEBHOOK_SECRET=$SECRET,LABEL=t4-ci-linux,INSTANCE=projects/t4-ci-3690/zones/us-central1-a/instances/t4-ci-linux-1"
 gh api -X POST repos/a-Fig/t4/hooks -f name=web -f "config[url]=$URL/" -f config[content_type]=json \
   -f "config[secret]=$SECRET" -f 'events[]=workflow_job' -F active=true

@@ -2,22 +2,39 @@
 # Stops this VM once the CI runner has had no job for 30 minutes: a stopped Spot VM bills only its
 # disk. The webhook service (Cloud Run, t4-ci-wake) starts it again when a job for it is queued.
 mark=/run/t4-last-busy          # /run is cleared at boot, so a fresh boot gets the full 30 minutes
+marked=/run/t4-marked-stopping  # the stopping mark below may be set, and needs taking back
 stopping=http://metadata.google.internal/computeMetadata/v1/instance/guest-attributes/t4/stopping
+
+# meta METHOD [DATA] sets or deletes the stopping mark, trying a few times, each try at most 5 s.
+meta() {
+  for _ in 1 2 3 4 5; do
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X "$1" -H 'Metadata-Flavor: Google' \
+      ${2:+--data "$2"} "$stopping")
+    [ "$code" = 200 ] && return 0
+    [ "$code" = 404 ] && [ "$1" = DELETE ] && return 0 # already gone
+    sleep 2
+  done
+  return 1
+}
+unmark() { [ ! -f "$marked" ] || { meta DELETE && rm -f "$marked"; }; }
+
 [ -f "$mark" ] || touch "$mark"
-if pgrep -f Runner.Worker >/dev/null; then touch "$mark"; exit 0; fi
+if pgrep -f Runner.Worker >/dev/null; then touch "$mark"; unmark; exit 0; fi
 idle=$(( $(date +%s) - $(stat -c %Y "$mark") ))
-[ "$idle" -gt 1800 ] || exit 0
+if [ "$idle" -le 1800 ]; then unmark; exit 0; fi
 
 # The VM shows RUNNING until its system has shut down, so t4-ci-wake can't see that it is stopping.
 # Say so first, in a guest attribute t4-ci-wake reads: a job queued from now on waits for the stop
-# and starts the VM again. One queued just before has 20 seconds to reach the runner.
-curl -sf -X PUT -H 'Metadata-Flavor: Google' --data "$(date +%s)" "$stopping" ||
+# and starts the VM again. One queued just before has 90 seconds to reach the runner (GitHub gives
+# a runner 60 to take a job it was assigned).
+touch "$marked"
+if ! meta PUT "$(date +%s)"; then
+  # Without the mark, a job queued during the stop would wait for the next job to start the VM. So
+  # wait for the next try, but not past two hours idle: a VM that can't stop costs the most.
   logger "t4-idle-stop: couldn't mark the VM as stopping"
-sleep 20
-if pgrep -f Runner.Worker >/dev/null; then
-  curl -sf -X DELETE -H 'Metadata-Flavor: Google' "$stopping"
-  touch "$mark"
-  exit 0
+  [ "$idle" -gt 7200 ] || exit 0
 fi
+sleep 90
+if pgrep -f Runner.Worker >/dev/null; then touch "$mark"; unmark; exit 0; fi
 logger "t4-idle-stop: no job for ${idle}s; stopping the VM"
 shutdown -h now
