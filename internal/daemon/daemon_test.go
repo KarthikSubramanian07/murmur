@@ -88,6 +88,10 @@ type device struct {
 	snapshot time.Duration
 	// pushRetry is PushRetry, the wait between a delivery's two attempts; zero takes 200 ms.
 	pushRetry time.Duration
+	// consent and consentPoll are the daemon's options of the same names; a nil consent means the
+	// user joined, always.
+	consent     func() bool
+	consentPoll time.Duration
 	// The page for humans: Idle (zero: never exit), PageOpen, PageMessages and PageAddr, for the
 	// daemon's options of the same names; logTo, if set, takes the daemon's log.
 	idle, pageOpen time.Duration
@@ -157,6 +161,7 @@ func (d *device) start() {
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
 			Heartbeat: beat, StaleAfter: d.stale, Idle: idle,
 			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry, PushRetry: pushRetry,
+			Consent: d.consent, ConsentPoll: d.consentPoll,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, Log: logger})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)

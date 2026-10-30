@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"sort"
@@ -88,8 +89,20 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 }
 
 // pusher delivers session id's messages until it has none left to deliver.
+//
+// Nothing is delivered for a user who has left (docs/VISION.md, "Joining a repo"): the daemon exits
+// within ConsentPoll of the consent going, and until then a message that comes in by sync waits in
+// the inbox instead of being put into a thread or a socket. Delivery is the one thing the daemon does
+// to the user's other programs, so it asks here, before taking a message, and again in sendTurn,
+// before each attempt.
 func (d *Daemon) pusher(ctx context.Context, id string) {
 	for {
+		if !d.consented() {
+			d.mu.Lock()
+			delete(d.pushing, id)
+			d.mu.Unlock()
+			return
+		}
 		wake := d.wakeSnapshot()
 		d.mu.Lock()
 		job := d.nextPushLocked(id, wake)
@@ -264,16 +277,19 @@ func (d *Daemon) deliver(ctx context.Context, j *pushJob) error {
 		}
 		err = d.sendTurn(ctx, j)
 		<-d.pushSem
-		if err == nil {
-			return nil
+		if err == nil || errors.Is(err, ErrNoConsent) {
+			return err
 		}
 	}
 	return err
 }
 
-// sendTurn makes one attempt, by the route's way in. No lock is held: it starts a process or writes to
-// a pipe.
+// sendTurn makes one attempt, by the route's way in, unless the user has left. No lock is held: it
+// starts a process or writes to a pipe.
 func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
+	if !d.consented() {
+		return ErrNoConsent
+	}
 	switch j.via {
 	case viaT3:
 		return t3.Send(ctx, j.route.T3CLI, j.route.T3Home, j.route.T3Thread, j.text)
@@ -290,6 +306,9 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	j.msg.Pushing = false
+	if errors.Is(err, ErrNoConsent) {
+		return // the user left on its way: it waits in the inbox, undelivered and not a failure
+	}
 	d.kickPush() // what waited behind this message, in an inbox that took it over, may go now
 	if err != nil {
 		j.msg.PushFailed = true
