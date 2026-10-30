@@ -52,9 +52,13 @@ a budget of $20 (2026-10-30); going past it is his to approve.
   read the project's operations (`t4CiWakeOps`), to learn whether a start worked.
 - **Spot.** Google can stop a Spot VM at any time, with 30 seconds' notice. A job running then
   fails and needs a re-run, which queues a new job, so the VM starts again.
+- **How long a wake takes.** On 2026-10-30, a job queued with the VM stopped started 38 seconds
+  later. The service's request took 18 seconds. GitHub stops waiting after 10, so it lists a wake's
+  delivery as failed, though the service carried on and started the VM.
 - **When a job stays queued.** Re-run it: the new job's webhook starts the VM. The webhook's
   deliveries are listed under Settings > Webhooks, and the service's log is
-  `gcloud run services logs read t4-ci-wake --region us-central1`.
+  `gcloud run services logs read t4-ci-wake --region us-central1`. A line ending "was TERMINATED"
+  is a wake that worked.
 - **After 14 days unused,** GitHub deletes a runner that hasn't connected. The VM then boots to a
   runner that can't connect, and the runner has to be registered again (below).
 - **Cost (estimates, 2026-10-30).** The VM costs about 4 cents an hour while it runs. The disk costs
