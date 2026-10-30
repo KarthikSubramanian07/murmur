@@ -1,6 +1,10 @@
-# Every pull request runs the checks each change must pass, on GitHub's Linux machines, so a
-# change's verification doesn't wait on a laptop shared with other agents' test runs (#48).
-# Windows and macOS minutes cost more, so they aren't run here yet.
+# Every pull request runs the checks each change must pass, so a change's verification doesn't wait
+# on a laptop shared with other agents' test runs, or die when that laptop sleeps (#48).
+#
+# It runs on a self-hosted runner on Tyler's home server (macOS, 2 cores), as GitHub's own runners
+# wouldn't start on this account (2026-10-29). That machine also serves Tyler's production work, so
+# the runner service and every step run at background priority, one package at a time, and the job
+# doesn't start while the machine is short of memory. docs/testing.md has the rest.
 name: test
 
 on:
@@ -18,18 +22,24 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    runs-on: [self-hosted, homeserver]
+    timeout-minutes: 60
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: -p=1
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
-        with:
-          go-version: '1.27.x'
-      # The tests make commits in scratch repositories.
-      - run: git config --global user.name t4-ci && git config --global user.email t4-ci@example.invalid
+      - name: Check the home server has room
+        run: |
+          swap=$(sysctl -n vm.swapusage | sed -E 's/.*used = ([0-9]+).*/\1/')
+          if [ "$swap" -gt 1700 ]; then
+            echo "::error::The home server is short of memory (${swap} MB of swap used), so the tests didn't run. Re-run the job later."
+            exit 1
+          fi
+          go version
       - name: gofmt
         run: |
           out=$(gofmt -l .)
           if [ -n "$out" ]; then echo "$out"; exit 1; fi
-      - run: go vet ./...
-      - run: go test -race -count=1 -timeout 40m ./...
+      - run: taskpolicy -b nice -n 20 go vet ./...
+      - run: taskpolicy -b nice -n 20 go test -race -count=1 -timeout 50m ./...

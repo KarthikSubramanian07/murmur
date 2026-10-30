@@ -46,7 +46,8 @@ Humans get the same through the CLI (`t4 help`): `t4 who`, `t4 send <to> <subjec
 ## Working on t4
 
 `go test ./...` runs everything, including tests that run two devices against a local bare
-remote through real git. Code lives under `internal/`; `internal/daemon` is the core.
+remote through real git; `docs/testing.md` says how a change is checked. Code lives under
+`internal/`; `internal/daemon` is the core.
 
 ## Not for
 
