@@ -29,17 +29,47 @@ func nextPoll(cur, base time.Duration, failed bool) time.Duration {
 	return min(cur*2, 20*base, max(maxPollBackoff, base))
 }
 
-// pollBase is how often the remote is looked at when all is well: Poll while a session is live or
-// a page is open, QuietPoll while neither is, when the daemon is up only to wake a T3 thread that
-// has no session (#87). It is read again after every poll, and a session or a page that comes
-// wakes the loop (kickPoll), so the slower rate costs a sleeping thread at most QuietPoll more.
-func (d *Daemon) pollBase() time.Duration {
+// pollRate is how the remote is looked at when all is well. every is the wait between looks; calm
+// is the wait to carry into the next call, so the slow phase can double from it; quiet says no
+// session is live and no page open.
+type pollRate struct {
+	every, calm time.Duration
+	quiet       bool
+}
+
+// pollEvery says how often to look at the remote when all is well, given calm, the last wait of
+// the slow phase (#93; Tyler: agents don't need real-time, a few seconds a hop is fine). It is
+// read again after every poll, and a conversation that moves wakes the loop (kickPoll).
+//
+//   - No session live and no page open (a daemon up only to wake a T3 thread, #87): QuietPoll,
+//     never faster than Poll, whatever was said lately; a session that starts makes it look at once.
+//   - A conversation moved less than FastFor ago: Poll. A reply is likely, and two agents talking
+//     are a hop apart each time.
+//   - Otherwise a session sits open and nothing happens: double the wait each poll, 3 s, 6, 12, up
+//     to PollCap. Doubling gets to the cap in three polls, so a first message waits at most PollCap
+//     plus the delivery, and hours of an open session cost 240 listings an hour, not 1,200.
+func (d *Daemon) pollEvery(calm time.Duration) pollRate {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if len(d.sessions) > 0 || d.pageOpenLocked(time.Now()) {
-		return d.opt.Poll
+	poll := d.opt.Poll
+	now := time.Now()
+	switch {
+	case len(d.sessions) == 0 && !d.pageOpenLocked(now):
+		return pollRate{every: max(poll, d.opt.QuietPoll), calm: poll, quiet: true}
+	case !d.convAt.IsZero() && now.Sub(d.convAt) < d.opt.FastFor:
+		return pollRate{every: poll, calm: poll}
 	}
-	return max(d.opt.Poll, d.opt.QuietPoll)
+	every := min(max(2*calm, poll), max(d.opt.PollCap, poll))
+	return pollRate{every: every, calm: every}
+}
+
+// noteConversationLocked records that a conversation moved: the poll goes to Poll for FastFor,
+// starting now, and a loop that was waiting longer looks at once. Presence heartbeats and status
+// changes don't come here: they arrive all the time from active teammates and predict no reply.
+// Caller holds mu.
+func (d *Daemon) noteConversationLocked() {
+	d.convAt = time.Now()
+	d.kickPoll()
 }
 
 // kickPoll wakes pollLoop, which looks at the remote now if that is sooner than it would have.
@@ -54,8 +84,9 @@ func (d *Daemon) kickPoll() {
 func (d *Daemon) pollLoop(ctx context.Context) {
 	t := time.NewTicker(d.opt.Poll)
 	defer t.Stop()
-	failing := false
-	wait, every := d.opt.Poll, d.opt.Poll // wait is until the next poll; every, when all is well
+	failing, quiet := false, false
+	// wait is until the next poll; every, when all is well; calm is where the slow phase is.
+	wait, every, calm := d.opt.Poll, d.opt.Poll, d.opt.Poll
 	for {
 		err := d.pollOnce(ctx)
 		if err != nil && ctx.Err() == nil {
@@ -73,14 +104,16 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 			d.kickNames()
 		}
 		failing = err != nil
-		if base := d.pollBase(); base != every {
-			if base > every {
-				d.log.Printf("no session is live and no page open; looking at the remote every %s, not every %s", base, every)
+		rate := d.pollEvery(calm)
+		if rate.quiet != quiet {
+			if rate.quiet {
+				d.log.Printf("no session is live and no page open; looking at the remote every %s, not every %s", rate.every, d.opt.Poll)
 			} else {
-				d.log.Printf("a session is live or a page open; looking at the remote every %s", base)
+				d.log.Printf("a session is live or a page open; looking at the remote every %s, less often while nothing is said", d.opt.Poll)
 			}
-			every = base
+			quiet = rate.quiet
 		}
+		every, calm = rate.every, rate.calm
 		if next := nextPoll(wait, every, failing); next != wait {
 			wait = next
 			t.Reset(wait)
@@ -92,10 +125,10 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 				return
 			case <-t.C:
 			case <-d.pollWake:
-				// A session or a page came. If the loop was running at the slower rate, look now
-				// and from here on at the faster; if not, it is as quick as it gets, and a
-				// failure's backoff is not ended by it.
-				if d.pollBase() >= every {
+				// A session, a page or a conversation's move came. If the loop was running at a
+				// slower rate than that calls for, look now and from here on at the faster; if
+				// not, it is as quick as it gets, and a failure's backoff is not ended by it.
+				if d.pollEvery(calm).every >= every {
 					continue sleep
 				}
 			}
@@ -107,6 +140,7 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 // pollOnce lists the remote's bus refs and fetches and processes the ones that changed. The
 // listing is one cheap round trip; objects move only when something changed.
 func (d *Daemon) pollOnce(ctx context.Context) error {
+	d.polls.Add(1)
 	// A listing applied after a newer one would drop presence that has since appeared.
 	d.syncMu.Lock()
 	defer d.syncMu.Unlock()
@@ -488,6 +522,9 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) {
 			continue
 		}
 		d.addInboxLocked(id, e)
+		if id != proto.CLISession {
+			d.noteConversationLocked() // a message arrived for a session here; its answer may soon follow
+		}
 	}
 	_, stopped := d.st.Stopped[sess]
 	if mode == modeNormal && !held && dev == d.device && sess != "" && sess != proto.CLISession &&
@@ -680,6 +717,9 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 			d.advMu.Lock()
 			d.mu.Lock()
 			d.known[ref] = sha
+			if e.Type == bus.Message {
+				d.noteConversationLocked() // a message went out; the answer may come soon
+			}
 			d.mu.Unlock()
 			d.advanceMesh(ctx, ref, sha) // delivers to sessions on this device
 			d.advMu.Unlock()

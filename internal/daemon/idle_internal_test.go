@@ -62,28 +62,31 @@ func TestHoldsRouteLocked(t *testing.T) {
 	}
 }
 
-// The poll is Poll while a session is live or a page is open, QuietPoll while neither is, and never
-// faster than Poll.
+// The poll is QuietPoll while no session is live and no page is open, never faster than Poll; with
+// one, Poll, or slower while nothing is said (see poll_rate_internal_test.go).
 func TestPollBase(t *testing.T) {
 	d := idleDaemon(nil)
-	if got := d.pollBase(); got != 30*time.Second {
+	d.opt.PollCap = 15 * time.Second
+	if got := d.pollEvery(3 * time.Second).every; got != 30*time.Second {
 		t.Errorf("with nobody there: %v, want 30s", got)
 	}
 	d.lastPage = time.Now().Add(-time.Minute)
-	if got := d.pollBase(); got != 3*time.Second {
-		t.Errorf("with a page open: %v, want 3s", got)
+	if got := d.pollEvery(3 * time.Second).every; got != 6*time.Second {
+		t.Errorf("with a page open: %v, want 6s, the first step of the slow phase", got)
 	}
 	d.lastPage = time.Now().Add(-3 * time.Minute)
-	if got := d.pollBase(); got != 30*time.Second {
+	if got := d.pollEvery(3 * time.Second).every; got != 30*time.Second {
 		t.Errorf("with a page closed: %v, want 30s", got)
 	}
 	d.sessions["aaaaaa"] = &session{id: "aaaaaa"}
-	if got := d.pollBase(); got != 3*time.Second {
-		t.Errorf("with a session: %v, want 3s", got)
+	d.noteConversationLocked()
+	d.opt.FastFor = time.Minute
+	if got := d.pollEvery(15 * time.Second).every; got != 3*time.Second {
+		t.Errorf("with a session and a conversation just moved: %v, want 3s", got)
 	}
 	d.sessions = map[string]*session{}
 	d.opt.QuietPoll = time.Second
-	if got := d.pollBase(); got != 3*time.Second {
+	if got := d.pollEvery(3 * time.Second).every; got != 3*time.Second {
 		t.Errorf("with QuietPoll under Poll: %v, want Poll, 3s", got)
 	}
 }
