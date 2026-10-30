@@ -11,7 +11,6 @@ import (
 
 	"github.com/a-Fig/t4/internal/client"
 	"github.com/a-Fig/t4/internal/proto"
-	"github.com/a-Fig/t4/internal/title"
 )
 
 // Tests of how the server finds out how to reach its client, for the daemon to deliver messages as
@@ -215,8 +214,18 @@ func TestNoThreadMeansNoRoute(t *testing.T) {
 		s := started(t, f, nil, map[string]string{"CLAUDE_CODE_SESSION_ID": "claude-session-1", "T3CODE_CLI_PATH": ""})
 		s.noteMeta(context.Background(), metaCall("x"))
 		eventually(t, "the daemon to be told the thread ID", func() bool { return len(f.routesTold()) > 0 })
-		if rs := f.routesTold(); len(rs) != 1 || rs[0] != (proto.Route{Native: "x", CodexHome: title.CodexDir()}) || f.lastHello().T3Thread != "" {
+		if rs := f.routesTold(); len(rs) != 1 || rs[0] != (proto.Route{Native: "x"}) || f.lastHello().T3Thread != "" {
 			t.Errorf("told %+v, hello %+v", rs, f.lastHello().Route)
+		}
+	})
+	t.Run("outside T3, with a Codex home named", func(t *testing.T) {
+		home := t.TempDir()
+		f := &fakeDaemon{}
+		s := started(t, f, nil, map[string]string{"CLAUDE_CODE_SESSION_ID": "", "T3CODE_CLI_PATH": "", "CODEX_HOME": home})
+		s.noteMeta(context.Background(), metaCall("x"))
+		eventually(t, "the daemon to be told the thread ID", func() bool { return len(f.routesTold()) > 0 })
+		if rs := f.routesTold(); len(rs) != 1 || rs[0] != (proto.Route{Native: "x", CodexHome: home}) {
+			t.Errorf("told %+v", rs)
 		}
 	})
 	t.Run("a database with no such session", func(t *testing.T) {

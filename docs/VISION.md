@@ -415,7 +415,7 @@ agents that mattered.
   | Session | Title | Not used |
   |---|---|---|
   | In T3 (its thread found, see Delivering a message as a turn) | `orchestration_v2_projection_threads.title` for the thread, in T3's `statev2.sqlite` | The client's own name for the conversation: T3 doesn't copy its title there, and the two would take turns |
-  | Codex outside T3 | The thread's explicit name: `threads.name` in `state_N.sqlite` (the highest N) of the session's `$CODEX_HOME` (its MCP server tells the daemon), else `~/.codex`; failing that `thread_name` in `session_index.jsonl`, the last entry for the thread | `threads.title` and `threads.preview`, which hold the opening message |
+  | Codex outside T3 | The thread's explicit name: `threads.name` in `state_N.sqlite` (the highest N) of `$CODEX_HOME` as the session's MCP server has it (Codex starts it with a bare environment, and `join` doesn't forward `CODEX_HOME` yet), else the daemon's, else `~/.codex`; failing that `thread_name` in `session_index.jsonl`, the last entry for the thread | `threads.title` and `threads.preview`, which hold the opening message |
   | Claude Code outside T3 | The last `custom-title` line in the session's transcript (the name the user gave it), else the last `ai-title` line (the one Claude Code made up) | The first prompt: a session with neither has no title |
 
   The transcript is the hook's `transcript_path`, which the hook sends with its notices request;

@@ -21,7 +21,6 @@ import (
 	"github.com/a-Fig/t4/internal/join"
 	"github.com/a-Fig/t4/internal/proto"
 	"github.com/a-Fig/t4/internal/t3db"
-	"github.com/a-Fig/t4/internal/title"
 	"github.com/a-Fig/t4/internal/view"
 )
 
@@ -541,9 +540,13 @@ func (l *link) learnNative(ctx context.Context, id string) {
 	}
 	if l.find == nil {
 		// Outside T3 the ID is for the daemon, to find the conversation's name in Codex's state.
-		l.mu.Lock()
-		l.hello.CodexHome = title.CodexDir()
-		l.mu.Unlock()
+		// Only where this server's environment names the Codex home: Codex starts it with a bare
+		// environment, and a guess at ~/.codex would override the daemon's own, which may be right.
+		if home := os.Getenv("CODEX_HOME"); home != "" {
+			l.mu.Lock()
+			l.hello.CodexHome = home
+			l.mu.Unlock()
+		}
 		go l.tellRoute(ctx)
 		return
 	}
