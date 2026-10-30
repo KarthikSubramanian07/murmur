@@ -120,11 +120,18 @@ func TestPreToolUseRunsNoGit(t *testing.T) {
 	if n := strings.Count(string(b), `"event":"start"`); n != 0 {
 		t.Errorf("three PreToolUse hooks ran %d git processes, want none", n)
 	}
+	want, err := os.Stat(gitDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var starts int
 	for _, r := range requests() {
 		if r.Op == proto.OpToolStart {
 			starts++
-			if r.GitDir != filepath.Clean(gitDir) {
+			// The same directory, not the same string: on macOS a linked worktree's .git file
+			// names the clone under /private/var, where the temp dir's own path is /var, a link to
+			// it. The daemon compares the two the same way (sameClone).
+			if got, err := os.Stat(r.GitDir); err != nil || !os.SameFile(got, want) {
 				t.Errorf("the hook in %s found the clone at %q, want %q", r.Cwd, r.GitDir, gitDir)
 			}
 		}
