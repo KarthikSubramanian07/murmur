@@ -175,6 +175,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		d.rememberRouteLocked(s)
 	}
 	d.lastActive = time.Now()
+	d.kickPoll() // a session is live: look at the remote at once, and at the faster rate
 	if h.Reconnect {
 		d.catchUpLocked(h.ID)
 	}
