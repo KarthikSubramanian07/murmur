@@ -216,7 +216,8 @@ func (d *Daemon) settleEnds() {
 // judgeEnd snapshots the worktree a call started in, calls snapped, and credits the sessions with
 // the commits made since its start, as of when the call ended. A call that ended with the hook in another worktree of the
 // clone, moved, is judged there too, against the same start: the start's tips are the whole
-// clone's, so they keep that worktree's history out as well as this one's.
+// clone's, so they keep that worktree's history out as well as this one's, but for what only a
+// detached HEAD there holds (#60).
 func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, moved string, ended time.Time, sessions []*session, snapped func()) {
 	ctx, cancel := context.WithTimeout(ctx, d.snapshotLimit())
 	defer cancel()

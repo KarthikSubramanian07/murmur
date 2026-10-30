@@ -195,7 +195,7 @@ which session made a commit, so the daemon watches tool calls for them.
   was cancelled, the hook crashed) can't pile them up. A call with no snapshot credits nothing.
 - **Which worktree.** The one the call started in, and the one it ended in if that is another
   worktree of the clone: the start's ref tips are the whole clone's, so they keep either
-  worktree's history out. A `cd` inside a Bash call leaves the hook's working directory where it
+  worktree's history out, all but a detached HEAD's in the other (#60). A `cd` inside a Bash call leaves the hook's working directory where it
   was (seen on 2.1.312, 2026-10-29), so a call ends elsewhere only when Claude Code itself has
   moved, and what `cd ../other && git commit`, or `git -C ../other commit`, makes in another
   worktree isn't credited. The hook finds the clone from its working directory, and a call in
