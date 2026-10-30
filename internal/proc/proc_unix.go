@@ -9,9 +9,9 @@ import (
 	"syscall"
 )
 
-// Lock takes an exclusive lock on path, held until the file is closed or the process exits,
-// however it exits.
-func Lock(path string) (*os.File, error) {
+// Lock takes an exclusive lock on path, held until it is closed or the process exits, however it
+// exits.
+func Lock(path string) (*Held, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
@@ -23,7 +23,19 @@ func Lock(path string) (*os.File, error) {
 		}
 		return nil, err
 	}
-	return f, nil
+	return &Held{f}, nil
+}
+
+// unlock releases the flock itself instead of leaving it to the descriptor's close. A flock belongs
+// to the open file description, not to the descriptor, so closing the descriptor releases it only
+// if no other descriptor refers to the same description. A process that forks (to run git, say)
+// gives its child a copy of every descriptor, and the copy lives until the child's exec closes it,
+// which can be a while on a busy machine. A lock closed in that window stays held, and a daemon
+// started a moment later is refused with ErrLocked: the daemon tests restart one device while the
+// other devices' daemons, in the same process, keep running git (the macOS runner, 2026-10-30).
+// LOCK_UN on any one descriptor releases the lock for all of them.
+func unlock(f *os.File) {
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }
 
 // StartDetached starts a program in its own session, so it outlives the process that started
