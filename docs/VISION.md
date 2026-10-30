@@ -137,6 +137,21 @@ Sessions reach the daemon over loopback TCP, on a random port written with a ran
 10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
 next sync rather than when it goes stale.
 
+An upgrade replaces the binary and not the daemon already started from it, which would go on
+answering ping and refuse whatever came after the version it was built from (the route request
+and delivering a turn, #57, were the first). So the daemon reports a protocol number
+(`proto.Protocol`, 1 as of 2026-10-30; a daemon from before the number reports none, read as 0) in
+its ping reply, and a client that finds a lower number than its own stops that daemon and starts its
+own: `t4 join`, `t4 ui` and an MCP server registering a session do, since each may start a
+daemon. Only an older daemon is replaced, never a newer one, so two binaries of different ages on
+one machine don't stop each other's daemons for ever, and a number is used, not the version string,
+so that builds from a branch (which all say "dev") are told apart. A client that may not start a
+daemon (the hook and the other commands, which never start one; `t4 stop`, which ends an old one by
+hand; a user who has left) takes the daemon as it is. A session whose daemon refuses its route (an older one that
+couldn't be replaced) works, with its messages as notices, and its MCP server logs that once, to its
+standard error, so that whoever wonders finds why. Raise the number with
+any change to a request or a reply that an older daemon can't serve.
+
 ### Joining a repo
 
 Decided 2026-10-29 (#55), built the same day. Tyler's requirement: setup should feel like magic,
@@ -204,7 +219,9 @@ page (`t4 ui`), and the commands left are `init`, `join`, `ui`, `stop`, `version
   daemon is per clone, not per working tree, so it needs only the consent: it checks at start
   (after its first sync, which takes a while), on every request but `stop` and `ping` (which reveal
   nothing, and are how a leave finds it), again in a registration after it has resolved the branch,
-  before each push of its own (presence, the names registry), and once a second, when it stops
+  before each push of its own (presence, the names registry) and before each delivery of a message
+  as a turn (the one thing it does to the user's other programs, so a message that comes in by sync
+  after a leave waits in the inbox, and isn't counted as a failure), and once a second, when it stops
   itself if the user has left. The last two are what end a daemon that was still starting when
   `join --leave` ran and so had no `daemon.json` to be found by. `t4 daemon` and `t4 ui` refuse in
   a clone that hasn't joined (so a stale client or a script can't start one). `join --leave`
@@ -544,7 +561,9 @@ A body past the limit is cut, as in `inbox`.
   `orchestration_v2_projection_provider_threads`, where `payload_json.nativeThreadRef.nativeId`
   is the Claude Code session ID or the Codex thread ID, next to the `thread_id` column (seen on
   T3 0.1.x, 2026-10-29). The ID comes from the hook or `CLAUDE_CODE_SESSION_ID` for Claude Code
-  and from `_meta.threadId` of a tool call for Codex; the database decides which is a thread. The
+  and from `_meta.threadId` of a tool call for Codex (every tool takes it); the database decides
+  which is a thread. The lookup is set up with the session's link, where the link is made, so a
+  server turned off by a leave and on again by a join finds its thread as the first link did. The
   lookup only reads: SQLite's read-only mode (never immutable, which would ignore the write-ahead
   log and miss the newest threads), at most 1.5 s on a lock and 4 s in all, and any trouble leaves
   the session with the keys it had before. The reader is `modernc.org/sqlite`, SQLite translated
@@ -569,12 +588,14 @@ A body past the limit is cut, as in `inbox`.
   while that has the route, and to the new one when it has it, so the thread may see it twice.
   A session that found its thread keeps its name under the Claude session ID too, so the ID does
   not bring that name to a second process of the same Claude session; it is a session of its own.
-- **Codex under T3** gets the thread from `_meta.threadId`, which every tool call carries, but its
-  MCP servers start with a bare environment, `T3CODE_CLI_PATH` not among its variables, so
-  Codex's config must forward it: `env_vars = ["T3CODE_CLI_PATH"]` under `[mcp_servers.t4]`
-  (worked with Codex 0.164.0 under T3 0.1.2, 2026-10-29). Without it the server doesn't know it is
-  in T3, and a Codex session gets notices only. Codex reads a project's `.codex/config.toml` only
-  once the project is trusted.
+- **Codex under T3** gets the thread from `_meta.threadId`, which every tool call carries (all five
+  tools note it, `lookup` too), but its MCP servers start with a bare environment, `T3CODE_CLI_PATH`
+  not among its variables, so Codex's config must forward it: `env_vars = ["T3CODE_CLI_PATH"]` under
+  `[mcp_servers.t4]` (worked with Codex 0.164.0 under T3 0.1.2, 2026-10-29). `t4 join` writes it,
+  and adds the name to a list the user already has there without touching their other entries; a
+  list over several lines, or of anything but names, it leaves alone and says what to add by hand.
+  Without it the server doesn't know it is in T3, and a Codex session gets notices only. Codex
+  reads a project's `.codex/config.toml` only once the project is trusted.
 - **The messaging socket** is for Claude Code outside T3. Claude Code sets
   `CLAUDE_CODE_MESSAGING_SOCKET` (a unix socket, a named pipe on Windows) and
   `CLAUDE_CODE_MESSAGING_TOKEN` in every child process, and the MCP server passes both to its
@@ -585,8 +606,18 @@ A body past the limit is cut, as in `inbox`.
   server is connected. A session inside T3 is never written to this way: the socket there is T3's.
   Claude Code wraps what arrives on the socket in a note of its own that says the message came
   from another Claude session, not the user (seen 2026-10-29), which suits t4's framing.
-- **When a message isn't delivered.** A failed delivery is tried once more after a pause, then
-  left to the hook's notice, and the log says why, once per session. A message that waited more
+- **When a message isn't delivered.** A failed delivery is left to the hook's notice, and the log
+  says why, once per session. It is not tried again, except when it plainly never started (no `t3`
+  command to run, no socket to connect to), which is tried once more after a pause (2 s). Any other
+  failure may have come after T3 took the message: `t3 thread send` has no idempotency key (the
+  MCP tool `t3_thread_send` has `clientRequestId`, the command line doesn't), and the messaging
+  socket answers nothing, so a second call would deliver the message twice, as two turns. The cost
+  is that a failure that was only a failure (T3 starting up, say) gets a notice and no second try.
+  The other safe way is to look in T3's database for the message before trying again
+  (`orchestration_v2_projection_messages`, by thread and text, or `t3 thread show --json`); it
+  would keep the second try, and it relies on tables that are T3's own and may change in any
+  update, so it wasn't done. Nothing is delivered for a user who has left either (see Joining a
+  repo). A message that waited more
   than 15 minutes (T3 closed, the session away) is not sprung on the agent as a turn: it stays a
   notice. The page's wake setting (#22) set to "never", for the device or for one session, keeps
   the notice too; otherwise delivery is at once. A daemon that starts looks at the messages its
