@@ -2,10 +2,14 @@ package mcpserver
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/a-Fig/t4/internal/client"
 )
 
 // More tests of how the server finds its T3 thread (#57), across the server's turning on and off.
@@ -83,5 +87,40 @@ func TestLinkMadeOnReactivationStillFindsItsThread(t *testing.T) {
 	}
 	if n := len(fd.askedAbout()); n != 2 {
 		t.Errorf("T3's database was asked %d times, want once for each link", n)
+	}
+}
+
+// A daemon that refuses the route is one that has no such request, left running by an older t4. The
+// session works, and messages for it come as notices: the server says so, once, and not at every
+// attempt.
+func TestARefusedRouteIsLoggedOnce(t *testing.T) {
+	fastSeek(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "claude-session-1")
+	t.Setenv("T3CODE_CLI_PATH", "/t3/bin/t3")
+	f := &fakeDaemon{routeError: "unknown op route"}
+	fd := &finder{threads: map[string]string{"claude-session-1": "thread-1"}, misses: 1}
+	gitDir := f.serve(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	var mu sync.Mutex
+	var lines []string
+	l := &link{c: &client.Client{GitDir: gitDir}, hello: helloFor("claude-code", "/work"), changed: make(chan struct{}), find: fd.find,
+		logf: func(format string, args ...any) {
+			mu.Lock()
+			defer mu.Unlock()
+			lines = append(lines, format)
+		}}
+	go l.run(ctx)
+	if _, err := l.wait(ctx, 10*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the route to be refused", func() bool { return len(f.routesTold()) > 0 })
+	l.tellRoute(ctx)
+	l.tellRoute(ctx)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lines) != 1 || !strings.Contains(lines[0], "route") {
+		t.Errorf("logged %q, want one line about the route", lines)
 	}
 }

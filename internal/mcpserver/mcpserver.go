@@ -343,6 +343,10 @@ type link struct {
 	// is looking for the T3 thread.
 	native  string
 	seeking bool
+	// routeWarned says the daemon's refusal of the route has been logged, which is done once. logf
+	// writes the line; nil writes it to standard error.
+	routeWarned bool
+	logf        func(format string, args ...any)
 }
 
 func (l *link) set(up bool, err error) {
@@ -474,7 +478,32 @@ func (l *link) tellRoute(ctx context.Context) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	l.c.Do(cctx, proto.Request{Op: proto.OpRoute, Session: id, Route: &route})
+	resp, err := l.c.Do(cctx, proto.Request{Op: proto.OpRoute, Session: id, Route: &route})
+	if err == nil && resp.Error != "" {
+		err = errors.New(resp.Error)
+	}
+	if err == nil {
+		return
+	}
+	// The daemon didn't take it: most likely one left running by an older t4 that has no such request.
+	// The session works without, but its messages arrive as notices and not as turns, which is worth
+	// one line for whoever wonders why.
+	l.mu.Lock()
+	first := !l.routeWarned
+	l.routeWarned = true
+	l.mu.Unlock()
+	if first {
+		l.warn("the %s daemon didn't take the route to this session's client (%v); messages for it will show as notices instead of arriving as turns", brand.Name, err)
+	}
+}
+
+// warn writes a line to the server's standard error, where MCP clients keep a server's log.
+func (l *link) warn(format string, args ...any) {
+	if l.logf != nil {
+		l.logf(format, args...)
+		return
+	}
+	fmt.Fprintf(os.Stderr, brand.Command+" mcp: "+format+"\n", args...)
 }
 
 // learnNative takes the client's own ID for the session when a tool call carries one (Codex's

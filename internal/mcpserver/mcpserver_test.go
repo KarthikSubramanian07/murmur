@@ -52,6 +52,8 @@ type fakeDaemon struct {
 	live string // what the daemon holds, as a hook has set it
 	// helloGate, if set, holds every hello's reply until it is closed.
 	helloGate chan struct{}
+	// routeError, if set, is the daemon's answer to a route: one that has no such request.
+	routeError string
 
 	mu       sync.Mutex
 	hellos   []proto.Hello
@@ -130,10 +132,15 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 		f.requests = append(f.requests, req)
 	}
 	live := f.live
+	refuse := req.Op == proto.OpRoute && f.routeError != ""
 	if req.Op == proto.OpRoute && req.Route != nil {
 		f.routes = append(f.routes, *req.Route)
 	}
 	f.mu.Unlock()
+	if refuse {
+		reply(proto.Response{Error: f.routeError})
+		return
+	}
 	reply(proto.Response{OK: true, Self: "dev/" + req.Session, ClaudeSession: live, Protocol: proto.Protocol})
 }
 
