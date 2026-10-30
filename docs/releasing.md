@@ -54,4 +54,9 @@ can't be fetched without a login. On 2026-10-29 the way to install was:
 gh api repos/a-Fig/t4/contents/install.sh -H 'Accept: application/vnd.github.raw' | GITHUB_TOKEN=$(gh auth token) sh
 ```
 
-and in PowerShell, `$env:GITHUB_TOKEN = gh auth token; gh api repos/a-Fig/t4/contents/install.ps1 -H 'Accept: application/vnd.github.raw' | iex`.
+and in PowerShell (`Out-String` joins the script's lines into one input for `iex`):
+
+```powershell
+$env:GITHUB_TOKEN = gh auth token
+gh api repos/a-Fig/t4/contents/install.ps1 -H 'Accept: application/vnd.github.raw' | Out-String | iex
+```
