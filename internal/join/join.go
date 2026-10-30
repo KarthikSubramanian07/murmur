@@ -136,11 +136,21 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	} else if news {
 		r.Did = append(r.Did, "Recorded that you joined "+brand.Name+" in this clone ("+p.consentPath()+")")
 	}
-	if _, err := client.Connect(ctx, p.GitDir, false); errors.Is(err, client.ErrNoDaemon) {
+	// A daemon left running by an older t4 answers, but can't do what this one does (deliver a message
+	// as a turn, for one): it is replaced, which Connect does for a client that may start daemons.
+	c, err := client.Connect(ctx, p.GitDir, false)
+	switch {
+	case errors.Is(err, client.ErrNoDaemon):
 		if _, err := client.Connect(ctx, p.GitDir, true); err != nil {
 			problem("starting the daemon", err)
 		} else {
 			r.Did = append(r.Did, "Started this clone's daemon")
+		}
+	case err == nil && c.Outdated():
+		if _, err := client.Connect(ctx, p.GitDir, true); err != nil {
+			problem("replacing the daemon of an older version", err)
+		} else {
+			r.Did = append(r.Did, "Replaced this clone's daemon, which was left running by an older version of "+brand.Name)
 		}
 	}
 

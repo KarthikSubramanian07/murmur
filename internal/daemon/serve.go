@@ -278,7 +278,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 
 	switch req.Op {
 	case proto.OpPing:
-		return proto.Response{OK: true, Self: from}
+		return proto.Response{OK: true, Self: from, Protocol: proto.Protocol}
 
 	case proto.OpWho:
 		d.mu.Lock()

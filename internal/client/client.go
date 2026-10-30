@@ -46,8 +46,13 @@ type Client struct {
 	// gone when the daemon it talked to goes away, which is the moment it would start another.
 	MaySpawn func() bool
 
+	// launch starts a daemon; start, unless a test says otherwise.
+	launch func() error
+
 	mu   sync.Mutex
 	info proto.Info
+	// older says the daemon that last answered a ping speaks an older protocol than this binary.
+	older bool
 }
 
 func (c *Client) current() proto.Info {
@@ -75,14 +80,25 @@ func Connect(ctx context.Context, gitDir string, spawn bool) (*Client, error) {
 	return c, c.connect(ctx)
 }
 
+// connect finds the clone's daemon. One that speaks an older protocol than this binary (left running
+// by the t4 it replaced) is stopped and replaced if the client may start daemons; a client that may
+// not, such as `t4 stop`, which has to be able to stop it, takes it as it is.
 func (c *Client) connect(ctx context.Context) error {
 	if c.load() && c.ping(ctx) == nil {
-		return nil
-	}
-	if !c.Spawn || (c.MaySpawn != nil && !c.MaySpawn()) {
+		if !c.Outdated() || !c.mayStart() {
+			return nil
+		}
+		if err := c.replace(ctx); err != nil {
+			return err
+		}
+	} else if !c.mayStart() {
 		return ErrNoDaemon
 	}
-	if err := c.start(); err != nil {
+	launch := c.launch
+	if launch == nil {
+		launch = c.start
+	}
+	if err := launch(); err != nil {
 		return fmt.Errorf("starting the daemon: %w", err)
 	}
 	deadline := time.Now().Add(15 * time.Second)
@@ -92,11 +108,58 @@ func (c *Client) connect(ctx context.Context) error {
 			return ctx.Err()
 		case <-time.After(150 * time.Millisecond):
 		}
-		if c.load() && c.ping(ctx) == nil {
+		if c.load() && c.ping(ctx) == nil && !c.Outdated() {
 			return nil
 		}
 	}
 	return fmt.Errorf("the daemon didn't come up; see %s", filepath.Join(StateDir(c.GitDir), "daemon.log"))
+}
+
+func (c *Client) mayStart() bool {
+	return c.Spawn && (c.MaySpawn == nil || c.MaySpawn())
+}
+
+// Outdated reports whether the daemon that last answered speaks an older protocol than this binary:
+// one that Connect found and, without permission to start daemons, left running.
+func (c *Client) Outdated() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.older
+}
+
+// replaceWait is how long replace waits for a daemon it asked to stop; a variable, for the test.
+var replaceWait = 15 * time.Second
+
+// replace stops the daemon at the address c has, which is outdated, and waits until it has let go of
+// the clone, so that the daemon started next finds the lock free. Another client may be doing the
+// same: if the daemon.json that appears isn't the old one's, the work is done.
+func (c *Client) replace(ctx context.Context) error {
+	old := c.current()
+	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	c.roundTrip(sctx, proto.Request{Op: proto.OpStop}) // by the old address and token, never a newer daemon's
+	cancel()
+	lock := filepath.Join(StateDir(c.GitDir), "daemon.lock")
+	for end := time.Now().Add(replaceWait); ; {
+		if c.load() && c.current().Token != old.Token {
+			return nil
+		}
+		l, err := proc.Lock(lock)
+		if err == nil {
+			l.Close()
+			return nil
+		}
+		if !errors.Is(err, proc.ErrLocked) {
+			return fmt.Errorf("replacing the daemon of an older version: %w", err)
+		}
+		if time.Now().After(end) {
+			return fmt.Errorf("the daemon of an older version (pid %d) didn't exit when asked to", old.PID)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 func (c *Client) load() bool {
@@ -124,6 +187,9 @@ func (c *Client) ping(ctx context.Context) error {
 	if !resp.OK {
 		return errors.New(resp.Error)
 	}
+	c.mu.Lock()
+	c.older = resp.Protocol < proto.Protocol
+	c.mu.Unlock()
 	return nil
 }
 
@@ -276,10 +342,9 @@ func (c *Client) roundTrip(ctx context.Context, req proto.Request) (resp proto.R
 // Hello registers a session and returns the connection that keeps it registered. The session
 // lasts until the connection closes.
 func (c *Client) Hello(ctx context.Context, h proto.Hello) (net.Conn, proto.Response, error) {
-	if !c.load() {
-		if err := c.connect(ctx); err != nil {
-			return nil, proto.Response{}, err
-		}
+	// Every registration pings first, which is also where a daemon of an older version is found.
+	if err := c.connect(ctx); err != nil {
+		return nil, proto.Response{}, err
 	}
 	conn, err := dial(ctx, c.current().Addr)
 	if err != nil {

@@ -25,6 +25,15 @@ const (
 	OpToolEnd   = "toolend"
 )
 
+// Protocol is the version of this protocol that the daemon speaks, reported in its ping reply. A
+// client that finds a daemon with a lower number than its own stops it and starts its own, since an
+// upgraded t4 would otherwise keep talking to the daemon the old one left running, which answers
+// ping and not what came after. A daemon from before the number reports none, which reads as 0.
+// Raise it with any change to a request or a reply that an older daemon can't serve:
+//
+//	1: OpRoute, and delivering a message as a turn (#56, #57)
+const Protocol = 1
+
 // CLISession is the session ID of requests from the command line. It is always registered on its
 // device, so a human can send and read an inbox without an agent.
 const CLISession = "cli"
@@ -115,7 +124,9 @@ type Hello struct {
 type Response struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
-	Self  string `json:"self,omitempty"` // the caller's address
+	// Protocol is the daemon's protocol number (Protocol), in the reply to a ping.
+	Protocol int    `json:"protocol,omitempty"`
+	Self     string `json:"self,omitempty"` // the caller's address
 	// Name is the caller's name, and NamePending says it has none yet: the session works, and is
 	// addressed as Self until the name lands.
 	Name        string `json:"name,omitempty"`

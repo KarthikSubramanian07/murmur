@@ -50,7 +50,7 @@ type fakeDaemon struct {
 
 	mu       sync.Mutex
 	hellos   []proto.Hello
-	requests []proto.Request // everything but hellos
+	requests []proto.Request // everything but hellos and pings
 	routes   []proto.Route   // what OpRoute requests carried
 	conns    []net.Conn      // the hello connections, to drop
 }
@@ -116,18 +116,20 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 		if f.helloGate != nil {
 			<-f.helloGate
 		}
-		reply(proto.Response{OK: true, Self: "dev/" + req.Hello.ID, ClaudeSession: live})
+		reply(proto.Response{OK: true, Self: "dev/" + req.Hello.ID, ClaudeSession: live, Protocol: proto.Protocol})
 		return // the connection stays open until the test drops it
 	}
 	defer conn.Close()
 	f.mu.Lock()
-	f.requests = append(f.requests, req)
+	if req.Op != proto.OpPing { // finding the daemon is the client's, and not a request of the session's
+		f.requests = append(f.requests, req)
+	}
 	live := f.live
 	if req.Op == proto.OpRoute && req.Route != nil {
 		f.routes = append(f.routes, *req.Route)
 	}
 	f.mu.Unlock()
-	reply(proto.Response{OK: true, Self: "dev/" + req.Session, ClaudeSession: live})
+	reply(proto.Response{OK: true, Self: "dev/" + req.Session, ClaudeSession: live, Protocol: proto.Protocol})
 }
 
 func (f *fakeDaemon) requestCount() int {
