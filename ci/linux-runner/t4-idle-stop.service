@@ -1,0 +1,6 @@
+[Unit]
+Description=Stop the VM when the t4 CI runner is idle
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/t4-idle-stop

@@ -1,0 +1,9 @@
+[Unit]
+Description=Check every 2 minutes whether the t4 CI runner is idle
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target

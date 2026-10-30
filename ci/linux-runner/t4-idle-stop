@@ -1,0 +1,11 @@
+#!/bin/bash
+# Stops this VM once the CI runner has had no job for 30 minutes: a stopped Spot VM bills only its
+# disk. The webhook service (Cloud Run, t4-ci-wake) starts it again when a job for it is queued.
+mark=/run/t4-last-busy          # /run is cleared at boot, so a fresh boot gets the full 30 minutes
+[ -f "$mark" ] || touch "$mark"
+if pgrep -f Runner.Worker >/dev/null; then touch "$mark"; exit 0; fi
+idle=$(( $(date +%s) - $(stat -c %Y "$mark") ))
+if [ "$idle" -gt 1800 ]; then
+  logger "t4-idle-stop: no job for ${idle}s; stopping the VM"
+  shutdown -h now
+fi
