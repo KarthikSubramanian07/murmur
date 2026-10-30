@@ -500,6 +500,7 @@ func (d *Daemon) addInboxLocked(id string, e bus.Event) {
 		box = box[len(box)-maxInbox:]
 	}
 	d.st.Inbox[id] = box
+	d.kickPush()
 }
 
 // catchUpLocked gives a session that reconnects after a restart what arrived for it while the
@@ -852,6 +853,7 @@ func (d *Daemon) pruneInboxes() {
 			delete(d.st.Stopped, id)
 			delete(d.st.Inbox, id)
 			delete(d.st.Commits, id)
+			delete(d.st.T3Routes, id)
 			d.saveLocked()
 		}
 	}
@@ -868,6 +870,14 @@ func (d *Daemon) pruneInboxes() {
 	for id := range d.st.Commits {
 		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {
 			delete(d.st.Commits, id)
+			d.saveLocked()
+		}
+	}
+	// A thread is kept for a session while it can have messages: it is running or stopped within
+	// StoppedInbox. One that went down with a daemon and never came back has none.
+	for id := range d.st.T3Routes {
+		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {
+			delete(d.st.T3Routes, id)
 			d.saveLocked()
 		}
 	}

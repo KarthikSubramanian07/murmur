@@ -1,0 +1,290 @@
+package t3db
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+	"time"
+
+	"github.com/a-Fig/t4/internal/t3"
+)
+
+// The fixture is a state database like T3's, as far as the lookup goes: the table, its columns,
+// and a payload that holds the provider's own session ID (seen on T3 0.1.x, 2026-10-29).
+
+const schema = `CREATE TABLE orchestration_v2_projection_provider_threads (
+	thread_id TEXT, provider TEXT, payload_json TEXT, updated_at TEXT)`
+
+type row struct{ thread, provider, payload, updated string }
+
+func payload(native, app string) string {
+	return `{"appThreadId":"` + app + `","nativeThreadRef":{"provider":"x","nativeId":"` + native + `"},"status":"ready"}`
+}
+
+// fixture makes T3's data directory (with userdata/statev2.sqlite) holding rows, and returns it.
+func fixture(t *testing.T, rows ...row) string {
+	t.Helper()
+	home := t.TempDir()
+	db := open(t, t3.StateDB(home))
+	defer db.Close()
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		var thread any = r.thread
+		if r.thread == "" {
+			thread = nil
+		}
+		if _, err := db.Exec(`INSERT INTO orchestration_v2_projection_provider_threads VALUES (?, ?, ?, ?)`,
+			thread, r.provider, r.payload, r.updated); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return home
+}
+
+// open opens (and makes) a database for writing, as T3 holds its own.
+func open(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	return db
+}
+
+// lookup asks about native in the data directory home. The user's own ~/.t3, which ThreadOf also
+// tries, is swapped for an empty directory, so that nothing here reads the real T3's database.
+func lookup(home, native string) (string, error) {
+	return ThreadOf(context.Background(), "", home, native)
+}
+
+func TestMain(m *testing.M) {
+	empty, err := os.MkdirTemp("", "t3db-home")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("USERPROFILE", empty) // os.UserHomeDir on Windows
+	os.Setenv("HOME", empty)
+	code := m.Run()
+	os.RemoveAll(empty)
+	os.Exit(code)
+}
+
+func TestThreadOfFindsTheThreadOfAClaudeSessionAndOfACodexThread(t *testing.T) {
+	home := fixture(t,
+		row{"thread-claude", "claudeAgent", payload("claude-session-1", "thread-claude"), "2026-10-29T10:00:00Z"},
+		row{"thread-codex", "codex", payload("codex-thread-9", "thread-codex"), "2026-10-29T10:05:00Z"},
+		row{"thread-other", "claudeAgent", payload("claude-session-2", "thread-other"), "2026-10-29T10:06:00Z"})
+	for native, want := range map[string]string{
+		"claude-session-1": "thread-claude", "codex-thread-9": "thread-codex", "claude-session-2": "thread-other"} {
+		if got, err := lookup(home, native); err != nil || got != want {
+			t.Errorf("ThreadOf(%s) = %q, %v; want %q", native, got, err, want)
+		}
+	}
+	if _, err := lookup(home, "no-such-session"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("an unknown session: %v, want ErrNotFound", err)
+	}
+	if _, err := lookup(home, ""); err == nil || errors.Is(err, ErrNotFound) {
+		t.Errorf("no session ID: %v", err)
+	}
+}
+
+// The data directory comes from T3CODE_HOME, else from where the command line is.
+func TestThreadOfFindsTheDatabaseFromTheCLIsPath(t *testing.T) {
+	home := fixture(t, row{"thread-1", "claudeAgent", payload("s1", "thread-1"), "2026-10-29T10:00:00Z"})
+	cli := filepath.Join(home, "bin", "t3.cmd")
+	if got, err := ThreadOf(context.Background(), cli, "", "s1"); err != nil || got != "thread-1" {
+		t.Errorf("by the CLI's path: %q, %v", got, err)
+	}
+	if got, err := ThreadOf(context.Background(), filepath.Join(t.TempDir(), "bin", "t3"), home, "s1"); err != nil || got != "thread-1" {
+		t.Errorf("by the home: %q, %v", got, err)
+	}
+}
+
+// A session in two rows (resumed under another thread, an ID reused) is the one updated last; a
+// row that left thread_id empty has the thread in its payload.
+func TestThreadOfPicksTheNewestAndFallsBackToThePayload(t *testing.T) {
+	home := fixture(t,
+		row{"old-thread", "claudeAgent", payload("s1", "old-thread"), "2026-10-29T09:00:00Z"},
+		row{"new-thread", "claudeAgent", payload("s1", "new-thread"), "2026-10-29T11:00:00Z"},
+		row{"", "claudeAgent", payload("s2", "payload-thread"), "2026-10-29T09:00:00Z"})
+	if got, err := lookup(home, "s1"); err != nil || got != "new-thread" {
+		t.Errorf("s1: %q, %v", got, err)
+	}
+	if got, err := lookup(home, "s2"); err != nil || got != "payload-thread" {
+		t.Errorf("s2: %q, %v", got, err)
+	}
+}
+
+// A row T3 wrote that isn't JSON, or has no native ID, is passed over: it doesn't fail the lookup
+// of everyone else's thread.
+func TestThreadOfPassesOverRowsItCannotRead(t *testing.T) {
+	home := fixture(t,
+		row{"junk-1", "x", "not json at all", "2026-10-29T12:00:00Z"},
+		row{"junk-2", "x", `{"nativeThreadRef":null}`, "2026-10-29T12:00:00Z"},
+		row{"junk-3", "x", `{"nativeThreadRef":{"nativeId":null}}`, "2026-10-29T12:00:00Z"},
+		row{"junk-4", "x", `[]`, "2026-10-29T12:00:00Z"},
+		row{"real", "claudeAgent", payload("s1", "real"), "2026-10-29T10:00:00Z"})
+	if got, err := lookup(home, "s1"); err != nil || got != "real" {
+		t.Errorf("ThreadOf = %q, %v", got, err)
+	}
+}
+
+// Whatever is wrong with T3's database is an error, not a panic or a wrong thread, and not
+// ErrNotFound, which means T3 was read and has no such thread.
+func TestThreadOfFailsSoftly(t *testing.T) {
+	cases := map[string]func(t *testing.T) string{
+		"no data directory": func(t *testing.T) string { return filepath.Join(t.TempDir(), "nothing") },
+		"no database": func(t *testing.T) string {
+			home := t.TempDir()
+			if err := os.MkdirAll(filepath.Dir(t3.StateDB(home)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return home
+		},
+		"the database is a directory": func(t *testing.T) string {
+			home := t.TempDir()
+			if err := os.MkdirAll(t3.StateDB(home), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return home
+		},
+		"not a database": func(t *testing.T) string {
+			home := t.TempDir()
+			os.MkdirAll(filepath.Dir(t3.StateDB(home)), 0o755)
+			if err := os.WriteFile(t3.StateDB(home), []byte("this is not sqlite, and long enough to be read as a header, or not"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return home
+		},
+		"an empty database": func(t *testing.T) string {
+			home := t.TempDir()
+			db := open(t, t3.StateDB(home))
+			defer db.Close()
+			if _, err := db.Exec(`CREATE TABLE unrelated (x)`); err != nil {
+				t.Fatal(err)
+			}
+			return home
+		},
+		"a table with other columns": func(t *testing.T) string {
+			home := t.TempDir()
+			db := open(t, t3.StateDB(home))
+			defer db.Close()
+			if _, err := db.Exec(`CREATE TABLE orchestration_v2_projection_provider_threads (id TEXT, data TEXT)`); err != nil {
+				t.Fatal(err)
+			}
+			return home
+		},
+	}
+	for name, make := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := lookup(make(t), "s1")
+			if err == nil || errors.Is(err, ErrNotFound) || got != "" {
+				t.Errorf("ThreadOf = %q, %v; want an error that is not ErrNotFound", got, err)
+			}
+		})
+	}
+}
+
+// T3 writing the database at that moment holds a lock readers wait for: the lookup waits only
+// the moment it is allowed, then gives up, and the database is the same afterwards.
+func TestThreadOfGivesUpOnALockedDatabase(t *testing.T) {
+	home := fixture(t, row{"thread-1", "claudeAgent", payload("s1", "thread-1"), "2026-10-29T10:00:00Z"})
+	defer func(b, tot time.Duration) { Busy, Total = b, tot }(Busy, Total)
+	Busy, Total = 150*time.Millisecond, 2*time.Second
+
+	w := open(t, t3.StateDB(home))
+	defer w.Close()
+	if _, err := w.Exec(`BEGIN EXCLUSIVE`); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	got, err := lookup(home, "s1")
+	if err == nil || errors.Is(err, ErrNotFound) || got != "" {
+		t.Fatalf("ThreadOf = %q, %v; want an error", got, err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("took %s to give up", took)
+	}
+	if _, err := w.Exec(`ROLLBACK`); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := lookup(home, "s1"); err != nil || got != "thread-1" {
+		t.Errorf("once the lock is released: %q, %v", got, err)
+	}
+}
+
+// T3 runs its database in write-ahead log mode, where the newest rows may be only in the log; a
+// reader that ignored the log (immutable mode does) would miss the thread just started. Nor may
+// a read change the files.
+func TestThreadOfSeesWhatIsOnlyInTheLogAndWritesNothing(t *testing.T) {
+	home := t.TempDir()
+	w := open(t, t3.StateDB(home))
+	defer w.Close()
+	for _, q := range []string{`PRAGMA journal_mode=WAL`, `PRAGMA wal_autocheckpoint=0`, schema,
+		`INSERT INTO orchestration_v2_projection_provider_threads VALUES ('thread-new', 'claudeAgent', '` + payload("s-new", "thread-new") + `', '2026-10-29T10:00:00Z')`} {
+		if _, err := w.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	wal := t3.StateDB(home) + "-wal"
+	if fi, err := os.Stat(wal); err != nil || fi.Size() == 0 {
+		t.Fatalf("the row should be in the log only: %v", err)
+	}
+	before := sums(t, home)
+	for range 3 {
+		if got, err := lookup(home, "s-new"); err != nil || got != "thread-new" {
+			t.Fatalf("ThreadOf = %q, %v", got, err)
+		}
+	}
+	if after := sums(t, home); after != before {
+		t.Errorf("the lookup changed the files:\nbefore %s\nafter  %s", before, after)
+	}
+}
+
+// sums fingerprints the database file and its log (not the shared-memory index, which every reader
+// of a log-mode database keeps).
+func sums(t *testing.T, home string) string {
+	t.Helper()
+	var out string
+	for _, suffix := range []string{"", "-wal"} {
+		b, err := os.ReadFile(t3.StateDB(home) + suffix)
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		out += fmt.Sprintf("%x ", sha256.Sum256(b))
+	}
+	return out
+}
+
+// A path with a space, a percent sign or a question mark in it opens as itself, not as a URI.
+func TestThreadOfOpensOddPaths(t *testing.T) {
+	dirs := []string{"t3 home", "100%25 sure", "a#b&c=d", "ünï"}
+	if runtime.GOOS != "windows" {
+		dirs = append(dirs, "what?is this") // a name Windows doesn't allow
+	}
+	for _, dir := range dirs {
+		root := filepath.Join(t.TempDir(), dir)
+		db := open(t, t3.StateDB(root))
+		for _, q := range []string{schema, `INSERT INTO orchestration_v2_projection_provider_threads VALUES ('thread-1', 'x', '` + payload("s1", "thread-1") + `', '1')`} {
+			if _, err := db.Exec(q); err != nil {
+				t.Fatalf("%s: %v", dir, err)
+			}
+		}
+		db.Close()
+		if got, err := lookup(root, "s1"); err != nil || got != "thread-1" {
+			t.Errorf("%q: ThreadOf = %q, %v", dir, got, err)
+		}
+	}
+}

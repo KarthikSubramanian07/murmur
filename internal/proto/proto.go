@@ -15,6 +15,7 @@ const (
 	OpSend    = "send"
 	OpInbox   = "inbox"
 	OpNotices = "notices"
+	OpRoute   = "route"
 	OpLog     = "log"
 	OpStop    = "stop"
 	OpLookup  = "lookup"
@@ -70,6 +71,28 @@ type Request struct {
 	ToolUseID string `json:"toolUseId,omitempty"`
 	Cwd       string `json:"cwd,omitempty"`
 	GitDir    string `json:"gitDir,omitempty"`
+
+	// Route is what an OpRoute carries: what the session's MCP server has learned about how to
+	// reach it.
+	Route *Route `json:"route,omitempty"`
+}
+
+// Route is how a message can be put into a session's own conversation, as a turn the agent acts
+// on, instead of waiting for it to read a notice. The MCP server finds these in its environment
+// and, inside T3, in T3's database. They are local to the device, like client IDs: the token opens
+// the session's messaging socket, so none of this is logged, shown on the page or put on the bus.
+// Every field is optional.
+type Route struct {
+	// T3CLI is T3CODE_CLI_PATH, set for the agents T3 runs, and T3Home is T3CODE_HOME where the
+	// agent has it. T3Thread is the T3 thread the session is, which is how a message reaches it
+	// through T3 (`t3 thread send`) even while the session's MCP server is away.
+	T3CLI    string `json:"t3Cli,omitempty"`
+	T3Home   string `json:"t3Home,omitempty"`
+	T3Thread string `json:"t3Thread,omitempty"`
+	// MsgSocket and MsgToken are Claude Code's messaging socket for the session and the token that
+	// opens it (CLAUDE_CODE_MESSAGING_SOCKET, CLAUDE_CODE_MESSAGING_TOKEN).
+	MsgSocket string `json:"msgSocket,omitempty"`
+	MsgToken  string `json:"msgToken,omitempty"`
 }
 
 // Hello registers a session.
@@ -84,6 +107,8 @@ type Hello struct {
 	// Reconnect says the session was registered with a daemon that went away, so it should get
 	// what that daemon would have delivered.
 	Reconnect bool `json:"reconnect,omitempty"`
+	// Route says how to deliver a message into the session as a turn.
+	Route
 }
 
 // Response is the daemon's answer. Which fields are set depends on the op.
@@ -183,16 +208,18 @@ type CommitView struct {
 
 // MessageView is one received message. Notices carry no Body.
 type MessageView struct {
-	ID         string    `json:"id"`
-	From       string    `json:"from"`
-	FromName   string    `json:"fromName,omitempty"`
-	FromAgent  string    `json:"fromAgent,omitempty"`
-	FromBranch string    `json:"fromBranch,omitempty"`
-	To         string    `json:"to"` // the address the message was sent to, whatever it was sent by
-	ToName     string    `json:"toName,omitempty"`
-	Subject    string    `json:"subject"`
-	Body       string    `json:"body,omitempty"`
-	At         time.Time `json:"at"`
+	ID         string `json:"id"`
+	From       string `json:"from"`
+	FromName   string `json:"fromName,omitempty"`
+	FromAgent  string `json:"fromAgent,omitempty"`
+	FromBranch string `json:"fromBranch,omitempty"`
+	// FromOwner is the sender's person: the git user name on its device, where known.
+	FromOwner string    `json:"fromOwner,omitempty"`
+	To        string    `json:"to"` // the address the message was sent to, whatever it was sent by
+	ToName    string    `json:"toName,omitempty"`
+	Subject   string    `json:"subject"`
+	Body      string    `json:"body,omitempty"`
+	At        time.Time `json:"at"`
 }
 
 // EventView is one line of `log`.

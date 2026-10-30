@@ -275,6 +275,7 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 		return web.Settings{}, fmt.Errorf("saving settings: %w", err)
 	}
 	d.settings = next
+	d.kickPush() // a session that was set to never may be woken now, for what it has waiting
 	return next.view(), nil
 }
 

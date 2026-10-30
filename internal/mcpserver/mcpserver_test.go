@@ -49,6 +49,7 @@ type fakeDaemon struct {
 	mu       sync.Mutex
 	hellos   []proto.Hello
 	requests []proto.Request // everything but hellos
+	routes   []proto.Route   // what OpRoute requests carried
 	conns    []net.Conn      // the hello connections, to drop
 }
 
@@ -117,6 +118,9 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 	f.mu.Lock()
 	f.requests = append(f.requests, req)
 	live := f.live
+	if req.Op == proto.OpRoute && req.Route != nil {
+		f.routes = append(f.routes, *req.Route)
+	}
 	f.mu.Unlock()
 	reply(proto.Response{OK: true, Self: "dev/" + req.Session, ClaudeSession: live})
 }
@@ -125,6 +129,12 @@ func (f *fakeDaemon) requestCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.requests)
+}
+
+func (f *fakeDaemon) routesTold() []proto.Route {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]proto.Route(nil), f.routes...)
 }
 
 func (f *fakeDaemon) helloCount() int {
