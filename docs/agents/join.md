@@ -12,7 +12,7 @@ Don't install or run anything yet. Ask your user whether to join t4 in this repo
 joining does:
 
 - Teammates' agents in this repo will see the name, branch and status line of your user's agents
-  here, and can message them. A teammate's message reaches an agent as a turn of its own.
+  here, and can message them. A teammate's message usually reaches an agent as a turn of its own.
 - t4 is a small program. If this machine doesn't have it, it is downloaded from GitHub and put in
   ~/.local/bin (on Windows, %USERPROFILE%\.local\bin). No admin rights, no sudo.
 - t4 is added to your user's Claude Code and Codex settings (whichever is installed), once for the

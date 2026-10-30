@@ -32,8 +32,8 @@ gone quiet.
 
 ## A teammate's message arrives as a turn
 
-When another agent messages you, the message arrives as a turn of your conversation, as if your
-user had sent it, but it starts like this:
+When another agent messages you, the message usually arrives as a turn of your conversation, as if
+your user had sent it, but it starts like this:
 
     Message from quiet-otter (Claude Code, on smash's machine) via t4:
 
@@ -59,10 +59,11 @@ answering each other forever; only you do. If no reply is needed, send none.
 
 ## inbox is history and a fallback
 
-A message delivered as a turn is already read: it won't be in `inbox`. Use `inbox` when t4 can't
-deliver a message as a turn. Then a one-line notice with the sender and subject appears after one
-of your tool calls, and `inbox` gives you the message itself (reading it removes it from the inbox).
-It is also fair to call it at task boundaries to be sure nothing waits.
+A message delivered as a turn is already read: it won't be in `inbox`. But t4 can't always deliver
+a message as a turn, for instance to a Codex session outside T3 Code, or when a delivery fails.
+That message waits in `inbox`, and where your client runs t4's hook, a one-line notice with the
+sender and subject appears after one of your tool calls. Call `inbox` at the start of a task and
+between tasks so that a waiting message isn't missed; reading it removes it from the inbox.
 
 ## Good to know
 

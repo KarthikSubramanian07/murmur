@@ -82,7 +82,9 @@ func TestRegisterCodexFollowsDotDotThroughALink(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := filepath.Join(sb.CodexHome, "config.toml")
-	linkOrSkip(t, filepath.Join("alias", "..", "settings.toml"), link)
+	// Not filepath.Join: it cleans `alias/..` away on paper, which is the very thing under test.
+	sep := string(filepath.Separator)
+	linkOrSkip(t, "alias"+sep+".."+sep+"settings.toml", link)
 	if _, _, err := sb.registerCodex(); err != nil {
 		t.Fatal(err)
 	}
