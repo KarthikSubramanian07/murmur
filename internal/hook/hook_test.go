@@ -11,20 +11,23 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/a-Fig/t4/internal/client"
 	"github.com/a-Fig/t4/internal/hook"
 	"github.com/a-Fig/t4/internal/proto"
 )
 
-// fakeDaemon answers every request with OK and records them, for the repository at dir.
-func fakeDaemon(t *testing.T, gitDir string) func() []proto.Request {
+// fakeDaemon serves the daemon's protocol for the clone at gitDir: answer gives the response line
+// to each request, or "" to hold the connection open without one. It returns the requests so far.
+func fakeDaemon(t *testing.T, gitDir string, answer func(proto.Request) string) func() []proto.Request {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done); ln.Close() })
 	var mu sync.Mutex
 	var got []proto.Request
 	go func() {
@@ -44,7 +47,11 @@ func fakeDaemon(t *testing.T, gitDir string) func() []proto.Request {
 				mu.Lock()
 				got = append(got, req)
 				mu.Unlock()
-				c.Write([]byte(`{"ok":true}` + "\n"))
+				if resp := answer(req); resp != "" {
+					c.Write([]byte(resp + "\n"))
+				} else {
+					<-done
+				}
 			}()
 		}
 	}()
@@ -61,6 +68,8 @@ func fakeDaemon(t *testing.T, gitDir string) func() []proto.Request {
 	}
 }
 
+func okToAll(proto.Request) string { return `{"ok":true}` }
+
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.invalid"}, args...)...)
@@ -71,29 +80,40 @@ func git(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func newRepo(t *testing.T) string {
+	t.Helper()
+	repo := t.TempDir()
+	git(t, repo, "init", "-q", "-b", "main")
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+	return repo
+}
+
+func run(event, cwd string) (string, time.Duration) {
+	payload, _ := json.Marshal(map[string]string{"session_id": "claude-x", "hook_event_name": event,
+		"cwd": cwd, "tool_name": "Bash", "tool_use_id": "toolu_1"})
+	var out bytes.Buffer
+	start := time.Now()
+	hook.Run(bytes.NewReader(payload), &out)
+	return out.String(), time.Since(start)
+}
+
 // Before a tool call the hook runs no git process of its own: it finds the clone from its files,
 // as one process would add a tenth of a second or more to every call on Windows (#21). It finds
 // the same clone from a linked worktree and from a subdirectory.
 func TestPreToolUseRunsNoGit(t *testing.T) {
-	repo := t.TempDir()
-	git(t, repo, "init", "-q", "-b", "main")
-	git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+	repo := newRepo(t)
 	linked := filepath.Join(t.TempDir(), "wt")
 	git(t, repo, "worktree", "add", "-q", "-b", "side", linked)
 	sub := filepath.Join(linked, "a", "b")
 	os.MkdirAll(sub, 0o755)
 	gitDir := filepath.Join(repo, ".git")
-	requests := fakeDaemon(t, gitDir)
+	requests := fakeDaemon(t, gitDir, okToAll)
 
 	trace := filepath.Join(t.TempDir(), "trace.json")
 	t.Setenv("GIT_TRACE2_EVENT", trace)
 	for _, cwd := range []string{repo, linked, sub} {
-		payload, _ := json.Marshal(map[string]string{"session_id": "claude-x", "hook_event_name": "PreToolUse",
-			"cwd": cwd, "tool_name": "Bash", "tool_use_id": "toolu_1"})
-		var out bytes.Buffer
-		hook.Run(bytes.NewReader(payload), &out)
-		if out.Len() != 0 {
-			t.Errorf("PreToolUse printed %q", out.String())
+		if out, _ := run("PreToolUse", cwd); out != "" {
+			t.Errorf("PreToolUse printed %q", out)
 		}
 	}
 	b, _ := os.ReadFile(trace)
@@ -111,5 +131,54 @@ func TestPreToolUseRunsNoGit(t *testing.T) {
 	}
 	if starts != 3 {
 		t.Errorf("the daemon was told of %d calls, want 3", starts)
+	}
+}
+
+// A daemon that takes the hook's connection and never answers holds a tool call up for no more
+// than BracketTimeout, and the hook prints nothing. (A daemon that isn't running at all is
+// TestPreToolUseWithTheDaemonDownIsSilent, in the daemon's tests.)
+func TestPreToolUseGivesUpOnAHungDaemon(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpPing {
+			return `{"ok":true}`
+		}
+		return "" // hung
+	})
+	out, took := run("PreToolUse", repo)
+	if out != "" {
+		t.Errorf("PreToolUse printed %q", out)
+	}
+	if limit := hook.BracketTimeout + 2*time.Second; took > limit {
+		t.Errorf("PreToolUse waited %v for a hung daemon, more than %v", took, limit)
+	}
+	var told bool
+	for _, r := range requests() {
+		told = told || r.Op == proto.OpToolStart
+	}
+	if !told {
+		t.Error("the hook didn't tell the daemon about the call")
+	}
+}
+
+// A daemon from before #21 can still be running when the hook is upgraded: it refuses the ends of
+// calls as an unknown op. The notices after a tool call still arrive.
+func TestNoticesFromADaemonThatDoesntBracket(t *testing.T) {
+	repo := newRepo(t)
+	fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		switch r.Op {
+		case proto.OpPing:
+			return `{"ok":true}`
+		case proto.OpNotices:
+			return `{"ok":true,"self":"fake-0001/aaaaaa","messages":[{"id":"m1","from":"other-0001/bbbbbb","subject":"the old daemon's notice"}]}`
+		}
+		return `{"ok":false,"error":"unknown op ` + r.Op + `"}`
+	})
+	if out, _ := run("PreToolUse", repo); out != "" {
+		t.Errorf("PreToolUse printed %q", out)
+	}
+	out, _ := run("PostToolUse", repo)
+	if !strings.Contains(out, "the old daemon's notice") {
+		t.Errorf("PostToolUse printed %q, want the notice", out)
 	}
 }
