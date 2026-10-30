@@ -161,9 +161,14 @@ func viaOf(r proto.Route, live bool) string {
 func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, proto.Route) {
 	var next *inMsg
 	for _, m := range d.st.Inbox[id] {
-		if pushable(m) {
+		if m.Pushing {
+			// One at a time, so they arrive in order. A message on its way in that isn't this
+			// session's pusher's came with the inbox of a session this one replaced (see
+			// takeInboxLocked): its pusher kicks when it is done.
+			return nil, "", proto.Route{}
+		}
+		if next == nil && pushable(m) {
 			next = m
-			break
 		}
 	}
 	if next == nil {
@@ -285,6 +290,7 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	j.msg.Pushing = false
+	d.kickPush() // what waited behind this message, in an inbox that took it over, may go now
 	if err != nil {
 		j.msg.PushFailed = true
 		if !d.pushWarned[j.id] {
@@ -355,7 +361,8 @@ func (d *Daemon) retireRoutesLocked(s *session, want t3Route) {
 // takeInboxLocked moves the messages session from has unread into s's inbox, in the order they
 // arrived. A message s has a copy of (one for everyone is in both inboxes) stays once, as s's copy,
 // unless from's is on its way in as a turn: then that one stays, so it is delivered once and is
-// removed from wherever it is when it has been. Caller holds mu.
+// removed from wherever it is when it has been. A message s never needs from the other session
+// stays behind (see hadCopyLocked). Caller holds mu.
 func (d *Daemon) takeInboxLocked(s *session, from string) {
 	old := d.st.Inbox[from]
 	if len(old) == 0 {
@@ -373,6 +380,9 @@ func (d *Daemon) takeInboxLocked(s *session, from string) {
 			}
 			continue
 		}
+		if !m.Pushing && d.hadCopyLocked(s, m) {
+			continue
+		}
 		at[m.Event.ID] = len(box)
 		box = append(box, m)
 	}
@@ -381,9 +391,25 @@ func (d *Daemon) takeInboxLocked(s *session, from string) {
 		box = box[len(box)-maxInbox:]
 	}
 	delete(d.st.Inbox, from)
-	d.st.Inbox[s.id] = box
+	if len(box) == 0 {
+		delete(d.st.Inbox, s.id)
+	} else {
+		d.st.Inbox[s.id] = box
+	}
 	d.log.Printf("session %s, taking over the T3 thread of %s, took what it had unread", bus.Addr(d.device, s.id), bus.Addr(d.device, from))
 	d.kickPush()
+}
+
+// hadCopyLocked says message m, in the inbox of a session that s replaces, is not for s to take:
+// s sent it itself (a message for everyone goes to every session but its sender, and until s found
+// its thread the other session was another one), or it came while s was running and was for s too,
+// so s was given a copy of its own, which s may have read since: its copy would not be in its inbox
+// to be told from this one. Caller holds mu.
+func (d *Daemon) hadCopyLocked(s *session, m *inMsg) bool {
+	if m.Event.From == bus.Addr(d.device, s.id) {
+		return true
+	}
+	return !m.Arrived.Before(s.started) && d.addressedLocked(m.Event, s.id)
 }
 
 // setRouteLocked takes what a session's MCP server has learned about reaching its client since it

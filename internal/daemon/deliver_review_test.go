@@ -1,6 +1,8 @@
 package daemon_test
 
 import (
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,5 +141,94 @@ func TestReplacementOfAThreadTakesWhatTheOldSessionHadUnread(t *testing.T) {
 	holds(t, "each delivered once", 2500*time.Millisecond, func() bool { return len(calls()) == 2 })
 	if inbox, _ := b.unread("cccccc", "claude-2"); len(inbox) != 0 {
 		t.Errorf("inbox: %q", inbox)
+	}
+}
+
+// A message that was on its way in when the new session of a thread took over keeps its place:
+// what came after it waits until it has been delivered, tried again or not, so the turns arrive in
+// the order the messages did. The stand-in t3 fails, so that the first message waits for its retry.
+func TestReplacementDeliversInOrderWhatWasOnItsWay(t *testing.T) {
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	t.Setenv(fakeT3FailEnv, "1")
+	a := newDevice(t, remote)
+	b := newDeviceWith(t, remote, func(d *device) { d.grace, d.keep, d.pushRetry = 20*time.Second, time.Hour, 3*time.Second })
+	alice, _ := a.session("aaaaaa", "")
+	route := proto.Route{T3CLI: exe, T3Thread: "thread-bob"}
+	old, conn := b.sessionRoute("bbbbbb", "claude-1", route)
+	eventually(t, "presence", func() bool { return a.seesSession(old) && b.seesSession(alice) })
+
+	a.send("aaaaaa", old, "first", "one")
+	eventually(t, "the first delivery to start", func() bool { return len(calls()) == 1 })
+	a.send("aaaaaa", old, "second", "two")
+	eventually(t, "the second message to reach b", func() bool { return logHas(b, "second") })
+	conn.Close()                       // dropped, in its grace, with the first on its way, waiting for its retry
+	time.Sleep(500 * time.Millisecond) // the daemon has seen it go
+	b.sessionRoute("cccccc", "claude-2", route)
+
+	eventually(t, "both messages to have been tried twice", func() bool { return len(calls()) >= 4 })
+	for i, want := range []string{"first", "first", "second", "second"} {
+		if got := calls()[i].Stdin; !strings.Contains(got, want) {
+			t.Errorf("call %d carried %q, want the message %q", i, got, want)
+		}
+	}
+}
+
+// quietReplacement is a device on which a T3 thread's first session has dropped, in its grace, and
+// a second session of the thread has registered without knowing the thread yet, with a third session
+// to send from, and the page saying never to wake a session. found tells the daemon the second
+// session's thread.
+func quietReplacement(t *testing.T) (b *device, calls func() []t3Call, found func()) {
+	t.Helper()
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	b = newDeviceWith(t, remote, func(d *device) { d.grace, d.keep = 20*time.Second, time.Hour })
+	pg := b.page()
+	if code, body := pg.call("PUT", "/api/settings", pg.token, `{"wake":{"when":"never"}}`); code != http.StatusOK {
+		t.Fatalf("PUT settings: %d %s", code, body)
+	}
+	route := proto.Route{T3CLI: exe, T3Thread: "thread-bob"}
+	_, conn := b.sessionRoute("bbbbbb", "claude-1", route)
+	conn.Close()
+	time.Sleep(500 * time.Millisecond) // the daemon has seen it go
+	b.sessionRoute("cccccc", "claude-2", proto.Route{T3CLI: exe})
+	b.session("dddddd", "")
+	return b, calls, func() {
+		t.Helper()
+		if r := b.do(proto.Request{Op: proto.OpRoute, Session: "cccccc", Route: &route}); r.Error != "" {
+			t.Fatalf("route: %s", r.Error)
+		}
+	}
+}
+
+// A message the new session of a thread sent for everyone, before it found its thread, is in the
+// inbox of the session it replaces, which isn't a sender: it must not come back to the new session.
+func TestReplacementIsNotHandedItsOwnBroadcast(t *testing.T) {
+	b, calls, found := quietReplacement(t)
+	b.send("cccccc", "*", "from the new one", "hello")
+	found()
+
+	inbox, notices := b.unread("cccccc", "claude-2")
+	if len(inbox) != 0 || len(notices) != 0 {
+		t.Errorf("the new session got its own message back: inbox %q, notices %q", inbox, notices)
+	}
+	if n := len(calls()); n != 0 {
+		t.Errorf("%d turns delivered while the page says never", n)
+	}
+}
+
+// A message for everyone that the new session of a thread has read, before it found its thread, is
+// not told again from the inbox of the session it replaces.
+func TestReplacementIsNotHandedWhatItHasRead(t *testing.T) {
+	b, _, found := quietReplacement(t)
+	b.send("dddddd", "*", "to everyone", "hi")
+	if r := b.do(proto.Request{Op: proto.OpInbox, Session: "cccccc"}); len(r.Messages) != 1 {
+		t.Fatalf("the new session read %d messages, want 1", len(r.Messages))
+	}
+	found()
+
+	inbox, notices := b.unread("cccccc", "claude-2")
+	if len(inbox) != 0 || len(notices) != 0 {
+		t.Errorf("a message it had read came back: inbox %q, notices %q", inbox, notices)
 	}
 }

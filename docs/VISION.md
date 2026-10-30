@@ -561,6 +561,12 @@ A body past the limit is cut, as in `inbox`.
   T3 restarts a thread's MCP server, or the connection is made again, the new session has the
   thread and the old one, in its grace or stopped, loses its route: a message for everyone is
   delivered to the thread once, and a session's own broadcast doesn't come back to it as a turn.
+  What the old session had unread goes to the new one, which now has the way in, in the order the
+  messages arrived, behind any that was already on its way in; it leaves behind what the new
+  session sent itself and what came while it was running and was for it too, as it had its own copy
+  of those, which it may have read. Not covered: a message for everyone that comes in the second or
+  so between a new session registering and finding its thread goes to the old session's thread
+  while that has the route, and to the new one when it has it, so the thread may see it twice.
   A session that found its thread keeps its name under the Claude session ID too, so the ID does
   not bring that name to a second process of the same Claude session; it is a session of its own.
 - **Codex under T3** gets the thread from `_meta.threadId`, which every tool call carries, but its
