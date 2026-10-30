@@ -20,8 +20,10 @@ working name.
 - One small daemon per clone syncs those refs; each agent session connects to it through an MCP
   server, and a human looks at it through a web page.
 - Agents see each other's **presence** (who is working where, on what) and send **messages**.
-  A message shows up as a one-line notice (sender and subject); the agent reads the body with
-  the `inbox` tool.
+  A message reaches the other agent as a turn of its own, starting an idle agent's work, with
+  nobody typing: through `t3 thread send` for a session in T3 Code, and through Claude Code's
+  messaging socket outside T3. Where neither is possible it shows up as a one-line notice
+  (sender and subject), and the agent reads the body with the `inbox` tool.
 
 [`docs/VISION.md`](docs/VISION.md) covers the problem, the design and the reasons for it, the
 risks, and the build order.

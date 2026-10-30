@@ -15,10 +15,25 @@ import (
 	"github.com/a-Fig/t4/internal/proto"
 )
 
+// maxPollBackoff is the longest a failing poll waits between tries, however short Poll is.
+const maxPollBackoff = time.Minute
+
+// nextPoll is how long to wait after a poll that failed or worked, when the wait was cur and Poll
+// is base: base again once it works, and while it fails twice as long each time, to at most 20
+// times base or maxPollBackoff. A remote that is down or limiting requests isn't asked every few
+// seconds by every device.
+func nextPoll(cur, base time.Duration, failed bool) time.Duration {
+	if !failed {
+		return base
+	}
+	return min(cur*2, 20*base, max(maxPollBackoff, base))
+}
+
 func (d *Daemon) pollLoop(ctx context.Context) {
 	t := time.NewTicker(d.opt.Poll)
 	defer t.Stop()
 	failing := false
+	wait := d.opt.Poll
 	for {
 		err := d.pollOnce(ctx)
 		if err != nil && ctx.Err() == nil {
@@ -28,7 +43,7 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 		}
 		switch {
 		case err != nil && ctx.Err() == nil && !failing:
-			d.log.Printf("sync failed, retrying every %s: %v", d.opt.Poll, err)
+			d.log.Printf("sync failed, retrying every %s, less often while it keeps failing: %v", d.opt.Poll, err)
 		case err == nil && failing:
 			d.log.Printf("sync working again")
 			// A session that couldn't take its name meanwhile would otherwise wait out a retry
@@ -36,6 +51,10 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 			d.kickNames()
 		}
 		failing = err != nil
+		if next := nextPoll(wait, d.opt.Poll, failing); next != wait {
+			wait = next
+			t.Reset(wait)
+		}
 		select {
 		case <-ctx.Done():
 			return

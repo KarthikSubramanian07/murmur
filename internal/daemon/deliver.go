@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/t4/internal/bus"
+	"github.com/a-Fig/t4/internal/msgsock"
 	"github.com/a-Fig/t4/internal/proto"
 	"github.com/a-Fig/t4/internal/t3"
 	"github.com/a-Fig/t4/internal/view"
@@ -247,6 +248,8 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 	switch j.via {
 	case viaT3:
 		return t3.Send(ctx, j.route.T3CLI, j.route.T3Home, j.route.T3Thread, j.text)
+	case viaSocket:
+		return msgsock.Send(ctx, j.route.MsgSocket, j.route.MsgToken, j.text)
 	}
 	return fmt.Errorf("no way to deliver by %s", j.via)
 }

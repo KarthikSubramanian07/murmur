@@ -1,0 +1,92 @@
+// Package msgsock writes a user message into a running Claude Code session through its messaging
+// socket, so the message arrives as a turn of the session. Claude Code offers the socket to the
+// processes it starts: CLAUDE_CODE_MESSAGING_SOCKET is its address (a unix socket, or a named
+// pipe on Windows) and CLAUDE_CODE_MESSAGING_TOKEN opens it. The protocol, as observed 2026-10-29,
+// is lines of JSON: an auth line {"type":"auth","token":...}, then a user line
+// {"type":"user","message":{"role":"user","content":...}}. The token and the address stay on the
+// device, so nothing here puts either in an error.
+package msgsock
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"net"
+	"strings"
+	"time"
+)
+
+// MaxLine is the longest line Send writes. The sender's text is cut well below it (see view.Turn).
+const MaxLine = 1 << 20
+
+// Timeout is how long Send waits to connect and write when the context sets no sooner end.
+const Timeout = 5 * time.Second
+
+type userLine struct {
+	Type    string      `json:"type"`
+	Message userMessage `json:"message"`
+}
+
+type userMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// Send connects to the socket at path, authenticates with token and writes text as a user message.
+// It returns once the lines are written: the session is not asked whether it took them, as the
+// socket has no reply to ask for.
+func Send(ctx context.Context, path, token, text string) error {
+	if path == "" || token == "" {
+		return errors.New("no messaging socket or token")
+	}
+	auth, err := json.Marshal(map[string]string{"type": "auth", "token": token})
+	if err != nil {
+		return err
+	}
+	msg, err := json.Marshal(userLine{Type: "user", Message: userMessage{Role: "user", Content: text}})
+	if err != nil {
+		return err
+	}
+	if len(msg) > MaxLine {
+		return fmt.Errorf("a message of %d bytes is over the %d byte limit of the messaging socket", len(msg), MaxLine)
+	}
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+	conn, err := dial(ctx, path)
+	if err != nil {
+		return clean(err, path, token)
+	}
+	defer conn.Close()
+	if dl, ok := ctx.Deadline(); ok {
+		conn.SetDeadline(dl)
+	}
+	out := make([]byte, 0, len(auth)+len(msg)+2)
+	out = append(append(append(append(out, auth...), '\n'), msg...), '\n')
+	if _, err := conn.Write(out); err != nil {
+		return clean(err, path, token)
+	}
+	return nil
+}
+
+// clean strips the address and the token out of an error: the net and os packages put the address
+// in theirs.
+func clean(err error, path, token string) error {
+	var op *net.OpError
+	var pe *fs.PathError
+	switch {
+	case errors.As(err, &op) && op.Err != nil:
+		err = fmt.Errorf("%s: %w", op.Op, op.Err)
+	case errors.As(err, &pe) && pe.Err != nil:
+		err = fmt.Errorf("%s: %w", pe.Op, pe.Err)
+	}
+	s := err.Error()
+	for _, secret := range []string{path, token} {
+		s = strings.ReplaceAll(s, secret, "<redacted>")
+	}
+	if s == err.Error() {
+		return err
+	}
+	return errors.New(s)
+}

@@ -13,8 +13,8 @@
 // The reader is modernc.org/sqlite: SQLite itself, translated to Go, so it needs no C compiler
 // and cross-compiles like the rest of t4, and its file locking and shared-memory index for the
 // write-ahead log are SQLite's own, which matters when another process has the file open. It adds
-// about 7.5 MB to the binary (a probe grew from 2.5 MB to 10 MB, 2026-10-29); ncruces/go-sqlite3,
-// which runs SQLite as WebAssembly, added 10.5 MB and brings locking of its own.
+// about 6 MB to the binary (t4.exe for Windows, 17.7 MB to 23.8 MB, 2026-10-29); ncruces/go-sqlite3,
+// which runs SQLite as WebAssembly, added 10.5 MB on a probe and brings locking of its own.
 package t3db
 
 import (

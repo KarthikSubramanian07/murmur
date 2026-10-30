@@ -3,6 +3,7 @@ module github.com/a-Fig/t4
 go 1.26.0
 
 require (
+	github.com/Microsoft/go-winio v0.6.4
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.61.0

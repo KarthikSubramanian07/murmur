@@ -1,7 +1,8 @@
 # Vision: agents that find each other across a hackathon team
 
 Status: V1 works, in Go (2026-10-26); the next version, with names, a web page and wake-ups, is
-being built, and the web page is in (2026-10-29), as is an agent joining a repo by itself. "t4" is the repo's name and a working name
+being built; the web page, an agent joining a repo by itself, and delivery of a message as a turn of
+the receiving session are in (2026-10-29). "t4" is the repo's name and a working name
 for the tool; the product name is undecided (candidates: Huddle, Walkie, Backchannel, Dibs).
 
 ## The problem
@@ -47,7 +48,7 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   event, the payload in the commit message (a readable subject, a JSON body). One writer per ref
   means pushes never race. A message to another session sits in the sender's log, addressed to it.
 - Per-device logs can't settle a race: two devices could each take the same session name (#20)
-  within one 10 s sync, each seeing no rival. What must be settled before anyone acts on it needs
+  within one sync, each seeing no rival. What must be settled before anyone acts on it needs
   one shared ref, which GitHub orders. A push to a ref is atomic, and with a lease
   (`--force-with-lease`) it is refused unless the ref still holds what the pusher last fetched,
   which makes the ref a compare-and-swap. A refused pusher fetches and decides again with what it
@@ -88,9 +89,10 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   would stop t4's own being pushed: those under its own names (`presence/<deviceId>/...`,
   `mesh/<deviceId>/...`, `names/...`), and `refs/t4/mesh` or `refs/t4/presence` as refs
   themselves. t4 writes nothing at any of them (found by the Opus reviews of V1, #8, 2026-10-28).
-- Reading: poll `git ls-remote origin 'refs/t4/*'` about every 10 s, which is cheap; fetch only
-  when a SHA has changed. Delivery takes roughly 10–15 s, plenty for agents: V1 took about 12 s
-  from a Windows laptop to a macOS machine through GitHub (2026-10-26), 2 s of it the send.
+- Reading: poll `git ls-remote origin 'refs/t4/*'` every 3 s (10 s until 2026-10-29), which is
+  cheap; fetch only when a SHA has changed. A message takes about 6–8 s from a `send` to the
+  receiving agent's turn ("Delivering a message as a turn", below); V1, polling every 10 s, took
+  about 12 s from a Windows laptop to a macOS machine (2026-10-26), 2 s of it the send.
 - A device is one clone's daemon. Worktrees of a clone share its `.git`, so they share its daemon;
   a second clone on the same machine is a second device. The device ID is the hostname plus four
   random hex digits (`tyler-laptop-3f2a`), kept with the daemon's other state in `.git/t4/`, which
@@ -409,12 +411,12 @@ evidence is in #19.
     2026-10-29).
 - **Under T3 the session is the thread, not the provider's session under it.** The Claude
   session ID under one thread changes when the user switches Claude accounts, and has gone
-  A → B → A. T3 gives MCP servers and hooks no way to learn the thread ID. The two ways that
-  work today are unofficial: the agent reads it with T3's `t3_thread_configuration` and passes
-  it to t4, or t4 looks up the Claude session ID in T3's database. Tyler decided on 2026-10-28
-  not to change T3's source, so which of these t4 uses is open.
+  A → B → A. T3 gives MCP servers and hooks no way to learn the thread ID. Tyler decided on
+  2026-10-28 not to change T3's source, so t4 looks up the provider's session in T3's database
+  (#56, 2026-10-29): "Delivering a message as a turn", below.
 - **Codex's MCP servers get a bare environment,** about 20 Windows core variables and no
-  `CODEX_*`, so the server learns its thread at its first tool call. Hooks under Codex inherit
+  `CODEX_*` or `T3CODE_CLI_PATH` (unless the Codex config forwards it), so the server learns its
+  thread at its first tool call. Hooks under Codex inherit
   the `CLAUDE_CODE_SESSION_ID` of any Claude Code session that started Codex, so that variable
   doesn't prove a hook runs under Claude Code.
 - **Two live processes can hold one ID.** Claude Code lets a session be resumed twice at once.
@@ -496,56 +498,110 @@ change and a daemon that knows no names delivers by it all the same.
   show without one and are reached at `device/session`, and they reach sessions named here the
   same way.
 
-### Delivery differs by client
+### Delivering a message as a turn
 
 Sending is an MCP tool call everywhere. Receiving is not, because MCP only answers when asked.
-Whatever the route, what reaches the agent is a **notice**: always the sender and the subject,
-one line per message, never the body.
+Until 2026-10-29 a message reached an agent only as a one-line notice (sender and subject, never
+the body) that a hook added after one of the agent's own tool calls, and the agent read the body
+with `inbox`. That cannot wake an idle agent, and it leaves a teammate's question unanswered until
+the agent happens to call a tool. Tyler's decision (2026-10-29, #57), which replaces notice-only
+delivery: **a message from another agent reaches the receiving session as a turn of its own**, the
+way a message between two T3 threads does. t4's core is two agents talking with nobody typing.
 
-```
-[t4] quiet-otter (bob-laptop/session-3, claude-code): "Are you changing the auth middleware?"
-```
+The daemon delivers at once, when a message arrives for a session it can reach:
 
-Every message has a subject for this reason. The body is one `inbox` call away, so it arrives as
-tool output, as data, not as something that looks like the user typing. Reading the body through
-a tool is crosstalk's idea.
-
-| Client | Notice delivered by | Can wake an idle agent |
+| Where the session runs | Delivered by | Starts a turn in an idle session |
 |---|---|---|
-| T3 Code | T3 queues the notice into the thread, as it does for local messages. The preferred route: when a session runs inside T3, use T3 | Yes |
-| Claude Code outside T3 | Its inbox socket (`CLAUDE_CODE_MESSAGING_SOCKET`), if it exists; otherwise a hook that checks after tool calls and prompts | With the socket, reportedly; with hooks, no |
-| Codex, others | AGENTS.md asks the agent to call `inbox` at task boundaries | No |
+| T3 Code, Claude Code or Codex | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
+| Claude Code outside T3 | the session's messaging socket | Unverified: a message t4's code wrote to a session's socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle one has not been tried |
+| Codex outside T3, or any delivery that fails | the hook's notice and `inbox`, as before | No |
 
-The socket exists: Claude Code 2.1.310 sets `CLAUDE_CODE_MESSAGING_SOCKET` (a named pipe on
-Windows) and a token for it in every child process, MCP servers and hooks included (seen
-2026-10-26). Its protocol, and whether it wakes an idle session, are unverified. Codex has
-Claude-style hooks too, `PostToolUse` among them, each run only once the user trusts it in
-`/hooks` (0.164.0, 2026-10-28); t4 doesn't install one yet. V1 uses the hook: Claude Code adds a `PostToolUse` hook's `additionalContext` to
-the conversation, which is how a notice reaches an agent mid-task (seen with 2.1.310, 2026-10-26).
+What the agent reads:
 
-### The envelope
+```
+Message from quiet-otter (Claude Code, on smash's machine) via t4:
 
-Every incoming message reaches the agent wrapped in an envelope **the tool adds**, never the
-sender: `[t4 message from quiet-otter (bob-laptop/session-3), claude-code]`. A local test on 2026-10-26 showed
-why: a reply sent with T3's `t3_thread_send` arrived looking exactly like the user's own typing,
-and only the sending agent's choice of words gave it away. Locally that is harmless, since every
-sender is the user. Across devices the agent must know a teammate's agent is speaking, not its
-user. That is what lets it treat messages as information rather than instructions.
+<the subject, then the body>
 
-The envelope goes on the `inbox` output, alongside the notice-only delivery above. crosstalk
-reports that Claude Code wraps every message pushed through its inbox socket in its own framing
-that presents the sender as the user's teammate, and that this can't be turned off (unverified
-here). That is one more reason to push only the notice.
+Reply with t4's `send` to quiet-otter if a reply is needed.
+```
+
+The first and last lines are t4's: the first says that a teammate's agent is speaking, not the
+user (the job the old "envelope" did, so that the agent treats a message as information rather
+than as the user's own typing), and the last says how to answer and that answering is optional.
+The sender's text in between is delivered as written, neither quoted nor wrapped: teammates'
+agents are trusted in t4's model, and a message that reads as a request is meant to be acted on.
+A body past the limit is cut, as in `inbox`.
+
+- **Marked read.** A delivered message leaves the receiving session's inbox, so neither the hook
+  nor `inbox` shows it again; the page and the daemon's log keep it as history. A message that
+  could not be delivered stays in the inbox and is announced by the hook as before.
+- **Finding the thread (#56).** T3 gives an MCP server or a hook no thread ID, so the MCP server
+  looks up the provider's own session in T3's database: `statev2.sqlite` in T3's data directory
+  (`T3CODE_HOME`, or the directory the CLI's `bin` is in, or `~/.t3`), table
+  `orchestration_v2_projection_provider_threads`, where `payload_json.nativeThreadRef.nativeId`
+  is the Claude Code session ID or the Codex thread ID, next to the `thread_id` column (seen on
+  T3 0.1.x, 2026-10-29). The ID comes from the hook or `CLAUDE_CODE_SESSION_ID` for Claude Code
+  and from `_meta.threadId` of a tool call for Codex; the database decides which is a thread. The
+  lookup only reads: SQLite's read-only mode (never immutable, which would ignore the write-ahead
+  log and miss the newest threads), at most 1.5 s on a lock and 4 s in all, and any trouble leaves
+  the session with the keys it had before. The reader is `modernc.org/sqlite`, SQLite translated
+  to Go, so `t4` stays one binary built without a C compiler for every platform. The cost is
+  size: with everything else in this change, `t4.exe` for Windows grew from 17.7 MB to 23.8 MB
+  (12.3 MB to 16.2 MB built with `-s -w`) against `main` on 2026-10-29, almost all of it SQLite.
+  `ncruces/go-sqlite3`, SQLite as WebAssembly, added more (10.5 MB on a probe).
+- **The session is its thread.** A session in T3 is named after its thread, not after the
+  provider's session under it, so its name stays through account switches, `/clear` and restarts
+  (see "Under T3", above). The daemon keeps the thread, the CLI's path and T3's data directory
+  per session in `.git/t4/state.json`, so a message for a session whose MCP server T3 has stopped
+  (after 30 minutes idle, for Claude Code) still finds its thread. The thread, the messaging
+  token and the socket's address stay on the device: never on the bus, the page or the log.
+- **Codex under T3** gets the thread from `_meta.threadId`, which every tool call carries, but its
+  MCP servers start with a bare environment, `T3CODE_CLI_PATH` not among its variables, so
+  Codex's config must forward it: `env_vars = ["T3CODE_CLI_PATH"]` under `[mcp_servers.t4]`
+  (worked with Codex 0.164.0 under T3 0.1.2, 2026-10-29). Without it the server doesn't know it is
+  in T3, and a Codex session gets notices only. Codex reads a project's `.codex/config.toml` only
+  once the project is trusted.
+- **The messaging socket** is for Claude Code outside T3. Claude Code sets
+  `CLAUDE_CODE_MESSAGING_SOCKET` (a unix socket, a named pipe on Windows) and
+  `CLAUDE_CODE_MESSAGING_TOKEN` in every child process, and the MCP server passes both to its
+  daemon with its hello. The protocol, as seen on 2.1.312 on 2026-10-29: JSON lines, an auth line
+  `{"type":"auth","token":...}`, then `{"type":"user","message":{"role":"user","content":...}}`.
+  The socket answers nothing, so t4 knows a message was written, not that the session took it.
+  The token dies with the session's process, so the socket is used only while the session's MCP
+  server is connected. A session inside T3 is never written to this way: the socket there is T3's.
+  Claude Code wraps what arrives on the socket in a note of its own that says the message came
+  from another Claude session, not the user (seen 2026-10-29), which suits t4's framing.
+- **When a message isn't delivered.** A failed delivery is tried once more after a pause, then
+  left to the hook's notice, and the log says why, once per session. A message that waited more
+  than 15 minutes (T3 closed, the session away) is not sprung on the agent as a turn: it stays a
+  notice. The page's wake setting (#22) set to "never", for the device or for one session, keeps
+  the notice too; otherwise delivery is at once.
+- **No loop guard.** Nothing in t4 limits how often two agents answer each other (Tyler's
+  decision, 2026-10-29). A message to a busy thread is queued as its next turn, not injected into
+  the one running, and the AGENTS.md wording asks for coordination, not chatting; beyond that
+  only the agents stop a loop.
+- **Speed.** The daemon polls the remote every 3 s, not 10 s (2026-10-29), and delivers the moment
+  a message is fetched. Measured between two T3 threads on one laptop through GitHub over HTTPS:
+  about 6–8 s from an agent's `send` to the other thread's turn starting (a push, 1.2 s; up to
+  one poll; `ls-remote`, 1.2 s; a fetch; `t3 thread send`, 1.1 s), and a question answered by
+  another agent's reply in about 19 s. GitHub documents no limit on git reads, and a test of 63
+  `ls-remote` requests about 2 s apart drew none, which is a short test, not evidence about
+  hours of them from every device of a team. A poll that fails waits twice as long each time, to
+  at most a minute (or 20 polls, if Poll is shorter), and goes back to 3 s when it works.
 
 ## Risks and how the design meets them
 
 - **Agents replying forever.** T3's local messaging stays calm because a reply is plain text in
   the receiver's own thread; nothing goes back unless the agent deliberately sends again. t4 keeps
   that: no automatic replies, incoming messages queued rather than steering a running turn, and
-  AGENTS.md wording that asks for coordination, not chatting. No limits or caps on top of that.
+  AGENTS.md wording that asks for coordination, not chatting. No limits or caps on top of that,
+  now that a message starts a turn without anyone typing (Tyler's decision, 2026-10-29): two
+  agents that keep answering each other are stopped by nothing but the agents.
 - **Prompt injection.** Anyone with push access can now put text in front of your agent. That
-  matches the trust model (a hackathon team), but messages never get to bypass the receiving
-  user's permission mode; the envelope keeps their origin visible.
+  matches the trust model (a hackathon team), and a delivered message is text in front of the
+  agent as a turn of its own, delivered as written; messages never get to bypass the receiving
+  user's permission mode, and the framing's first line keeps their origin visible.
 - **Leaked secrets.** Everything on the bus stays in repo history, readable by anyone with read
   access, and agents do paste `.env` values. Everything a session sends (its messages and status
   line) is scanned first, and a match blocks the send rather than being redacted, so the
@@ -576,7 +632,8 @@ t4's difference.
 - **openhuddle**: a hub server plus Claude Code hooks; claims (automatic, on edit), presence,
   messages. The closest feature match. Days old, one author, many concepts.
 - **crosstalk** (epode-studio): encrypted rooms through a Cloudflare relay, eight clients. The best
-  message delivery and safety design, the source of notice-only delivery above. Appears macOS-only.
+  message delivery and safety design, the source of the notice-only delivery t4 used until 2026-10-29.
+  Appears macOS-only.
 - **walkie**: peer-to-peer chat between agents (Hyperswarm), the most used (≈253 stars). Messages
   only; no relay, so it can fail behind client isolation.
 - One machine only, so not comparable: polymatx/dibs, abevz/dibs, bcmyguest/huddle, parley
@@ -599,6 +656,7 @@ a git library, so it gets each user's credential helpers, SSH config and URL rew
 2. MCP server and the Claude Code hook. The first useful version.
 3. T3: connect as an MCP server. `t3 thread send`, run on the same machine, queues a message
    into any thread and starts its turn, so waking an idle thread (#25) needs no change to T3.
+   Done 2026-10-29 (#56, #57): the daemon delivers a message with it.
 4. Codex specifics.
 
 ## Open questions
@@ -607,10 +665,11 @@ a git library, so it gets each user's credential helpers, SSH config and URL rew
 - Should the page's messages outlast a daemon restart? `t4 ui` often starts a fresh daemon, which
   has read nothing yet, and the page opens empty. Recent bus commits could be read at start; no code
   does that yet.
-- How does t4 learn a T3 thread's ID: from the agent, or from T3's database? (See above.)
-- What is the protocol of Claude Code's messaging socket, and can it wake an idle session?
 - A worktree made after joining has the tools (the consent is per clone) but no hook, until
   `t4 join` runs there again. Nothing prompts that, since the agent in it already has the tools.
   Should the server or the daemon install the hook there?
-- Does GitHub rate-limit a `git ls-remote` every 10 s from each of a team's devices? Nothing
-  documents a limit for git traffic; none was hit in testing so far.
+- Does Claude Code's messaging socket start a turn in an idle session? Its protocol is known
+  and a message written to it arrived in a working session (2026-10-29); an idle one hasn't been
+  tried.
+- Does GitHub rate-limit a `git ls-remote` every 3 s from each of a team's devices? Nothing
+  documents a limit for git traffic; none was hit in a test of 63 requests 2 s apart.

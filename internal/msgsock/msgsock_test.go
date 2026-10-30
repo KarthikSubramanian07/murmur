@@ -1,0 +1,168 @@
+package msgsock
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// fakeSession stands in for Claude Code's messaging socket: it accepts connections and hands every
+// line it reads to lines.
+type fakeSession struct {
+	ln    net.Listener
+	lines chan string
+}
+
+func serveLines(t *testing.T, ln net.Listener) *fakeSession {
+	t.Helper()
+	f := &fakeSession{ln: ln, lines: make(chan string, 16)}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				r := bufio.NewReaderSize(conn, MaxLine+16)
+				for {
+					line, err := r.ReadString('\n')
+					if err != nil {
+						return
+					}
+					f.lines <- strings.TrimSuffix(line, "\n")
+				}
+			}()
+		}
+	}()
+	return f
+}
+
+// unixSession listens on a unix socket, which every platform has, in a directory short enough for
+// macOS's limit on the path.
+func unixSession(t *testing.T) (*fakeSession, string) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "t4s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "s")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Skipf("no unix sockets here: %v", err)
+	}
+	return serveLines(t, ln), path
+}
+
+func (f *fakeSession) next(t *testing.T) string {
+	t.Helper()
+	select {
+	case l := <-f.lines:
+		return l
+	case <-time.After(5 * time.Second):
+		t.Fatal("the session got no more lines")
+		return ""
+	}
+}
+
+// The session gets the auth line first, then the user message, one JSON object per line.
+func TestSendWritesTheAuthLineThenTheMessage(t *testing.T) {
+	f, path := unixSession(t)
+	text := "Message from quiet-otter via t4:\n\nare you \"on it\"?\n\nReply with `send`.\n"
+	if err := Send(context.Background(), path, "tok-secret", text); err != nil {
+		t.Fatal(err)
+	}
+	var auth map[string]string
+	if err := json.Unmarshal([]byte(f.next(t)), &auth); err != nil || auth["type"] != "auth" || auth["token"] != "tok-secret" || len(auth) != 2 {
+		t.Fatalf("auth line: %v %v", auth, err)
+	}
+	var msg struct {
+		Type    string `json:"type"`
+		Message struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(f.next(t)), &msg); err != nil {
+		t.Fatal(err)
+	}
+	if msg.Type != "user" || msg.Message.Role != "user" || msg.Message.Content != text {
+		t.Errorf("user line: %+v", msg)
+	}
+}
+
+// A message with newlines, quotes and a line separator stays one line: the protocol is lines.
+func TestSendKeepsTheMessageOnOneLine(t *testing.T) {
+	f, path := unixSession(t)
+	text := "a\nb\r\nc d \"e\" \\ f"
+	if err := Send(context.Background(), path, "t", text); err != nil {
+		t.Fatal(err)
+	}
+	f.next(t) // auth
+	line := f.next(t)
+	var msg userLine
+	if err := json.Unmarshal([]byte(line), &msg); err != nil || msg.Message.Content != text {
+		t.Fatalf("got %q, %v", msg.Message.Content, err)
+	}
+	select {
+	case extra := <-f.lines:
+		t.Errorf("a third line: %q", extra)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// Where nothing listens, Send fails, and what it says holds neither the address nor the token.
+func TestSendFailureHidesTheAddressAndTheToken(t *testing.T) {
+	dir, err := os.MkdirTemp("", "t4s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "no-such-socket-9f3a")
+	err = Send(context.Background(), path, "tok-secret-9f3a", "hello")
+	if err == nil {
+		t.Fatal("sending to nothing worked")
+	}
+	for _, secret := range []string{path, "no-such-socket-9f3a", "tok-secret-9f3a"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("the error gives away %q: %v", secret, err)
+		}
+	}
+}
+
+// Without an address or a token there is nothing to try; a message over the limit is not sent.
+func TestSendRefusesWhatCannotWork(t *testing.T) {
+	f, path := unixSession(t)
+	if err := Send(context.Background(), "", "t", "x"); err == nil {
+		t.Error("no address: no error")
+	}
+	if err := Send(context.Background(), path, "", "x"); err == nil {
+		t.Error("no token: no error")
+	}
+	if err := Send(context.Background(), path, "t", strings.Repeat("x", MaxLine)); err == nil {
+		t.Error("a message over the limit: no error")
+	}
+	select {
+	case l := <-f.lines:
+		t.Errorf("the session got %q", l)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// A context that has ended stops Send before it connects.
+func TestSendStopsWithTheContext(t *testing.T) {
+	_, path := unixSession(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := Send(ctx, path, "t", "x"); err == nil {
+		t.Error("a cancelled context: no error")
+	}
+}
