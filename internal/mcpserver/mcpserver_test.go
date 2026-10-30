@@ -35,6 +35,11 @@ func TestMain(m *testing.M) {
 		}
 		return
 	}
+	// The tests run in whatever session started them, which may be one in T3 with a messaging socket:
+	// a server that took those from its environment would look its thread up in the real T3 database.
+	for _, k := range []string{"T3CODE_CLI_PATH", "T3CODE_HOME", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN"} {
+		os.Unsetenv(k)
+	}
 	os.Exit(m.Run())
 }
 

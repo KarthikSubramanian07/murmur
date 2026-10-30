@@ -374,6 +374,9 @@ func (l *link) clientSession() string {
 	return l.hello.ClaudeSession
 }
 
+// threadOf finds a T3 thread in T3's database; a variable, so that tests needn't have one.
+var threadOf = t3db.ThreadOf
+
 // findInT3 lets the link look for its T3 thread, if it runs inside T3 (its hello has T3's command
 // line), which only the link's setup does: a link made in activate, on the first activation or on
 // a reactivation after a leave and a rejoin, gets its finder here, since nothing else sets one.
@@ -382,8 +385,9 @@ func (l *link) findInT3() {
 	if cli == "" {
 		return
 	}
+	find := threadOf
 	l.find = func(ctx context.Context, native string) (string, error) {
-		return t3db.ThreadOf(ctx, cli, home, native)
+		return find(ctx, cli, home, native)
 	}
 }
 
