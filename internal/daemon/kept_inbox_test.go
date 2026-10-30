@@ -112,6 +112,20 @@ func TestKeptInboxCatchesUpAfterALongOutage(t *testing.T) {
 		t.Errorf("a session that wasn't kept has %q", got)
 	}
 
+	// What was kept was read, so the page lists it; history that was skipped is not. (The page also
+	// lists what was sent since the daemon started, by the sender's clock, which these forged
+	// futures count as.)
+	msgs, _ := b.page().messages("")
+	listed := strings.Join(subjects(msgs), "|")
+	for _, s := range want {
+		if !strings.Contains(listed, s) {
+			t.Errorf("the page doesn't list %q: %q", s, listed)
+		}
+	}
+	if strings.Contains(listed, "before bob stopped") {
+		t.Errorf("the page lists skipped history: %q", listed)
+	}
+
 	if _, err := b.restartedMCP("bbbbbb", ""); err != nil {
 		t.Fatal(err)
 	}

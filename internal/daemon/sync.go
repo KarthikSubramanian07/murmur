@@ -486,11 +486,12 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		if e.Type == bus.Message {
 			// A skip passes over history, but a ref read in one only after sessions registered
 			// (the first sync failed) also holds what was sent since this daemon started, which
-			// is new to it: by the sender's clock, with the minute deliverLocked allows.
-			if mode != modeSkip || !e.At.Before(d.started.Add(-time.Minute)) {
+			// is new to it: by the sender's clock, with the minute deliverLocked allows. What a
+			// skip gave a kept inbox (#30) was read too, so the page lists it.
+			kept := d.deliverLocked(e, mode)
+			if mode != modeSkip || kept || !e.At.Before(d.started.Add(-time.Minute)) {
 				d.recordMessageLocked(e)
 			}
-			d.deliverLocked(e, mode)
 		}
 	}
 	d.st.Processed[ref] = sha
@@ -509,7 +510,7 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 // catchUpLocked). A message forwarded to the session that holds its recipient's name (see
 // forwardLocked) is the holder's if it is new enough for either: a backlog read after the holder
 // started still gives it what the recipient's kept inbox would have caught up on. Caller holds mu.
-func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) {
+func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) (delivered bool) {
 	held := mode == modeCatchUp || mode == modeNormal && time.Since(d.started) <= catchUpWindow
 	if held {
 		d.pending = append(d.pending, e)
@@ -525,6 +526,7 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) {
 			continue
 		}
 		d.addInboxLocked(id, e)
+		delivered = true
 		if id != proto.CLISession {
 			d.noteConversationLocked() // a message arrived for a session here; its answer may soon follow
 		}
@@ -534,6 +536,7 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) {
 		d.sessions[sess] == nil && !stopped && fwd == "" {
 		d.log.Printf("message %s is for %s, which isn't running here; dropped", e.ID, e.To)
 	}
+	return delivered
 }
 
 // recipientsLocked lists the sessions a message can be delivered to: those registered, which
