@@ -238,11 +238,14 @@ func (s *server) call(ctx context.Context, req proto.Request) (proto.Response, e
 // servers get a bare environment, so a call is the first they hear of it. The session is a T3 thread
 // if T3's database has that ID.
 func (s *server) noteMeta(ctx context.Context, req *mcp.CallToolRequest) {
-	if s.link == nil || req == nil || req.Params == nil {
+	s.mu.Lock()
+	l := s.link
+	s.mu.Unlock()
+	if l == nil || req == nil || req.Params == nil {
 		return
 	}
 	if id, _ := req.Params.GetMeta()["threadId"].(string); id != "" {
-		s.link.learnNative(context.WithoutCancel(ctx), id)
+		l.learnNative(context.WithoutCancel(ctx), id)
 	}
 }
 
@@ -292,7 +295,8 @@ func (s *server) tools(srv *mcp.Server) {
 		"others. Use it before messaging a session you don't know, to tell whether it is working on what you need " +
 		"and is still there, or when a session you sent to has gone quiet. For a session on this device it " +
 		"also gives its worktree folder and the commits it made."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in lookupIn) (*mcp.CallToolResult, any, error) {
+		func(ctx context.Context, req *mcp.CallToolRequest, in lookupIn) (*mcp.CallToolResult, any, error) {
+			s.noteMeta(ctx, req)
 			resp, err := s.call(ctx, proto.Request{Op: proto.OpLookup, Name: in.Name, Limit: in.Messages})
 			return result(view.Lookup, resp, err)
 		})
