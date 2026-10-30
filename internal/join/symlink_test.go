@@ -69,3 +69,27 @@ func TestHookFileThatIsALinkIsKeptThroughJoinAndLeave(t *testing.T) {
 		t.Errorf("the hook is still in the file the link points to:\n%s", got)
 	}
 }
+
+// A link whose target goes through another link and back up with `..` is followed the way the
+// system follows it, not as a path cleaned on paper (Codex review, 2026-10-29).
+func TestRegisterCodexFollowsDotDotThroughALink(t *testing.T) {
+	sb := newSandbox(t, false)
+	elsewhere := filepath.Join(sb.root, "dotfiles", "subdir")
+	write(t, filepath.Join(sb.root, "dotfiles", "settings.toml"), "model = \"real\"\n")
+	write(t, filepath.Join(sb.CodexHome, "settings.toml"), "model = \"sibling\"\n")
+	linkOrSkip(t, elsewhere, filepath.Join(sb.CodexHome, "alias"))
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(sb.CodexHome, "config.toml")
+	linkOrSkip(t, filepath.Join("alias", "..", "settings.toml"), link)
+	if _, _, err := sb.registerCodex(); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, filepath.Join(sb.root, "dotfiles", "settings.toml")); !strings.Contains(got, "[mcp_servers.t4]") {
+		t.Errorf("the file the link leads to:\n%s", got)
+	}
+	if got := read(t, filepath.Join(sb.CodexHome, "settings.toml")); strings.Contains(got, "mcp_servers") {
+		t.Errorf("the file next to the link was written:\n%s", got)
+	}
+}

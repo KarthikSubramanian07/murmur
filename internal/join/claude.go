@@ -145,8 +145,12 @@ func exists(path string) bool {
 
 // resolveLinks follows path through symbolic links to the file a write should replace, a link whose
 // target doesn't exist yet included: filepath.EvalSymlinks gives up there, and a write that did too
-// would replace the link with a file.
+// would replace the link with a file. The walk below is for that case only; it joins relative
+// targets lexically, so a `..` after a link in the target would be taken from the wrong place.
 func resolveLinks(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved // the usual case, and the one that follows `..` through a link correctly
+	}
 	for range 40 {
 		dir, err := filepath.EvalSymlinks(filepath.Dir(path))
 		if err != nil {

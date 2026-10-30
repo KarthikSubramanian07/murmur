@@ -28,6 +28,15 @@ func TestWaitGoneWithNoDaemon(t *testing.T) {
 	}
 }
 
+// A clone that never ran a daemon has no state directory, which is no daemon, not a failure: it is
+// what `t4 join --leave` meets in a clone that never joined.
+func TestWaitGoneWithNoStateDirectory(t *testing.T) {
+	gitDir := filepath.Join(t.TempDir(), ".git")
+	if held, err := WaitGone(context.Background(), gitDir, time.Second); held || err != nil {
+		t.Errorf("held %v, err %v", held, err)
+	}
+}
+
 // A daemon that exits while it is waited for is reported as having been there, and gone.
 func TestWaitGoneWaitsForADaemonToExit(t *testing.T) {
 	gitDir, lock := lockPath(t)

@@ -375,3 +375,16 @@ func TestActiveNeedsTheMarkerAndTheConsent(t *testing.T) {
 		t.Error("an empty place is joined")
 	}
 }
+
+// Leaving a clone that never joined has nothing to undo and no daemon to look for, and says so.
+func TestLeaveInACloneThatNeverJoined(t *testing.T) {
+	sb := newSandbox(t, false)
+	p, _ := clone(t)
+	r, err := Leave(context.Background(), sb.Env, p.Top)
+	if err != nil || len(r.Problems) != 0 {
+		t.Fatalf("err %v, problems %q", err, r.Problems)
+	}
+	if len(r.Did) != 1 || !strings.Contains(r.Did[0], "Nothing to undo") {
+		t.Errorf("did %q", r.Did)
+	}
+}

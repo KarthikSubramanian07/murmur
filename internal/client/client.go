@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -202,6 +203,9 @@ func WaitGone(ctx context.Context, gitDir string, d time.Duration) (held bool, e
 		if lerr == nil {
 			l.Close()
 			return held, nil
+		}
+		if errors.Is(lerr, fs.ErrNotExist) {
+			return held, nil // no state directory: no daemon has ever run here
 		}
 		if !errors.Is(lerr, proc.ErrLocked) {
 			return held, lerr
