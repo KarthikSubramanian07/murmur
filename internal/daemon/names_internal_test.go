@@ -37,7 +37,7 @@ func namedDaemon(t *testing.T) (d *Daemon, remote string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.attemptName(context.Background(), &wanted{id: "aaaaaa", key: nameKey("", "", "aaaaaa")}); err != nil {
+	if err := d.attemptName(context.Background(), &wanted{id: "aaaaaa", key: nameKey("", "", "", "aaaaaa")}); err != nil {
 		t.Fatal(err)
 	}
 	if d.st.NamesGood == "" || d.st.NamesGood != d.st.NamesTip {

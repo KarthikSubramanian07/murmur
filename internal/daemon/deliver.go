@@ -487,7 +487,7 @@ func (d *Daemon) hadCopyLocked(s *session, m *inMsg) bool {
 }
 
 // setRouteLocked takes what a session's MCP server has learned about reaching its client since it
-// registered: the T3 thread, once it finds it. The session's name follows the thread from then on
+// registered: the T3 thread, once it finds it, or its client's own thread ID (Codex's). The session's name follows it from then on
 // (see rekeyLocked). Caller holds mu.
 func (d *Daemon) setRouteLocked(s *session, r proto.Route) {
 	if titleSource(r) != titleSource(s.route) && s.title != "" {
@@ -497,13 +497,14 @@ func (d *Daemon) setRouteLocked(s *session, r proto.Route) {
 	}
 	s.route = r
 	d.rememberRouteLocked(s)
-	if key := d.uniqueKeyLocked(nameKey(r.T3Thread, s.claudeSession, s.id), s.id); key != s.key {
+	if key := d.uniqueKeyLocked(nameKey(r.T3Thread, s.claudeSession, r.Native, s.id), s.id); key != s.key {
 		d.rekeyLocked(s, key)
 	}
 	d.kickPush()
 }
 
-// rekeyLocked moves s to another name key: its client's session ID or its T3 thread became known.
+// rekeyLocked moves s to another name key: its client's session ID, its Codex thread or its T3
+// thread became known.
 // A key that has never had a name takes the one s has, so the name doesn't change under whoever
 // has just learned it; a key that has one gives s that, which is the point of keying on the
 // thread: the name follows the thread across /clear, restarts and account switches. Nothing goes
@@ -522,9 +523,9 @@ func (d *Daemon) rekeyLocked(s *session, key string) {
 	d.kickPresence()
 	addr := bus.Addr(d.device, s.id)
 	if s.name != from {
-		d.noteLocked(time.Now(), fmt.Sprintf("%s found its T3 thread: %s -> %s", addr, from, s.name))
-		d.log.Printf("session %s found its T3 thread; its name is %s now, not %s", addr, s.name, from)
+		d.noteLocked(time.Now(), fmt.Sprintf("%s found its thread: %s -> %s", addr, from, s.name))
+		d.log.Printf("session %s found its thread; its name is %s now, not %s", addr, s.name, from)
 	} else {
-		d.log.Printf("session %s found its T3 thread", addr)
+		d.log.Printf("session %s found its thread", addr)
 	}
 }

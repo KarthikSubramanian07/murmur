@@ -510,7 +510,8 @@ change and a daemon that knows no names delivers by it all the same.
   got in first the push is refused; the daemon fetches, reads what it missed, and picks again. It
   stops after 5 refusals in a row and backs off, up to 5 minutes.
 - **A name follows the client's session ID.** The key is the full `ClaudeSession` the MCP server
-  gives when it has one (Claude Code's `CLAUDE_CODE_SESSION_ID`), else the ID t4 gave the session.
+  gives when it has one (Claude Code's `CLAUDE_CODE_SESSION_ID`), else the Codex thread ID (see
+  below), else the ID t4 gave the session.
   The same key keeps its name across the MCP server restarting, the daemon restarting and a
   resume; different keys never share one. A daemon keeps the key-to-name map in its own state
   file, so the client's ID is never published. A resume of the same client session on another
@@ -519,6 +520,15 @@ change and a daemon that knows no names delivers by it all the same.
   that comes back under another ID while its old session is still in its grace takes the name
   with it, and presence shows the name on the live session only, so a message to it isn't left
   in an inbox about to stop (2026-10-29).
+- **A Codex session outside T3 follows its Codex thread (#36, 2026-10-30).** Codex's MCP server
+  learns the thread ID at its first tool call (`_meta.threadId`) and reports it as the route's
+  `Native`; the key is then `codex:<threadId>`, after `t3:` and `claude:` in the order of
+  preference. Codex keeps the thread ID across resume and compaction and gives a new one on `/new`,
+  `/clear` and a fork, which is the life a name should have. So a Codex CLI session whose MCP
+  server restarts is a new t4 session with a new name until its first tool call, and then takes the
+  thread's old name back, as a T3 thread does. A session that already has a name when it learns its
+  thread keeps it for the thread, if the thread has had none. Inside T3 the `t3:` key still wins
+  once the T3 thread is known.
 - **Never reused, whatever happens to the registry.** A daemon keeps every name it has ever seen,
   in the registry's whole history or in any device's presence, and the set never shrinks, so a
   registry that is deleted, overwritten or force-pushed frees nothing. When the tip isn't a
