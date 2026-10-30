@@ -113,3 +113,31 @@ func TestClientSessionIDDoesNotBringBackTheNameOfASessionInT3(t *testing.T) {
 	}
 	b.nameIs(first, name)
 }
+
+// What the session that a thread's new session replaces still had unread goes to the new one, and
+// is delivered: with the old route retired, nothing else would. One that is on its way in as the
+// replacement registers is delivered once.
+func TestReplacementOfAThreadTakesWhatTheOldSessionHadUnread(t *testing.T) {
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	t.Setenv(fakeT3SleepEnv, "4s")
+	a, b := newDevice(t, remote), newTimedDevice(t, remote, 20*time.Second, time.Hour)
+	alice, _ := a.session("aaaaaa", "")
+	route := proto.Route{T3CLI: exe, T3Thread: "thread-bob"}
+	old, conn := b.sessionRoute("bbbbbb", "claude-1", route)
+	eventually(t, "presence", func() bool { return a.seesSession(old) && b.seesSession(alice) })
+
+	a.send("aaaaaa", old, "first", "one")
+	eventually(t, "the first delivery to start", func() bool { return len(calls()) == 1 })
+	a.send("aaaaaa", old, "second", "two")
+	eventually(t, "the second message to reach b", func() bool { return logHas(b, "second") })
+	conn.Close()                       // dropped, in its grace, with the second unread and the first on its way
+	time.Sleep(500 * time.Millisecond) // the daemon has seen it go, and the grace is long
+	b.sessionRoute("cccccc", "claude-2", route)
+
+	eventually(t, "the second message to be delivered", func() bool { return len(calls()) >= 2 })
+	holds(t, "each delivered once", 2500*time.Millisecond, func() bool { return len(calls()) == 2 })
+	if inbox, _ := b.unread("cccccc", "claude-2"); len(inbox) != 0 {
+		t.Errorf("inbox: %q", inbox)
+	}
+}
