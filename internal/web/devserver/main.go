@@ -123,7 +123,7 @@ func newFixtures(now time.Time) *fixtures {
 			},
 		},
 		{
-			ID: "homeserver-c4d1", Host: "homeserver", Owner: "Tyler", Reachable: false, LastSeen: ago(47 * time.Minute),
+			ID: "mac-mini-c4d1", Host: "mac-mini", Owner: "Tyler", Reachable: false, LastSeen: ago(47 * time.Minute),
 			Sessions: []web.Session{
 				{Name: "dusty-lynx", Agent: "codex", Branch: "macos-ci",
 					Doing: "Running the test suite on macOS", Started: ago(6 * time.Hour), LastActive: ago(48 * time.Minute)},
