@@ -146,7 +146,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		// this time: it is still that thread.
 		route.T3Thread = s.route.T3Thread
 	}
-	key := d.uniqueKeyLocked(nameKey(route.T3Thread, claude, h.ID), h.ID)
+	key := d.uniqueKeyLocked(nameKey(route.T3Thread, claude, route.Native, h.ID), h.ID)
 	taken := false
 	if s != nil {
 		// A session in its grace: this connection takes it over, with its inbox and its unread
