@@ -127,8 +127,9 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 			case <-d.pollWake:
 				// A session, a page or a conversation's move came. If the loop was running at a
 				// slower rate than that calls for, look now and from here on at the faster; if
-				// not, it is as quick as it gets, and a failure's backoff is not ended by it.
-				if d.pollEvery(calm).every >= every {
+				// not, it is as quick as it gets. A failure's backoff is not ended by it either,
+				// unless the loop was quiet: a session that comes then is the reason to look now.
+				if d.pollEvery(calm).every >= every || failing && !quiet {
 					continue sleep
 				}
 			}

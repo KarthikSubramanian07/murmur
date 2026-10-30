@@ -343,3 +343,45 @@ func TestPollFailureStillBacksOff(t *testing.T) {
 		t.Errorf("polled %.1f times a second while failing, against %.1f when it worked; want it much less", failing, healthy)
 	}
 }
+
+// A conversation that moves while a failing poll waits doesn't end the wait: the remote is down or
+// limiting, and the faster rate is for when it answers.
+func TestConversationDuringAFailureKeepsTheBackoff(t *testing.T) {
+	opt := Options{Poll: testPoll, PollCap: testCap, FastFor: time.Minute, QuietPoll: time.Hour}
+	d, _, clone := rateRig(t, opt, true)
+	d.mu.Lock()
+	d.convAt = time.Now().Add(-2 * time.Minute) // FastFor is over
+	d.mu.Unlock()
+	time.Sleep(2 * time.Second) // up to the cap
+	before := d.polls.Load()
+	runGit(t, clone, "config", "remote.origin.url", filepath.Join(clone, "no-such-remote.git"))
+	within(t, "three failed polls", 15*time.Second, func() bool { return d.polls.Load()-before >= 3 })
+	time.Sleep(300 * time.Millisecond) // the third has failed, and the loop is waiting out the next
+	polled := d.polls.Load()
+	d.mu.Lock()
+	d.noteConversationLocked()
+	d.mu.Unlock()
+	time.Sleep(time.Second)
+	if n := d.polls.Load() - polled; n != 0 {
+		t.Errorf("%d polls within a second of a conversation moving, during a failure's back-off", n)
+	}
+}
+
+// Messages kept for a conversation that reach its live session when it takes the name move the
+// conversation too, as one received does.
+func TestAdoptingAKeptInboxMovesTheConversation(t *testing.T) {
+	d := rateDaemon()
+	d.opt.StoppedInbox = time.Hour
+	d.st.SessionNames = map[string]string{"aaaaaa": "quiet-otter"}
+	d.st.Stopped["aaaaaa"] = time.Now().Add(-time.Minute)
+	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa", To: "here-0001/aaaaaa", Subject: "hi"}
+	d.st.Inbox["aaaaaa"] = []*inMsg{{Event: e, Arrived: time.Now()}}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.adoptLocked(d.sessions["bbbbbb"], "quiet-otter") {
+		t.Fatal("the kept inbox was not taken")
+	}
+	if d.convAt.IsZero() {
+		t.Errorf("taking a kept inbox did not move the conversation")
+	}
+}
