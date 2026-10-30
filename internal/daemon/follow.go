@@ -91,6 +91,7 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 		box = box[len(box)-maxInbox:]
 	}
 	d.st.Inbox[s.id] = box
+	d.noteConversationLocked() // messages waiting for a conversation reached its live session
 	d.log.Printf("session %s, taking the name %s, took what was kept for it at %v", bus.Addr(d.device, s.id), name, from)
 	return true
 }

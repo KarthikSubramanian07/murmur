@@ -617,5 +617,6 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 	// After its own inbox is settled, which an expired stop empties: the name may bring more.
 	d.setNameLocked(s, d.st.NameKeys[key])
 	d.sessions[h.ID] = s
+	d.noteConversationLocked() // a session starts: its agent is about to look around, and may send
 	return s
 }

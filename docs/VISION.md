@@ -93,9 +93,8 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   would stop t4's own being pushed: those under its own names (`presence/<deviceId>/...`,
   `mesh/<deviceId>/...`, `names/...`), and `refs/t4/mesh` or `refs/t4/presence` as refs
   themselves. t4 writes nothing at any of them (found by the Opus reviews of V1, #8, 2026-10-28).
-- Reading: poll `git ls-remote origin 'refs/t4/*'` every 3 s (10 s until 2026-10-29), which is
-  cheap; fetch only when a SHA has changed. While no session is live and no page is open, every
-  30 s ("A thread that is idle", below). A message takes about 6–8 s from a `send` to the
+- Reading: poll `git ls-remote origin 'refs/t4/*'`, which is cheap; fetch only when a SHA has
+  changed. How often is "Speed", below (3 s around a conversation; 10 s before 2026-10-29). A message takes about 6–8 s from a `send` to the
   receiving agent's turn ("Delivering a message as a turn", below); V1, polling every 10 s, took
   about 12 s from a Windows laptop to a macOS machine (2026-10-26), 2 s of it the send.
 - A device is one clone's daemon. Worktrees of a clone share its `.git`, so they share its daemon;
@@ -678,9 +677,8 @@ A body past the limit is cut, as in `inbox`.
   thread waiting for the next time anyone used the clone, by when it was past the 15 minutes a
   message may wake a session and arrived as a notice. A route counts only if the page's wake
   setting would let a message through to the thread. With no session live and no page open the
-  daemon looks at the remote every 30 s, not every 3 s: about 2,900 `ls-remote` calls in a day
-  of waiting, against 29,000, and a sleeping thread wakes up to 30 s later than a working one
-  would. It still pushes its presence every 2 minutes (about 720 pushes a day), which tells others
+  daemon looks at the remote every 30 s (see "Speed"): about 2,900 `ls-remote` calls in a day of
+  waiting, and a sleeping thread wakes up to 30 s later than a working one would. It still pushes its presence every 2 minutes (about 720 pushes a day), which tells others
   the device is there. Claude Code outside T3 has nothing like it: its messaging socket dies with
   the session. `t4 join --leave` and `t4 stop` end the daemon at once.
 - **When a message isn't delivered.** A failed delivery is left to the hook's notice, and the log
@@ -712,16 +710,31 @@ A body past the limit is cut, as in `inbox`.
   decision, 2026-10-29). A message to a busy thread is queued as its next turn, not injected into
   the one running, and the AGENTS.md wording asks for coordination, not chatting; beyond that
   only the agents stop a loop.
-- **Speed.** The daemon polls the remote every 3 s, not 10 s (2026-10-29), and delivers the moment
-  a message is fetched. Measured between two T3 threads on one laptop through GitHub over HTTPS:
+- **Speed.** The daemon polls the remote every 3 s around a conversation, not 10 s (2026-10-29), and
+  delivers the moment a message is fetched. Measured between two T3 threads on one laptop through GitHub over HTTPS:
   about 6–8 s from an agent's `send` to the other thread's turn starting (a push, 1.2 s; up to
   one poll; `ls-remote`, 1.2 s; a fetch; `t3 thread send`, 1.1 s), and a question answered by
   another agent's reply in about 19 s. GitHub documents no limit on git reads, and a test of 63
   `ls-remote` requests about 2 s apart drew none, which is a short test, not evidence about
   hours of them from every device of a team. A poll that fails waits twice as long each time, to
-  at most a minute (or 20 polls, if Poll is shorter), and goes back to 3 s when it works. While
-  no session is live and no page is open the poll is every 30 s (QuietPoll, #87); a session
-  registering, or a page opening, makes it look at once and go back to 3 s.
+  at most a minute (or 20 polls, if Poll is shorter), and goes back to its usual rate when it works.
+- **How often it polls (2026-10-30, #93).** Tyler: agents don't need real-time communication, and
+  4–7 s a hop is fine. So a daemon polls fast only when a reply is likely, and a session left open
+  for hours, which would cost 1,200 `ls-remote` calls an hour at 3 s, costs 240.
+  - *Fast, every 3 s (`Poll`), for 3 minutes (`FastFor`)* after this device sends a message, or
+    delivers or receives one for a session on this device, or a session starts here. A reply
+    usually comes within a minute or two (the other agent's thinking time plus two hops), and each
+    move restarts the 3 minutes.
+  - *Otherwise, with a session live or a page open,* the wait doubles after each poll that follows
+    FastFor's end: 3 s, 6, 12, up to 15 s (`PollCap`). Doubling reaches the cap in three polls; a
+    first message of a conversation then waits at most 15 s, plus the delivery.
+  - *Quiet:* with no session live and no page open the poll is every 30 s (`QuietPoll`, #87),
+    whatever was said lately. A session registering, or a page opening, makes it look at once, and
+    a session starting is itself a move, so it polls fast for the 3 minutes.
+  - *Not moves:* presence heartbeats and status changes, which arrive all the time from active
+    teammates and don't predict a reply, and other devices' messages for sessions elsewhere.
+  - A failed poll keeps the back-off above, from whatever the rate was.
+  - All four numbers are options, so a test can shrink them.
 
 ## Risks and how the design meets them
 
@@ -804,5 +817,6 @@ a git library, so it gets each user's credential helpers, SSH config and URL rew
 - Does Claude Code's messaging socket start a turn in an idle session? Its protocol is known
   and a message written to it arrived in a working session (2026-10-29); an idle one hasn't been
   tried.
-- Does GitHub rate-limit a `git ls-remote` every 3 s from each of a team's devices? Nothing
+- Does GitHub rate-limit a `git ls-remote` every 3 s (around a conversation) from each of a team's
+  devices? Nothing
   documents a limit for git traffic; none was hit in a test of 63 requests 2 s apart.

@@ -387,6 +387,7 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	}
 	d.saveLocked()
 	delete(d.pushWarned, j.id)
+	d.noteConversationLocked() // the agent now has the message; its answer may soon follow
 	e := j.msg.Event
 	d.noteLocked(time.Now(), fmt.Sprintf("delivered %q from %s to %s as a turn, through %s", e.Subject, e.From, j.addr, j.via))
 	d.log.Printf("delivered message %s to session %s as a turn, through %s", e.ID, j.addr, j.via)

@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/a-Fig/t4/internal/brand"
@@ -37,6 +38,11 @@ type Options struct {
 	QuietPoll  time.Duration
 	Heartbeat  time.Duration // how often to re-push presence when nothing changed; 2 min
 	StaleAfter time.Duration // presence unchanged this long means the device is gone; 6 min
+	// PollCap is the slowest the poll gets while a session is live and nothing is happening: 15 s.
+	// FastFor is how long after a conversation moves (this device sends a message, or delivers or
+	// receives one for a session here, or a session starts) the poll stays at Poll: 3 min (#93).
+	// Neither is ever below Poll.
+	PollCap, FastFor time.Duration
 	// Idle is how long a daemon with no sessions, no open page and no T3 thread to wake (see
 	// holdsRouteLocked) goes on before it exits: 10 min. Negative: never.
 	Idle time.Duration
@@ -86,6 +92,12 @@ func (o *Options) defaults() {
 	}
 	if o.QuietPoll == 0 {
 		o.QuietPoll = 30 * time.Second
+	}
+	if o.PollCap == 0 {
+		o.PollCap = 15 * time.Second
+	}
+	if o.FastFor == 0 {
+		o.FastFor = 3 * time.Minute
 	}
 	if o.Heartbeat == 0 {
 		o.Heartbeat = 2 * time.Minute
@@ -187,6 +199,9 @@ type Daemon struct {
 	unfetched  map[string]fetchFail // refs whose fetch failed, and when
 	junkTried  map[string]time.Time // blocking refs clearOwnJunk last tried to delete, and when
 	lastPollOK time.Time            // when the last successful sync listed the remote (monotonic)
+	// convAt is when a conversation last moved, for how fast to poll (see pollEvery); zero if none
+	// has since the daemon started.
+	convAt time.Time
 	// namesChecked says the registry has been looked at since this daemon started, even if its
 	// tip is the one state.json recorded.
 	namesChecked bool
@@ -210,6 +225,8 @@ type Daemon struct {
 	// message (see deliver.go).
 	pushing    map[string]bool
 	pushWarned map[string]bool
+
+	polls atomic.Int64 // the remote listings tried, so a test can see the rate
 
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
