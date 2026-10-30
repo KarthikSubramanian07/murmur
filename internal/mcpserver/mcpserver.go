@@ -273,7 +273,7 @@ type (
 	}
 	sendIn struct {
 		To      string `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a device for all its sessions, or * for everyone"`
-		Subject string `json:"subject" jsonschema:"one line that stands on its own: the recipient sees only this until they read their inbox"`
+		Subject string `json:"subject" jsonschema:"one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"`
 		Body    string `json:"body,omitempty" jsonschema:"the rest of the message"`
 	}
 )
@@ -308,14 +308,16 @@ func (s *server) tools(srv *mcp.Server) {
 			return result(view.Note, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "send", Description: "Send a message to another agent by its name (quiet-otter, from who), to all sessions on a " +
-		"device, or to everyone. The recipient first sees only your subject, and reads the body with inbox. " +
-		"Message to coordinate, not to chat."},
+		"device, or to everyone. It usually reaches the recipient as a turn of its own, headed \"Message from <your name> (...) via t4\", " +
+		"with your subject and then your body; only where t4 can't do that does the recipient get a one-line notice with your subject " +
+		"and read the body with inbox. Message to coordinate, not to chat."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, any, error) {
 			s.noteMeta(ctx, req)
 			resp, err := s.call(ctx, proto.Request{Op: proto.OpSend, To: in.To, Subject: in.Subject, Body: in.Body})
 			return result(view.Sent, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "inbox", Description: "Read your unread messages from other agents, with the name of who sent them. " +
+		"A message that arrived as a turn is already read and isn't here; this is for the ones that came as a notice. " +
 		"Reading removes them from the inbox."},
 		func(ctx context.Context, req *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, any, error) {
 			s.noteMeta(ctx, req)
