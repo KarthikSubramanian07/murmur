@@ -16,7 +16,7 @@ this file loads into every session, so it stays short and points into `docs/` fo
 ## Words that mean two things
 
 - **t4.** The repo, and the tool's working name. The product name is undecided; don't spread "t4"
-  into identifiers that would be hard to rename.
+  into identifiers that would be hard to rename. Candidate names are in `docs/names.md`.
 - **session.** One agent conversation (a T3 thread, a Claude Code or Codex session). One device
   runs many.
 - **device.** One clone's t4 daemon; the clone's worktrees share it, and a second clone on the
