@@ -231,7 +231,7 @@ func TestFirstSyncFailedStillDelivers(t *testing.T) {
 	pushEvent(t, remote, "refs/t4/mesh/old-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
 		From: "old-0001/x", At: time.Now().Add(-10 * time.Minute).UTC(), To: "*", Subject: "backlog"})
 	dir := filepath.Join(t.TempDir(), "clone")
-	git(t, filepath.Dir(dir), "clone", "-q", "--no-hardlinks", remote, dir)
+	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
 	// Pushes go out, so presence is seen, but listing and fetching fail.
 	git(t, dir, "config", "remote.origin.pushurl", remote)
 	git(t, dir, "config", "remote.origin.url", filepath.Join(filepath.Dir(remote), "nowhere.git"))

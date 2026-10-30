@@ -20,7 +20,7 @@ func consentClone(t *testing.T) (remote, gitDir string, joined *atomic.Bool) {
 	t.Helper()
 	remote = newRemote(t)
 	dir := filepath.Join(t.TempDir(), "clone")
-	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
+	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
 	joined = new(atomic.Bool)
 	return remote, filepath.Join(dir, ".git"), joined
 }
