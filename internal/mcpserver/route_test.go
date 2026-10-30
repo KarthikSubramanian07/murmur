@@ -72,6 +72,28 @@ func fastSeek(t *testing.T) {
 	t.Cleanup(func() { seekFirst, seekMax, seekFor = first, longest, total })
 }
 
+// fastSeek puts the timings back when its test ends, and a link's lookup may still be running
+// then: the servers a test opens end with the test, but their goroutines are not waited for. A
+// lookup that read the variables would race with that, and the race detector fails the run (CI did,
+// on TestEveryToolTakesTheThreadFromMeta). The link takes its timings when it is made, so changing
+// the variables while it looks is harmless. This test can fail only under -race.
+func TestALookupInProgressLeavesTheTimingVariablesAlone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	l := &link{c: &client.Client{}, hello: helloFor("claude-code", "/work"), changed: make(chan struct{}),
+		find: (&finder{}).find, seek: seekTimes{total: time.Minute, first: time.Hour, max: time.Hour}}
+	l.startSeek(ctx)
+	first, longest, total := seekFirst, seekMax, seekFor
+	seekFirst, seekMax, seekFor = time.Hour, time.Hour, time.Hour // what a test's cleanup does, as the lookup runs
+	seekFirst, seekMax, seekFor = first, longest, total
+	cancel()
+	waitFor(t, "the lookup to end", func() bool {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return !l.seeking
+	})
+}
+
 // started runs a link against f the way the server does: inside T3 if fd is given.
 func started(t *testing.T, f *fakeDaemon, fd *finder, env map[string]string) *server {
 	t.Helper()
@@ -82,7 +104,7 @@ func started(t *testing.T, f *fakeDaemon, fd *finder, env map[string]string) *se
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	c := &client.Client{GitDir: gitDir}
-	l := &link{c: c, hello: helloFor("claude-code", "/work"), changed: make(chan struct{})}
+	l := &link{c: c, hello: helloFor("claude-code", "/work"), changed: make(chan struct{}), seek: currentSeek()}
 	if fd != nil {
 		l.find = fd.find
 	}
@@ -218,7 +240,7 @@ func TestThreadFoundWhileRegisteringIsToldAfterwards(t *testing.T) {
 	gitDir := f.serve(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	l := &link{c: &client.Client{GitDir: gitDir}, hello: helloFor("claude-code", "/work"), changed: make(chan struct{}), find: fd.find}
+	l := &link{c: &client.Client{GitDir: gitDir}, hello: helloFor("claude-code", "/work"), changed: make(chan struct{}), find: fd.find, seek: currentSeek()}
 	go l.run(ctx)
 	eventually(t, "the thread to be found", l.threadKnown)
 	if h := f.lastHello(); h.T3Thread != "" {

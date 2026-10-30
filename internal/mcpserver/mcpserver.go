@@ -183,7 +183,7 @@ func (s *server) activate(ctx context.Context) {
 		return
 	}
 	c := &client.Client{GitDir: s.place.GitDir, Spawn: true, MaySpawn: s.place.Active}
-	l := &link{c: c, hello: helloFor(s.opt.Agent, s.cwd), changed: make(chan struct{}), allowed: s.place.Active}
+	l := &link{c: c, hello: helloFor(s.opt.Agent, s.cwd), changed: make(chan struct{}), allowed: s.place.Active, seek: currentSeek()}
 	l.findInT3()
 	lctx, cancel := context.WithCancel(ctx)
 	s.c, s.link, s.stop, s.on = c, l, cancel, true
@@ -335,6 +335,8 @@ type link struct {
 	// find looks up the T3 thread of a client session ID, where the server is inside T3; nil
 	// elsewhere.
 	find func(ctx context.Context, native string) (thread string, err error)
+	// seek is how find is retried, taken when the link is made.
+	seek seekTimes
 
 	mu      sync.Mutex
 	up      bool
@@ -428,12 +430,20 @@ func (l *link) lookupThread(ctx context.Context, timeout time.Duration) {
 // The server goes on looking for its thread for seekFor, pausing seekFirst, then twice that, up to
 // seekMax: T3 may not have written the row for a new session when the session starts its MCP
 // servers, and writes it by the time the agent has anything to do. Variables, so tests needn't
-// wait.
+// wait. A link copies them when it is made (see seekTimes): the goroutine that looks never reads
+// them, so a test that puts them back when it ends doesn't race with a lookup still running.
 var (
 	seekFor   = 3 * time.Minute
 	seekFirst = time.Second      // the pause before the first retry, doubled each time
 	seekMax   = 15 * time.Second // and kept to this
 )
+
+// seekTimes is how a link looks for its thread: for how long, with what first pause, and the
+// longest pause.
+type seekTimes struct{ total, first, max time.Duration }
+
+// currentSeek is the timings above as they are now, for a link that is being made.
+func currentSeek() seekTimes { return seekTimes{seekFor, seekFirst, seekMax} }
 
 // startSeek looks for the T3 thread in the background, with growing pauses, until it finds it, the
 // time is up, or there is no client session ID to look for. When found it tells the daemon, which
@@ -445,6 +455,7 @@ func (l *link) startSeek(ctx context.Context) {
 		return
 	}
 	l.seeking = true
+	seek := l.seek
 	l.mu.Unlock()
 	go func() {
 		defer func() {
@@ -452,15 +463,15 @@ func (l *link) startSeek(ctx context.Context) {
 			l.seeking = false
 			l.mu.Unlock()
 		}()
-		deadline := time.Now().Add(seekFor)
-		delay := seekFirst
+		deadline := time.Now().Add(seek.total)
+		delay := seek.first
 		for ctx.Err() == nil && time.Now().Before(deadline) {
 			select {
 			case <-ctx.Done():
 				return
 			case <-time.After(delay):
 			}
-			delay = min(delay*2, seekMax)
+			delay = min(delay*2, seek.max)
 			if l.lookupThread(ctx, 3*time.Second); l.threadKnown() {
 				l.tellRoute(ctx)
 				return

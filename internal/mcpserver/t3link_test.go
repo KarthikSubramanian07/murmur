@@ -105,7 +105,7 @@ func TestARefusedRouteIsLoggedOnce(t *testing.T) {
 
 	var mu sync.Mutex
 	var lines []string
-	l := &link{c: &client.Client{GitDir: gitDir}, hello: helloFor("claude-code", "/work"), changed: make(chan struct{}), find: fd.find,
+	l := &link{c: &client.Client{GitDir: gitDir}, hello: helloFor("claude-code", "/work"), changed: make(chan struct{}), find: fd.find, seek: currentSeek(),
 		logf: func(format string, args ...any) {
 			mu.Lock()
 			defer mu.Unlock()
