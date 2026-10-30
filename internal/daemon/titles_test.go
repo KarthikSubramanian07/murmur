@@ -19,13 +19,14 @@ import (
 // so none of them can read the real ~/.t3, ~/.codex or ~/.claude.
 
 // openFixtureDB makes a SQLite database at path for the fixture to write, as the client holds its
-// own.
+// own: in WAL mode, as T3's database is, so the daemon reading it doesn't lock the test's writes out, and
+// waiting on a lock a moment rather than failing (CI saw "database is locked" without both).
 func openFixtureDB(t *testing.T, path string) *sql.DB {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path))
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?_pragma=journal_mode(wal)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatal(err)
 	}
