@@ -27,7 +27,25 @@ risks, and the build order.
 
 ## Using it
 
-Each teammate needs Go 1.26 or later once, to build, and git 2.31 or later:
+Each teammate installs t4 with one command, and needs git 2.31 or later. On macOS and Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/a-Fig/t4/main/install.sh | sh
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/a-Fig/t4/main/install.ps1 | iex
+```
+
+Each downloads the latest release's binary for the machine, checks it against the release's
+checksums, puts `t4` in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), adds that folder to
+PATH if it isn't there, and needs no sudo or administrator rights. No GitHub login is needed once
+the repo is public (#54, private on 2026-10-29); [`docs/releasing.md`](docs/releasing.md) covers
+what to do until then, and the options.
+
+To build from source instead (Go 1.26 or later):
 
 ```sh
 git clone https://github.com/a-Fig/t4 && cd t4
