@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/a-Fig/t4/internal/attrib"
@@ -101,15 +102,27 @@ func (d *Daemon) touchHookLocked(req proto.Request) []*session {
 // hook waits for the reply and the tool call starts when it has it, so the snapshot has to be taken
 // before replying: a commit made before it would count as old history. It replies OK whatever
 // happens, as the hook has nothing to do with an error.
+//
+// It first waits for the calls that have ended and whose worktrees haven't been snapshotted again
+// yet (toolEnd answers before it snapshots). This call could otherwise switch branches or reset
+// before that snapshot, which would then miss what the earlier call committed, or credit it to the
+// wrong branch. The wait and the snapshot share one limit, under the hook's.
 func (d *Daemon) toolStart(ctx context.Context, req proto.Request) proto.Response {
 	d.mu.Lock()
 	sessions := d.touchHookLocked(req)
+	unsnapped := slices.Clone(d.unsnapped)
 	d.mu.Unlock()
 	if len(sessions) == 0 || req.ToolUseID == "" || req.Cwd == "" || !d.sameClone(req.GitDir) {
 		return proto.Response{OK: true}
 	}
 	ctx, cancel := context.WithTimeout(ctx, d.snapshotLimit())
 	defer cancel()
+	for _, ch := range unsnapped {
+		select {
+		case <-ch:
+		case <-ctx.Done():
+		}
+	}
 	before, err := attrib.Head(ctx, req.Cwd)
 	if err != nil {
 		d.snapshotFailed("snapshotting before a tool call", err)
@@ -138,8 +151,8 @@ func (d *Daemon) toolStart(ctx context.Context, req proto.Request) proto.Respons
 
 // toolEnd closes the call's bracket, and answers at once: the hook, and with it the agent and the
 // notices the hook brings, would otherwise wait for git. It then snapshots the worktree again in
-// the background, and credits the sessions the hook speaks for with the commits that appeared
-// since. A call with no bracket (its start was skipped, expired, or came before a daemon restart)
+// the background, before any call that starts later is let start, and credits the sessions the
+// hook speaks for with the commits that appeared since. A call with no bracket (its start was skipped, expired, or came before a daemon restart)
 // credits nothing.
 func (d *Daemon) toolEnd(ctx context.Context, req proto.Request) proto.Response {
 	key := bracketKey(req)
@@ -152,7 +165,18 @@ func (d *Daemon) toolEnd(ctx context.Context, req proto.Request) proto.Response 
 		return proto.Response{OK: true}
 	}
 	d.ending++
+	unsnapped := make(chan struct{})
+	d.unsnapped = append(d.unsnapped, unsnapped)
 	d.mu.Unlock()
+	var once sync.Once
+	snapped := func() {
+		once.Do(func() {
+			d.mu.Lock()
+			d.unsnapped = slices.DeleteFunc(d.unsnapped, func(ch chan struct{}) bool { return ch == unsnapped })
+			d.mu.Unlock()
+			close(unsnapped)
+		})
+	}
 	moved := ""
 	if req.Cwd != "" && req.Cwd != b.cwd && d.sameClone(req.GitDir) {
 		moved = req.Cwd
@@ -167,7 +191,8 @@ func (d *Daemon) toolEnd(ctx context.Context, req proto.Request) proto.Response 
 			d.ending--
 			d.mu.Unlock()
 		}()
-		d.judgeEnd(ctx, b, moved, sessions)
+		defer snapped()
+		d.judgeEnd(ctx, b, moved, sessions, snapped)
 	}()
 	return proto.Response{OK: true}
 }
@@ -187,16 +212,26 @@ func (d *Daemon) settleEnds() {
 	}
 }
 
-// judgeEnd snapshots the worktree a call started in, and credits the sessions with the commits made
-// since its start. A call that ended with the hook in another worktree of the clone, moved, is
-// judged there too, against the same start: the start's tips are the whole clone's, so they keep
-// that worktree's history out as well as this one's.
-func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, moved string, sessions []*session) {
+// judgeEnd snapshots the worktree a call started in, calls snapped, and credits the sessions with
+// the commits made since its start. A call that ended with the hook in another worktree of the
+// clone, moved, is judged there too, against the same start: the start's tips are the whole
+// clone's, so they keep that worktree's history out as well as this one's.
+func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, moved string, sessions []*session, snapped func()) {
 	ctx, cancel := context.WithTimeout(ctx, d.snapshotLimit())
 	defer cancel()
-	commits, ok := d.commitsSince(ctx, b.cwd, b.before)
+	worktrees := []string{b.cwd}
 	if moved != "" && !sameWorktree(b.cwd, moved) {
-		more, _ := d.commitsSince(ctx, moved, b.before)
+		worktrees = append(worktrees, moved)
+	}
+	afters := make([]attrib.Ref, len(worktrees))
+	errs := make([]error, len(worktrees))
+	for i, wt := range worktrees {
+		afters[i], errs[i] = snapshot(ctx, wt)
+	}
+	snapped()
+	commits, ok := d.commitsSince(ctx, b.cwd, b.before, afters[0], errs[0])
+	if len(worktrees) > 1 {
+		more, _ := d.commitsSince(ctx, moved, b.before, afters[1], errs[1])
 		for _, c := range more {
 			if !slices.ContainsFunc(commits, func(o attrib.Commit) bool { return o.SHA == c.SHA }) {
 				commits = append(commits, c)
@@ -216,10 +251,9 @@ func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, moved string, session
 	}
 }
 
-// commitsSince snapshots worktree and returns the commits made there since before. ok is false if
-// git failed, which is logged.
-func (d *Daemon) commitsSince(ctx context.Context, worktree string, before attrib.Ref) ([]attrib.Commit, bool) {
-	after, err := snapshot(ctx, worktree)
+// commitsSince returns the commits made in worktree between the snapshots before and after, which
+// failed if err isn't nil. ok is false if git failed, which is logged.
+func (d *Daemon) commitsSince(ctx context.Context, worktree string, before, after attrib.Ref, err error) ([]attrib.Commit, bool) {
 	if err != nil {
 		d.snapshotFailed("snapshotting after a tool call", err)
 		return nil, false

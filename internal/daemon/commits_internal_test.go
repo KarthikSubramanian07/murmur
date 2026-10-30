@@ -331,3 +331,52 @@ func TestCallEndIsAnsweredBeforeGit(t *testing.T) {
 		t.Errorf("credited %+v, want the commit made during the call", got)
 	}
 }
+
+func igit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// The end of a call is snapshotted after it is answered, so the next call to start waits for that
+// snapshot: Claude Code runs it as soon as the end is answered, and one that switches branches
+// before the snapshot would hide what the first call committed.
+func TestNextCallWaitsForTheEndBeforeIt(t *testing.T) {
+	d, dir := bracketDaemon(t)
+	ctx := context.Background()
+	d.toolStart(ctx, d.startReq(dir, "t1"))
+	igit(t, dir, "switch", "-q", "-c", "feat")
+	igit(t, dir, "commit", "-q", "--allow-empty", "-m", "on feat")
+
+	release := make(chan struct{})
+	orig := snapshot
+	snapshot = func(ctx context.Context, wt string) (attrib.Ref, error) {
+		<-release
+		return orig(ctx, wt)
+	}
+	defer func() { snapshot = orig }()
+	end := d.startReq(dir, "t1")
+	end.Op = proto.OpToolEnd
+	d.toolEnd(ctx, end)
+	// The snapshot is let go a little after the next call asks to start: that call can't start
+	// before it.
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		close(release)
+	}()
+	d.toolStart(ctx, d.startReq(dir, "t2"))
+	igit(t, dir, "switch", "-q", "main") // what the second call does
+	end2 := d.startReq(dir, "t2")
+	end2.Op = proto.OpToolEnd
+	d.toolEnd(ctx, end2)
+	d.settleEnds()
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if got := d.st.Commits["aaaaaa"]; len(got) != 1 || got[0].Subject != "on feat" || got[0].Branch != "feat" {
+		t.Errorf("credited %+v, want the first call's commit, on feat", got)
+	}
+}

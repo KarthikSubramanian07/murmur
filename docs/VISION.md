@@ -208,7 +208,8 @@ which session made a commit, so the daemon watches tool calls for them.
   reftable repository, or one git might find differently, takes three). It can't be made to run
   without the call waiting: a commit made before the snapshot would count as old history. The end
   is answered at once, and the daemon finds the commits after, with two more; a `lookup` waits for
-  that. Measured 2026-10-29 on the Windows laptop, idle, where one `git` process took 24 ms:
+  that, and so does the next call's start for the end's snapshot, as that call could otherwise
+  switch branches before it. Measured 2026-10-29 on the Windows laptop, idle, where one `git` process took 24 ms:
   `PreToolUse` for a bracketed call took a median of 79 ms and `PostToolUse` 19 ms, against 15 ms
   and 19 ms for a skipped tool. As first built, the start was four `git` processes and the end
   waited for five: 241 ms and 335 ms on the same machine. With several test runs going, where one

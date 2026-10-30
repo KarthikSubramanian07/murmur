@@ -151,6 +151,9 @@ type Daemon struct {
 	snapLogged time.Time
 	// ending counts the calls whose end is being judged in the background (see toolEnd).
 	ending int
+	// unsnapped holds a channel for each ended call whose worktree hasn't been snapshotted again
+	// yet, closed when it has; the next call's start waits for them (see toolStart).
+	unsnapped []chan struct{}
 
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
