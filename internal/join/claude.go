@@ -143,13 +143,41 @@ func exists(path string) bool {
 	return err == nil
 }
 
+// resolveLinks follows path through symbolic links to the file a write should replace, a link whose
+// target doesn't exist yet included: filepath.EvalSymlinks gives up there, and a write that did too
+// would replace the link with a file.
+func resolveLinks(path string) string {
+	for range 40 {
+		dir, err := filepath.EvalSymlinks(filepath.Dir(path))
+		if err != nil {
+			return path
+		}
+		path = filepath.Join(dir, filepath.Base(path))
+		if !isLink(path) {
+			return path
+		}
+		target, err := os.Readlink(path)
+		if err != nil {
+			return path
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(dir, target)
+		}
+		path = target
+	}
+	return path
+}
+
+func isLink(path string) bool {
+	fi, err := os.Lstat(path)
+	return err == nil && fi.Mode()&os.ModeSymlink != 0
+}
+
 // writeAtomic replaces path with data so a reader, or a crash, never sees half a file. The file
 // keeps the permissions it had; a new one gets perm. A path that is a symbolic link (a dotfiles
 // repository's, say) is written through: the file it points to is replaced, and the link stays.
 func writeAtomic(path string, data []byte, perm os.FileMode) error {
-	if target, err := filepath.EvalSymlinks(path); err == nil {
-		path = target
-	}
+	path = resolveLinks(path)
 	if fi, err := os.Stat(path); err == nil {
 		perm = fi.Mode().Perm()
 	} else if !errors.Is(err, os.ErrNotExist) {

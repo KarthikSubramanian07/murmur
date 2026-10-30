@@ -63,7 +63,9 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 	conn.SetReadDeadline(time.Time{})
-	if req.Op != proto.OpStop && !d.consented() {
+	// A ping and a stop reveal nothing, and are how a leave finds the daemon and ends it: Stop
+	// connects with a ping first.
+	if req.Op != proto.OpStop && req.Op != proto.OpPing && !d.consented() {
 		writeResp(conn, fail(ErrNoConsent.Error()+", or has left since"))
 		return
 	}

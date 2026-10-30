@@ -114,6 +114,19 @@ var ErrRunning = errors.New("a daemon is already running for this clone")
 // ErrNoConsent means the user hasn't joined t4 in this clone, or has left since.
 var ErrNoConsent = errors.New("this clone hasn't joined t4")
 
+// push publishes to the bus, if the user still has this clone joined. The checks at start and on
+// each request leave a window for a leave to land in, and the loops that publish on their own (the
+// device's presence, the names registry) would put the device on the remote in it: the watcher
+// stops the daemon only a second later, and a daemon that was still starting has no daemon.json
+// for Stop to find. goodbye is not a publication in that sense and doesn't come through here: it
+// takes the device off the remote.
+func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, expect string) error {
+	if !d.consented() {
+		return ErrNoConsent
+	}
+	return d.repo.Push(ctx, sha, ref, mode, expect)
+}
+
 // consented reports whether the user's consent to run in this clone stands.
 func (d *Daemon) consented() bool { return d.opt.Consent == nil || d.opt.Consent() }
 

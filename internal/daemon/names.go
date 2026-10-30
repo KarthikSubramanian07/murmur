@@ -354,7 +354,7 @@ func (d *Daemon) attemptName(ctx context.Context, w *wanted) error {
 	if err != nil {
 		return err
 	}
-	if err := d.repo.Push(ctx, sha, brand.NamesRef, bus.Lease, tip); err != nil {
+	if err := d.push(ctx, sha, brand.NamesRef, bus.Lease, tip); err != nil {
 		return err
 	}
 

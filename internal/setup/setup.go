@@ -152,6 +152,24 @@ func markerFile(top, name string) (string, error) {
 	return name + ": " + verb + " a section telling agents the repo uses " + brand.Name, os.WriteFile(path, b, 0o644)
 }
 
+// HookEvent is one Claude Code event the hook is installed on, and the matcher of its group.
+type HookEvent struct {
+	Name    string
+	Matcher string // "" for an event that has none
+}
+
+// HookEvents are the events join installs the hook on. The tool events take every tool, with a
+// matcher of "*": the hook itself skips those that can't commit. PreToolUse and PostToolUseFailure
+// are for finding the commits a call made (#21), and a hook missing from them loses those commits.
+// Before #55 `t4 init` installed these in the committed settings; join does now, so every event
+// that gains a use belongs here.
+var HookEvents = []HookEvent{
+	{"PreToolUse", "*"},
+	{"PostToolUse", "*"},
+	{"PostToolUseFailure", "*"},
+	{"UserPromptSubmit", ""},
+}
+
 // HookCommand is the notice hook's command line for the binary at exe. Claude Code runs a hook's
 // command through a shell, bash on Windows too, so the path has forward slashes and sits in double
 // quotes, where only a backslash, a quote, a dollar sign and a backtick mean anything.

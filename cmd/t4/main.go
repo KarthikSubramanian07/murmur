@@ -171,7 +171,7 @@ func runInit(ctx context.Context, args []string) error {
 
 func runJoin(ctx context.Context, args []string, out io.Writer) error {
 	fs, dir := flags("join")
-	leave := fs.Bool("leave", false, "undo joining in this clone: forget the consent, remove the notice hook, stop the daemon")
+	leave := fs.Bool("leave", false, "undo joining in this clone: forget the consent, remove the hook, stop the daemon")
 	fs.Parse(args)
 	env, err := join.EnvFromProcess()
 	if err != nil {

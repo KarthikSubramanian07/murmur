@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -298,8 +299,11 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 	}
 	for _, top := range []string{p.Top, other} {
 		got := read(t, filepath.Join(top, ".claude", "settings.local.json"))
-		if !strings.Contains(got, string(command)) || !strings.Contains(got, "a b") || !strings.Contains(got, "PostToolUse") || !strings.Contains(got, "UserPromptSubmit") {
+		if !strings.Contains(got, string(command)) || !strings.Contains(got, "a b") {
 			t.Errorf("%s:\n%s", top, got)
+		}
+		if events := hookEvents(t, filepath.Join(top, ".claude", "settings.local.json")); !reflect.DeepEqual(events, wantHookEvents()) {
+			t.Errorf("%s: the hook is on %v, want %v", top, events, wantHookEvents())
 		}
 	}
 	if !strings.Contains(read(t, filepath.Join(other, ".claude", "settings.local.json")), "Bash(ls)") {
@@ -320,7 +324,7 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := read(t, filepath.Join(p.Top, ".claude", "settings.local.json"))
-	if strings.Contains(got, "a b") || strings.Count(got, `/new/t4`) != 2 {
+	if strings.Contains(got, "a b") || strings.Count(got, `/new/t4`) != len(setup.HookEvents) {
 		t.Errorf("after the binary moved:\n%s", got)
 	}
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -262,6 +263,17 @@ func open(t *testing.T, dir string, poll time.Duration) (*mcp.ClientSession, *at
 	return cs, &changed
 }
 
+// offersTools reports whether the names include the tools every agent gets. Tools added since
+// (lookup, #21) are not a reason for the tests of when the server is on to change.
+func offersTools(names []string) bool {
+	for _, want := range []string{"who", "status", "send", "inbox"} {
+		if !slices.Contains(names, want) {
+			return false
+		}
+	}
+	return true
+}
+
 func toolNamesOf(t *testing.T, cs *mcp.ClientSession) []string {
 	t.Helper()
 	res, err := cs.ListTools(context.Background(), nil)
@@ -367,7 +379,12 @@ func TestJoinThenLeaveWhileRunning(t *testing.T) {
 	if _, err := p.RecordConsent(); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "the tools to appear", func() bool { return len(toolNamesOf(t, cs)) == 4 })
+	waitFor(t, "the tools to appear", func() bool { return offersTools(toolNamesOf(t, cs)) })
+	// Leaving takes away the tools named in toolNames, so a tool added without being named there
+	// would stay after a leave.
+	if got, want := slices.Sorted(slices.Values(toolNamesOf(t, cs))), slices.Sorted(slices.Values(toolNames)); !slices.Equal(got, want) {
+		t.Errorf("the server offers %q but takes away %q on a leave", got, want)
+	}
 	waitFor(t, "the session to register", func() bool { return f.helloCount() == 1 })
 	waitFor(t, "the client to be told the tool list changed", func() bool { return changed.Load() > 0 })
 	if spawned(p) {

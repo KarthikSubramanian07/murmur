@@ -605,9 +605,9 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 			return err
 		}
 		if lease == "" {
-			err = d.repo.Push(ctx, sha, ref, bus.FastForward, "")
+			err = d.push(ctx, sha, ref, bus.FastForward, "")
 		} else {
-			err = d.repo.Push(ctx, sha, ref, bus.Lease, lease)
+			err = d.push(ctx, sha, ref, bus.Lease, lease)
 		}
 		if err == nil {
 			d.ownTip = sha
@@ -705,7 +705,7 @@ func (d *Daemon) clearOwnJunk(listed map[string]string) {
 		ctx, cancel := context.WithTimeout(d.bgCtx, time.Minute)
 		defer cancel()
 		for _, ref := range junk {
-			if err := d.repo.Push(ctx, "", ref, bus.FastForward, ""); err != nil {
+			if err := d.push(ctx, "", ref, bus.FastForward, ""); err != nil {
 				d.log.Printf("deleting %s, which blocks the bus's own refs: %v", ref, err)
 			} else {
 				d.log.Printf("deleted %s, which blocked the bus's own refs", ref)
@@ -824,7 +824,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return d.repo.Push(ctx, sha, d.presenceRef(), bus.Force, "")
+	return d.push(ctx, sha, d.presenceRef(), bus.Force, "")
 }
 
 // liveNamesLocked is the names of the sessions that are connected, as opposed to waiting out their

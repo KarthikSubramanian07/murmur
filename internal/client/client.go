@@ -189,22 +189,31 @@ func Stop(ctx context.Context, gitDir string) (bool, error) {
 	return true, nil
 }
 
+// ErrStillRunning is what WaitGone returns when a daemon still holds the clone's lock at the deadline.
+var ErrStillRunning = errors.New("the daemon is still running")
+
 // WaitGone waits, up to d, until no daemon holds the clone's lock, and reports whether one did when
 // it began. A daemon still starting has no daemon.json yet, so Stop doesn't see it; it does hold the
-// lock.
-func WaitGone(ctx context.Context, gitDir string, d time.Duration) (held bool) {
-	for end := time.Now().Add(d); ctx.Err() == nil; time.Sleep(50 * time.Millisecond) {
-		l, err := proc.Lock(filepath.Join(StateDir(gitDir), "daemon.lock"))
-		if err == nil {
+// lock. If one still does at the deadline the error is ErrStillRunning, so a caller can't take a
+// slow daemon for a gone one.
+func WaitGone(ctx context.Context, gitDir string, d time.Duration) (held bool, err error) {
+	for end := time.Now().Add(d); ; time.Sleep(50 * time.Millisecond) {
+		l, lerr := proc.Lock(filepath.Join(StateDir(gitDir), "daemon.lock"))
+		if lerr == nil {
 			l.Close()
-			return held
+			return held, nil
 		}
-		if !errors.Is(err, proc.ErrLocked) || time.Now().After(end) {
-			return held
+		if !errors.Is(lerr, proc.ErrLocked) {
+			return held, lerr
 		}
 		held = true
+		if ctx.Err() != nil {
+			return held, ctx.Err()
+		}
+		if time.Now().After(end) {
+			return held, ErrStillRunning
+		}
 	}
-	return held
 }
 
 // Do sends one request. If the daemon couldn't be reached, it reconnects (starting a new daemon

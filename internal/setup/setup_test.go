@@ -208,6 +208,37 @@ func TestInitRemovesFilesItOnlyHeld(t *testing.T) {
 	}
 }
 
+// A repo set up with the hook on every event (an init from before #55 put it in the committed
+// settings, and added events as the hook learned them) loses all of it, and keeps what isn't t4's.
+func TestInitRemovesTheHookFromEveryEventItWasOn(t *testing.T) {
+	var events []string
+	for _, ev := range HookEvents {
+		events = append(events, `"`+ev.Name+`": [{"hooks": [{"type": "command", "command": "t4 hook"}]}]`)
+	}
+	dir := repo(t, map[string]string{".claude/settings.json": `{
+  "permissions": {"allow": ["Bash(go test:*)"]},
+  "hooks": {
+    ` + strings.Join(events, ",\n    ") + `,
+    "Stop": [{"hooks": [{"type": "command", "command": "other-tool"}]}]
+  }
+}`})
+	initRepo(t, dir)
+	got := read(t, dir, ".claude/settings.json")
+	if strings.Contains(got, "t4 hook") {
+		t.Errorf("t4's hook is still there:\n%s", got)
+	}
+	for _, kept := range []string{"Bash(go test:*)", "other-tool"} {
+		if !strings.Contains(got, kept) {
+			t.Errorf("lost %q:\n%s", kept, got)
+		}
+	}
+	for _, ev := range HookEvents {
+		if strings.Contains(got, `"`+ev.Name+`"`) {
+			t.Errorf("an empty %s is left:\n%s", ev.Name, got)
+		}
+	}
+}
+
 // A t4 entry that isn't the one init wrote (another program with that name, or the user's own
 // settings) is not init's to remove.
 func TestInitLeavesEntriesThatAreNotItsOwn(t *testing.T) {

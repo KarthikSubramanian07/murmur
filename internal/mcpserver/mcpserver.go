@@ -249,7 +249,7 @@ type (
 )
 
 // toolNames are the tools tools lists, for taking them away again.
-var toolNames = []string{"who", "status", "send", "inbox"}
+var toolNames = []string{"who", "lookup", "status", "send", "inbox"}
 
 func (s *server) tools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "who", Description: "Show the agents working in this repo across the team: each device and " +

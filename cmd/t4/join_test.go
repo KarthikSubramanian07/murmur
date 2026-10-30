@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -88,7 +89,11 @@ func TestInitJoinAndLeave(t *testing.T) {
 
 	// The hook is for this user in this repo, and not committed.
 	hook := readFile(t, filepath.Join(b.clone, ".claude", "settings.local.json"))
-	if !strings.Contains(hook, "PostToolUse") || !strings.Contains(hook, "UserPromptSubmit") || !strings.Contains(hook, ` hook`) {
+	missing := false
+	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit"} {
+		missing = missing || !strings.Contains(hook, `"`+event+`"`)
+	}
+	if missing || !strings.Contains(hook, ` hook`) {
 		t.Errorf("settings.local.json:\n%s", hook)
 	}
 	status := git(t, b.clone, "status", "--porcelain")
@@ -253,6 +258,17 @@ func (b *box) mcpSession(t *testing.T) *mcp.ClientSession {
 	return cs
 }
 
+// offersTools reports whether the names include the tools every agent gets. Tools added since
+// (lookup, #21) are not a reason for the tests of when the server is on to change.
+func offersTools(names []string) bool {
+	for _, want := range []string{"who", "status", "send", "inbox"} {
+		if !slices.Contains(names, want) {
+			return false
+		}
+	}
+	return true
+}
+
 func tools(t *testing.T, cs *mcp.ClientSession) []string {
 	t.Helper()
 	res, err := cs.ListTools(context.Background(), nil)
@@ -323,7 +339,7 @@ func TestTheMCPServerFollowsJoinAndLeave(t *testing.T) {
 	}
 
 	b.mustRun(b.clone, "join")
-	eventually(t, "the tools to appear", func() bool { return len(tools(t, cs)) == 4 })
+	eventually(t, "the tools to appear", func() bool { return offersTools(tools(t, cs)) })
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "who"})
 	if err != nil || res.IsError {
 		t.Fatalf("who after joining: %v %+v", err, res)

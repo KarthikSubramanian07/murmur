@@ -19,9 +19,6 @@ import (
 // and the one who has gets it in every working tree of the clone: they share one daemon.
 const hookFile = ".claude/settings.local.json"
 
-// hookEvents are the events the hook is installed on: after a tool call and when a prompt is sent.
-var hookEvents = []string{"PostToolUse", "UserPromptSubmit"}
-
 // worktrees lists the working trees of the clone, the one at place first.
 func worktrees(ctx context.Context, p Place) []string {
 	out, err := gitx.RunIn(ctx, p.Top, "worktree", "list", "--porcelain")
@@ -96,7 +93,8 @@ func installHook(top, command string) (bool, error) {
 		hooks = jsonedit.New()
 		cfg.Set("hooks", hooks)
 	}
-	for _, event := range hookEvents {
+	for _, ev := range setup.HookEvents {
+		event := ev.Name
 		var groups []any
 		if v, ok := hooks.Get(event); ok {
 			var isList bool
@@ -111,8 +109,8 @@ func installHook(top, command string) (bool, error) {
 		entry.Set("type", "command")
 		entry.Set("command", command)
 		group := jsonedit.New()
-		if event == "PostToolUse" {
-			group.Set("matcher", "*")
+		if ev.Matcher != "" {
+			group.Set("matcher", ev.Matcher)
 		}
 		group.Set("hooks", []any{entry})
 		hooks.Set(event, append(groups, group))
@@ -159,7 +157,7 @@ func removeHooks(ctx context.Context, p Place) (changed []string, err error) {
 		if raw == nil || !setup.RemoveHooks(cfg) {
 			continue
 		}
-		if cfg.Len() == 0 {
+		if cfg.Len() == 0 && !isLink(path) { // a link is the user's, and its target is written, not deleted
 			if rmerr := os.Remove(path); rmerr != nil {
 				err = errors.Join(err, rmerr)
 				continue

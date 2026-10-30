@@ -124,10 +124,10 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	// Per repo: the hook that shows incoming messages, in every working tree of the clone.
 	trees, err := installHooks(ctx, p, e.Exe)
 	for _, t := range trees {
-		r.Did = append(r.Did, "Installed the notice hook in "+filepath.Join(t, filepath.FromSlash(hookFile))+" (not committed)")
+		r.Did = append(r.Did, "Installed the hook in "+filepath.Join(t, filepath.FromSlash(hookFile))+" (not committed)")
 	}
 	if err != nil {
-		problem("notice hook", err)
+		problem("hook", err)
 	}
 
 	// Consent comes before the daemon: the daemon refuses to run in a clone that hasn't joined.
@@ -154,7 +154,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	return r, nil
 }
 
-// Leave undoes a join for the clone containing dir: the consent, the notice hook in each working
+// Leave undoes a join for the clone containing dir: the consent, the hook in each working
 // tree, and the daemon. The MCP server stays registered with the agents, which is per user, and does
 // nothing in a repo that hasn't joined.
 func Leave(ctx context.Context, e Env, dir string) (Report, error) {
@@ -174,22 +174,25 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 	trees, err := removeHooks(ctx, p)
 	for _, t := range trees {
-		r.Did = append(r.Did, "Removed the notice hook from "+filepath.Join(t, filepath.FromSlash(hookFile)))
+		r.Did = append(r.Did, "Removed the hook from "+filepath.Join(t, filepath.FromSlash(hookFile)))
 	}
 	if err != nil {
-		problem("notice hook", err)
+		problem("hook", err)
 	}
-	stopped, err := client.Stop(ctx, p.GitDir)
-	if err != nil {
-		problem("stopping the daemon", err)
+	stopped, stopErr := client.Stop(ctx, p.GitDir)
+	if stopErr != nil {
+		problem("stopping the daemon", stopErr)
 	}
 	// A daemon that is still starting has no daemon.json to stop; it sees the consent gone and exits
 	// by itself, which is waited for here so a leave doesn't return while one is about to publish.
-	if starting := client.WaitGone(ctx, p.GitDir, 20*time.Second); starting && !stopped {
-		stopped = true
+	starting, err := client.WaitGone(ctx, p.GitDir, 20*time.Second)
+	if err != nil {
+		problem("waiting for the daemon to exit", fmt.Errorf("%w; it has no consent left and refuses requests, and stops by itself", err))
 	}
-	if stopped && err == nil {
-		r.Did = append(r.Did, "Stopped this clone's daemon")
+	if stopped || starting {
+		if stopErr == nil && err == nil {
+			r.Did = append(r.Did, "Stopped this clone's daemon")
+		}
 	}
 
 	if len(r.Did) == 0 && len(r.Problems) == 0 {
