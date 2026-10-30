@@ -40,6 +40,10 @@ func StateDir(gitDir string) string { return filepath.Join(gitDir, brand.StateDi
 type Client struct {
 	GitDir string
 	Spawn  bool // start a daemon when none answers
+	// MaySpawn, if set, is asked each time a daemon would be started, and says no to stop it. A
+	// client that outlives the user's consent (the MCP server) needs it: it learns the consent is
+	// gone when the daemon it talked to goes away, which is the moment it would start another.
+	MaySpawn func() bool
 
 	mu   sync.Mutex
 	info proto.Info
@@ -74,7 +78,7 @@ func (c *Client) connect(ctx context.Context) error {
 	if c.load() && c.ping(ctx) == nil {
 		return nil
 	}
-	if !c.Spawn {
+	if !c.Spawn || (c.MaySpawn != nil && !c.MaySpawn()) {
 		return ErrNoDaemon
 	}
 	if err := c.start(); err != nil {
@@ -157,6 +161,32 @@ func (c *Client) start() error {
 		return nil
 	}
 	return p.Release()
+}
+
+// Stop asks the clone's daemon to exit and waits for it to go. It reports whether there was one.
+func Stop(ctx context.Context, gitDir string) (bool, error) {
+	c, err := Connect(ctx, gitDir, false)
+	if errors.Is(err, ErrNoDaemon) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	resp, err := c.Do(ctx, proto.Request{Op: proto.OpStop})
+	if err == nil && resp.Error != "" {
+		err = errors.New(resp.Error)
+	}
+	if err != nil {
+		return true, err
+	}
+	// The daemon removes daemon.json as it goes, and holds the clone's files until then.
+	info := filepath.Join(StateDir(gitDir), "daemon.json")
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end) && ctx.Err() == nil; time.Sleep(50 * time.Millisecond) {
+		if _, err := os.Stat(info); err != nil {
+			break
+		}
+	}
+	return true, nil
 }
 
 // Do sends one request. If the daemon couldn't be reached, it reconnects (starting a new daemon

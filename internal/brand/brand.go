@@ -27,4 +27,10 @@ const (
 	Command = Name
 	// MCPServer is the MCP server's name; Claude Code shows its tools as mcp__<name>__<tool>.
 	MCPServer = Name
+
+	// InstallSh and InstallPs1 are the one-line installs the marker in a repo's AGENTS.md and
+	// CLAUDE.md tells an agent to run; Site is where the tool is described.
+	Site       = "https://github.com/a-Fig/t4"
+	InstallSh  = "https://raw.githubusercontent.com/a-Fig/t4/main/install.sh"
+	InstallPs1 = "https://raw.githubusercontent.com/a-Fig/t4/main/install.ps1"
 )
