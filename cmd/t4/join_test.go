@@ -183,6 +183,18 @@ func TestJoinKeepsTheUsersConfig(t *testing.T) {
 	}
 }
 
+// A Codex thread in T3 that began before t4 was added never gets its tools, so what join prints for
+// it is to open a new thread (Tyler, 2026-10-30), in these words.
+func TestJoinInACodexThreadInT3SaysToOpenANewThread(t *testing.T) {
+	b := newBox(t)
+	b.extraEnv = []string{"CODEX_THREAD_ID=019a", "T3CODE_CLI_PATH=" + filepath.Join(b.root, "t3", "bin", "t3")}
+	b.mustRun(b.clone, "init")
+	out := b.mustRun(b.clone, "join")
+	if want := "open a new thread in this project to talk to other agents through t4"; !strings.Contains(out, want) {
+		t.Errorf("join's output doesn't say %q:\n%s", want, out)
+	}
+}
+
 // join does nothing in a repo that doesn't say it uses t4: the user's yes was to this repo's invitation.
 func TestJoinNeedsTheMarker(t *testing.T) {
 	b := newBox(t)

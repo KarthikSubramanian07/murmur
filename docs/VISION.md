@@ -229,7 +229,7 @@ before the server was registered.
 |---|---|---|---|
 | Claude Code | Ignored | Honored | A restarted process |
 | T3 Code, Claude | Ignored | Honored | Press Stop, then send any message: T3 restarts the Claude process |
-| T3 Code, Codex | Ignored | Ignored | A new thread (or session) |
+| T3 Code, Codex | Ignored (2026-10-30: a new thread loads it from `config.toml`; an older one still lacks it on its next turn) | Ignored | A new thread |
 
 That shaped the design. Because `list_changed` is honored where it matters, the server is
 registered once per user and starts in every session as a passive server: after the first join, a
@@ -243,6 +243,16 @@ at start), that Codex honors `default_tools_approval_mode = "approve"` in a live
 config is valid and `codex mcp get t4` shows it), and which variables Codex sets for the commands
 it runs (`CODEX_THREAD_ID`, `CODEX_SANDBOX`, `CODEX_CI` are assumed; with none, `join`'s advice
 covers every client).
+
+More on Codex in T3, from a Codex agent in a T3 thread (Codex 0.164.0, 2026-10-30). T3's Codex
+provider loads a stdio server from `~/.codex/config.toml` in a newly created thread: its echo tool
+worked, with no approval prompt in full-access mode. A thread that existed before the server was
+added still lacks it on its next turn. Codex's app-server has a `config/mcpServer/reload` request
+that refreshes a running thread without a restart, but the installed T3 never sends it. So `join`
+tells a Codex thread in T3 (Codex's variables plus `T3CODE_CLI_PATH`) to "open a new thread in this
+project to talk to other agents through t4". Still being tested at the time of writing: whether a
+project-level Codex config is read, and approval policy outside full-access mode (findings go to
+#55 as comments).
 
 ### The page for humans
 

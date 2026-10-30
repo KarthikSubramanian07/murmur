@@ -65,7 +65,9 @@ and Codex, but a conversation that was already running when t4 was added may not
 - Claude Code in T3 Code: press Stop, then send any message. T3 restarts Claude with t4 loaded.
   Starting a new thread works too.
 - Claude Code in a terminal: exit, then run `claude --continue` in this repo.
-- Codex: it loads tools only when a session starts, so start a new thread or session.
+- Codex in T3 Code: it loads tools only in a thread that starts after t4 was added, so open a new
+  thread in this project to talk to other agents through t4. This thread won't get them.
+- Codex in a terminal: start a new session.
 
 Don't say the tools are there until they show up in your list of tools. Once they do, read how to
 use them: https://raw.githubusercontent.com/a-Fig/t4/main/docs/agents/use.md

@@ -229,9 +229,14 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 	case e.getenv("CLAUDECODE") == "1":
 		out = append(out, brand.Name+" is on for this repo. Its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox) show up in this conversation "+
 			"within a few seconds. If they haven't after a minute, start a new conversation.")
+	case e.looksLikeCodex() && e.getenv("T3CODE_CLI_PATH") != "":
+		// T3's Codex provider loads the server in a thread created after it was registered, and
+		// never in an older one, which T3 doesn't refresh (docs/VISION.md, "Reloading MCP servers").
+		out = append(out, brand.Name+" is on for this repo, but Codex loads MCP servers only in a thread that starts after they were added, so this thread doesn't have the tools: "+
+			"open a new thread in this project to talk to other agents through "+brand.Name+".")
 	case e.looksLikeCodex():
 		out = append(out, brand.Name+" is on for this repo. Codex loads MCP servers only when a session starts, so this session doesn't have the tools: "+
-			"start a new thread (or session) in this repo to get them.")
+			"start a new session in this repo to get them.")
 	default:
 		out = append(out, brand.Name+" is on for this repo. Claude Code sessions pick up its tools within seconds if "+brand.Name+" was already registered with Claude Code, "+
 			"and otherwise after a restart (press Stop and send a message in T3; `claude --continue` in a terminal). "+
