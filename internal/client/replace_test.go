@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -25,16 +26,19 @@ import (
 // standIn is a daemon inside the test: it holds the clone's lock, publishes its daemon.json, and
 // answers a ping with the protocol number it was given. One with protocol 0 is a daemon from before
 // the number, which knows no request that came later and says so. A stop ends it as it ends the real
-// one: the file goes, then the lock is let go.
+// one: the file goes, then the lock is let go. A slow one (slowStop) takes its time over that, as the
+// real one does while it drains and says goodbye: it takes no more connections, and keeps its file and
+// its lock until it is done.
 type standIn struct {
 	protocol int
 	token    string
 	ln       net.Listener
 	gitDir   string
 
-	mu   sync.Mutex
-	lock *proc.Held
-	ops  []string
+	mu        sync.Mutex
+	lock      *proc.Held
+	ops       []string
+	stopAfter time.Duration
 }
 
 func startStandIn(t *testing.T, gitDir string, protocol int) *standIn {
@@ -88,6 +92,14 @@ func (d *standIn) serve(conn net.Conn) {
 		reply(proto.Response{OK: true, Protocol: d.protocol})
 	case proto.OpStop:
 		reply(proto.Response{OK: true})
+		d.mu.Lock()
+		after := d.stopAfter
+		d.mu.Unlock()
+		if after > 0 {
+			d.ln.Close()
+			time.AfterFunc(after, d.exit)
+			return
+		}
 		go d.exit()
 	case proto.OpHello:
 		reply(proto.Response{OK: true, Self: "dev/x"})
@@ -99,6 +111,13 @@ func (d *standIn) serve(conn net.Conn) {
 		}
 		reply(proto.Response{OK: true})
 	}
+}
+
+// slowStop makes the stand-in take that long, after it is asked to stop, to let go of the lock.
+func (d *standIn) slowStop(after time.Duration) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.stopAfter = after
 }
 
 func (d *standIn) exit() {
@@ -255,5 +274,58 @@ func TestAnOlderDaemonThatStaysIsAnError(t *testing.T) {
 	old.ln.Close() // it keeps the lock and its file, and answers nothing
 	if err := c.replace(context.Background()); err == nil || !strings.Contains(err.Error(), "didn't exit") {
 		t.Errorf("replace: %v", err)
+	}
+}
+
+// A daemon asked to stop takes up to proto.DrainTimeout letting its background work finish and
+// proto.GoodbyeTimeout saying goodbye, and holds the clone's lock until it is done (#83). Replacing it
+// waits that long, not the 15 s it once did, and then starts the replacement.
+func TestAnOlderDaemonThatIsSlowToStopIsWaitedFor(t *testing.T) {
+	t.Parallel()
+	gitDir := stateOnly(t)
+	old := startStandIn(t, gitDir, 0)
+	old.slowStop(16 * time.Second) // more than replace once waited, less than a shutdown may take
+	var fresh *standIn
+	c := &Client{GitDir: gitDir, Spawn: true}
+	c.launch = func() error {
+		fresh = startStandIn(t, gitDir, proto.Protocol) // fails if the lock is still held
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := c.connect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if fresh == nil || !old.got(proto.OpStop) {
+		t.Errorf("replacement started: %v; older daemon asked to stop: %v", fresh != nil, old.got(proto.OpStop))
+	}
+}
+
+// The wait is as long as a shutdown may take, and a little more for the request to arrive and the
+// process to go.
+func TestReplaceWaitCoversAShutdown(t *testing.T) {
+	if replaceWait <= proto.ShutdownMax {
+		t.Errorf("replace waits %v for a daemon that may take %v to stop", replaceWait, proto.ShutdownMax)
+	}
+}
+
+// However long a shutdown may take, a caller who gives up is not kept waiting for it.
+func TestReplacingAnOlderDaemonEndsWhenTheCallerGivesUp(t *testing.T) {
+	gitDir := stateOnly(t)
+	old := startStandIn(t, gitDir, 0)
+	old.slowStop(time.Hour)
+	c := &Client{GitDir: gitDir, Spawn: true}
+	c.launch = func() error {
+		t.Error("a daemon was started while the older one holds the lock")
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	began := time.Now()
+	if err := c.connect(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("connect: %v, want the caller's deadline", err)
+	}
+	if took := time.Since(began); took > 10*time.Second {
+		t.Errorf("connect took %v after the caller gave up", took)
 	}
 }

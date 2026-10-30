@@ -34,6 +34,16 @@ const (
 //	1: OpRoute, and delivering a message as a turn (#56, #57)
 const Protocol = 1
 
+// How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
+// DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
+// then. A client that waits for the lock, to start a daemon in the old one's place, waits for
+// ShutdownMax and a little more (#83).
+const (
+	DrainTimeout   = 20 * time.Second
+	GoodbyeTimeout = 15 * time.Second
+	ShutdownMax    = DrainTimeout + GoodbyeTimeout
+)
+
 // CLISession is the session ID of requests from the command line. It is always registered on its
 // device, so a human can send and read an inbox without an agent.
 const CLISession = "cli"

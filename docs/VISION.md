@@ -149,10 +149,15 @@ daemon. Only an older daemon is replaced, never a newer one, so two binaries of 
 one machine don't stop each other's daemons for ever, and a number is used, not the version string,
 so that builds from a branch (which all say "dev") are told apart. A client that may not start a
 daemon (the hook and the other commands, which never start one; `t4 stop`, which ends an old one by
-hand; a user who has left) takes the daemon as it is. A session whose daemon refuses its route (an older one that
-couldn't be replaced) works, with its messages as notices, and its MCP server logs that once, to its
-standard error, so that whoever wonders finds why. Raise the number with
-any change to a request or a reply that an older daemon can't serve.
+hand; a user who has left) takes the daemon as it is. The old daemon is asked to stop and
+takes its time: it lets its background work finish for up to 20 seconds and then deletes its
+presence for up to 15, holding the clone's lock throughout, and the new one can't start until the
+lock is free. So the client waits for the lock for as long as a shutdown may take, 35 seconds, and 5
+more (`proto.ShutdownMax`; it waited 15 s until #83), or less if its caller gives up first, and
+fails with an error that names the old daemon's pid if the lock is still held. A session whose
+daemon refuses its route (an older one that couldn't be replaced) works, with its messages as
+notices, and its MCP server logs that once, to its standard error, so that whoever wonders finds
+why. Raise the number with any change to a request or a reply that an older daemon can't serve.
 
 ### Joining a repo
 

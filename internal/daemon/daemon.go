@@ -480,7 +480,7 @@ func Run(ctx context.Context, opt Options) error {
 	go func() { d.bg.Wait(); close(drained) }()
 	select {
 	case <-drained:
-	case <-time.After(20 * time.Second):
+	case <-time.After(proto.DrainTimeout):
 		d.log.Printf("background work still running at exit")
 	}
 	d.goodbye()
@@ -572,7 +572,7 @@ func (d *Daemon) stop() { d.quitOnce.Do(func() { close(d.quit) }) }
 // goodbye deletes this device's presence, so other devices drop it at their next sync instead of
 // finding it stale six minutes later.
 func (d *Daemon) goodbye() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), proto.GoodbyeTimeout)
 	defer cancel()
 	if err := d.repo.Push(ctx, "", d.presenceRef(), bus.FastForward, ""); err != nil {
 		d.log.Printf("removing presence: %v", err)
