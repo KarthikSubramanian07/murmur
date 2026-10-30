@@ -26,7 +26,7 @@ import (
 func newDeviceWith(t *testing.T, remote string, set func(*device)) *device {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
-	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
+	git(t, filepath.Dir(dir), "clone", "-q", "--no-hardlinks", remote, dir)
 	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
 	if set != nil {
 		set(d)

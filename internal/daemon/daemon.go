@@ -54,7 +54,10 @@ type Options struct {
 	PageOpen time.Duration
 	// PageMessages is how many messages the page can look back on: 500.
 	PageMessages int
-	Log          *log.Logger
+	// SnapshotTimeout bounds the git a snapshot of a tool call's worktree runs (#21): 4 s. Tests on a
+	// loaded machine raise it.
+	SnapshotTimeout time.Duration
+	Log             *log.Logger
 }
 
 func (o *Options) defaults() {
@@ -142,6 +145,15 @@ type Daemon struct {
 	msgs     []pageMsg
 	msgSeq   uint64
 	msgIDs   map[string]bool
+	// brackets holds the tool calls in flight whose start was snapshotted, by Claude session and
+	// tool-use ID (see toolStart). snapLogged is when a failed snapshot was last logged.
+	brackets   map[string]*bracket
+	snapLogged time.Time
+	// ending counts the calls whose end is being judged in the background (see toolEnd).
+	ending int
+	// unsnapped holds a channel for each ended call whose worktree hasn't been snapshotted again
+	// yet, closed when it has; the next call's start waits for them (see toolStart).
+	unsnapped []chan struct{}
 
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
@@ -183,6 +195,10 @@ type session struct {
 	// clientPID is the MCP server's parent process, 0 if its hello gave none. A hook run by the
 	// same process speaks for this session (see hookSessionsLocked).
 	clientPID int
+	// lastActive is when the session last made a request, or a hook of its did: its last tool call.
+	// It is kept in memory and goes out with the next presence write, never as a write of its own.
+	// Zero until its first.
+	lastActive time.Time
 }
 
 // syncMode says what a sync does with events this daemon hasn't processed.
@@ -264,6 +280,10 @@ type state struct {
 	NamesTip    string `json:"namesTip,omitempty"`
 	NamesGood   string `json:"namesGood,omitempty"`
 	NamesRepair bool   `json:"namesRepair,omitempty"`
+
+	// Commits is the commits credited to each session on this device (see credit), oldest first, by
+	// the session's ID. They are kept as long as the session's inbox is, and never leave the device.
+	Commits map[string][]commitRec `json:"commits,omitempty"`
 }
 
 // Run runs a daemon until ctx is done, it is told to stop, or it has been idle too long.
@@ -375,7 +395,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
-		quit: make(chan struct{}), msgIDs: map[string]bool{},
+		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
 	}
 	device, err := loadDevice(dir)
 	if err != nil {
@@ -547,7 +567,7 @@ func (d *Daemon) statePath() string { return filepath.Join(d.dir, "state.json") 
 func (d *Daemon) loadState() error {
 	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},
 		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
-		NameHolders: map[string]string{}, SessionNames: map[string]string{}}
+		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -582,6 +602,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.SessionNames == nil {
 		d.st.SessionNames = map[string]string{}
+	}
+	if d.st.Commits == nil {
+		d.st.Commits = map[string][]commitRec{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from t4 itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

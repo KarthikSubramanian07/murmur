@@ -35,6 +35,8 @@ Setup:
 
 For humans (each starts the clone's daemon if it isn't running):
   t4 who                        devices, sessions and what they're doing
+  t4 lookup [-n N] <name>       all that's known of one session: name or device/session; N caps its
+                                recent messages
   t4 send <to> <subject> [body] to is a session's name, device/session, a device, or '*'; body "-" reads stdin
   t4 inbox                      read messages sent to this device's CLI
   t4 log [-n N]                 recent events on the bus
@@ -69,7 +71,7 @@ func main() {
 		err = runDaemon(ctx, args)
 	case "init":
 		err = runInit(ctx, args)
-	case "who", "send", "inbox", "log", "stop":
+	case "who", "lookup", "send", "inbox", "log", "stop":
 		err = runClient(ctx, cmd, args)
 	case "ui":
 		err = runUI(ctx, args, os.Stdout, browse)
@@ -165,7 +167,7 @@ func runInit(ctx context.Context, args []string) error {
 
 func runClient(ctx context.Context, cmd string, args []string) error {
 	fs, dir := flags(cmd)
-	limit := fs.Int("n", 30, "log: how many events")
+	limit := fs.Int("n", 30, "log: how many events; lookup: how many messages (default 10)")
 	fs.Parse(args)
 	rest := fs.Args()
 
@@ -187,6 +189,16 @@ func runClient(ctx context.Context, cmd string, args []string) error {
 	switch cmd {
 	case "who":
 		req, render = proto.Request{Op: proto.OpWho}, view.Who
+	case "lookup":
+		if len(rest) != 1 {
+			return errors.New("usage: lookup [-n N] <name or device/session>")
+		}
+		req, render = proto.Request{Op: proto.OpLookup, Name: rest[0]}, view.Lookup
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "n" {
+				req.Limit = *limit
+			}
+		})
 	case "send":
 		if len(rest) < 2 {
 			return errors.New("usage: send <to> <subject> [body]")

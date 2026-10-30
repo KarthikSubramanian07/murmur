@@ -240,8 +240,14 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		sess = proto.CLISession
 	}
 	d.mu.Lock()
-	d.lastActive = time.Now()
+	now := time.Now()
+	d.lastActive = now
 	registered := d.liveLocked(sess)
+	// Whatever a session's MCP server asks is the session at work (#21). The CLI's calls are a
+	// human's, and hooks, which reach here as the CLI, mark the sessions they speak for themselves.
+	if s := d.sessions[sess]; registered && s != nil {
+		s.lastActive = now
+	}
 	d.mu.Unlock()
 	if !registered && req.Op != proto.OpNotices && req.Op != proto.OpPing {
 		return fail("this session isn't registered with the daemon (it may have just restarted); try again in a few seconds")
@@ -292,6 +298,15 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	case proto.OpNotices:
 		return d.notices(req)
 
+	case proto.OpToolStart:
+		return d.toolStart(ctx, req)
+
+	case proto.OpToolEnd:
+		return d.toolEnd(ctx, req)
+
+	case proto.OpLookup:
+		return d.lookup(sess, req)
+
 	case proto.OpLog:
 		limit := req.Limit
 		if limit <= 0 {
@@ -322,7 +337,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	defer d.mu.Unlock()
 	var ids []string
 	if req.ClaudeSession != "" {
-		for _, s := range d.hookSessionsLocked(req.ClaudeSession, req.ClientPID) {
+		for _, s := range d.touchHookLocked(req) {
 			ids = append(ids, s.id)
 		}
 	} else {
@@ -516,12 +531,14 @@ func (d *Daemon) whoLocked(you string) []proto.Device {
 func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *session {
 	// A key that has a name keeps it, whatever this session's ID, and whichever process
 	// registered it: the name is waiting here from the first moment, without the registry.
+	now := time.Now()
 	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession, branch: branch,
-		started: time.Now(), reconnect: h.Reconnect, key: key, clientPID: h.ClientPID}
+		started: now, lastActive: now, reconnect: h.Reconnect, key: key, clientPID: h.ClientPID}
 	if at, ok := d.st.Stopped[h.ID]; ok {
 		delete(d.st.Stopped, h.ID)
 		if time.Since(at) > d.opt.StoppedInbox {
 			delete(d.st.Inbox, h.ID)
+			delete(d.st.Commits, h.ID)
 		} else {
 			s.since = at
 		}

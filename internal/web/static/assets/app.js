@@ -361,6 +361,7 @@ function prLink(pr) {
 function sessionRow(d, s) {
   const active = when(s.lastActive);
   const started = when(s.started);
+  const committed = Array.isArray(s.committed) ? s.committed : [];
   // Own keys only: a branch named constructor or __proto__ would otherwise find Object's.
   const prs = ui.state.prs || {};
   const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
@@ -401,6 +402,10 @@ function sessionRow(d, s) {
       s.branch &&
         h("span", { class: "meta-item", title: s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
       pr && h("span", { class: "meta-item" }, prLink(pr)),
+      // Shown only when short: a longer list would crowd the row, and `lookup` has it whole.
+      committed.length > 0 &&
+        committed.length <= 3 &&
+        h("span", { class: "meta-item", title: "Committed to " + committed.join(", ") }, "committed to " + committed.join(", ")),
       s.worktree &&
         h("span", { class: "meta-item", title: "Worktree" }, icon("folder"), h("span", { class: "truncate" }, s.worktree)),
       started && agoEl("span", "meta-item tabular", started, "started "),

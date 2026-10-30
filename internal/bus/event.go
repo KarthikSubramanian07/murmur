@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -99,10 +100,23 @@ func (p *Presence) Clean() {
 			s.Agent = OneLine(s.Agent, 40)
 			s.Branch = OneLine(s.Branch, 100)
 			s.Doing = OneLine(s.Doing, 120)
+			s.Committed = cleanBranches(s.Committed)
 			keep = append(keep, s)
 		}
 	}
 	p.Sessions = keep
+}
+
+// cleanBranches holds a list of branch names to what t4 writes: each on one line, none empty or
+// repeated, at most MaxCommitted.
+func cleanBranches(in []string) []string {
+	var out []string
+	for _, b := range in {
+		if b = OneLine(b, 100); b != "" && !slices.Contains(out, b) && len(out) < MaxCommitted {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // ValidName accepts device and session IDs: lowercase letters, digits and dashes.
@@ -183,7 +197,17 @@ type SessionInfo struct {
 	Branch  string    `json:"branch,omitempty"`
 	Doing   string    `json:"doing,omitempty"`
 	Started time.Time `json:"started"`
+	// LastActive is the writer's clock at the session's last tool call, or its last request to the
+	// daemon; absent when the session has made none, or on a daemon from before #21. It goes out
+	// with whatever presence write comes next, never as a write of its own.
+	LastActive time.Time `json:"lastActive,omitzero"`
+	// Committed is the branches the session has committed to, most recent first, at most
+	// MaxCommitted. The commits, their SHAs and the worktree stay on the session's device.
+	Committed []string `json:"committed,omitempty"`
 }
+
+// MaxCommitted caps SessionInfo.Committed.
+const MaxCommitted = 5
 
 // Encode renders a record as a commit message: a readable subject line, a blank line, then
 // the JSON that readers actually parse.

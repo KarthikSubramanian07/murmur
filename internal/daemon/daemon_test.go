@@ -81,6 +81,11 @@ type device struct {
 	keep   time.Duration // StoppedInbox; likewise
 	names  io.Reader     // NameSource; nil takes crypto/rand's
 	retry  time.Duration // NameRetry; zero takes 200 ms
+	// beat is the heartbeat; zero takes 500 ms.
+	beat time.Duration
+	// snapshot is how long the daemon lets a tool call's snapshot take; zero takes a minute, as
+	// the real 4 s is too short for git on a machine busy with other test runs.
+	snapshot time.Duration
 	// The page for humans: Idle (zero: never exit), PageOpen, PageMessages and PageAddr, for the
 	// daemon's options of the same names; logTo, if set, takes the daemon's log.
 	idle, pageOpen time.Duration
@@ -97,7 +102,7 @@ type device struct {
 func newDevice(t *testing.T, remote string, stale ...time.Duration) *device {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
-	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
+	git(t, filepath.Dir(dir), "clone", "-q", "--no-hardlinks", remote, dir)
 	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
 	if len(stale) > 0 {
 		d.stale = stale[0]
@@ -110,7 +115,7 @@ func newDevice(t *testing.T, remote string, stale ...time.Duration) *device {
 func newTimedDevice(t *testing.T, remote string, grace, keep time.Duration) *device {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
-	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
+	git(t, filepath.Dir(dir), "clone", "-q", "--no-hardlinks", remote, dir)
 	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond,
 		grace: grace, keep: keep}
 	d.start()
@@ -122,9 +127,17 @@ func (d *device) start() {
 	if retry == 0 {
 		retry = 200 * time.Millisecond
 	}
+	beat := d.beat
+	if beat == 0 {
+		beat = 500 * time.Millisecond
+	}
 	idle := d.idle
 	if idle == 0 {
 		idle = -1
+	}
+	snapshot := d.snapshot
+	if snapshot == 0 {
+		snapshot = time.Minute
 	}
 	logger := testLog()
 	if d.logTo != nil {
@@ -136,9 +149,9 @@ func (d *device) start() {
 	go func() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
-			Heartbeat: 500 * time.Millisecond, StaleAfter: d.stale, Idle: idle,
+			Heartbeat: beat, StaleAfter: d.stale, Idle: idle,
 			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry,
-			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, Log: logger})
+			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, Log: logger})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)
 		}
@@ -146,7 +159,7 @@ func (d *device) start() {
 	var once sync.Once
 	d.stop = func() { once.Do(func() { cancel(); <-done }) }
 	d.t.Cleanup(d.stop)
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		c, err := client.Connect(context.Background(), d.gitDir, false)
 		if err == nil {
@@ -194,9 +207,11 @@ func testLog() *log.Logger {
 	return log.New(io.Discard, "", 0)
 }
 
+// eventually waits for cond. The limit only matters when it fails, and is long because git here
+// takes seconds, not tens of milliseconds, when other test runs are busy on the same machine.
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)

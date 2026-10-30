@@ -1,9 +1,11 @@
-// Package hook is the Claude Code hook that delivers notices: after each tool call and each
-// prompt, it asks the daemon for messages this session hasn't been told about and adds one line
-// per message (sender and subject, never the body) to the agent's context.
+// Package hook is the Claude Code hook. After each tool call and each prompt it asks the daemon
+// for messages this session hasn't been told about, and adds one line per message (sender and
+// subject, never the body) to the agent's context. Before and after each tool call that could run
+// a command it also tells the daemon, which finds the commits the call made (#21).
 //
 // It never blocks or fails the agent: any problem, including no daemon running, means it
-// prints nothing and exits 0.
+// prints nothing and exits 0. Before a tool call it never prints anything at all, and the time it
+// can hold the call up is bounded by BracketTimeout.
 package hook
 
 import (
@@ -12,9 +14,11 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/a-Fig/t4/internal/client"
+	"github.com/a-Fig/t4/internal/gitx"
 	"github.com/a-Fig/t4/internal/proto"
 	"github.com/a-Fig/t4/internal/view"
 )
@@ -24,6 +28,10 @@ type input struct {
 	SessionID string `json:"session_id"`
 	Event     string `json:"hook_event_name"`
 	Cwd       string `json:"cwd"`
+	ToolName  string `json:"tool_name"`
+	// ToolUseID is on PreToolUse, PostToolUse and PostToolUseFailure alike, and the same for one
+	// call: it is what pairs the two ends (measured on Claude Code 2.1.312, 2026-10-29).
+	ToolUseID string `json:"tool_use_id"`
 }
 
 type output struct {
@@ -33,8 +41,39 @@ type output struct {
 	} `json:"hookSpecificOutput"`
 }
 
-// Events the hook answers. Each can add context to the conversation without steering a turn.
-var events = map[string]bool{"PostToolUse": true, "UserPromptSubmit": true, "SessionStart": true}
+// Events the hook answers.
+const (
+	preTool     = "PreToolUse"
+	postTool    = "PostToolUse"
+	postFailure = "PostToolUseFailure"
+)
+
+// events are those the hook acts on. A failing tool call fires PostToolUseFailure, not
+// PostToolUse, so a `git commit && git push` whose push failed still has its end seen.
+var events = map[string]bool{preTool: true, postTool: true, postFailure: true, "UserPromptSubmit": true, "SessionStart": true}
+
+// NoticeTimeout bounds the hook when it only fetches notices: it runs after the call, and a daemon
+// that answers slowly is not worth waiting on.
+//
+// NoticeTimeout and BracketTimeout are variables so that tests on a loaded machine can raise them.
+var NoticeTimeout = 3 * time.Second
+
+// BracketTimeout bounds a hook that brackets a tool call. The snapshot at the start has to be taken
+// before the call runs, so PreToolUse waits for it; this is the most a call can be held up, and a
+// snapshot that misses it just means no commits are credited for that call. The daemon's own limit
+// on a snapshot (Options.SnapshotTimeout) is a little shorter.
+var BracketTimeout = 5 * time.Second
+
+// cannotRun are the tools that can't run a command, and so can't make a commit. The hook skips
+// bracketing them: a snapshot costs git processes, and these are the commonest calls. A tool not
+// named here is bracketed, which is the safe way round for one this list has never heard of.
+var cannotRun = map[string]bool{
+	"Read": true, "Glob": true, "Grep": true, "LS": true,
+	"Edit": true, "MultiEdit": true, "Write": true, "NotebookEdit": true,
+	"WebFetch": true, "WebSearch": true,
+	"TodoWrite": true, "ToolSearch": true, "AskUserQuestion": true,
+	"EnterPlanMode": true, "ExitPlanMode": true,
+}
 
 // claudePID is the Claude Code process this hook runs under, which Claude Code gives hooks as
 // CLAUDE_PID; 0 where it isn't set. The MCP server's parent is the same process, which is how the
@@ -47,6 +86,32 @@ func claudePID() int {
 	return pid
 }
 
+// bracketOp is the daemon op that tells it about the call this event is the start or end of, or ""
+// if the event isn't one, or the call is of a tool that can't commit.
+func bracketOp(in input) string {
+	if in.ToolUseID == "" || cannotRun[in.ToolName] {
+		return ""
+	}
+	switch in.Event {
+	case preTool:
+		return proto.OpToolStart
+	case postTool, postFailure:
+		return proto.OpToolEnd
+	}
+	return ""
+}
+
+// findClone is the git common dir of the repository the hook runs in, which is what names its
+// daemon. It is read from the repository's files where it can be (gitx.Discover): a git process
+// here would add a tenth of a second or more to every tool call on Windows. Git is asked where it
+// can't.
+func findClone(ctx context.Context, cwd string) (string, error) {
+	if _, common, ok := gitx.Discover(cwd); ok {
+		return common, nil
+	}
+	return client.FindGitDir(ctx, cwd)
+}
+
 // Run reads a hook payload from stdin and writes the hook's answer, if any, to stdout.
 func Run(stdin io.Reader, stdout io.Writer) {
 	defer func() { recover() }()
@@ -57,9 +122,20 @@ func Run(stdin io.Reader, stdout io.Writer) {
 	if in.SessionID == "" || !events[in.Event] {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	op := bracketOp(in)
+	// Neither PreToolUse nor PostToolUseFailure delivers notices: the next PostToolUse or prompt
+	// does, and a PreToolUse prints nothing at all.
+	wantNotices := in.Event != preTool && in.Event != postFailure
+	if !wantNotices && op == "" {
+		return
+	}
+	timeout := NoticeTimeout
+	if op != "" {
+		timeout = BracketTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	gitDir, err := client.FindGitDir(ctx, in.Cwd)
+	gitDir, err := findClone(ctx, in.Cwd)
 	if err != nil {
 		return
 	}
@@ -67,8 +143,26 @@ func Run(stdin io.Reader, stdout io.Writer) {
 	if err != nil {
 		return
 	}
-	resp, err := c.Do(ctx, proto.Request{Op: proto.OpNotices, ClaudeSession: in.SessionID, ClientPID: claudePID()})
-	if err != nil || len(resp.Messages) == 0 {
+	// The end of a call is sent alongside the notices request. The daemon answers it at once and
+	// finds the call's commits after, so neither holds up the notices or the agent.
+	var wg sync.WaitGroup
+	if op != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { recover() }()
+			c.Do(ctx, proto.Request{Op: op, ClaudeSession: in.SessionID, ClientPID: claudePID(),
+				ToolUseID: in.ToolUseID, Cwd: in.Cwd, GitDir: gitDir})
+		}()
+	}
+	var resp proto.Response
+	if wantNotices {
+		nctx, ncancel := context.WithTimeout(ctx, NoticeTimeout)
+		resp, err = c.Do(nctx, proto.Request{Op: proto.OpNotices, ClaudeSession: in.SessionID, ClientPID: claudePID()})
+		ncancel()
+	}
+	wg.Wait()
+	if !wantNotices || err != nil || len(resp.Messages) == 0 {
 		return
 	}
 	var out output

@@ -152,16 +152,17 @@ call.
   keeps from the server; the page reads it and sends it with each request. `t4 ui --no-open`
   prints the address and opens nothing.
 - **What it shows.** Every device the daemon knows, this one first, with each session's name,
-  agent, branch, what it is doing and when it started. Whether a device is reachable, and when it
-  was last seen, come from presence going stale. The worktree's folder name is shown for this
+  agent, branch, what it is doing, when it started and when it was last active (#21), and the
+  branches it has committed to when there are three or fewer. Whether a device is reachable, and
+  when it was last seen, come from presence going stale. The worktree's folder name is shown for this
   device's sessions only: presence doesn't carry it, and a path from another machine would mean
   nothing here. Messages are every one this daemon reads, whoever it is for (anyone who can read
   the repo can read them all already), oldest first as this daemon read them, which is not by the
   senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
   it never read what was sent while it was away for more than 10 minutes (above).
 - **Settings** (when a session is woken) are saved in `.git/t4/settings.json`, replaced whole.
-  Nothing acts on them yet: waking is #25. A session's last-active time (#21) and mutes (#27)
-  aren't built, so the page shows neither and refuses to unmute.
+  Nothing acts on them yet: waking is #25. Mutes (#27) aren't built, so the page shows none and
+  refuses to unmute.
 - **Open page, running daemon.** The page asks for its state every 3 s, 15 s in a hidden tab. A
   call that carries the token, from a page someone can see, counts as an open page for 2 minutes,
   and an open page stops the 10-minute countdown the way a session does: a daemon with no sessions
@@ -169,6 +170,70 @@ call.
   a locked screen). A hidden page marks its calls, so a tab forgotten in the background doesn't
   keep the daemon, and its polling of GitHub, up for good (Opus review, 2026-10-29). A request
   without the token doesn't count.
+
+### What a session has done
+
+Added 2026-10-29 (#21). `lookup` (an MCP tool, and `t4 lookup <name>`) gives an agent what `who`
+doesn't: the branches another session has committed to, when it was last active, whether a message
+would reach it, and its latest messages. A session on this device also gives its worktree folder,
+the commits it made and the client's session ID, which stay on this device. Git doesn't record
+which session made a commit, so the daemon watches tool calls for them.
+
+- **Bracketing a call.** Setup installs the hook on `PreToolUse`, `PostToolUse` and
+  `PostToolUseFailure` as well as `UserPromptSubmit`, with matcher `*`, and `t4 init` run again
+  adds what an older install lacks. On `PreToolUse` the daemon snapshots the worktree of the
+  hook's working directory (`attrib.Head`: HEAD, branch and every ref tip). On the call's end it
+  snapshots again and credits `attrib.NewCommits` between the two to the sessions the hook speaks
+  for, the ones its notices go to. A commit made in that worktree during the call by a human or
+  another session is credited too: git can't say who made it, and this was accepted. Package
+  `attrib` decides which commits count.
+- **Pairing.** The two ends of a call share a `tool_use_id`, as does a call that fails, which fires
+  `PostToolUseFailure` instead of `PostToolUse` (seen on Claude Code 2.1.312, 2026-10-29); the hook
+  closes the call on either, so `git commit && git push` with a failed push is still credited. The
+  key is the Claude session ID and the `tool_use_id`, since calls run in parallel. A snapshot is
+  dropped after an hour, and the oldest goes once 128 are held, so a call whose end never comes (it
+  was cancelled, the hook crashed) can't pile them up. A call with no snapshot credits nothing.
+- **Which worktree.** The one the call started in, and the one it ended in if that is another
+  worktree of the clone: the start's ref tips are the whole clone's, so they keep either
+  worktree's history out, all but a detached HEAD's in the other (#60). A `cd` inside a Bash call leaves the hook's working directory where it
+  was (seen on 2.1.312, 2026-10-29), so a call ends elsewhere only when Claude Code itself has
+  moved, and what `cd ../other && git commit`, or `git -C ../other commit`, makes in another
+  worktree isn't credited. The hook finds the clone from its working directory, and a call in
+  another repository, or none, isn't watched. A subagent's hooks carry the parent's session ID,
+  so its commits are credited to the parent.
+- **What it costs.** A call that cannot run a command (`Read`, `Glob`, `Grep`, `Edit`, `Write`
+  and the like, named in `internal/hook`) isn't bracketed. Any other tool is, MCP tools and
+  subagents included. The start is one `git` process: the hook finds the clone from its files, and
+  `attrib.Head` reads HEAD from the worktree's git directory and asks git only for the refs (a
+  reftable repository, or one git might find differently, takes three). It can't be made to run
+  without the call waiting: a commit made before the snapshot would count as old history. The end
+  is answered at once, and the daemon finds the commits after, with two more; a `lookup` waits for
+  that, and so does the next call's start for the end's snapshot, as that call could otherwise
+  switch branches before it. Measured 2026-10-29 on the Windows laptop, idle, where one `git` process took 24 ms:
+  `PreToolUse` for a bracketed call took a median of 79 ms and `PostToolUse` 19 ms, against 15 ms
+  and 19 ms for a skipped tool. As first built, the start was four `git` processes and the end
+  waited for five: 241 ms and 335 ms on the same machine. With several test runs going, where one
+  `git` process took 300 to 400 ms, that start took a median of 1.7 s (0.8 to 2.7 s over five
+  runs); the start as it is now wasn't measured that busy, and should take about a quarter of it
+  (inferred).
+- **It never stops a call.** `PreToolUse` prints nothing and exits 0 whatever goes wrong, never 2.
+  It waits at most 5 s for the daemon, which limits its own snapshot to 4 s; one that misses
+  credits nothing for that call.
+- **Where it is kept.** Each session's credited commits (SHA, branch, subject and when the call
+  ended; the latest 100) are in `.git/t4/state.json` and nowhere else, for as long as its inbox is
+  kept after it stops (24 hours) and across daemon restarts. Presence carries only the names of the
+  branches it committed to, most recent first, at most 5. A commit made on a detached HEAD is kept
+  and `lookup` lists it as that, but it adds no branch to the list.
+- **Last active.** The time of the session's last request to the daemon: any hook event (notices,
+  or either end of a call) or any MCP call, `who` included. It is held in memory and goes out with
+  the next presence write, a change or the 2-minute heartbeat, and never causes one, so another
+  device sees it up to two minutes late. A reader works out the time on its own clock from how
+  long before the presence was written the session was active, so clocks that disagree don't
+  matter. Codex, and any agent without the hook, moves it by MCP calls only, and has no commits
+  credited. An older daemon reads the new presence and ignores both fields; the sessions of a
+  daemon that doesn't write them have no last-active time, and the page leaves it blank.
+- **Messages in `lookup`** are those this daemon has read, the same as the page keeps: the last
+  500, none from before it started.
 
 ### When a session stays the same session
 
@@ -215,9 +280,9 @@ evidence is in #19.
     Python server rather than t4: its parent was the `claude.exe` that `CLAUDE_PID` named, and a
     `cmd.exe` stood between them only where the user's own config said `cmd /c`. A wrapper means
     no PID match, so that session falls back to its Claude ID and doesn't follow.
-  - *When it happens.* Setup installs the hook for `PostToolUse` and `UserPromptSubmit`, not
-    `SessionStart`, so a session moves at the first tool call or prompt after the switch, not at
-    the switch. Until then it shows its old name, and what is sent to that reaches it.
+  - *When it happens.* Setup installs the hook for `PreToolUse`, `PostToolUse`,
+    `PostToolUseFailure` and `UserPromptSubmit`, not `SessionStart`, so a session moves at the
+    first tool call or prompt after the switch, not at the switch. Until then it shows its old name, and what is sent to that reaches it.
   - *Subagents.* A subagent's hooks carry its parent session's `session_id` and `CLAUDE_PID`,
     with `agent_id` set, so a subagent's tool calls don't move the session (seen on 2.1.312,
     2026-10-29).
