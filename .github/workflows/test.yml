@@ -42,9 +42,11 @@ jobs:
           persist-credentials: false
       - name: Check the runner's machine has room
         run: |
-          swap=$(sysctl -n vm.swapusage | sed -E 's/.*used = ([0-9]+).*/\1/')
-          if [ "$swap" -gt 1700 ]; then
-            echo "::error::The runner's machine is short of memory (${swap} MB of swap used), so the tests didn't run. Re-run the job later."
+          # macOS keeps swap allocated long after memory frees up, so swap in use says little;
+          # the kernel's free percentage says whether there is room now.
+          free=$(memory_pressure | sed -nE 's/.*free percentage: ([0-9]+)%.*/\1/p')
+          if [ -n "$free" ] && [ "$free" -lt 20 ]; then
+            echo "::error::The runner's machine is short of memory (${free}% free), so the tests didn't run. Re-run the job later."
             exit 1
           fi
           go version
