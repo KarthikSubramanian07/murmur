@@ -17,7 +17,9 @@ push to `main`, and by hand. It runs on a self-hosted macOS runner (2 cores), se
 - **Low priority.** The runner machine does other work too. The runner service runs at background
   priority, each step under `taskpolicy -b nice -n 20`, with `GOMAXPROCS=2` and one package at a
   time.
-- **Memory check.** A job won't start while more than 1.7 GB of the machine's 2 GB swap is in use.
+- **Memory check.** A job won't start while the machine has less than 20% of its memory free, as
+  `memory_pressure` reports it. Swap in use isn't the test: macOS keeps swap allocated long after
+  memory frees up, and a swap threshold blocked every job for hours on 2026-10-29.
   The job then fails with a message saying so, and a re-run later works.
 - **One job at a time.** There is one runner, so jobs queue, and a newer push to the same pull
   request cancels the run in progress.
