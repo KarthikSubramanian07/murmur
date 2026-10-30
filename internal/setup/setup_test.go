@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/a-Fig/t4/internal/brand"
+	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/t4/internal/view"
 )
 
 // repo makes a git repository with the given files, and returns its root.
@@ -112,6 +114,36 @@ func TestTheAgentPagesExistAndSayWhatTheSectionPromises(t *testing.T) {
 		if !strings.Contains(use, want) {
 			t.Errorf("the page on using t4 doesn't say %q", want)
 		}
+	}
+}
+
+// The page on using t4 quotes the turn a delivered message becomes. An agent that reads the quote
+// and then meets a header worded differently has no way to tell t4's turn from a user's, so the
+// quote is the turn view.Turn renders, word for word, and this fails if either one is reworded.
+func TestTheUsePageQuotesTheDeliveredTurnWordForWord(t *testing.T) {
+	rel := brand.UseDoc[strings.Index(brand.UseDoc, "/main/")+len("/main/"):]
+	b, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	use := strings.ReplaceAll(string(b), "\r\n", "\n")
+	turn := view.Turn(proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", FromAgent: "claude-code in T3", FromOwner: "smash",
+		To: "dev-0002/def456", Subject: "<the subject>", Body: "<the body, if the sender wrote one>"})
+	var quoted []string
+	for _, line := range strings.Split(strings.TrimSuffix(turn, "\n"), "\n") {
+		if line != "" {
+			line = "    " + line
+		}
+		quoted = append(quoted, line)
+	}
+	if want := strings.Join(quoted, "\n"); !strings.Contains(use, want) {
+		t.Errorf("the page on using t4 doesn't quote the delivered turn; it should contain:\n%s", want)
+	}
+	// A message to everyone is the one variation in the header, and the page says so.
+	everyone := view.Turn(proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", To: "*", Subject: "x"})
+	first, _, _ := strings.Cut(everyone, ":\n")
+	if !strings.HasSuffix(first, ", sent to everyone") || !strings.Contains(use, ", sent to everyone") {
+		t.Errorf("the page doesn't match the header of a message to everyone: %q", first)
 	}
 }
 
