@@ -1,0 +1,8 @@
+[Unit]
+Description=Stop the VM when the t4 CI runner is idle
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/t4-idle-stop
+# A oneshot has no start timeout by default, and one that hung would keep the next from running.
+TimeoutStartSec=5min
