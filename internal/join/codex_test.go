@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-const tomlTable = "[mcp_servers.t4]\ncommand = \"/opt/t4\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\ndefault_tools_approval_mode = \"approve\"\n"
+const tomlTable = "[mcp_servers.t4]\ncommand = \"/opt/t4\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\nenv_vars = [\"T3CODE_CLI_PATH\"]\ndefault_tools_approval_mode = \"approve\"\n"
 
 func edit(t *testing.T, text string) (string, bool) {
 	t.Helper()
@@ -48,14 +48,14 @@ func TestCodexEditIsIdempotentAndUpdatesInPlace(t *testing.T) {
 	}
 
 	stale := "[mcp_servers.t4]\n# mine\ncommand = '/old/t4'\nstartup_timeout_sec = 30\nargs = [\"mcp\"]\ndefault_tools_approval_mode = \"prompt\"\n\n[mcp_servers.t4.env]\nA = \"1\"\n\n[other]\nx = 1\n"
-	want := "[mcp_servers.t4]\n# mine\ncommand = \"/opt/t4\"\nstartup_timeout_sec = 30\nargs = [\"mcp\", \"--agent\", \"codex\"]\ndefault_tools_approval_mode = \"prompt\"\n\n[mcp_servers.t4.env]\nA = \"1\"\n\n[other]\nx = 1\n"
+	want := "[mcp_servers.t4]\n# mine\ncommand = \"/opt/t4\"\nstartup_timeout_sec = 30\nargs = [\"mcp\", \"--agent\", \"codex\"]\ndefault_tools_approval_mode = \"prompt\"\nenv_vars = [\"T3CODE_CLI_PATH\"]\n\n[mcp_servers.t4.env]\nA = \"1\"\n\n[other]\nx = 1\n"
 	if got, changed := edit(t, stale); !changed || got != want {
 		t.Errorf("changed=%v:\n%s\nwant:\n%s", changed, got, want)
 	}
 
 	// A table with only some of the keys gets the others, before the next table.
 	partial := "[mcp_servers.t4]\ncommand = \"/opt/t4\"\n\n[mcp_servers.t4.env]\nA = \"1\"\n"
-	want = "[mcp_servers.t4]\ncommand = \"/opt/t4\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\ndefault_tools_approval_mode = \"approve\"\n\n[mcp_servers.t4.env]\nA = \"1\"\n"
+	want = "[mcp_servers.t4]\ncommand = \"/opt/t4\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\nenv_vars = [\"T3CODE_CLI_PATH\"]\ndefault_tools_approval_mode = \"approve\"\n\n[mcp_servers.t4.env]\nA = \"1\"\n"
 	if got, _ := edit(t, partial); got != want {
 		t.Errorf("partial table:\n%s\nwant:\n%s", got, want)
 	}
@@ -115,12 +115,12 @@ func TestCodexEditReadsQuotedHeadersWithComments(t *testing.T) {
 	// The same spelling for t4's own table is that table, edited in place, not a second one.
 	own := "[ mcp_servers . \"t4\" ] # mine\ncommand = '/old/t4' # keep\n\n[other]\nx = 1\n"
 	got, changed := edit(t, own)
-	want := "[ mcp_servers . \"t4\" ] # mine\ncommand = \"/opt/t4\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\ndefault_tools_approval_mode = \"approve\"\n\n[other]\nx = 1\n"
+	want := "[ mcp_servers . \"t4\" ] # mine\ncommand = \"/opt/t4\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\nenv_vars = [\"T3CODE_CLI_PATH\"]\ndefault_tools_approval_mode = \"approve\"\n\n[other]\nx = 1\n"
 	if !changed || got != want {
 		t.Errorf("changed=%v:\n%s\nwant:\n%s", changed, got, want)
 	}
 	// A comment after a value that is already right isn't a difference.
-	commented := "[mcp_servers.t4]\ncommand = \"/opt/t4\" # mine\nargs = [\"mcp\", \"--agent\", \"codex\"] # mine\ndefault_tools_approval_mode = \"approve\"\n"
+	commented := "[mcp_servers.t4]\ncommand = \"/opt/t4\" # mine\nargs = [\"mcp\", \"--agent\", \"codex\"] # mine\nenv_vars = [\"T3CODE_CLI_PATH\"]\ndefault_tools_approval_mode = \"approve\"\n"
 	if out, changed := edit(t, commented); changed {
 		t.Errorf("rewrote a value that was right:\n%s", out)
 	}
@@ -155,5 +155,46 @@ func TestCodexEditQuotesWindowsPaths(t *testing.T) {
 	}
 	if _, changed, _ := editCodexConfig(out, `C:\Users\a b\bin\t4.exe`); changed {
 		t.Error("a second edit changed it")
+	}
+}
+
+// Codex starts MCP servers with a bare environment and passes on only the variables a table names
+// in env_vars, so join names T3CODE_CLI_PATH: it is how a session in T3 Code is found and woken.
+// What the user already lists there stays, and the name is added to it only if it is missing.
+func TestCodexEditForwardsTheT3Variable(t *testing.T) {
+	head := "[mcp_servers.t4]\ncommand = \"/opt/t4\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\n"
+	tail := "default_tools_approval_mode = \"approve\"\n"
+	for name, tc := range map[string]struct{ in, want string }{
+		"none":           {head + tail, head + tail + "env_vars = [\"T3CODE_CLI_PATH\"]\n"},
+		"someone else's": {head + "env_vars = [\"HTTP_PROXY\"]\n" + tail, head + "env_vars = [\"HTTP_PROXY\", \"T3CODE_CLI_PATH\"]\n" + tail},
+		"empty":          {head + "env_vars = []\n" + tail, head + "env_vars = [\"T3CODE_CLI_PATH\"]\n" + tail},
+		"with a comment": {head + "env_vars = [\"A\"] # mine [x]\n" + tail, head + "env_vars = [\"A\", \"T3CODE_CLI_PATH\"] # mine [x]\n" + tail},
+		"already there":  {head + "env_vars = [\"A\", \"T3CODE_CLI_PATH\"]\n" + tail, ""},
+		"single quotes":  {head + "env_vars = ['T3CODE_CLI_PATH', 'A']\n" + tail, ""},
+	} {
+		got, changed := edit(t, tc.in)
+		if tc.want == "" {
+			if changed || got != tc.in {
+				t.Errorf("%s: changed the user's own list (changed=%v):\n%s", name, changed, got)
+			}
+			continue
+		}
+		if !changed || got != tc.want {
+			t.Errorf("%s: changed=%v:\n%s\nwant:\n%s", name, changed, got, tc.want)
+		}
+		if again, changed := edit(t, got); changed || again != got {
+			t.Errorf("%s: a second edit changed it:\n%s", name, again)
+		}
+	}
+	// A list over several lines, or of anything but names, is the user's to change.
+	for name, text := range map[string]string{
+		"several lines": head + "env_vars = [\n  \"A\",\n]\n" + tail,
+		"inline tables": head + "env_vars = [{ name = \"A\" }]\n" + tail,
+	} {
+		if out, _, err := editCodexConfig(text, "/opt/t4"); err == nil {
+			t.Errorf("%s: edited it:\n%s", name, out)
+		} else if !strings.Contains(err.Error(), "T3CODE_CLI_PATH") {
+			t.Errorf("%s: the error doesn't say what to add by hand: %v", name, err)
+		}
 	}
 }

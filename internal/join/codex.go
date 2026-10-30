@@ -3,6 +3,7 @@ package join
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -16,8 +17,15 @@ import (
 
 var codexArgs = []string{"mcp", "--agent", "codex"}
 
+// t3CLIEnv is the variable that says a session runs inside T3 Code, and where its command line is.
+// Codex starts an MCP server with a bare environment and passes on only the variables the table
+// names in env_vars, so without this one the server can't tell it is in T3 and the daemon has no way
+// to wake the thread with a message (docs/VISION.md, "Delivering a message as a turn").
+const t3CLIEnv = "T3CODE_CLI_PATH"
+
 // editCodexConfig returns config.toml's text with t4's server in it. changed is false, and out is
-// text, when the table already says what join would write. It refuses (an error) a file whose t4
+// text, when the table already says what join would write; a user's own env_vars is kept, with
+// T3CODE_CLI_PATH added to it if it lacks that. It refuses (an error) a file whose t4
 // entry is written in a form it doesn't edit: two definitions of one table make the file invalid,
 // and Codex then fails to load any of its config.
 func editCodexConfig(text, exe string) (out string, changed bool, err error) {
@@ -63,8 +71,9 @@ func editCodexConfig(text, exe string) (out string, changed bool, err error) {
 	}
 
 	want := map[string]string{
-		"command": "command = " + tomlString(exe),
-		"args":    "args = [" + joinQuoted(codexArgs) + "]",
+		"command":  "command = " + tomlString(exe),
+		"args":     "args = [" + joinQuoted(codexArgs) + "]",
+		"env_vars": "env_vars = [" + joinQuoted([]string{t3CLIEnv}) + "]",
 	}
 	approve := `default_tools_approval_mode = "approve"`
 
@@ -77,7 +86,7 @@ func editCodexConfig(text, exe string) (out string, changed bool, err error) {
 		if strings.TrimSpace(text) != "" {
 			b.WriteString(nl)
 		}
-		for _, l := range []string{"[mcp_servers." + brand.MCPServer + "]", want["command"], want["args"], approve} {
+		for _, l := range []string{"[mcp_servers." + brand.MCPServer + "]", want["command"], want["args"], want["env_vars"], approve} {
 			b.WriteString(l + nl)
 		}
 		return b.String(), true, nil
@@ -102,6 +111,18 @@ func editCodexConfig(text, exe string) (out string, changed bool, err error) {
 			if !sameValue(key, val, exe) {
 				block[i] = want[key] + cr
 			}
+		case "env_vars":
+			found[key] = true
+			items, after, ok := stringListRest(val)
+			if !singleLine(val) || !ok || (after != "" && after[0] != '#') {
+				return "", false, fmt.Errorf("config.toml has env_vars of the %s server in a form join doesn't edit (several lines, or not a list of names): add %q to it by hand", brand.MCPServer, t3CLIEnv)
+			}
+			if !slices.Contains(items, t3CLIEnv) {
+				if after != "" {
+					after = " " + after // the user's comment stays
+				}
+				block[i] = "env_vars = [" + joinQuoted(append(items, t3CLIEnv)) + "]" + after + cr
+			}
 		case "default_tools_approval_mode":
 			found[key] = true // the user's own setting, kept
 		}
@@ -112,7 +133,7 @@ func editCodexConfig(text, exe string) (out string, changed bool, err error) {
 		at--
 	}
 	var add []string
-	for _, key := range []string{"command", "args"} {
+	for _, key := range []string{"command", "args", "env_vars"} {
 		if !found[key] {
 			add = append(add, want[key])
 		}
@@ -261,25 +282,31 @@ func stripComment(val string) string {
 
 // stringList reads ["a", 'b'] on one line.
 func stringList(val string) ([]string, bool) {
+	items, _, ok := stringListRest(val)
+	return items, ok
+}
+
+// stringListRest is stringList with what follows the closing bracket, trimmed: a comment, or nothing.
+func stringListRest(val string) (items []string, after string, ok bool) {
 	val = strings.TrimSpace(val)
 	if !strings.HasPrefix(val, "[") {
-		return nil, false
+		return nil, "", false
 	}
 	rest := strings.TrimSpace(val[1:])
 	var out []string
 	for {
 		if strings.HasPrefix(rest, "]") {
-			return out, true
+			return out, strings.TrimSpace(rest[1:]), true
 		}
 		if rest == "" || (rest[0] != '"' && rest[0] != '\'') {
-			return nil, false
+			return nil, "", false
 		}
 		var s string
 		var n int
 		if rest[0] == '\'' {
 			end := strings.IndexByte(rest[1:], '\'')
 			if end < 0 {
-				return nil, false
+				return nil, "", false
 			}
 			s, n = rest[1:1+end], end+2
 		} else {
@@ -293,11 +320,11 @@ func stringList(val string) ([]string, bool) {
 				}
 			}
 			if end < 0 {
-				return nil, false
+				return nil, "", false
 			}
 			var ok bool
 			if s, ok = tomlUnquote(rest[:end+1]); !ok {
-				return nil, false
+				return nil, "", false
 			}
 			n = end + 1
 		}
