@@ -11,7 +11,9 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/a-Fig/t4/internal/brand"
 	"github.com/a-Fig/t4/internal/client"
+	"github.com/a-Fig/t4/internal/join"
 )
 
 // runUI opens the page for humans: the daemon serves it, and starts if it isn't running. The
@@ -25,6 +27,10 @@ func runUI(ctx context.Context, args []string, out io.Writer, open func(url stri
 	gitDir, err := client.FindGitDir(ctx, *dir)
 	if err != nil {
 		return err
+	}
+	if !join.Joined(gitDir) {
+		return fmt.Errorf("this clone hasn't joined %[1]s, and the page is the daemon's, which runs only for a user who has: "+
+			"ask the agent in this repo to join, or run `%[1]s join`", brand.Command)
 	}
 	c, err := client.Connect(ctx, gitDir, true)
 	if err != nil {

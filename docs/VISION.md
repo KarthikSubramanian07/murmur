@@ -1,7 +1,7 @@
 # Vision: agents that find each other across a hackathon team
 
 Status: V1 works, in Go (2026-10-26); the next version, with names, a web page and wake-ups, is
-being built, and the web page is in (2026-10-29). "t4" is the repo's name and a working name
+being built, and the web page is in (2026-10-29), as is an agent joining a repo by itself. "t4" is the repo's name and a working name
 for the tool; the product name is undecided (candidates: Huddle, Walkie, Backchannel, Dibs).
 
 ## The problem
@@ -105,8 +105,8 @@ GitHub (refs/t4/*)
   t4 daemon  (per device, per repo)
         ▲  local socket
    ┌────┼──────────┬──────────┐
- MCP   MCP        MCP       CLI
-(T3)  (Claude    (Codex)   (humans, debugging)
+ MCP   MCP        MCP       page
+(T3)  (Claude    (Codex)   (humans)
        Code)
 ```
 
@@ -134,6 +134,125 @@ Sessions reach the daemon over loopback TCP, on a random port written with a ran
 `.git/t4/daemon.json`. A daemon with no sessions and no open page (see The page for humans) for
 10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
 next sync rather than when it goes stale.
+
+### Joining a repo
+
+Decided 2026-10-29 (#55), built the same day. Tyler's requirement: setup should feel like magic,
+and T3 Code users are the main customers. The user should still know t4 is running and choose to
+join. So a repo that uses t4 says so, in a section of `AGENTS.md` and `CLAUDE.md` that an agent
+reads when it starts; an agent that has no t4 tools asks its user whether to join; and if the user
+says yes, the agent installs t4 and runs `t4 join`, which does the rest. Tyler also decided that
+messaging gets no command-line commands (`who`, `send`, `inbox`, `log` were removed): "If everyone
+is using the CLI, there will be no one to message." Agents message through MCP, humans look at the
+page (`t4 ui`), and the commands left are `init`, `join`, `ui`, `stop`, `version` and `help`.
+
+- **The marker.** `t4 init` writes a section between `<!-- t4:start -->` and `<!-- t4:end -->` into
+  both files, creates either if it is missing, and rewrites the section in place on a rerun. The
+  section is six lines, since every agent that opens the repo reads it whole (Tyler, 2026-10-29,
+  after a first version of about twenty): it says the repo uses t4 and links two pages in
+  `docs/agents/`, by raw GitHub address. `join.md` is for an agent without the tools: ask the user,
+  say what joining does, install t4 (the one-line command for macOS and Linux or for Windows
+  PowerShell), run `t4 join`, tell the user what it printed. `use.md` is for an agent with them:
+  keep `status` set, check `who` before sizeable work, answer a message with `send`, and `inbox`
+  for history and as the fallback. The addresses work without login only once the repo is public;
+  until then an agent with GitHub access reads the files in the repo. A test holds the addresses to
+  files that exist. `init` writes no other file. An older `init` had put an `.mcp.json`
+  entry and a hook in `.claude/settings.json`; `init` removes only t4's own entries from those,
+  deletes a file that is left empty, and says so. Committing installs nothing on a teammate's machine.
+- **What `t4 join` writes.** It refuses in a repo without the marker. Everything it writes is
+  outside the repo's tracked files:
+
+  | What | Where | Per |
+  |---|---|---|
+  | Consent | `.git/t4/joined.json` (mode 0600) | clone, so every worktree of it |
+  | The MCP server, for Claude Code | `claude mcp add --scope user t4 -- <absolute path of t4> mcp`, which writes `.claude.json` in `$CLAUDE_CONFIG_DIR`, else the home directory | user |
+  | Permission for its tools | `mcp__t4` in `permissions.allow` of `settings.json` next to it | user |
+  | The MCP server, for Codex | a `[mcp_servers.t4]` table in `$CODEX_HOME/config.toml`, else `~/.codex/config.toml`: the command, `args = ["mcp", "--agent", "codex"]` and `default_tools_approval_mode = "approve"` | user |
+  | The hook, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure` and `UserPromptSubmit` (`setup.HookEvents`) | `.claude/settings.local.json` in each worktree of the clone, kept out of `git status` through the clone's `info/exclude` | clone |
+  | The daemon | started, if none is running | clone |
+
+  A client that isn't installed is skipped. Each file is edited, never replaced: other servers,
+  settings and comments stay, and a form it can't edit safely (a dotted `mcp_servers.t4.command`
+  key in Codex's TOML, a `permissions` that isn't an object) is a reported problem, not a guess.
+  `codex mcp add` is not used, because it rewrites the whole file. The path is absolute so the
+  server starts whatever PATH the client has. The hook command is the path in double quotes with
+  forward slashes (`"C:/Users/a b/t4.exe" hook`), because Claude Code runs hook commands through a
+  shell, which would split a path with a space, eat the backslashes of a Windows one, and expand a
+  `$` or backtick in it; those are escaped. Measured to run under Claude Code 2.1.312 with a space
+  in the path, 2026-10-29. A config file that is a symbolic link (a dotfiles repository's, say) is
+  written through, one that points at a file not yet there included: the file it points to is
+  replaced or created and the link stays; a hook file that is a link is emptied, never deleted.
+  Run again, `join` changes nothing and says so; it fills in what is missing and repoints an entry
+  whose binary moved. A worktree made after joining has no hook until `t4 join` runs in it again.
+  `t4 join --leave` removes the consent and the hooks and stops the daemon. It leaves the server
+  registered, since that is per user and does nothing where the user hasn't joined; its output says
+  how to remove it.
+- **What it prints.** What it did, what went wrong, and "Tell your user", chosen from which agent ran
+  it (see Reloading MCP servers below), so the agent can say exactly what to do next.
+- **The server stays passive where it isn't invited.** The user-scope entry starts `t4 mcp` in every
+  repo the user opens. The server is on only while the repo says it uses t4 (this working tree's
+  `AGENTS.md` or `CLAUDE.md` has the marker) and this user has joined in this clone, both read from
+  files every 2 seconds. Off, it advertises a tools capability with no tools and no instructions,
+  contacts no daemon, and answers a call that arrives anyway with why it is off. A join turns it on
+  and lists the tools through `tools/list_changed`; a leave removes them. MCP instructions are fixed
+  at initialize, so a server that started off never has them: the pages the section in `AGENTS.md`
+  and `CLAUDE.md` links to carry that guidance. Nothing relies on the server alone, and the checks differ by
+  what the thing is for. The server asks again before each registration with the daemon, before
+  starting one, and before forwarding a tool call, since its 2-second look can lag a leave. The
+  daemon is per clone, not per working tree, so it needs only the consent: it checks at start
+  (after its first sync, which takes a while), on every request but `stop` and `ping` (which reveal
+  nothing, and are how a leave finds it), again in a registration after it has resolved the branch,
+  before each push of its own (presence, the names registry), and once a second, when it stops
+  itself if the user has left. The last two are what end a daemon that was still starting when
+  `join --leave` ran and so had no `daemon.json` to be found by. `t4 daemon` and `t4 ui` refuse in
+  a clone that hasn't joined (so a stale client or a script can't start one). `join --leave`
+  forgets the consent before it stops anything, then waits up to 20 seconds for the daemon's lock to
+  be free, and reports it as a problem, not as stopped, if it isn't. What it can't close: a push
+  already past its check when the leave lands completes, and a starter already past its own
+  check (Windows starts the daemon through WMI, which is slow) can still launch `t4 daemon`, which
+  exits at its consent check before it opens any state or publishes. A repo without the marker, or
+  one the user hasn't joined, gets no daemon, no `refs/t4/*` and nothing published. A clone whose
+  user joined but whose current branch lacks the marker keeps its daemon (it is the user's, for
+  every worktree) and gets no MCP tools there.
+- **Per user, not per account.** T3 can start Claude Code with its own `CLAUDE_CONFIG_DIR` (a
+  provider with a home path, as `claude_personal` on Tyler's laptop, 2026-10-29). `t4 join` writes
+  to the config directory of the agent that ran it, so a user with a second account has a second
+  registration, made when an agent under it joins.
+
+### Reloading MCP servers
+
+Measured 2026-10-29 on Claude Code 2.1.312, Codex CLI 0.164.0 and T3 Code, with Claude and Codex
+threads. The question was what a session needs after `t4 join`, since the agent that ran it started
+before the server was registered.
+
+| Client | A server registered after the session started | `tools/list_changed` from a running server | What loads it |
+|---|---|---|---|
+| Claude Code | Ignored | Honored | A restarted process |
+| T3 Code, Claude | Ignored | Honored | Press Stop, then send any message: T3 restarts the Claude process |
+| T3 Code, Codex | Ignored (2026-10-30: a new thread loads it from `config.toml`; an older one still lacks it on its next turn) | Ignored | A new thread |
+
+That shaped the design. Because `list_changed` is honored where it matters, the server is
+registered once per user and starts in every session as a passive server: after the first join, a
+Claude Code session opened in any repo gets the tools the moment that repo is joined, with no
+restart. A session that began before the registration needs the restart in the table, and `join`
+says so for the agent that ran it (`CLAUDECODE` and `T3CODE_CLI_PATH` in its environment): in T3,
+Stop and a message; in a terminal Claude Code, exit and `claude --continue`; in Codex, a new
+thread. When the registration was already there, the Claude Code tools appear in a few seconds.
+Not verified: that `claude --continue` loads the server (inferred from Claude reading its settings
+at start), that Codex honors `default_tools_approval_mode = "approve"` in a live thread (the
+config is valid and `codex mcp get t4` shows it), and which variables Codex sets for the commands
+it runs (`CODEX_THREAD_ID`, `CODEX_SANDBOX`, `CODEX_CI` are assumed; with none, `join`'s advice
+covers every client).
+
+More on Codex in T3, from a Codex agent in a T3 thread (Codex 0.164.0, 2026-10-30). T3's Codex
+provider loads a stdio server from `~/.codex/config.toml` in a newly created thread: its echo tool
+worked, with no approval prompt in full-access mode. A thread that existed before the server was
+added still lacks it on its next turn. Codex's app-server has a `config/mcpServer/reload` request
+that refreshes a running thread without a restart, but the installed T3 never sends it. So `join`
+tells a Codex thread in T3 (Codex's variables plus `T3CODE_CLI_PATH`) to "open a new thread in this
+project to talk to other agents through t4". Still being tested at the time of writing: whether a
+project-level Codex config is read, and approval policy outside full-access mode (findings go to
+#55 as comments).
 
 ### The page for humans
 
@@ -173,16 +292,18 @@ call.
 
 ### What a session has done
 
-Added 2026-10-29 (#21). `lookup` (an MCP tool, and `t4 lookup <name>`) gives an agent what `who`
-doesn't: the branches another session has committed to, when it was last active, whether a message
-would reach it, and its latest messages. A session on this device also gives its worktree folder,
+Added 2026-10-29 (#21). `lookup` (an MCP tool; it has no command, like the other messaging tools)
+gives an agent what `who` doesn't: the branches another session has committed to, when it was last
+active, whether a message would reach it, and its latest messages. A session on this device also gives its worktree folder,
 the commits it made and the client's session ID, which stay on this device. Git doesn't record
 which session made a commit, so the daemon watches tool calls for them.
 
-- **Bracketing a call.** Setup installs the hook on `PreToolUse`, `PostToolUse` and
-  `PostToolUseFailure` as well as `UserPromptSubmit`, with matcher `*`, and `t4 init` run again
-  adds what an older install lacks. On `PreToolUse` the daemon snapshots the worktree of the
-  hook's working directory (`attrib.Head`: HEAD, branch and every ref tip). On the call's end it
+- **Bracketing a call.** `t4 join` installs the hook on `PreToolUse`, `PostToolUse` and
+  `PostToolUseFailure` as well as `UserPromptSubmit`, with matcher `*` on the three tool events, and
+  run again adds what an older join lacks. A repo set up by an `init` from before #55 had the hook
+  in its committed `.claude/settings.json`; `t4 init` removes it there, and the user's `t4 join`
+  installs it in `.claude/settings.local.json`. On `PreToolUse` the daemon snapshots the worktree
+  of the hook's working directory (`attrib.Head`: HEAD, branch and every ref tip). On the call's end it
   snapshots again and credits `attrib.NewCommits` between the two to the sessions the hook speaks
   for, the ones its notices go to. A commit made in that worktree during the call by a human or
   another session is credited too: git can't say who made it, and this was accepted. Package
@@ -274,13 +395,13 @@ evidence is in #19.
     A daemon that restarts between
     a switch and the server's next call to it can still bring the stale ID back, until the next
     hook corrects it.
-  - *The parent PID.* `t4 init` registers a bare `t4 mcp --agent claude-code` in `.mcp.json`, so
-    Claude Code starts it itself and the server's parent is the Claude Code process, unless `t4`
-    is a shell or batch shim, or the user wraps it. Seen 2026-10-29 on Windows, with a plain
+  - *The parent PID.* `t4 join` registers `<absolute path of t4> mcp` with Claude Code (see Joining
+    a repo), so Claude Code starts it itself and the server's parent is the Claude Code process,
+    unless `t4` is a shell or batch shim, or the user wraps it. Seen 2026-10-29 on Windows, with a plain
     Python server rather than t4: its parent was the `claude.exe` that `CLAUDE_PID` named, and a
     `cmd.exe` stood between them only where the user's own config said `cmd /c`. A wrapper means
     no PID match, so that session falls back to its Claude ID and doesn't follow.
-  - *When it happens.* Setup installs the hook for `PreToolUse`, `PostToolUse`,
+  - *When it happens.* `t4 join` installs the hook for `PreToolUse`, `PostToolUse`,
     `PostToolUseFailure` and `UserPromptSubmit`, not `SessionStart`, so a session moves at the
     first tool call or prompt after the switch, not at the switch. Until then it shows its old name, and what is sent to that reaches it.
   - *Subagents.* A subagent's hooks carry its parent session's `session_id` and `CLAUDE_PID`,
@@ -463,8 +584,8 @@ t4's difference.
 
 ## Built in Go
 
-One static binary per platform, `t4`, holds the daemon, MCP server, hook and CLI. A teammate
-installs one file and no runtime. Go cross-compiles for macOS, Linux and Windows from any one
+One static binary per platform, `t4`, holds the daemon, MCP server, hook and the few commands a
+person runs. A teammate installs one file and no runtime. Go cross-compiles for macOS, Linux and Windows from any one
 machine with no C toolchain, where Rust would need Apple's SDK and linker to build for macOS
 from elsewhere. Tyler chose between the two on 2026-10-26. The MCP server uses the official Go
 SDK (`modelcontextprotocol/go-sdk`, v1.8.0). The daemon runs the `git` binary rather than using
@@ -488,5 +609,8 @@ a git library, so it gets each user's credential helpers, SSH config and URL rew
   does that yet.
 - How does t4 learn a T3 thread's ID: from the agent, or from T3's database? (See above.)
 - What is the protocol of Claude Code's messaging socket, and can it wake an idle session?
+- A worktree made after joining has the tools (the consent is per clone) but no hook, until
+  `t4 join` runs there again. Nothing prompts that, since the agent in it already has the tools.
+  Should the server or the daemon install the hook there?
 - Does GitHub rate-limit a `git ls-remote` every 10 s from each of a team's devices? Nothing
   documents a limit for git traffic; none was hit in testing so far.

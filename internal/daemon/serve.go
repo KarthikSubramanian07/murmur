@@ -63,6 +63,12 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 	conn.SetReadDeadline(time.Time{})
+	// A ping and a stop reveal nothing, and are how a leave finds the daemon and ends it: Stop
+	// connects with a ping first.
+	if req.Op != proto.OpStop && req.Op != proto.OpPing && !d.consented() {
+		writeResp(conn, fail(ErrNoConsent.Error()+", or has left since"))
+		return
+	}
 	if req.Op == proto.OpHello {
 		d.hello(ctx, conn, r, req.Hello)
 		return
@@ -110,6 +116,11 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	}
 	branch := branchOf(ctx, h.Cwd)
 	worktree := worktreeOf(ctx, h.Cwd)
+	// Resolving the branch runs git, long enough for a leave to land after handleConn's check.
+	if !d.consented() {
+		writeResp(conn, fail(ErrNoConsent.Error()+", or has left since"))
+		return
+	}
 	d.mu.Lock()
 	s := d.sessions[h.ID]
 	if s != nil && s.dropped.IsZero() {

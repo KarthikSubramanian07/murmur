@@ -6,54 +6,33 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/a-Fig/t4/internal/join"
+	"github.com/a-Fig/t4/internal/setup"
 )
-
-// A daemon that a command starts is this binary run as `t4 daemon`, which under test is the test
-// binary: let it be one.
-func TestMain(m *testing.M) {
-	if len(os.Args) > 1 && os.Args[1] == "daemon" {
-		main()
-		return
-	}
-	os.Exit(m.Run())
-}
-
-func git(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
-}
 
 // `t4 ui` starts the clone's daemon, prints the page's address with the token in its fragment, and
 // hands the same address to the browser; --no-open leaves the browser alone.
 func TestUIPrintsAndOpensThePage(t *testing.T) {
-	root := t.TempDir()
-	remote, seed, clone := filepath.Join(root, "remote.git"), filepath.Join(root, "seed"), filepath.Join(root, "clone")
-	git(t, root, "init", "-q", "--bare", "--initial-branch=main", remote)
-	git(t, root, "init", "-q", "--initial-branch=main", seed)
-	git(t, seed, "commit", "-q", "--allow-empty", "-m", "init")
-	git(t, seed, "push", "-q", remote, "HEAD:refs/heads/main")
-	git(t, root, "clone", "-q", remote, clone)
-	t.Cleanup(func() {
-		runClient(context.Background(), "stop", []string{"-C", clone})
-		// The daemon removes daemon.json as it goes, and holds the clone's files until then.
-		for end := time.Now().Add(15 * time.Second); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
-			if _, err := os.Stat(filepath.Join(clone, ".git", "t4", "daemon.json")); err != nil {
-				return
-			}
-		}
-	})
+	_, clone := cloneOf(t, t.TempDir())
+	t.Cleanup(func() { stopDaemon(clone) })
 
+	// The user joined in this clone, which is what lets a daemon run in it.
 	ctx := context.Background()
+	if _, err := setup.Init(ctx, clone); err != nil {
+		t.Fatal(err)
+	}
+	p, err := join.Locate(ctx, clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+
 	var out bytes.Buffer
 	var opened []string
 	open := func(u string) error { opened = append(opened, u); return nil }
@@ -96,5 +75,20 @@ func TestUIPrintsAndOpensThePage(t *testing.T) {
 	}
 	if got := strings.TrimSpace(out.String()); got != address || len(opened) != 0 {
 		t.Fatalf("with --no-open: printed %q, opened %q; want %q and nothing opened", got, opened, address)
+	}
+}
+
+// The page is the daemon's, and a daemon runs only for a user who joined in the clone: without that,
+// `t4 ui` says so and starts nothing.
+func TestUIWithoutJoiningStartsNoDaemon(t *testing.T) {
+	_, clone := cloneOf(t, t.TempDir())
+	t.Cleanup(func() { stopDaemon(clone) })
+	opened := false
+	err := runUI(context.Background(), []string{"-C", clone}, &bytes.Buffer{}, func(string) error { opened = true; return nil })
+	if err == nil || !strings.Contains(err.Error(), "hasn't joined") {
+		t.Fatalf("got %v, want an error saying the clone hasn't joined", err)
+	}
+	if opened || exists(filepath.Join(clone, ".git", "t4")) {
+		t.Error("a daemon was started, or a browser opened, for a clone that hasn't joined")
 	}
 }

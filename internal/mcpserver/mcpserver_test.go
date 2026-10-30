@@ -6,14 +6,39 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/a-Fig/t4/internal/client"
+	"github.com/a-Fig/t4/internal/join"
 	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/t4/internal/setup"
 )
+
+// A server that starts a daemon runs this binary as `t4 daemon --git-dir DIR`, which under test is
+// the test binary. Here it only notes in DIR that it was asked to, and exits: a test of a server
+// that must not start one looks for that note.
+func TestMain(m *testing.M) {
+	if len(os.Args) > 3 && os.Args[1] == "daemon" && os.Args[2] == "--git-dir" {
+		f, err := os.OpenFile(filepath.Join(os.Args[3], spawnNote), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err == nil {
+			f.WriteString("spawned\n")
+			f.Close()
+		}
+		return
+	}
+	os.Exit(m.Run())
+}
+
+const spawnNote = "daemon-was-spawned"
 
 // fakeDaemon answers hellos and requests the way the daemon does, as far as the server's side of
 // following Claude Code's session ID goes: every reply to a request carries the Claude Code
@@ -21,19 +46,25 @@ import (
 type fakeDaemon struct {
 	live string // what the daemon holds, as a hook has set it
 
-	mu     sync.Mutex
-	hellos []proto.Hello
-	conns  []net.Conn // the hello connections, to drop
+	mu       sync.Mutex
+	hellos   []proto.Hello
+	requests []proto.Request // everything but hellos
+	conns    []net.Conn      // the hello connections, to drop
 }
 
 func (f *fakeDaemon) serve(t *testing.T) (gitDir string) {
+	t.Helper()
+	return f.serveAt(t, t.TempDir())
+}
+
+// serveAt is serve with the git dir already chosen, for a test that has a real repository.
+func (f *fakeDaemon) serveAt(t *testing.T, gitDir string) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	gitDir = t.TempDir()
 	dir := client.StateDir(gitDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -84,9 +115,16 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 	}
 	defer conn.Close()
 	f.mu.Lock()
+	f.requests = append(f.requests, req)
 	live := f.live
 	f.mu.Unlock()
 	reply(proto.Response{OK: true, Self: "dev/" + req.Session, ClaudeSession: live})
+}
+
+func (f *fakeDaemon) requestCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.requests)
 }
 
 func (f *fakeDaemon) helloCount() int {
@@ -135,12 +173,15 @@ func TestHelloNamesTheParentProcess(t *testing.T) {
 func TestReconnectBringsTheLiveClaudeID(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff")
 	f := &fakeDaemon{}
-	gitDir := f.serve(t)
+	p := repo(t, true, f)
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c := &client.Client{GitDir: gitDir}
-	s := &server{c: c, link: &link{c: c, hello: helloFor("claude-code", "/work"), changed: make(chan struct{})}}
+	c := &client.Client{GitDir: p.GitDir}
+	s := &server{c: c, place: p, link: &link{c: c, hello: helloFor("claude-code", "/work"), changed: make(chan struct{})}}
 	go s.link.run(ctx)
 
 	if _, err := s.call(ctx, proto.Request{Op: proto.OpWho}); err != nil {
@@ -172,5 +213,277 @@ func TestReconnectBringsTheLiveClaudeID(t *testing.T) {
 	}
 	if h.ID != "0a1b2c" || !h.Reconnect {
 		t.Fatalf("the session's own ID must not change: %+v", h)
+	}
+}
+
+// repo makes a git repository whose files say it uses t4 (if marked), with a daemon that answers
+// for it, and returns the repository's place.
+func repo(t *testing.T, marked bool, f *fakeDaemon) join.Place {
+	t.Helper()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if marked {
+		if _, err := setup.Init(context.Background(), dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, err := join.Locate(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f != nil {
+		f.serveAt(t, p.GitDir)
+	}
+	return p
+}
+
+// open serves the repo's MCP server over an in-memory connection and returns a client of it, and
+// the number of times the client was told the tool list changed.
+func open(t *testing.T, dir string, poll time.Duration) (*mcp.ClientSession, *atomic.Int32) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	ct, st := mcp.NewInMemoryTransports()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Serve(ctx, Options{Agent: "claude-code", Version: "test", Dir: dir, Poll: poll}, st)
+	}()
+	var changed atomic.Int32
+	c := mcp.NewClient(&mcp.Implementation{Name: "test-client"}, &mcp.ClientOptions{
+		ToolListChangedHandler: func(context.Context, *mcp.ToolListChangedRequest) { changed.Add(1) },
+	})
+	cs, err := c.Connect(ctx, ct, nil)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cs.Close(); cancel(); <-done })
+	return cs, &changed
+}
+
+// offersTools reports whether the names include the tools every agent gets. Tools added since
+// (lookup, #21) are not a reason for the tests of when the server is on to change.
+func offersTools(names []string) bool {
+	for _, want := range []string{"who", "status", "send", "inbox"} {
+		if !slices.Contains(names, want) {
+			return false
+		}
+	}
+	return true
+}
+
+func toolNamesOf(t *testing.T, cs *mcp.ClientSession) []string {
+	t.Helper()
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, tool := range res.Tools {
+		names = append(names, tool.Name)
+	}
+	return names
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for end := time.Now().Add(10 * time.Second); !cond(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+	}
+}
+
+// settle gives a server that might wrongly act time to do it.
+func settle() { time.Sleep(400 * time.Millisecond) }
+
+// spawned reports whether anything tried to start a daemon for the clone: the note the test binary
+// leaves when run as one, or the log file the client creates just before it does.
+func spawned(p join.Place) bool {
+	for _, name := range []string{spawnNote, filepath.Join("t4", "daemon.log")} {
+		if _, err := os.Stat(filepath.Join(p.GitDir, name)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// A user-scope server starts in every repo the user opens. In one that hasn't invited t4, or that
+// this user hasn't joined, it lists no tools and no instructions, and never reaches a daemon: not to
+// start one, and not to register with one that is already running.
+func TestPassiveWhereItIsNotInvited(t *testing.T) {
+	for name, tc := range map[string]struct{ marked, joined bool }{
+		"no marker, not joined": {false, false},
+		"marker, not joined":    {true, false},
+		"joined, no marker":     {false, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeDaemon{}
+			p := repo(t, tc.marked, f)
+			if tc.joined {
+				if _, err := p.RecordConsent(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cs, changed := open(t, p.Top, 25*time.Millisecond)
+			settle()
+			if names := toolNamesOf(t, cs); len(names) != 0 {
+				t.Errorf("tools listed where t4 is off: %q", names)
+			}
+			if got := cs.InitializeResult().Instructions; got != "" {
+				t.Errorf("instructions given where t4 is off: %q", got)
+			}
+			if f.helloCount() != 0 || spawned(p) || changed.Load() != 0 {
+				t.Errorf("hellos=%d spawned=%v list changes=%d: it acted where t4 is off", f.helloCount(), spawned(p), changed.Load())
+			}
+		})
+	}
+	t.Run("outside any repository", func(t *testing.T) {
+		cs, _ := open(t, t.TempDir(), 25*time.Millisecond)
+		settle()
+		if names := toolNamesOf(t, cs); len(names) != 0 {
+			t.Errorf("tools listed outside a repo: %q", names)
+		}
+	})
+}
+
+// A repo with no daemon running, where t4 is off: the server doesn't start one.
+func TestPassiveStartsNoDaemon(t *testing.T) {
+	p := repo(t, true, nil)
+	open(t, p.Top, 25*time.Millisecond)
+	settle()
+	if spawned(p) {
+		t.Error("started a daemon in a repo the user hasn't joined")
+	}
+	// The same repo once joined does want one, which shows the check above can see it.
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "a daemon to be started", func() bool { return spawned(p) })
+}
+
+// Joining while the session is open turns the server on: the tools appear through a list change the
+// client is told about, and the session registers. Leaving turns it off again, and when the
+// daemon goes away with it the server does not start another.
+func TestJoinThenLeaveWhileRunning(t *testing.T) {
+	f := &fakeDaemon{}
+	p := repo(t, true, f)
+	cs, changed := open(t, p.Top, 25*time.Millisecond)
+	settle()
+	if len(toolNamesOf(t, cs)) != 0 || f.helloCount() != 0 {
+		t.Fatalf("on before joining: tools %q, hellos %d", toolNamesOf(t, cs), f.helloCount())
+	}
+
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the tools to appear", func() bool { return offersTools(toolNamesOf(t, cs)) })
+	// Leaving takes away the tools named in toolNames, so a tool added without being named there
+	// would stay after a leave.
+	if got, want := slices.Sorted(slices.Values(toolNamesOf(t, cs))), slices.Sorted(slices.Values(toolNames)); !slices.Equal(got, want) {
+		t.Errorf("the server offers %q but takes away %q on a leave", got, want)
+	}
+	waitFor(t, "the session to register", func() bool { return f.helloCount() == 1 })
+	waitFor(t, "the client to be told the tool list changed", func() bool { return changed.Load() > 0 })
+	if spawned(p) {
+		t.Error("started a daemon though one answers")
+	}
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "who"})
+	if err != nil || res.IsError {
+		t.Fatalf("who: %v %+v", err, res)
+	}
+
+	// Leave: the consent goes, then the daemon stops (as `t4 join --leave` does it, in that order).
+	if _, err := p.ForgetConsent(); err != nil {
+		t.Fatal(err)
+	}
+	f.dropConnections()
+	os.Remove(filepath.Join(client.StateDir(p.GitDir), "daemon.json"))
+	waitFor(t, "the tools to go", func() bool { return len(toolNamesOf(t, cs)) == 0 })
+	time.Sleep(1500 * time.Millisecond) // longer than the wait before a registration is retried
+	if spawned(p) {
+		t.Error("started a daemon after the user left")
+	}
+	if f.helloCount() != 1 {
+		t.Errorf("registered again after the user left: %d hellos", f.helloCount())
+	}
+}
+
+// The window between a leave and the next look at the files is closed by asking before every
+// registration: the daemon stops with the consent already gone, and the server, which has not yet
+// noticed, must neither register again nor start another daemon.
+func TestLeaveBeforeTheServerNoticesStartsNoDaemon(t *testing.T) {
+	f := &fakeDaemon{}
+	p := repo(t, true, f)
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	cs, _ := open(t, p.Top, time.Hour) // never looks again
+	if cs.InitializeResult().Instructions == "" {
+		t.Error("a joined repo's server gave no instructions")
+	}
+	waitFor(t, "the session to register", func() bool { return f.helloCount() == 1 })
+
+	p.ForgetConsent()
+	f.dropConnections()
+	os.Remove(filepath.Join(client.StateDir(p.GitDir), "daemon.json"))
+	time.Sleep(2500 * time.Millisecond) // the link would retry after one second, then two
+	if spawned(p) || f.helloCount() != 1 {
+		t.Errorf("spawned=%v hellos=%d: it acted after the consent was gone", spawned(p), f.helloCount())
+	}
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "who"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "isn't") {
+		t.Errorf("a call after leaving: %+v", res)
+	}
+}
+
+// The server looks at the files every few seconds, and until it does, its registered session is
+// still up. A tool call in that window must not reach a daemon that is still running, or it would
+// publish for a user who has left, or whose repo no longer says it uses t4 (Codex review, 2026-10-29).
+func TestCallAfterLeavingNeverReachesAStillRunningDaemon(t *testing.T) {
+	f := &fakeDaemon{}
+	p := repo(t, true, f)
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	cs, _ := open(t, p.Top, time.Hour) // never looks again
+	waitFor(t, "the session to register", func() bool { return f.helloCount() == 1 })
+	ctx := context.Background()
+	if res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "status", Arguments: map[string]any{"doing": "x"}}); err != nil || res.IsError {
+		t.Fatalf("status while joined: %v %+v", err, res)
+	}
+	before := f.requestCount()
+	if before != 1 {
+		t.Fatalf("the daemon saw %d requests for one call", before)
+	}
+
+	if _, err := p.ForgetConsent(); err != nil {
+		t.Fatal(err)
+	}
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "status", Arguments: map[string]any{"doing": "after leaving"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "isn't on") {
+		t.Errorf("a call after leaving: %+v", res)
+	}
+	if f.requestCount() != before {
+		t.Errorf("the daemon was sent %d requests after the user left", f.requestCount()-before)
+	}
+
+	// The same when the repo stops saying it uses t4, say on a checkout of an older branch.
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+		os.Remove(filepath.Join(p.Top, name))
+	}
+	if res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "who"}); err != nil || !res.IsError || f.requestCount() != before {
+		t.Errorf("a call with the marker gone: %v %+v, %d requests", err, res, f.requestCount()-before)
 	}
 }

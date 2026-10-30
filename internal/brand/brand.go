@@ -27,4 +27,15 @@ const (
 	Command = Name
 	// MCPServer is the MCP server's name; Claude Code shows its tools as mcp__<name>__<tool>.
 	MCPServer = Name
+
+	// JoinDoc and UseDoc are the pages the marker in a repo's AGENTS.md and CLAUDE.md sends an
+	// agent to, as raw text: how to join (docs/agents/join.md) and how to use the tools
+	// (docs/agents/use.md). They read without login once the repo is public.
+	JoinDoc = "https://raw.githubusercontent.com/a-Fig/t4/main/docs/agents/join.md"
+	UseDoc  = "https://raw.githubusercontent.com/a-Fig/t4/main/docs/agents/use.md"
+
+	// InstallSh and InstallPs1 are the one-line installs join.md tells an agent to run. The docs
+	// spell them out, so a test holds them to these.
+	InstallSh  = "https://raw.githubusercontent.com/a-Fig/t4/main/install.sh"
+	InstallPs1 = "https://raw.githubusercontent.com/a-Fig/t4/main/install.ps1"
 )

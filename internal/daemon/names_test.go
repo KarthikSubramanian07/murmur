@@ -88,7 +88,7 @@ func (c *countedReader) Read(p []byte) (int, error) {
 func newNamedDevice(t *testing.T, remote string, src io.Reader, stale ...time.Duration) *device {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
-	git(t, filepath.Dir(dir), "clone", "-q", "--no-hardlinks", remote, dir)
+	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
 	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond,
 		names: src}
 	if len(stale) > 0 {

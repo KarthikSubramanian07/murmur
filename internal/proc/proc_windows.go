@@ -18,9 +18,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Lock takes an exclusive lock on path, held until the file is closed or the process exits,
-// however it exits.
-func Lock(path string) (*os.File, error) {
+// Lock takes an exclusive lock on path, held until it is closed or the process exits, however it
+// exits.
+func Lock(path string) (*Held, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
@@ -35,7 +35,7 @@ func Lock(path string) (*os.File, error) {
 		}
 		return nil, err
 	}
-	return f, nil
+	return &Held{f}, nil
 }
 
 const (
@@ -226,3 +226,7 @@ func windowsCommandLine(path string, args []string) string {
 	}
 	return strings.Join(parts, " ")
 }
+
+// unlock does nothing here: a LockFileEx lock goes with its handle, and Go starts no child with
+// handles it didn't name, so closing the handle releases it.
+func unlock(*os.File) {}

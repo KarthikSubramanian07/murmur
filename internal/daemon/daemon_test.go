@@ -102,7 +102,7 @@ type device struct {
 func newDevice(t *testing.T, remote string, stale ...time.Duration) *device {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
-	git(t, filepath.Dir(dir), "clone", "-q", "--no-hardlinks", remote, dir)
+	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
 	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
 	if len(stale) > 0 {
 		d.stale = stale[0]
@@ -115,7 +115,7 @@ func newDevice(t *testing.T, remote string, stale ...time.Duration) *device {
 func newTimedDevice(t *testing.T, remote string, grace, keep time.Duration) *device {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
-	git(t, filepath.Dir(dir), "clone", "-q", "--no-hardlinks", remote, dir)
+	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
 	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond,
 		grace: grace, keep: keep}
 	d.start()

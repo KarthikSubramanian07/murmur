@@ -57,7 +57,13 @@ type Options struct {
 	// SnapshotTimeout bounds the git a snapshot of a tool call's worktree runs (#21): 4 s. Tests on a
 	// loaded machine raise it.
 	SnapshotTimeout time.Duration
-	Log             *log.Logger
+	// Consent says whether the user has joined t4 in this clone (nil: always). A daemon exists only
+	// for a user who did: it won't start without it, refuses requests once it is gone, and stops
+	// within ConsentPoll of it going, so a leave that races a daemon still starting ends that daemon
+	// too.
+	Consent     func() bool
+	ConsentPoll time.Duration // how often to look; 1 s
+	Log         *log.Logger
 }
 
 func (o *Options) defaults() {
@@ -94,6 +100,9 @@ func (o *Options) defaults() {
 	if o.PageMessages == 0 {
 		o.PageMessages = 500
 	}
+	if o.ConsentPoll == 0 {
+		o.ConsentPoll = time.Second
+	}
 	if o.Log == nil {
 		o.Log = log.New(os.Stderr, "", log.LstdFlags)
 	}
@@ -101,6 +110,25 @@ func (o *Options) defaults() {
 
 // ErrRunning means another daemon already holds this clone's lock.
 var ErrRunning = errors.New("a daemon is already running for this clone")
+
+// ErrNoConsent means the user hasn't joined t4 in this clone, or has left since.
+var ErrNoConsent = errors.New("this clone hasn't joined t4")
+
+// push publishes to the bus, if the user still has this clone joined. The checks at start and on
+// each request leave a window for a leave to land in, and the loops that publish on their own (the
+// device's presence, the names registry) would put the device on the remote in it: the watcher
+// stops the daemon only a second later, and a daemon that was still starting has no daemon.json
+// for Stop to find. goodbye is not a publication in that sense and doesn't come through here: it
+// takes the device off the remote.
+func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, expect string) error {
+	if !d.consented() {
+		return ErrNoConsent
+	}
+	return d.repo.Push(ctx, sha, ref, mode, expect)
+}
+
+// consented reports whether the user's consent to run in this clone stands.
+func (d *Daemon) consented() bool { return d.opt.Consent == nil || d.opt.Consent() }
 
 // maxInbox caps each session's unread messages; the oldest go first.
 const maxInbox = 200
@@ -306,6 +334,9 @@ func Run(ctx context.Context, opt Options) error {
 	if err != nil {
 		return err
 	}
+	if !d.consented() {
+		return ErrNoConsent
+	}
 	// Sync once before accepting sessions, so whatever this sync finds was sent before any of
 	// them registered: it is the backlog, and nothing a new session should get.
 	sctx, scancel := context.WithTimeout(ctx, 10*time.Second)
@@ -313,6 +344,11 @@ func Run(ctx context.Context, opt Options) error {
 		d.log.Printf("first sync failed; retrying in the background: %v", err)
 	}
 	scancel()
+	// The sync can take seconds, long enough for a leave to have come and gone without finding a
+	// daemon.json to stop.
+	if !d.consented() {
+		return ErrNoConsent
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -370,6 +406,9 @@ func Run(ctx context.Context, opt Options) error {
 	}()
 	if opt.Idle > 0 {
 		go d.idleLoop(ctx)
+	}
+	if opt.Consent != nil {
+		go d.consentLoop(ctx)
 	}
 	select {
 	case <-ctx.Done():
@@ -497,6 +536,24 @@ func clearStaleLocks(gitDir string, l *log.Logger) (removed bool) {
 		return nil
 	})
 	return removed
+}
+
+// consentLoop stops the daemon once the user's consent is gone.
+func (d *Daemon) consentLoop(ctx context.Context) {
+	t := time.NewTicker(d.opt.ConsentPoll)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		if !d.consented() {
+			d.log.Printf("this clone is no longer joined; exiting")
+			d.stop()
+			return
+		}
+	}
 }
 
 func (d *Daemon) idleLoop(ctx context.Context) {

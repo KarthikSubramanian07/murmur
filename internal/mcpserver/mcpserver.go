@@ -18,6 +18,7 @@ import (
 	"github.com/a-Fig/t4/internal/brand"
 	"github.com/a-Fig/t4/internal/bus"
 	"github.com/a-Fig/t4/internal/client"
+	"github.com/a-Fig/t4/internal/join"
 	"github.com/a-Fig/t4/internal/proto"
 	"github.com/a-Fig/t4/internal/view"
 )
@@ -37,25 +38,75 @@ var Instructions = strings.ReplaceAll(`t4 connects you with the coding agents on
 type Options struct {
 	Agent   string // shown to teammates, e.g. "claude-code"
 	Version string
+	Dir     string        // the session's working directory; default the process's
+	Poll    time.Duration // how often to look for a join or a leave; default 2s
 }
 
 // Run serves MCP on stdin and stdout until the client disconnects.
 func Run(ctx context.Context, opt Options) error {
-	cwd, _ := os.Getwd()
-	s := &server{}
-	gitDir, err := client.FindGitDir(ctx, cwd)
-	if err != nil {
-		s.broken = err // serve anyway, so the agent sees why every tool fails
-	} else {
-		s.c = &client.Client{GitDir: gitDir, Spawn: true}
-		s.link = &link{c: s.c, hello: helloFor(opt.Agent, cwd), changed: make(chan struct{})}
-		go s.link.run(ctx)
-	}
+	return Serve(ctx, opt, &mcp.StdioTransport{})
+}
 
-	srv := mcp.NewServer(&mcp.Implementation{Name: brand.MCPServer, Version: opt.Version},
-		&mcp.ServerOptions{Instructions: Instructions})
-	s.tools(srv)
-	return srv.Run(ctx, &mcp.StdioTransport{})
+// errPassive is what a tool call says in a repo t4 isn't on for.
+var errPassive = fmt.Errorf("%[1]s isn't on for this repo. It is when the repo says it uses %[1]s (a section in AGENTS.md or CLAUDE.md) "+
+	"and this user has joined in this clone (`%[1]s join`, after asking them)", brand.Command)
+
+// Serve is Run over any transport.
+//
+// The user registers this server once, for every repo they open, so it starts in repos that never
+// asked for t4. There it must do nothing: no tools, no daemon, no ref written, nothing sent. It is
+// "on" only while Place.Active says the repo invites t4 and this user joined, checked from files
+// every Poll, so a join mid-session turns it on (the tools appear through tools/list_changed) and a
+// leave turns it off. Each step that would reach the daemon asks again first.
+func Serve(ctx context.Context, opt Options, t mcp.Transport) error {
+	cwd := opt.Dir
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	if opt.Poll <= 0 {
+		opt.Poll = 2 * time.Second
+	}
+	s := &server{opt: opt, cwd: cwd}
+	place, err := join.Locate(ctx, cwd)
+	located := err == nil
+	s.place = place
+
+	sopts := &mcp.ServerOptions{
+		// Say tools can change though there are none yet: a client that learned otherwise at
+		// initialize would never ask again.
+		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{ListChanged: true}},
+	}
+	if located && place.Active() {
+		sopts.Instructions = Instructions // fixed at initialize; the repo's own section says the rest
+	}
+	s.srv = mcp.NewServer(&mcp.Implementation{Name: brand.MCPServer, Version: opt.Version}, sopts)
+	if located {
+		s.sync(ctx)
+		go s.watch(ctx)
+	}
+	return s.srv.Run(ctx, t)
+}
+
+// watch turns the server on and off as the repo's files change.
+func (s *server) watch(ctx context.Context) {
+	tick := time.NewTicker(s.opt.Poll)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			s.sync(ctx)
+		}
+	}
+}
+
+func (s *server) sync(ctx context.Context) {
+	if s.place.Active() {
+		s.activate(ctx)
+	} else {
+		s.deactivate()
+	}
 }
 
 // helloFor is the registration this process makes. The Claude Code session ID in its environment
@@ -98,27 +149,70 @@ func agentName(flag string) string {
 }
 
 type server struct {
-	c      *client.Client
-	link   *link
-	broken error
+	opt   Options
+	cwd   string
+	place join.Place
+	srv   *mcp.Server
+
+	mu   sync.Mutex
+	on   bool // the tools are listed and the session is registered
+	c    *client.Client
+	link *link
+	stop context.CancelFunc // ends link
+}
+
+// activate lists the tools and registers the session with the daemon, starting it if needed.
+func (s *server) activate(ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.on {
+		return
+	}
+	c := &client.Client{GitDir: s.place.GitDir, Spawn: true, MaySpawn: s.place.Active}
+	l := &link{c: c, hello: helloFor(s.opt.Agent, s.cwd), changed: make(chan struct{}), allowed: s.place.Active}
+	lctx, cancel := context.WithCancel(ctx)
+	s.c, s.link, s.stop, s.on = c, l, cancel, true
+	s.tools(s.srv)
+	go l.run(lctx)
+}
+
+// deactivate takes the tools away and drops the registration, which the daemon sees as the session
+// ending.
+func (s *server) deactivate() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.on {
+		return
+	}
+	s.stop()
+	s.c, s.link, s.stop, s.on = nil, nil, nil, false
+	s.srv.RemoveTools(toolNames...)
 }
 
 // call sends a request as this session, waiting briefly for the registration if it is still
 // being made (the first call can arrive while the daemon is starting).
 func (s *server) call(ctx context.Context, req proto.Request) (proto.Response, error) {
-	if s.broken != nil {
-		return proto.Response{}, s.broken
+	s.mu.Lock()
+	c, l := s.c, s.link
+	s.mu.Unlock()
+	if l == nil {
+		return proto.Response{}, errPassive
 	}
-	id, err := s.link.wait(ctx, 15*time.Second)
+	id, err := l.wait(ctx, 15*time.Second)
 	if err != nil {
 		return proto.Response{}, err
 	}
+	// The poll that turns the server off runs every few seconds; a call in between must not reach a
+	// daemon that is still up, or publish for a user who has left.
+	if !s.place.Active() {
+		return proto.Response{}, errPassive
+	}
 	req.Session = id
-	resp, err := s.c.Do(ctx, req)
+	resp, err := c.Do(ctx, req)
 	if err != nil {
 		return resp, fmt.Errorf("can't reach the %s daemon: %w", brand.Name, err)
 	}
-	s.link.learn(resp.ClaudeSession)
+	l.learn(resp.ClaudeSession)
 	if resp.Error != "" {
 		return resp, errors.New(resp.Error)
 	}
@@ -153,6 +247,9 @@ type (
 		Body    string `json:"body,omitempty" jsonschema:"the rest of the message"`
 	}
 )
+
+// toolNames are the tools tools lists, for taking them away again.
+var toolNames = []string{"who", "lookup", "status", "send", "inbox"}
 
 func (s *server) tools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "who", Description: "Show the agents working in this repo across the team: each device and " +
@@ -195,8 +292,9 @@ func (s *server) tools(srv *mcp.Server) {
 // link keeps the session registered: a hello connection that stays open while this process
 // lives, re-made if the daemon restarts.
 type link struct {
-	c     *client.Client
-	hello proto.Hello
+	c       *client.Client
+	hello   proto.Hello
+	allowed func() bool // asked before every registration; nil means always
 
 	mu      sync.Mutex
 	up      bool
@@ -235,6 +333,9 @@ func (l *link) wait(ctx context.Context, timeout time.Duration) (string, error) 
 		if up {
 			return id, nil
 		}
+		if errors.Is(err, errPassive) {
+			return "", err // no point waiting for a registration that isn't coming
+		}
 		select {
 		case <-changed:
 		case <-ctx.Done():
@@ -252,6 +353,17 @@ func (l *link) run(ctx context.Context) {
 	backoff := time.Second
 	inUse := 0
 	for ctx.Err() == nil {
+		// The user can leave while this runs, and leaving stops the daemon: the next thing this
+		// loop would do is start another. So ask before every hello, not once.
+		if l.allowed != nil && !l.allowed() {
+			l.set(false, errPassive)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			continue
+		}
 		l.mu.Lock()
 		h := l.hello
 		l.mu.Unlock()
