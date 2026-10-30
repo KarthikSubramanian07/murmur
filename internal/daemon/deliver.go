@@ -489,6 +489,11 @@ func (d *Daemon) hadCopyLocked(s *session, m *inMsg) bool {
 // registered: the T3 thread, once it finds it. The session's name follows the thread from then on
 // (see rekeyLocked). Caller holds mu.
 func (d *Daemon) setRouteLocked(s *session, r proto.Route) {
+	if titleSource(r) != titleSource(s.route) && s.title != "" {
+		// Another conversation: the title of the last one must not stay if this one's can't be read.
+		s.title = ""
+		d.kickPresence()
+	}
 	s.route = r
 	d.rememberRouteLocked(s)
 	if key := d.uniqueKeyLocked(nameKey(r.T3Thread, s.claudeSession, s.id), s.id); key != s.key {

@@ -111,13 +111,22 @@ func readTitle(ctx context.Context, j titleJob) (raw string, known bool, err err
 		}
 		return raw, true, err
 	case r.Native != "":
-		raw, err = title.Codex(ctx, title.CodexDir(), r.Native)
+		dir := r.CodexHome // the session's own, as the daemon may have been started by another client
+		if !filepath.IsAbs(dir) {
+			dir = title.CodexDir()
+		}
+		raw, err = title.Codex(ctx, dir, r.Native)
 		return raw, true, err
 	case j.transcript != "":
 		raw, err = title.Claude(j.transcript)
 		return raw, true, err
 	}
 	return "", false, nil
+}
+
+// titleSource is the part of a route that says which conversation's title to read, and where.
+func titleSource(r proto.Route) [5]string {
+	return [5]string{r.T3CLI, r.T3Home, r.T3Thread, r.Native, r.CodexHome}
 }
 
 // validTranscript says a hook's transcript path is one to read the title from: a path to a JSON

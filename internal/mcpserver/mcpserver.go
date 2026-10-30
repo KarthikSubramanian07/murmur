@@ -21,6 +21,7 @@ import (
 	"github.com/a-Fig/t4/internal/join"
 	"github.com/a-Fig/t4/internal/proto"
 	"github.com/a-Fig/t4/internal/t3db"
+	"github.com/a-Fig/t4/internal/title"
 	"github.com/a-Fig/t4/internal/view"
 )
 
@@ -540,6 +541,9 @@ func (l *link) learnNative(ctx context.Context, id string) {
 	}
 	if l.find == nil {
 		// Outside T3 the ID is for the daemon, to find the conversation's name in Codex's state.
+		l.mu.Lock()
+		l.hello.CodexHome = title.CodexDir()
+		l.mu.Unlock()
 		go l.tellRoute(ctx)
 		return
 	}

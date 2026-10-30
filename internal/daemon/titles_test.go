@@ -190,6 +190,47 @@ func TestCodexNameOutsideT3(t *testing.T) {
 	}
 }
 
+// One daemon serves every Codex session on the device, and they may not share a Codex home: each
+// is read from the home its own MCP server named.
+func TestCodexNameIsReadFromTheSessionsOwnHome(t *testing.T) {
+	homeOf := func(id, name string) string {
+		dir := t.TempDir()
+		db := openFixtureDB(t, filepath.Join(dir, "state_5.sqlite"))
+		if _, err := db.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT)`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO threads VALUES (?, ?)`, id, name); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	one, two := homeOf("cx-1", "Named in home one"), homeOf("cx-2", "Named in home two")
+	a := newDevice(t, newRemote(t))
+	first, _ := a.sessionRoute("aaaaaa", "", proto.Route{Native: "cx-1", CodexHome: one})
+	second, _ := a.sessionRoute("bbbbbb", "", proto.Route{Native: "cx-2", CodexHome: two})
+	a.waitDoing("aaaaaa", first, "Named in home one")
+	a.waitDoing("aaaaaa", second, "Named in home two")
+}
+
+// A session that moves to another conversation doesn't keep the last one's title if the new one's
+// can't be read: that title would be shown, and sent to teammates, as the new conversation's.
+func TestTitleDoesNotOutliveItsConversation(t *testing.T) {
+	home, _ := t3Fixture(t, map[string]string{"thread-a": "First conversation"})
+	a := newDevice(t, newRemote(t))
+	alice, _ := a.sessionRoute("aaaaaa", "", t3Route(home, "thread-a"))
+	a.waitDoing("aaaaaa", alice, "First conversation")
+
+	elsewhere := t3Route(t.TempDir(), "thread-b") // a T3 data directory with no database to read
+	if resp := a.do(proto.Request{Op: proto.OpRoute, Session: "aaaaaa", Route: &elsewhere}); resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	a.waitDoing("aaaaaa", alice, "")
+	holds(t, "no title", 500*time.Millisecond, func() bool {
+		got, _ := a.doingIn("aaaaaa", alice)
+		return got == ""
+	})
+}
+
 // A Claude Code session outside T3 shows the title in its transcript, which the hook names: the
 // name the user gave it over the one Claude Code made up, and none rather than the first prompt.
 // A new transcript, as after /clear, is a new conversation.

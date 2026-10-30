@@ -258,4 +258,22 @@ func TestCleanCutsToAStatusLineAndDropsSecrets(t *testing.T) {
 	if got := Clean("deploy with sk-ant-" + strings.Repeat("a1b2c3", 8)); got != "" {
 		t.Errorf("a title with a key in it: %q", got)
 	}
+	// A token that runs past the cut is still a token: cut, it would be too short to be known.
+	crossing := strings.Repeat("x", 110) + " ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789AB"
+	if got := Clean(crossing); got != "" {
+		t.Errorf("a title with a token across the cut: %q", got)
+	}
+}
+
+// An index that can't be read doesn't say the thread has no name: the error lets the caller keep
+// the name it had.
+func TestCodexIndexThatCantBeReadIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	writeDB(t, filepath.Join(dir, "state_5.sqlite"), codexSchema, `INSERT INTO threads VALUES ('t1', NULL, 'opening', 'opening', 'x')`)
+	if err := os.Mkdir(filepath.Join(dir, "session_index.jsonl"), 0o755); err != nil { // opens, but can't be read
+		t.Fatal(err)
+	}
+	if got, err := Codex(context.Background(), dir, "t1"); err == nil || got != "" {
+		t.Errorf("an unreadable index with an unnamed thread in the database: %q, %v", got, err)
+	}
 }

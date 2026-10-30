@@ -54,8 +54,12 @@ const tailBytes = 128 << 10
 
 // Clean makes a title fit for presence: on one line, at most Max runes, and "" if it holds
 // something scrub would stop in a status (a title is the user's words or a model's, and goes to
-// everyone who reads the bus).
+// everyone who reads the bus). The whole title is checked before it is cut: a token that runs
+// past the cut would otherwise be left too short for scrub to know, and go out in part.
 func Clean(s string) string {
+	if scrub.Check(s) != nil {
+		return ""
+	}
 	s = bus.OneLine(s, Max)
 	if scrub.Check(s) != nil {
 		return ""
@@ -89,9 +93,9 @@ func Codex(ctx context.Context, dir, id string) (string, error) {
 	switch {
 	case name != "":
 		return name, nil
-	case dbErr != nil && idxErr != nil:
-		return "", errors.Join(dbErr, idxErr)
-	case dbErr != nil && !errors.Is(idxErr, os.ErrNotExist):
+	case idxErr != nil && !errors.Is(idxErr, os.ErrNotExist):
+		return "", errors.Join(dbErr, idxErr) // an index that can't be read doesn't say there's no name
+	case dbErr != nil:
 		return "", dbErr // the index has no name, but the database, which may, could not be read
 	}
 	return "", nil

@@ -121,6 +121,10 @@ type Route struct {
 	// the thread ID Codex puts in every tool call. Outside T3 it is how the daemon finds the
 	// thread's name in Codex's state.
 	Native string `json:"native,omitempty"`
+	// CodexHome is the Codex state directory of that client (CODEX_HOME, else ~/.codex), as its MCP
+	// server sees it: one daemon serves every client on the device, and they may not share a
+	// Codex home. Empty takes the daemon's own.
+	CodexHome string `json:"codexHome,omitempty"`
 }
 
 // Hello registers a session.
