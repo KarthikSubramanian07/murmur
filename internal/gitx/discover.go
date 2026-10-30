@@ -44,7 +44,7 @@ func Discover(dir string) (gitDir, commonDir string, ok bool) {
 		case errors.Is(err, fs.ErrNotExist):
 			// A link here may lead into another repository. One above the .git doesn't
 			// matter: git and this both find the same .git through it.
-			if fi, err := os.Lstat(dir); err != nil || fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			if fi, err := os.Lstat(dir); err != nil || redirects(dir, fi) {
 				return "", "", false
 			}
 			parent := filepath.Dir(dir)
@@ -83,6 +83,21 @@ func Discover(dir string) (gitDir, commonDir string, ok bool) {
 		}
 		return gitDir, commonDir, true
 	}
+}
+
+// redirects says whether path, as Lstat described it in fi, leads somewhere else: a symbolic link,
+// or a Windows junction. Go reports a junction as irregular, but also other reparse points that
+// lead nowhere else, such as OneDrive's files-on-demand folders; of these, os.Readlink reads only
+// links and junctions.
+func redirects(path string, fi fs.FileInfo) bool {
+	switch {
+	case fi.Mode()&fs.ModeSymlink != 0:
+		return true
+	case fi.Mode()&fs.ModeIrregular != 0:
+		_, err := os.Readlink(path)
+		return err == nil
+	}
+	return false
 }
 
 // isGitDir says whether dir looks like a git directory: a HEAD file, and objects of its own or a
