@@ -211,7 +211,7 @@ func TestNoThreadMeansNoRoute(t *testing.T) {
 	fastSeek(t)
 	t.Run("outside T3", func(t *testing.T) {
 		f := &fakeDaemon{}
-		s := started(t, f, nil, map[string]string{"CLAUDE_CODE_SESSION_ID": "claude-session-1", "T3CODE_CLI_PATH": ""})
+		s := started(t, f, nil, map[string]string{"CLAUDE_CODE_SESSION_ID": "claude-session-1", "T3CODE_CLI_PATH": "", "CODEX_HOME": ""})
 		s.noteMeta(context.Background(), metaCall("x"))
 		eventually(t, "the daemon to be told the thread ID", func() bool { return len(f.routesTold()) > 0 })
 		if rs := f.routesTold(); len(rs) != 1 || rs[0] != (proto.Route{Native: "x"}) || f.lastHello().T3Thread != "" {
