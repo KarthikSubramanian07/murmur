@@ -177,6 +177,21 @@ func TestSendSaysWhetherTheCommandStarted(t *testing.T) {
 	}
 }
 
+// A send cancelled before the command could start ran nothing, and says so as well as that it was
+// cancelled: a caller that has marked the message as handed over can take the mark off (#82).
+func TestSendCancelledBeforeItStartsIsNotStarted(t *testing.T) {
+	exe, calls := fake(t, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := Send(ctx, exe, "", "thread-1", "x")
+	if !errors.Is(err, ErrNotStarted) || !errors.Is(err, context.Canceled) {
+		t.Errorf("error: %v, want one that wraps ErrNotStarted and context.Canceled", err)
+	}
+	if len(calls()) != 0 {
+		t.Errorf("%d calls, want none", len(calls()))
+	}
+}
+
 // A cancelled context stops a send that hangs, and the error says it was cancelled.
 func TestSendStopsWhenCancelled(t *testing.T) {
 	exe, _ := fake(t, "hang")

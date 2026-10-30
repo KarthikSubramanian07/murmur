@@ -90,7 +90,8 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   `mesh/<deviceId>/...`, `names/...`), and `refs/t4/mesh` or `refs/t4/presence` as refs
   themselves. t4 writes nothing at any of them (found by the Opus reviews of V1, #8, 2026-10-28).
 - Reading: poll `git ls-remote origin 'refs/t4/*'` every 3 s (10 s until 2026-10-29), which is
-  cheap; fetch only when a SHA has changed. A message takes about 6–8 s from a `send` to the
+  cheap; fetch only when a SHA has changed. While no session is live and no page is open, every
+  30 s ("A thread that is idle", below). A message takes about 6–8 s from a `send` to the
   receiving agent's turn ("Delivering a message as a turn", below); V1, polling every 10 s, took
   about 12 s from a Windows laptop to a macOS machine (2026-10-26), 2 s of it the send.
 - A device is one clone's daemon. Worktrees of a clone share its `.git`, so they share its daemon;
@@ -125,16 +126,17 @@ presence, and a hello with the same session ID in that time takes it over with i
 unread notices, writing nothing to the bus. Only when the grace runs out does the daemon announce
 `session.stopped`, even after a crash. A stopped session's inbox is kept 24 hours, across daemon
 restarts, and given back if the session returns. It holds only what its daemon received: a daemon
-exits 10 minutes after its last session or open page, and one back after longer than that skips
-what it missed, so messages sent while it was gone aren't kept. A message is addressed on the bus to
+exits 10 minutes after its last session or open page, unless a T3 thread it could still wake is
+waiting ("A thread that is idle", below), and one back after longer than that skips what it
+missed, so messages sent while it was gone aren't kept. A message is addressed on the bus to
 `device/session`, which a session's name stands for (see Session names); presence carries enough
 description (name, agent, branch, what it is doing) for an agent to choose a recipient. Nothing sent before a session first started is replayed to it. A
 daemon back after less than 10 minutes down delivers what it missed to the sessions that
 reconnect within 30 seconds of its start, and to sessions stopped within the 24 hours.
 
 Sessions reach the daemon over loopback TCP, on a random port written with a random token to
-`.git/t4/daemon.json`. A daemon with no sessions and no open page (see The page for humans) for
-10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
+`.git/t4/daemon.json`. A daemon with no sessions, no open page (see The page for humans) and no
+T3 thread to wake for 10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
 next sync rather than when it goes stale.
 
 An upgrade replaces the binary and not the daemon already started from it, which would go on
@@ -147,10 +149,15 @@ daemon. Only an older daemon is replaced, never a newer one, so two binaries of 
 one machine don't stop each other's daemons for ever, and a number is used, not the version string,
 so that builds from a branch (which all say "dev") are told apart. A client that may not start a
 daemon (the hook and the other commands, which never start one; `t4 stop`, which ends an old one by
-hand; a user who has left) takes the daemon as it is. A session whose daemon refuses its route (an older one that
-couldn't be replaced) works, with its messages as notices, and its MCP server logs that once, to its
-standard error, so that whoever wonders finds why. Raise the number with
-any change to a request or a reply that an older daemon can't serve.
+hand; a user who has left) takes the daemon as it is. The old daemon is asked to stop and
+takes its time: it lets its background work finish for up to 20 seconds and then deletes its
+presence for up to 15, holding the clone's lock throughout, and the new one can't start until the
+lock is free. So the client waits for the lock for as long as a shutdown may take, 35 seconds, and 5
+more (`proto.ShutdownMax`; it waited 15 s until #83), or less if its caller gives up first, and
+fails with an error that names the old daemon's pid if the lock is still held. A session whose
+daemon refuses its route (an older one that couldn't be replaced) works, with its messages as
+notices, and its MCP server logs that once, to its standard error, so that whoever wonders finds
+why. Raise the number with any change to a request or a reply that an older daemon can't serve.
 
 ### Joining a repo
 
@@ -304,10 +311,10 @@ call.
 - **Open page, running daemon.** The page asks for its state every 3 s, 15 s in a hidden tab. A
   call that carries the token, from a page someone can see, counts as an open page for 2 minutes,
   and an open page stops the 10-minute countdown the way a session does: a daemon with no sessions
-  exits about 12 minutes after its page is closed or hidden (a background tab, a minimized window,
-  a locked screen). A hidden page marks its calls, so a tab forgotten in the background doesn't
-  keep the daemon, and its polling of GitHub, up for good (Opus review, 2026-10-29). A request
-  without the token doesn't count.
+  and no T3 thread to wake exits about 12 minutes after its page is closed or hidden (a background
+  tab, a minimized window, a locked screen). A hidden page marks its calls, so a tab forgotten in
+  the background doesn't keep the daemon, and its polling of GitHub, up for good (Opus review,
+  2026-10-29). A request without the token doesn't count.
 
 ### What a session has done
 
@@ -610,6 +617,20 @@ A body past the limit is cut, as in `inbox`.
   server is connected. A session inside T3 is never written to this way: the socket there is T3's.
   Claude Code wraps what arrives on the socket in a note of its own that says the message came
   from another Claude session, not the user (seen 2026-10-29), which suits t4's framing.
+- **A thread that is idle (#87).** T3 stops an idle thread's provider process, and with it t4's MCP
+  server, after about 30 minutes (seen live on 2026-10-30: both threads' sessions stopped at 03:30,
+  half an hour after their last turn), so the session of a thread that is idle is the normal case,
+  and the thread most worth waking. Its route is kept in `state.json` (`T3Routes`) for as long as
+  its inbox is, 24 hours from the stop, and the daemon stays up for as long as it holds one: a
+  daemon that exited 10 minutes after the last session, as it did first, left a message to such a
+  thread waiting for the next time anyone used the clone, by when it was past the 15 minutes a
+  message may wake a session and arrived as a notice. A route counts only if the page's wake
+  setting would let a message through to the thread. With no session live and no page open the
+  daemon looks at the remote every 30 s, not every 3 s: about 2,900 `ls-remote` calls in a day
+  of waiting, against 29,000, and a sleeping thread wakes up to 30 s later than a working one
+  would. It still pushes its presence every 2 minutes (about 720 pushes a day), which tells others
+  the device is there. Claude Code outside T3 has nothing like it: its messaging socket dies with
+  the session. `t4 join --leave` and `t4 stop` end the daemon at once.
 - **When a message isn't delivered.** A failed delivery is left to the hook's notice, and the log
   says why, once per session. It is not tried again, except when it plainly never started (no `t3`
   command to run, no socket to connect to), which is tried once more after a pause (2 s). Any other
@@ -617,6 +638,15 @@ A body past the limit is cut, as in `inbox`.
   MCP tool `t3_thread_send` has `clientRequestId`, the command line doesn't), and the messaging
   socket answers nothing, so a second call would deliver the message twice, as two turns. The cost
   is that a failure that was only a failure (T3 starting up, say) gets a notice and no second try.
+  The mark that a message was handed over ("attempted", in `state.json`) is saved before the
+  handoff, not after, so it holds when the daemon stops in the middle of the call or right after a
+  failed one; a daemon that starts again within the 15 minutes finds it and leaves the message to the
+  notice, where it would otherwise have sent the turn a second time (#82). The mark comes off only
+  when the call provably went nowhere, as above (that includes a `t3` call cancelled before it could
+  start). A mark that can't be saved stops the handoff: the message is a notice, as after any failed
+  delivery. The save is a write to the file, which a power cut can still lose. A crash between the
+  save and the handoff leaves the mark on a message that was never sent, which is the safe way
+  round: it is a notice, not a repeat.
   The other safe way is to look in T3's database for the message before trying again
   (`orchestration_v2_projection_messages`, by thread and text, or `t3 thread show --json`); it
   would keep the second try, and it relies on tables that are T3's own and may change in any
@@ -637,7 +667,9 @@ A body past the limit is cut, as in `inbox`.
   another agent's reply in about 19 s. GitHub documents no limit on git reads, and a test of 63
   `ls-remote` requests about 2 s apart drew none, which is a short test, not evidence about
   hours of them from every device of a team. A poll that fails waits twice as long each time, to
-  at most a minute (or 20 polls, if Poll is shorter), and goes back to 3 s when it works.
+  at most a minute (or 20 polls, if Poll is shorter), and goes back to 3 s when it works. While
+  no session is live and no page is open the poll is every 30 s (QuietPoll, #87); a session
+  registering, or a page opening, makes it look at once and go back to 3 s.
 
 ## Risks and how the design meets them
 

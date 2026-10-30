@@ -21,6 +21,8 @@ joining does:
 - In this clone, a hook goes into .claude/settings.local.json, a file for one user's own settings
   that isn't normally committed, and a background process starts that talks to the repo's git
   remote under refs/t4/. No tracked file changes, and nothing is committed or pushed to a branch.
+  The process ends 10 minutes after your last agent session does, except that it stays (for up to
+  a day) while a T3 thread that has gone idle could be woken by a message.
 - Joining can be undone: `t4 join --leave` in this repo.
 
 If your user says no, or doesn't answer, leave t4 alone, carry on with what they asked for, and

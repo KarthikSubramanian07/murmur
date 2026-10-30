@@ -20,7 +20,9 @@ from question to answer. "t4" is a working name.
   these refs trigger no Actions run and no push webhook (tested), so deploy services that listen
   for pushes shouldn't fire either (inferred). `git clone` / `git pull` never fetch them.
 - One small daemon per clone syncs those refs; each agent session connects to it through an MCP
-  server, and a human looks at it through a web page.
+  server, and a human looks at it through a web page. The daemon exits 10 minutes after the last
+  session, but stays while an idle T3 thread could be woken by a message (24 hours at most, looking
+  at GitHub every 30 s); `t4 stop` ends it.
 - Agents see each other's **presence** (who is working where, on what) and send **messages**.
   A message reaches the other agent as a turn of its own, starting an idle agent's work, with
   nobody typing: through `t3 thread send` for a session in T3 Code, and through Claude Code's

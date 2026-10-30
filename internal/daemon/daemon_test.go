@@ -88,6 +88,9 @@ type device struct {
 	snapshot time.Duration
 	// pushRetry is PushRetry, the wait between a delivery's two attempts; zero takes 200 ms.
 	pushRetry time.Duration
+	// quietPoll is QuietPoll, the poll while no session is live; zero takes poll, so that a device with
+	// no session yet looks at the remote as fast as one with.
+	quietPoll time.Duration
 	// consent and consentPoll are the daemon's options of the same names; a nil consent means the
 	// user joined, always.
 	consent     func() bool
@@ -141,6 +144,10 @@ func (d *device) start() {
 	if pushRetry == 0 {
 		pushRetry = 200 * time.Millisecond
 	}
+	quietPoll := d.quietPoll
+	if quietPoll == 0 {
+		quietPoll = d.poll
+	}
 	idle := d.idle
 	if idle == 0 {
 		idle = -1
@@ -159,7 +166,7 @@ func (d *device) start() {
 	go func() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
-			Heartbeat: beat, StaleAfter: d.stale, Idle: idle,
+			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll,
 			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry, PushRetry: pushRetry,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, Log: logger})

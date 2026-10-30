@@ -29,7 +29,7 @@ func runWithConsent(gitDir string, joined *atomic.Bool, poll time.Duration) (can
 	ctx, cancel := context.WithCancel(context.Background())
 	done = make(chan error, 1)
 	go func() {
-		done <- daemon.Run(ctx, daemon.Options{GitDir: gitDir, Poll: 100 * time.Millisecond, Idle: -1,
+		done <- daemon.Run(ctx, daemon.Options{GitDir: gitDir, Poll: 100 * time.Millisecond, QuietPoll: 100 * time.Millisecond, Idle: -1,
 			Consent: joined.Load, ConsentPoll: poll, Log: testLog()})
 	}()
 	return cancel, done
@@ -134,7 +134,7 @@ func TestDaemonPublishesNothingOnceTheUserHasLeft(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- daemon.Run(ctx, daemon.Options{GitDir: gitDir, Poll: 100 * time.Millisecond, Heartbeat: 100 * time.Millisecond,
+		done <- daemon.Run(ctx, daemon.Options{GitDir: gitDir, Poll: 100 * time.Millisecond, QuietPoll: 100 * time.Millisecond, Heartbeat: 100 * time.Millisecond,
 			Idle: -1, Consent: joined.Load, ConsentPoll: time.Hour, Log: testLog()})
 	}()
 	defer func() { cancel(); <-done }()

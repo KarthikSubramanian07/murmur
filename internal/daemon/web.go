@@ -296,6 +296,14 @@ func (d *Daemon) pageCalled(ctx context.Context) {
 // Caller holds mu.
 func (d *Daemon) pageSeenLocked(ctx context.Context, now time.Time) {
 	if web.Watched(ctx) {
+		if !d.pageOpenLocked(now) {
+			d.kickPoll() // a page opens: its view should not be 30 s behind
+		}
 		d.lastPage = now
 	}
+}
+
+// pageOpenLocked says a page someone can see has called within PageOpen of now. Caller holds mu.
+func (d *Daemon) pageOpenLocked(now time.Time) bool {
+	return !d.lastPage.IsZero() && now.Sub(d.lastPage) <= d.opt.PageOpen
 }

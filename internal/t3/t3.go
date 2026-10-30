@@ -83,8 +83,8 @@ func Send(ctx context.Context, cli, home, thread, text string) error {
 	cmd.Stdout, cmd.Stderr = &out, &out
 	hideWindow(cmd)
 	if err := cmd.Start(); err != nil {
-		if parent.Err() != nil {
-			return fmt.Errorf("t3 thread send: %w", parent.Err())
+		if parent.Err() != nil { // cancelled before it could start: nothing ran, and the caller's cancellation is still the reason
+			return fmt.Errorf("t3 thread send: %w: %w", ErrNotStarted, parent.Err())
 		}
 		return fmt.Errorf("t3 thread send: %w: %v", ErrNotStarted, err)
 	}

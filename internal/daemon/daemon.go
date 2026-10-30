@@ -29,11 +29,17 @@ import (
 
 // Options configure a daemon. Zero values take the defaults in docs/VISION.md.
 type Options struct {
-	GitDir     string        // the clone's git common dir, absolute
-	Poll       time.Duration // how often to check the remote; 3 s
+	GitDir string        // the clone's git common dir, absolute
+	Poll   time.Duration // how often to check the remote; 3 s
+	// QuietPoll is how often to check it while no session is live and no page is open: 30 s. A
+	// daemon that is only waiting to wake a T3 thread (see Idle) needn't look as often as one with
+	// an agent working; it is never faster than Poll.
+	QuietPoll  time.Duration
 	Heartbeat  time.Duration // how often to re-push presence when nothing changed; 2 min
 	StaleAfter time.Duration // presence unchanged this long means the device is gone; 6 min
-	Idle       time.Duration // exit after this long with no sessions; 10 min. Negative: never
+	// Idle is how long a daemon with no sessions, no open page and no T3 thread to wake (see
+	// holdsRouteLocked) goes on before it exits: 10 min. Negative: never.
+	Idle time.Duration
 	// SessionGrace is how long a session whose connection dropped stays registered, for the same
 	// session ID to take it over: 60 s. Its MCP server restarts while the conversation carries on.
 	SessionGrace time.Duration
@@ -74,6 +80,9 @@ type Options struct {
 func (o *Options) defaults() {
 	if o.Poll == 0 {
 		o.Poll = 3 * time.Second
+	}
+	if o.QuietPoll == 0 {
+		o.QuietPoll = 30 * time.Second
 	}
 	if o.Heartbeat == 0 {
 		o.Heartbeat = 2 * time.Minute
@@ -206,6 +215,7 @@ type Daemon struct {
 	settings pageSettings
 
 	kick     chan struct{}
+	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
 	pushKick chan struct{} // wakes pushLoop, which delivers messages into sessions as turns
 	pushSem  chan struct{} // bounds the deliveries running at once
 	nameKick chan struct{} // wakes nameLoop, the only user of nameSrc
@@ -293,10 +303,16 @@ type inMsg struct {
 	Noticed bool      `json:"noticed"`
 	// Pushing says the message is being delivered into its session as a turn, so the hook's notice
 	// and inbox leave it alone: it either arrives as the turn, and is gone from the inbox, or the
-	// delivery fails and it is theirs again. PushFailed says that delivery failed, or the message
-	// was too old to wake a session with (see pushMaxAge). Neither is kept over a restart.
+	// delivery fails and it is theirs again. PushFailed says that delivery failed. Neither is kept
+	// over a restart.
 	Pushing    bool `json:"-"`
 	PushFailed bool `json:"-"`
+	// Attempted says the message was handed to T3 or the socket, and it may be in the session's
+	// conversation, though the daemon doesn't know (see deliver.go). It is saved before the handoff
+	// and taken off only when the attempt provably went nowhere, so a restart in the middle of a
+	// delivery, or after one that failed, finds it, and the message is left to the hook's notice
+	// instead of being delivered a second time.
+	Attempted bool `json:"attempted,omitempty"`
 }
 
 // state is what survives a restart, in state.json.
@@ -464,7 +480,7 @@ func Run(ctx context.Context, opt Options) error {
 	go func() { d.bg.Wait(); close(drained) }()
 	select {
 	case <-drained:
-	case <-time.After(20 * time.Second):
+	case <-time.After(proto.DrainTimeout):
 		d.log.Printf("background work still running at exit")
 	}
 	d.goodbye()
@@ -477,7 +493,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
-		kick: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
+		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
 		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{},
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
@@ -556,7 +572,7 @@ func (d *Daemon) stop() { d.quitOnce.Do(func() { close(d.quit) }) }
 // goodbye deletes this device's presence, so other devices drop it at their next sync instead of
 // finding it stale six minutes later.
 func (d *Daemon) goodbye() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), proto.GoodbyeTimeout)
 	defer cancel()
 	if err := d.repo.Push(ctx, "", d.presenceRef(), bus.FastForward, ""); err != nil {
 		d.log.Printf("removing presence: %v", err)
@@ -611,6 +627,7 @@ func (d *Daemon) idleLoop(ctx context.Context) {
 			return
 		case <-t.C:
 		}
+		wake := d.wakeSnapshot() // before mu: setMu is taken alone
 		d.mu.Lock()
 		// An open page keeps the daemon up as a session does: the idle time counts from the last
 		// session going, or from the page no longer counting as open.
@@ -618,14 +635,30 @@ func (d *Daemon) idleLoop(ctx context.Context) {
 		if gone := d.lastPage.Add(d.opt.PageOpen); gone.After(quiet) {
 			quiet = gone
 		}
-		idle := len(d.sessions) == 0 && time.Since(quiet) > d.opt.Idle
+		idle := len(d.sessions) == 0 && !d.holdsRouteLocked(wake) && time.Since(quiet) > d.opt.Idle
 		d.mu.Unlock()
 		if idle {
-			d.log.Printf("no sessions and no page open for %s; exiting", d.opt.Idle)
+			d.log.Printf("no sessions, no page open and no T3 thread to wake for %s; exiting", d.opt.Idle)
 			d.stop()
 			return
 		}
 	}
+}
+
+// holdsRouteLocked says the daemon has a T3 thread it could still wake with a message: the session
+// of a thread stopped within StoppedInbox, whose route is kept (T3Routes) so that a message for it
+// still reaches the thread though its MCP server is gone. T3 stops an idle thread's MCP server
+// after about 30 minutes, and the thread is the one most worth waking (#87). The daemon stays up
+// for it, as no other daemon reads the bus for this clone, and it ends when the route's inbox is
+// no longer kept. A thread the page's wake setting says not to wake has nothing to stay up for.
+// Caller holds mu.
+func (d *Daemon) holdsRouteLocked(wake pageSettings) bool {
+	for id := range d.st.T3Routes {
+		if d.sessions[id] == nil && d.receivesLocked(id) && wake.wakes(d.sessionNameLocked(id)) {
+			return true
+		}
+	}
+	return false
 }
 
 // loadDevice reads this clone's device ID, creating it on first run: the hostname plus four

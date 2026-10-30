@@ -29,11 +29,33 @@ func nextPoll(cur, base time.Duration, failed bool) time.Duration {
 	return min(cur*2, 20*base, max(maxPollBackoff, base))
 }
 
+// pollBase is how often the remote is looked at when all is well: Poll while a session is live or
+// a page is open, QuietPoll while neither is, when the daemon is up only to wake a T3 thread that
+// has no session (#87). It is read again after every poll, and a session or a page that comes
+// wakes the loop (kickPoll), so the slower rate costs a sleeping thread at most QuietPoll more.
+func (d *Daemon) pollBase() time.Duration {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.sessions) > 0 || d.pageOpenLocked(time.Now()) {
+		return d.opt.Poll
+	}
+	return max(d.opt.Poll, d.opt.QuietPoll)
+}
+
+// kickPoll wakes pollLoop, which looks at the remote now if that is sooner than it would have.
+// Any lock may be held.
+func (d *Daemon) kickPoll() {
+	select {
+	case d.pollWake <- struct{}{}:
+	default:
+	}
+}
+
 func (d *Daemon) pollLoop(ctx context.Context) {
 	t := time.NewTicker(d.opt.Poll)
 	defer t.Stop()
 	failing := false
-	wait := d.opt.Poll
+	wait, every := d.opt.Poll, d.opt.Poll // wait is until the next poll; every, when all is well
 	for {
 		err := d.pollOnce(ctx)
 		if err != nil && ctx.Err() == nil {
@@ -51,14 +73,33 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 			d.kickNames()
 		}
 		failing = err != nil
-		if next := nextPoll(wait, d.opt.Poll, failing); next != wait {
+		if base := d.pollBase(); base != every {
+			if base > every {
+				d.log.Printf("no session is live and no page open; looking at the remote every %s, not every %s", base, every)
+			} else {
+				d.log.Printf("a session is live or a page open; looking at the remote every %s", base)
+			}
+			every = base
+		}
+		if next := nextPoll(wait, every, failing); next != wait {
 			wait = next
 			t.Reset(wait)
 		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
+	sleep:
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			case <-d.pollWake:
+				// A session or a page came. If the loop was running at the slower rate, look now
+				// and from here on at the faster; if not, it is as quick as it gets, and a
+				// failure's backoff is not ended by it.
+				if d.pollBase() >= every {
+					continue sleep
+				}
+			}
+			break
 		}
 	}
 }
