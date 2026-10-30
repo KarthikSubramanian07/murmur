@@ -61,6 +61,43 @@ func ThreadOf(ctx context.Context, cli, home, native string) (string, error) {
 	if native == "" {
 		return "", errors.New("no session ID to look up")
 	}
+	var thread sql.NullString
+	err := queryOne(ctx, cli, home, threadQuery, native, &thread)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", ErrNotFound
+	case err != nil:
+		return "", err
+	case !thread.Valid || thread.String == "":
+		return "", ErrNotFound
+	}
+	return thread.String, nil
+}
+
+// titleQuery reads a thread's title, the one T3 shows for it in its sidebar (seen on T3 0.1.x,
+// 2026-10-30; Codex's own name for the conversation is a different field, and T3 never copies the
+// title into it).
+const titleQuery = `SELECT title FROM orchestration_v2_projection_threads WHERE thread_id = ?`
+
+// TitleOf reads the title of T3 thread, as ThreadOf reads its row: read-only, with a short wait on
+// a lock, any trouble an error. "" with no error means the thread has no title yet.
+func TitleOf(ctx context.Context, cli, home, thread string) (string, error) {
+	if thread == "" {
+		return "", errors.New("no thread to look up")
+	}
+	var title sql.NullString
+	err := queryOne(ctx, cli, home, titleQuery, thread, &title)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", ErrNotFound
+	case err != nil:
+		return "", err
+	}
+	return title.String, nil
+}
+
+// queryOne runs a query with one argument against T3's state database and scans its first row.
+func queryOne(ctx context.Context, cli, home, query, arg string, dest any) error {
 	var path string
 	for _, h := range t3.Homes(cli, home) {
 		p := t3.StateDB(h)
@@ -70,27 +107,33 @@ func ThreadOf(ctx context.Context, cli, home, native string) (string, error) {
 		}
 	}
 	if path == "" {
-		return "", errors.New("T3's state database isn't there")
+		return errors.New("T3's state database isn't there")
 	}
 	ctx, cancel := context.WithTimeout(ctx, Total)
 	defer cancel()
-	db, err := sql.Open("sqlite", dsn(path))
+	db, err := OpenReadOnly(path)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(1)
-	var thread sql.NullString
-	err = db.QueryRowContext(ctx, threadQuery, native).Scan(&thread)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return "", ErrNotFound
-	case err != nil:
-		return "", fmt.Errorf("reading T3's database: %w", err)
-	case !thread.Valid || thread.String == "":
-		return "", ErrNotFound
+	err = db.QueryRowContext(ctx, query, arg).Scan(dest)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("reading T3's database: %w", err)
 	}
-	return thread.String, nil
+	return err
+}
+
+// OpenReadOnly opens a SQLite database to read only, waiting at most Busy on a lock: for T3's
+// database, and for other agents' state that t4 reads the same way (package title). It opens in
+// SQLite's read-only mode, never immutable, and refuses writes. The caller closes it and bounds its
+// queries with a context.
+func OpenReadOnly(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", dsn(path))
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
 }
 
 // dsn is the URI that opens path read-only, waiting at most Busy on a lock. The path is escaped

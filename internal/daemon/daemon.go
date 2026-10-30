@@ -68,6 +68,9 @@ type Options struct {
 	// SnapshotTimeout bounds the git a snapshot of a tool call's worktree runs (#21): 4 s. Tests on a
 	// loaded machine raise it.
 	SnapshotTimeout time.Duration
+	// TitleEvery is how often the titles of the sessions' conversations are read from their
+	// clients' state, and the least time between two reads of one: 5 s (#66).
+	TitleEvery time.Duration
 	// Consent says whether the user has joined t4 in this clone (nil: always). A daemon exists only
 	// for a user who did: it won't start without it, refuses requests once it is gone, and stops
 	// within ConsentPoll of it going, so a leave that races a daemon still starting ends that daemon
@@ -116,6 +119,9 @@ func (o *Options) defaults() {
 	}
 	if o.PageMessages == 0 {
 		o.PageMessages = 500
+	}
+	if o.TitleEvery == 0 {
+		o.TitleEvery = 5 * time.Second
 	}
 	if o.ConsentPoll == 0 {
 		o.ConsentPoll = time.Second
@@ -256,6 +262,21 @@ type session struct {
 	// claudeSession: the token in it opens the session's messaging socket, so it is never logged
 	// or put on the page or the bus.
 	route proto.Route
+	// transcript is where Claude Code keeps the session's conversation, as its hook reported it;
+	// it holds the title. title is the conversation's title as last read from its client (see
+	// titles.go), "" if it has none. It is shown where doing, the status the agent set, is empty.
+	transcript, title string
+	// titleWarned says reading the title has been logged as failing, so that is logged once.
+	titleWarned bool
+}
+
+// shownDoing is the status line other sessions see for s: what the agent set, else its
+// conversation's title. Caller holds mu.
+func (s *session) shownDoing() string {
+	if s.doing != "" {
+		return s.doing
+	}
+	return s.title
 }
 
 // syncMode says what a sync does with events this daemon hasn't processed.
@@ -463,6 +484,11 @@ func Run(ctx context.Context, opt Options) error {
 	go func() {
 		defer d.bg.Done()
 		d.pushLoop(ctx)
+	}()
+	d.bg.Add(1)
+	go func() {
+		defer d.bg.Done()
+		d.titleLoop(ctx)
 	}()
 	if opt.Idle > 0 {
 		go d.idleLoop(ctx)

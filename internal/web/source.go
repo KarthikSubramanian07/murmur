@@ -51,7 +51,7 @@ type Session struct {
 	Branch string `json:"branch,omitempty"`
 	// Committed is the branches the session has committed to, most recent first (#21).
 	Committed []string `json:"committed,omitempty"`
-	Doing     string   `json:"doing,omitempty"` // the status line the session sets itself
+	Doing     string   `json:"doing,omitempty"` // the status line the session set, else its conversation's title
 	// Worktree is the name of the session's worktree folder. Only sessions on this device have
 	// one: it never leaves the machine.
 	Worktree   string    `json:"worktree,omitempty"`

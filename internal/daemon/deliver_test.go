@@ -32,7 +32,19 @@ func TestMain(m *testing.M) {
 	if path := os.Getenv(fakeT3Env); path != "" {
 		os.Exit(fakeT3(path))
 	}
-	os.Exit(m.Run())
+	// The daemon reads conversation titles from the clients' state under the user's home (#66): in
+	// tests that is an empty directory, so nothing here reads the real ~/.t3, ~/.codex or ~/.claude.
+	home, err := os.MkdirTemp("", "daemon-home")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
+	os.Setenv("HOME", home)
+	os.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	os.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	code := m.Run()
+	os.RemoveAll(home)
+	os.Exit(code)
 }
 
 // t3Call is one run of the stand-in `t3`.

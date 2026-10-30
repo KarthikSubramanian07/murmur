@@ -190,6 +190,20 @@ func TestPeerActiveIsTheWritersGapOnThisClock(t *testing.T) {
 	}
 }
 
+// A presence this daemon has never seen change is dated from when it was written, and never from
+// later than now, so a writer's clock that runs ahead can't make a device look newer than it is.
+func TestFirstSightIsWhenItWasWrittenButNeverLater(t *testing.T) {
+	near := func(got time.Time, ago time.Duration) bool {
+		return time.Since(got.Add(ago)) < time.Second && time.Since(got.Add(ago)) > -time.Second
+	}
+	if got := firstSight(time.Now().Add(-5 * time.Hour)); !near(got, 5*time.Hour) {
+		t.Errorf("a presence written 5 hours ago is dated %v ago", time.Since(got))
+	}
+	if got := firstSight(time.Now().Add(time.Hour)); !near(got, 0) {
+		t.Errorf("a presence written in the future is dated %v ago, want now", time.Since(got))
+	}
+}
+
 // A stopped session's commits are kept exactly as long as its inbox: both go in the same sweep,
 // and a session of that ID that registers after the time is up starts with neither. (Worked out
 // on the daemon's own state, as the keep time in a running daemon is a race against how slow git

@@ -26,9 +26,12 @@ import (
 // input is the part of Claude Code's hook payload the hook reads.
 type input struct {
 	SessionID string `json:"session_id"`
-	Event     string `json:"hook_event_name"`
-	Cwd       string `json:"cwd"`
-	ToolName  string `json:"tool_name"`
+	// TranscriptPath is the file Claude Code keeps the session's conversation in, which also holds
+	// its title.
+	TranscriptPath string `json:"transcript_path"`
+	Event          string `json:"hook_event_name"`
+	Cwd            string `json:"cwd"`
+	ToolName       string `json:"tool_name"`
 	// ToolUseID is on PreToolUse, PostToolUse and PostToolUseFailure alike, and the same for one
 	// call: it is what pairs the two ends (measured on Claude Code 2.1.312, 2026-10-29).
 	ToolUseID string `json:"tool_use_id"`
@@ -158,7 +161,8 @@ func Run(stdin io.Reader, stdout io.Writer) {
 	var resp proto.Response
 	if wantNotices {
 		nctx, ncancel := context.WithTimeout(ctx, NoticeTimeout)
-		resp, err = c.Do(nctx, proto.Request{Op: proto.OpNotices, ClaudeSession: in.SessionID, ClientPID: claudePID()})
+		resp, err = c.Do(nctx, proto.Request{Op: proto.OpNotices, ClaudeSession: in.SessionID, ClientPID: claudePID(),
+			Transcript: in.TranscriptPath})
 		ncancel()
 	}
 	wg.Wait()

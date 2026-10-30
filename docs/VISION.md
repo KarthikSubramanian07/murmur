@@ -62,8 +62,12 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
 - A reader measures staleness from when it saw a presence change, on its own monotonic clock, and
   only up to its own last successful sync, so a reader that was itself asleep or offline doesn't
   take everyone else for gone. Only a presence it has never seen change is dated by the writer's
-  clock, and never more than 2 minutes back, so a slow clock can't make a device look gone before
-  its next heartbeat.
+  clock, from when the tip commit was written and never later than now. A daemon that has just
+  started sees every device's ref as new, so dating them from now showed devices dead for hours
+  as alive for the first 6 minutes, which is when a new session is most likely to ask `who`
+  (seen live, 2026-10-30). A writer whose clock runs more than 6 minutes slow looks stale until
+  its next heartbeat, at most 2 minutes, when the reader sees the presence change and times it
+  itself.
 - Custom refs, not branches, so CI and preview deploys don't fire on every message, and
   `git clone` / `git pull` never fetch them. git-bug uses `refs/bugs/*` on GitHub the same way.
   Tested on this repo on 2026-10-26: a push to `refs/t4/*` produced no `push` webhook delivery
@@ -381,6 +385,54 @@ which session made a commit, so the daemon watches tool calls for them.
   daemon that doesn't write them have no last-active time, and the page leaves it blank.
 - **Messages in `lookup`** are those this daemon has read, the same as the page keeps: the last
   500, none from before it started.
+
+### Who is on, and what they are doing
+
+Tyler's decisions, 2026-10-29, built 2026-10-30 (#66). With many agents on, `who` had a line for
+every session ever seen, the stale ones above the live ones, and a context only where an agent
+had called `status`: in a live test it listed three devices left from earlier tests above the two
+agents that mattered.
+
+- **A cap.** `who` lists sessions most recently active first, at most 20 in all (`view.WhoLimit`),
+  then says "and N more, less recently active; use lookup with a session's name to see one". Sessions
+  are ranked across devices, and shown under their devices; a session whose device doesn't say when it
+  was last active ranks by when it started. The caller's own session and device are always shown,
+  and count toward the 20. A device that has gone stale is one line (its name, who it belongs to,
+  when it was last seen, how many sessions it has) and its sessions are neither listed nor counted
+  among the "more". The cap is in the text `who` renders, so the CLI and the MCP tool share it; the
+  daemon's reply still holds every session.
+- **Last active on every line**, as `active 2m ago` after the agent and branch (`lookup` keeps its
+  own, longer form). A session on a daemon from before #21 has none, and its line says when it
+  started instead.
+- **The conversation's title is the default status line.** An agent that has set no status shows
+  the title of its conversation in `who`, `lookup` and the page; a `status` it sets always wins,
+  and setting it to nothing brings the title back. The title is read from the client's own state,
+  which belongs to the client, is versioned by it and is open for writing in it, so every reader
+  opens it read-only, waits no more than a moment for a lock, and treats a missing file, table or
+  column, a lock or a shape it doesn't know as a read that failed, which keeps the title the session
+  had and costs nothing else. Where each client keeps it (seen 2026-10-30):
+
+  | Session | Title | Not used |
+  |---|---|---|
+  | In T3 (its thread found, see Delivering a message as a turn) | `orchestration_v2_projection_threads.title` for the thread, in T3's `statev2.sqlite` | The client's own name for the conversation: T3 doesn't copy its title there, and the two would take turns |
+  | Codex outside T3 | The thread's explicit name: `threads.name` in `state_N.sqlite` (the highest N) of `$CODEX_HOME` as the session's MCP server has it (Codex starts it with a bare environment, and `join` doesn't forward `CODEX_HOME` yet), else the daemon's, else `~/.codex`; failing that `thread_name` in `session_index.jsonl`, the last entry for the thread | `threads.title` and `threads.preview`, which hold the opening message |
+  | Claude Code outside T3 | The last `custom-title` line in the session's transcript (the name the user gave it), else the last `ai-title` line (the one Claude Code made up) | The first prompt: a session with neither has no title |
+
+  The transcript is the hook's `transcript_path`, which the hook sends with its notices request;
+  Claude Code rewrites the title lines near the end of the file, so the last 128 KB is read (2.1.312;
+  in the 300 largest transcripts on the laptop, 2026-10-30, the last `ai-title` was within 31 KB of the
+  end). A new path, as after `/clear`, is a new conversation and drops the old title. Codex puts
+  its thread ID in the `_meta` of every tool call, and the MCP server hands it to the daemon in the
+  route (protocol 2) even outside T3.
+- **It goes out as presence.** The daemon puts the title in the session's `doing`, the field a
+  status goes in, so the bus format is unchanged and an older daemon shows the title as it shows a
+  status. A reader can't tell the two apart. **A conversation's title is therefore shown to every
+  teammate who can read the bus, unless the agent sets a status**; it is cut to the status line's 120
+  characters, and one that `scrub` would stop in a status is not shown.
+- **When it is read.** A daemon goes through its sessions every 5 seconds (`Options.TitleEvery`) and
+  reads each source once, outside its lock, so no database is read more often than that. A session
+  with a status is not read. A changed title causes a presence write, as a changed status does, so it
+  shows on other devices within seconds; a title that hasn't changed writes nothing.
 
 ### When a session stays the same session
 

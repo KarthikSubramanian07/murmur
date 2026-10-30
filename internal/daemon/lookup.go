@@ -96,7 +96,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 		det.Local, det.Host, det.Owner = true, d.host, d.owner
 		det.Committed = d.committedLocked(sess)
 		if s := d.sessions[sess]; s != nil {
-			det.Name, det.Agent, det.Branch, det.Doing, det.Started = s.name, s.agent, s.branch, s.doing, s.started
+			det.Name, det.Agent, det.Branch, det.Doing, det.Started = s.name, s.agent, s.branch, s.shownDoing(), s.started
 			det.Running, det.Reachable, det.Dropped = true, s.dropped.IsZero(), !s.dropped.IsZero()
 			det.LastActive, det.Worktree, det.ClientSession = s.lastActive, s.worktree, s.claudeSession
 		} else {

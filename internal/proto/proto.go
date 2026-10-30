@@ -32,7 +32,9 @@ const (
 // Raise it with any change to a request or a reply that an older daemon can't serve:
 //
 //	1: OpRoute, and delivering a message as a turn (#56, #57)
-const Protocol = 1
+//	2: the conversation's title as the default status line, which needs the transcript the hook
+//	   reports and the Codex thread ID in the route (#66)
+const Protocol = 2
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -79,6 +81,9 @@ type Request struct {
 	// ClaudeSession, it tells the daemon which sessions that process's conversation has moved to
 	// a new Claude ID. 0 if the hook has none.
 	ClientPID int `json:"clientPid,omitempty"`
+	// Transcript is the path of the Claude Code session's transcript, the hook's transcript_path,
+	// which holds the session's title. OpNotices carries it.
+	Transcript string `json:"transcript,omitempty"`
 
 	// Name is the session OpLookup describes: a name, or device/session. Limit caps the messages.
 	Name string `json:"name,omitempty"`
@@ -112,6 +117,14 @@ type Route struct {
 	// opens it (CLAUDE_CODE_MESSAGING_SOCKET, CLAUDE_CODE_MESSAGING_TOKEN).
 	MsgSocket string `json:"msgSocket,omitempty"`
 	MsgToken  string `json:"msgToken,omitempty"`
+	// Native is the client's own ID for the conversation where its environment doesn't have one:
+	// the thread ID Codex puts in every tool call. Outside T3 it is how the daemon finds the
+	// thread's name in Codex's state.
+	Native string `json:"native,omitempty"`
+	// CodexHome is the Codex state directory of that client (CODEX_HOME, else ~/.codex), as its MCP
+	// server sees it: one daemon serves every client on the device, and they may not share a
+	// Codex home. Empty takes the daemon's own.
+	CodexHome string `json:"codexHome,omitempty"`
 }
 
 // Hello registers a session.
@@ -171,13 +184,17 @@ type SessionView struct {
 	Addr string `json:"addr"`
 	// Name is the session's name; empty for a session of a daemon that doesn't give names, and,
 	// with Pending set, for one on this device still waiting for its own.
-	Name    string    `json:"name,omitempty"`
-	Pending bool      `json:"pending,omitempty"`
-	Agent   string    `json:"agent"`
-	Branch  string    `json:"branch,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Pending bool   `json:"pending,omitempty"`
+	Agent   string `json:"agent"`
+	Branch  string `json:"branch,omitempty"`
+	// Doing is the status line the agent set or, where it set none, its conversation's title.
 	Doing   string    `json:"doing,omitempty"`
 	Started time.Time `json:"started"`
-	You     bool      `json:"you,omitempty"`
+	// LastActive is when the session last did anything, on the daemon's clock; zero where the
+	// session's device doesn't say.
+	LastActive time.Time `json:"lastActive,omitzero"`
+	You        bool      `json:"you,omitempty"`
 }
 
 // SessionDetail is everything the daemon knows about one session, as `lookup` shows it. Where a
