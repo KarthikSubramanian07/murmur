@@ -380,3 +380,62 @@ func TestNextCallWaitsForTheEndBeforeIt(t *testing.T) {
 		t.Errorf("credited %+v, want the first call's commit, on feat", got)
 	}
 }
+
+// Calls are judged in the background, and one can be judged after a call that ended later. What
+// each credited is kept in the order the calls ended, so the branches a session committed to are
+// listed most recent first all the same.
+func TestCreditsKeepTheOrderCallsEnded(t *testing.T) {
+	d, dir := bracketDaemon(t)
+	ctx := context.Background()
+	wt2 := filepath.Join(t.TempDir(), "two")
+	igit(t, dir, "worktree", "add", "-q", "-b", "feat-b", wt2)
+	d.toolStart(ctx, d.startReq(dir, "t1"))
+	d.toolStart(ctx, d.startReq(wt2, "t2"))
+
+	release := make(chan struct{})
+	orig := snapshot
+	snapshot = func(ctx context.Context, wt string) (attrib.Ref, error) {
+		if wt == dir {
+			<-release
+		}
+		return orig(ctx, wt)
+	}
+	defer func() { snapshot = orig }()
+	igit(t, dir, "switch", "-q", "-c", "feat-a")
+	igit(t, dir, "commit", "-q", "--allow-empty", "-m", "a")
+	end1 := d.startReq(dir, "t1")
+	end1.Op = proto.OpToolEnd
+	d.toolEnd(ctx, end1)
+	igit(t, wt2, "commit", "-q", "--allow-empty", "-m", "b")
+	end2 := d.startReq(wt2, "t2")
+	end2.Op = proto.OpToolEnd
+	d.toolEnd(ctx, end2)
+	for deadline := time.Now().Add(20 * time.Second); ; {
+		d.mu.Lock()
+		n := len(d.st.Commits["aaaaaa"])
+		d.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			close(release)
+			t.Fatal("the second call's commit wasn't credited")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	close(release)
+	d.settleEnds()
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var got []string
+	for _, r := range d.st.Commits["aaaaaa"] {
+		got = append(got, r.Subject)
+	}
+	if strings.Join(got, ",") != "a,b" {
+		t.Errorf("credited %v, want [a b], in the order the calls ended", got)
+	}
+	if b := d.committedLocked("aaaaaa"); strings.Join(b, ",") != "feat-b,feat-a" {
+		t.Errorf("committed to %v, want [feat-b feat-a], most recent first", b)
+	}
+}

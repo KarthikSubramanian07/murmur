@@ -156,6 +156,7 @@ func (d *Daemon) toolStart(ctx context.Context, req proto.Request) proto.Respons
 // credits nothing.
 func (d *Daemon) toolEnd(ctx context.Context, req proto.Request) proto.Response {
 	key := bracketKey(req)
+	ended := time.Now()
 	d.mu.Lock()
 	sessions := d.touchHookLocked(req)
 	b := d.brackets[key]
@@ -192,7 +193,7 @@ func (d *Daemon) toolEnd(ctx context.Context, req proto.Request) proto.Response 
 			d.mu.Unlock()
 		}()
 		defer snapped()
-		d.judgeEnd(ctx, b, moved, sessions, snapped)
+		d.judgeEnd(ctx, b, moved, ended, sessions, snapped)
 	}()
 	return proto.Response{OK: true}
 }
@@ -213,10 +214,10 @@ func (d *Daemon) settleEnds() {
 }
 
 // judgeEnd snapshots the worktree a call started in, calls snapped, and credits the sessions with
-// the commits made since its start. A call that ended with the hook in another worktree of the
+// the commits made since its start, as of when the call ended. A call that ended with the hook in another worktree of the
 // clone, moved, is judged there too, against the same start: the start's tips are the whole
 // clone's, so they keep that worktree's history out as well as this one's.
-func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, moved string, sessions []*session, snapped func()) {
+func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, moved string, ended time.Time, sessions []*session, snapped func()) {
 	ctx, cancel := context.WithTimeout(ctx, d.snapshotLimit())
 	defer cancel()
 	worktrees := []string{b.cwd}
@@ -243,7 +244,7 @@ func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, moved string, session
 		return
 	}
 	d.mu.Lock()
-	published := d.creditLocked(sessions, commits, time.Now())
+	published := d.creditLocked(sessions, commits, ended)
 	d.saveLocked()
 	d.mu.Unlock()
 	if published {
@@ -290,15 +291,21 @@ func (d *Daemon) snapshotFailed(what string, err error) {
 }
 
 // creditLocked records commits as made by sessions, each at most once per session: calls that
-// overlap, in parallel or because one is a subagent running others, see the same commits. It says
-// whether any session's list of branches changed, which presence then shows. Caller holds mu.
+// overlap, in parallel or because one is a subagent running others, see the same commits. at is
+// when the call ended, and the records stay in that order: calls are judged in the background, and
+// one that ended first can be judged last. It says whether any session's list of branches changed,
+// which presence then shows. Caller holds mu.
 func (d *Daemon) creditLocked(sessions []*session, commits []attrib.Commit, at time.Time) (branchesChanged bool) {
 	for _, s := range sessions {
 		before := d.committedLocked(s.id)
 		recs := d.st.Commits[s.id]
 		for _, c := range commits {
 			if !slices.ContainsFunc(recs, func(r commitRec) bool { return r.SHA == c.SHA }) {
-				recs = append(recs, commitRec{SHA: c.SHA, Branch: c.Branch, Subject: bus.OneLine(c.Subject, 120), At: at})
+				i := len(recs)
+				for i > 0 && recs[i-1].At.After(at) {
+					i--
+				}
+				recs = slices.Insert(recs, i, commitRec{SHA: c.SHA, Branch: c.Branch, Subject: bus.OneLine(c.Subject, 120), At: at})
 			}
 		}
 		if len(recs) > maxCommits {
