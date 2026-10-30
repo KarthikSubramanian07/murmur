@@ -104,6 +104,47 @@ func TestCodexEditRefusesFormsItDoesNotEdit(t *testing.T) {
 	}
 }
 
+// A header may quote its keys and carry a comment; neither changes where a table starts or ends
+// (Codex review, 2026-10-29: the comment kept the header from parsing, and the table before it
+// swallowed the other server's lines).
+func TestCodexEditReadsQuotedHeadersWithComments(t *testing.T) {
+	before := tomlTable + "\n[mcp_servers.\"other\"] # personal\ncommand = \"o\"\nargs = [\"x\"]\n"
+	if out, changed := edit(t, before); changed {
+		t.Errorf("changed a table that was right:\n%s", out)
+	}
+	// The same spelling for t4's own table is that table, edited in place, not a second one.
+	own := "[ mcp_servers . \"t4\" ] # mine\ncommand = '/old/t4' # keep\n\n[other]\nx = 1\n"
+	got, changed := edit(t, own)
+	want := "[ mcp_servers . \"t4\" ] # mine\ncommand = \"/opt/t4\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\ndefault_tools_approval_mode = \"approve\"\n\n[other]\nx = 1\n"
+	if !changed || got != want {
+		t.Errorf("changed=%v:\n%s\nwant:\n%s", changed, got, want)
+	}
+	// A comment after a value that is already right isn't a difference.
+	commented := "[mcp_servers.t4]\ncommand = \"/opt/t4\" # mine\nargs = [\"mcp\", \"--agent\", \"codex\"] # mine\ndefault_tools_approval_mode = \"approve\"\n"
+	if out, changed := edit(t, commented); changed {
+		t.Errorf("rewrote a value that was right:\n%s", out)
+	}
+}
+
+// t4's server can also be defined inside [mcp_servers] itself; a table of join's own would then be
+// a second definition, and the file would no longer parse.
+func TestCodexEditRefusesT4InsideTheParentTable(t *testing.T) {
+	for name, text := range map[string]string{
+		"inline table": "[mcp_servers]\nt4 = { command = \"t4\", args = [\"mcp\"] }\n",
+		"dotted key":   "[mcp_servers]\nt4.command = \"t4\"\n",
+		"quoted key":   "[mcp_servers]\n\"t4\".command = 'x'\n",
+	} {
+		if out, _, err := editCodexConfig(text, "/opt/t4"); err == nil {
+			t.Errorf("%s: edited it:\n%s", name, out)
+		}
+	}
+	// Other servers in the parent table are theirs, and t4's table goes after them.
+	before := "[mcp_servers]\nother = { command = \"o\" }\n"
+	if out, changed := edit(t, before); !changed || out != before+"\n"+tomlTable {
+		t.Errorf("changed=%v:\n%s", changed, out)
+	}
+}
+
 func TestCodexEditQuotesWindowsPaths(t *testing.T) {
 	out, _, err := editCodexConfig("", `C:\Users\a b\bin\t4.exe`)
 	if err != nil {

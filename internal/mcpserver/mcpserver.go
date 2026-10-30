@@ -202,6 +202,11 @@ func (s *server) call(ctx context.Context, req proto.Request) (proto.Response, e
 	if err != nil {
 		return proto.Response{}, err
 	}
+	// The poll that turns the server off runs every few seconds; a call in between must not reach a
+	// daemon that is still up, or publish for a user who has left.
+	if !s.place.Active() {
+		return proto.Response{}, errPassive
+	}
 	req.Session = id
 	resp, err := c.Do(ctx, req)
 	if err != nil {

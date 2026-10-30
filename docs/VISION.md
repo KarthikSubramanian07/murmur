@@ -169,12 +169,16 @@ page (`t4 ui`), and the commands left are `init`, `join`, `ui`, `stop`, `version
   settings and comments stay, and a form it can't edit safely (a dotted `mcp_servers.t4.command`
   key in Codex's TOML, a `permissions` that isn't an object) is a reported problem, not a guess.
   `codex mcp add` is not used, because it rewrites the whole file. The path is absolute so the
-  server starts whatever PATH the client has, and the hook command quotes it, since hook commands
-  run through a shell. Run again, `join` changes nothing and says so; it fills in what is missing
-  and repoints an entry whose binary moved. A worktree made after joining has no hook until `t4
-  join` runs in it again. `t4 join --leave` removes the consent and the hooks and stops the daemon.
-  It leaves the server registered, since that is per user and does nothing where the user hasn't
-  joined; its output says how to remove it.
+  server starts whatever PATH the client has. The hook command is the path in double quotes with
+  forward slashes (`"C:/Users/a b/t4.exe" hook`), because Claude Code runs hook commands through a
+  shell, which would split a path with a space, eat the backslashes of a Windows one, and expand a
+  `$` or backtick in it; those are escaped. Measured to run under Claude Code 2.1.312 with a space
+  in the path, 2026-10-29. A config file that is a symbolic link (a dotfiles repository's, say) is
+  written through: the file it points to is replaced and the link stays. Run again, `join` changes
+  nothing and says so; it fills in what is missing and repoints an entry whose binary moved. A
+  worktree made after joining has no hook until `t4 join` runs in it again. `t4 join --leave`
+  removes the consent and the hooks and stops the daemon. It leaves the server registered, since
+  that is per user and does nothing where the user hasn't joined; its output says how to remove it.
 - **What it prints.** What it did, what went wrong, and "Tell your user", chosen from which agent ran
   it (see Reloading MCP servers below), so the agent can say exactly what to do next.
 - **The server stays passive where it isn't invited.** The user-scope entry starts `t4 mcp` in every
@@ -184,11 +188,18 @@ page (`t4 ui`), and the commands left are `init`, `join`, `ui`, `stop`, `version
   contacts no daemon, and answers a call that arrives anyway with why it is off. A join turns it on
   and lists the tools through `tools/list_changed`; a leave removes them. MCP instructions are fixed
   at initialize, so a server that started off never has them: the section in `AGENTS.md` and
-  `CLAUDE.md` carries that guidance. Nothing relies on the
-  server alone: it asks again before each registration with the daemon and before starting one,
-  `t4 daemon` and `t4 ui` refuse in a clone that hasn't joined (so a stale client or a script can't
-  start one), and `join --leave` forgets the consent before it stops anything. A repo without the
-  marker, or one the user hasn't joined, gets no daemon, no `refs/t4/*` and nothing published.
+  `CLAUDE.md` carries that guidance. Nothing relies on the server alone, and the checks differ by
+  what the thing is for. The server asks again before each registration with the daemon, before
+  starting one, and before forwarding a tool call, since its 2-second look can lag a leave. The
+  daemon is per clone, not per working tree, so it needs only the consent: it checks at start
+  (after its first sync, which takes a while), on every request but `stop`, again in a
+  registration after it has resolved the branch, and once a second, when it stops itself if the
+  user has left. That last check is what ends a daemon that was still starting when `join --leave`
+  ran and so had no `daemon.json` to be found by. `t4 daemon` and `t4 ui` refuse in a clone that
+  hasn't joined (so a stale client or a script can't start one). `join --leave` forgets the
+  consent before it stops anything, then waits for the daemon's lock to be free. A repo without
+  the marker, or one the user hasn't joined, gets no daemon, no `refs/t4/*` and nothing published. A clone whose user joined but whose current branch lacks the
+  marker keeps its daemon (it is the user's, for every worktree) and gets no MCP tools there.
 - **Per user, not per account.** T3 can start Claude Code with its own `CLAUDE_CONFIG_DIR` (a
   provider with a home path, as `claude_personal` on Tyler's laptop, 2026-10-29). `t4 join` writes
   to the config directory of the agent that ran it, so a user with a second account has a second

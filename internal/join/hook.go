@@ -22,10 +22,6 @@ const hookFile = ".claude/settings.local.json"
 // hookEvents are the events the hook is installed on: after a tool call and when a prompt is sent.
 var hookEvents = []string{"PostToolUse", "UserPromptSubmit"}
 
-// hookCommand is the hook's command line. Claude Code runs it through a shell, bash on Windows too,
-// so the path has forward slashes and is quoted for the spaces a home directory can have.
-func hookCommand(exe string) string { return `"` + filepath.ToSlash(exe) + `" hook` }
-
 // worktrees lists the working trees of the clone, the one at place first.
 func worktrees(ctx context.Context, p Place) []string {
 	out, err := gitx.RunIn(ctx, p.Top, "worktree", "list", "--porcelain")
@@ -66,7 +62,7 @@ func installHooks(ctx context.Context, p Place, exe string) (changed []string, e
 		return nil, err
 	}
 	for _, top := range worktrees(ctx, p) {
-		did, err := installHook(top, hookCommand(exe))
+		did, err := installHook(top, setup.HookCommand(exe))
 		if err != nil {
 			return changed, err
 		}

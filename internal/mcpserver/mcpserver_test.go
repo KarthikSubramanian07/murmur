@@ -45,9 +45,10 @@ const spawnNote = "daemon-was-spawned"
 type fakeDaemon struct {
 	live string // what the daemon holds, as a hook has set it
 
-	mu     sync.Mutex
-	hellos []proto.Hello
-	conns  []net.Conn // the hello connections, to drop
+	mu       sync.Mutex
+	hellos   []proto.Hello
+	requests []proto.Request // everything but hellos
+	conns    []net.Conn      // the hello connections, to drop
 }
 
 func (f *fakeDaemon) serve(t *testing.T) (gitDir string) {
@@ -113,9 +114,16 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 	}
 	defer conn.Close()
 	f.mu.Lock()
+	f.requests = append(f.requests, req)
 	live := f.live
 	f.mu.Unlock()
 	reply(proto.Response{OK: true, Self: "dev/" + req.Session, ClaudeSession: live})
+}
+
+func (f *fakeDaemon) requestCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.requests)
 }
 
 func (f *fakeDaemon) helloCount() int {
@@ -164,12 +172,15 @@ func TestHelloNamesTheParentProcess(t *testing.T) {
 func TestReconnectBringsTheLiveClaudeID(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff")
 	f := &fakeDaemon{}
-	gitDir := f.serve(t)
+	p := repo(t, true, f)
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c := &client.Client{GitDir: gitDir}
-	s := &server{c: c, link: &link{c: c, hello: helloFor("claude-code", "/work"), changed: make(chan struct{})}}
+	c := &client.Client{GitDir: p.GitDir}
+	s := &server{c: c, place: p, link: &link{c: c, hello: helloFor("claude-code", "/work"), changed: make(chan struct{})}}
 	go s.link.run(ctx)
 
 	if _, err := s.call(ctx, proto.Request{Op: proto.OpWho}); err != nil {
@@ -411,5 +422,51 @@ func TestLeaveBeforeTheServerNoticesStartsNoDaemon(t *testing.T) {
 	}
 	if !res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "isn't") {
 		t.Errorf("a call after leaving: %+v", res)
+	}
+}
+
+// The server looks at the files every few seconds, and until it does, its registered session is
+// still up. A tool call in that window must not reach a daemon that is still running, or it would
+// publish for a user who has left, or whose repo no longer says it uses t4 (Codex review, 2026-10-29).
+func TestCallAfterLeavingNeverReachesAStillRunningDaemon(t *testing.T) {
+	f := &fakeDaemon{}
+	p := repo(t, true, f)
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	cs, _ := open(t, p.Top, time.Hour) // never looks again
+	waitFor(t, "the session to register", func() bool { return f.helloCount() == 1 })
+	ctx := context.Background()
+	if res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "status", Arguments: map[string]any{"doing": "x"}}); err != nil || res.IsError {
+		t.Fatalf("status while joined: %v %+v", err, res)
+	}
+	before := f.requestCount()
+	if before != 1 {
+		t.Fatalf("the daemon saw %d requests for one call", before)
+	}
+
+	if _, err := p.ForgetConsent(); err != nil {
+		t.Fatal(err)
+	}
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "status", Arguments: map[string]any{"doing": "after leaving"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "isn't on") {
+		t.Errorf("a call after leaving: %+v", res)
+	}
+	if f.requestCount() != before {
+		t.Errorf("the daemon was sent %d requests after the user left", f.requestCount()-before)
+	}
+
+	// The same when the repo stops saying it uses t4, say on a checkout of an older branch.
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+		os.Remove(filepath.Join(p.Top, name))
+	}
+	if res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "who"}); err != nil || !res.IsError || f.requestCount() != before {
+		t.Errorf("a call with the marker gone: %v %+v, %d requests", err, res, f.requestCount()-before)
 	}
 }

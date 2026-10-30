@@ -129,7 +129,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		return fmt.Errorf("this clone hasn't joined %[1]s, so its daemon won't run (`%[1]s join` joins, after asking the user)", brand.Command)
 	}
 	err := daemon.Run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
-		Log: log.New(os.Stderr, "", log.LstdFlags)})
+		Consent: func() bool { return join.Joined(*gitDir) }, Log: log.New(os.Stderr, "", log.LstdFlags)})
 	if errors.Is(err, daemon.ErrRunning) {
 		return nil // another client started one first; that one serves
 	}

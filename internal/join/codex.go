@@ -28,7 +28,7 @@ func editCodexConfig(text, exe string) (out string, changed bool, err error) {
 	lines := strings.Split(text, "\n") // a CRLF file keeps its \r on each line, which isn't touched
 	start, end := -1, len(lines)
 	inString := ""
-	inTable := false
+	var table []string // the table the line is in; none before the first header
 	for i, raw := range lines {
 		line := strings.TrimRight(raw, "\r")
 		if inString != "" {
@@ -43,7 +43,7 @@ func editCodexConfig(text, exe string) (out string, changed bool, err error) {
 			}
 		}
 		if path, ok := tableHeader(line); ok {
-			inTable = true
+			table = path
 			switch {
 			case start >= 0 && end == len(lines):
 				end = i
@@ -52,10 +52,13 @@ func editCodexConfig(text, exe string) (out string, changed bool, err error) {
 			}
 			continue
 		}
-		// Before the first table header, a key is a top-level one: `mcp_servers.x.command = ...` or
-		// `mcp_servers = {...}` would define the table a second time if join added its own.
-		if key, _, ok := keyValue(line); ok && !inTable && (key == "mcp_servers" || strings.HasPrefix(key, "mcp_servers.")) {
-			return "", false, errors.New("config.toml sets mcp_servers in a form join doesn't edit (a dotted key or an inline table)")
+		// A key that defines the server, or all the servers, without a [mcp_servers.t4] header of its
+		// own: `mcp_servers.x.command = ...` or `mcp_servers = {...}` before the first header, and
+		// `t4 = {...}` or `t4.command = ...` under [mcp_servers]. Join's own table would define it twice.
+		if key, _, ok := keyValue(line); ok {
+			if (len(table) == 0 && key[0] == "mcp_servers") || (len(table) == 1 && table[0] == "mcp_servers" && key[0] == brand.MCPServer) {
+				return "", false, errors.New("config.toml sets the mcp_servers table, or the " + brand.MCPServer + " server in it, in a form join doesn't edit (a dotted key or an inline table)")
+			}
 		}
 	}
 
@@ -84,10 +87,11 @@ func editCodexConfig(text, exe string) (out string, changed bool, err error) {
 	found := map[string]bool{}
 	for i, raw := range block {
 		line := strings.TrimRight(raw, "\r")
-		key, val, ok := keyValue(line)
-		if !ok {
+		path, val, ok := keyValue(line)
+		if !ok || len(path) != 1 {
 			continue
 		}
+		key := path[0]
 		cr := raw[len(line):]
 		switch key {
 		case "command", "args":
@@ -128,65 +132,88 @@ func editCodexConfig(text, exe string) (out string, changed bool, err error) {
 	return out, out != text, nil
 }
 
-// tableHeader parses a line that is a table header, [a.b] or [[a.b]], into its key path.
+// tableHeader parses a line that is a table header, [a.b] or [[a.b]], into its key path. Only a
+// comment may follow the header.
 func tableHeader(line string) ([]string, bool) {
 	t := strings.TrimSpace(line)
 	if !strings.HasPrefix(t, "[") {
 		return nil, false
 	}
-	t = strings.TrimPrefix(t, "[")
-	t = strings.TrimPrefix(t, "[") // array of tables
-	if i := strings.Index(t, "#"); i >= 0 && !strings.ContainsAny(t[:i], `"'`) {
-		t = t[:i]
+	closing := "]"
+	if strings.HasPrefix(t, "[[") {
+		closing = "]]" // array of tables
 	}
-	t = strings.TrimSpace(t)
-	if !strings.HasSuffix(t, "]") {
+	path, rest, ok := keyPath(strings.TrimLeft(t, "[")) // past the opening brackets of either form
+	if !ok || !strings.HasPrefix(rest, closing) {
 		return nil, false
 	}
-	t = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(t, "]"), "]"))
-	if t == "" || strings.ContainsAny(t, "=,[]") {
-		return nil, false
-	}
-	var path []string
-	for len(t) > 0 {
-		t = strings.TrimSpace(t)
-		var part string
-		switch {
-		case t[0] == '"' || t[0] == '\'':
-			end := strings.IndexByte(t[1:], t[0])
-			if end < 0 {
-				return nil, false
-			}
-			part, t = t[1:1+end], t[2+end:]
-		default:
-			end := strings.IndexByte(t, '.')
-			if end < 0 {
-				end = len(t)
-			}
-			part, t = strings.TrimSpace(t[:end]), t[end:]
-		}
-		path = append(path, part)
-		t = strings.TrimSpace(t)
-		if strings.HasPrefix(t, ".") {
-			t = t[1:]
-		} else if t != "" {
-			return nil, false
-		}
-	}
-	return path, len(path) > 0
+	rest = strings.TrimSpace(strings.TrimPrefix(rest, closing))
+	return path, rest == "" || rest[0] == '#'
 }
 
-// keyValue splits a `key = value` line.
-func keyValue(line string) (key, val string, ok bool) {
-	t := strings.TrimSpace(line)
-	if t == "" || strings.HasPrefix(t, "#") {
-		return "", "", false
+// keyValue splits a `key = value` line into its key path (a.b.c is three parts) and its value.
+func keyValue(line string) (path []string, val string, ok bool) {
+	path, rest, ok := keyPath(strings.TrimSpace(line))
+	if !ok || !strings.HasPrefix(rest, "=") {
+		return nil, "", false
 	}
-	i := strings.Index(t, "=")
-	if i < 0 {
-		return "", "", false
+	return path, strings.TrimSpace(rest[1:]), true
+}
+
+// keyPath reads a dotted key (bare or quoted parts, spaces allowed around the dots) from the start of
+// t and returns it with what follows, left-trimmed.
+func keyPath(t string) (path []string, rest string, ok bool) {
+	for {
+		t = strings.TrimLeft(t, " \t")
+		var part string
+		switch {
+		case t == "":
+			return nil, "", false
+		case t[0] == '"' || t[0] == '\'':
+			end := closingQuote(t)
+			if end < 0 {
+				return nil, "", false
+			}
+			if part, ok = tomlUnquote(t[:end+1]); !ok {
+				return nil, "", false
+			}
+			t = t[end+1:]
+		default:
+			end := 0
+			for end < len(t) && (t[end] == '-' || t[end] == '_' || t[end] >= '0' && t[end] <= '9' || t[end] >= 'a' && t[end] <= 'z' || t[end] >= 'A' && t[end] <= 'Z') {
+				end++
+			}
+			if end == 0 {
+				return nil, "", false
+			}
+			part, t = t[:end], t[end:]
+		}
+		path = append(path, part)
+		t = strings.TrimLeft(t, " \t")
+		if !strings.HasPrefix(t, ".") {
+			return path, t, true
+		}
+		t = t[1:]
 	}
-	return strings.Trim(strings.TrimSpace(t[:i]), `"'`), strings.TrimSpace(t[i+1:]), true
+}
+
+// closingQuote is the index of the quote that ends the string t starts with, or -1.
+func closingQuote(t string) int {
+	if t[0] == '\'' {
+		if end := strings.IndexByte(t[1:], '\''); end >= 0 {
+			return end + 1
+		}
+		return -1
+	}
+	for j := 1; j < len(t); j++ {
+		switch t[j] {
+		case '\\':
+			j++
+		case '"':
+			return j
+		}
+	}
+	return -1
 }
 
 // singleLine reports whether a value is complete on its line.
@@ -221,8 +248,8 @@ func sameValue(key, val, exe string) bool {
 
 func stripComment(val string) string {
 	if len(val) > 0 && (val[0] == '"' || val[0] == '\'') {
-		if end := strings.IndexByte(val[1:], val[0]); end >= 0 && val[0] == '\'' {
-			return val[:end+2]
+		if end := closingQuote(val); end >= 0 {
+			return val[:end+1]
 		}
 		return val
 	}

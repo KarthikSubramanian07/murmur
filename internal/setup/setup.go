@@ -152,17 +152,31 @@ func markerFile(top, name string) (string, error) {
 	return name + ": " + verb + " a section telling agents the repo uses " + brand.Name, os.WriteFile(path, b, 0o644)
 }
 
+// HookCommand is the notice hook's command line for the binary at exe. Claude Code runs a hook's
+// command through a shell, bash on Windows too, so the path has forward slashes and sits in double
+// quotes, where only a backslash, a quote, a dollar sign and a backtick mean anything.
+func HookCommand(exe string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`, "`", "\\`").Replace(filepath.ToSlash(exe)) + `" hook`
+}
+
 // IsHookCommand reports whether a hook's command line is t4's notice hook, whether written by an
-// older init as `t4 hook` or by join with the binary's full path in quotes.
+// older init as `t4 hook` or by join (HookCommand) with the binary's full path in quotes.
 func IsHookCommand(command string) bool {
 	command = strings.TrimSpace(command)
 	exe, rest := command, ""
 	if strings.HasPrefix(command, `"`) {
-		end := strings.Index(command[1:], `"`)
-		if end < 0 {
+		var word strings.Builder
+		i := 1
+		for ; i < len(command) && command[i] != '"'; i++ {
+			if command[i] == '\\' && i+1 < len(command) && strings.IndexByte("\\\"$`", command[i+1]) >= 0 {
+				i++
+			}
+			word.WriteByte(command[i])
+		}
+		if i >= len(command) {
 			return false
 		}
-		exe, rest = command[1:1+end], command[2+end:]
+		exe, rest = word.String(), command[i+1:]
 	} else if i := strings.IndexAny(command, " \t"); i >= 0 {
 		exe, rest = command[:i], command[i:]
 	}

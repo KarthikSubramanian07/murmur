@@ -144,8 +144,12 @@ func exists(path string) bool {
 }
 
 // writeAtomic replaces path with data so a reader, or a crash, never sees half a file. The file
-// keeps the permissions it had; a new one gets perm.
+// keeps the permissions it had; a new one gets perm. A path that is a symbolic link (a dotfiles
+// repository's, say) is written through: the file it points to is replaced, and the link stays.
 func writeAtomic(path string, data []byte, perm os.FileMode) error {
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		path = target
+	}
 	if fi, err := os.Stat(path); err == nil {
 		perm = fi.Mode().Perm()
 	} else if !errors.Is(err, os.ErrNotExist) {

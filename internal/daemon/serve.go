@@ -63,6 +63,10 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 	conn.SetReadDeadline(time.Time{})
+	if req.Op != proto.OpStop && !d.consented() {
+		writeResp(conn, fail(ErrNoConsent.Error()+", or has left since"))
+		return
+	}
 	if req.Op == proto.OpHello {
 		d.hello(ctx, conn, r, req.Hello)
 		return
@@ -110,6 +114,11 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	}
 	branch := branchOf(ctx, h.Cwd)
 	worktree := worktreeOf(ctx, h.Cwd)
+	// Resolving the branch runs git, long enough for a leave to land after handleConn's check.
+	if !d.consented() {
+		writeResp(conn, fail(ErrNoConsent.Error()+", or has left since"))
+		return
+	}
 	d.mu.Lock()
 	s := d.sessions[h.ID]
 	if s != nil && s.dropped.IsZero() {

@@ -2,6 +2,7 @@ package join
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -226,6 +227,30 @@ func TestRegisterCodexKeepsTheConfig(t *testing.T) {
 	}
 }
 
+// A config file that is a symbolic link, as a dotfiles repository makes, is written through: the link
+// stays, and the file it points to gets the server (Codex review, 2026-10-29).
+func TestRegisterCodexWritesThroughASymlink(t *testing.T) {
+	sb := newSandbox(t, false)
+	target := filepath.Join(sb.root, "dotfiles", "codex.toml")
+	write(t, target, "model = \"gpt\"\n")
+	link := filepath.Join(sb.CodexHome, "config.toml")
+	if err := os.MkdirAll(sb.CodexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+	if _, _, err := sb.registerCodex(); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the link was replaced by a file (%v)", err)
+	}
+	if got := read(t, target); !strings.HasPrefix(got, "model = ") || !strings.Contains(got, "[mcp_servers.t4]") {
+		t.Errorf("the file the link points to:\n%s", got)
+	}
+}
+
 func TestRegisterCodexSkipsAMachineWithoutIt(t *testing.T) {
 	sb := newSandbox(t, false)
 	if did, fresh, err := sb.registerCodex(); err != nil || fresh || len(did) != 0 {
@@ -259,7 +284,11 @@ func clone(t *testing.T) (Place, string) {
 // Taking it out leaves the user's other settings and deletes a file that held only the hook.
 func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 	p, other := clone(t)
-	exe := `C:\Users\a b\bin\t4.exe`
+	exe := filepath.Join(t.TempDir(), "a b", "bin", "t4") // a path with a space, in this OS's own form
+	command, err := json.Marshal(setup.HookCommand(exe))
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	write(t, filepath.Join(other, ".claude", "settings.local.json"), "{\n  \"permissions\": {\"allow\": [\"Bash(ls)\"]}\n}\n")
 
@@ -269,7 +298,7 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 	}
 	for _, top := range []string{p.Top, other} {
 		got := read(t, filepath.Join(top, ".claude", "settings.local.json"))
-		if !strings.Contains(got, `"\"C:/Users/a b/bin/t4.exe\" hook"`) || !strings.Contains(got, "PostToolUse") || !strings.Contains(got, "UserPromptSubmit") {
+		if !strings.Contains(got, string(command)) || !strings.Contains(got, "a b") || !strings.Contains(got, "PostToolUse") || !strings.Contains(got, "UserPromptSubmit") {
 			t.Errorf("%s:\n%s", top, got)
 		}
 	}
@@ -291,7 +320,7 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := read(t, filepath.Join(p.Top, ".claude", "settings.local.json"))
-	if strings.Contains(got, "C:/Users") || strings.Count(got, `/new/t4`) != 2 {
+	if strings.Contains(got, "a b") || strings.Count(got, `/new/t4`) != 2 {
 		t.Errorf("after the binary moved:\n%s", got)
 	}
 

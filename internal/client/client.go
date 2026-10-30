@@ -189,6 +189,24 @@ func Stop(ctx context.Context, gitDir string) (bool, error) {
 	return true, nil
 }
 
+// WaitGone waits, up to d, until no daemon holds the clone's lock, and reports whether one did when
+// it began. A daemon still starting has no daemon.json yet, so Stop doesn't see it; it does hold the
+// lock.
+func WaitGone(ctx context.Context, gitDir string, d time.Duration) (held bool) {
+	for end := time.Now().Add(d); ctx.Err() == nil; time.Sleep(50 * time.Millisecond) {
+		l, err := proc.Lock(filepath.Join(StateDir(gitDir), "daemon.lock"))
+		if err == nil {
+			l.Close()
+			return held
+		}
+		if !errors.Is(err, proc.ErrLocked) || time.Now().After(end) {
+			return held
+		}
+		held = true
+	}
+	return held
+}
+
 // Do sends one request. If the daemon couldn't be reached, it reconnects (starting a new daemon
 // when Spawn is set) and tries once more. Once a request has been sent it is never resent: the
 // daemon may have acted on it, and a second send would happen twice.

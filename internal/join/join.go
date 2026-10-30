@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/a-Fig/t4/internal/brand"
 	"github.com/a-Fig/t4/internal/client"
@@ -178,9 +179,16 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	if err != nil {
 		problem("notice hook", err)
 	}
-	if stopped, err := client.Stop(ctx, p.GitDir); err != nil {
+	stopped, err := client.Stop(ctx, p.GitDir)
+	if err != nil {
 		problem("stopping the daemon", err)
-	} else if stopped {
+	}
+	// A daemon that is still starting has no daemon.json to stop; it sees the consent gone and exits
+	// by itself, which is waited for here so a leave doesn't return while one is about to publish.
+	if starting := client.WaitGone(ctx, p.GitDir, 20*time.Second); starting && !stopped {
+		stopped = true
+	}
+	if stopped && err == nil {
 		r.Did = append(r.Did, "Stopped this clone's daemon")
 	}
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -225,6 +226,8 @@ func TestIsHookCommand(t *testing.T) {
 		"t4 hook":                        true,
 		`"C:/Users/a b/bin/t4.exe" hook`: true,
 		`"/home/a/.local/bin/t4" hook`:   true,
+		`"/home/a/\$tools/t4" hook`:      true,
+		`"/home/a/\"q\"/t4" hook`:        true,
 		"/usr/local/bin/t4 hook":         true,
 		"t4 hook --extra":                false,
 		"t4 who":                         false,
@@ -236,5 +239,46 @@ func TestIsHookCommand(t *testing.T) {
 		if got := IsHookCommand(command); got != want {
 			t.Errorf("IsHookCommand(%q) = %v, want %v", command, got, want)
 		}
+	}
+}
+
+// A shell runs the hook command, so a path with a space, a dollar sign, a backtick or a quote in
+// it must reach the binary as written: HookCommand is run through a real shell here, and then
+// recognised again by IsHookCommand (Codex review, 2026-10-29).
+func TestHookCommandReachesTheBinaryThroughAShell(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh to run the command in")
+	}
+	names := []string{"a b", "$HOME", "x`echo wrong`", "$(echo wrong)", `back\slash`}
+	if runtime.GOOS != "windows" {
+		names = append(names, `q"uote`) // not a legal file name there
+	}
+	for _, name := range names {
+		bin := filepath.Join(t.TempDir(), name, "t4")
+		if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\necho ran\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		command := HookCommand(bin)
+		out, err := exec.Command(sh, "-c", command).CombinedOutput()
+		if err != nil || strings.TrimSpace(string(out)) != "ran" {
+			t.Errorf("%s: the shell ran something else: %q, %v\n%s", name, command, err, out)
+		}
+		if !IsHookCommand(command) {
+			t.Errorf("%s: %q isn't recognised as t4's hook", name, command)
+		}
+	}
+}
+
+// On Windows the hook's path has forward slashes, which bash reads and a backslash it would not.
+func TestHookCommandUsesForwardSlashesOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("only Windows paths have backslashes to convert")
+	}
+	if got, want := HookCommand(`C:\Users\a b\bin\t4.exe`), `"C:/Users/a b/bin/t4.exe" hook`; got != want {
+		t.Errorf("got %s, want %s", got, want)
 	}
 }
