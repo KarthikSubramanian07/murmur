@@ -33,10 +33,15 @@ const (
 	maxNameBackoff = 5 * time.Minute
 )
 
-// nameKey is what a session's name follows: the client's own session ID when it gives one, so that
-// a resume, or an MCP server restarting, is the same session; otherwise the ID t4 gave the session.
-// The kinds are kept apart so that no ID of one can equal an ID of the other.
-func nameKey(claude, id string) string {
+// nameKey is what a session's name follows: inside T3, the T3 thread, which stays the same session
+// across /clear, restarts of its MCP server and switches of Claude account (#56); else the
+// client's own session ID when it gives one, so that a resume, or an MCP server restarting, is the
+// same session; otherwise the ID t4 gave the session. The kinds are kept apart so that no ID of
+// one can equal an ID of another.
+func nameKey(t3Thread, claude, id string) string {
+	if t3Thread != "" {
+		return "t3:" + t3Thread
+	}
 	if claude != "" {
 		return "claude:" + claude
 	}

@@ -130,6 +130,45 @@ func Inbox(r proto.Response) string {
 	return b.String()
 }
 
+// Turn renders a message as the turn it becomes in the session it is for, when t4 delivers it at
+// once (docs/VISION.md, "Delivering a message as a turn"): who it is from, as t4 knows them, then
+// the message as its sender wrote it, then how to answer. What the agent reads here is all it has,
+// so the first line says it is a teammate's agent and not the user, and the last says how to reply
+// and that doing so is optional. The sender's text is not wrapped or quoted: teammates' agents are
+// trusted in t4's model, and a message that reads as a request is meant to be acted on.
+func Turn(m proto.MessageView) string {
+	who := m.From
+	if m.FromName != "" {
+		who = m.FromName
+	}
+	agent := m.FromAgent
+	if _, sess := bus.SplitAddr(m.From); agent == "" && sess == proto.CLISession {
+		agent = "the command line"
+	}
+	var about []string
+	if agent != "" {
+		about = append(about, agent)
+	}
+	if m.FromOwner != "" {
+		about = append(about, "on "+m.FromOwner+"'s machine")
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Message from %s", who)
+	if len(about) > 0 {
+		fmt.Fprintf(&b, " (%s)", strings.Join(about, ", "))
+	}
+	fmt.Fprintf(&b, " via %s", brand.Name)
+	if m.To == "*" {
+		b.WriteString(", sent to everyone")
+	}
+	fmt.Fprintf(&b, ":\n\n%s\n", m.Subject)
+	if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
+		fmt.Fprintf(&b, "\n%s\n", body)
+	}
+	fmt.Fprintf(&b, "\nReply with %s's `send` to %s if a reply is needed.\n", brand.Name, who)
+	return b.String()
+}
+
 // Notices renders the one-line notices the hook shows: sender and subject, never the body.
 func Notices(msgs []proto.MessageView) string {
 	var b strings.Builder

@@ -35,6 +35,11 @@ func TestMain(m *testing.M) {
 		}
 		return
 	}
+	// The tests run in whatever session started them, which may be one in T3 with a messaging socket:
+	// a server that took those from its environment would look its thread up in the real T3 database.
+	for _, k := range []string{"T3CODE_CLI_PATH", "T3CODE_HOME", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN"} {
+		os.Unsetenv(k)
+	}
 	os.Exit(m.Run())
 }
 
@@ -45,10 +50,15 @@ const spawnNote = "daemon-was-spawned"
 // session ID the daemon holds, and a hello's reply carries the one it was given.
 type fakeDaemon struct {
 	live string // what the daemon holds, as a hook has set it
+	// helloGate, if set, holds every hello's reply until it is closed.
+	helloGate chan struct{}
+	// routeError, if set, is the daemon's answer to a route: one that has no such request.
+	routeError string
 
 	mu       sync.Mutex
 	hellos   []proto.Hello
-	requests []proto.Request // everything but hellos
+	requests []proto.Request // everything but hellos and pings
+	routes   []proto.Route   // what OpRoute requests carried
 	conns    []net.Conn      // the hello connections, to drop
 }
 
@@ -110,21 +120,40 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 			live = req.Hello.ClaudeSession
 		}
 		f.mu.Unlock()
-		reply(proto.Response{OK: true, Self: "dev/" + req.Hello.ID, ClaudeSession: live})
+		if f.helloGate != nil {
+			<-f.helloGate
+		}
+		reply(proto.Response{OK: true, Self: "dev/" + req.Hello.ID, ClaudeSession: live, Protocol: proto.Protocol})
 		return // the connection stays open until the test drops it
 	}
 	defer conn.Close()
 	f.mu.Lock()
-	f.requests = append(f.requests, req)
+	if req.Op != proto.OpPing { // finding the daemon is the client's, and not a request of the session's
+		f.requests = append(f.requests, req)
+	}
 	live := f.live
+	refuse := req.Op == proto.OpRoute && f.routeError != ""
+	if req.Op == proto.OpRoute && req.Route != nil {
+		f.routes = append(f.routes, *req.Route)
+	}
 	f.mu.Unlock()
-	reply(proto.Response{OK: true, Self: "dev/" + req.Session, ClaudeSession: live})
+	if refuse {
+		reply(proto.Response{Error: f.routeError})
+		return
+	}
+	reply(proto.Response{OK: true, Self: "dev/" + req.Session, ClaudeSession: live, Protocol: proto.Protocol})
 }
 
 func (f *fakeDaemon) requestCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.requests)
+}
+
+func (f *fakeDaemon) routesTold() []proto.Route {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]proto.Route(nil), f.routes...)
 }
 
 func (f *fakeDaemon) helloCount() int {

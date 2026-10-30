@@ -16,12 +16,15 @@ import (
 // parent. A session that follows keeps its t4 ID and its inbox; its key, and so its name, change.
 // docs/VISION.md ("When a session stays the same session") has the reasons.
 
-// uniqueKeyLocked is key, unless another live session has it: two live sessions of one client
-// session (two MCP servers in it) would share a name, and a name is an address, so the later one
-// is a session of its own. Caller holds mu.
+// uniqueKeyLocked is key, unless another live session has it, or has the name it would bring: two
+// live sessions of one client session (two MCP servers in it) would share a name, and a name is an
+// address, so the later one is a session of its own. The name matters as well as the key because a
+// session that finds its T3 thread keeps the name under its old key too (see rekeyLocked), so the
+// client's session ID brings the same name, though the session has another key now. Caller holds mu.
 func (d *Daemon) uniqueKeyLocked(key, id string) string {
+	name := d.st.NameKeys[key]
 	for _, o := range d.sessions {
-		if o.id != id && o.key == key && o.dropped.IsZero() {
+		if o.id != id && o.dropped.IsZero() && (o.key == key || (name != "" && o.name == name)) {
 			return key + "/" + id
 		}
 	}
@@ -133,7 +136,7 @@ func (d *Daemon) hookSessionsLocked(claude string, pid int) []*session {
 func (d *Daemon) followLocked(s *session, claude string) {
 	from := s.name
 	s.claudeSession = claude
-	s.key = d.uniqueKeyLocked(nameKey(claude, s.id), s.id)
+	s.key = d.uniqueKeyLocked(nameKey(s.route.T3Thread, claude, s.id), s.id)
 	d.setNameLocked(s, d.st.NameKeys[s.key])
 	if s.name == "" {
 		d.kickNames()

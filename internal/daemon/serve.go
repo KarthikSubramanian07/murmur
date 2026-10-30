@@ -140,7 +140,13 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	}
 	// Two live sessions of one client session (two MCP servers in it) would share a name, and
 	// a name is an address. The later one is a session of its own.
-	key := d.uniqueKeyLocked(nameKey(claude, h.ID), h.ID)
+	route := h.Route
+	if s != nil && route.T3Thread == "" && claude == s.claudeSession {
+		// The same client session, back after its server restarted without finding its T3 thread
+		// this time: it is still that thread.
+		route.T3Thread = s.route.T3Thread
+	}
+	key := d.uniqueKeyLocked(nameKey(route.T3Thread, claude, h.ID), h.ID)
 	taken := false
 	if s != nil {
 		// A session in its grace: this connection takes it over, with its inbox and its unread
@@ -151,6 +157,8 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		}
 		s.agent, s.cwd, s.claudeSession, s.branch, s.reconnect = agent, h.Cwd, claude, branch, h.Reconnect
 		s.clientPID = h.ClientPID
+		s.route = route
+		d.rememberRouteLocked(s)
 		s.worktree = worktree
 		// The name is set again even when the key hasn't changed: while s was in its grace another
 		// session may have taken its key and name, and s, back, holds the name now. As any taking
@@ -163,6 +171,8 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	} else {
 		s = d.newSessionLocked(h, agent, branch, key)
 		s.worktree = worktree
+		s.route = route
+		d.rememberRouteLocked(s)
 	}
 	d.lastActive = time.Now()
 	if h.Reconnect {
@@ -173,6 +183,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	if name == "" {
 		d.kickNames()
 	}
+	d.kickPush() // a session back may have messages waiting that its route can now deliver
 
 	addr := bus.Addr(d.device, h.ID)
 	reply := proto.Response{OK: true, Self: addr, Name: name, NamePending: name == "", ClaudeSession: live}
@@ -267,7 +278,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 
 	switch req.Op {
 	case proto.OpPing:
-		return proto.Response{OK: true, Self: from}
+		return proto.Response{OK: true, Self: from, Protocol: proto.Protocol}
 
 	case proto.OpWho:
 		d.mu.Lock()
@@ -301,10 +312,34 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	case proto.OpInbox:
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		msgs := d.messageViewsLocked(d.st.Inbox[sess], true)
-		delete(d.st.Inbox, sess)
+		// A message on its way into the session as a turn is left to arrive as one.
+		var read, left []*inMsg
+		for _, m := range d.st.Inbox[sess] {
+			if m.Pushing {
+				left = append(left, m)
+			} else {
+				read = append(read, m)
+			}
+		}
+		msgs := d.messageViewsLocked(read, true)
+		if len(left) == 0 {
+			delete(d.st.Inbox, sess)
+		} else {
+			d.st.Inbox[sess] = left
+		}
 		d.saveLocked()
 		return proto.Response{OK: true, Self: from, Messages: msgs}
+
+	case proto.OpRoute:
+		if req.Route == nil {
+			return fail("route needs a route")
+		}
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if s := d.sessions[sess]; s != nil {
+			d.setRouteLocked(s, *req.Route)
+		}
+		return proto.Response{OK: true, Self: from}
 
 	case proto.OpNotices:
 		return d.notices(req)
@@ -344,6 +379,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 // process: with them, the sessions of that process follow the hook to the ID it reports (see
 // hookSessionsLocked), and a hook that matches nothing gets nothing.
 func (d *Daemon) notices(req proto.Request) proto.Response {
+	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var ids []string
@@ -365,7 +401,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			self = bus.Addr(d.device, id)
 		}
 		for _, m := range d.st.Inbox[id] {
-			if !m.Noticed {
+			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
 				m.Noticed = true
 				fresh = append(fresh, m)
 			}
@@ -483,6 +519,19 @@ func (d *Daemon) sessionInfoLocked(addr string) (name, agent, branch string) {
 	return "", "", ""
 }
 
+// ownerOfLocked is the person behind the session at addr, as its device's presence says: the git
+// user name there. "" where it isn't known. Caller holds mu.
+func (d *Daemon) ownerOfLocked(addr string) string {
+	dev, _ := bus.SplitAddr(addr)
+	if dev == d.device {
+		return d.owner
+	}
+	if p := d.peers[dev]; p != nil {
+		return p.pres.Owner
+	}
+	return ""
+}
+
 func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.MessageView {
 	views := make([]proto.MessageView, 0, len(msgs))
 	var byAddr map[string]string // the registry's names, for a sender no longer in presence
@@ -496,7 +545,7 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 			name = byAddr[e.From]
 		}
 		v := proto.MessageView{ID: e.ID, From: e.From, FromName: name, FromAgent: agent, FromBranch: branch,
-			To: e.To, Subject: e.Subject, At: e.At}
+			FromOwner: d.ownerOfLocked(e.From), To: e.To, Subject: e.Subject, At: e.At}
 		if withBody {
 			v.Body = e.Body
 		}
@@ -550,6 +599,7 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 		if time.Since(at) > d.opt.StoppedInbox {
 			delete(d.st.Inbox, h.ID)
 			delete(d.st.Commits, h.ID)
+			delete(d.st.T3Routes, h.ID)
 		} else {
 			s.since = at
 		}

@@ -51,7 +51,7 @@ func TestForwardedCatchUpIsJudgedByItsRecipient(t *testing.T) {
 	d := &Daemon{opt: Options{StoppedInbox: time.Hour}, dir: t.TempDir(), log: log.New(io.Discard, "", 0),
 		device: "here-0001", started: time.Now(), sessions: map[string]*session{},
 		st: state{Inbox: map[string][]*inMsg{}, Stopped: map[string]time.Time{"bbbbbb": time.Now().Add(-5 * time.Minute)},
-			NameKeys:    map[string]string{nameKey("x", "bbbbbb"): nameX},
+			NameKeys:    map[string]string{nameKey("", "x", "bbbbbb"): nameX},
 			NameHolders: map[string]string{nameX: "bbbbbb"}, SessionNames: map[string]string{"bbbbbb": nameX}}}
 	sent := func(subject string, ago time.Duration) bus.Event {
 		return bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa",
@@ -59,7 +59,7 @@ func TestForwardedCatchUpIsJudgedByItsRecipient(t *testing.T) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.newSessionLocked(&proto.Hello{ID: "cccccc", ClaudeSession: "x"}, "claude-code", "", nameKey("x", "cccccc"))
+	d.newSessionLocked(&proto.Hello{ID: "cccccc", ClaudeSession: "x"}, "claude-code", "", nameKey("", "x", "cccccc"))
 	if h := d.st.NameHolders[nameX]; h != "cccccc" {
 		t.Fatalf("the fresh session didn't take the name: its holder is %q", h)
 	}

@@ -86,6 +86,12 @@ type device struct {
 	// snapshot is how long the daemon lets a tool call's snapshot take; zero takes a minute, as
 	// the real 4 s is too short for git on a machine busy with other test runs.
 	snapshot time.Duration
+	// pushRetry is PushRetry, the wait between a delivery's two attempts; zero takes 200 ms.
+	pushRetry time.Duration
+	// consent and consentPoll are the daemon's options of the same names; a nil consent means the
+	// user joined, always.
+	consent     func() bool
+	consentPoll time.Duration
 	// The page for humans: Idle (zero: never exit), PageOpen, PageMessages and PageAddr, for the
 	// daemon's options of the same names; logTo, if set, takes the daemon's log.
 	idle, pageOpen time.Duration
@@ -131,6 +137,10 @@ func (d *device) start() {
 	if beat == 0 {
 		beat = 500 * time.Millisecond
 	}
+	pushRetry := d.pushRetry
+	if pushRetry == 0 {
+		pushRetry = 200 * time.Millisecond
+	}
 	idle := d.idle
 	if idle == 0 {
 		idle = -1
@@ -150,7 +160,8 @@ func (d *device) start() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
 			Heartbeat: beat, StaleAfter: d.stale, Idle: idle,
-			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry,
+			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry, PushRetry: pushRetry,
+			Consent: d.consent, ConsentPoll: d.consentPoll,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, Log: logger})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)

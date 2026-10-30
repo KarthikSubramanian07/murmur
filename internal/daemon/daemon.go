@@ -30,7 +30,7 @@ import (
 // Options configure a daemon. Zero values take the defaults in docs/VISION.md.
 type Options struct {
 	GitDir     string        // the clone's git common dir, absolute
-	Poll       time.Duration // how often to check the remote; 10 s
+	Poll       time.Duration // how often to check the remote; 3 s
 	Heartbeat  time.Duration // how often to re-push presence when nothing changed; 2 min
 	StaleAfter time.Duration // presence unchanged this long means the device is gone; 6 min
 	Idle       time.Duration // exit after this long with no sessions; 10 min. Negative: never
@@ -45,6 +45,11 @@ type Options struct {
 	// NameRetry is how long the first retry after a failed name assignment waits: 15 s. It
 	// doubles with each failure in a row.
 	NameRetry time.Duration
+	// PushRetry is how long a delivery of a message as a turn that never got started (no `t3`
+	// to run, no socket to connect to) waits before its one retry: 2 s. Any other failure may have
+	// delivered the message, so it is not repeated, and a second failure of this kind too leaves
+	// the message to the hook's notice.
+	PushRetry time.Duration
 	// PageAddr is where the page for humans is served: 127.0.0.1:0, a random port on loopback.
 	// A host other than 127.0.0.1 is refused: off loopback anyone on the network could reach the
 	// page, and on another loopback address the page's Host check would refuse every request.
@@ -68,7 +73,7 @@ type Options struct {
 
 func (o *Options) defaults() {
 	if o.Poll == 0 {
-		o.Poll = 10 * time.Second
+		o.Poll = 3 * time.Second
 	}
 	if o.Heartbeat == 0 {
 		o.Heartbeat = 2 * time.Minute
@@ -90,6 +95,9 @@ func (o *Options) defaults() {
 	}
 	if o.NameRetry == 0 {
 		o.NameRetry = 15 * time.Second
+	}
+	if o.PushRetry == 0 {
+		o.PushRetry = 2 * time.Second
 	}
 	if o.PageAddr == "" {
 		o.PageAddr = "127.0.0.1:0"
@@ -182,6 +190,11 @@ type Daemon struct {
 	// unsnapped holds a channel for each ended call whose worktree hasn't been snapshotted again
 	// yet, closed when it has; the next call's start waits for them (see toolStart).
 	unsnapped []chan struct{}
+	// pushing is the sessions a delivery goroutine is working for, and pushWarned those whose last
+	// delivery failed or that have no way to be delivered to, so that is logged once, not for every
+	// message (see deliver.go).
+	pushing    map[string]bool
+	pushWarned map[string]bool
 
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
@@ -193,6 +206,8 @@ type Daemon struct {
 	settings pageSettings
 
 	kick     chan struct{}
+	pushKick chan struct{} // wakes pushLoop, which delivers messages into sessions as turns
+	pushSem  chan struct{} // bounds the deliveries running at once
 	nameKick chan struct{} // wakes nameLoop, the only user of nameSrc
 	nameSrc  io.Reader
 	quit     chan struct{}
@@ -227,6 +242,10 @@ type session struct {
 	// It is kept in memory and goes out with the next presence write, never as a write of its own.
 	// Zero until its first.
 	lastActive time.Time
+	// route is how a message gets into the session as a turn (see deliver.go). It is local, like
+	// claudeSession: the token in it opens the session's messaging socket, so it is never logged
+	// or put on the page or the bus.
+	route proto.Route
 }
 
 // syncMode says what a sync does with events this daemon hasn't processed.
@@ -272,6 +291,12 @@ type inMsg struct {
 	Event   bus.Event `json:"event"`
 	Arrived time.Time `json:"arrived"`
 	Noticed bool      `json:"noticed"`
+	// Pushing says the message is being delivered into its session as a turn, so the hook's notice
+	// and inbox leave it alone: it either arrives as the turn, and is gone from the inbox, or the
+	// delivery fails and it is theirs again. PushFailed says that delivery failed, or the message
+	// was too old to wake a session with (see pushMaxAge). Neither is kept over a restart.
+	Pushing    bool `json:"-"`
+	PushFailed bool `json:"-"`
 }
 
 // state is what survives a restart, in state.json.
@@ -312,6 +337,20 @@ type state struct {
 	// Commits is the commits credited to each session on this device (see credit), oldest first, by
 	// the session's ID. They are kept as long as the session's inbox is, and never leave the device.
 	Commits map[string][]commitRec `json:"commits,omitempty"`
+
+	// T3Routes is the T3 thread each session on this device is, with T3's command line, for the
+	// sessions that are in T3: a thread outlives its MCP server, which T3 stops when the thread has
+	// been idle for 30 minutes, and a message is still delivered to the thread, which wakes it.
+	// Local only, like NameKeys. It is kept as long as the session's inbox is.
+	T3Routes map[string]t3Route `json:"t3Routes,omitempty"`
+}
+
+// t3Route is where a message for a session in T3 goes: T3's command line, its data directory if
+// the session had one set, and the thread.
+type t3Route struct {
+	CLI    string `json:"cli"`
+	Home   string `json:"home,omitempty"`
+	Thread string `json:"thread"`
 }
 
 // Run runs a daemon until ctx is done, it is told to stop, or it has been idle too long.
@@ -404,6 +443,11 @@ func Run(ctx context.Context, opt Options) error {
 		defer d.bg.Done()
 		d.nameLoop(ctx)
 	}()
+	d.bg.Add(1)
+	go func() {
+		defer d.bg.Done()
+		d.pushLoop(ctx)
+	}()
 	if opt.Idle > 0 {
 		go d.idleLoop(ctx)
 	}
@@ -434,6 +478,8 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
+		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes),
+		pushing: map[string]bool{}, pushWarned: map[string]bool{},
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
 	}
 	device, err := loadDevice(dir)
@@ -624,7 +670,8 @@ func (d *Daemon) statePath() string { return filepath.Join(d.dir, "state.json") 
 func (d *Daemon) loadState() error {
 	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},
 		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
-		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{}}
+		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
+		T3Routes: map[string]t3Route{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -662,6 +709,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Commits == nil {
 		d.st.Commits = map[string][]commitRec{}
+	}
+	if d.st.T3Routes == nil {
+		d.st.T3Routes = map[string]t3Route{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from t4 itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.
