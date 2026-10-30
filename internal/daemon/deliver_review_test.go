@@ -26,11 +26,11 @@ func TestMessagesKeptOverARestartAreDeliveredWhenTheDaemonIsBack(t *testing.T) {
 	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.seesSession(bob) })
 
 	a.send("aaaaaa", bob, "while T3 was away", "wake up")
-	eventually(t, "both attempts to fail", func() bool { return len(calls()) == 2 })
+	eventually(t, "the attempt to fail", func() bool { return len(calls()) == 1 })
 
 	t.Setenv(fakeT3FailEnv, "") // T3 is back, and so is the daemon
 	b.restart()
-	eventually(t, "the delivery after the restart", func() bool { return len(calls()) == 3 })
+	eventually(t, "the delivery after the restart", func() bool { return len(calls()) == 2 })
 }
 
 // The hook doesn't tell a session of the messages queued behind the one being delivered: they are
@@ -146,28 +146,35 @@ func TestReplacementOfAThreadTakesWhatTheOldSessionHadUnread(t *testing.T) {
 
 // A message that was on its way in when the new session of a thread took over keeps its place:
 // what came after it waits until it has been delivered, tried again or not, so the turns arrive in
-// the order the messages did. The stand-in t3 fails, so that the first message waits for its retry.
+// the order the messages did. The first message waits for its retry because the first attempt could
+// not start `t3`, which is not there yet.
 func TestReplacementDeliversInOrderWhatWasOnItsWay(t *testing.T) {
 	remote := newRemote(t)
-	exe, calls := useFakeT3(t)
-	t.Setenv(fakeT3FailEnv, "1")
+	exe, install, calls := lateT3(t)
+	var out syncBuf
 	a := newDevice(t, remote)
-	b := newDeviceWith(t, remote, func(d *device) { d.grace, d.keep, d.pushRetry = 20*time.Second, time.Hour, 3*time.Second })
+	b := newDeviceWith(t, remote, func(d *device) {
+		d.grace, d.keep, d.pushRetry, d.logTo = 20*time.Second, time.Hour, 3*time.Second, &out
+	})
 	alice, _ := a.session("aaaaaa", "")
 	route := proto.Route{T3CLI: exe, T3Thread: "thread-bob"}
 	old, conn := b.sessionRoute("bbbbbb", "claude-1", route)
 	eventually(t, "presence", func() bool { return a.seesSession(old) && b.seesSession(alice) })
 
 	a.send("aaaaaa", old, "first", "one")
-	eventually(t, "the first delivery to start", func() bool { return len(calls()) == 1 })
+	eventually(t, "the first delivery to fail before it started", func() bool {
+		return strings.Contains(out.String(), "nothing was sent")
+	})
+	install() // the retry, 3 s on, finds it
 	a.send("aaaaaa", old, "second", "two")
 	eventually(t, "the second message to reach b", func() bool { return logHas(b, "second") })
 	conn.Close()                       // dropped, in its grace, with the first on its way, waiting for its retry
 	time.Sleep(500 * time.Millisecond) // the daemon has seen it go
 	b.sessionRoute("cccccc", "claude-2", route)
 
-	eventually(t, "both messages to have been tried twice", func() bool { return len(calls()) >= 4 })
-	for i, want := range []string{"first", "first", "second", "second"} {
+	eventually(t, "both messages to have been delivered", func() bool { return len(calls()) >= 2 })
+	holds(t, "each delivered once", 2*time.Second, func() bool { return len(calls()) == 2 })
+	for i, want := range []string{"first", "second"} {
 		if got := calls()[i].Stdin; !strings.Contains(got, want) {
 			t.Errorf("call %d carried %q, want the message %q", i, got, want)
 		}

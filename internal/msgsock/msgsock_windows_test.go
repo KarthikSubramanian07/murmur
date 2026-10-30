@@ -3,6 +3,7 @@ package msgsock
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -43,5 +44,8 @@ func TestSendToAMissingPipeHidesTheName(t *testing.T) {
 		if strings.Contains(err.Error(), secret) {
 			t.Errorf("the error gives away %q: %v", secret, err)
 		}
+	}
+	if !errors.Is(err, ErrNotConnected) {
+		t.Errorf("the error doesn't say nothing was sent: %v", err)
 	}
 }

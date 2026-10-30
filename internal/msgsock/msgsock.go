@@ -18,6 +18,12 @@ import (
 	"time"
 )
 
+// ErrNotConnected is what Send's error wraps when it could not connect to the socket, so that
+// nothing was written: the one failure that is safe to try again. A failure after the connection,
+// a write that errors, may have delivered some or all of the lines, and the socket answers nothing
+// that would say which.
+var ErrNotConnected = errors.New("couldn't connect")
+
 // MaxLine is the longest line Send writes. The sender's text is cut well below it (see view.Turn).
 const MaxLine = 1 << 20
 
@@ -56,7 +62,7 @@ func Send(ctx context.Context, path, token, text string) error {
 	defer cancel()
 	conn, err := dial(ctx, path)
 	if err != nil {
-		return clean(err, path, token)
+		return fmt.Errorf("%w: %v", ErrNotConnected, clean(err, path, token))
 	}
 	defer conn.Close()
 	if dl, ok := ctx.Deadline(); ok {

@@ -220,8 +220,9 @@ func TestWithNoWayInMessagesStayNotices(t *testing.T) {
 	}
 }
 
-// A failed delivery is tried once more, then left to the hook's notice, which still shows the
-// message, and the log says so once per session however many messages fail.
+// A failed delivery is left to the hook's notice, which still shows the message, and the log says so
+// once per session however many messages fail. It is not tried again: the failure may have come
+// after T3 took the message (see deliver_repeat_test.go).
 func TestFailedDeliveryFallsBackToTheNotice(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
@@ -233,7 +234,7 @@ func TestFailedDeliveryFallsBackToTheNotice(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	a.send("aaaaaa", bob, "first", "body one")
-	eventually(t, "two attempts", func() bool { return len(calls()) >= 2 })
+	eventually(t, "the attempt", func() bool { return len(calls()) >= 1 })
 	var notices []string
 	eventually(t, "the notice", func() bool {
 		notices = append(notices, b.hook("claude-bob", 0)...)
@@ -243,12 +244,12 @@ func TestFailedDeliveryFallsBackToTheNotice(t *testing.T) {
 		t.Fatalf("notices: %q", notices)
 	}
 	a.send("aaaaaa", bob, "second", "body two")
-	eventually(t, "two attempts more", func() bool { return len(calls()) >= 4 })
+	eventually(t, "an attempt more", func() bool { return len(calls()) >= 2 })
 	eventually(t, "the second notice", func() bool {
 		n := b.hook("claude-bob", 0)
 		return len(n) > 0 && n[0] == "second"
 	})
-	holds(t, "two attempts for each message", 800*time.Millisecond, func() bool { return len(calls()) == 4 })
+	holds(t, "one attempt for each message", 800*time.Millisecond, func() bool { return len(calls()) == 2 })
 
 	if n := strings.Count(out.String(), "as a turn through T3 failed"); n != 1 {
 		t.Errorf("the log says it %d times, want once:\n%s", n, out.String())

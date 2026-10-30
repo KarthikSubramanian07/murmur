@@ -46,11 +46,12 @@ func TestNoTurnIsDeliveredForAUserWhoHasLeft(t *testing.T) {
 	}
 }
 
-// A delivery that failed and waits to try again doesn't try again for a user who left in between.
+// A delivery that failed before anything started, and waits to try again, doesn't try again for a
+// user who left in between. Without the guard the second attempt would fail to start too, and be
+// logged as a failure; with it, the attempt isn't made.
 func TestRetryOfADeliveryStopsWhenTheUserLeaves(t *testing.T) {
 	remote := newRemote(t)
-	exe, calls := useFakeT3(t)
-	t.Setenv(fakeT3FailEnv, "1")
+	exe, _, calls := lateT3(t) // never installed: every attempt fails to start
 	var joined atomic.Bool
 	joined.Store(true)
 	var out syncBuf
@@ -64,10 +65,10 @@ func TestRetryOfADeliveryStopsWhenTheUserLeaves(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	a.send("aaaaaa", bob, "first", "")
-	eventually(t, "the first attempt", func() bool { return len(calls()) == 1 })
+	eventually(t, "the first attempt to fail", func() bool { return strings.Contains(out.String(), "nothing was sent") })
 	joined.Store(false)
-	holds(t, "no second attempt", 3*time.Second, func() bool { return len(calls()) == 1 })
-	if strings.Contains(out.String(), "as a turn through T3 failed") {
-		t.Errorf("an attempt not made for want of consent was logged as a failure:\n%s", out.String())
+	holds(t, "no second attempt", 3*time.Second, func() bool { return !strings.Contains(out.String(), "as a turn through T3 failed") })
+	if n := len(calls()); n != 0 {
+		t.Errorf("the stand-in ran %d times", n)
 	}
 }

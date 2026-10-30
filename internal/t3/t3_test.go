@@ -153,6 +153,30 @@ func TestSendNeedsACommandAndAThread(t *testing.T) {
 	}
 }
 
+// Whether the command started is how a caller knows a second call is safe: `t3 thread send` takes no
+// key that would make a repeat harmless, so after any failure past the start the message may be in
+// the thread already.
+func TestSendSaysWhetherTheCommandStarted(t *testing.T) {
+	err := Send(context.Background(), filepath.Join(t.TempDir(), "no-such-t3"), "", "thread", "x")
+	if !errors.Is(err, ErrNotStarted) {
+		t.Errorf("a command that isn't there: %v", err)
+	}
+	for _, mode := range []string{"fail", "failsilently"} {
+		exe, calls := fake(t, mode)
+		err := Send(context.Background(), exe, "", "thread", "x")
+		if err == nil || errors.Is(err, ErrNotStarted) || len(calls()) != 1 {
+			t.Errorf("%s: a command that ran and failed (%d calls): %v", mode, len(calls()), err)
+		}
+	}
+	// One that was stopped on the way, as by a timeout, may have got the message in before it was.
+	exe, _ := fake(t, "hang")
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if err := Send(ctx, exe, "", "thread", "x"); err == nil || errors.Is(err, ErrNotStarted) {
+		t.Errorf("a command stopped on the way: %v", err)
+	}
+}
+
 // A cancelled context stops a send that hangs, and the error says it was cancelled.
 func TestSendStopsWhenCancelled(t *testing.T) {
 	exe, _ := fake(t, "hang")

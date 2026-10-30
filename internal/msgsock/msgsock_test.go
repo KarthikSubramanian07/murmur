@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -135,6 +136,10 @@ func TestSendFailureHidesTheAddressAndTheToken(t *testing.T) {
 		if strings.Contains(err.Error(), secret) {
 			t.Errorf("the error gives away %q: %v", secret, err)
 		}
+	}
+	// Nothing was written, so a caller may try again; it can tell from the error.
+	if !errors.Is(err, ErrNotConnected) {
+		t.Errorf("the error doesn't say nothing was sent: %v", err)
 	}
 }
 

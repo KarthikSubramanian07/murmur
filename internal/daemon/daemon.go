@@ -45,8 +45,10 @@ type Options struct {
 	// NameRetry is how long the first retry after a failed name assignment waits: 15 s. It
 	// doubles with each failure in a row.
 	NameRetry time.Duration
-	// PushRetry is how long a failed delivery of a message as a turn waits before its one retry:
-	// 2 s. A second failure leaves the message to the hook's notice.
+	// PushRetry is how long a delivery of a message as a turn that never got started (no `t3`
+	// to run, no socket to connect to) waits before its one retry: 2 s. Any other failure may have
+	// delivered the message, so it is not repeated, and a second failure of this kind too leaves
+	// the message to the hook's notice.
 	PushRetry time.Duration
 	// PageAddr is where the page for humans is served: 127.0.0.1:0, a random port on loopback.
 	// A host other than 127.0.0.1 is refused: off loopback anyone on the network could reach the

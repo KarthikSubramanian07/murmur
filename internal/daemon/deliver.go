@@ -259,11 +259,17 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 	return &pushJob{id: id, addr: bus.Addr(d.device, id), msg: m, via: via, route: route, text: view.Turn(views[0])}
 }
 
-// deliver puts the message into the session, once and, if that fails, once more after PushRetry.
+// deliver puts the message into the session, once. It is tried a second time, after PushRetry, only
+// if the first attempt never reached the way in (notReached): `t3 thread send` takes no key that
+// would make a repeat harmless, and the socket answers nothing, so a call that failed after it
+// started may have delivered the message, and a second one would make a second turn of it. A message
+// whose delivery failed that way is left to the hook's notice, which the agent still gets.
 func (d *Daemon) deliver(ctx context.Context, j *pushJob) error {
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
 		if attempt > 0 {
+			d.log.Printf("session %s: nothing was sent to deliver a message through %s (%v); trying once more in %s",
+				j.addr, j.via, err, d.opt.PushRetry)
 			select {
 			case <-time.After(d.opt.PushRetry):
 			case <-ctx.Done():
@@ -277,11 +283,17 @@ func (d *Daemon) deliver(ctx context.Context, j *pushJob) error {
 		}
 		err = d.sendTurn(ctx, j)
 		<-d.pushSem
-		if err == nil || errors.Is(err, ErrNoConsent) {
+		if err == nil || errors.Is(err, ErrNoConsent) || !notReached(err) {
 			return err
 		}
 	}
 	return err
+}
+
+// notReached says an attempt failed before it could have put the message anywhere: the command
+// didn't start, or the socket couldn't be connected to.
+func notReached(err error) bool {
+	return errors.Is(err, t3.ErrNotStarted) || errors.Is(err, msgsock.ErrNotConnected)
 }
 
 // sendTurn makes one attempt, by the route's way in, unless the user has left. No lock is held: it
