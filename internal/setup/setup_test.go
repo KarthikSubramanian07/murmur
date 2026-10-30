@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/a-Fig/t4/internal/brand"
 )
 
 // repo makes a git repository with the given files, and returns its root.
@@ -60,6 +62,11 @@ func initRepo(t *testing.T, dir string) []string {
 // init writes the marker into both files, creating the ones that are missing, and says the repo
 // uses t4 so an agent there knows to ask its user about joining.
 func TestInitWritesTheMarkerIntoBothFiles(t *testing.T) {
+	// The section is a few lines that point to the pages with the detail, not the detail (Tyler,
+	// 2026-10-29: 5 or 6 lines).
+	if n := strings.Count(strings.TrimSpace(section), "\n") + 1; n > 6 {
+		t.Errorf("the section is %d lines, want 6 at most:\n%s", n, section)
+	}
 	dir := repo(t, map[string]string{"AGENTS.md": "# Notes\nkeep this\n"})
 	if changed := initRepo(t, dir); len(changed) != 2 {
 		t.Fatalf("changed %q, want AGENTS.md and CLAUDE.md", changed)
@@ -71,7 +78,7 @@ func TestInitWritesTheMarkerIntoBothFiles(t *testing.T) {
 	if claude != section {
 		t.Errorf("a CLAUDE.md that didn't exist is just the section:\n%s", claude)
 	}
-	for _, want := range []string{"Ask your user", "t4 join", "install.sh", "install.ps1"} {
+	for _, want := range []string{"ask your user first", brand.JoinDoc, brand.UseDoc} {
 		if !strings.Contains(agents, want) {
 			t.Errorf("the section doesn't say %q:\n%s", want, agents)
 		}
@@ -81,6 +88,30 @@ func TestInitWritesTheMarkerIntoBothFiles(t *testing.T) {
 	}
 	if changed := initRepo(t, dir); len(changed) != 0 {
 		t.Errorf("a second init changed %q", changed)
+	}
+}
+
+// The section sends agents to two pages by address. A page that isn't where the address says, or
+// that has lost what the section promises of it, would leave an agent holding a link to nothing.
+func TestTheAgentPagesExistAndSayWhatTheSectionPromises(t *testing.T) {
+	page := func(url string) string {
+		rel := url[strings.Index(url, "/main/")+len("/main/"):]
+		b, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("the section links to %s, and the repo has no such file: %v", url, err)
+		}
+		return string(b)
+	}
+	join, use := page(brand.JoinDoc), page(brand.UseDoc)
+	for _, want := range []string{"Ask your user", brand.InstallSh, brand.InstallPs1, "t4 version", "t4 join", "t4 join --leave", brand.UseDoc} {
+		if !strings.Contains(join, want) {
+			t.Errorf("the page on joining doesn't say %q", want)
+		}
+	}
+	for _, want := range []string{"`who`", "`lookup`", "`status`", "`send`", "`inbox`", "Message from", "via t4", brand.JoinDoc} {
+		if !strings.Contains(use, want) {
+			t.Errorf("the page on using t4 doesn't say %q", want)
+		}
 	}
 }
 

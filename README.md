@@ -55,10 +55,13 @@ go build -o ~/bin/t4 ./cmd/t4      # anywhere on PATH; t4.exe on Windows
 ```
 
 Once per project repo, one person runs `t4 init` in it and commits what it writes: a section in
-`AGENTS.md` and in `CLAUDE.md` saying the repo uses t4. Committing installs nothing for anyone.
+`AGENTS.md` and in `CLAUDE.md` saying the repo uses t4, in six lines that link to
+[`docs/agents/join.md`](docs/agents/join.md) and [`docs/agents/use.md`](docs/agents/use.md).
+Committing installs nothing for anyone.
 
-A teammate's agent that reads that section asks its user whether to join, and says what joining
-does. If the user says yes, the agent does the rest itself: it installs t4 with a one-line command,
+A teammate's agent that reads that section follows `join.md`: it asks its user whether to join, and
+says what joining does. If the user says yes, the agent does the rest itself: it installs t4 with
+a one-line command,
 runs `t4 join`, and tells the user whether to start a new session to get the tools (Claude Code
 and Codex each differ; `t4 join` prints which). If the user says no, nothing happens. Agents then
 use the `who`, `lookup`, `status`, `send` and `inbox` tools.

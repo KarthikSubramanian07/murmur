@@ -148,9 +148,15 @@ page (`t4 ui`), and the commands left are `init`, `join`, `ui`, `stop`, `version
 
 - **The marker.** `t4 init` writes a section between `<!-- t4:start -->` and `<!-- t4:end -->` into
   both files, creates either if it is missing, and rewrites the section in place on a rerun. The
-  section says the repo uses t4, how to use its tools, and what to do without them: ask, install
-  (the one-line command in `brand`, for macOS and Linux or for Windows PowerShell), `t4 join`, then
-  tell the user what it printed. `init` writes no other file. An older `init` had put an `.mcp.json`
+  section is six lines, since every agent that opens the repo reads it whole (Tyler, 2026-10-29,
+  after a first version of about twenty): it says the repo uses t4 and links two pages in
+  `docs/agents/`, by raw GitHub address. `join.md` is for an agent without the tools: ask the user,
+  say what joining does, install t4 (the one-line command for macOS and Linux or for Windows
+  PowerShell), run `t4 join`, tell the user what it printed. `use.md` is for an agent with them:
+  keep `status` set, check `who` before sizeable work, answer a message with `send`, and `inbox`
+  for history and as the fallback. The addresses work without login only once the repo is public;
+  until then an agent with GitHub access reads the files in the repo. A test holds the addresses to
+  files that exist. `init` writes no other file. An older `init` had put an `.mcp.json`
   entry and a hook in `.claude/settings.json`; `init` removes only t4's own entries from those,
   deletes a file that is left empty, and says so. Committing installs nothing on a teammate's machine.
 - **What `t4 join` writes.** It refuses in a repo without the marker. Everything it writes is
@@ -189,8 +195,8 @@ page (`t4 ui`), and the commands left are `init`, `join`, `ui`, `stop`, `version
   files every 2 seconds. Off, it advertises a tools capability with no tools and no instructions,
   contacts no daemon, and answers a call that arrives anyway with why it is off. A join turns it on
   and lists the tools through `tools/list_changed`; a leave removes them. MCP instructions are fixed
-  at initialize, so a server that started off never has them: the section in `AGENTS.md` and
-  `CLAUDE.md` carries that guidance. Nothing relies on the server alone, and the checks differ by
+  at initialize, so a server that started off never has them: the pages the section in `AGENTS.md`
+  and `CLAUDE.md` links to carry that guidance. Nothing relies on the server alone, and the checks differ by
   what the thing is for. The server asks again before each registration with the daemon, before
   starting one, and before forwarding a tool call, since its 2-second look can lag a leave. The
   daemon is per clone, not per working tree, so it needs only the consent: it checks at start

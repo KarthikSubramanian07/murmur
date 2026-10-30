@@ -56,8 +56,11 @@ func TestInitJoinAndLeave(t *testing.T) {
 
 	b.mustRun(b.clone, "init")
 	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
-		if got := readFile(t, filepath.Join(b.clone, name)); !strings.Contains(got, "<!-- t4:start -->") || !strings.Contains(got, "t4 join") {
-			t.Errorf("%s after init:\n%s", name, got)
+		got := readFile(t, filepath.Join(b.clone, name))
+		for _, want := range []string{"<!-- t4:start -->", "ask your user first", "docs/agents/join.md", "docs/agents/use.md", "<!-- t4:end -->"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s after init doesn't say %q:\n%s", name, want, got)
+			}
 		}
 	}
 	for _, name := range []string{".mcp.json", ".claude", "t4"} {
