@@ -204,16 +204,17 @@ func TestCodexThreadIDInAToolCallFindsTheThread(t *testing.T) {
 	}
 }
 
-// Outside T3, and where T3's database has nothing, the server does what it did before: it
-// registers, it tells the daemon nothing.
+// Where T3's database has nothing, and outside T3, the server tells the daemon nothing about a T3
+// thread. Outside T3 it does tell the daemon the client's own ID for the conversation (Codex's
+// thread ID), which is how the daemon finds the conversation's name (#66).
 func TestNoThreadMeansNoRoute(t *testing.T) {
 	fastSeek(t)
 	t.Run("outside T3", func(t *testing.T) {
 		f := &fakeDaemon{}
 		s := started(t, f, nil, map[string]string{"CLAUDE_CODE_SESSION_ID": "claude-session-1", "T3CODE_CLI_PATH": ""})
 		s.noteMeta(context.Background(), metaCall("x"))
-		time.Sleep(300 * time.Millisecond)
-		if rs := f.routesTold(); len(rs) != 0 || f.lastHello().T3Thread != "" {
+		eventually(t, "the daemon to be told the thread ID", func() bool { return len(f.routesTold()) > 0 })
+		if rs := f.routesTold(); len(rs) != 1 || rs[0] != (proto.Route{Native: "x"}) || f.lastHello().T3Thread != "" {
 			t.Errorf("told %+v, hello %+v", rs, f.lastHello().Route)
 		}
 	})

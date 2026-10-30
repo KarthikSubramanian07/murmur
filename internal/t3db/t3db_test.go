@@ -306,3 +306,85 @@ func TestThreadOfOpensOddPaths(t *testing.T) {
 		}
 	}
 }
+
+const threadsSchema = `CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY, title TEXT, payload_json TEXT)`
+
+func titleFixture(t *testing.T, stmts ...string) string {
+	t.Helper()
+	home := t.TempDir()
+	db := open(t, t3.StateDB(home))
+	defer db.Close()
+	for _, s := range append([]string{threadsSchema}, stmts...) {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return home
+}
+
+func TestTitleOfReadsTheThreadsTitle(t *testing.T) {
+	home := titleFixture(t,
+		`INSERT INTO orchestration_v2_projection_threads VALUES ('thread-a', 'Offer Help to T4 Session', '{"title":"Offer Help to T4 Session"}')`,
+		`INSERT INTO orchestration_v2_projection_threads VALUES ('thread-untitled', NULL, '{}')`)
+	ctx := context.Background()
+	if got, err := TitleOf(ctx, "", home, "thread-a"); err != nil || got != "Offer Help to T4 Session" {
+		t.Errorf("got %q, %v", got, err)
+	}
+	if got, err := TitleOf(ctx, "", home, "thread-untitled"); err != nil || got != "" {
+		t.Errorf("a thread with no title: %q, %v", got, err)
+	}
+	if got, err := TitleOf(ctx, "", home, "thread-none"); !errors.Is(err, ErrNotFound) || got != "" {
+		t.Errorf("a thread with no row: %q, %v", got, err)
+	}
+	if _, err := TitleOf(ctx, "", home, ""); err == nil {
+		t.Errorf("no thread gave no error")
+	}
+}
+
+func TestTitleOfFailsSoftly(t *testing.T) {
+	cases := map[string]string{
+		"no data directory": filepath.Join(t.TempDir(), "nothing"),
+		"another schema": func() string {
+			home := t.TempDir()
+			db := open(t, t3.StateDB(home))
+			defer db.Close()
+			if _, err := db.Exec(`CREATE TABLE orchestration_v2_projection_threads (id TEXT, name TEXT)`); err != nil {
+				t.Fatal(err)
+			}
+			return home
+		}(),
+		"no such table": func() string {
+			home := t.TempDir()
+			db := open(t, t3.StateDB(home))
+			defer db.Close()
+			if _, err := db.Exec(`CREATE TABLE unrelated (x)`); err != nil {
+				t.Fatal(err)
+			}
+			return home
+		}(),
+	}
+	for name, home := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := TitleOf(context.Background(), "", home, "thread-a")
+			if err == nil || errors.Is(err, ErrNotFound) || got != "" {
+				t.Errorf("TitleOf = %q, %v; want an error that is not ErrNotFound", got, err)
+			}
+		})
+	}
+}
+
+func TestTitleOfGivesUpOnALockedDatabase(t *testing.T) {
+	defer func(b, tot time.Duration) { Busy, Total = b, tot }(Busy, Total)
+	Busy, Total = 150*time.Millisecond, 2*time.Second
+	home := titleFixture(t, `INSERT INTO orchestration_v2_projection_threads VALUES ('thread-a', 'Titled', '{}')`)
+	db := open(t, t3.StateDB(home))
+	defer db.Close()
+	if _, err := db.Exec(`BEGIN EXCLUSIVE`); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	got, err := TitleOf(context.Background(), "", home, "thread-a")
+	if err == nil || got != "" || time.Since(start) > 3*time.Second {
+		t.Errorf("TitleOf = %q, %v after %s", got, err, time.Since(start))
+	}
+}

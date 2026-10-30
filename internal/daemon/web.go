@@ -102,7 +102,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 		addr := bus.Addr(d.device, ss.id)
 		self.Sessions = append(self.Sessions, web.Session{
 			Name: nameOr(ss.name, addr), Addr: addr, Agent: ss.agent, Branch: ss.branch,
-			Committed: d.committedLocked(ss.id), Doing: ss.doing, Worktree: ss.worktree, Started: ss.started,
+			Committed: d.committedLocked(ss.id), Doing: ss.shownDoing(), Worktree: ss.worktree, Started: ss.started,
 			LastActive: ss.lastActive})
 	}
 	st := web.State{Device: d.device, Devices: []web.Device{self}}

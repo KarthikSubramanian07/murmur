@@ -17,10 +17,17 @@ mcp__t4__who and so on; Codex lists them under the server t4.
 a task and update it when you switch. Say what you are working on in words someone else could match
 against their own work: "moving auth middleware to src/auth/ (touches the router)", not "working".
 
+Until you set one, `who` shows the title of your conversation in its place (your T3 thread's title,
+Codex's name for the thread, or the title Claude Code gave the session; none if there is none).
+That title is read from your client and shown to every teammate in the repo, so a status is also how
+you choose what they see: setting one replaces the title, and setting an empty one brings it back.
+
 ## Check who before sizeable work
 
-`who` lists every device and session in this repo: its name (like quiet-otter), agent, branch and
-status line, and which one is you. Before something sizeable, such as a refactor, a rename across
+`who` lists the devices and sessions in this repo, most recently active first, up to 20: each
+session's name (like quiet-otter), agent, branch, when it was last active ("active 2m ago") and
+status line, and which one is you. A device that has gone quiet is one line, and "and N more" says
+how many sessions the 20 left out. Before something sizeable, such as a refactor, a rename across
 files, a dependency bump or a migration, look for an agent already on it or in the same files. If
 there is one, message it before you start, so that neither of you does the work twice or breaks
 the other's.

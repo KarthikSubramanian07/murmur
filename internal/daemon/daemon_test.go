@@ -91,6 +91,8 @@ type device struct {
 	// quietPoll is QuietPoll, the poll while no session is live; zero takes poll, so that a device with
 	// no session yet looks at the remote as fast as one with.
 	quietPoll time.Duration
+	// titleEvery is TitleEvery, how often titles are read; zero takes 150 ms.
+	titleEvery time.Duration
 	// consent and consentPoll are the daemon's options of the same names; a nil consent means the
 	// user joined, always.
 	consent     func() bool
@@ -148,6 +150,10 @@ func (d *device) start() {
 	if quietPoll == 0 {
 		quietPoll = d.poll
 	}
+	titleEvery := d.titleEvery
+	if titleEvery == 0 {
+		titleEvery = 150 * time.Millisecond
+	}
 	idle := d.idle
 	if idle == 0 {
 		idle = -1
@@ -169,7 +175,7 @@ func (d *device) start() {
 			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll,
 			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry, PushRetry: pushRetry,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
-			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, Log: logger})
+			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, Log: logger})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)
 		}

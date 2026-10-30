@@ -4,6 +4,7 @@ package view
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,7 +35,56 @@ func note(b *strings.Builder, r proto.Response) {
 	}
 }
 
-// Who renders the team's devices and sessions.
+// WhoLimit is the most sessions `who` lists. A repo with many agents on would otherwise answer
+// with pages that every agent that asks has to read; the rest are one `lookup` away.
+const WhoLimit = 20
+
+// activeAt is when a session was last active, else when it started: what `who` orders by.
+func activeAt(s proto.SessionView) time.Time {
+	if !s.LastActive.IsZero() {
+		return s.LastActive
+	}
+	return s.Started
+}
+
+// shown picks the sessions `who` lists: the caller's own, then the most recently active, WhoLimit
+// of them in all. Sessions of a stale device are not counted, nor listed: the device is one line.
+// The result says, for each device and session, whether it is listed.
+func shown(devices []proto.Device) [][]bool {
+	type ref struct{ dev, sess int }
+	out := make([][]bool, len(devices))
+	var rest []ref
+	listed := 0
+	for i, d := range devices {
+		out[i] = make([]bool, len(d.Sessions))
+		if d.Stale && !d.Self {
+			continue
+		}
+		for j, s := range d.Sessions {
+			if s.You {
+				out[i][j] = true
+				listed++
+			} else {
+				rest = append(rest, ref{i, j})
+			}
+		}
+	}
+	sort.SliceStable(rest, func(a, b int) bool {
+		return activeAt(devices[rest[a].dev].Sessions[rest[a].sess]).After(activeAt(devices[rest[b].dev].Sessions[rest[b].sess]))
+	})
+	for _, r := range rest {
+		if listed >= WhoLimit {
+			break
+		}
+		out[r.dev][r.sess] = true
+		listed++
+	}
+	return out
+}
+
+// Who renders the team's devices and sessions: each device with the sessions listed on it, most
+// recently active first, at most WhoLimit in all; a stale device in one line; then how many more
+// there are.
 func Who(r proto.Response) string {
 	var b strings.Builder
 	switch {
@@ -45,23 +95,44 @@ func Who(r proto.Response) string {
 	default:
 		fmt.Fprintf(&b, "You are %s.\n", r.Self)
 	}
-	for _, d := range r.Devices {
+	listed := shown(r.Devices)
+	hidden := 0
+	for i, d := range r.Devices {
 		who := d.Host
 		if d.Owner != "" {
 			who = d.Owner + " on " + d.Host
 		}
+		var sessions []proto.SessionView
+		for j, s := range d.Sessions {
+			switch {
+			case listed[i][j]:
+				sessions = append(sessions, s)
+			case !d.Stale || d.Self:
+				hidden++
+			}
+		}
+		if len(sessions) == 0 && len(d.Sessions) > 0 && !d.Stale && !d.Self {
+			continue // every one of its sessions is among the hidden
+		}
+		sort.SliceStable(sessions, func(a, b int) bool { return activeAt(sessions[a]).After(activeAt(sessions[b])) })
 		switch {
 		case d.Self:
 			fmt.Fprintf(&b, "\n%s (%s, this device)\n", d.ID, who)
 		case d.Stale:
-			fmt.Fprintf(&b, "\n%s (%s) STALE: last seen %s; messages may not reach it\n", d.ID, who, Ago(d.LastSeen))
+			fmt.Fprintf(&b, "\n%s (%s) STALE: last seen %s; messages may not reach it", d.ID, who, Ago(d.LastSeen))
+			if n := len(d.Sessions); n == 1 {
+				b.WriteString("; its 1 session is not listed")
+			} else if n > 1 {
+				fmt.Fprintf(&b, "; its %d sessions are not listed", n)
+			}
+			b.WriteString("\n")
 		default:
 			fmt.Fprintf(&b, "\n%s (%s, seen %s)\n", d.ID, who, Ago(d.LastSeen))
 		}
 		if len(d.Sessions) == 0 {
 			b.WriteString("  no sessions\n")
 		}
-		for _, s := range d.Sessions {
+		for _, s := range sessions {
 			line := "  "
 			if s.Name != "" {
 				line += s.Name + "  "
@@ -69,6 +140,12 @@ func Who(r proto.Response) string {
 			line += s.Addr + "  " + s.Agent
 			if s.Branch != "" {
 				line += " on " + s.Branch
+			}
+			switch {
+			case !s.LastActive.IsZero():
+				line += ", active " + Ago(s.LastActive)
+			case !s.Started.IsZero():
+				line += ", started " + Ago(s.Started) // its device doesn't say when it was last active
 			}
 			if s.Doing != "" {
 				line += ": " + s.Doing
@@ -81,6 +158,9 @@ func Who(r proto.Response) string {
 			}
 			b.WriteString(line + "\n")
 		}
+	}
+	if hidden > 0 {
+		fmt.Fprintf(&b, "\nand %d more, less recently active; use lookup with a session's name to see one\n", hidden)
 	}
 	note(&b, r)
 	return b.String()

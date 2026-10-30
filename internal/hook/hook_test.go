@@ -189,3 +189,22 @@ func TestNoticesFromADaemonThatDoesntBracket(t *testing.T) {
 		t.Errorf("PostToolUse printed %q, want the notice", out)
 	}
 }
+
+// The transcript's path, which holds the session's title, goes to the daemon with the notices
+// request (#66): the daemon cannot find it from the session ID alone, as the hook's payload names it.
+func TestNoticesCarryTheTranscriptPath(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
+	payload, _ := json.Marshal(map[string]string{"session_id": "claude-x", "hook_event_name": "UserPromptSubmit",
+		"cwd": repo, "transcript_path": "/home/u/.claude/projects/p/claude-x.jsonl"})
+	hook.Run(bytes.NewReader(payload), &bytes.Buffer{})
+	for _, r := range requests() {
+		if r.Op == proto.OpNotices {
+			if r.Transcript != "/home/u/.claude/projects/p/claude-x.jsonl" {
+				t.Errorf("the notices request carries transcript %q", r.Transcript)
+			}
+			return
+		}
+	}
+	t.Errorf("the hook sent no notices request: %+v", requests())
+}

@@ -387,6 +387,14 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	if req.ClaudeSession != "" {
 		for _, s := range d.touchHookLocked(req) {
 			ids = append(ids, s.id)
+			if validTranscript(req.Transcript) && s.transcript != req.Transcript {
+				// A /clear or a /resume is a new conversation, with a title of its own.
+				s.transcript = req.Transcript
+				if s.title != "" {
+					s.title = ""
+					d.kickPresence()
+				}
+			}
 		}
 	} else {
 		ids = []string{req.Session}
@@ -560,12 +568,12 @@ func (d *Daemon) whoLocked(you string) []proto.Device {
 	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Self: true, LastSeen: time.Now()}
 	for _, s := range d.sortedSessionsLocked() {
 		self.Sessions = append(self.Sessions, proto.SessionView{Addr: bus.Addr(d.device, s.id), Name: s.name,
-			Pending: s.name == "", Agent: s.agent, Branch: s.branch, Doing: s.doing, Started: s.started,
+			Pending: s.name == "", Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(), Started: s.started, LastActive: s.lastActive,
 			You: s.id == you})
 	}
 	if you == proto.CLISession {
 		self.Sessions = append(self.Sessions, proto.SessionView{Addr: bus.Addr(d.device, proto.CLISession),
-			Agent: "cli", Started: d.started, You: true})
+			Agent: "cli", Started: d.started, LastActive: time.Now(), You: true})
 	}
 	devices := []proto.Device{self}
 	for _, id := range sortedKeys(d.peers) {
@@ -577,7 +585,7 @@ func (d *Daemon) whoLocked(you string) []proto.Device {
 				continue // V1 daemons list their CLI, which only claims needed
 			}
 			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: bus.Addr(id, s.ID), Name: s.Name,
-				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: s.Started})
+				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: s.Started, LastActive: peerActive(p, s)})
 		}
 		devices = append(devices, dv)
 	}

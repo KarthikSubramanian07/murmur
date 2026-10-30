@@ -283,7 +283,8 @@ var toolNames = []string{"who", "lookup", "status", "send", "inbox"}
 
 func (s *server) tools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "who", Description: "Show the agents working in this repo across the team: each device and " +
-		"session, its name, agent and branch, and what it is doing, and which one is you. Use it to find who to message."},
+		"session, its name, agent and branch, when it was last active and what it is doing, and which one is you. " +
+		"Lists the 20 most recently active sessions. Use it to find who to message."},
 		func(ctx context.Context, req *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, any, error) {
 			s.noteMeta(ctx, req)
 			resp, err := s.call(ctx, proto.Request{Op: proto.OpWho})
@@ -301,7 +302,8 @@ func (s *server) tools(srv *mcp.Server) {
 			return result(view.Lookup, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "status", Description: "Set the one line other agents see in who for what you are working on. " +
-		"Update it when you switch tasks."},
+		"Update it when you switch tasks. Until you set one, your conversation's title is what they see; " +
+		"an empty status brings the title back."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in statusIn) (*mcp.CallToolResult, any, error) {
 			s.noteMeta(ctx, req)
 			resp, err := s.call(ctx, proto.Request{Op: proto.OpStatus, Doing: in.Doing})
@@ -528,11 +530,17 @@ func (l *link) learnNative(ctx context.Context, id string) {
 	l.mu.Lock()
 	changed := l.native != id
 	l.native = id
+	l.hello.Native = id
 	if changed {
 		l.hello.T3Thread = "" // an ID for another conversation finds another thread
 	}
 	l.mu.Unlock()
-	if !changed || l.find == nil {
+	if !changed {
+		return
+	}
+	if l.find == nil {
+		// Outside T3 the ID is for the daemon, to find the conversation's name in Codex's state.
+		go l.tellRoute(ctx)
 		return
 	}
 	go func() {
