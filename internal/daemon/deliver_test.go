@@ -24,6 +24,8 @@ import (
 const (
 	fakeT3Env     = "T4_TEST_FAKE_T3"
 	fakeT3FailEnv = "T4_TEST_FAKE_T3_FAIL"
+	// fakeT3SleepEnv, if set to a duration, makes the stand-in take that long, as a `t3` that is busy.
+	fakeT3SleepEnv = "T4_TEST_FAKE_T3_SLEEP"
 )
 
 func TestMain(m *testing.M) {
@@ -51,6 +53,11 @@ func fakeT3(path string) int {
 	}
 	f.Write(append(line, '\n'))
 	f.Close()
+	if s := os.Getenv(fakeT3SleepEnv); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			time.Sleep(d)
+		}
+	}
 	if os.Getenv(fakeT3FailEnv) != "" {
 		os.Stdout.WriteString("no thread with that id\nsecond line\n")
 		return 1

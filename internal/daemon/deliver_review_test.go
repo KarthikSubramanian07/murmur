@@ -1,0 +1,115 @@
+package daemon_test
+
+import (
+	"testing"
+	"time"
+
+	"github.com/a-Fig/t4/internal/proto"
+)
+
+// Tests from the review of delivering messages as turns (#57): what a restart, a hook, a thread
+// that came back as a new session, and a client session's ID in T3 did to a delivery.
+
+// A message that waited in an inbox over a restart is delivered when the daemon is back, though
+// nothing new arrives to start a delivery: the first one failed because T3 wasn't there.
+func TestMessagesKeptOverARestartAreDeliveredWhenTheDaemonIsBack(t *testing.T) {
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	t.Setenv(fakeT3FailEnv, "1")
+	a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+	alice, _ := a.session("aaaaaa", "")
+	bob, conn := b.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+	conn.Close()
+	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.seesSession(bob) })
+
+	a.send("aaaaaa", bob, "while T3 was away", "wake up")
+	eventually(t, "both attempts to fail", func() bool { return len(calls()) == 2 })
+
+	t.Setenv(fakeT3FailEnv, "") // T3 is back, and so is the daemon
+	b.restart()
+	eventually(t, "the delivery after the restart", func() bool { return len(calls()) == 3 })
+}
+
+// The hook doesn't tell a session of the messages queued behind the one being delivered: they are
+// turns too, and told by a notice they would never be delivered.
+func TestHookLeavesMessagesQueuedForDeliveryAlone(t *testing.T) {
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	t.Setenv(fakeT3SleepEnv, "1500ms")
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+
+	a.send("aaaaaa", bob, "first", "one")
+	a.send("aaaaaa", bob, "second", "two")
+	eventually(t, "the first delivery to start", func() bool { return len(calls()) == 1 })
+	eventually(t, "the second message to reach b", func() bool { return logHas(b, "second") })
+	if got := b.hook("claude-bob", 0); len(got) != 0 {
+		t.Errorf("the hook told of %q, which are on their way as turns", got)
+	}
+	eventually(t, "both messages to be delivered", func() bool { return len(calls()) == 2 })
+	holds(t, "nothing unread", time.Second, func() bool {
+		inbox, notices := b.unread("bbbbbb", "claude-bob")
+		return len(inbox) == 0 && len(notices) == 0 && len(calls()) == 2
+	})
+}
+
+// A thread whose MCP server was replaced by a new session is one recipient of a message for
+// everyone, not two: the session it replaced, in its grace or stopped, still has the thread.
+func TestMessageForEveryoneReachesAThreadOnce(t *testing.T) {
+	route := func(exe string) proto.Route { return proto.Route{T3CLI: exe, T3Thread: "thread-bob"} }
+	t.Run("the old session stopped", func(t *testing.T) {
+		remote := newRemote(t)
+		exe, calls := useFakeT3(t)
+		a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+		alice, _ := a.session("aaaaaa", "")
+		old, conn := b.sessionRoute("bbbbbb", "claude-1", route(exe))
+		eventually(t, "presence", func() bool { return a.seesSession(old) && b.seesSession(alice) })
+		conn.Close()
+		eventually(t, "the old session to stop", func() bool { return busLines(b, old, "stopped") == 1 && !a.seesSession(old) })
+		bob, _ := b.sessionRoute("cccccc", "claude-2", route(exe))
+		eventually(t, "presence", func() bool { return a.seesSession(bob) })
+
+		a.send("aaaaaa", "*", "to everyone", "hello")
+		eventually(t, "the delivery", func() bool { return len(calls()) >= 1 })
+		holds(t, "one delivery", 1500*time.Millisecond, func() bool { return len(calls()) == 1 })
+	})
+	t.Run("the old session in its grace", func(t *testing.T) {
+		remote := newRemote(t)
+		exe, calls := useFakeT3(t)
+		a, b := newDevice(t, remote), newTimedDevice(t, remote, 20*time.Second, time.Hour)
+		alice, _ := a.session("aaaaaa", "")
+		old, conn := b.sessionRoute("bbbbbb", "claude-1", route(exe))
+		eventually(t, "presence", func() bool { return a.seesSession(old) && b.seesSession(alice) })
+		conn.Close() // dropped; its grace runs
+		bob, _ := b.sessionRoute("cccccc", "claude-2", route(exe))
+		eventually(t, "presence", func() bool { return a.seesSession(bob) })
+
+		a.send("aaaaaa", "*", "to everyone", "hello")
+		eventually(t, "the delivery", func() bool { return len(calls()) >= 1 })
+		holds(t, "one delivery", 1500*time.Millisecond, func() bool { return len(calls()) == 1 })
+	})
+}
+
+// A session that found its T3 thread keeps its name under the thread, and the Claude Code session
+// ID it had before no longer brings that name to a second process of the same client session: a
+// name is an address, and two live sessions can't share one.
+func TestClientSessionIDDoesNotBringBackTheNameOfASessionInT3(t *testing.T) {
+	remote := newRemote(t)
+	exe, _ := useFakeT3(t)
+	b := newDevice(t, remote)
+	first, _ := b.sessionRoute("bbbbbb", "claude-1", proto.Route{T3CLI: exe})
+	name := b.named(first)
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "bbbbbb", Route: &proto.Route{T3CLI: exe, T3Thread: "thread-bob"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	b.nameIs(first, name)
+
+	second, _ := b.sessionRoute("cccccc", "claude-1", proto.Route{})
+	if other := b.named(second); other == name {
+		t.Errorf("two live sessions are both named %s", name)
+	}
+	b.nameIs(first, name)
+}

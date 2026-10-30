@@ -569,6 +569,14 @@ func (l *link) run(ctx context.Context) {
 		l.mu.Unlock()
 		l.learn(resp.ClaudeSession)
 		l.set(true, nil)
+		// The thread may have been found after this hello was made, when tellRoute had no session
+		// to tell: the daemon hasn't got it.
+		l.mu.Lock()
+		stale := l.hello.Route != h.Route
+		l.mu.Unlock()
+		if stale {
+			go l.tellRoute(ctx)
+		}
 		done := make(chan struct{})
 		go func() {
 			select {

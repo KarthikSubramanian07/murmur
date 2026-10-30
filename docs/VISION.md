@@ -535,7 +535,9 @@ A body past the limit is cut, as in `inbox`.
 
 - **Marked read.** A delivered message leaves the receiving session's inbox, so neither the hook
   nor `inbox` shows it again; the page and the daemon's log keep it as history. A message that
-  could not be delivered stays in the inbox and is announced by the hook as before.
+  could not be delivered stays in the inbox and is announced by the hook as before. The hook
+  leaves alone a message that is waiting its turn to be delivered, behind the one being delivered:
+  announced by a notice it would never become a turn.
 - **Finding the thread (#56).** T3 gives an MCP server or a hook no thread ID, so the MCP server
   looks up the provider's own session in T3's database: `statev2.sqlite` in T3's data directory
   (`T3CODE_HOME`, or the directory the CLI's `bin` is in, or `~/.t3`), table
@@ -555,7 +557,12 @@ A body past the limit is cut, as in `inbox`.
   (see "Under T3", above). The daemon keeps the thread, the CLI's path and T3's data directory
   per session in `.git/t4/state.json`, so a message for a session whose MCP server T3 has stopped
   (after 30 minutes idle, for Claude Code) still finds its thread. The thread, the messaging
-  token and the socket's address stay on the device: never on the bus, the page or the log.
+  token and the socket's address stay on the device: never on the bus, the page or the log. When
+  T3 restarts a thread's MCP server, or the connection is made again, the new session has the
+  thread and the old one, in its grace or stopped, loses its route: a message for everyone is
+  delivered to the thread once, and a session's own broadcast doesn't come back to it as a turn.
+  A session that found its thread keeps its name under the Claude session ID too, so the ID does
+  not bring that name to a second process of the same Claude session; it is a session of its own.
 - **Codex under T3** gets the thread from `_meta.threadId`, which every tool call carries, but its
   MCP servers start with a bare environment, `T3CODE_CLI_PATH` not among its variables, so
   Codex's config must forward it: `env_vars = ["T3CODE_CLI_PATH"]` under `[mcp_servers.t4]`
@@ -576,7 +583,8 @@ A body past the limit is cut, as in `inbox`.
   left to the hook's notice, and the log says why, once per session. A message that waited more
   than 15 minutes (T3 closed, the session away) is not sprung on the agent as a turn: it stays a
   notice. The page's wake setting (#22) set to "never", for the device or for one session, keeps
-  the notice too; otherwise delivery is at once.
+  the notice too; otherwise delivery is at once. A daemon that starts looks at the messages its
+  inboxes kept, and delivers those that are still young enough.
 - **No loop guard.** Nothing in t4 limits how often two agents answer each other (Tyler's
   decision, 2026-10-29). A message to a busy thread is queued as its next turn, not injected into
   the one running, and the AGENTS.md wording asks for coordination, not chatting; beyond that

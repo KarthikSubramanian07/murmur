@@ -45,6 +45,8 @@ const spawnNote = "daemon-was-spawned"
 // session ID the daemon holds, and a hello's reply carries the one it was given.
 type fakeDaemon struct {
 	live string // what the daemon holds, as a hook has set it
+	// helloGate, if set, holds every hello's reply until it is closed.
+	helloGate chan struct{}
 
 	mu       sync.Mutex
 	hellos   []proto.Hello
@@ -111,6 +113,9 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 			live = req.Hello.ClaudeSession
 		}
 		f.mu.Unlock()
+		if f.helloGate != nil {
+			<-f.helloGate
+		}
 		reply(proto.Response{OK: true, Self: "dev/" + req.Hello.ID, ClaudeSession: live})
 		return // the connection stays open until the test drops it
 	}

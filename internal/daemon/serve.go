@@ -379,6 +379,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 // process: with them, the sessions of that process follow the hook to the ID it reports (see
 // hookSessionsLocked), and a hook that matches nothing gets nothing.
 func (d *Daemon) notices(req proto.Request) proto.Response {
+	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var ids []string
@@ -400,7 +401,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			self = bus.Addr(d.device, id)
 		}
 		for _, m := range d.st.Inbox[id] {
-			if !m.Noticed && !m.Pushing {
+			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
 				m.Noticed = true
 				fresh = append(fresh, m)
 			}
@@ -598,6 +599,7 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 		if time.Since(at) > d.opt.StoppedInbox {
 			delete(d.st.Inbox, h.ID)
 			delete(d.st.Commits, h.ID)
+			delete(d.st.T3Routes, h.ID)
 		} else {
 			s.since = at
 		}

@@ -205,3 +205,30 @@ func TestNoThreadMeansNoRoute(t *testing.T) {
 		}
 	})
 }
+
+// A thread found while the server's hello is still on its way is not lost: the daemon has no
+// session yet to be told it, and the hello doesn't have it, so the server tells it once registered.
+func TestThreadFoundWhileRegisteringIsToldAfterwards(t *testing.T) {
+	fastSeek(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "claude-session-1")
+	t.Setenv("T3CODE_CLI_PATH", "/t3/bin/t3")
+	gate := make(chan struct{})
+	f := &fakeDaemon{helloGate: gate}
+	fd := &finder{threads: map[string]string{"claude-session-1": "thread-1"}, misses: 1}
+	gitDir := f.serve(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	l := &link{c: &client.Client{GitDir: gitDir}, hello: helloFor("claude-code", "/work"), changed: make(chan struct{}), find: fd.find}
+	go l.run(ctx)
+	eventually(t, "the thread to be found", l.threadKnown)
+	if h := f.lastHello(); h.T3Thread != "" {
+		t.Fatalf("the hello had the thread already: %+v", h.Route)
+	}
+	close(gate)
+	if _, err := l.wait(ctx, 10*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastRoute(t, f); got.T3Thread != "thread-1" {
+		t.Errorf("route told: %+v", got)
+	}
+}

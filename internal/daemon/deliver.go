@@ -57,6 +57,9 @@ func (d *Daemon) kickPush() {
 // running. A session's messages go one at a time, in the order they arrived; sessions go in
 // parallel.
 func (d *Daemon) pushLoop(ctx context.Context) {
+	// Messages kept over a restart never passed through addInboxLocked, which is what kicks: look at
+	// them once, before waiting for anything.
+	d.kickPush()
 	for {
 		select {
 		case <-ctx.Done():
@@ -114,8 +117,8 @@ func (d *Daemon) wakeSnapshot() pageSettings {
 }
 
 // wakes says whether messages for the session called name may be delivered as turns: unless the
-// page says never, for the device or for this session. "Within N minutes" waits on a session's
-// last-active time (#21), which isn't recorded yet, so it delivers as "always" does.
+// page says never, for the device or for this session. "Within N minutes" delivers as "always"
+// does: a message is delivered at once, as Tyler decided on 2026-10-29.
 func (p pageSettings) wakes(name string) bool {
 	w := p.Wake
 	if o, ok := p.SessionWake[name]; ok && name != "" {
@@ -157,7 +160,7 @@ func viaOf(r proto.Route, live bool) string {
 func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, proto.Route) {
 	var next *inMsg
 	for _, m := range d.st.Inbox[id] {
-		if !m.Noticed && !m.Pushing && !m.PushFailed && time.Since(m.Arrived) <= pushMaxAge {
+		if pushable(m) {
 			next = m
 			break
 		}
@@ -181,6 +184,26 @@ func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, 
 		return nil, "", proto.Route{}
 	}
 	return next, via, route
+}
+
+// pushable says a message may still be delivered as a turn: it wasn't told to the session by the
+// hook, isn't on its way in already, hasn't failed, and isn't too old.
+func pushable(m *inMsg) bool {
+	return !m.Noticed && !m.Pushing && !m.PushFailed && time.Since(m.Arrived) <= pushMaxAge
+}
+
+// queuedForPushLocked says message m of session id is on its way in as a turn, or will be: the
+// hook's notice leaves it alone, as it would be a second telling of what the turn says, and
+// would take the message out of the delivery for good. Caller holds mu.
+func (d *Daemon) queuedForPushLocked(id string, m *inMsg, wake pageSettings) bool {
+	if m.Pushing {
+		return true
+	}
+	if !pushable(m) || !wake.wakes(d.sessionNameLocked(id)) {
+		return false
+	}
+	s := d.sessions[id]
+	return viaOf(d.routeOfLocked(id), s != nil && s.dropped.IsZero()) != ""
 }
 
 // noWay says why a route can't be delivered into, without anything of it that is secret.
@@ -297,9 +320,32 @@ func (d *Daemon) rememberRouteLocked(s *session) {
 		return
 	}
 	want := t3Route{CLI: r.T3CLI, Home: r.T3Home, Thread: r.T3Thread}
+	d.retireRoutesLocked(s, want)
 	if d.st.T3Routes[s.id] != want {
 		d.st.T3Routes[s.id] = want
 		d.saveLocked()
+	}
+}
+
+// retireRoutesLocked takes away the way into thread want from every other session that has it
+// and isn't running: a thread's MCP server is a new session, with an ID of its own, each time T3
+// restarts it (after 30 idle minutes) or a connection is made again, and the one it replaces, in
+// its grace or stopped, still holds the thread. A message for everyone, or for the device, goes
+// into both inboxes, and would be delivered to the one thread twice, or, from the new session,
+// back to itself. The old session keeps its inbox, and the name that follows the thread has moved
+// on to the new one. Caller holds mu.
+func (d *Daemon) retireRoutesLocked(s *session, want t3Route) {
+	for id, r := range d.st.T3Routes {
+		if id == s.id || r.Thread != want.Thread || r.Home != want.Home {
+			continue
+		}
+		if o := d.sessions[id]; o == nil || !o.dropped.IsZero() {
+			delete(d.st.T3Routes, id)
+			if o != nil {
+				o.route = proto.Route{}
+			}
+			d.saveLocked()
+		}
 	}
 }
 
