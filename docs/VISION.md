@@ -203,15 +203,18 @@ which session made a commit, so the daemon watches tool calls for them.
   so its commits are credited to the parent.
 - **What it costs.** A call that cannot run a command (`Read`, `Glob`, `Grep`, `Edit`, `Write`
   and the like, named in `internal/hook`) isn't bracketed. Any other tool is, MCP tools and
-  subagents included. Measured 2026-10-29 on the Windows laptop, where one `git` process takes
-  300 to 400 ms and any process about 300 ms: `PreToolUse` for a bracketed call took a median of
-  1.7 s (0.8 to 2.7 s over five runs), against 0.3 s for a skipped one; the end of a call, run
-  once with a commit to find, took 2.1 s. Four `git` processes make up the start (the hook's own lookup of the clone and the three
-  of `attrib.Head`); on a machine where they take 20 ms the start would cost about 0.1 s (inferred,
-  not measured). Running `Head`'s three concurrently would save about half (an estimate);
-  `attrib` was left as it was. The start can't be made to run without the call waiting: a commit made before the
-  snapshot would count as old history. The end runs alongside the notices request, so a call
-  waits for the longer of the two.
+  subagents included. The start is one `git` process: the hook finds the clone from its files, and
+  `attrib.Head` reads HEAD from the worktree's git directory and asks git only for the refs (a
+  reftable repository, or one git might find differently, takes three). It can't be made to run
+  without the call waiting: a commit made before the snapshot would count as old history. The end
+  is answered at once, and the daemon finds the commits after, with two more; a `lookup` waits for
+  that. Measured 2026-10-29 on the Windows laptop, idle, where one `git` process took 24 ms:
+  `PreToolUse` for a bracketed call took a median of 79 ms and `PostToolUse` 19 ms, against 15 ms
+  and 19 ms for a skipped tool. As first built, the start was four `git` processes and the end
+  waited for five: 241 ms and 335 ms on the same machine. With several test runs going, where one
+  `git` process took 300 to 400 ms, that start took a median of 1.7 s (0.8 to 2.7 s over five
+  runs); the start as it is now wasn't measured that busy, and should take about a quarter of it
+  (inferred).
 - **It never stops a call.** `PreToolUse` prints nothing and exits 0 whatever goes wrong, never 2.
   It waits at most 5 s for the daemon, which limits its own snapshot to 4 s; one that misses
   credits nothing for that call.
