@@ -319,6 +319,9 @@ func TestMessageForAStoppedT3SessionStillReachesItsThread(t *testing.T) {
 	if c := calls()[0]; strings.Join(c.Args, " ") != "thread send thread-bob -" || !strings.Contains(c.Stdin, "wake up") {
 		t.Errorf("t3 was run as %q with %q", c.Args, c.Stdin)
 	}
+	// The stand-in notes its call when it starts; the message leaves the inbox when it has ended. A
+	// restart before that finds the message still there, and delivers it again, as it should.
+	eventually(t, "the first delivery to finish", func() bool { return logHas(b, `delivered "while you were away"`) })
 
 	b.restart()
 	a.send("aaaaaa", bob, "and again", "still there?")

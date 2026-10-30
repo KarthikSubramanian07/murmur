@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,7 +56,9 @@ func open(t *testing.T, path string) *sql.DB {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", path)
+	// As a URI, as the reader opens it: given as a plain name, a path with a ? in it is cut there.
+	u := fileURL(path)
+	db, err := sql.Open("sqlite", u.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,6 +269,21 @@ func sums(t *testing.T, home string) string {
 		out += fmt.Sprintf("%x ", sha256.Sum256(b))
 	}
 	return out
+}
+
+// What a path could be taken for in a URI (a ?, a #, a space) is escaped, on every platform: the
+// path with a ? in it can only be made on some of them, but its URI can be checked on all.
+func TestDSNEscapesWhatAPathCouldBeTakenFor(t *testing.T) {
+	got := dsn("/t3/what?is this#x/userdata/statev2.sqlite")
+	const path = "file:///t3/what%3Fis%20this%23x/userdata/statev2.sqlite?"
+	if !strings.HasPrefix(got, path) {
+		t.Errorf("dsn = %q, want it to start with %q", got, path)
+	}
+	for _, want := range []string{"mode=ro", "query_only%281%29", "busy_timeout%28"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("dsn = %q, want %q in it", got, want)
+		}
+	}
 }
 
 // A path with a space, a percent sign or a question mark in it opens as itself, not as a URI.

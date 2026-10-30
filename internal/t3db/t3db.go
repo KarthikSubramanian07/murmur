@@ -96,15 +96,21 @@ func ThreadOf(ctx context.Context, cli, home, native string) (string, error) {
 // dsn is the URI that opens path read-only, waiting at most Busy on a lock. The path is escaped
 // so that a space, a % or a ? in it is read as part of the path.
 func dsn(path string) string {
-	slashed := filepath.ToSlash(path)
-	if len(slashed) > 1 && slashed[1] == ':' {
-		slashed = "/" + slashed // a Windows drive letter: file:///C:/...
-	}
-	u := url.URL{Scheme: "file", Path: slashed}
+	u := fileURL(path)
 	q := url.Values{}
 	q.Set("mode", "ro")
 	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", Busy.Milliseconds()))
 	q.Add("_pragma", "query_only(1)")
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// fileURL is the file: URI of path. Left as a plain name, a path with a ? in it would be cut there
+// by the driver, which reads what follows as the query.
+func fileURL(path string) url.URL {
+	slashed := filepath.ToSlash(path)
+	if len(slashed) > 1 && slashed[1] == ':' {
+		slashed = "/" + slashed // a Windows drive letter: file:///C:/...
+	}
+	return url.URL{Scheme: "file", Path: slashed}
 }
