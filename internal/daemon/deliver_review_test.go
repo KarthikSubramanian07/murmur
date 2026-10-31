@@ -87,7 +87,8 @@ func TestMessageForEveryoneReachesAThreadOnce(t *testing.T) {
 		alice, _ := a.session("aaaaaa", "")
 		old, conn := b.sessionRoute("bbbbbb", "claude-1", route(exe))
 		eventually(t, "presence", func() bool { return a.seesSession(old) && b.seesSession(alice) })
-		conn.Close() // dropped; its grace runs
+		conn.Close()                       // dropped; its grace runs
+		time.Sleep(500 * time.Millisecond) // the daemon has seen it go, before the new one comes (#99)
 		bob, _ := b.sessionRoute("cccccc", "claude-2", route(exe))
 		eventually(t, "presence", func() bool { return a.seesSession(bob) })
 
