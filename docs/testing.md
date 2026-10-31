@@ -3,26 +3,24 @@
 `go test ./...` runs everything, including tests that run two devices against a local bare remote.
 A change is checked with `gofmt -l .` (empty), `go vet ./...` and `go test -race -count=1 ./...`.
 The `daemon` package is most of the time. Under `-race` it took 10–16 minutes on a laptop shared
-with other agents' test runs, and about 12 on the CI runner (2026-10-29; #39 is about making it
+with other agents' test runs, and about 12 on the first CI runner (2026-10-29; #39 is about making it
 faster).
 
 ## On every pull request
 
-`.github/workflows/test.yml` runs those checks on a pull request from a branch of this repo, on a
-push to `main`, and by hand. Two jobs run them at once, each on a self-hosted runner: `test` on a
-macOS machine (2 cores) that does other work too, set up 2026-10-29, and `test-linux` on a Linux VM
-in Google Cloud, set up 2026-10-30 (below). Windows runs only on a developer's laptop.
+`.github/workflows/test.yml` runs those checks on every pull request, on a push to `main`, and by
+hand. Three jobs run them at once: `test-macos` and `test-windows` on GitHub's own runners, and
+`test-linux` on a Linux VM in Google Cloud (below), which runs only for branches of this repo. Until
+2026-10-31 the macOS job ran on a self-hosted machine of Tyler's that also did other work, because
+GitHub's runners didn't start on this account while the repo was private; they are free for a
+public repo.
 
 - **To test a pushed branch without a pull request:** `gh workflow run test.yml --ref <branch>`.
   Then `gh run watch` follows it, and `gh run view --log-failed` shows what failed.
-- **Low priority on macOS.** The runner service runs at background priority, each step under
-  `taskpolicy -b nice -n 20`, with `GOMAXPROCS=2` and one package at a time.
-- **Memory check on macOS.** A job won't start while the machine has less than 20% of its memory
-  free, as `memory_pressure` reports it. Swap in use isn't the test: macOS keeps swap allocated long
-  after memory frees up, and a swap threshold blocked every job for hours on 2026-10-29.
-  The job then fails with a message saying so, and a re-run later works.
-- **One job at a time on each runner,** so jobs queue, and a newer push to the same pull request
-  cancels the run in progress.
+- **gofmt doesn't run on Windows.** A Windows checkout turns line endings into CRLF, which gofmt
+  reports as unformatted; the other two jobs check it.
+- **One job at a time on the Linux runner,** so its jobs queue. A newer push to the same pull
+  request cancels the run in progress, on every runner.
 
 ## The Linux runner
 
@@ -70,7 +68,7 @@ a budget of $20 (2026-10-30); going past it is his to approve.
   `gcloud run services update t4-ci-wake --region us-central1 --update-env-vars WEBHOOK_SECRET=…`
   and `gh api -X PATCH repos/a-Fig/t4/hooks/705335778/config -f secret=…`.
 - **Not ephemeral.** A job can change files outside its checkout, such as the runner user's home
-  directory and Go's caches, and the next job runs with them, as on the macOS runner. The VM has no
+  directory and Go's caches, and the next job runs with them. The VM has no
   service account, so a job can't reach the rest of the project.
 
 ### Setting it up again
@@ -123,16 +121,16 @@ in a shell variable, and `$URL` is the service's URL from the deploy.
 
 ## Pull requests from forks
 
-A pull request from a fork doesn't run the checks on either runner, because a job runs whatever code
-a pull request contains, with the runner user's access to its machine. GitHub advises keeping
-self-hosted runners off public repositories for this reason. Its author can run the checks above
-locally. A maintainer can push the branch to this repo and open a pull request from it, or start a
-run by hand.
+A pull request from a fork is checked by `test-macos` and `test-windows` on GitHub's runners, which
+start fresh for every job. It skips `test-linux`: the Linux VM is self-hosted and kept between jobs,
+and a job runs whatever code its pull request contains. GitHub advises keeping self-hosted runners
+off public repositories for this reason. A maintainer can push the branch to this repo and open a
+pull request from it, or start a run by hand, to run the Linux job too.
 
-That the job skips a fork's pull request is not by itself what keeps its code away. A pull request
-from a fork runs the workflow file as the fork changed it, so it can delete the check, or add a
-workflow of its own that asks for the same runners. What holds is the repository setting "Approval
-for running fork pull request workflows from contributors", set to "Require approval for all
-external contributors" (Settings > Actions > General). With it, a fork's workflow run waits for a
-maintainer, and approving it runs the fork's code on the runners, so read what it changes under
-`.github/` first. A fork's run gets a read-only token and no secrets either way.
+That the job skips a fork's pull request is not by itself what keeps its code off the VM. A pull
+request from a fork runs the workflow file as the fork changed it, so it can delete the check, or
+add a workflow of its own that asks for the same runner. What holds is the repository setting
+"Approval for running fork pull request workflows from contributors", set to "Require approval for
+all external contributors" (Settings > Actions > General). With it, a fork's workflow run waits for
+a maintainer, and approving it runs the fork's code, so read what it changes under `.github/` first.
+A fork's run gets a read-only token and no secrets either way.
