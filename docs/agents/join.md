@@ -45,10 +45,6 @@ The installer downloads t4's release for this machine, checks it against the rel
 and adds its folder to PATH. Your shell may not see the new PATH until it is restarted: use the
 full path the installer printed to run t4 in the next step.
 
-While the t4 repository is private, those addresses answer "not found", and the installer needs a
-GitHub token in the GITHUB_TOKEN environment variable that can read the repository. If you can't
-get it, tell your user, and don't work around it.
-
 ## 3. Join
 
 In this repo (any folder inside the clone), run:

@@ -49,9 +49,8 @@ irm https://raw.githubusercontent.com/a-Fig/t4/main/install.ps1 | iex
 
 Each downloads the latest release's binary for the machine, checks it against the release's
 checksums, puts `t4` in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), adds that folder to
-PATH if it isn't there, and needs no sudo or administrator rights. No GitHub login is needed once
-the repo is public (#54, private on 2026-10-29); [`docs/releasing.md`](docs/releasing.md) covers
-what to do until then, and the options.
+PATH if it isn't there, and needs no sudo or administrator rights, nor a GitHub login.
+[`docs/releasing.md`](docs/releasing.md) covers the options.
 
 To build from source instead (Go 1.26 or later):
 

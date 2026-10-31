@@ -41,19 +41,3 @@ those don't say:
 - **Dock apps.** On macOS, an app started from the Dock doesn't get the Terminal's PATH, so
   `install.sh`'s PATH edit doesn't reach it; anything that must find t4 from there uses the
   absolute path the installer prints.
-
-## While the repo is private
-
-Until `a-Fig/t4` is public (#54), even the script can't be fetched without a login. On 2026-10-29
-the way to install was:
-
-```sh
-gh api repos/a-Fig/t4/contents/install.sh -H 'Accept: application/vnd.github.raw' | GITHUB_TOKEN=$(gh auth token) sh
-```
-
-and in PowerShell (`Out-String` joins the script's lines into one input for `iex`):
-
-```powershell
-$env:GITHUB_TOKEN = gh auth token
-gh api repos/a-Fig/t4/contents/install.ps1 -H 'Accept: application/vnd.github.raw' | Out-String | iex
-```

@@ -7,7 +7,7 @@
 #
 # Environment:
 #   T4_VERSION    install this release (v0.1.0 or 0.1.0) instead of the latest stable one
-#   GITHUB_TOKEN  download through the GitHub API, which works while the repo is private
+#   GITHUB_TOKEN  download through the GitHub API, which also works for a private copy of the repo
 #   T4_REPO       fetch releases of this repo (owner/name) instead of a-Fig/t4
 #
 # docs/releasing.md says where the binaries come from and what the checksum does and doesn't prove.
