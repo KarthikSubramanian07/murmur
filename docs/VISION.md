@@ -664,6 +664,11 @@ A body past the limit is cut, as in `inbox`.
   of those, which it may have read. Not covered: a message for everyone that comes in the second or
   so between a new session registering and finding its thread goes to the old session's thread
   while that has the route, and to the new one when it has it, so the thread may see it twice.
+  Nor is a new session that registers before the daemon has seen the old one's connection close:
+  the old one, still running then, keeps the route through its grace, and the thread may see a
+  message for everyone twice (#99). Handing the thread over when the drop is seen was tried
+  (2026-10-30) and dropped: in three review rounds each version could strand a message to the old
+  session's name, where a repeat is all that happens now.
   A session that found its thread keeps its name under the Claude session ID too, so the ID does
   not bring that name to a second process of the same Claude session; it is a session of its own.
 - **Codex under T3** gets the thread from `_meta.threadId`, which every tool call carries (all five
