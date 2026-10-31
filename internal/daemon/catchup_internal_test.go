@@ -3,6 +3,7 @@ package daemon
 import (
 	"io"
 	"log"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,7 +71,7 @@ func TestForwardedCatchUpIsJudgedByItsRecipient(t *testing.T) {
 	if n := len(d.st.Inbox["bbbbbb"]); n != 0 {
 		t.Errorf("the stopped session kept %d messages, which are the holder's", n)
 	}
-	d.deliverLocked(sent("history", 3*time.Minute), modeSkip)
+	d.deliverLocked(sent("history", 8*time.Minute), modeSkip) // before bbbbbb stopped, 5 minutes ago
 	d.deliverLocked(sent("since the holder started", 0), modeSkip)
 	var got []string
 	for _, m := range d.st.Inbox["cccccc"] {
@@ -78,5 +79,51 @@ func TestForwardedCatchUpIsJudgedByItsRecipient(t *testing.T) {
 	}
 	if len(got) != 2 || got[1] != "since the holder started" {
 		t.Errorf("after a skip the holder has %q, want the catch-up and what was sent since it started", got)
+	}
+}
+
+// #30. A skip, after a daemon was down longer than catchUpLimit, delivers to a stopped session
+// what was sent after it stopped, with the minute's allowance, and before StoppedInbox ran out; to
+// everyone else it delivers nothing, and a session that has registered again is judged by when it
+// started, as in any skip.
+func TestSkipKeepsInboxesOfStoppedSessions(t *testing.T) {
+	now := time.Now()
+	stopped := now.Add(-30 * time.Minute)
+	d := &Daemon{opt: Options{StoppedInbox: time.Hour}, dir: t.TempDir(), log: log.New(io.Discard, "", 0),
+		device: "here-0001", started: now, sessions: map[string]*session{},
+		st: state{Inbox: map[string][]*inMsg{}, Stopped: map[string]time.Time{"bbbbbb": stopped, "dddddd": stopped}}}
+	sent := func(to, subject string, at time.Time) bus.Event {
+		return bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa",
+			To: to, Subject: subject, At: at}
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.newSessionLocked(&proto.Hello{ID: "dddddd"}, "claude-code", "", "dddddd")
+	for _, e := range []bus.Event{
+		sent("here-0001/bbbbbb", "after it stopped", now.Add(-20*time.Minute)),
+		sent("here-0001/bbbbbb", "within the minute's allowance", stopped.Add(-30*time.Second)),
+		sent("here-0001/bbbbbb", "before it stopped", stopped.Add(-2*time.Minute)),
+		sent("here-0001/bbbbbb", "after the inbox would have run out", stopped.Add(2*time.Hour)),
+		sent("here-0001", "to the device", now.Add(-20*time.Minute)),
+		sent("*", "to everyone", now.Add(-20*time.Minute)),
+		sent("here-0001/cccccc", "to nobody kept", now.Add(-20*time.Minute)),
+		sent("here-0001/dddddd", "to a session that is back", now.Add(-20*time.Minute)),
+	} {
+		d.deliverLocked(e, modeSkip)
+	}
+	subjects := func(id string) string {
+		var got []string
+		for _, m := range d.st.Inbox[id] {
+			got = append(got, m.Event.Subject)
+		}
+		return strings.Join(got, "|")
+	}
+	if got, want := subjects("bbbbbb"), "after it stopped|within the minute's allowance|to the device|to everyone"; got != want {
+		t.Errorf("the stopped session's inbox: %q, want %q", got, want)
+	}
+	for _, id := range []string{"cccccc", "dddddd", proto.CLISession} {
+		if got := subjects(id); got != "" {
+			t.Errorf("%s got %q", id, got)
+		}
 	}
 }

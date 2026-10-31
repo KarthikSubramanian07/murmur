@@ -427,9 +427,10 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 	}
 	if mode == modeSkip {
 		// Nothing is delivered from the backlog, unless the first sync failed and sessions have
-		// registered since: what was sent after they started is for them.
+		// registered since (what was sent after they started is for them), or an inbox is kept for
+		// a stopped session (what was sent after it stopped is for it, #30).
 		d.mu.Lock()
-		waiting := len(d.sessions) > 0
+		waiting := len(d.sessions) > 0 || d.keptInboxLocked()
 		d.mu.Unlock()
 		if !waiting {
 			skipTo()
@@ -485,11 +486,12 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		if e.Type == bus.Message {
 			// A skip passes over history, but a ref read in one only after sessions registered
 			// (the first sync failed) also holds what was sent since this daemon started, which
-			// is new to it: by the sender's clock, with the minute deliverLocked allows.
-			if mode != modeSkip || !e.At.Before(d.started.Add(-time.Minute)) {
+			// is new to it: by the sender's clock, with the minute deliverLocked allows. What a
+			// skip gave a kept inbox (#30) was read too, so the page lists it.
+			kept := d.deliverLocked(e, mode)
+			if mode != modeSkip || kept || !e.At.Before(d.started.Add(-time.Minute)) {
 				d.recordMessageLocked(e)
 			}
-			d.deliverLocked(e, mode)
 		}
 	}
 	d.st.Processed[ref] = sha
@@ -501,13 +503,14 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 // deliverLocked puts a message in the inbox of each session here it is addressed to. A session
 // gets only what arrives while it runs, or, if it stops, within StoppedInbox of that, in case it
 // comes back (see recipientsLocked). What arrived while the daemon was down (modeCatchUp)
-// goes only to sessions that were running before and reconnect, and in modeSkip to nobody; in
+// goes only to sessions that were running before and reconnect, and in modeSkip to nobody, except
+// the sessions whose inbox is kept, for what was sent since they stopped (see inTimeLocked); in
 // both, what was sent after a session here started is for it. Everything
 // is held for catchUpWindow after the daemon starts, for sessions still reconnecting (see
 // catchUpLocked). A message forwarded to the session that holds its recipient's name (see
 // forwardLocked) is the holder's if it is new enough for either: a backlog read after the holder
 // started still gives it what the recipient's kept inbox would have caught up on. Caller holds mu.
-func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) {
+func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) (delivered bool) {
 	held := mode == modeCatchUp || mode == modeNormal && time.Since(d.started) <= catchUpWindow
 	if held {
 		d.pending = append(d.pending, e)
@@ -523,6 +526,7 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) {
 			continue
 		}
 		d.addInboxLocked(id, e)
+		delivered = true
 		if id != proto.CLISession {
 			d.noteConversationLocked() // a message arrived for a session here; its answer may soon follow
 		}
@@ -532,6 +536,7 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) {
 		d.sessions[sess] == nil && !stopped && fwd == "" {
 		d.log.Printf("message %s is for %s, which isn't running here; dropped", e.ID, e.To)
 	}
+	return delivered
 }
 
 // recipientsLocked lists the sessions a message can be delivered to: those registered, which
@@ -549,13 +554,37 @@ func (d *Daemon) recipientsLocked() []string {
 // inTimeLocked says whether e, read in a sync of this mode, is new enough for session id: anything
 // in a normal sync; from a backlog, what was sent after id started, and in a catch-up also what
 // arrived while the daemon was down, for a session that was running before and reconnected, or
-// one stopped, which may come back. Caller holds mu.
+// one stopped, which may come back. A skip gives a stopped session only what was sent to it while
+// its inbox was kept (see keptSinceLocked): it can't take all the daemon was down for, as that may
+// be the whole history of a ref. Caller holds mu.
 func (d *Daemon) inTimeLocked(e bus.Event, id string, mode syncMode) bool {
 	if mode == modeNormal || d.sentSinceLocked(e, id, mode) {
 		return true
 	}
 	s := d.sessions[id] // nil for a stopped session
+	if mode == modeSkip {
+		return s == nil && d.keptSinceLocked(e, id)
+	}
 	return mode == modeCatchUp && id != proto.CLISession && (s == nil || s.reconnect)
+}
+
+// keptInboxLocked says some stopped session has its inbox kept: it stopped within StoppedInbox
+// and has not registered again. Caller holds mu.
+func (d *Daemon) keptInboxLocked() bool {
+	for id, at := range d.st.Stopped {
+		if d.sessions[id] == nil && time.Since(at) <= d.opt.StoppedInbox {
+			return true
+		}
+	}
+	return false
+}
+
+// keptSinceLocked says whether e was sent while the inbox of stopped session id was kept, by the
+// sender's clock: after the session stopped (with a minute's allowance, as sentSinceLocked has)
+// and before StoppedInbox had run out. Caller holds mu.
+func (d *Daemon) keptSinceLocked(e bus.Event, id string) bool {
+	at, ok := d.st.Stopped[id]
+	return ok && !e.At.Before(at.Add(-time.Minute)) && !e.At.After(at.Add(d.opt.StoppedInbox))
 }
 
 // sentSinceLocked says whether e was sent after session id started, by the sender's clock, with a

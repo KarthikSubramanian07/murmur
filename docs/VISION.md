@@ -131,7 +131,12 @@ unread notices, writing nothing to the bus. Only when the grace runs out does th
 restarts, and given back if the session returns. It holds only what its daemon received: a daemon
 exits 10 minutes after its last session or open page, unless a T3 thread it could still wake is
 waiting ("A thread that is idle", below), and one back after longer than that skips what it
-missed, so messages sent while it was gone aren't kept. A message is addressed on the bus to
+missed, except for the sessions whose inbox is kept (2026-10-30, #30): to a session stopped
+within the 24 hours it delivers what was sent after the session stopped (by the sender's clock,
+with a minute's allowance), which includes a message to the whole device or to everyone, as the
+live ones do and as the shorter outage's catch-up does. Before then a laptop shut overnight lost
+every message sent to its stopped sessions. A first start has no stopped sessions and skips all of
+it. A message is addressed on the bus to
 `device/session`, which a session's name stands for (see Session names); presence carries enough
 description (name, agent, branch, what it is doing) for an agent to choose a recipient. Nothing sent before a session first started is replayed to it. A
 daemon back after less than 10 minutes down delivers what it missed to the sessions that
@@ -307,7 +312,8 @@ call.
   nothing here. Messages are every one this daemon reads, whoever it is for (anyone who can read
   the repo can read them all already), oldest first as this daemon read them, which is not by the
   senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
-  it never read what was sent while it was away for more than 10 minutes (above).
+  it never read what was sent while it was away for more than 10 minutes, except what is kept for a
+  stopped session's inbox (above).
 - **Settings** (when a session is woken) are saved in `.git/t4/settings.json`, replaced whole.
   Nothing acts on them yet: waking is #25. Mutes (#27) aren't built, so the page shows none and
   refuses to unmute.
@@ -713,7 +719,9 @@ A body past the limit is cut, as in `inbox`.
   update, so it wasn't done. Nothing is delivered for a user who has left either (see Joining a
   repo). A message that waited more
   than 15 minutes (T3 closed, the session away) is not sprung on the agent as a turn: it stays a
-  notice. The page's wake setting (#22) set to "never", for the device or for one session, keeps
+  notice. The 15 minutes count from when the daemon puts the message in the inbox, so one read
+  after a long outage (2026-10-30, #30) is young and wakes its thread.
+  The page's wake setting (#22) set to "never", for the device or for one session, keeps
   the notice too; otherwise delivery is at once. A daemon that starts looks at the messages its
   inboxes kept, and delivers those that are still young enough.
 - **No loop guard.** Nothing in t4 limits how often two agents answer each other (Tyler's
