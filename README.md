@@ -89,3 +89,7 @@ remote through real git; `docs/testing.md` says how a change is checked. Code li
 
 Public repos, large teams, long-lived projects, or teams whose members don't trust each other's
 agents. See "Who it is for" in the vision doc.
+
+## License
+
+MIT; see [`LICENSE`](LICENSE).

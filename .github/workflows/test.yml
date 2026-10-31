@@ -1,21 +1,19 @@
-# Every pull request from a branch of this repo runs the checks each change must pass, so a change's
-# verification doesn't wait on a laptop shared with other agents' test runs, or die when that
-# laptop sleeps (#48).
+# Every pull request runs the checks each change must pass, so a change's verification doesn't wait
+# on a laptop shared with other agents' test runs, or die when that laptop sleeps (#48).
 #
-# Two jobs run in parallel, each on a self-hosted runner. `test` runs on macOS (2 cores) on a
-# machine that does other work, so the runner service and every step run at background priority,
-# one package at a time, and the job doesn't start while the machine is short of memory.
-# `test-linux` runs on a Spot VM in Google Cloud (4 cores) that runs nothing else; it stops itself
-# when idle and is started again for each job that asks for it (ci/wake). docs/testing.md has the
-# rest.
+# Three jobs run in parallel. `test-macos` and `test-windows` run on GitHub's own runners, which are
+# free for a public repo and start fresh for every job. `test-linux` runs on a self-hosted Spot VM in
+# Google Cloud (4 cores) that runs nothing else; it stops itself when idle and is started again for
+# each job that asks for it (ci/wake). docs/testing.md has the rest.
 #
-# A self-hosted runner runs whatever code reaches it, on a machine that does other things.
-# GitHub's own advice is to keep such runners off public repositories, because anyone can open a
-# pull request from a fork (docs/testing.md, "Pull requests from forks"). So each job's `if` lets
-# through only a pull request whose head is a branch of this repo, a push to main and a manual run.
-# That `if` alone is not a lock: a pull request from a fork runs the workflow file as the fork
-# changed it, so the fork can delete the `if`. What keeps its code off the runner is the repo
-# setting that makes a maintainer approve every outside contributor's workflow run.
+# A self-hosted runner runs whatever code reaches it, and it is not wiped between jobs. GitHub's own
+# advice is to keep such runners off public repositories, because anyone can open a pull request
+# from a fork (docs/testing.md, "Pull requests from forks"). So `test-linux`'s `if` lets through
+# only a pull request whose head is a branch of this repo, a push to main and a manual run, and a
+# fork's pull request is checked on GitHub's runners alone. That `if` alone is not a lock: a pull
+# request from a fork runs the workflow file as the fork changed it, so the fork can delete the
+# `if`. What keeps its code off the VM is the repo setting that makes a maintainer approve every
+# outside contributor's workflow run.
 name: test
 
 on:
@@ -32,33 +30,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, t4-ci]
+  test-macos:
+    runs-on: macos-latest
     timeout-minutes: 60
-    env:
-      GOMAXPROCS: '2'
-      GOFLAGS: -p=1
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - name: Check the runner's machine has room
-        run: |
-          # macOS keeps swap allocated long after memory frees up, so swap in use says little;
-          # the kernel's free percentage says whether there is room now.
-          free=$(memory_pressure | sed -nE 's/.*free percentage: ([0-9]+)%.*/\1/p')
-          if [ -n "$free" ] && [ "$free" -lt 20 ]; then
-            echo "::error::The runner's machine is short of memory (${free}% free), so the tests didn't run. Re-run the job later."
-            exit 1
-          fi
-          go version
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
       - name: gofmt
         run: |
           out=$(gofmt -l .)
           if [ -n "$out" ]; then echo "$out"; exit 1; fi
-      - run: taskpolicy -b nice -n 20 go vet ./...
-      - run: taskpolicy -b nice -n 20 go test -race -count=1 -timeout 50m ./...
+      - run: go vet ./...
+      - run: go test -race -count=1 -timeout 50m ./...
+
+  # gofmt runs on the other two: a Windows checkout turns line endings into CRLF, which gofmt reports.
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race -count=1 -timeout 50m ./...
 
   test-linux:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
