@@ -4,6 +4,7 @@
 {
   "name": "murmur-site",
   "compatibility_date": "2026-11-01",
-  "assets": { "directory": "." },
+  "main": "src/worker.js",
+  "assets": { "directory": ".", "binding": "ASSETS", "run_worker_first": ["/*.mp4"] },
   "routes": [{ "pattern": "murmur.afig.dev", "custom_domain": true }]
 }

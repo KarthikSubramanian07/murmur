@@ -1,0 +1,791 @@
+<!doctype html>
+<!-- The scene how-wide.mp4 and how-tall.mp4 are rendered from, by render-video.mjs. It is not published. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Murmur: intra-repo agent communication</title>
+<meta name="description" content="Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --blue: #225BFF;
+    --butter: #FDEE8C;
+    --cream: #FFFBEA;
+    --ink: #0E1B45;
+    --ink-soft: #3A4670;
+    --badge-bg: #DCE6FF;
+    --badge-ink: #1640BF;
+    --green: #17A34A;
+    --mono: ui-monospace, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { background: var(--blue); color: var(--cream); }
+  body {
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    position: relative;
+    width: 100%;
+    /* The hero fills the first screen; page 2 starts below it. */
+    min-height: max(800px, 100vh);
+    overflow-x: clip;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .center { text-align: center; padding: 0 24px; position: relative; z-index: 1; }
+  h1 {
+    font-size: clamp(min(38px, 11vw), 5.6vw, 76px);
+    font-weight: 700;
+    letter-spacing: -.035em;
+    line-height: 1.04;
+    color: var(--butter);
+  }
+  h1 span { display: block; white-space: nowrap; }
+  .center p {
+    max-width: 680px;
+    margin: 24px auto 0;
+    font-size: 18px;
+    line-height: 1.5;
+    text-wrap: balance;
+  }
+  .button {
+    display: inline-block;
+    margin-top: 28px;
+    padding: 14px 24px;
+    border-radius: 999px;
+    background: var(--butter);
+    color: var(--ink);
+    font-size: 16px;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .button:hover { background: var(--cream); }
+  .button:focus-visible { outline: 3px solid var(--cream); outline-offset: 3px; }
+
+  .card {
+    position: absolute;
+    width: clamp(232px, 21.5%, 300px);
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: var(--cream);
+    color: var(--ink);
+    box-shadow: 0 10px 24px rgba(8, 24, 90, .28);
+    transform: rotate(var(--tilt, 0deg));
+  }
+  .head { display: flex; align-items: center; gap: 8px; }
+  .dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
+  .name { font-size: 14.5px; font-weight: 600; letter-spacing: -.01em; }
+  .badge {
+    margin-left: auto;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--badge-bg);
+    color: var(--badge-ink);
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+  .doing { margin-top: 8px; font-size: 14.5px; line-height: 1.35; }
+  .where { margin-top: 6px; font: 12.5px/1.4 var(--mono); color: var(--ink-soft); }
+
+  .message {
+    width: clamp(250px, 23.5%, 330px);
+    background: var(--butter);
+    font: 13.5px/1.45 var(--mono);
+  }
+  .message b { font-weight: 700; }
+
+  /* Placement: session cards hold the corners, and the two messages sit
+     side by side between the two sessions they come from. */
+  .c-finch  { left: 7%;    top: 62px;  --tilt: -2deg; }
+  .c-wren   { right: 8%;   top: 44px;  --tilt: 1.5deg; }
+  /* These two run off the page; the extra padding on that side keeps all their text on it. */
+  .c-otter  { left: -28px;  top: 556px; --tilt: 1.5deg;  width: calc(clamp(232px, 21.5%, 300px) + 28px); padding-left: 44px; }
+  .c-heron  { right: -28px; top: 576px; --tilt: -1.5deg; width: calc(clamp(232px, 21.5%, 300px) + 28px); padding-right: 44px; }
+  .c-ask    { right: calc(50% + 12px); top: 628px; --tilt: -1deg; }
+  .c-reply  { left: calc(50% + 12px); top: 664px; --tilt: 1deg; }
+
+  /* Below this the headline takes the whole width, so cards move under it. */
+  @media (max-width: 1099px) {
+    .page { display: block; min-height: 0; padding: 56px 0 48px; }
+    h1 span { white-space: normal; text-wrap: balance; }
+    .center p { font-size: 17px; max-width: 520px; }
+    .cards {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      max-width: 480px;
+      margin: 44px auto 0;
+      padding: 0 16px;
+    }
+    .card, .c-otter, .c-heron { position: static; width: 88%; padding: 14px 16px; }
+    .c-finch, .c-wren { display: none; }
+    .c-heron, .c-reply { align-self: flex-end; }
+  }
+
+  /* ---------- Page 2: two laptops and the remote, scroll position is the clock ---------- */
+  /* Blue is the ground under the whole page; the cream parts are sheets laid on it, one radius
+     for all of them. Setup keeps its own box, so its rounded top edge is drawn here. */
+  #how { --sheet: clamp(28px, 3.2vw, 48px); position: relative; background: var(--blue); color: var(--cream); }
+  #how .route { border-radius: var(--sheet); }
+  #how::after { content: ""; display: block; height: var(--sheet); background: var(--cream); border-radius: var(--sheet) var(--sheet) 0 0; }
+
+  .scrub .track { height: 400vh; }
+  .stage { position: relative; height: 100vh; height: 100svh; min-height: 640px; container-type: size; overflow: clip; }
+  .scrub .stage { position: sticky; top: 0; }
+
+  /* Everything in the scene is sized in --u, one unit of a fixed drawing that ends at its own
+     ink: 1400 x 802 wide, 358 x 753 stacked. The margins are --px and --py, outside the drawing.
+     The route paths in the SVG use the same units. */
+  .scene {
+    --dw: 1400; --dh: 802;
+    --px: clamp(24px, 5cqw, 96px);
+    --py: clamp(24px, 7.2cqh, 80px);
+    --u: min(calc((100cqw - 2 * var(--px)) / var(--dw)), calc((100cqh - 2 * var(--py)) / var(--dh)));
+    --shade: #1A47CF;
+    position: absolute;
+    left: 50%; top: 50%;
+    width: calc(var(--u) * var(--dw));
+    height: calc(var(--u) * var(--dh));
+    transform: translate(-50%, -50%);
+  }
+  .abs, .lap, .panel, .clock, .wires, .pill { position: absolute; }
+
+  /* Route lines sit under the laptops and the panel, so they only show between them. */
+  .wires { inset: 0; width: 100%; height: 100%; z-index: 1; overflow: visible; }
+  .wires path { fill: none; }
+  .wires .base { stroke: rgba(255, 251, 234, .42); stroke-width: 2.5; stroke-dasharray: 3 8; stroke-linecap: round; }
+  .wires .fl { stroke: var(--butter); stroke-width: var(--ln); stroke-linejoin: round; }
+  .scene { --ln: 5; }
+  .tall-only { display: none; }
+
+  /* A laptop: lid, display, deck. Nothing on the keyboard moves. */
+  .lap { z-index: 4; left: calc(var(--u) * var(--x)); top: calc(var(--u) * 300); width: calc(var(--u) * 580); --x: 0; --fs: 34; }
+  .lap-a { --x: 820; }
+  .lid {
+    width: calc(var(--u) * 536);
+    height: calc(var(--u) * 336);
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    padding: calc(var(--u) * 14) calc(var(--u) * 14) calc(var(--u) * 10);
+    background: var(--cream);
+    border-radius: calc(var(--u) * 18) calc(var(--u) * 18) 0 0;
+  }
+  .disp {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--ink);
+    border-radius: calc(var(--u) * 6);
+    overflow: hidden;
+    font-family: var(--mono);
+  }
+  .tbar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: calc(var(--u) * 9);
+    height: calc(var(--u) * 36);
+    padding: 0 calc(var(--u) * 26);
+    background: #16265C;
+    color: #C3C9DC;
+    font-size: calc(var(--u) * 18);
+  }
+  .tbar i { width: calc(var(--u) * 10); height: calc(var(--u) * 10); border-radius: 50%; background: #2BD06A; }
+  .tbar i.idle { background: #5C688F; }
+  .log {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    padding: calc(var(--u) * 12) calc(var(--u) * 14);
+    font-size: calc(var(--u) * var(--fs));
+    line-height: 1.2;
+    color: var(--cream);
+  }
+  /* One grid: every turn is the same box, so all the text shares one left edge. A turn from the
+     other agent adds a fill and its sender, and nothing else. */
+  .turn { padding: calc(var(--u) * 10) calc(var(--u) * 12); border-radius: calc(var(--u) * 7); }
+  .turn + .turn { margin-top: calc(var(--u) * 8); }
+  .in { background: var(--butter); color: var(--ink); }
+  .from { display: block; margin-bottom: calc(var(--u) * 3); font-size: calc(var(--u) * 18); color: var(--ink-soft); }
+  .off { visibility: hidden; }
+  .caret { position: absolute; left: 0; top: 0; width: .56em; height: 1.1em; background: var(--cream); display: none; }
+  .deck { display: block; width: 100%; height: calc(var(--u) * 118); }
+  .seat {
+    margin-top: calc(var(--u) * 12);
+    text-align: center;
+    font-size: calc(var(--u) * 28);
+    line-height: calc(var(--u) * 36);
+    font-weight: 600;
+    letter-spacing: -.02em;
+  }
+
+  /* GitHub: the same drawing as the route figure above, branches first, the side ref below. */
+  .panel {
+    z-index: 2;
+    left: calc(var(--u) * 500);
+    top: 0;
+    width: calc(var(--u) * 400);
+    height: calc(var(--u) * 252);
+    --lab: 20; --pad: 16; --lane: 80; --ly: 58;
+    background: #F7F4E4;
+    color: var(--ink);
+    border-radius: calc(var(--u) * 14);
+    overflow: hidden;
+    box-shadow: 0 calc(var(--u) * 8) 0 var(--shade);
+  }
+  .gh {
+    height: calc(var(--u) * 44);
+    padding: 0 calc(var(--u) * var(--pad));
+    display: flex;
+    align-items: center;
+    background: var(--ink);
+    color: var(--cream);
+    font-size: calc(var(--u) * 22);
+    font-weight: 600;
+    letter-spacing: -.01em;
+  }
+  .hd {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: calc(var(--u) * 10) calc(var(--u) * var(--pad)) calc(var(--u) * 3);
+    font-size: calc(var(--u) * var(--lab));
+    line-height: 1.2;
+    color: var(--ink-soft);
+  }
+  .hd b { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+  .hd-r { color: var(--ink); font: 700 calc(var(--u) * var(--lab))/1.2 var(--mono); }
+  .hd-r b { color: var(--badge-ink); font-family: Inter, system-ui, sans-serif; }
+  .graph { display: block; width: calc(100% - var(--u) * var(--pad) * 2); margin: 0 auto; }
+  .graph path { fill: none; stroke: #A5A9B4; stroke-width: 2.5; }
+  .graph circle { fill: #A5A9B4; }
+  /* The side ref runs edge to edge in the route's colour, so a route line meets it at its own
+     line and continues as that line, butter on blue outside, blue on butter inside. */
+  .lane {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: calc(var(--u) * var(--lane));
+    background: var(--butter);
+  }
+  .lane::before { content: ""; position: absolute; left: 0; right: 0; top: calc(var(--u) * var(--ly)); height: calc(var(--u) * var(--ln)); margin-top: calc(var(--u) * var(--ln) / -2); background: var(--blue); }
+  .cd {
+    position: absolute;
+    top: calc(var(--u) * var(--ly));
+    width: calc(var(--u) * var(--dot));
+    height: calc(var(--u) * var(--dot));
+    margin: calc(var(--u) * var(--dot) / -2) 0 0 calc(var(--u) * var(--dot) / -2);
+    border-radius: 50%;
+    background: var(--blue);
+    --dot: 22;
+  }
+  #cd1 { left: calc(var(--u) * 145); }
+  #cd2 { left: calc(var(--u) * 295); }
+
+  /* A daemon: its own part of the route, between the laptop and the ref. Ink like the panel's
+     header, so the route's butter line runs straight through it unchanged. The label sits above
+     the line, and the pill overhangs the sides when it holds on it. */
+  .node {
+    position: absolute;
+    z-index: 2;
+    left: calc(var(--u) * var(--nx));
+    top: calc(var(--u) * var(--ny));
+    width: calc(var(--u) * var(--nw));
+    height: calc(var(--u) * var(--nh));
+    --nx: 276; --ny: 160; --nw: 100; --nh: 88; --ly: 70;
+    background: var(--ink);
+    color: var(--cream);
+    border-radius: calc(var(--u) * 10);
+    box-shadow: 0 calc(var(--u) * 6) 0 var(--shade);
+  }
+  .node-a { --nx: 1024; }
+  .node::after { content: ""; position: absolute; left: 0; right: 0; top: calc(var(--u) * var(--ly)); height: calc(var(--u) * var(--ln)); margin-top: calc(var(--u) * var(--ln) / -2); background: var(--butter); }
+  .nm {
+    display: block;
+    padding: calc(var(--u) * 8) 0 0 calc(var(--u) * 25);
+    font-size: calc(var(--u) * 17);
+    line-height: 1.15;
+    font-weight: 600;
+    letter-spacing: -.01em;
+  }
+  .on { position: absolute; top: calc(var(--u) * 13); left: calc(var(--u) * 10); width: calc(var(--u) * 9); height: calc(var(--u) * 9); border-radius: 50%; background: #2BD06A; }
+  /* What a daemon is doing, over the route as in the figure above. */
+  .st { position: absolute; top: calc(var(--u) * 34); font: 700 calc(var(--u) * 18)/1.2 var(--mono); color: var(--cream); }
+  .node-b .st { left: calc(100% + var(--u) * 8); }
+  .node-a .st { right: calc(100% + var(--u) * 8); }
+
+  /* The moving commit is the one thing the eye follows. Its width, height and colour are set from
+     t: a labelled pill on the route, the row's dot once it is on the ref. */
+  .pill {
+    z-index: 6;
+    left: 0; top: 0;
+    display: grid;
+    place-items: center;
+    justify-content: center;
+    align-content: center;
+    overflow: hidden;
+    width: calc(var(--u) * var(--pw, 112));
+    height: calc(var(--u) * var(--ph, 40));
+    border-radius: calc(var(--u) * 27);
+    background: var(--butter);
+    color: var(--ink);
+    font-size: calc(var(--u) * 24);
+    font-weight: 700;
+    letter-spacing: -.02em;
+    white-space: nowrap;
+    opacity: 0;
+    will-change: transform;
+    pointer-events: none;
+  }
+
+  .pill span { grid-area: 1 / 1; white-space: nowrap; }
+  #pillT { color: transparent; -webkit-background-clip: text; background-clip: text; }
+
+  .clock { z-index: 2; left: calc(var(--u) * 580); top: calc(var(--u) * 392); width: calc(var(--u) * 240); text-align: center; color: var(--cream); }
+  .clock.done { color: var(--butter); }
+  .clock-n {
+    font-size: calc(var(--u) * 124);
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -.05em;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  .clock-n small { font-size: .4em; font-weight: 600; letter-spacing: -.02em; margin-left: .06em; }
+  .clock-l { margin-top: calc(var(--u) * 6); font-size: calc(var(--u) * 22); color: var(--cream); }
+
+  /* Stacked: Bob's laptop, GitHub and the clock, Alice's laptop. The routes keep the wide layout's
+     grammar: Bob's meets the ref row from the left, Alice's from the right. */
+  @media (max-aspect-ratio: 1/1), (max-width: 999px) {
+    .scene { --dw: 358; --dh: 753; --px: 16px; --py: 20px; --ln: 3.5; }
+    .wide-only { display: none; }
+    .tall-only { display: block; }
+    .wires .base { stroke-width: 2; stroke-dasharray: 2 6; }
+    .lap { top: calc(var(--u) * var(--y)); width: calc(var(--u) * 358); --x: 0; --y: 0; --fs: 20; }
+    .lap-a { --x: 0; --y: 490; }
+    .lid { width: calc(var(--u) * 330); height: calc(var(--u) * 190); padding: calc(var(--u) * 8) calc(var(--u) * 8) calc(var(--u) * 5); border-radius: calc(var(--u) * 12) calc(var(--u) * 12) 0 0; }
+    /* The nodes flank the panel on the ref row's line, as wide. Bob's route comes down to his,
+       Alice's goes down from hers. No room to bend inside a node, so each edge takes its line. */
+    .node { --nx: -8; --ny: 401; --nw: 70; --nh: 60; --ly: 50; border-radius: calc(var(--u) * 7); box-shadow: 0 calc(var(--u) * 4) 0 var(--shade); }
+    .node-a { --nx: 296; }
+    .node-b::after { left: 50%; }
+    .node-a::after { right: 50%; }
+    .nm { padding: calc(var(--u) * 4) 0 0 calc(var(--u) * 13); font-size: calc(var(--u) * 14); line-height: 1.08; }
+    .on { top: calc(var(--u) * 8); left: calc(var(--u) * 4); width: calc(var(--u) * 6); height: calc(var(--u) * 6); }
+    .st { top: calc(var(--u) * -19); font-size: calc(var(--u) * 14); }
+    .node-b .st { left: calc(var(--u) * 41); }
+    .node-a .st { left: auto; right: 0; }
+    .disp { border-radius: calc(var(--u) * 4); }
+    .tbar { height: calc(var(--u) * 22); padding: 0 calc(var(--u) * 16); font-size: calc(var(--u) * 14); gap: calc(var(--u) * 6); }
+    .tbar i { width: calc(var(--u) * 7); height: calc(var(--u) * 7); }
+    .log { padding: calc(var(--u) * 6) calc(var(--u) * 8); }
+    .turn { padding: calc(var(--u) * 6) calc(var(--u) * 8); border-radius: calc(var(--u) * 5); }
+    .turn + .turn { margin-top: calc(var(--u) * 4); }
+    .from { margin-bottom: calc(var(--u) * 2); font-size: calc(var(--u) * 14); }
+    .deck { height: calc(var(--u) * 48); }
+    .seat { margin-top: calc(var(--u) * 3); font-size: calc(var(--u) * 18); line-height: calc(var(--u) * 22); }
+    .panel {
+      left: calc(var(--u) * 76); top: calc(var(--u) * 326);
+      width: calc(var(--u) * 206); height: calc(var(--u) * 138);
+      --lab: 14; --pad: 8; --lane: 46; --ly: 33;
+      border-radius: calc(var(--u) * 10);
+      box-shadow: 0 calc(var(--u) * 5) 0 var(--shade);
+    }
+    .gh { height: calc(var(--u) * 26); font-size: calc(var(--u) * 15); }
+    .hd { padding-top: calc(var(--u) * 3); padding-bottom: 0; }
+    .cd { --dot: 14; }
+    #cd1 { left: calc(var(--u) * 63); }
+    #cd2 { left: calc(var(--u) * 143); }
+    .pill { font-size: calc(var(--u) * 15); border-radius: calc(var(--u) * 15); }
+    .clock { left: calc(var(--u) * 76); top: calc(var(--u) * 272); width: calc(var(--u) * 206); display: flex; align-items: baseline; gap: calc(var(--u) * 8); text-align: left; }
+    .clock-n { font-size: calc(var(--u) * 44); }
+    .clock-l { font-size: calc(var(--u) * 14); margin-top: 0; white-space: nowrap; }
+  }
+
+  /* ---------- Page 2, first: the route, one static figure ---------- */
+  .route {
+    --panel: #F7F4E4;
+    --line: rgba(14, 27, 69, .13);
+    --node: #E8E5D6;
+    --node-mute: #EFECDD;
+    --mute: #A5A9B4;
+    background: var(--cream);
+    color: var(--ink);
+    padding: clamp(56px, 9vh, 96px) 24px;
+  }
+  .route-in { max-width: 960px; margin: 0 auto; }
+  #how .route h2 { font-size: clamp(34px, 3.4vw, 44px); font-weight: 500; letter-spacing: -.025em; line-height: 1.1; margin-bottom: 32px; }
+  .route figure { margin: 0; }
+  .route .fig-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+  .route svg { display: block; width: 100%; height: auto; }
+  .route .tall { display: none; }
+  .route figcaption { margin-top: 16px; font-size: 17px; line-height: 1.45; text-align: center; text-wrap: balance; }
+  .route svg text { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: var(--ink); }
+  .route .ct { fill: #FBF8EA; stroke: var(--line); stroke-width: 1; }
+  .route .ct-h { fill: var(--node); }
+  .route .ct-t { font-size: 14px; font-weight: 500; }
+  .route .ic rect, .ic path { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-linecap: round; }
+  .route .dot-s { fill: var(--green); }
+  .route .rm-h { fill: var(--ink); }
+  .route svg .rm-t { font-size: 17px; font-weight: 600; fill: var(--cream); letter-spacing: -.01em; }
+  .route svg .rm-s { font: 13.5px var(--mono); fill: #C3C9DC; }
+  .route .nd { fill: var(--node); }
+  .route .nd-t { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+  .route svg .nd-s { font-size: 13.5px; fill: var(--ink-soft); }
+  .route svg .gl { font-size: 13.5px; fill: var(--ink-soft); }
+  .route .rw { fill: var(--node); }
+  .route .rw-mute { fill: var(--node-mute); }
+  .route .rw-new { fill: var(--butter); stroke: var(--blue); stroke-width: 2; }
+  .route .commit { fill: var(--blue); }
+  .route .lk { fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  .route .lk-blue { stroke: var(--blue); }
+  .route .lk-mute { stroke: var(--mute); }
+  .route .lk-ink { stroke: var(--ink); }
+  .route .lk-dash { stroke-dasharray: 2 7; }
+  .route .nodash { stroke-dasharray: none; }
+  .route svg .mono { font: 13.5px var(--mono); }
+  .route .cloud { fill: #fff; stroke: var(--mute); stroke-width: 2; }
+  .route .srv { fill: var(--node); stroke: var(--ink-soft); stroke-width: 1.5; }
+  .route .srv-l, .route .srv-v { fill: none; stroke: var(--ink-soft); stroke-width: 1.5; }
+  .route .srv-v { stroke-width: 2; stroke-linecap: round; opacity: .55; }
+  .route .srv-d { fill: var(--green); }
+  /* The one red on the site: the server Murmur doesn't need. */
+  .route .x-big { fill: none; stroke: #E5342B; stroke-width: 11; stroke-linecap: round; }
+  .route svg .lk-blue-t { fill: var(--blue); }
+  .route svg .lk-mute-t { fill: #5F6880; }
+  @media (max-width: 759px) {
+    .route { padding: 56px 10px; }
+    #how .route h2 { margin: 0 10px 24px; }
+    .route .wide { display: none; }
+    .route .tall { display: block; max-width: 440px; margin: 0 auto; }
+    .route figcaption { margin: 14px 10px 0; font-size: 16px; }
+  }
+
+  /* ---------- Page 3 ---------- */
+  #setup { background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) clamp(56px, 9vh, 96px); }
+  .setup-in { max-width: 1040px; margin: 0 auto; }
+  #setup h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
+  .inst { margin-top: 22px; display: grid; gap: 8px; }
+  .inst-h { font-size: 14px; font-weight: 600; color: var(--ink-soft); }
+  .cmd { display: grid; grid-template-columns: 6.4em minmax(0, 1fr) auto; align-items: center; column-gap: 12px; padding: 11px 14px; border-radius: 10px; background: var(--ink); color: var(--cream); font: 13px/1.45 var(--mono); }
+  .cmd > span { color: #A9B6E6; font-family: Inter, system-ui, sans-serif; font-size: 13px; }
+  .cmd code { overflow-wrap: anywhere; font: inherit; }
+  .copy { font: 600 12.5px/1 Inter, system-ui, sans-serif; color: var(--ink); background: var(--butter); border: 0; border-radius: 999px; padding: 7px 11px; cursor: pointer; }
+  .copy:hover { background: var(--cream); }
+  .copy:focus-visible { outline: 3px solid var(--butter); outline-offset: 2px; }
+  .steps { list-style: none; padding: 0; margin-top: 28px; border-top: 2px solid var(--ink); }
+  .steps > li { display: grid; grid-template-columns: 2em minmax(0, 13em) minmax(0, 1fr); column-gap: 14px; padding: 18px 0; border-bottom: 1px solid #DDD7B8; }
+  .n { font-size: 18px; font-weight: 700; color: var(--blue); line-height: 1.35; }
+  .actor { font-size: 18px; font-weight: 700; letter-spacing: -.015em; line-height: 1.35; }
+  .do p { font-size: 15.5px; line-height: 1.5; max-width: 62ch; }
+  .do p + .cmds, .do .cmds + p, .do .cmds + .cmds { margin-top: 8px; }
+  .cmds { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
+  .cmds code { padding: 3px 8px; border-radius: 6px; background: var(--badge-bg); color: var(--badge-ink); font: 600 14px/1.4 var(--mono); }
+  .cmds span { font-size: 14px; color: var(--ink-soft); }
+  .setup-end { margin-top: 28px; }
+  #setup .button { margin-top: 0; background: var(--blue); color: var(--cream); }
+  #setup .button:hover { background: var(--ink); }
+  #setup .button:focus-visible { outline: 3px solid var(--blue); }
+  @media (max-width: 720px) {
+    .steps > li { grid-template-columns: 1.6em minmax(0, 1fr); }
+    .do { grid-column: 2; margin-top: 6px; }
+    .cmd { grid-template-columns: minmax(0, 1fr) auto; row-gap: 6px; }
+    .cmd code { grid-column: 1 / -1; grid-row: 2; }
+  }
+</style>
+</head>
+<body>
+
+
+<section id="how">
+  <div class="scene-wrap"><div class="track"><div class="stage"><div class="scene" id="scene" data-scene role="img" aria-label="Bob's agent, quiet-otter, asks: Are you changing the auth middleware? The message goes to Bob's Murmur daemon, which makes it a commit and pushes it to refs/murmur/* on GitHub, where it stays. Alice's Murmur daemon fetches a copy and delivers the message into brave-heron's conversation as a new turn. brave-heron answers: No, that's yours. I'm only in cookies. The answer takes the same route back. Branches get no commits. Measured: 15 seconds from question to answer.">
+
+    <svg class="wires wide-only" viewBox="0 0 1400 802" aria-hidden="true"><path class="base" d="M326 230H645"/><path class="base" d="M645 230H1074"/><path class="base" d="M240 310V246Q240 230 256 230H326"/><path class="base" d="M1074 230H1144Q1160 230 1160 246V310"/><path class="fl" id="f1w" pathLength="1" d="M326 230H645"/><path class="fl" id="f2w" pathLength="1" d="M645 230H1074"/><path class="fl" id="f3w" pathLength="1" d="M1074 230H795"/><path class="fl" id="f4w" pathLength="1" d="M795 230H326"/><path class="fl" id="sBw" pathLength="1" d="M240 310V246Q240 230 256 230H326"/><path class="fl" id="sAw" pathLength="1" d="M1074 230H1144Q1160 230 1160 246V310"/></svg><svg class="wires tall-only" viewBox="0 0 358 753" aria-hidden="true"><path class="base" d="M27 451H139"/><path class="base" d="M139 451H331"/><path class="base" d="M27 225V451"/><path class="base" d="M331 451V505"/><path class="fl" id="f1t" pathLength="1" d="M27 451H139"/><path class="fl" id="f2t" pathLength="1" d="M139 451H331"/><path class="fl" id="f3t" pathLength="1" d="M331 451H219"/><path class="fl" id="f4t" pathLength="1" d="M219 451H27"/><path class="fl" id="sBt" pathLength="1" d="M27 225V451"/><path class="fl" id="sAt" pathLength="1" d="M331 451V505"/></svg>
+
+    <div class="panel">
+      <div class="gh">GitHub</div>
+      <div class="hd"><span>branches</span><b data-artifact>+0</b></div>
+      <svg class="graph" viewBox="0 0 368 70" aria-hidden="true"><path d="M8 11H340M40 11C66 11 58 59 84 59H320M140 11C166 11 158 35 184 35H345"/><circle cx="40" cy="11" r="6"/><circle cx="140" cy="11" r="6"/><circle cx="250" cy="11" r="6"/><circle cx="340" cy="11" r="6"/><circle cx="205" cy="35" r="6"/><circle cx="280" cy="35" r="6"/><circle cx="345" cy="35" r="6"/><circle cx="120" cy="59" r="6"/><circle cx="225" cy="59" r="6"/><circle cx="320" cy="59" r="6"/></svg>
+      <div class="lane">
+        <div class="hd hd-r"><span data-artifact>refs/murmur/*</span><b id="cnt" data-artifact>+2 commits</b></div>
+        <i class="cd" id="cd1"></i><i class="cd" id="cd2"></i>
+      </div>
+    </div>
+
+    <div class="node node-b"><span class="nm">Murmur <br>daemon</span><i class="on"></i><span class="st" id="stB"></span></div>
+    <div class="node node-a"><span class="nm">Murmur <br>daemon</span><i class="on"></i><span class="st" id="stA"></span></div>
+
+    <div class="clock done" id="clock">
+      <div class="clock-n"><span id="clk">15</span><small>s</small></div>
+      <div class="clock-l" id="clockL">question to answer</div>
+    </div>
+
+    <div class="lap lap-b"><div id="lapB">
+      <div class="lid"><div class="disp">
+        <div class="tbar"><i id="dotB"></i>quiet-otter</div>
+        <div class="log">
+          <p class="turn" id="bq" data-artifact>Are you changing the auth middleware?</p>
+          <div class="turn in" id="ba"><span class="from">from brave-heron</span><p data-artifact>No, that's yours. I'm only in cookies.</p></div>
+          <i class="caret" id="caretB"></i>
+        </div>
+      </div></div>
+      <svg class="deck" viewBox="0 0 580 118" preserveAspectRatio="none" aria-hidden="true"><use href="#deckArt"/></svg></div>
+      <div class="seat">Bob's laptop</div>
+    </div>
+
+    <div class="lap lap-a"><div id="lapA">
+      <div class="lid"><div class="disp">
+        <div class="tbar"><i id="dotA" class="idle"></i>brave-heron</div>
+        <div class="log">
+          <div class="turn in" id="aq"><span class="from">from quiet-otter</span><p data-artifact>Are you changing the auth middleware?</p></div>
+          <p class="turn" id="ar" data-artifact>No, that's yours. I'm only in cookies.</p>
+          <i class="caret" id="caretA"></i>
+        </div>
+      </div></div>
+      <svg class="deck" viewBox="0 0 580 118" preserveAspectRatio="none" aria-hidden="true"><use href="#deckArt"/></svg></div>
+      <div class="seat">Alice's laptop</div>
+    </div>
+
+    <div class="pill" id="pill" aria-hidden="true" data-artifact><span id="pillM">message</span><span id="pillT">commit</span></div>
+
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><g id="deckArt"><rect x="22" y="0" width="536" height="5" fill="#C9C5AC"/><path d="M22 0H558L580 106H0Z" fill="#F7F4E4"/><rect x="22" y="0" width="536" height="3" fill="#C9C5AC"/><path d="M63.4 7.0L91.3 7.0L89.8 16.5L61.7 16.5ZM96.1 7.0L124.0 7.0L122.8 16.5L94.7 16.5ZM128.8 7.0L156.7 7.0L155.7 16.5L127.6 16.5ZM161.5 7.0L189.4 7.0L188.7 16.5L160.6 16.5ZM194.3 7.0L222.1 7.0L221.6 16.5L193.6 16.5ZM227.0 7.0L254.9 7.0L254.6 16.5L226.5 16.5ZM259.7 7.0L287.6 7.0L287.6 16.5L259.5 16.5ZM292.4 7.0L320.3 7.0L320.5 16.5L292.4 16.5ZM325.1 7.0L353.0 7.0L353.5 16.5L325.4 16.5ZM357.9 7.0L385.7 7.0L386.4 16.5L358.4 16.5ZM390.6 7.0L418.5 7.0L419.4 16.5L391.3 16.5ZM423.3 7.0L451.2 7.0L452.4 16.5L424.3 16.5ZM456.0 7.0L483.9 7.0L485.3 16.5L457.2 16.5ZM488.7 7.0L516.6 7.0L518.3 16.5L490.2 16.5ZM61.3 18.7L99.6 18.7L98.1 29.3L59.5 29.3ZM104.5 18.7L130.4 18.7L129.1 29.3L103.0 29.3ZM135.3 18.7L161.2 18.7L160.2 29.3L134.0 29.3ZM166.1 18.7L192.0 18.7L191.2 29.3L165.1 29.3ZM196.9 18.7L222.8 18.7L222.3 29.3L196.2 29.3ZM227.7 18.7L253.7 18.7L253.4 29.3L227.2 29.3ZM258.6 18.7L284.5 18.7L284.4 29.3L258.3 29.3ZM289.4 18.7L315.3 18.7L315.5 29.3L289.4 29.3ZM320.2 18.7L346.1 18.7L346.6 29.3L320.4 29.3ZM351.0 18.7L376.9 18.7L377.6 29.3L351.5 29.3ZM381.8 18.7L407.7 18.7L408.7 29.3L382.5 29.3ZM412.6 18.7L438.5 18.7L439.7 29.3L413.6 29.3ZM443.4 18.7L469.4 18.7L470.8 29.3L444.7 29.3ZM474.2 18.7L518.7 18.7L520.5 29.3L475.7 29.3ZM59.1 31.5L107.1 31.5L105.4 43.2L57.1 43.2ZM112.0 31.5L138.2 31.5L136.8 43.2L110.4 43.2ZM143.1 31.5L169.3 31.5L168.2 43.2L141.8 43.2ZM174.2 31.5L200.4 31.5L199.6 43.2L173.2 43.2ZM205.4 31.5L231.5 31.5L231.0 43.2L204.6 43.2ZM236.5 31.5L262.6 31.5L262.4 43.2L236.0 43.2ZM267.6 31.5L293.8 31.5L293.8 43.2L267.4 43.2ZM298.7 31.5L324.9 31.5L325.2 43.2L298.8 43.2ZM329.8 31.5L356.0 31.5L356.6 43.2L330.2 43.2ZM360.9 31.5L387.1 31.5L388.0 43.2L361.5 43.2ZM392.0 31.5L418.2 31.5L419.3 43.2L392.9 43.2ZM423.2 31.5L449.3 31.5L450.7 43.2L424.3 43.2ZM454.3 31.5L520.9 31.5L522.9 43.2L455.7 43.2ZM56.7 45.4L120.9 45.4L119.2 58.2L54.5 58.2ZM125.9 45.4L152.3 45.4L151.0 58.2L124.3 58.2ZM157.3 45.4L183.7 45.4L182.7 58.2L156.0 58.2ZM188.7 45.4L215.2 45.4L214.5 58.2L187.8 58.2ZM220.2 45.4L246.6 45.4L246.2 58.2L219.5 58.2ZM251.6 45.4L278.1 45.4L278.0 58.2L251.3 58.2ZM283.1 45.4L309.5 45.4L309.7 58.2L283.0 58.2ZM314.5 45.4L341.0 45.4L341.4 58.2L314.7 58.2ZM345.9 45.4L372.4 45.4L373.2 58.2L346.5 58.2ZM377.4 45.4L403.8 45.4L404.9 58.2L378.2 58.2ZM408.8 45.4L435.3 45.4L436.7 58.2L410.0 58.2ZM440.3 45.4L523.3 45.4L525.5 58.2L441.7 58.2ZM54.1 60.4L83.1 60.4L81.0 74.3L51.6 74.3ZM88.1 60.4L117.1 60.4L115.4 74.3L86.1 74.3ZM122.2 60.4L158.0 60.4L156.7 74.3L120.5 74.3ZM163.1 60.4L348.8 60.4L349.4 74.3L161.8 74.3ZM353.8 60.4L389.7 60.4L390.7 74.3L354.5 74.3ZM394.7 60.4L423.7 60.4L425.1 74.3L395.8 74.3ZM428.8 60.4L457.8 60.4L459.5 74.3L430.2 74.3ZM462.9 60.4L491.9 60.4L493.9 74.3L464.6 74.3ZM496.9 60.4L525.9 60.4L528.4 74.3L499.0 74.3Z" fill="#0E1B45"/><path d="M216.0 79.5L364.0 79.5L365.2 103.0L214.8 103.0Z" fill="#E4E0CA"/><path d="M0 106H580V110Q580 118 572 118H8Q0 118 0 110Z" fill="#D5D1B8"/><path d="M254 106H326V109Q326 112 323 112H257Q254 112 254 109Z" fill="#BDB99F"/></g></defs></svg>
+  </div></div></div></div>
+</section>
+
+
+
+<script>
+// One number drives page 2: t, in seconds, from scroll position. No timers, no
+// transitions, so the clock, the commit and every character agree at any scroll position.
+(() => {
+  const $ = id => document.getElementById(id);
+  const scene = $('scene');
+  const stacked = matchMedia('(max-aspect-ratio: 1/1), (max-width: 999px)');
+  const still = matchMedia('(prefers-reduced-motion: reduce)');
+  const roomy = matchMedia('(min-height: 640px)');
+  const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+    const outCubic = f => 1 - (1 - f) ** 3;
+  const smooth = f => f * f * (3 - 2 * f);
+
+  // Each message split into characters, so typing never reflows the screen.
+  const split = id => {
+    const el = $(id), text = el.textContent;
+    el.textContent = '';
+    const chars = [...text].map(c => {
+      const s = document.createElement('span');
+      s.textContent = c;
+      el.append(s);
+      return s;
+    });
+    return { el, chars, shown: chars.length };
+  };
+  // Only an agent's own message is typed; the other's arrives whole.
+  const bq = split('bq'), ar = split('ar');
+  const type = (m, n) => {
+    for (let i = Math.min(n, m.shown); i < Math.max(n, m.shown); i++) m.chars[i].classList.toggle('off', i >= n);
+    m.shown = n;
+  };
+
+  // Seconds in BRIEF's timeline: ask 0, pushed 2, turn starts 7, reply pushed 9, answer lands 15.
+  // A push carries the commit to the ref; a fetch carries a copy away and the dot stays.
+  const flights = [
+    { n: 1, from: 1.4,  to: 2,    ease: outCubic, leaving: false },
+    { n: 2, from: 5.5,  to: 6.4,  ease: smooth,   leaving: true },
+    { n: 3, from: 8.4,  to: 9,    ease: outCubic, leaving: false },
+    { n: 4, from: 13.5, to: 14.4, ease: smooth,   leaving: true },
+  ];
+  // On a screen it is a message, and only a daemon's strip changes that. Each time: leaves or
+  // reaches the screen, reaches or leaves the strip.
+  const SENDS = [
+    { from: 1, strip: 1.25, flight: 0, screen: 'bq', x: 'bx', s: 'bs' },
+    { from: 8, strip: 8.25, flight: 2, screen: 'ar', x: 'ax', s: 'as' },
+  ];
+  const DELIVERIES = [
+    { strip: 6.4, go: 6.6, at: 7, flight: 1, screen: 'aq', x: 'ax', s: 'as' },
+    { strip: 14.4, go: 14.6, at: 15, flight: 3, screen: 'ba', x: 'bx', s: 'bs' },
+  ];
+  // On the route the commit is a labelled pill. It morphs into the row's dot over the run between
+  // the panel's edge and the dot: dist is that run, per flight, in drawing units.
+  const SHAPE = {
+    w: { full: [112, 40], dot: 22, dist: [145, 255, 105, 295], edge: [500, 900], bx: 240, ax: 1160, bs: 326, as: 1074, dw: 1400, nodes: [[276, 160, 376, 248], [1024, 160, 1124, 248]] },
+    t: { full: [70, 24], dot: 14, dist: [63, 143, 63, 143], edge: [76, 282], bx: 60, ax: 290, bs: 27, as: 331, dw: 358, nodes: [[-8, 401, 62, 461], [296, 401, 366, 461]] },
+  };
+  let paths = [], stems = {}, shape = SHAPE.w, screens = {};
+  function choosePaths() {
+    const k = stacked.matches ? 't' : 'w';
+    shape = SHAPE[k];
+    paths = flights.map(f => $('f' + f.n + k));
+    paths.forEach(p => { p.len = p.getTotalLength(); });
+    stems = { bx: $('sB' + k), ax: $('sA' + k) };
+    stems.bx.len = stems.bx.getTotalLength();
+    stems.ax.len = stems.ax.getTotalLength();
+    // Where each message sits on its screen, in drawing units.
+    const box = scene.getBoundingClientRect(), unit = box.width / shape.dw;
+    screens = {};
+    ['bq', 'ba', 'aq', 'ar'].forEach(id => { const r = $(id).getBoundingClientRect(); screens[id] = (r.top + r.height / 2 - box.top) / unit; });
+  }
+
+  // Past 15 only the landing settles; the clock has stopped.
+  const END = 15.6;
+  // Waiting gets little scroll and motion gets a lot; the clock stays true because it reads t.
+  const SCRUB = [[.02, 0], [.10, 1], [.15, 1.25], [.19, 1.4], [.26, 2], [.29, 5.5], [.37, 6.4], [.40, 6.6], [.46, 7], [.48, 7.3], [.55, 8], [.59, 8.25], [.62, 8.4], [.68, 9], [.71, 13.5], [.79, 14.4], [.82, 14.6], [.90, 15], [1, END]];
+  function tAt(p) {
+    if (p <= SCRUB[0][0]) return 0;
+    for (let i = 1; i < SCRUB.length; i++) {
+      const [p0, t0] = SCRUB[i - 1], [p1, t1] = SCRUB[i];
+      if (p <= p1) return t0 + (t1 - t0) * (p - p0) / (p1 - p0);
+    }
+    return END;
+  }
+
+  // A cursor exists only while an agent is producing text, at the end of that text. Waiting
+  // agents have none, so a blank screen is a blank screen.
+  function placeCaret(c, char, after) {
+    if (!char) { c.style.display = 'none'; return; }
+    const box = c.parentElement.getBoundingClientRect(), r = char.getBoundingClientRect();
+    c.style.display = 'block';
+    c.style.transform = `translate(${(after ? r.right : r.left) - box.left}px, ${r.top - box.top}px)`;
+  }
+  // A band lands with a small overshoot.
+  function land(el, t, at) {
+    const x = clamp((t - at) / .35);
+    el.style.opacity = t >= at ? 1 : 0;
+    el.style.transform = t >= at && x < 1 ? `scale(${.95 + .05 * x + .025 * Math.sin(x * Math.PI)})` : '';
+  }
+
+  let last = -1;
+  function paint(t) {
+    if (t === last) return;
+    last = t;
+    $('clk').textContent = Math.min(15, Math.floor(t + 1e-6));
+    $('clock').classList.toggle('done', t >= 15);
+    $('clockL').style.visibility = t >= 15 ? 'visible' : 'hidden';
+    const n = t >= 9 ? 2 : t >= 2 ? 1 : 0;
+    $('cnt').textContent = `+${n} commit${n === 1 ? '' : 's'}`;
+    $('cd1').style.opacity = t >= 2 ? 1 : 0;
+    $('cd2').style.opacity = t >= 9 ? 1 : 0;
+    // A session's dot is green while its agent has a turn running.
+    $('dotB').classList.toggle('idle', t >= 2 && t < 15);
+    $('dotA').classList.toggle('idle', t < 7 || t >= 9);
+
+    // What each daemon is doing, while it does it.
+    const during = (a, b) => t >= a && t < b;
+    $('stB').textContent = during(1.4, 2) ? 'push' : during(13.5, 14.6) ? 'fetch' : '';
+    $('stA').textContent = during(8.4, 9) ? 'push' : during(5.5, 6.6) ? 'fetch' : '';
+    // The stems fill as the message passes along them, up from Bob's laptop, down to Alice's.
+    const stem = (el, e) => { el.setAttribute('stroke-dasharray', `${e} 1`); el.style.opacity = e > 0 ? 1 : 0; };
+    const kind = stacked.matches ? 't' : 'w';
+    stem($('sB' + kind), smooth(clamp((t - 1) / .25)));
+    stem($('sA' + kind), smooth(clamp((t - 6.6) / .4)));
+
+    // Typing, by the agents. The keyboards under them never move.
+    const nq = Math.round(clamp((t - .02) / .98) * bq.chars.length);
+    const nr = Math.round(clamp((t - 7.3) / .7) * ar.chars.length);
+    type(bq, nq);
+    type(ar, nr);
+
+    land($('aq'), t, 7);
+    land($('ba'), t, 15);
+
+    placeCaret($('caretB'), t > .02 && nq < bq.chars.length ? (nq ? bq.chars[nq - 1] : bq.chars[0]) : null, nq > 0);
+    placeCaret($('caretA'), t >= 7 && nr < ar.chars.length ? (nr ? ar.chars[nr - 1] : ar.chars[0]) : null, nr > 0);
+
+    // One thing moves. A message on a screen; a commit from a daemon to the ref, where a dot
+    // lands and stays; an unlabelled copy of that dot from the ref to the other daemon.
+    const pill = $('pill');
+    let at = null, m = 0, msg = 0, size = 1, copy = false, onRoute = false;
+    const lerp = (a, b, f) => ({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f });
+    // Between a screen and its node, f from 0 at the screen to 1 at the node: over the lid, then
+    // along the stem.
+    const hop = (side, y, f) => {
+      const stem = stems[side], along = g => stem.getPointAtLength((side === 'bx' ? g : 1 - g) * stem.len);
+      return f < .35 ? lerp({ x: shape[side], y }, along(0), f / .35) : along((f - .35) / .65);
+    };
+    flights.forEach((fl, i) => {
+      const p = paths[i];
+      const f = clamp((t - fl.from) / (fl.to - fl.from));
+      const e = fl.ease(f);
+      p.setAttribute('stroke-dasharray', `${e} 1`);
+      p.style.opacity = e > 0 ? 1 : 0;
+      if (f > 0 && f < 1) {
+        at = p.getPointAtLength(e * p.len);
+        onRoute = true;
+        copy = fl.leaving;
+        // Arriving, the morph starts as the pill's nose reaches the panel.
+        if (!copy) m = clamp(1 - (1 - e) * p.len / (shape.dist[i] + shape.full[0] / 2));
+      }
+    });
+    SENDS.forEach(s => {
+      const route = paths[s.flight].getPointAtLength(0), strip = { x: shape[s.s], y: route.y }, screen = { x: shape[s.x], y: screens[s.screen] };
+      if (during(s.from, s.strip)) { const f = (t - s.from) / (s.strip - s.from); at = hop(s.x, screen.y, smooth(f)); msg = 1; size = clamp(f / .3); }
+      // On the strip the word changes: this is the only place a message becomes a commit.
+      if (during(s.strip, flights[s.flight].from)) { const f = (t - s.strip) / (flights[s.flight].from - s.strip); at = lerp(strip, route, smooth(f)); msg = 1 - f; }
+    });
+    DELIVERIES.forEach(d => {
+      const p = paths[d.flight], route = p.getPointAtLength(p.len), strip = { x: shape[d.s], y: route.y }, screen = { x: shape[d.x], y: screens[d.screen] };
+      if (during(d.strip, d.go)) { const f = (t - d.strip) / (d.go - d.strip); at = lerp(route, strip, smooth(f)); msg = 1; size = f; }
+      if (during(d.go, d.at)) { at = hop(d.x, screen.y, 1 - smooth((t - d.go) / (d.at - d.go))); msg = 1; }
+    });
+    pill.style.opacity = at ? 1 : 0;
+    if (at) {
+      const mm = copy ? 1 : smooth(m), inFlight = msg || !onRoute ? 1 : 1 - mm;
+      const k = msg || (!onRoute) ? size : inFlight;
+      const wide = shape.dot + (shape.full[0] - shape.dot) * k, high = shape.dot + (shape.full[1] - shape.dot) * k;
+      pill.style.setProperty('--pw', wide.toFixed(1));
+      pill.style.setProperty('--ph', high.toFixed(1));
+      pill.style.borderRadius = `calc(var(--u) * ${msg ? 7 + (shape.full[1] / 2 - 7) * (1 - msg) : 27})`;
+      // Same counterchange as the line: butter on blue outside the panel, blue on butter inside,
+      // split exactly at the panel's edge while it straddles it.
+      const leftSide = at.x < (shape.edge[0] + shape.edge[1]) / 2;
+      const split = (x, w) => clamp(((leftSide ? shape.edge[0] : shape.edge[1]) - (x - w / 2)) / w) * 100;
+      const two = (out, inn, s) => `linear-gradient(90deg, ${leftSide ? out : inn} ${s}%, ${leftSide ? inn : out} ${s}%)`;
+      pill.style.background = onRoute ? two('#FDEE8C', '#225BFF', split(at.x, wide)) : '#FDEE8C';
+      // On a node's cream, or off the route, it needs an edge.
+      const overNode = shape.nodes.some(([x0, y0, x1, y1]) => at.x + wide / 2 > x0 && at.x - wide / 2 < x1 && at.y + high / 2 > y0 && at.y - high / 2 < y1);
+      pill.style.boxShadow = onRoute && !overNode ? 'none' : '0 0 0 calc(var(--u) * 2) var(--ink)';
+      const label = $('pillT'), tw = label.offsetWidth * shape.dw / scene.offsetWidth;
+      label.style.backgroundImage = onRoute ? two('#0E1B45', '#FFFBEA', split(at.x, tw)) : 'linear-gradient(#0E1B45, #0E1B45)';
+      // The swap: one word fades most of the way out, the other takes over from there, never both.
+      label.style.opacity = copy ? 0 : onRoute ? clamp(1 - m * 2.2) : msg < .5 ? .2 + .8 * (1 - 2 * msg) : 0;
+      // While the pill grows from a dot the word grows with it, so it is never clipped or missing.
+      $('pillM').style.opacity = onRoute || msg < .5 ? 0 : .2 + .8 * (2 * msg - 1);
+      const word = $('pillM').offsetWidth * shape.dw / scene.offsetWidth;
+      $('pillM').style.transform = size < 1 ? `scale(${clamp((wide - 6 * (1 - size)) / word).toFixed(3)})` : '';
+      pill.style.transform = `translate(calc(var(--u) * ${at.x.toFixed(1)}), calc(var(--u) * ${at.y.toFixed(1)})) translate(-50%, -50%)`;
+    }
+  }
+
+  let queued = false;
+  function fromScroll() {
+    queued = false;
+    if (!document.documentElement.classList.contains('scrub')) return paint(END);
+    const track = scene.closest('.track');
+    const range = track.offsetHeight - innerHeight;
+    paint(tAt(clamp(-track.getBoundingClientRect().top / range)));
+  }
+  const onScroll = () => { if (!queued) { queued = true; requestAnimationFrame(fromScroll); } };
+
+  function setup() {
+    document.documentElement.classList.toggle('scrub', roomy.matches && !still.matches);
+    choosePaths();
+    last = -1;
+    fromScroll();
+  }
+  addEventListener('scroll', onScroll, { passive: true });
+  addEventListener('resize', setup);
+  still.addEventListener('change', setup);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(setup);
+  setup();
+
+})();
+</script>
+</body>
+</html>
