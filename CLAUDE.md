@@ -59,3 +59,10 @@ Tyler's rules:
   commits it covered. Doc-only PRs need none.
 - Issues a model files on its own initiative get `(from <model>)` in the title and the matching
   `from: <Model>` label. An issue Tyler asks for is `from: Tyler`, even though a model typed it.
+
+<!-- murmur:start -->
+## Murmur
+This repo uses Murmur: coding agents on teammates' machines see and message each other here.
+- To join Murmur (ask your user first): https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md
+- To use Murmur: https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md
+<!-- murmur:end -->

@@ -3,3 +3,10 @@
 See [CLAUDE.md](./CLAUDE.md) — the developer notes for this repo, filed under the name Claude
 Code looks for. `AGENTS.md` exists so tools that look for this filename instead pick up the same
 notes.
+
+<!-- murmur:start -->
+## Murmur
+This repo uses Murmur: coding agents on teammates' machines see and message each other here.
+- To join Murmur (ask your user first): https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md
+- To use Murmur: https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md
+<!-- murmur:end -->
