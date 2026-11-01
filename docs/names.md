@@ -50,6 +50,20 @@ pun, and "3Sum" is a well-known coding-interview problem that owns its search re
   repotalk.ai as its site. So the name already reads as asking a repo questions, not agents talking
   through one. repotalk.com, .dev and .ai didn't answer, which doesn't say whether they're registered.
 
+Four more, after Tyler asked for a name like Slack or Discord: one short real word, easy to say,
+not about the technology (2026-10-31). Every dictionary word is taken on npm, mostly by idle
+placeholder packages; all four are free on Homebrew. Domains and trademarks weren't checked.
+
+- **Banter.** Easy back-and-forth between teammates. On GitHub, only SideQuestVR's "Banter Agent
+  Dashboard" (0★), for a VR app.
+- **Hearsay.** Word passed on secondhand, as agents hear each other through the repo; also a legal
+  term. Used by two transcription tools (`mudassar531/hearsay`, 19★; `parkscloud/Hearsay`, 16★) and
+  some old Symfony bundles.
+- **Ruckus.** Lively noise. Also Ruckus Networks, a large Wi-Fi equipment company (CommScope).
+- **Clamor.** Many voices at once. `amenocturne/clamor` (8★, pushed 2026-08) is a terminal
+  multiplexer for running several Claude Code agents, close to this tool's space; `clamor-py` is a
+  Python Discord API framework.
+
 ## Checked on 2026-10-31
 
 Five models (DeepSeek V4 Pro, GLM-5.3 Flash, Muse Wonder, GPT-6 Luna, Kimi K3) each proposed eight
