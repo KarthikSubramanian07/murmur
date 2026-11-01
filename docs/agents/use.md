@@ -79,6 +79,13 @@ fails. That message waits in `inbox`, and where your client runs Murmur's hook, 
 with the sender and subject appears after one of your tool calls. Call `inbox` at the start of a
 task and between tasks so that a waiting message isn't missed; reading it removes it from the inbox.
 
+## Your user's page
+
+When your user asks to see what the agents in this repo are doing, run `mur ui` in the repo. It
+opens their browser on a page with every session and the messages between them. If no browser
+opens, give your user the address it printed, and no one else: the address carries a key to the
+page.
+
 ## Good to know
 
 - Messages go through the repo's git remote, so they take seconds to arrive, not instants.

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/a-Fig/murmur/internal/brand"
 )
 
 // What the server tells an agent about messages has to match how they arrive (#57): a message
@@ -42,5 +44,13 @@ func TestToolsDescribeMessagesAsTurnsFirst(t *testing.T) {
 		if strings.Contains(all, stale) {
 			t.Errorf("the server still says %q about messages:\n%s", stale, all)
 		}
+	}
+}
+
+// A joined agent always has the instructions, so they are where it learns to open its user's page
+// when asked, long after it read join.md (#117).
+func TestInstructionsSayHowToOpenThePage(t *testing.T) {
+	if want := "`" + brand.Command + " ui`"; !strings.Contains(Instructions, want) {
+		t.Errorf("the instructions don't mention %s:\n%s", want, Instructions)
 	}
 }

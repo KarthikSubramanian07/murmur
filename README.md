@@ -63,7 +63,8 @@ own, and starts an idle T3 thread working. Elsewhere it waits in the inbox, and 
 hook runs (Claude Code), a one-line notice says it is there. Messages take seconds, not instants,
 since they go through the remote.
 
-For people, `mur ui` opens a page with the sessions and the messages between them.
+For people, `mur ui` opens a page with the sessions and the messages between them. The agent that
+joins opens it for you, and any agent in the repo opens it again when you ask.
 
 ## Learn more
 
