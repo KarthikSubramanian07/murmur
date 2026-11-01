@@ -10,18 +10,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/jsonedit"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/jsonedit"
 )
 
-// allowRule is the permission that lets an agent call every tool of t4's server without asking.
+// allowRule is the permission that lets an agent call every tool of Murmur's server without asking.
 // `mcp__<server>` with nothing after it is Claude Code's own spelling for that (seen on 2.1.312,
 // 2026-10-29).
 var allowRule = "mcp__" + brand.MCPServer
 
-// registerClaude makes Claude Code know t4's server, for this user in every project, and lets its
-// tools run without a prompt each time. fresh reports whether the server was new to Claude Code (or
-// moved), which is when sessions that are already running have never heard of it.
+// registerClaude makes Claude Code know Murmur's server, for this user in every project, and lets
+// its tools run without a prompt each time. fresh reports whether the server was new to Claude Code
+// (or moved), which is when sessions that are already running have never heard of it.
 func (e Env) registerClaude(ctx context.Context) (did []string, fresh bool, err error) {
 	claude, err := e.look("claude")
 	haveCLI := err == nil
@@ -76,12 +76,12 @@ func (e Env) registerClaude(ctx context.Context) (did []string, fresh bool, err 
 		return did, fresh, err
 	}
 	if allowed {
-		did = append(did, "Claude Code: allowed "+brand.Name+"'s tools, so they don't ask each time ("+filepath.Join(e.ClaudeDir, "settings.json")+")")
+		did = append(did, "Claude Code: allowed "+brand.Product+"'s tools, so they don't ask each time ("+filepath.Join(e.ClaudeDir, "settings.json")+")")
 	}
 	return did, fresh, nil
 }
 
-// ownsEntry reports whether a Claude Code server entry runs this binary as t4's MCP server.
+// ownsEntry reports whether a Claude Code server entry runs this binary as Murmur's MCP server.
 func ownsEntry(entry *jsonedit.Object, exe string) bool {
 	if entry == nil {
 		return false
@@ -190,7 +190,7 @@ func writeAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".t4tmp*")
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".murmurtmp*")
 	if err != nil {
 		return err
 	}

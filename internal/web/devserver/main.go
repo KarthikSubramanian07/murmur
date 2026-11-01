@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/a-Fig/t4/internal/web"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 func main() {
@@ -55,10 +55,10 @@ func fixturePRs(ctx context.Context, branch string) (*web.PR, error) {
 		return nil, ctx.Err()
 	}
 	prs := map[string]web.PR{
-		"session-names": {Number: 31, URL: "https://github.com/a-Fig/t4/pull/31"},
-		"wake-ups":      {Number: 33, Draft: true, URL: "https://github.com/a-Fig/t4/pull/33"},
-		"receipts":      {Number: 35, URL: "https://github.com/a-Fig/t4/pull/35"},
-		"web-page":      {Number: 36, Draft: true, URL: "https://github.com/a-Fig/t4/pull/36"},
+		"session-names": {Number: 31, URL: "https://github.com/a-Fig/murmur/pull/31"},
+		"wake-ups":      {Number: 33, Draft: true, URL: "https://github.com/a-Fig/murmur/pull/33"},
+		"receipts":      {Number: 35, URL: "https://github.com/a-Fig/murmur/pull/35"},
+		"web-page":      {Number: 36, Draft: true, URL: "https://github.com/a-Fig/murmur/pull/36"},
 	}
 	if branch == "fix/ls-remote-rate-limit" {
 		return nil, errors.New("gh: simulated failure") // shown as no PR state
@@ -97,7 +97,7 @@ func newFixtures(now time.Time) *fixtures {
 					Doing: "Building the settings view of the web page", Started: ago(52 * time.Minute), LastActive: ago(20 * time.Second)},
 				{Name: "brave-heron", Agent: "codex", Branch: "remove-claims", Worktree: "remove-claims",
 					Doing: "Deleting claims from the daemon and the MCP tools", Started: ago(2*time.Hour + 4*time.Minute), LastActive: ago(3 * time.Minute)},
-				{Name: "amber-finch", Agent: "claude-code", Branch: "main", Worktree: "t4",
+				{Name: "amber-finch", Agent: "claude-code", Branch: "main", Worktree: "murmur",
 					Started: ago(5 * time.Hour), LastActive: ago(26 * time.Minute)},
 			},
 		},
@@ -105,7 +105,7 @@ func newFixtures(now time.Time) *fixtures {
 			ID: "maya-mbp-91c0", Host: "maya-mbp", Owner: "Maya", Reachable: true, LastSeen: ago(40 * time.Second),
 			Sessions: []web.Session{
 				{Name: "lucid-badger", Agent: "claude-code", Branch: "session-names",
-					Doing: "Taking names by compare-and-swap on refs/t4/names", Started: ago(80 * time.Minute), LastActive: ago(50 * time.Second)},
+					Doing: "Taking names by compare-and-swap on refs/murmur/names", Started: ago(80 * time.Minute), LastActive: ago(50 * time.Second)},
 				{Name: "velvet-moth", Agent: "t3", Branch: "session-names",
 					Doing: "Writing the word lists", Started: ago(35 * time.Minute), LastActive: ago(9 * time.Minute)},
 				{Name: "solar-wren", Agent: "codex", Branch: "wake-ups",
@@ -142,7 +142,7 @@ func newFixtures(now time.Time) *fixtures {
 		"Heads up: #24 deletes claims.go and the claim/release tools. If wake-ups reads anything from claims, it won't be there.")
 	msg(165*time.Minute, "solar-wren", "brave-heron", web.ToSession, "Re: Claims are going away under you",
 		"It doesn't. Thanks.")
-	msg(80*time.Minute, "lucid-badger", "*", web.ToAll, "Names are moving to refs/t4/names",
+	msg(80*time.Minute, "lucid-badger", "*", web.ToAll, "Names are moving to refs/murmur/names",
 		"Session names (#20) land on a new shared ref. Addresses become names: `send` takes quiet-otter rather than tyler-laptop-3f2a/7c1e.")
 	msg(62*time.Minute, "dusty-lynx", "tyler-laptop-3f2a", web.ToDevice, "macOS run is red",
 		"TestRestart fails on macOS only:\n\n    restart_test.go:212: daemon did not exit within 5s\n\nLooks like the interrupt is delivered to the process group. Leaving it for whoever owns the daemon tonight.")
@@ -166,7 +166,7 @@ func newFixtures(now time.Time) *fixtures {
 	return f
 }
 
-const long = `It doesn't exist yet. A session has no name until its push to refs/t4/names lands, and until then it isn't on the bus at all: hello registers it with its own daemon, but presence only carries named sessions.
+const long = `It doesn't exist yet. A session has no name until its push to refs/murmur/names lands, and until then it isn't on the bus at all: hello registers it with its own daemon, but presence only carries named sessions.
 
 So for the page:
 

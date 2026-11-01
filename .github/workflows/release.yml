@@ -1,4 +1,4 @@
-# Pushing a tag like v0.1.0 publishes a release: t4 built for macOS, Linux and Windows (amd64 and
+# Pushing a tag like v0.1.0 publishes a release: mur built for macOS, Linux and Windows (amd64 and
 # arm64), with a SHA256SUMS file that install.sh and install.ps1 check their download against (#58).
 #
 # It runs on GitHub's own Linux runner, which cross-compiles every target (CGO_ENABLED=0). Only a
@@ -45,15 +45,15 @@ jobs:
             ext=''
             if [ "$os" = windows ]; then ext=.exe; fi
             CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
-              go build -trimpath -ldflags "-X main.version=$version" -o "dist/t4-$os-$arch$ext" ./cmd/t4
+              go build -trimpath -ldflags "-X main.version=$version" -o "dist/mur-$os-$arch$ext" ./cmd/mur
           done
           # The runner's own binary must report the tag's version, or `-X` missed its variable.
-          out=$(dist/t4-$(go env GOHOSTOS)-$(go env GOHOSTARCH) version)
+          out=$(dist/mur-$(go env GOHOSTOS)-$(go env GOHOSTARCH) version)
           case "$out" in
             *" $version") ;;
             *) echo "::error::The built binary says \"$out\", not the version $version."; exit 1 ;;
           esac
-          (cd dist && sha256sum t4-* > SHA256SUMS && cat SHA256SUMS)
+          (cd dist && sha256sum mur-* > SHA256SUMS && cat SHA256SUMS)
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}

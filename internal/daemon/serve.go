@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/names"
-	"github.com/a-Fig/t4/internal/proto"
-	"github.com/a-Fig/t4/internal/scrub"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/names"
+	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/scrub"
 )
 
 const maxBody = bus.MaxBody

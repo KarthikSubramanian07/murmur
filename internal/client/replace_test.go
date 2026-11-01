@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/proc"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/proc"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
-// Tests of replacing a daemon that an older t4 left running (#57): an upgrade replaces the binary,
+// Tests of replacing a daemon that an older mur left running (#57): an upgrade replaces the binary,
 // not the daemon already started from it.
 
 // standIn is a daemon inside the test: it holds the clone's lock, publishes its daemon.json, and
@@ -144,7 +144,7 @@ func stateOnly(t *testing.T) string {
 	return gitDir
 }
 
-// A daemon left running by an older t4 answers a ping, and not what came after it. A client that may
+// A daemon left running by an older mur answers a ping, and not what came after it. A client that may
 // start daemons stops it and starts its own, and its next request reaches that one.
 func TestAnOlderDaemonIsStoppedAndReplaced(t *testing.T) {
 	gitDir := stateOnly(t)

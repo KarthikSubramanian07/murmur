@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // Tests of what survives, and what must not, when a daemon stops and starts again.
@@ -141,7 +141,7 @@ func TestNewDaemonShowsADeadDeviceStaleAtOnce(t *testing.T) {
 	b := newDevice(t, remote)
 	bdev := b.self()
 	eventually(t, "b's presence on the remote", func() bool {
-		return strings.Contains(git(t, remote, "for-each-ref", "refs/t4/presence/"+bdev), bdev)
+		return strings.Contains(git(t, remote, "for-each-ref", "refs/murmur/presence/"+bdev), bdev)
 	})
 	b.offline(remote, true) // no more heartbeats, and no goodbye
 	time.Sleep(2 * b.stale)
@@ -202,7 +202,7 @@ func TestStaleLockIsCleared(t *testing.T) {
 
 	// Another device's log appears on the remote, while a's copy of that ref has a lock left
 	// behind by a killed git.
-	ref := "refs/t4/mesh/zzz-0000"
+	ref := "refs/murmur/mesh/zzz-0000"
 	lock := filepath.Join(a.gitDir, filepath.FromSlash(ref)+".lock")
 	os.MkdirAll(filepath.Dir(lock), 0o755)
 	if err := os.WriteFile(lock, nil, 0o644); err != nil {
@@ -256,7 +256,7 @@ func TestMessageBeforeReconnectIsCaughtUp(t *testing.T) {
 func TestFirstSyncFailedStillDelivers(t *testing.T) {
 	remote := newRemote(t)
 	a := newDevice(t, remote)
-	pushEvent(t, remote, "refs/t4/mesh/old-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
+	pushEvent(t, remote, "refs/murmur/mesh/old-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
 		From: "old-0001/x", At: time.Now().Add(-10 * time.Minute).UTC(), To: "*", Subject: "backlog"})
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)

@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/attrib"
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/attrib"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // The snapshots of tool calls in flight are bounded: a call whose end never comes (it was

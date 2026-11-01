@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/a-Fig/t4/internal/brand"
+	"github.com/a-Fig/murmur/internal/brand"
 )
 
 // Codex keeps its MCP servers in config.toml, a file the user also edits by hand and Codex rewrites
@@ -23,9 +23,9 @@ var codexArgs = []string{"mcp", "--agent", "codex"}
 // to wake the thread with a message (docs/VISION.md, "Delivering a message as a turn").
 const t3CLIEnv = "T3CODE_CLI_PATH"
 
-// editCodexConfig returns config.toml's text with t4's server in it. changed is false, and out is
-// text, when the table already says what join would write; a user's own env_vars is kept, with
-// T3CODE_CLI_PATH added to it if it lacks that. It refuses (an error) a file whose t4
+// editCodexConfig returns config.toml's text with Murmur's server in it. changed is false, and out
+// is text, when the table already says what join would write; a user's own env_vars is kept, with
+// T3CODE_CLI_PATH added to it if it lacks that. It refuses (an error) a file whose Murmur
 // entry is written in a form it doesn't edit: two definitions of one table make the file invalid,
 // and Codex then fails to load any of its config.
 func editCodexConfig(text, exe string) (out string, changed bool, err error) {
@@ -60,9 +60,9 @@ func editCodexConfig(text, exe string) (out string, changed bool, err error) {
 			}
 			continue
 		}
-		// A key that defines the server, or all the servers, without a [mcp_servers.t4] header of its
+		// A key that defines the server, or all the servers, without a [mcp_servers.murmur] header of its
 		// own: `mcp_servers.x.command = ...` or `mcp_servers = {...}` before the first header, and
-		// `t4 = {...}` or `t4.command = ...` under [mcp_servers]. Join's own table would define it twice.
+		// `murmur = {...}` or `murmur.command = ...` under [mcp_servers]. Join's own table would define it twice.
 		if key, _, ok := keyValue(line); ok {
 			if (len(table) == 0 && key[0] == "mcp_servers") || (len(table) == 1 && table[0] == "mcp_servers" && key[0] == brand.MCPServer) {
 				return "", false, errors.New("config.toml sets the mcp_servers table, or the " + brand.MCPServer + " server in it, in a form join doesn't edit (a dotted key or an inline table)")

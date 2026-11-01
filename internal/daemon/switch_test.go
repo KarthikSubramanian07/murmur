@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/hook"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/hook"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // Tests of a session following Claude Code's session ID (#9) and of a name found at the session
@@ -328,7 +328,7 @@ func TestStaleTakeoverAfterADaemonRestartKeepsTheLiveID(t *testing.T) {
 	holds(t, "the live name", time.Second, func() bool { return b.nameOf(bob) == nameB })
 }
 
-// Two MCP servers in one Claude Code process, which is what a project and a user config for t4
+// Two MCP servers in one Claude Code process, which is what a project and a user config for Murmur
 // make: both move to the conversation the hook reports, and since a name is an address the two do
 // not share one.
 func TestTwoServersInOneProcessSwitchTogether(t *testing.T) {
@@ -465,8 +465,9 @@ func TestMessageForARetiredIDGoesToTheHolder(t *testing.T) {
 
 // #37 the other way back. Conversation X's name went to another session, which stopped too, and a
 // message sent to X's name meanwhile went on to that session's kept inbox. X is then resumed from
-// the command line, so its server has X in its environment and X's own t4 ID again, or a session
-// opened on something else follows a hook to X. Whichever takes X's name takes what was kept for it.
+// the command line, so its server has X in its environment and X's own Murmur ID again, or a
+// session opened on something else follows a hook to X. Whichever takes X's name takes what was
+// kept for it.
 func TestTheSessionThatTakesANameTakesWhatWasKeptForIt(t *testing.T) {
 	remote := newRemote(t)
 	a := newDevice(t, remote)

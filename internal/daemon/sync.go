@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/gitx"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // maxPollBackoff is the longest a failing poll waits between tries, however short Poll is.
@@ -269,14 +269,14 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	return nil
 }
 
-// meshDevice names the device a mesh ref belongs to, and whether t4 reads it at all: not one
-// under a name no device can have, such as t4's own, which could only impersonate it.
+// meshDevice names the device a mesh ref belongs to, and whether Murmur reads it at all: not one
+// under a name no device can have, such as Murmur's own, which could only impersonate it.
 func meshDevice(ref string) (string, bool) {
 	dev := strings.TrimPrefix(ref, brand.MeshPrefix)
 	return dev, bus.ValidDevice(dev)
 }
 
-// readable keeps the refs t4 reads: each device's log and presence, and the names registry.
+// readable keeps the refs Murmur reads: each device's log and presence, and the names registry.
 // Anything else under the bus's
 // root stays on the remote, unfetched: a name this machine can't store (one Windows forbids, or
 // one clashing with a local ref, as presence/<device>/x does with a device's old presence) would
@@ -804,8 +804,8 @@ func (d *Daemon) overOwnLog(ctx context.Context, tip string) (bool, error) {
 // clearOwnJunk deletes, in the background, refs on the remote that keep this device's own refs
 // off it, since the remote refuses a ref whose name clashes with another's: refs under this
 // device's names (presence/<device>/..., mesh/<device>/...), refs under the registry's
-// (names/...), and a ref at presence or mesh itself, which blocks every device. Nothing t4 writes
-// lives at any of them. Each is tried at
+// (names/...), and a ref at presence or mesh itself, which blocks every device. Nothing Murmur
+// writes lives at any of them. Each is tried at
 // most once a minute, so a delete the remote refuses isn't pushed, and logged, at every poll.
 func (d *Daemon) clearOwnJunk(listed map[string]string) {
 	if d.bgCtx == nil {

@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/proto"
-	"github.com/a-Fig/t4/internal/web"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // The page for humans (#22). The daemon serves internal/web on loopback and is its web.Source.

@@ -1,4 +1,4 @@
-// Command t4 is the whole tool in one binary: the per-clone daemon, the stdio MCP server each
+// Command mur is the whole tool in one binary: the per-clone daemon, the stdio MCP server each
 // agent session starts, the Claude Code hook, and the few commands a person runs: setup, joining
 // and the page. Messaging is for agents, through the MCP server, and for humans, through the page.
 package main
@@ -17,36 +17,39 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/client"
-	"github.com/a-Fig/t4/internal/daemon"
-	"github.com/a-Fig/t4/internal/hook"
-	"github.com/a-Fig/t4/internal/join"
-	"github.com/a-Fig/t4/internal/mcpserver"
-	"github.com/a-Fig/t4/internal/setup"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/daemon"
+	"github.com/a-Fig/murmur/internal/hook"
+	"github.com/a-Fig/murmur/internal/join"
+	"github.com/a-Fig/murmur/internal/mcpserver"
+	"github.com/a-Fig/murmur/internal/setup"
 )
 
 var version = "0.1.0-dev"
 
-var usage = strings.ReplaceAll(`t4: coding agents on teammates' machines, in the same repo, finding each other.
+// usage spells the names as they are, so its columns line up; the replacer keeps it in step with
+// package brand ("Murmur" first, so the "mur" inside it isn't taken for the command).
+var usage = strings.NewReplacer("Murmur", brand.Product, "mur", brand.Command).Replace(
+	`Murmur: coding agents on teammates' machines, in the same repo, finding each other.
 
 Setup:
-  t4 init                       add the section to AGENTS.md and CLAUDE.md that says this repo uses t4
-  t4 join [--leave]             join t4 in this repo, after the user agreed (an agent runs this);
+  mur init                      add the section to AGENTS.md and CLAUDE.md that says this repo uses Murmur
+  mur join [--leave]            join Murmur in this repo, after the user agreed (an agent runs this);
                                 --leave undoes it
 
 For humans:
-  t4 ui [--no-open]             open the page showing sessions and messages in a browser; --no-open
+  mur ui [--no-open]            open the page showing sessions and messages in a browser; --no-open
                                 only prints its address (starts the clone's daemon if it isn't running)
-  t4 stop                       stop this clone's daemon
+  mur stop                      stop this clone's daemon
 
 Started by other programs:
-  t4 mcp [--agent NAME]         stdio MCP server, one per agent session
-  t4 hook                       Claude Code hook (reads the hook payload on stdin)
-  t4 daemon [--git-dir DIR]     the daemon, in the foreground
+  mur mcp [--agent NAME]        stdio MCP server, one per agent session
+  mur hook                      Claude Code hook (reads the hook payload on stdin)
+  mur daemon [--git-dir DIR]    the daemon, in the foreground
 
 Every command takes -C DIR to act on the repository at DIR.
-`, "t4", brand.Command)
+`)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -126,7 +129,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	// A daemon publishes this machine's presence to the team, which only a user who joined in this
 	// clone has agreed to. Whoever started this one (a stale client, a script) doesn't change that.
 	if !join.Joined(*gitDir) {
-		return fmt.Errorf("this clone hasn't joined %[1]s, so its daemon won't run (`%[1]s join` joins, after asking the user)", brand.Command)
+		return fmt.Errorf("this clone hasn't joined %s, so its daemon won't run (`%s join` joins, after asking the user)", brand.Product, brand.Command)
 	}
 	err := daemon.Run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: log.New(os.Stderr, "", log.LstdFlags)})
@@ -165,7 +168,7 @@ func runInit(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("\nReview and commit these files. A teammate's agent that reads them asks its user whether to join,\n"+
 		"and if the user says yes it installs %[1]s and sets it up itself. Committing installs nothing, and %[1]s\n"+
-		"does nothing in a clone until its user has joined there.\n", brand.Command)
+		"does nothing in a clone until its user has joined there.\n", brand.Product)
 	return nil
 }
 

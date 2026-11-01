@@ -1,5 +1,5 @@
 // Package bus is the wire format and the git plumbing of the bus: events and presence encoded
-// as commit messages on refs/t4/*, written and read without ever touching a working tree.
+// as commit messages on refs/murmur/*, written and read without ever touching a working tree.
 package bus
 
 import (
@@ -13,8 +13,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/names"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/names"
 )
 
 // Version is the format version every event and presence record carries. A reader skips
@@ -62,8 +62,8 @@ func (e Event) Line() string {
 // know, from a newer version or an older one, is not: readers pass over it and read on.
 //
 // Anyone with push access can write the bus, and what it carries reaches agents' context, so a
-// reader holds each event to what t4 itself writes: IDs and addresses in their own alphabets
-// (Valid), text fields on one line at t4's lengths (Clean, which goes first).
+// reader holds each event to what Murmur itself writes: IDs and addresses in their own alphabets
+// (Valid), text fields on one line at Murmur's lengths (Clean, which goes first).
 func (e Event) Valid() bool {
 	if e.V != Version || !validID(e.ID) || !validAddr(e.From) {
 		return false
@@ -77,7 +77,7 @@ func (e Event) Valid() bool {
 	return false
 }
 
-// Clean puts each text field of an event read from the bus on one line, at most as long as t4
+// Clean puts each text field of an event read from the bus on one line, at most as long as Murmur
 // itself writes it. Bodies keep their lines; the reader's view marks them as quoted.
 func (e *Event) Clean() {
 	e.Subject = OneLine(e.Subject, 120)
@@ -87,7 +87,7 @@ func (e *Event) Clean() {
 }
 
 // Clean does for a presence what Event.Clean does for an event, and drops sessions whose IDs
-// t4 wouldn't write.
+// Murmur wouldn't write.
 func (p *Presence) Clean() {
 	p.Host = OneLine(p.Host, 64)
 	p.Owner = OneLine(p.Owner, 64)
@@ -107,7 +107,7 @@ func (p *Presence) Clean() {
 	p.Sessions = keep
 }
 
-// cleanBranches holds a list of branch names to what t4 writes: each on one line, none empty or
+// cleanBranches holds a list of branch names to what Murmur writes: each on one line, none empty or
 // repeated, at most MaxCommitted.
 func cleanBranches(in []string) []string {
 	var out []string
@@ -133,8 +133,8 @@ func ValidName(s string) bool {
 }
 
 // ValidDevice accepts device IDs: valid names that every filesystem can hold as a ref (none of
-// Windows' reserved device names), other than t4's own, under which a message would pass for the
-// tool's own words. IDs t4 makes always pass: a hostname slug and 4 hex digits.
+// Windows' reserved device names), other than Murmur's own, under which a message would pass for
+// the tool's own words. IDs Murmur makes always pass: a hostname slug and 4 hex digits.
 func ValidDevice(s string) bool {
 	if !ValidName(s) || s == brand.Name {
 		return false

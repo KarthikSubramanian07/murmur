@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/a-Fig/t4/internal/brand"
+	"github.com/a-Fig/murmur/internal/brand"
 )
 
 func runGit(t *testing.T, dir string, args ...string) string {

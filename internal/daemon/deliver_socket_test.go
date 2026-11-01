@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // Tests of delivering a message into a Claude Code session outside T3, through the messaging
@@ -28,7 +28,7 @@ type fakeSocket struct {
 
 func useFakeSocket(t *testing.T) *fakeSocket {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "t4s") // short: macOS limits the path of a unix socket
+	dir, err := os.MkdirTemp("", "murs") // short: macOS limits the path of a unix socket
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,8 +111,8 @@ func TestMessageForAClaudeCodeSessionGoesThroughItsMessagingSocket(t *testing.T)
 	turn := socketTurn(t, sock.lines(), "tok-bob-1")
 	for _, want := range []string{
 		"Message from " + aliceName + " (test",
-		"via " + brand.Name + ":\n\nauth middleware?\n\n" + body + "\n",
-		"Reply with " + brand.Name + "'s `send` to " + aliceName + " if a reply is needed.",
+		"via " + brand.Product + ":\n\nauth middleware?\n\n" + body + "\n",
+		"Reply with " + brand.Product + "'s `send` to " + aliceName + " if a reply is needed.",
 	} {
 		if !strings.Contains(turn, want) {
 			t.Errorf("the turn lacks %q:\n%s", want, turn)
@@ -172,7 +172,7 @@ func TestMessagingSocketNeedsTheSessionToBeRunning(t *testing.T) {
 // log says so once, without the socket's address, its token or the message.
 func TestFailedSocketDeliveryFallsBackToTheNotice(t *testing.T) {
 	remote := newRemote(t)
-	dir, err := os.MkdirTemp("", "t4s")
+	dir, err := os.MkdirTemp("", "murs")
 	if err != nil {
 		t.Fatal(err)
 	}

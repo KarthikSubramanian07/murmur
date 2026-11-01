@@ -17,10 +17,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/a-Fig/t4/internal/client"
-	"github.com/a-Fig/t4/internal/gitx"
-	"github.com/a-Fig/t4/internal/proto"
-	"github.com/a-Fig/t4/internal/view"
+	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/view"
 )
 
 // input is the part of Claude Code's hook payload the hook reads.

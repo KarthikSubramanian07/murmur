@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
+	"github.com/a-Fig/murmur/internal/brand"
 )
 
 const testToken = "s3cret-token"
@@ -347,7 +347,7 @@ func TestIndex(t *testing.T) {
 	h := start(t, newFake(), noPRs)
 	resp := h.ok("GET", "/", "")
 	b, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(b), "<title>"+brand.Name+"</title>") {
+	if !strings.Contains(string(b), "<title>"+brand.Product+"</title>") {
 		t.Errorf("index doesn't carry the brand name:\n%s", b)
 	}
 	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") {
@@ -381,11 +381,11 @@ func TestPRLookup(t *testing.T) {
 		mu.Lock()
 		asked = append(asked, branch)
 		mu.Unlock()
-		return &PR{Number: 36, Draft: true, URL: "https://github.com/a-Fig/t4/pull/36"}, nil
+		return &PR{Number: 36, Draft: true, URL: "https://github.com/a-Fig/murmur/pull/36"}, nil
 	}
 	h := start(t, newFake(), lookup)
 	prs := pollPRs(t, h, func(p map[string]PR) bool { return len(p) > 0 })
-	if want := (PR{Number: 36, Draft: true, URL: "https://github.com/a-Fig/t4/pull/36"}); prs["web-page"] != want || len(prs) != 1 {
+	if want := (PR{Number: 36, Draft: true, URL: "https://github.com/a-Fig/murmur/pull/36"}); prs["web-page"] != want || len(prs) != 1 {
 		t.Errorf("prs = %+v", prs)
 	}
 	// The cached answer serves later polls without asking again, and a branch that could pass

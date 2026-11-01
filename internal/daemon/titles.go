@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/proto"
-	"github.com/a-Fig/t4/internal/t3db"
-	"github.com/a-Fig/t4/internal/title"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3db"
+	"github.com/a-Fig/murmur/internal/title"
 )
 
 // A conversation's title as the default status line (#66, docs/VISION.md, "Who is on, and what
