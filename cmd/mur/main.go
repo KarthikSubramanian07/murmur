@@ -34,7 +34,8 @@ var usage = strings.NewReplacer("Murmur", brand.Product, "mur", brand.Command).R
 	`Murmur: coding agents on teammates' machines, in the same repo, finding each other.
 
 Setup:
-  mur init                      add the section to AGENTS.md and CLAUDE.md that says this repo uses Murmur
+  mur init [--no-push]          add the section to AGENTS.md and CLAUDE.md that says this repo uses Murmur,
+                                as a commit pushed to the default branch; --no-push only edits the files here
   mur join [--leave]            join Murmur in this repo, after the user agreed (an agent runs this);
                                 --leave undoes it
 
@@ -69,7 +70,7 @@ func main() {
 	case "daemon":
 		err = runDaemon(ctx, args)
 	case "init":
-		err = runInit(ctx, args)
+		err = runInit(ctx, args, os.Stdout)
 	case "join":
 		err = runJoin(ctx, args, os.Stdout)
 	case "stop":
@@ -152,21 +153,76 @@ func redirectOutput(path string) error {
 	return debug.SetCrashOutput(f, debug.CrashOptions{})
 }
 
-func runInit(ctx context.Context, args []string) error {
+func runInit(ctx context.Context, args []string, out io.Writer) error {
 	fs, dir := flags("init")
+	noPush := fs.Bool("no-push", false, "only edit the files in this working tree, for you to review and commit")
 	fs.Parse(args)
-	changed, err := setup.Init(ctx, *dir)
+	if *noPush {
+		return initWorkTree(ctx, *dir, out)
+	}
+	p, err := setup.Push(ctx, *dir)
+	if err != nil {
+		return err
+	}
+	short := p.SHA
+	if len(short) > 7 {
+		short = short[:7]
+	}
+	list := func() {
+		for _, c := range p.Changed {
+			fmt.Fprintln(out, "  "+c)
+		}
+	}
+	switch {
+	case p.SHA == "":
+		fmt.Fprintf(out, "Already set up on %s's %s; nothing pushed.\n", p.Remote, p.Branch)
+		if p.Checkout != "" {
+			fmt.Fprintf(out, "%s%s.\n", strings.ToUpper(p.Checkout[:1]), p.Checkout[1:])
+		}
+		return nil
+	case p.Pending:
+		fmt.Fprintf(out, "%s refused the push to %s: %s\n", p.Remote, p.Branch, p.Refused)
+		fmt.Fprintf(out, "Its branch %s already has the section (%s) from an earlier init; nothing pushed.\n", p.Fallback, short)
+	case p.Fallback != "":
+		fmt.Fprintf(out, "%s refused the push to %s: %s\n", p.Remote, p.Branch, p.Refused)
+		fmt.Fprintf(out, "Pushed %s to a new branch on %s, %s, instead:\n", short, p.Remote, p.Fallback)
+		list()
+	default:
+		fmt.Fprintf(out, "Pushed %s to %s's %s:\n", short, p.Remote, p.Branch)
+		list()
+	}
+	if p.Fallback != "" {
+		if p.PullURL != "" {
+			fmt.Fprintf(out, "\nOpen a pull request from it, for someone who may merge into %s: %s\n", p.Branch, p.PullURL)
+		} else {
+			fmt.Fprintf(out, "\nMerge %s into %s to finish; someone who may push to %s can.\n", p.Fallback, p.Branch, p.Branch)
+		}
+	} else if p.FastForwarded {
+		fmt.Fprintf(out, "\nThis checkout's %s is now at %s.\n", p.Branch, short)
+	} else {
+		fmt.Fprintf(out, "\nThe section is on %s; %s.\n", p.Branch, p.Checkout)
+	}
+	fmt.Fprintf(out, "\nA teammate's agent that reads the section asks its user whether to join, and if the user says yes\n"+
+		"it installs %[1]s and sets it up itself. The section installs nothing, and %[1]s does nothing in a\n"+
+		"clone until its user has joined there.\n", brand.Product)
+	return nil
+}
+
+// initWorkTree is init before it pushed, kept as --no-push: it edits this working tree and leaves
+// committing to the person.
+func initWorkTree(ctx context.Context, dir string, out io.Writer) error {
+	changed, err := setup.Init(ctx, dir)
 	for _, c := range changed {
-		fmt.Println(c)
+		fmt.Fprintln(out, c)
 	}
 	if err != nil {
 		return err
 	}
 	if len(changed) == 0 {
-		fmt.Println("Already set up; nothing changed.")
+		fmt.Fprintln(out, "Already set up; nothing changed.")
 		return nil
 	}
-	fmt.Printf("\nReview and commit these files. A teammate's agent that reads them asks its user whether to join,\n"+
+	fmt.Fprintf(out, "\nReview and commit these files. A teammate's agent that reads them asks its user whether to join,\n"+
 		"and if the user says yes it installs %[1]s and sets it up itself. Committing installs nothing, and %[1]s\n"+
 		"does nothing in a clone until its user has joined there.\n", brand.Product)
 	return nil

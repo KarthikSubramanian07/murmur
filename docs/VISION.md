@@ -195,6 +195,24 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   addresses to files that exist. `init` writes no other file. An older `init` had put an `.mcp.json`
   entry and a hook in `.claude/settings.json`; `init` removes only Murmur's own entries from those,
   deletes a file that is left empty, and says so. Committing installs nothing on a teammate's machine.
+- **`init` pushes its commit to the default branch** (Tyler, 2026-11-01, #119). Until then it edited
+  the working tree and said "review and commit"; run in a T3 worktree, the section landed on that
+  worktree's branch at best, so teammates' agents on main never read it. Now `init` fetches the
+  default branch of the clone's remote (the bus's remote, `murmur.remote` else `origin`; the branch
+  the remote's HEAD names), applies the same edits to that commit's files, builds the tree with a
+  temporary index (`GIT_INDEX_FILE`) and `commit-tree`, and pushes `<sha>:refs/heads/<default>`,
+  never forced: the same rule as the bus, no working tree or index touched. A push rejected because
+  the branch moved is rebuilt on the new tip, up to 3 tries. One the server refuses for a reason of
+  its own (a protected branch, a hook) goes to a new branch, `murmur-init`, and `init` prints the
+  GitHub page that opens a pull request from it; a `murmur-init` already there with the section
+  counts as pending, and one without it stops `init`. A failure to push at all (no permission, no
+  network) is reported, not worked around. Nothing changes when the branch already has the section.
+  The checkout `init` ran in is fast-forwarded to the commit only when it is on the default branch,
+  behind the commit, with no local change to the four files (git refuses a pull over an
+  uncommitted change to a file the pull brings, even an identical one, checked 2026-11-01);
+  otherwise it is left alone and gets the section when the default branch is merged in. The push
+  skips the repo's pre-push hook, as bus pushes do: the hook would run against a checkout that
+  isn't this commit. `init --no-push` is the old behavior.
 - **What `mur join` writes.** It refuses in a repo without the marker. Everything it writes is
   outside the repo's tracked files:
 
@@ -227,8 +245,12 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   it (see Reloading MCP servers below), so the agent can say exactly what to do next.
 - **The server stays passive where it isn't invited.** The user-scope entry starts `mur mcp` in
   every repo the user opens. The server is on only while the repo says it uses Murmur (this working
-  tree's `AGENTS.md` or `CLAUDE.md` has the marker) and this user has joined in this clone, both
-  read from files every 2 seconds. Off, it advertises a tools capability with no tools and no
+  tree's `AGENTS.md` or `CLAUDE.md` has the marker, or the clone's remote-tracking default branch,
+  `refs/remotes/<remote>/HEAD`, does) and this user has joined in this clone, checked every 2
+  seconds. The working tree and the consent are read from files; the remote-tracking branch, which
+  needs git and is read only in a joined clone whose working tree lacks the marker, at most every 20
+  seconds. It counts so that a worktree on a branch made before `init` pushed isn't left off until
+  it merges the default branch (#119). Off, it advertises a tools capability with no tools and no
   instructions, contacts no daemon, and answers a call that arrives anyway with why it is off. A
   join turns it on and lists the tools through `tools/list_changed`; a leave removes them. MCP
   instructions are fixed at initialize, so a server that started off never has them: the pages the

@@ -19,6 +19,10 @@ import (
 // different error.
 var ErrRejected = errors.New("push rejected: the ref moved")
 
+// ErrRefused means the server refused a push for a reason of its own, such as a protected branch
+// or a hook; the error that wraps it carries the server's reason.
+var ErrRefused = errors.New("refused by the server")
+
 // Commit is a bus commit as read back.
 type Commit struct {
 	SHA     string
@@ -182,7 +186,7 @@ func (r *Repo) Push(ctx context.Context, sha, ref string, mode PushMode, expect 
 	if mode == Lease && lerr == nil && now != expect {
 		return ErrRejected
 	}
-	return fmt.Errorf("push to %s refused by the server: %s", ref, refused)
+	return fmt.Errorf("push to %s %w: %s", ref, ErrRefused, refused)
 }
 
 // LocalRefs returns the local copies of bus refs.
@@ -306,6 +310,22 @@ func (r *Repo) ReadCommit(ctx context.Context, sha string) (Commit, error) {
 	}
 	secs, _ := strconv.ParseInt(parts[1], 10, 64)
 	return Commit{SHA: parts[0], Time: time.Unix(secs, 0), Message: parts[2]}, nil
+}
+
+// RemoteFor names the remote a clone's bus lives on: the one `git config murmur.remote` names,
+// else origin. A clone without that remote is an error. `mur init` pushes its commit to the same
+// remote, so a repo's section is where its bus is.
+func RemoteFor(ctx context.Context, g gitx.Git) (string, error) {
+	r := &Repo{Git: g}
+	name := r.Config(ctx, brand.ConfigRemote)
+	if name == "" {
+		name = "origin"
+	}
+	if r.Config(ctx, "remote."+name+".url") == "" {
+		return name, fmt.Errorf("this clone has no remote %q; add one, or name the bus's remote with `git config %s <name>`",
+			name, brand.ConfigRemote)
+	}
+	return name, nil
 }
 
 // Config returns a git config value, or "" if it isn't set.

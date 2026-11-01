@@ -54,7 +54,11 @@ func TestInitJoinAndLeave(t *testing.T) {
 	b := newBox(t)
 	b.extraEnv = []string{"CLAUDECODE=1"} // the agent running these is Claude Code
 
-	b.mustRun(b.clone, "init")
+	out := b.mustRun(b.clone, "init")
+	sha := strings.TrimSpace(git(t, b.remote, "rev-parse", "--short=7", "main"))
+	if !strings.Contains(out, "Pushed "+sha+" to origin's main") || !strings.Contains(out, "is now at "+sha) {
+		t.Errorf("init doesn't say it pushed %s to main and moved this checkout there:\n%s", sha, out)
+	}
 	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
 		got := readFile(t, filepath.Join(b.clone, name))
 		for _, want := range []string{"<!-- murmur:start -->", "ask your user first", "docs/agents/join.md", "docs/agents/use.md", "<!-- murmur:end -->"} {
@@ -72,7 +76,7 @@ func TestInitJoinAndLeave(t *testing.T) {
 		t.Fatal("init touched the user's settings or started something")
 	}
 
-	out := b.mustRun(b.clone, "join")
+	out = b.mustRun(b.clone, "join")
 	if !strings.Contains(out, "Tell your user") || !strings.Contains(out, "claude --continue") {
 		t.Errorf("join's output should tell the agent what to pass on, and that this conversation needs a restart:\n%s", out)
 	}
@@ -147,6 +151,26 @@ func TestInitJoinAndLeave(t *testing.T) {
 	b.mustRun(b.clone, "join")
 	if !exists(filepath.Join(b.clone, ".git", "murmur", "joined.json")) || !exists(filepath.Join(b.clone, ".claude", "settings.local.json")) {
 		t.Error("joining again after leaving didn't join")
+	}
+}
+
+// --no-push is init as it was before it pushed: it edits this working tree, commits nothing and
+// leaves the remote alone.
+func TestInitNoPushOnlyEditsTheWorkingTree(t *testing.T) {
+	b := newBox(t)
+	before := git(t, b.remote, "rev-parse", "main")
+	out := b.mustRun(b.clone, "init", "--no-push")
+	if !strings.Contains(out, "Review and commit these files") || strings.Contains(out, "Pushed") {
+		t.Errorf("init --no-push said:\n%s", out)
+	}
+	if got := git(t, b.remote, "rev-parse", "main"); got != before {
+		t.Errorf("init --no-push moved the remote's main")
+	}
+	if status := git(t, b.clone, "status", "--porcelain"); !strings.Contains(status, "AGENTS.md") || !strings.Contains(status, "CLAUDE.md") {
+		t.Errorf("status after init --no-push:\n%s", status)
+	}
+	if git(t, b.clone, "rev-parse", "HEAD") != before {
+		t.Error("init --no-push committed")
 	}
 }
 

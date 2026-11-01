@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -548,13 +547,8 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	d.device = device
 	d.host, _ = os.Hostname()
 	d.repo = &bus.Repo{Git: gitx.Git{Dir: opt.GitDir}, Name: device, Email: device + "@" + brand.Name + ".invalid"}
-	d.repo.Remote = d.repo.Config(ctx, brand.ConfigRemote)
-	if d.repo.Remote == "" {
-		d.repo.Remote = "origin"
-	}
-	if d.repo.Config(ctx, "remote."+d.repo.Remote+".url") == "" {
-		return nil, fmt.Errorf("this clone has no remote %q; add one, or name the bus's remote with `git config %s <name>`",
-			d.repo.Remote, brand.ConfigRemote)
+	if d.repo.Remote, err = bus.RemoteFor(ctx, d.repo.Git); err != nil {
+		return nil, err
 	}
 	d.owner = d.repo.Config(ctx, "user.name")
 	if err := d.loadState(); err != nil {
