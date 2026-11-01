@@ -104,8 +104,9 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		return r, err
 	}
 	if !p.Marked() {
-		return r, fmt.Errorf("this repo doesn't say it uses %[1]s: neither AGENTS.md nor CLAUDE.md has the %[1]s section. "+
-			"A teammate adds it with `%[2]s init` and commits it; to try it alone, run `%[2]s init` here", brand.Product, brand.Command)
+		return r, fmt.Errorf("this repo doesn't say it uses %[1]s: neither AGENTS.md nor CLAUDE.md has the %[1]s section, "+
+			"here or on the default branch as this clone last fetched it. `%[2]s init` adds it and pushes it to the default branch, "+
+			"after the user agrees (%[3]s)", brand.Product, brand.Command, brand.SetupDoc)
 	}
 	problem := func(what string, err error) { r.Problems = append(r.Problems, what+": "+err.Error()) }
 

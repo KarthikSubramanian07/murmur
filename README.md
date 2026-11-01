@@ -34,8 +34,12 @@ On Windows, in PowerShell:
 irm https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1 | iex
 ```
 
-Once per repo, one person runs `mur init` in it and commits the short section it adds to
-`AGENTS.md` and `CLAUDE.md`. Then each teammate, in their clone:
+Once per repo, one person runs `mur init` in it. It adds a short section to `AGENTS.md` and
+`CLAUDE.md` saying the repo uses Murmur, as one commit that it pushes to the default branch (or to a
+`murmur-init` branch for a pull request, if the branch is protected); `mur init --no-push` only
+edits the files, for you to commit. Or ask your agent to set it up: point it at
+https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md. Then each teammate, in
+their clone:
 
 ```sh
 mur join

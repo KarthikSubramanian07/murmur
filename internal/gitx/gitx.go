@@ -17,6 +17,9 @@ type Git struct {
 	// Dir is passed as --git-dir, so no command it runs can read or write a working tree or an
 	// index. Humans and agents are editing the working tree at the same moment.
 	Dir string
+	// Env is added to the environment of every command, such as a GIT_INDEX_FILE of the caller's
+	// own, so that building a tree doesn't use the index the working tree's users share.
+	Env []string
 }
 
 // Error is a failed git command, with what it printed to stderr.
@@ -38,16 +41,17 @@ func (e *Error) Unwrap() error { return e.Err }
 
 // Run runs git with the given stdin and returns its stdout.
 func (g Git) Run(ctx context.Context, stdin string, args ...string) (string, error) {
-	return run(ctx, "", stdin, append([]string{"--git-dir=" + g.Dir}, args...)...)
+	return run(ctx, "", stdin, g.Env, append([]string{"--git-dir=" + g.Dir}, args...)...)
 }
 
 // RunIn runs git in a working directory. It is for the few reads that need one, such as finding
-// a repository or a session's current branch; nothing that writes goes through it.
+// a repository or a session's current branch. The one write that goes through it is `mur init`
+// fast-forwarding the checkout it was run in, which a person asked for.
 func RunIn(ctx context.Context, dir string, args ...string) (string, error) {
-	return run(ctx, dir, "", args...)
+	return run(ctx, dir, "", nil, args...)
 }
 
-func run(ctx context.Context, dir, stdin string, args ...string) (string, error) {
+func run(ctx context.Context, dir, stdin string, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	// A git killed outright can leave a ref's .lock file behind, and every later write to that
 	// ref fails until it is removed. Where the platform allows, interrupt it instead, so git
@@ -60,7 +64,7 @@ func run(ctx context.Context, dir, stdin string, args ...string) (string, error)
 	cmd.WaitDelay = 5 * time.Second
 	cmd.Dir = dir
 	// The daemon runs detached, with nobody to answer a prompt: fail instead of waiting.
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never")
+	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never"), env...)
 	hideWindow(cmd)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)

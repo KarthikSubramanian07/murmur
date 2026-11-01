@@ -115,6 +115,17 @@ func TestTheAgentPagesExistAndSayWhatTheSectionPromises(t *testing.T) {
 			t.Errorf("the page on using Murmur doesn't say %q", want)
 		}
 	}
+	// The page on setting Murmur up is linked from the README rather than the section, and sends
+	// the agent on to joining.
+	setup := page(brand.SetupDoc)
+	for _, want := range []string{"Ask your user", brand.InstallSh, brand.InstallPs1, "mur init", FallbackBranch, brand.JoinDoc} {
+		if !strings.Contains(setup, want) {
+			t.Errorf("the page on setting Murmur up doesn't say %q", want)
+		}
+	}
+	if readme, err := os.ReadFile(filepath.Join("..", "..", "README.md")); err != nil || !strings.Contains(string(readme), brand.SetupDoc) {
+		t.Errorf("the README doesn't link to the page on setting Murmur up (%v)", err)
+	}
 }
 
 // The page on using Murmur quotes the turn a delivered message becomes. An agent that reads the

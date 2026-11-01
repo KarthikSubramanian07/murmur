@@ -1,7 +1,10 @@
-// Package setup is `init`: it writes the section into AGENTS.md and CLAUDE.md that says a repo
-// uses Murmur, for a human to review and commit. It is the only part of Murmur that writes tracked
-// files in a working tree, and it runs only when a person asks. Joining (package join) is a
-// separate, per-user step that commits nothing.
+// Package setup is `init`: it puts the section into AGENTS.md and CLAUDE.md that says a repo uses
+// Murmur. By default (Push) it makes that change as a commit on the remote's default branch, built
+// with plumbing so that no working tree or index is touched, and pushes it there, or to a
+// murmur-init branch for a pull request when the server refuses. With --no-push (Init) it edits the
+// working tree instead, for a person to review and commit. It is the only part of Murmur that writes
+// to a repo's branches or tracked files, and it runs only when a person asks. Joining (package join)
+// is a separate, per-user step that commits nothing.
 package setup
 
 import (
@@ -12,35 +15,91 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/jsonedit"
 )
 
-// Init sets up the repository containing dir and returns what it changed, one line per file.
+// Init edits the working tree containing dir, as `mur init --no-push` does, for a person to review
+// and commit, and returns what it changed, one line per file. Push makes the same edits as a commit
+// on the remote's default branch.
 func Init(ctx context.Context, dir string) ([]string, error) {
 	top, err := Top(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
 	var changed []string
-	steps := []func(string) (string, error){
-		func(top string) (string, error) { return markerFile(top, "AGENTS.md") },
-		func(top string) (string, error) { return markerFile(top, "CLAUDE.md") },
-		cleanMCPConfig,
-		cleanClaudeHooks,
-	}
-	for _, step := range steps {
-		msg, err := step(top)
-		if err != nil {
+	for _, s := range steps {
+		path := filepath.Join(top, filepath.FromSlash(s.name))
+		b, err := os.ReadFile(path)
+		exists := err == nil
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			if s.optional {
+				continue // a config file that can't be read has nothing init can safely clean
+			}
 			return changed, err
 		}
-		if msg != "" {
-			changed = append(changed, msg)
+		e := s.edit(b, exists)
+		if e.change {
+			if err := writeOut(top, path, e); err != nil {
+				if !s.optional {
+					return changed, err
+				}
+				e.msg = err.Error()
+			}
+		}
+		if e.msg != "" {
+			changed = append(changed, s.name+": "+e.msg)
 		}
 	}
 	return changed, nil
+}
+
+// writeOut makes a step's change to the file at path. A file it removes takes its directory with it
+// when nothing else is in that, as .claude is when it held only the settings init cleaned.
+func writeOut(top, path string, e edited) error {
+	if !e.remove {
+		if err := os.WriteFile(path, e.data, 0o644); err != nil {
+			return fmt.Errorf("couldn't rewrite the file: %w", err)
+		}
+		return nil
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("couldn't remove the empty file: %w", err)
+	}
+	if dir := filepath.Dir(path); dir != top {
+		os.Remove(dir) // only if nothing else is in it
+	}
+	return nil
+}
+
+// A step is one of init's edits, on one file. It takes the file's content and returns what to do
+// with it, so the same steps edit the working tree (Init) and build the commit Push makes.
+type step struct {
+	name string // the file, slash-separated, from the top of the tree
+	// optional is for the config files init only cleans: one that can't be read is left alone,
+	// and one that can't be written is reported in the step's message rather than failing init.
+	optional bool
+	edit     func(b []byte, exists bool) edited
+}
+
+// edited is what a step does to its file.
+type edited struct {
+	msg    string // what to tell the user, after the file's name; "" for nothing
+	change bool   // the file becomes data, or goes if remove is set
+	remove bool
+	data   []byte
+}
+
+var steps = []step{
+	{name: "AGENTS.md", edit: markerFile},
+	{name: "CLAUDE.md", edit: markerFile},
+	{name: ".mcp.json", optional: true, edit: cleanMCPConfig},
+	{name: ".claude/settings.json", optional: true, edit: cleanClaudeHooks},
 }
 
 // Top is the root of the working tree containing dir.
@@ -60,15 +119,97 @@ const (
 // markerFiles are the files init puts the marker in: Codex reads AGENTS.md, Claude Code CLAUDE.md.
 var markerFiles = []string{"AGENTS.md", "CLAUDE.md"}
 
-// Marked reports whether the working tree at top says its repo uses Murmur, which is what makes a
-// repo one that Murmur may start in. The marker in either file is enough.
-func Marked(top string) bool {
+// Marked reports whether the repo says it uses Murmur, as seen from the working tree at top, which
+// is what makes a repo one that Murmur may start in. The marker in either file is enough, in the
+// working tree or on the clone's remote-tracking default branch (refs/remotes/<remote>/HEAD, read
+// without the network): `mur init` puts the section on the default branch, and a worktree on a
+// branch made before that would otherwise stay unmarked until it merged the default branch.
+func Marked(top string) bool { return markedTree(top) || markedUpstream(top) }
+
+// markedTree reports whether the working tree at top has the marker in either file.
+func markedTree(top string) bool {
 	for _, name := range markerFiles {
 		if b, err := os.ReadFile(filepath.Join(top, name)); err == nil && bytes.Contains(b, []byte(markStart)) {
 			return true
 		}
 	}
 	return false
+}
+
+// upstreamRecheck is how long markedUpstream's answer for a working tree stands. The MCP server asks
+// Marked every 2 seconds, and the answer takes git processes, which on Windows cost a tenth of a
+// second or more each (#21); the remote-tracking branch moves only on a fetch anyway.
+var upstreamRecheck = 20 * time.Second
+
+var upstream = struct {
+	sync.Mutex
+	seen map[string]upstreamAnswer
+}{seen: map[string]upstreamAnswer{}}
+
+type upstreamAnswer struct {
+	at     time.Time
+	marked bool
+}
+
+// markedUpstream reports whether the remote-tracking default branch of the clone containing top
+// has the marker in either file.
+func markedUpstream(top string) bool {
+	upstream.Lock()
+	a, ok := upstream.seen[top]
+	upstream.Unlock()
+	if ok && time.Since(a.at) < upstreamRecheck {
+		return a.marked
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	marked := false
+	if g, _, err := gitIn(ctx, top); err == nil {
+		if remote, err := bus.RemoteFor(ctx, g); err == nil {
+			marked = markedAt(ctx, g, "refs/remotes/"+remote+"/HEAD")
+		}
+	}
+	upstream.Lock()
+	upstream.seen[top] = upstreamAnswer{at: time.Now(), marked: marked}
+	upstream.Unlock()
+	return marked
+}
+
+// markedAt reports whether either marker file in the commit rev has the marker. A rev that names
+// nothing isn't marked. git grep is one process but reads a symbolic link as the path it holds, so
+// without a match the files are read again as Push reads them, following links.
+func markedAt(ctx context.Context, g gitx.Git, rev string) bool {
+	if _, err := g.Run(ctx, "", append([]string{"grep", "-q", "-F", "-e", markStart, rev, "--"}, markerFiles...)...); err == nil {
+		return true
+	}
+	tip, err := g.Run(ctx, "", "rev-parse", "--verify", "--quiet", rev+"^{commit}")
+	if err != nil {
+		return false
+	}
+	t := &treeFiles{ctx: ctx, g: g, tip: strings.TrimSpace(tip), files: map[string]*treeFile{}}
+	for _, name := range markerFiles {
+		if _, b, ok, err := t.read(name); err == nil && ok && bytes.Contains(b, []byte(markStart)) {
+			return true
+		}
+	}
+	return false
+}
+
+// gitIn is git for the checkout at top, two ways. clone runs in the clone's common git dir, as the
+// daemon does (one per clone), so the remote is chosen exactly as the daemon chooses it, whatever
+// a worktree's own config says. own runs in the checkout's own git directory, which for a linked
+// worktree is the one under the clone's worktrees/, so that what git reads for the commit (a
+// user.name set for this worktree alone, an includeIf on its path) is what git would read in that
+// checkout. Both are found without running git when they can be.
+func gitIn(ctx context.Context, top string) (clone, own gitx.Git, err error) {
+	if dir, common, ok := gitx.Discover(top); ok {
+		return gitx.Git{Dir: common}, gitx.Git{Dir: dir}, nil
+	}
+	out, err := gitx.RunIn(ctx, top, "rev-parse", "--path-format=absolute", "--git-common-dir", "--absolute-git-dir")
+	lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(out, "\r", "")), "\n")
+	if err != nil || len(lines) != 2 {
+		return gitx.Git{}, gitx.Git{}, fmt.Errorf("not inside a git repository (%s)", top)
+	}
+	return gitx.Git{Dir: filepath.Clean(lines[0])}, gitx.Git{Dir: filepath.Clean(lines[1])}, nil
 }
 
 // section is what both files get. It is short on purpose, since it sits in files every agent reads
@@ -82,14 +223,8 @@ This repo uses {name}: coding agents on teammates' machines see and message each
 - To use {name}: {use}
 ` + markEnd + "\n")
 
-// markerFile puts the section into the file called name under top, creating it if it is missing.
-func markerFile(top, name string) (string, error) {
-	path := filepath.Join(top, name)
-	b, err := os.ReadFile(path)
-	exists := err == nil
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
+// markerFile puts the section into a file, which is created if it is missing.
+func markerFile(b []byte, exists bool) edited {
 	sec := []byte(section)
 	if bytes.Contains(b, []byte("\r\n")) {
 		sec = bytes.ReplaceAll(sec, []byte("\n"), []byte("\r\n")) // git may check out CRLF
@@ -100,7 +235,7 @@ func markerFile(top, name string) (string, error) {
 		// edited by hand and is left alone.
 		n := bytes.Index(b[start:], []byte(markEnd))
 		if n < 0 {
-			return "", nil
+			return edited{}
 		}
 		end := start + n + len(markEnd)
 		if bytes.HasPrefix(b[end:], []byte("\r\n")) {
@@ -109,11 +244,12 @@ func markerFile(top, name string) (string, error) {
 			end++
 		}
 		if bytes.Equal(b[start:end], sec) {
-			return "", nil
+			return edited{}
 		}
 		b = append(append(append([]byte{}, b[:start]...), sec...), b[end:]...)
-		return name + ": updated the section telling agents the repo uses " + brand.Product, os.WriteFile(path, b, 0o644)
+		return edited{msg: "updated the section telling agents the repo uses " + brand.Product, change: true, data: b}
 	}
+	b = append([]byte{}, b...)
 	if len(b) > 0 && !bytes.HasSuffix(b, []byte("\n\n")) {
 		if bytes.HasSuffix(b, []byte("\n")) {
 			b = append(b, '\n')
@@ -126,7 +262,7 @@ func markerFile(top, name string) (string, error) {
 	if !exists {
 		verb = "created, with"
 	}
-	return name + ": " + verb + " a section telling agents the repo uses " + brand.Product, os.WriteFile(path, b, 0o644)
+	return edited{msg: verb + " a section telling agents the repo uses " + brand.Product, change: true, data: b}
 }
 
 // HookEvent is one Claude Code event the hook is installed on, and the matcher of its group.
@@ -189,25 +325,24 @@ func isBinary(command string) bool {
 
 // cleanMCPConfig takes the Murmur server out of the project's .mcp.json, where an older init put
 // it. An entry that isn't one init wrote is left, and so is everything else in the file.
-func cleanMCPConfig(top string) (string, error) {
-	path := filepath.Join(top, ".mcp.json")
-	cfg, raw, ok := readConfig(path)
+func cleanMCPConfig(raw []byte, exists bool) edited {
+	cfg, ok := parseConfig(raw, exists)
 	if !ok {
-		return "", nil
+		return edited{}
 	}
 	servers := cfg.Object("mcpServers")
 	entry := servers.Object(brand.MCPServer)
 	if entry == nil {
-		return "", nil
+		return edited{}
 	}
 	if !isOwnServer(entry) {
-		return ".mcp.json: its " + brand.MCPServer + " server isn't the one an older init wrote, so it was left alone", nil
+		return edited{msg: "its " + brand.MCPServer + " server isn't the one an older init wrote, so it was left alone"}
 	}
 	servers.Delete(brand.MCPServer)
 	if servers.Len() == 0 {
 		cfg.Delete("mcpServers")
 	}
-	return ".mcp.json: " + dropOrWrite(path, cfg, raw, "removed the "+brand.MCPServer+" MCP server an older init added"), nil
+	return dropOrWrite(cfg, raw, "removed the "+brand.MCPServer+" MCP server an older init added")
 }
 
 func isOwnServer(entry *jsonedit.Object) bool {
@@ -223,20 +358,12 @@ func isOwnServer(entry *jsonedit.Object) bool {
 
 // cleanClaudeHooks takes Murmur's notice hook out of the project's .claude/settings.json, where an
 // older init put it. join puts it in a file that isn't committed instead.
-func cleanClaudeHooks(top string) (string, error) {
-	path := filepath.Join(top, ".claude", "settings.json")
-	cfg, raw, ok := readConfig(path)
-	if !ok {
-		return "", nil
+func cleanClaudeHooks(raw []byte, exists bool) edited {
+	cfg, ok := parseConfig(raw, exists)
+	if !ok || !RemoveHooks(cfg) {
+		return edited{}
 	}
-	if !RemoveHooks(cfg) {
-		return "", nil
-	}
-	msg := dropOrWrite(path, cfg, raw, "removed the "+brand.Product+" notice hook an older init added")
-	if cfg.Len() == 0 {
-		os.Remove(filepath.Dir(path)) // only if nothing else is in it
-	}
-	return ".claude/settings.json: " + msg, nil
+	return dropOrWrite(cfg, raw, "removed the "+brand.Product+" notice hook an older init added")
 }
 
 // RemoveHooks deletes Murmur's notice hook from a Claude Code settings object, along with the
@@ -307,35 +434,25 @@ func dropHooks(group *jsonedit.Object, keep string) bool {
 
 func asString(v any) string { s, _ := v.(string); return s }
 
-// readConfig reads a JSON config file; ok is false when it is missing or isn't valid JSON, which
+// parseConfig parses a JSON config file; ok is false when it is missing or isn't valid JSON, which
 // cleaning treats alike: there is nothing it can safely change.
-func readConfig(path string) (cfg *jsonedit.Object, raw []byte, ok bool) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, nil, false
+func parseConfig(raw []byte, exists bool) (cfg *jsonedit.Object, ok bool) {
+	if !exists {
+		return nil, false
 	}
-	cfg, err = jsonedit.Parse(raw)
-	if err != nil {
-		return nil, nil, false
-	}
-	return cfg, raw, true
+	cfg, err := jsonedit.Parse(raw)
+	return cfg, err == nil
 }
 
-// dropOrWrite saves cfg to path, or deletes the file if cfg is empty, which is when init made the
-// whole file. It returns what to tell the user.
-func dropOrWrite(path string, cfg *jsonedit.Object, raw []byte, what string) string {
+// dropOrWrite is the change that saves cfg, or deletes the file if cfg is empty, which is when init
+// made the whole file. what says what the change does.
+func dropOrWrite(cfg *jsonedit.Object, raw []byte, what string) edited {
 	if cfg.Len() == 0 {
-		if err := os.Remove(path); err != nil {
-			return "couldn't remove the empty file: " + err.Error()
-		}
-		return what + "; nothing else was in it, so the file is gone"
+		return edited{msg: what + "; nothing else was in it, so the file is gone", change: true, remove: true}
 	}
 	out, err := jsonedit.Format(cfg, raw)
-	if err == nil {
-		err = os.WriteFile(path, out, 0o644)
-	}
 	if err != nil {
-		return "couldn't rewrite the file: " + err.Error()
+		return edited{msg: "couldn't rewrite the file: " + err.Error()}
 	}
-	return what
+	return edited{msg: what, change: true, data: out}
 }

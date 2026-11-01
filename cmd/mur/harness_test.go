@@ -161,6 +161,8 @@ func (b *box) env() []string {
 		"CLAUDE_CONFIG_DIR="+b.claudeDir, "CODEX_HOME="+b.codexHome,
 		jointest.LogEnv+"="+b.log,
 		"PATH="+filepath.Dir(b.mur)+string(os.PathListSeparator)+os.Getenv("PATH"),
+		// init commits as the user, and this home has no git config to say who that is.
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
 	)
 }
 
