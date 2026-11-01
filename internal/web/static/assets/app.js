@@ -9,6 +9,8 @@ const HIDDEN_POLL_MS = 15000;
 const MAX_MESSAGES = 2000;
 const VIEWS = ["sessions", "messages", "settings"];
 const TITLES = { sessions: "Sessions", messages: "Messages", settings: "Settings" };
+const MODE_KEY = NAME + ":messages";
+const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
 const ui = {
   view: "sessions",
@@ -23,6 +25,8 @@ const ui = {
   rowErrors: {},
   expanded: new Set(),
   filter: null, // a session name
+  messageMode: localStorage.getItem(MODE_KEY) === "conversations" ? "conversations" : "recent",
+  conversation: null, // the open conversation's key
   muting: new Set(),
 };
 
@@ -190,10 +194,14 @@ function render() {
   }
   const keep = document.activeElement?.dataset?.key;
   const scroll = content ? content.scrollTop : 0;
+  const chat = chatScroll();
   if (!content) content = h("div", { class: "content" });
-  content.replaceChildren(page());
+  const inner = page(); // before the top bar, which counts what this settles
+  content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
+  content.replaceChildren(inner);
   root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, topbar(), content)));
   content.scrollTop = scroll;
+  restoreChatScroll(chat);
   if (keep) root.querySelector(`[data-key="${CSS.escape(keep)}"]`)?.focus({ preventScroll: true });
 }
 
@@ -278,7 +286,10 @@ function topbar() {
   } else if (ui.view === "sessions" && ui.state) {
     meta = plural(sessionCount(), "session") + " · " + plural(ui.state.devices.length, "device");
   } else if (ui.view === "messages") {
-    meta = plural(visibleMessages().length, "message");
+    meta =
+      ui.messageMode === "conversations"
+        ? plural(conversations().length, "conversation")
+        : plural(visibleMessages().length, "message");
   }
   return h(
     "header",
@@ -367,6 +378,7 @@ function sessionRow(d, s) {
   const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
   const open = () => {
     ui.filter = s.addr || s.name;
+    ui.conversation = null;
     go("messages");
   };
   return h(
@@ -447,28 +459,53 @@ function recipient(m) {
   return h("span", { class: "msg-to", title: to }, h("span", { class: "truncate" }, to));
 }
 
-function messagesPage() {
-  const list = [...visibleMessages()].reverse();
+function messagesBar() {
   const shown = ui.filter && nameOf(ui.filter, ui.filter);
-  const filter =
+  return h(
+    "div",
+    { class: "filter-bar" },
     ui.filter &&
-    h(
-      "div",
-      { class: "filter-bar" },
       h(
         "span",
         { class: "chip" },
         shown,
         h("button", { "aria-label": "Show all messages", "data-key": "unfilter", onclick: () => ((ui.filter = null), render()) }, "×"),
       ),
-    );
+    h(
+      "div",
+      { class: "segmented msg-modes", role: "group", "aria-label": "Message view" },
+      [
+        ["recent", "Recent"],
+        ["conversations", "Conversations"],
+      ].map(([mode, label]) =>
+        h(
+          "button",
+          {
+            "aria-pressed": ui.messageMode === mode ? "true" : "false",
+            "data-key": "mode-" + mode,
+            onclick: () => {
+              ui.messageMode = mode;
+              localStorage.setItem(MODE_KEY, mode);
+              render();
+            },
+          },
+          label,
+        ),
+      ),
+    ),
+  );
+}
+
+function messagesPage() {
+  if (ui.messageMode === "conversations") return conversationsPage();
+  const list = [...visibleMessages()].reverse();
   if (list.length === 0) {
-    return h("div", { class: "page" }, filter, h("div", { class: "blank" }, ui.filter ? "No messages with " + shown : "No messages"));
+    return h("div", { class: "page" }, messagesBar(), h("div", { class: "blank" }, noMessages()));
   }
   return h(
     "div",
     { class: "page" },
-    filter,
+    messagesBar(),
     h(
       "div",
       { class: "group msg-list" },
@@ -477,19 +514,240 @@ function messagesPage() {
   );
 }
 
+function noMessages() {
+  return ui.filter ? "No messages with " + nameOf(ui.filter, ui.filter) : "No messages";
+}
+
+// Who sent a message and when, as far as the page knows.
+function messageDetail(m) {
+  const at = when(m.at);
+  const sender = findSession(fromName(m));
+  return [sender && [sender.session.agent, sender.device.id].filter(Boolean).join(" on "), at && stamp(at)]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+// Conversations: two sessions' messages to each other, a device's, and everyone's. There is no
+// thread on the bus, so this is all a conversation can be. They are keyed by name, not address, so
+// a session that came back under a new session ID stays in the same one.
+function conversationOf(m) {
+  if (m.toKind === "all") return { key: "all", kind: "all", title: "Everyone" };
+  if (m.toKind === "device") return { key: "device:" + m.to, kind: "device", title: m.to };
+  const pair = [...new Set([fromName(m), toName(m)])].sort();
+  return { key: "dm:" + JSON.stringify(pair), kind: "dm", title: pair.join(" & "), pair };
+}
+
+// Newest conversation first, and each one's messages oldest first. The page holds messages as they
+// arrived, device by device, so a reply can be held ahead of what it answers; the senders' clocks
+// put them back in order.
+function conversations() {
+  const byKey = new Map();
+  for (const m of visibleMessages()) {
+    const c = conversationOf(m);
+    if (!byKey.has(c.key)) byKey.set(c.key, { ...c, messages: [] });
+    byKey.get(c.key).messages.push(m);
+  }
+  const time = (m) => when(m.at) || 0;
+  const list = [...byKey.values()];
+  for (const c of list) c.messages.sort((a, b) => time(a) - time(b));
+  const latest = (c) => time(c.messages[c.messages.length - 1]);
+  return list.sort((a, b) => latest(b) - latest(a));
+}
+
+// The same name always gets the same color. The classes are in style.css: the page's content
+// policy doesn't allow an inline style.
+function avatar(name) {
+  let n = 0;
+  for (const ch of name) n = (n * 31 + ch.codePointAt(0)) % 997;
+  return h("span", { class: "avatar avatar-" + (n % 5), "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
+}
+
+function conversationIcon(c) {
+  if (c.kind === "all") return h("span", { class: "avatar" }, icon("broadcast"));
+  if (c.kind === "device") return h("span", { class: "avatar" }, icon("laptop"));
+  if (c.pair.length === 1) return avatar(c.pair[0]);
+  return h("span", { class: "avatar-pair" }, c.pair.map(avatar));
+}
+
+function conversationsPage() {
+  const list = conversations();
+  // On a wide page a conversation is always open, and stays open while others get newer. On a
+  // narrow one the list and a conversation take turns, so the list is where it starts.
+  if (!list.some((c) => c.key === ui.conversation)) {
+    ui.conversation = list.length && !NARROW.matches ? list[0].key : null;
+  }
+  const open = list.find((c) => c.key === ui.conversation);
+  return h(
+    "div",
+    { class: "page chat-page" },
+    messagesBar(),
+    list.length === 0
+      ? h("div", { class: "blank" }, noMessages())
+      : h(
+          "div",
+          { class: "chat" + (open ? " chat-open" : "") },
+          h("nav", { class: "chat-list", "aria-label": "Conversations" }, list.map(conversationRow)),
+          open && conversationPane(open),
+        ),
+  );
+}
+
+function conversationRow(c) {
+  const last = c.messages[c.messages.length - 1];
+  const at = when(last.at);
+  return h(
+    "button",
+    {
+      class: "chat-row",
+      "aria-current": c.key === ui.conversation ? "true" : null,
+      "data-key": "c-" + c.key,
+      onclick: () => {
+        ui.conversation = c.key;
+        render();
+      },
+    },
+    conversationIcon(c),
+    h(
+      "span",
+      { class: "chat-row-text" },
+      h(
+        "span",
+        { class: "chat-row-line" },
+        h("span", { class: "chat-row-title truncate", title: c.title }, c.title),
+        at && agoEl("span", "chat-row-time", at),
+      ),
+      h("span", { class: "chat-row-preview truncate" }, fromName(last) + ": " + last.subject),
+    ),
+  );
+}
+
+function conversationPane(c) {
+  const senders = new Set(c.messages.map(fromName));
+  const about = [
+    c.kind === "all" && "Every session",
+    c.kind === "device" && "Every session on this device",
+    plural(c.messages.length, "message"),
+    c.kind !== "dm" && plural(senders.size, "sender"),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return h(
+    "section",
+    { class: "chat-pane", "aria-label": c.title },
+    h(
+      "header",
+      { class: "chat-head" },
+      h(
+        "button",
+        {
+          class: "chat-back",
+          "aria-label": "All conversations",
+          "data-key": "chat-back",
+          onclick: () => {
+            ui.conversation = null;
+            render();
+          },
+        },
+        icon("arrowLeft"),
+      ),
+      conversationIcon(c),
+      h(
+        "div",
+        { class: "chat-head-text" },
+        h("h2", { class: "chat-title truncate", title: c.title }, c.title),
+        h("div", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
+      ),
+    ),
+    h("div", { class: "chat-thread", "data-conversation": c.key }, chatMessages(c)),
+  );
+}
+
+// A sender's messages run together under one header, as long as they come close together.
+const RUN_MS = 7 * 60 * 1000;
+
+function chatMessages(c) {
+  const out = [];
+  let prev = null;
+  let prevDay = null;
+  for (const m of c.messages) {
+    const at = when(m.at);
+    const day = at && new Date(at).toDateString();
+    if (day && day !== prevDay) {
+      out.push(h("div", { class: "chat-day" }, h("span", null, dayLabel(at))));
+      prev = null;
+      prevDay = day;
+    }
+    const from = fromName(m);
+    const head = !prev || fromName(prev) !== from || !at || at - (when(prev.at) || 0) > RUN_MS;
+    out.push(chatMessage(m, from, at, head));
+    prev = m;
+  }
+  return out;
+}
+
+function dayLabel(t) {
+  const today = new Date();
+  if (new Date(t).toDateString() === today.toDateString()) return "Today";
+  today.setDate(today.getDate() - 1);
+  if (new Date(t).toDateString() === today.toDateString()) return "Yesterday";
+  return new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+}
+
+function chatMessage(m, from, at, head) {
+  return h(
+    "article",
+    { class: "chat-msg" + (head ? " chat-msg-first" : ""), title: head ? null : messageDetail(m) },
+    head ? avatar(from) : h("span", { class: "avatar-gap" }),
+    h(
+      "div",
+      { class: "chat-msg-main" },
+      head &&
+        h(
+          "div",
+          { class: "chat-msg-head" },
+          h("span", { class: "chat-msg-from truncate" }, from),
+          h(
+            "span",
+            { class: "chat-msg-time", title: messageDetail(m) },
+            at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
+          ),
+        ),
+      h("div", { class: "chat-msg-subject" }, m.subject),
+      m.body && h("div", { class: "chat-msg-body" }, m.body),
+    ),
+  );
+}
+
+// A render builds the panes anew. The list keeps its place. So does a conversation being read
+// further up; one that is open at its end, or just opened, shows its newest message.
+function chatScroll() {
+  const list = root.querySelector(".chat-list");
+  const thread = root.querySelector(".chat-thread");
+  return {
+    list: list ? list.scrollTop : 0,
+    key: thread?.dataset.conversation,
+    top: thread ? thread.scrollTop : 0,
+    atEnd: !thread || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 48,
+  };
+}
+
+function restoreChatScroll(was) {
+  const list = root.querySelector(".chat-list");
+  const thread = root.querySelector(".chat-thread");
+  if (list) list.scrollTop = was.list;
+  if (thread) thread.scrollTop = thread.dataset.conversation === was.key && !was.atEnd ? was.top : thread.scrollHeight;
+}
+
 function messageRow(m) {
   const open = ui.expanded.has(m.id);
   const at = when(m.at);
   const from = fromName(m);
-  const sender = findSession(from);
   const toggle = () => {
     if (ui.expanded.has(m.id)) ui.expanded.delete(m.id);
     else ui.expanded.add(m.id);
     render();
   };
-  const detail = [sender && [sender.session.agent, sender.device.id].filter(Boolean).join(" on "), at && stamp(at)]
-    .filter(Boolean)
-    .join(" · ");
+  const detail = messageDetail(m);
   return h(
     "div",
     { class: "msg", "aria-expanded": open ? "true" : "false" },
@@ -860,10 +1118,12 @@ async function poll() {
     ui.conn = "down";
   }
   inflight = false;
-  // Rebuild only when something changed, and leave a minutes field being typed in alone.
+  // Rebuild only when something changed, and leave a minutes field being typed in alone, and text
+  // being selected, which a rebuild would drop.
   const sig = JSON.stringify([ui.state, ui.messages.length, ui.conn]);
   const typing = document.activeElement?.tagName === "INPUT";
-  if (sig !== last && !typing) {
+  const selecting = document.getSelection()?.isCollapsed === false;
+  if (sig !== last && !typing && !selecting) {
     last = sig;
     render();
   }
@@ -878,7 +1138,7 @@ async function poll() {
 function start() {
   const token = takeToken();
   if (token !== ui.token) {
-    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null });
+    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null });
     ui.ids = new Set();
     named.clear();
     for (const key of [...minuteEdits.keys()]) cancelMinutes(key);

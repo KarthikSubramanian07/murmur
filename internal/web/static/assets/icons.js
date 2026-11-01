@@ -43,6 +43,10 @@ const shapes = {
     ],
   ],
   chevronRight: [["path", { d: "m9 18 6-6-6-6" }]],
+  arrowLeft: [
+    ["path", { d: "m12 19-7-7 7-7" }],
+    ["path", { d: "M19 12H5" }],
+  ],
   broadcast: [
     ["path", { d: "M16.247 7.761a6 6 0 0 1 0 8.478" }],
     ["path", { d: "M19.075 4.933a10 10 0 0 1 0 14.134" }],
