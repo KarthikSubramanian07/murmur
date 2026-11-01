@@ -212,7 +212,8 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   uncommitted change to a file the pull brings, even an identical one, checked 2026-11-01);
   otherwise it is left alone and gets the section when the default branch is merged in. The push
   skips the repo's pre-push hook, as bus pushes do: the hook would run against a checkout that
-  isn't this commit. `init --no-push` is the old behavior.
+  isn't this commit. `init --no-push` is the old behavior. `docs/agents/setup.md` is the page an
+  agent follows when its user asks it to set Murmur up; the README links it.
 - **What `mur join` writes.** It refuses in a repo without the marker. Everything it writes is
   outside the repo's tracked files:
 

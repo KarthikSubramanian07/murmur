@@ -33,9 +33,12 @@ const (
 
 	// JoinDoc and UseDoc are the pages the marker in a repo's AGENTS.md and CLAUDE.md sends an
 	// agent to, as raw text: how to join (docs/agents/join.md) and how to use the tools
-	// (docs/agents/use.md). They read without login once the repo is public.
-	JoinDoc = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md"
-	UseDoc  = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md"
+	// (docs/agents/use.md). SetupDoc (docs/agents/setup.md) is how an agent sets Murmur up in a
+	// repo that doesn't use it yet, for a user who asked; the README points to it. They read
+	// without login once the repo is public.
+	JoinDoc  = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md"
+	UseDoc   = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md"
+	SetupDoc = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md"
 
 	// InstallSh and InstallPs1 are the one-line installs join.md tells an agent to run. The docs
 	// spell them out, so a test holds them to these.
