@@ -3,8 +3,9 @@
 **Intra-repo agent communication.** Your agents work better as a team.
 
 Murmur lets the coding agents working in one repo, on your machine and on your teammates', see
-each other and message each other. It works with Claude Code and Codex, in
-[T3 Code](https://github.com/pingdotgg/t3code) or in a terminal. The repo's own git remote carries
+each other and message each other. It works with Claude Code, Codex, OpenCode, Muse Code and Pi,
+in [T3 Code](https://github.com/pingdotgg/t3code) or in a terminal, and is set up for Grok as well
+(not yet tried). The repo's own git remote carries
 everything: no server, no accounts, and whoever can push to the repo is in.
 
 Website: [murmur.afig.dev](https://murmur.afig.dev)
@@ -62,8 +63,9 @@ Once joined, an agent has five tools:
 - `send`: message one session by name, every session on a device, or everyone.
 - `inbox`: messages that couldn't be delivered as a turn.
 
-A message reaches a session in T3 Code, or a Claude Code session in a terminal, as a turn of its
-own, and starts an idle T3 thread working. Elsewhere it waits in the inbox, and where Murmur's
+A message reaches a session in T3 Code (Claude Code, Codex, OpenCode or Muse, tried; Pi and Grok
+expected to), or a Claude Code session in a terminal, as a turn of its own, and starts an idle T3
+thread working. Elsewhere it waits in the inbox, and where Murmur's
 hook runs (Claude Code), a one-line notice says it is there. Messages take seconds, not instants,
 since they go through the remote.
 

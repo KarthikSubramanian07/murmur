@@ -223,6 +223,7 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   | The MCP server, for Claude Code | `claude mcp add --scope user murmur -- <absolute path of mur> mcp`, which writes `.claude.json` in `$CLAUDE_CONFIG_DIR`, else the home directory | user |
   | Permission for its tools | `mcp__murmur` in `permissions.allow` of `settings.json` next to it | user |
   | The MCP server, for Codex | a `[mcp_servers.murmur]` table in `$CODEX_HOME/config.toml`, else `~/.codex/config.toml`: the command, `args = ["mcp", "--agent", "codex"]` and `default_tools_approval_mode = "approve"` | user |
+  | The MCP server, for OpenCode, Muse Code, Pi and Grok | see "Other agents", below | user |
   | The hook, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure` and `UserPromptSubmit` (`setup.HookEvents`) | `.claude/settings.local.json` in each worktree of the clone, kept out of `git status` through the clone's `info/exclude` | clone |
   | The daemon | started, if none is running | clone |
 
@@ -276,10 +277,56 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   one the user hasn't joined, gets no daemon, no `refs/murmur/*` and nothing published. A clone
   whose user joined but whose current branch lacks the marker keeps its daemon (it is the user's,
   for every worktree) and gets no MCP tools there.
-- **Per user, not per account.** T3 can start Claude Code with its own `CLAUDE_CONFIG_DIR` (a
-  provider with a home path, as `claude_personal` on Tyler's laptop, 2026-10-29). `mur join` writes
-  to the config directory of the agent that ran it, so a user with a second account has a second
-  registration, made when an agent under it joins.
+- **Per user, in every account T3 runs.** T3 can start Claude Code with its own `CLAUDE_CONFIG_DIR`
+  (a provider instance with a home path, as `claude_personal` on Tyler's laptop, 2026-10-29), and
+  Codex with its own `CODEX_HOME`. Until 2026-11-01 `mur join` wrote only to the home of the agent
+  that ran it, so a thread under Tyler's other account had no Murmur tools and nothing said why.
+  Now it also reads T3's `userdata/settings.json` (in the first of T3's data directories that has
+  one, found as for the database) and registers in the home of every provider instance that is on:
+  `config.homePath`, else the same variable in the instance's environment, else the agent's
+  default; `config.binaryPath` finds an agent that isn't on PATH (Muse, here). Which instances are
+  on, and the defaults, follow T3's own code (`internal/join/t3homes.go` says how). Homes are
+  deduplicated, the agent's default home is the same registration as before, an instance that is
+  off is named under "Not done", and without T3 nothing changes. The file holds API keys, so join
+  decodes only those fields, takes an environment value only by name and only if T3 doesn't mark it
+  sensitive, and never prints the file.
+
+#### Other agents
+
+Added 2026-11-01 (#128), at Tyler's request: OpenCode, Muse Code, Pi and Grok, in T3 Code and on
+their own. Each was looked at in its installed binary, its documentation and probe runs (OpenCode
+2.2.0, Muse 1.4.14, Pi 0.99.0 on Tyler's laptop; Grok Build from its documentation and source only,
+since it wasn't installed). The details, and where each came from, are in the comments of
+`internal/join` (one file per agent) and `internal/mcpserver`.
+
+| Agent | Where join writes | How a session is told apart | Inside T3 |
+|---|---|---|---|
+| OpenCode | `mcp.servers.murmur` in `opencode.json(c)` in `~/.config/opencode`, `"codemode": false`, and a `murmur_*` allow rule appended to `permissions` | One server process serves every session in a directory; each call names its session in `_meta["ai.opencode/sessionID"]`, and the server keeps a registration per session that calls | The session ID is T3's native ID for the thread |
+| Muse Code | `mcpServers.murmur` in `~/.config/muse/settings.json`, `"mode": "optional"`, `env` forwarding `T3CODE_CLI_PATH` and, on Windows, the home variables, as `${VAR:-}` | One process per session, with `MUSE_SESSION_ID` | The same ID |
+| Pi | an extension, `extensions/murmur.ts` in `~/.pi/agent`, that registers the server with the session's file in `MURMUR_PI_SESSION_FILE` | One process per session | T3 knows a Pi thread by that file (not tried: Pi is off in T3 on the laptop) |
+| Grok | `[mcp_servers.murmur]` in `~/.grok/config.toml`, and `MCPTool(murmur__*)` in `[permission] allow` | One process per session, with `GROK_SESSION_ID` | Expected to be the ACP session ID T3 records (not tried) |
+
+- **Edited, not rewritten.** JSON and JSONC files are edited as text (`jsonedit.SetIn`,
+  `AppendIn`): one member or item changes and every other byte, comments and alignment included,
+  stays. A file in a form join can't read safely (not an object, a path through a list, a key
+  given twice, Muse's older `mcp_servers` beside which a new key would drop every server) is a
+  reported problem. Grok's TOML goes through Codex's editor. Pi's extension is Murmur's own file,
+  written whole, and one of that name that isn't Murmur's is left alone.
+- **Identity.** Claude Code's variables count only for Claude Code: Pi and OpenCode pass their own
+  environment on to their servers, and one started from a Claude Code session carries that
+  session's `CLAUDE_CODE_SESSION_ID`. An agent's own session ID becomes the session's Murmur ID by
+  hash, since Muse's and OpenCode's IDs begin with the time and two of them often share six
+  characters. A session of the shared OpenCode server is registered at its first call and dropped
+  after 30 minutes without one, as a stopped session is; its T3 route outlives that as any does.
+- **Delivery.** Inside T3 the existing `t3 thread send` delivery needed nothing new: an OpenCode and
+  a Muse thread each took a message as a turn and answered it with `send`, nobody typing
+  (2026-11-01). Outside T3 none of the four has a way in that Murmur uses yet (OpenCode has an HTTP
+  API and plugins, Pi extensions can start a turn, Muse's session messaging isn't on Windows), so a
+  message waits in the inbox, with no notice: no hook of Murmur's runs in them.
+- **Titles.** Inside T3 the thread's title is read as for any thread. Outside T3 none is read for
+  these agents: their IDs aren't Codex threads.
+- **Tool approval.** OpenCode and Grok have a rule for it, which join writes; Muse and Pi have none.
+  In T3 outside full-access mode, Muse and T3's Pi extension ask before each call.
 
 ### Reloading MCP servers
 
@@ -635,9 +682,9 @@ The daemon delivers at once, when a message arrives for a session it can reach:
 
 | Where the session runs | Delivered by | Starts a turn in an idle session |
 |---|---|---|
-| T3 Code, Claude Code or Codex | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
+| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
 | Claude Code outside T3 | the session's messaging socket | Unverified: a message Murmur's code wrote to a session's socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle one has not been tried |
-| Codex outside T3, or any delivery that fails | the hook's notice and `inbox`, as before | No |
+| Codex, OpenCode, Muse, Pi or Grok outside T3, or any delivery that fails | the hook's notice where the hook runs (Claude Code), and `inbox` | No |
 
 What the agent reads:
 
@@ -817,7 +864,9 @@ of the transport, so a websocket relay can be added later if 10–15 s proves to
 
 T3-only would need changes inside T3 itself; from outside, an MCP server is the way in for every
 client, T3 included. The daemon and MCP layer cost little more than a T3-only build, and they are
-what makes Claude Code and Codex sessions first-class.
+what makes Claude Code and Codex sessions first-class, and since 2026-11-01 OpenCode, Muse Code and
+Pi sessions too, with Grok's set up from its documentation (see "Other agents", under Joining a
+repo).
 
 ## Prior art
 

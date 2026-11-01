@@ -17,10 +17,15 @@ joining does:
   and put in ~/.local/bin (on Windows, %USERPROFILE%\.local\bin), and that folder is added to PATH:
   in the shell's startup file (.zshenv, .bashrc or .profile) on macOS and Linux, in the user's PATH
   on Windows. No admin rights, no sudo.
-- Murmur is added to your user's Claude Code and Codex settings (whichever is installed), once for
-  the user, not once per repo, with its tools approved so they run without asking each time
+- Murmur is added to the settings of each coding agent your user has installed (Claude Code,
+  Codex, OpenCode, Muse Code, Pi, Grok), once for the user, not once per repo, and to every other
+  account of them that T3 Code runs (a second Claude Code with its own home, say). Its tools are
+  approved so they run without asking each time where the agent has a setting for that
   (`mcp__murmur` in Claude Code's allowed permissions; `default_tools_approval_mode = "approve"` in
-  Codex). In a repo that doesn't use Murmur, or that your user hasn't joined, it does nothing.
+  Codex; a `murmur_*` allow rule in OpenCode; `MCPTool(murmur__*)` in Grok); Muse and Pi have none,
+  and ask in T3 unless the thread runs in full-access mode. For Pi it is a small extension file of
+  Murmur's in Pi's extensions folder. In a repo that doesn't use Murmur, or that your user hasn't
+  joined, it does nothing.
 - In every worktree of this clone, a hook goes into .claude/settings.local.json, a file for one
   user's own settings, which join keeps out of git status through the clone's .git/info/exclude.
   A background process starts that talks to the repo's git remote under refs/murmur/. No tracked
@@ -29,7 +34,7 @@ joining does:
   gone idle could be woken by a message.
 - Joining can be undone in this repo with `mur join --leave`. It removes the hooks, stops the
   background process and forgets that your user joined; Murmur stays registered, and its tools
-  approved, in Claude Code and Codex, doing nothing here (what it prints says how to remove those).
+  approved, in the agents, doing nothing here (what it prints says how to remove each).
 
 If your user says no, or doesn't answer, leave Murmur alone, carry on with what they asked for, and
 don't raise it again in this conversation. Go on only after a clear yes.
@@ -68,8 +73,8 @@ https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md
 
 ## 4. Tell your user what it printed
 
-Say, in your own words, what it set up and what to do next. Joining adds Murmur's tools to Claude
-Code and Codex, but a conversation that was already running when Murmur was added may not load them.
+Say, in your own words, what it set up and what to do next. Joining adds Murmur's tools to the
+agents, but a conversation that was already running when Murmur was added may not load them.
 What `mur join` prints says which case this is, and how to get the tools if they are missing:
 
 - Claude Code in T3 Code: press Stop, then send any message. T3 restarts Claude with Murmur loaded.
@@ -78,6 +83,8 @@ What `mur join` prints says which case this is, and how to get the tools if they
 - Codex in T3 Code: it loads tools only in a thread that starts after Murmur was added, so open a
   new thread in this project to talk to other agents through Murmur. This thread won't get them.
 - Codex in a terminal: start a new session.
+- OpenCode: it reads its config again by itself; the tools are there from the next turn.
+- Muse Code, Pi or Grok: start a new session (in T3 Code, a new thread).
 
 Don't say the tools are there until they show up in your list of tools. Once they do, read how to
 use them: https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md

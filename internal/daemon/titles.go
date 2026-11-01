@@ -38,6 +38,7 @@ func (d *Daemon) titleLoop(ctx context.Context) {
 // titleJob is one session whose title is to be read, with what the read goes by.
 type titleJob struct {
 	id         string
+	agent      string
 	route      proto.Route
 	transcript string
 }
@@ -50,7 +51,7 @@ func (d *Daemon) refreshTitles(ctx context.Context) {
 	var jobs []titleJob
 	for id, s := range d.sessions {
 		if s.doing == "" && s.dropped.IsZero() {
-			jobs = append(jobs, titleJob{id: id, route: s.route, transcript: s.transcript})
+			jobs = append(jobs, titleJob{id: id, agent: s.agent, route: s.route, transcript: s.transcript})
 		}
 	}
 	d.mu.Unlock()
@@ -96,6 +97,7 @@ func (d *Daemon) refreshTitles(ctx context.Context) {
 
 // readTitle reads the title of the conversation a session is in. known is false when the session
 // gives nothing to find it by: not in T3 with its thread found, no Codex thread ID, no transcript.
+// Outside T3 the title of an agent other than Claude Code or Codex isn't read.
 // A session in T3 is read from T3 only: its own client's name for the conversation is another
 // title, and the two would take turns showing.
 func readTitle(ctx context.Context, j titleJob) (raw string, known bool, err error) {
@@ -110,7 +112,7 @@ func readTitle(ctx context.Context, j titleJob) (raw string, known bool, err err
 			return "", true, nil // T3 has the thread's row not yet, or no more: no title
 		}
 		return raw, true, err
-	case r.Native != "":
+	case r.Native != "" && !ownTitleUnread(j.agent):
 		dir := r.CodexHome // the session's own, as the daemon may have been started by another client
 		if !filepath.IsAbs(dir) {
 			dir = title.CodexDir()
@@ -122,6 +124,18 @@ func readTitle(ctx context.Context, j titleJob) (raw string, known bool, err err
 		return raw, true, err
 	}
 	return "", false, nil
+}
+
+// ownTitleUnread says whether agent is one that gives the daemon its own ID for the conversation
+// but whose own name for it Murmur doesn't read: OpenCode, Muse, Pi and Grok. Codex is the one whose
+// ID is read, in Codex's state.
+func ownTitleUnread(agent string) bool {
+	for _, a := range []string{"opencode", "muse", "pi", "grok"} {
+		if agent == a || strings.HasPrefix(agent, a+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 // titleSource is the part of a route that says which conversation's title to read, and where.

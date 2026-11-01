@@ -19,19 +19,40 @@ import (
 // 2026-10-29).
 var allowRule = "mcp__" + brand.MCPServer
 
-// registerClaude makes Claude Code know Murmur's server, for this user in every project, and lets
-// its tools run without a prompt each time. fresh reports whether the server was new to Claude Code
-// (or moved), which is when sessions that are already running have never heard of it.
+// A Claude Code home is the directory its settings.json is in (Dir) and the file it keeps user-scope
+// MCP servers in (JSON). One that is a CLAUDE_CONFIG_DIR has that file inside it; the default home
+// is ~/.claude with ~/.claude.json beside it.
+
+// configDir is the CLAUDE_CONFIG_DIR that makes `claude` use Claude Code home h, "" for the default.
+func (h agentHome) configDir() string {
+	if filepath.Clean(h.JSON) == filepath.Join(filepath.Clean(h.Dir), ".claude.json") {
+		return h.Dir
+	}
+	return ""
+}
+
+// registerClaude registers in the Claude Code home of the process's own environment.
 func (e Env) registerClaude(ctx context.Context) (did []string, fresh bool, err error) {
+	return e.registerClaudeAt(ctx, e.defaultHome(agents[0]))
+}
+
+// registerClaudeAt makes Claude Code know Murmur's server in home h, for this user in every
+// project, and lets its tools run without a prompt each time. fresh reports whether the server was
+// new to that home (or moved), which is when sessions that are already running have never heard of
+// it.
+func (e Env) registerClaudeAt(ctx context.Context, h agentHome) (did []string, fresh bool, err error) {
 	claude, err := e.look("claude")
+	if err != nil && h.Bin != "" {
+		claude, err = h.Bin, nil
+	}
 	haveCLI := err == nil
-	if !haveCLI && !exists(e.ClaudeJSON) && !exists(e.ClaudeDir) {
+	if !haveCLI && !exists(h.JSON) && !exists(h.Dir) {
 		return nil, false, nil // no Claude Code here
 	}
 
-	cfg, raw, err := jsonedit.ReadFile(e.ClaudeJSON)
+	cfg, raw, err := jsonedit.ReadFile(h.JSON)
 	if err != nil {
-		return nil, false, fmt.Errorf("%s: %w", e.ClaudeJSON, err)
+		return nil, false, fmt.Errorf("%s: %w", h.JSON, err)
 	}
 	servers := cfg.Object("mcpServers")
 	entry := servers.Object(brand.MCPServer) // nil-safe: a nil *Object has no keys
@@ -41,12 +62,12 @@ func (e Env) registerClaude(ctx context.Context) (did []string, fresh bool, err 
 		case haveCLI:
 			if entry != nil {
 				// A stale entry (the binary moved): `add` refuses a name that exists.
-				e.runClaude(ctx, claude, "mcp", "remove", "--scope", "user", brand.MCPServer)
+				e.runClaude(ctx, h, claude, "mcp", "remove", "--scope", "user", brand.MCPServer)
 			}
-			if out, err := e.runClaude(ctx, claude, "mcp", "add", "--scope", "user", brand.MCPServer, "--", e.Exe, "mcp"); err != nil {
+			if out, err := e.runClaude(ctx, h, claude, "mcp", "add", "--scope", "user", brand.MCPServer, "--", e.Exe, "mcp"); err != nil {
 				return nil, false, fmt.Errorf("`claude mcp add` failed: %v: %s", err, strings.TrimSpace(out))
 			}
-			did = append(did, "Claude Code: registered the "+brand.MCPServer+" MCP server for you, in every project ("+e.ClaudeJSON+")")
+			did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project ("+h.JSON+")")
 		default:
 			// Claude Code is configured here but its command isn't on PATH, so write the entry the
 			// command would have written.
@@ -62,21 +83,21 @@ func (e Env) registerClaude(ctx context.Context) (did []string, fresh bool, err 
 			servers.Set(brand.MCPServer, e2)
 			out, err := jsonedit.Format(cfg, raw)
 			if err == nil {
-				err = writeAtomic(e.ClaudeJSON, out, 0o600)
+				err = writeAtomic(h.JSON, out, 0o600)
 			}
 			if err != nil {
-				return nil, false, fmt.Errorf("%s: %w", e.ClaudeJSON, err)
+				return nil, false, fmt.Errorf("%s: %w", h.JSON, err)
 			}
-			did = append(did, "Claude Code: registered the "+brand.MCPServer+" MCP server for you, in every project ("+e.ClaudeJSON+")")
+			did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project ("+h.JSON+")")
 		}
 	}
 
-	allowed, err := e.allowClaudeTools()
+	allowed, err := allowClaudeTools(h.Dir)
 	if err != nil {
 		return did, fresh, err
 	}
 	if allowed {
-		did = append(did, "Claude Code: allowed "+brand.Product+"'s tools, so they don't ask each time ("+filepath.Join(e.ClaudeDir, "settings.json")+")")
+		did = append(did, h.Label+": allowed "+brand.Product+"'s tools, so they don't ask each time ("+filepath.Join(h.Dir, "settings.json")+")")
 	}
 	return did, fresh, nil
 }
@@ -92,9 +113,9 @@ func ownsEntry(entry *jsonedit.Object, exe string) bool {
 	return cmd == exe && len(list) == 1 && list[0] == "mcp"
 }
 
-// allowClaudeTools adds the allow rule to the user's settings.json, and reports whether it was new.
-func (e Env) allowClaudeTools() (bool, error) {
-	path := filepath.Join(e.ClaudeDir, "settings.json")
+// allowClaudeTools adds the allow rule to the settings.json in dir, and reports whether it was new.
+func allowClaudeTools(dir string) (bool, error) {
+	path := filepath.Join(dir, "settings.json")
 	cfg, raw, err := jsonedit.ReadFile(path)
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", path, err)
@@ -130,12 +151,40 @@ func (e Env) allowClaudeTools() (bool, error) {
 	return true, nil
 }
 
-func (e Env) runClaude(ctx context.Context, claude string, args ...string) (string, error) {
+// runClaude runs the claude command against home h: with CLAUDE_CONFIG_DIR set to it, or unset for
+// the default home, whatever this process's own environment says.
+func (e Env) runClaude(ctx context.Context, h agentHome, claude string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, claude, args...)
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(kv), "CLAUDE_CONFIG_DIR=") {
+			env = append(env, kv)
+		}
+	}
+	if dir := h.configDir(); dir != "" {
+		env = append(env, "CLAUDE_CONFIG_DIR="+dir)
+	}
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// claudeRemoval is how to take the server out of Claude Code home h, for a leave's advice.
+func (e Env) claudeRemoval(h agentHome) string {
+	cfg, _, err := jsonedit.ReadFile(h.JSON)
+	if err != nil || cfg.Object("mcpServers").Object(brand.MCPServer) == nil {
+		return ""
+	}
+	step := "`claude mcp remove --scope user " + brand.MCPServer + "`"
+	switch dir, mine := h.configDir(), e.getenv("CLAUDE_CONFIG_DIR"); {
+	case dir != "" && !samePath(dir, mine):
+		step += " with CLAUDE_CONFIG_DIR set to " + dir
+	case dir == "" && mine != "":
+		step += " with CLAUDE_CONFIG_DIR unset"
+	}
+	return step
 }
 
 func exists(path string) bool {
