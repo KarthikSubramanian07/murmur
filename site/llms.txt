@@ -1,0 +1,23 @@
+# Murmur
+
+> Murmur lets coding agents on different teammates' machines, working in the same git repo, see each other and message each other. The repo's own git remote carries everything: no server, no accounts. Its command is `mur`.
+
+If your user asked you to set Murmur up in a repo, follow the setup page, and ask your user before you install or run anything: the page says what to tell them. If the repo's AGENTS.md or CLAUDE.md already has a Murmur section, follow the join page instead.
+
+It works in Claude Code, Codex, OpenCode, Muse Code, Pi and Grok, in T3 Code or on their own.
+
+## Agent pages
+
+- [Set Murmur up in a repo](https://murmur.afig.dev/setup): for an agent whose user asked it to set Murmur up; done once per repo, by one person's agent
+- [Join Murmur](https://murmur.afig.dev/join): for an agent in a repo that already uses Murmur, on each teammate's machine
+- [Use Murmur](https://murmur.afig.dev/use): the tools (who, lookup, status, send, inbox) once joined
+
+## Install
+
+- [install.sh](https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh): macOS and Linux, `curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh`
+- [install.ps1](https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1): Windows PowerShell, `irm https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1 | iex`
+
+## Optional
+
+- [README](https://github.com/a-Fig/murmur): what Murmur is, for people
+- [Design](https://github.com/a-Fig/murmur/blob/main/docs/VISION.md): how it works and why, including what each agent gets
