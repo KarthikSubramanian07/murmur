@@ -154,12 +154,40 @@ var ErrNoConsent = errors.New("this clone hasn't joined " + brand.Product)
 // stops the daemon only a second later, and a daemon that was still starting has no daemon.json
 // for Stop to find. goodbye is not a publication in that sense and doesn't come through here: it
 // takes the device off the remote.
+//
+// A device pushes one ref at a time. Its presence, its log and the names registry used to be pushed
+// each from its own goroutine, and a session starting or stopping set off two or three pushes in
+// the same second; GitHub then refused one of them now and then with "[remote rejected] (failed)",
+// which is not a lease refusal and cost a retry (see "Git is the transport" in docs/VISION.md).
 func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, expect string) error {
+	if !d.takePush(ctx) {
+		return ctx.Err()
+	}
+	defer d.donePush()
+	// After the wait, which can be a push or two long: a leave may have landed meanwhile.
 	if !d.consented() {
 		return ErrNoConsent
 	}
+	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
+	defer cancel()
 	return d.repo.Push(ctx, sha, ref, mode, expect)
 }
+
+// pushTimeout bounds one push, so a push that hangs doesn't hold up the device's others for good.
+const pushTimeout = time.Minute
+
+// takePush waits for this device's turn to push, and reports whether it got it before ctx ended.
+// donePush gives the turn back.
+func (d *Daemon) takePush(ctx context.Context) bool {
+	select {
+	case d.pushOne <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (d *Daemon) donePush() { <-d.pushOne }
 
 // consented reports whether the user's consent to run in this clone stands.
 func (d *Daemon) consented() bool { return d.opt.Consent == nil || d.opt.Consent() }
@@ -242,6 +270,7 @@ type Daemon struct {
 	pushSem  chan struct{} // bounds the deliveries running at once
 	nameKick chan struct{} // wakes nameLoop, the only user of nameSrc
 	nameSrc  io.Reader
+	pushOne  chan struct{} // held while this device pushes to the remote (see push)
 	quit     chan struct{}
 	quitOnce sync.Once
 
@@ -536,7 +565,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
-		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes),
+		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{},
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
 	}
@@ -611,6 +640,14 @@ func (d *Daemon) stop() { d.quitOnce.Do(func() { close(d.quit) }) }
 func (d *Daemon) goodbye() {
 	ctx, cancel := context.WithTimeout(context.Background(), proto.GoodbyeTimeout)
 	defer cancel()
+	// In turn with the device's other pushes, as push does, but not through it: the goodbye takes
+	// the device off the remote, which a leave wants too. A push still holding the turn, from work
+	// that didn't drain in time, gets half the goodbye's time to finish; then it goes anyway.
+	wait, stopWait := context.WithTimeout(ctx, proto.GoodbyeTimeout/2)
+	if d.takePush(wait) {
+		defer d.donePush()
+	}
+	stopWait()
 	if err := d.repo.Push(ctx, "", d.presenceRef(), bus.FastForward, ""); err != nil {
 		d.log.Printf("removing presence: %v", err)
 	}

@@ -78,6 +78,17 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   webhooks, so they have nothing to react to (inferred, not tested with either).
 - Writes use git plumbing (`commit-tree`, `push <sha>:<ref>`) and never touch the working tree or
   index, where humans and agents are working at the same moment.
+- A device pushes one ref at a time (#141, 2026-11-01). Its presence, its log and the names
+  registry were each pushed from a goroutine of their own, so a session starting set off three
+  pushes in the same second (its name, its start on the log, the presence) and one stopping two.
+  GitHub refused one of them now and then with `[remote rejected] (failed)`, which is no lease
+  refusal, and a refused presence waited 15 s for its retry. In one laptop's log of 2026-11-01 all
+  9 refusals (7 presence, 2 names) came within seconds of a session starting or stopping, about one
+  such moment in five with the network up, and none came while presence was pushed alone on its
+  heartbeat, over several hours. That is inferred from the timing, not reproduced against GitHub; a
+  bare repo on disk takes concurrent pushes without complaint. Now a push waits for the one before
+  it, so a `send` made while presence is being pushed waits about a second more. Pushes from
+  different devices can still meet on GitHub; a refused one is retried as before.
 - Bus commits carry git's empty tree, so they hold no files and fetching them brings nothing else
   along. The daemon pushes them with `--no-verify` and doesn't sign them: a `pre-push` hook that
   runs the test suite, or a signing prompt, on every message would make the bus unusable. These
