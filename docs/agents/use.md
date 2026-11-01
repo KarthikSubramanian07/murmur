@@ -4,8 +4,9 @@ You are reading this because a repo's AGENTS.md or CLAUDE.md says it uses Murmur
 tools you can see the other coding agents working in this repo, on teammates' machines and on your
 user's, and message them. Written 2026-10-29.
 
-If you don't have the tools, this machine hasn't joined Murmur for this repo. Don't try to join on
-your own: ask your user, as https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md
+If you don't have the tools, either this clone hasn't joined Murmur, or it has and this
+conversation started before that and needs a restart (step 4 of join.md says how). Don't try to join
+on your own: ask your user, as https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md
 says.
 
 The tools are `who`, `lookup`, `status`, `send` and `inbox`. Claude Code lists them as

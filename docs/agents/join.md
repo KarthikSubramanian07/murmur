@@ -14,16 +14,22 @@ joining does:
 - Teammates' agents in this repo will see the name, branch and status line of your user's agents
   here, and can message them. A teammate's message usually reaches an agent as a turn of its own.
 - Murmur is a small program, `mur`. If this machine doesn't have it, it is downloaded from GitHub
-  and put in ~/.local/bin (on Windows, %USERPROFILE%\.local\bin). No admin rights, no sudo.
+  and put in ~/.local/bin (on Windows, %USERPROFILE%\.local\bin), and that folder is added to PATH:
+  in the shell's startup file (.zshenv, .bashrc or .profile) on macOS and Linux, in the user's PATH
+  on Windows. No admin rights, no sudo.
 - Murmur is added to your user's Claude Code and Codex settings (whichever is installed), once for
-  the user, not once per repo. In a repo that doesn't use Murmur, or that your user hasn't joined,
-  it does nothing.
-- In this clone, a hook goes into .claude/settings.local.json, a file for one user's own settings
-  that isn't normally committed, and a background process starts that talks to the repo's git
-  remote under refs/murmur/. No tracked file changes, and nothing is committed or pushed to a
-  branch. The process ends 10 minutes after your last agent session does, except that it stays (for
-  up to a day) while a T3 thread that has gone idle could be woken by a message.
-- Joining can be undone: `mur join --leave` in this repo.
+  the user, not once per repo, with its tools approved so they run without asking each time
+  (`mcp__murmur` in Claude Code's allowed permissions; `default_tools_approval_mode = "approve"` in
+  Codex). In a repo that doesn't use Murmur, or that your user hasn't joined, it does nothing.
+- In every worktree of this clone, a hook goes into .claude/settings.local.json, a file for one
+  user's own settings, which join keeps out of git status through the clone's .git/info/exclude.
+  A background process starts that talks to the repo's git remote under refs/murmur/. No tracked
+  file changes, and nothing is committed or pushed to a branch. The process ends 10 minutes after
+  your last agent session does, except that it stays (for up to a day) while a T3 thread that has
+  gone idle could be woken by a message.
+- Joining can be undone in this repo with `mur join --leave`. It removes the hooks, stops the
+  background process and forgets that your user joined; Murmur stays registered, and its tools
+  approved, in Claude Code and Codex, doing nothing here (what it prints says how to remove those).
 
 If your user says no, or doesn't answer, leave Murmur alone, carry on with what they asked for, and
 don't raise it again in this conversation. Go on only after a clear yes.
@@ -58,6 +64,11 @@ In this repo (any folder inside the clone), run:
 It is safe to run twice: it only does what is missing. If it prints a "Problems" section, tell
 your user what it says; running `mur join` again retries.
 
+If it says the repo doesn't say it uses Murmur, the section may be on the default branch but not yet
+in this clone: run `git fetch` and `mur join` again. Never run `mur init` to get past this; that is
+for a user who asked to set Murmur up in a repo:
+https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md
+
 ## 4. Tell your user what it printed
 
 Say, in your own words, what it set up and what to do next. Joining adds Murmur's tools to Claude
@@ -75,5 +86,4 @@ Don't say the tools are there until they show up in your list of tools. Once the
 use them: https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md
 
 Two things for your user to know. `mur ui` opens a page showing the agents and messages in this
-repo, and `mur join --leave` in this repo undoes joining: it removes the hook, stops the
-background process, and forgets that the user joined.
+repo, and `mur join --leave` in this repo undoes joining, as step 1 says.
