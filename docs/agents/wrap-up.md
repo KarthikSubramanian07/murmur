@@ -12,12 +12,12 @@ The subject says what was done and stands alone, since it is all the receiver se
 
 ```
 Branch: <branch or commit, or "none">
-Untested: <what you did not run or check, or "nothing, ran <command>">
+Untested: <what you did not run or check, or "nothing, checked by <command or how>">
 Next: <what the receiver should do, or "nothing">
 ```
 
-- `Untested` is the line that earns its place. A bare "nothing" reads as "all verified" and may only mean nobody looked, so a clean line names the command that was run.
-- `Next: nothing` tells the receiver not to reply, which fits the no-acknowledgements note in [use.md](use.md).
+- `Untested` is the line that earns its place. A bare "nothing" reads as "all verified" and may only mean nobody looked, so a clean line names the command that was run or how it was checked.
+- `Next: nothing` tells the receiver not to reply, which fits the no-acknowledgements note in [use.md](https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md).
 
 ## Receiving one
 
