@@ -108,4 +108,12 @@ func TestAppendInMovesTheItemLast(t *testing.T) {
 	if _, changed, _ := AppendIn(got, []string{"p"}, "x"); changed {
 		t.Error("moved an item that was last already")
 	}
+
+	// A comment about the rule after it stays.
+	src = "{\n  \"p\": [\n    \"x\",\n    // no one may do anything\n    \"deny-all\",\n  ],\n}\n"
+	got, _, err = AppendIn(src, []string{"p"}, "x")
+	want = "{\n  \"p\": [\n    // no one may do anything\n    \"deny-all\",\n    \"x\"\n  ],\n}\n"
+	if err != nil || got != want {
+		t.Errorf("got %q (%v), want %q", got, err, want)
+	}
 }

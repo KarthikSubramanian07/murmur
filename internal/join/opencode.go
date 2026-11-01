@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/jsonedit"
@@ -119,16 +120,21 @@ func (e Env) registerOpenCodeAt(h agentHome) (did []string, fresh bool, err erro
 	return did, changed || len(otherDid) > 0, nil
 }
 
+// openCodeRemoval names every one of the two files that has the server (Codex's second review of
+// #136: join keeps an entry in each when both are there).
 func openCodeRemoval(_ Env, h agentHome) string {
-	path, _ := openCodeFile(h.Dir)
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
+	var steps []string
+	for _, name := range []string{"opencode.json", "opencode.jsonc"} {
+		path := filepath.Join(h.Dir, name)
+		b, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if _, found, _ := jsonedit.GetIn(string(b), []string{"mcp", "servers", brand.MCPServer}); found {
+			steps = append(steps, "delete \""+brand.MCPServer+"\" from mcp.servers, and the "+brand.MCPServer+"_* rule from permissions, in "+path)
+		}
 	}
-	if _, found, _ := jsonedit.GetIn(string(b), []string{"mcp", "servers", brand.MCPServer}); !found {
-		return ""
-	}
-	return "delete \"" + brand.MCPServer + "\" from mcp.servers, and the " + brand.MCPServer + "_* rule from permissions, in " + path
+	return strings.Join(steps, "; ")
 }
 
 func toAny(ss []string) []any {

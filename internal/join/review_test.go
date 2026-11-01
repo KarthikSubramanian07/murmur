@@ -27,6 +27,10 @@ func TestRegisterOpenCodeWithBothFiles(t *testing.T) {
 	if got := read(t, jsonPath); strings.Contains(got, "disabled") || strings.Contains(got, "/old/mur") {
 		t.Errorf("opencode.json keeps the stale entry:\n%s", got)
 	}
+	// Leaving says to take it out of both.
+	if r := openCodeRemoval(sb.Env, sb.defaultHome(agents[agentIndex("opencode")])); !strings.Contains(r, jsonPath) || !strings.Contains(r, jsoncPath) {
+		t.Errorf("removal: %q", r)
+	}
 }
 
 // A rule of the user's after Murmur's, which would override it, puts Murmur's last again.

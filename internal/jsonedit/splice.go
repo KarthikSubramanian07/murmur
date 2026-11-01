@@ -472,14 +472,25 @@ func AppendIn(text string, path []string, item any) (out string, changed bool, e
 			if len(items) > 0 && same(text[items[len(items)-1].start:items[len(items)-1].end], item) {
 				return text, false, nil
 			}
-			// An earlier copy goes, with what separates it from the item after it, from the end
-			// back so that the offsets before it hold.
+			// An earlier copy goes, with its comma and the whitespace after it, and no more: a comment
+			// between it and the next item is the user's, about that one (Codex's second review of
+			// #136). From the end back, so that the offsets before it hold.
 			removed := false
 			for j := len(items) - 2; j >= 0; j-- {
-				if same(text[items[j].start:items[j].end], item) {
-					text = text[:items[j].start] + text[items[j+1].start:]
-					removed = true
+				if !same(text[items[j].start:items[j].end], item) {
+					continue
 				}
+				sc := &scanner{s: text, pos: items[j].end}
+				_ = sc.space()
+				if sc.pos < len(text) && text[sc.pos] == ',' {
+					text = text[:sc.pos] + text[sc.pos+1:]
+				}
+				end := items[j].end
+				for end < len(text) && strings.IndexByte(" \t\r\n", text[end]) >= 0 {
+					end++
+				}
+				text = text[:items[j].start] + text[end:]
+				removed = true
 			}
 			if removed {
 				out, _, err := AppendIn(text, path, item)
