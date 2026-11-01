@@ -190,8 +190,8 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   the user, say what joining does, install mur (the one-line command for macOS and Linux or for
   Windows PowerShell), run `mur join`, tell the user what it printed. `use.md` is for an agent with
   them: keep `status` set, check `who` before sizeable work, answer a message with `send`, and
-  `inbox` for history and as the fallback. The addresses work without login only once the repo is
-  public; until then an agent with GitHub access reads the files in the repo. A test holds the
+  `inbox` for history and as the fallback. The addresses work without login, since the repo is
+  public. A test holds the
   addresses to files that exist. `init` writes no other file. An older `init` had put an `.mcp.json`
   entry and a hook in `.claude/settings.json`; `init` removes only Murmur's own entries from those,
   deletes a file that is left empty, and says so. Committing installs nothing on a teammate's machine.

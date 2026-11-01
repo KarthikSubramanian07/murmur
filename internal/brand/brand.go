@@ -33,7 +33,7 @@ const (
 
 	// JoinDoc and UseDoc are the pages the marker in a repo's AGENTS.md and CLAUDE.md sends an
 	// agent to, as raw text: how to join (docs/agents/join.md) and how to use the tools
-	// (docs/agents/use.md). They read without login once the repo is public.
+	// (docs/agents/use.md). They read without login, as the repo is public.
 	JoinDoc = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md"
 	UseDoc  = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md"
 
