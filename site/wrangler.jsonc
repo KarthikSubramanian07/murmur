@@ -5,6 +5,18 @@
   "name": "murmur-site",
   "compatibility_date": "2026-11-01",
   "main": "src/worker.js",
-  "assets": { "directory": ".", "binding": "ASSETS", "run_worker_first": ["/*.mp4"] },
-  "routes": [{ "pattern": "murmur.afig.dev", "custom_domain": true }]
+  // The Worker answers these before the assets do: `/` to serve markdown to an agent that asks for
+  // it, the agent pages (no asset has their paths), and the videos (src/worker.js says why).
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS",
+    "run_worker_first": ["/", "/*.mp4", "/setup", "/setup.md", "/join", "/join.md", "/use", "/use.md"]
+  },
+  // src/worker.js imports docs/agents/*.md as text, its copy for when GitHub can't be reached.
+  "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
+  "routes": [{ "pattern": "murmur.afig.dev", "custom_domain": true }],
+  // No murmur-site.<account>.workers.dev, but a preview URL for each `npx wrangler versions upload`,
+  // so a change is tried on Cloudflare before it is deployed (#140).
+  "workers_dev": false,
+  "preview_urls": true
 }

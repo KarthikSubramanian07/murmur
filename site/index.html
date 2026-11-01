@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- Coding agents: to set Murmur up for your user, follow https://murmur.afig.dev/setup (markdown), and ask your user before you install or run anything. Index: https://murmur.afig.dev/llms.txt -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -8,6 +9,7 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="alternate" type="text/markdown" href="/setup" title="Setting Murmur up, for coding agents">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -70,6 +72,9 @@
   }
   .button:hover { background: var(--cream); }
   .button:focus-visible { outline: 3px solid var(--cream); outline-offset: 3px; }
+  /* For whoever hands the page to an agent, and for the agent: first in the text, one line above the cards. */
+  .agent-note { position: absolute; top: 14px; left: 0; right: 0; padding: 0 24px; text-align: center; font-size: 13.5px; line-height: 1.4; }
+  .agent-note a { color: inherit; font-weight: 600; text-underline-offset: 3px; }
 
   .card {
     position: absolute;
@@ -116,6 +121,7 @@
   /* Below this the headline takes the whole width, so cards move under it. */
   @media (max-width: 1099px) {
     .page { display: block; min-height: 0; padding: 56px 0 48px; }
+    .agent-note { position: static; margin: -40px 0 28px; text-wrap: balance; }
     h1 span { white-space: normal; text-wrap: balance; }
     .center p { font-size: 17px; max-width: 520px; }
     .cards {
@@ -209,6 +215,7 @@
   #setup { background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) clamp(56px, 9vh, 96px); }
   .setup-in { max-width: 1040px; margin: 0 auto; }
   #setup h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
+  .works { margin-top: 10px; font-size: 15.5px; line-height: 1.5; max-width: 72ch; color: var(--ink-soft); }
   .inst { margin-top: 22px; display: grid; gap: 8px; }
   .inst-h { font-size: 14px; font-weight: 600; color: var(--ink-soft); }
   .cmd { display: grid; grid-template-columns: 6.4em minmax(0, 1fr) auto; align-items: center; column-gap: 12px; padding: 11px 14px; border-radius: 10px; background: var(--ink); color: var(--cream); font: 13px/1.45 var(--mono); }
@@ -226,6 +233,7 @@
   .cmds { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
   .cmds code { padding: 3px 8px; border-radius: 6px; background: var(--badge-bg); color: var(--badge-ink); font: 600 14px/1.4 var(--mono); }
   .cmds span { font-size: 14px; color: var(--ink-soft); }
+  .do a { color: var(--blue); font-weight: 600; text-underline-offset: 3px; }
   .setup-end { margin-top: 28px; }
   #setup .button { margin-top: 0; background: var(--blue); color: var(--cream); }
   #setup .button:hover { background: var(--ink); }
@@ -240,6 +248,7 @@
 </head>
 <body>
 <main class="page">
+  <p class="agent-note" data-prose>Setting this up with a coding agent? Send it this link. Agents: follow <a href="https://murmur.afig.dev/setup">https://murmur.afig.dev/setup</a>, and ask your user first.</p>
   <div class="center">
     <h1><span>Intra-repo agent communication.</span> <span>Your agents work better as a team.</span></h1>
     <p>Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.</p>
@@ -305,6 +314,7 @@
 <section id="setup">
   <div class="setup-in">
     <h2>Setup</h2>
+    <p class="works" data-prose>Works in Claude Code, Codex, OpenCode, Muse Code, Pi and Grok, in T3 Code or on their own. A message arrives as a new turn in T3 Code and in Claude Code; elsewhere it waits in the agent's inbox.</p>
     <div class="inst">
       <div class="inst-h">Install, needs git 2.31 or later</div>
       <div class="cmd"><span>sh</span><code data-artifact>curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh</code><button class="copy" type="button" hidden>Copy</button></div>
@@ -315,7 +325,7 @@
         <div class="n">1</div><div class="actor">One person</div>
         <div class="do">
           <div class="cmds"><code data-artifact>mur init</code></div>
-          <p data-prose>Writes a short section into AGENTS.md and CLAUDE.md. Commit it. Committing installs nothing for anyone.</p>
+          <p data-prose>Writes a short section into AGENTS.md and CLAUDE.md and pushes it to the default branch as one commit (to a murmur-init branch for a pull request, if that branch is protected). It installs nothing for anyone. Or have your agent do it: give it <a href="https://murmur.afig.dev/setup">murmur.afig.dev/setup</a>.</p>
         </div>
       </li>
       <li>
