@@ -1,0 +1,225 @@
+package join
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/t3"
+)
+
+// agentHome is one configuration of one agent, where join registers Murmur's server: the agent's
+// default one, or another account's that T3 Code runs (t3homes.go).
+type agentHome struct {
+	Dir   string // the agent's configuration directory
+	JSON  string // for Claude Code, the file it keeps user-scope MCP servers in
+	Label string // what the report calls it: "Claude Code", or with T3's name for the instance
+	Bin   string // the agent's command as T3 runs it, for an agent that isn't on PATH
+}
+
+// agent is one of the coding agents join registers the server with.
+type agent struct {
+	driver string // T3 Code's name for it
+	label  string
+	// t3Var is the variable in a T3 instance's environment that moves its configuration, and sub
+	// the directory under it that is the agent's (XDG_CONFIG_HOME/opencode); config.homePath, for
+	// the drivers that have it, is the same variable's value.
+	t3Var, sub string
+	register   func(e Env, ctx context.Context, h agentHome) (did []string, fresh bool, err error)
+	// removal says how to take the server out of h by hand, "" where there is nothing to take out.
+	removal func(e Env, h agentHome) string
+}
+
+// agents are the agents join knows, in the order it reports them.
+var agents = []agent{
+	{driver: "claudeAgent", label: "Claude Code", t3Var: "CLAUDE_CONFIG_DIR", register: Env.registerClaudeAt, removal: Env.claudeRemoval},
+	{driver: "codex", label: "Codex", t3Var: "CODEX_HOME",
+		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerCodexAt(h) },
+		removal:  tableRemoval},
+	{driver: "opencode", label: "OpenCode", t3Var: "XDG_CONFIG_HOME", sub: "opencode",
+		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerOpenCodeAt(h) },
+		removal:  openCodeRemoval},
+	{driver: "muse", label: "Muse Code", t3Var: "XDG_CONFIG_HOME", sub: "muse",
+		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerMuseAt(h) },
+		removal:  museRemoval},
+	{driver: "pi", label: "Pi", t3Var: "PI_CODING_AGENT_DIR",
+		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerPiAt(h) },
+		removal:  piRemoval},
+	{driver: "grok", label: "Grok", t3Var: "GROK_HOME",
+		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerGrokAt(h) },
+		removal:  tableRemoval},
+}
+
+// defaultHome is an agent's configuration as this process's environment says, "" Dir where the
+// Env doesn't say (a test's that leaves the agent out).
+func (e Env) defaultHome(a agent) agentHome {
+	h := agentHome{Label: a.label}
+	switch a.driver {
+	case "claudeAgent":
+		h.Dir, h.JSON = e.ClaudeDir, e.ClaudeJSON
+	case "codex":
+		h.Dir = e.CodexHome
+	case "opencode":
+		h.Dir = e.OpenCodeDir
+	case "muse":
+		h.Dir = e.MuseDir
+	case "pi":
+		h.Dir = e.PiDir
+	case "grok":
+		h.Dir = e.GrokHome
+	}
+	return h
+}
+
+// t3Home is the configuration a T3 instance of agent a runs in.
+func (e Env) t3Home(a agent, in t3Instance) (agentHome, bool) {
+	h := agentHome{Label: a.label + " (" + in.Name + " in T3 Code)", Bin: in.binary()}
+	dir := in.homeOf(a.t3Var, e.Home)
+	switch {
+	case dir != "" && a.sub != "":
+		h.Dir = filepath.Join(dir, a.sub)
+	case dir != "":
+		h.Dir = dir
+	case a.driver == "claudeAgent" || a.driver == "codex":
+		// T3 runs these with no variable of their own in the user's default, whatever the agent
+		// running join has: this one may be another account's.
+		if e.Home == "" {
+			return h, false
+		}
+		if a.driver == "codex" {
+			h.Dir = filepath.Join(e.Home, ".codex")
+		} else {
+			h.Dir, h.JSON = filepath.Join(e.Home, ".claude"), filepath.Join(e.Home, ".claude.json")
+		}
+		return h, true
+	case e.Home != "":
+		// The default as T3 would see it, not as this process does: the agent running join may be
+		// another instance, with its own XDG_CONFIG_HOME.
+		h.Dir = filepath.Join(append([]string{e.Home}, userDefault[a.driver]...)...)
+	default:
+		h.Dir = e.defaultHome(a).Dir
+	}
+	if a.driver == "claudeAgent" {
+		h.JSON = filepath.Join(h.Dir, ".claude.json")
+	}
+	return h, h.Dir != ""
+}
+
+// userDefault is each other agent's configuration directory under the user's home when nothing
+// moves it.
+var userDefault = map[string][]string{
+	"opencode": {".config", "opencode"},
+	"muse":     {".config", "muse"},
+	"pi":       {".pi", "agent"},
+	"grok":     {".grok"},
+}
+
+// homes lists, for each agent, every configuration join registers in: the default first, then the
+// ones T3's instances run in, each once. notes says what was passed over, and why.
+func (e Env) homes() (byAgent [][]agentHome, notes []string) {
+	byAgent = make([][]agentHome, len(agents))
+	for i, a := range agents {
+		byAgent[i] = []agentHome{e.defaultHome(a)}
+	}
+	instances, err := readT3Instances(e.T3Settings)
+	if err != nil {
+		notes = append(notes, "T3 Code's settings ("+e.T3Settings+") couldn't be read, so only each agent's default configuration was registered in: "+err.Error())
+	}
+	for _, in := range instances {
+		i := agentIndex(in.Driver)
+		if i < 0 {
+			continue
+		}
+		a := agents[i]
+		h, ok := e.t3Home(a, in)
+		if !ok {
+			continue
+		}
+		if !in.On {
+			// Said only of a configuration that nothing else registers in: one that is the agent's
+			// default gets the server whatever T3 does with it.
+			if !samePath(h.Dir, byAgent[i][0].Dir) || !samePath(h.JSON, byAgent[i][0].JSON) {
+				notes = append(notes, a.label+" as T3 Code's \""+in.Name+"\" is turned off in T3, so its configuration ("+h.Dir+") was left alone; `"+brand.Command+" join` again after turning it on registers it")
+			}
+			continue
+		}
+		dup := false
+		for j, o := range byAgent[i] {
+			if samePath(o.Dir, h.Dir) && samePath(o.JSON, h.JSON) {
+				dup = true
+				if o.Bin == "" {
+					byAgent[i][j].Bin = h.Bin // the default home, with the command T3 runs it by
+				}
+			}
+		}
+		if !dup {
+			byAgent[i] = append(byAgent[i], h)
+		}
+	}
+	return byAgent, notes
+}
+
+func agentIndex(driver string) int {
+	for i, a := range agents {
+		if a.driver == driver {
+			return i
+		}
+	}
+	return -1
+}
+
+// t3SettingsPath is T3's settings.json, in the first of T3's data directories that has one.
+func t3SettingsPath(cli, home string) string {
+	for _, h := range t3.Homes(cli, home) {
+		p := filepath.Join(h, "userdata", "settings.json")
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	return ""
+}
+
+// samePath compares paths as the file system does: without case on Windows and macOS's default.
+func samePath(a, b string) bool {
+	if a == "" || b == "" {
+		return a == b
+	}
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// removal says how to take the server out of every agent configuration join registers in, for
+// the advice of a leave.
+func (e Env) removal() string {
+	byAgent, _ := e.homes()
+	var steps []string
+	for i, a := range agents {
+		for _, h := range byAgent[i] {
+			if h.Dir == "" {
+				continue
+			}
+			if step := a.removal(e, h); step != "" {
+				steps = append(steps, step+" (for "+h.Label+")")
+			}
+		}
+	}
+	if len(steps) == 0 {
+		return "nothing, as no agent here has it"
+	}
+	return strings.Join(steps, "; ")
+}
+
+// tableRemoval is the removal for an agent with a config.toml: Codex, Grok.
+func tableRemoval(_ Env, h agentHome) string {
+	path := filepath.Join(h.Dir, "config.toml")
+	if b, err := os.ReadFile(path); err != nil || !strings.Contains(string(b), "[mcp_servers."+brand.MCPServer+"]") {
+		return ""
+	}
+	return "delete the [mcp_servers." + brand.MCPServer + "] table from " + path
+}

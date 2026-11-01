@@ -5,6 +5,8 @@ package mcpserver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -116,22 +118,57 @@ func (s *server) sync(ctx context.Context) {
 // is only what it was when this process started: the daemon corrects it from the hook (see
 // link.learn). The parent's PID is the Claude Code process when Claude Code started this server
 // itself, and the hook's CLAUDE_PID is how the daemon pairs the two.
+//
+// Claude Code's variables count only for Claude Code itself (the agent "claude-code", or none
+// given): Pi and OpenCode pass their own environment on to their MCP servers, and one started from
+// a Claude Code session has that session's CLAUDE_CODE_SESSION_ID, which isn't theirs (seen
+// 2026-11-01). The agents that give their session's ID in the environment (Muse, Pi, Grok; see
+// nativeEnv) are registered with it, and an ID made from it.
 func helloFor(agent, cwd string) proto.Hello {
-	claude := os.Getenv("CLAUDE_CODE_SESSION_ID")
-	return proto.Hello{ID: sessionID(claude), Agent: agentName(agent), Cwd: cwd, ClaudeSession: claude,
-		ClientPID: os.Getppid(), Route: routeFromEnv()}
+	var claude string
+	if isClaude(agent) {
+		claude = os.Getenv("CLAUDE_CODE_SESSION_ID")
+	}
+	h := proto.Hello{ID: sessionID(claude), Agent: agentName(agent), Cwd: cwd, ClaudeSession: claude,
+		ClientPID: os.Getppid(), Route: routeFromEnv(agent)}
+	if v := nativeEnv[agent]; v != "" {
+		if native := os.Getenv(v); native != "" {
+			h.ID, h.Native = nativeID(native), native
+		}
+	}
+	return h
+}
+
+// isClaude says whether the server runs for Claude Code: `mcp` with no agent, as join registers it
+// there, or with claude-code.
+func isClaude(agent string) bool { return agent == "" || agent == "claude-code" }
+
+// nativeEnv names, for each agent that has one, the variable its MCP servers get the session's own
+// ID in: the ID T3 Code keeps for the thread's provider session, and so how the thread is found.
+// Muse sets MUSE_SESSION_ID, which T3 makes when it starts the thread (seen on Muse 1.4.14,
+// 2026-11-01); Grok sets GROK_SESSION_ID (read in its source, not seen run). Pi has no such
+// variable: the extension join writes for it registers the server with the session's file in
+// MURMUR_PI_SESSION_FILE, and the file's path is what T3 records (internal/join/pi.go).
+var nativeEnv = map[string]string{"muse": "MUSE_SESSION_ID", "pi": "MURMUR_PI_SESSION_FILE", "grok": "GROK_SESSION_ID"}
+
+// nativeID is the session's Murmur ID made from its client's own: the same each time, so a server
+// that restarts within the conversation takes its session back, and hashed, since Muse's and
+// OpenCode's IDs begin with the time they were made, so that two of them often share their first
+// six characters.
+func nativeID(native string) string {
+	sum := sha256.Sum256([]byte(native))
+	return hex.EncodeToString(sum[:3])
 }
 
 // routeFromEnv is what this process's environment says about reaching its client: inside T3, T3's
 // command line; in Claude Code, the messaging socket and the token for it. T3's thread isn't in
 // the environment: link.seek finds it. The daemon keeps all of this to itself (see proto.Route).
-func routeFromEnv() proto.Route {
-	return proto.Route{
-		T3CLI:     os.Getenv("T3CODE_CLI_PATH"),
-		T3Home:    os.Getenv("T3CODE_HOME"),
-		MsgSocket: os.Getenv("CLAUDE_CODE_MESSAGING_SOCKET"),
-		MsgToken:  os.Getenv("CLAUDE_CODE_MESSAGING_TOKEN"),
+func routeFromEnv(agent string) proto.Route {
+	r := proto.Route{T3CLI: os.Getenv("T3CODE_CLI_PATH"), T3Home: os.Getenv("T3CODE_HOME")}
+	if isClaude(agent) {
+		r.MsgSocket, r.MsgToken = os.Getenv("CLAUDE_CODE_MESSAGING_SOCKET"), os.Getenv("CLAUDE_CODE_MESSAGING_TOKEN")
 	}
+	return r
 }
 
 // sessionID derives the session's ID from Claude Code's, when there is one, so the ID stays
@@ -173,8 +210,34 @@ type server struct {
 	on   bool // the tools are listed and the session is registered
 	c    *client.Client
 	link *link
-	stop context.CancelFunc // ends link
+	stop context.CancelFunc // ends link, or every link in links
+	// For an agent whose one server serves all its sessions in a directory (OpenCode, see
+	// sharedAgent), each session has a link of its own, made at its first tool call, which names
+	// the session; link is nil then. lctx is the context they run in.
+	links map[string]*sessionLink
+	lctx  context.Context
 }
+
+// sessionLink is one session's link in a server that serves many.
+type sessionLink struct {
+	l      *link
+	cancel context.CancelFunc
+	last   time.Time // its latest tool call
+}
+
+// sharedAgent says whether one server process serves every session of the agent in a directory,
+// each tool call naming its session: OpenCode starts one MCP process per server and directory,
+// and puts the session's ID in each call's _meta as "ai.opencode/sessionID" (seen on OpenCode
+// 2.2.0, 2026-11-01). That ID is the one T3 Code keeps for the thread's provider session.
+func sharedAgent(agent string) bool { return agent == "opencode" }
+
+const openCodeSessionMeta = "ai.opencode/sessionID"
+
+// sharedIdle is how long a session of a shared server goes without a tool call before its
+// registration is dropped, as a session whose server stopped is: OpenCode never says a session
+// ended, and its server can run for days. A message to the session still reaches its T3 thread,
+// whose route the daemon keeps (docs/VISION.md, "A thread that is idle"). A variable, for tests.
+var sharedIdle = 30 * time.Minute
 
 // activate lists the tools and registers the session with the daemon, starting it if needed.
 func (s *server) activate(ctx context.Context) {
@@ -184,12 +247,62 @@ func (s *server) activate(ctx context.Context) {
 		return
 	}
 	c := &client.Client{GitDir: s.place.GitDir, Spawn: true, MaySpawn: s.place.Active}
-	l := &link{c: c, hello: helloFor(s.opt.Agent, s.cwd), changed: make(chan struct{}), allowed: s.place.Active, seek: currentSeek()}
-	l.findInT3()
 	lctx, cancel := context.WithCancel(ctx)
-	s.c, s.link, s.stop, s.on = c, l, cancel, true
+	s.c, s.stop, s.on = c, cancel, true
+	if sharedAgent(s.opt.Agent) {
+		// No session until a call names one: registering the process would show a session that is
+		// no conversation.
+		s.links, s.lctx = map[string]*sessionLink{}, lctx
+		s.tools(s.srv)
+		return
+	}
+	l := s.newLink(c, helloFor(s.opt.Agent, s.cwd))
+	s.link = l
 	s.tools(s.srv)
 	go l.run(lctx)
+}
+
+// newLink makes the link for a registration.
+func (s *server) newLink(c *client.Client, h proto.Hello) *link {
+	l := &link{c: c, hello: h, native: h.Native, changed: make(chan struct{}), allowed: s.place.Active, seek: currentSeek()}
+	l.findInT3()
+	return l
+}
+
+// sessionLinkFor is the link of the session a call to a shared server comes from, made and started
+// at the session's first call. A call that names no session (from an OpenCode too old to say) goes
+// by one link for the whole process, as a server of any other agent does. Sessions idle for
+// sharedIdle are dropped on the way. It is nil when the server is off.
+func (s *server) sessionLinkFor(req *mcp.CallToolRequest) *link {
+	var native string
+	if req != nil && req.Params != nil {
+		native, _ = req.Params.GetMeta()[openCodeSessionMeta].(string)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.links == nil {
+		return nil
+	}
+	now := time.Now()
+	for id, sl := range s.links {
+		if id != native && now.Sub(sl.last) > sharedIdle {
+			sl.cancel()
+			delete(s.links, id)
+		}
+	}
+	if sl := s.links[native]; sl != nil {
+		sl.last = now
+		return sl.l
+	}
+	h := helloFor(s.opt.Agent, s.cwd)
+	if native != "" {
+		h.ID, h.Native = nativeID(native), native
+	}
+	l := s.newLink(s.c, h)
+	ctx, cancel := context.WithCancel(s.lctx)
+	s.links[native] = &sessionLink{l: l, cancel: cancel, last: now}
+	go l.run(ctx)
+	return l
 }
 
 // deactivate takes the tools away and drops the registration, which the daemon sees as the session
@@ -202,6 +315,7 @@ func (s *server) deactivate() {
 	}
 	s.stop()
 	s.c, s.link, s.stop, s.on = nil, nil, nil, false
+	s.links, s.lctx = nil, nil
 	s.srv.RemoveTools(toolNames...)
 }
 
@@ -211,6 +325,25 @@ func (s *server) call(ctx context.Context, req proto.Request) (proto.Response, e
 	s.mu.Lock()
 	c, l := s.c, s.link
 	s.mu.Unlock()
+	return s.callOn(ctx, c, l, req)
+}
+
+// callFrom is call for a tool call, which says something about its session first: Codex's thread
+// in its _meta, or the OpenCode session a shared server's call comes from.
+func (s *server) callFrom(ctx context.Context, mreq *mcp.CallToolRequest, req proto.Request) (proto.Response, error) {
+	if !sharedAgent(s.opt.Agent) {
+		s.noteMeta(ctx, mreq)
+		return s.call(ctx, req)
+	}
+	l := s.sessionLinkFor(mreq)
+	s.mu.Lock()
+	c := s.c
+	s.mu.Unlock()
+	return s.callOn(ctx, c, l, req)
+}
+
+// callOn is call by link l of client c.
+func (s *server) callOn(ctx context.Context, c *client.Client, l *link, req proto.Request) (proto.Response, error) {
 	if l == nil {
 		return proto.Response{}, errPassive
 	}
@@ -287,8 +420,7 @@ func (s *server) tools(srv *mcp.Server) {
 		"session, its name, agent and branch, when it was last active and what it is doing, and which one is you. " +
 		"Lists the 20 most recently active sessions. Use it to find who to message."},
 		func(ctx context.Context, req *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, any, error) {
-			s.noteMeta(ctx, req)
-			resp, err := s.call(ctx, proto.Request{Op: proto.OpWho})
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpWho})
 			return result(view.Who, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "lookup", Description: "Look up everything known about one other session, by its name from who " +
@@ -298,16 +430,14 @@ func (s *server) tools(srv *mcp.Server) {
 		"and is still there, or when a session you sent to has gone quiet. For a session on this device it " +
 		"also gives its worktree folder and the commits it made."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in lookupIn) (*mcp.CallToolResult, any, error) {
-			s.noteMeta(ctx, req)
-			resp, err := s.call(ctx, proto.Request{Op: proto.OpLookup, Name: in.Name, Limit: in.Messages})
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpLookup, Name: in.Name, Limit: in.Messages})
 			return result(view.Lookup, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "status", Description: "Set the one line other agents see in who for what you are working on. " +
 		"Update it when you switch tasks. Until you set one, your conversation's title is what they see; " +
 		"an empty status brings the title back."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in statusIn) (*mcp.CallToolResult, any, error) {
-			s.noteMeta(ctx, req)
-			resp, err := s.call(ctx, proto.Request{Op: proto.OpStatus, Doing: in.Doing})
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpStatus, Doing: in.Doing})
 			return result(view.Note, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "send", Description: "Send a message to another agent by its name (quiet-otter, from who), to all sessions on a " +
@@ -315,16 +445,14 @@ func (s *server) tools(srv *mcp.Server) {
 		"with your subject and then your body; only where " + brand.Product + " can't do that does the recipient get a one-line notice with your subject " +
 		"and read the body with inbox. Message to coordinate, not to chat."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, any, error) {
-			s.noteMeta(ctx, req)
-			resp, err := s.call(ctx, proto.Request{Op: proto.OpSend, To: in.To, Subject: in.Subject, Body: in.Body})
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpSend, To: in.To, Subject: in.Subject, Body: in.Body})
 			return result(view.Sent, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "inbox", Description: "Read your unread messages from other agents, with the name of who sent them. " +
 		"A message that arrived as a turn is already read and isn't here; this is for the ones that came as a notice. " +
 		"Reading removes them from the inbox."},
 		func(ctx context.Context, req *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, any, error) {
-			s.noteMeta(ctx, req)
-			resp, err := s.call(ctx, proto.Request{Op: proto.OpInbox})
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpInbox})
 			return result(view.Inbox, resp, err)
 		})
 }

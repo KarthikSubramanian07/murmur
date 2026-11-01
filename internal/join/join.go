@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,8 +23,16 @@ type Env struct {
 	ClaudeDir  string // Claude Code's config directory, where its settings.json is
 	ClaudeJSON string // the file Claude Code keeps user-scope MCP servers in
 	CodexHome  string // Codex's home, where its config.toml is
-	Getenv     func(string) string
-	LookPath   func(string) (string, error)
+	// The other agents' configuration directories, each "" for an agent join leaves alone (a test
+	// that isn't about it).
+	OpenCodeDir string // OpenCode's, with its opencode.json
+	MuseDir     string // Muse Code's, with its settings.json
+	PiDir       string // Pi's agent directory
+	GrokHome    string // Grok's home, with its config.toml
+	Home        string // the user's home directory, for the homes T3 Code's settings name with ~ or leave to the default
+	T3Settings  string // T3 Code's settings.json, "" without T3: the other agent homes T3 runs (t3homes.go)
+	Getenv      func(string) string
+	LookPath    func(string) (string, error)
 }
 
 // EnvFromProcess is the environment of the running process.
@@ -36,7 +45,8 @@ func EnvFromProcess() (Env, error) {
 	if err != nil {
 		return Env{}, err
 	}
-	e := Env{Exe: exe, Getenv: os.Getenv, LookPath: exec.LookPath}
+	e := Env{Exe: exe, Home: home, Getenv: os.Getenv, LookPath: exec.LookPath,
+		T3Settings: t3SettingsPath(os.Getenv("T3CODE_CLI_PATH"), os.Getenv("T3CODE_HOME"))}
 	// Claude Code puts everything under CLAUDE_CONFIG_DIR when it is set (a second account, a T3
 	// provider with its own home); else its settings are in ~/.claude and its state in ~/.claude.json.
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
@@ -46,6 +56,22 @@ func EnvFromProcess() (Env, error) {
 	}
 	if e.CodexHome = os.Getenv("CODEX_HOME"); e.CodexHome == "" {
 		e.CodexHome = filepath.Join(home, ".codex")
+	}
+	// OpenCode and Muse follow XDG on every OS: ~/.config, not %APPDATA%, on Windows too.
+	config := os.Getenv("XDG_CONFIG_HOME")
+	if !filepath.IsAbs(config) {
+		config = filepath.Join(home, ".config")
+	}
+	e.OpenCodeDir, e.MuseDir = filepath.Join(config, "opencode"), filepath.Join(config, "muse")
+	// Pi reads a leading ~ in PI_CODING_AGENT_DIR as the home directory (Codex's review of #136).
+	if e.PiDir = os.Getenv("PI_CODING_AGENT_DIR"); strings.HasPrefix(e.PiDir, "~") {
+		e.PiDir = expandHome(e.PiDir, home)
+	}
+	if e.PiDir == "" {
+		e.PiDir = filepath.Join(home, ".pi", "agent")
+	}
+	if e.GrokHome = os.Getenv("GROK_HOME"); e.GrokHome == "" {
+		e.GrokHome = filepath.Join(home, ".grok")
 	}
 	return e, nil
 }
@@ -67,6 +93,7 @@ func (e Env) getenv(key string) string {
 // Report is what a join or a leave did and what the agent that ran it should pass on.
 type Report struct {
 	Did      []string // what changed
+	Notes    []string // what was passed over, and why
 	Tell     []string // what the agent tells its user, one paragraph each
 	Problems []string // what didn't work; the command fails if there are any
 }
@@ -78,6 +105,12 @@ func (r Report) String() string {
 		b.WriteString("Done:\n")
 		for _, d := range r.Did {
 			b.WriteString("  - " + d + "\n")
+		}
+	}
+	if len(r.Notes) > 0 {
+		b.WriteString("\nNot done:\n")
+		for _, n := range r.Notes {
+			b.WriteString("  - " + n + "\n")
 		}
 	}
 	if len(r.Problems) > 0 {
@@ -110,16 +143,30 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 	problem := func(what string, err error) { r.Problems = append(r.Problems, what+": "+err.Error()) }
 
-	// Per user: the MCP server, registered once for every repo this user opens.
-	did, claudeFresh, err := e.registerClaude(ctx)
-	r.Did = append(r.Did, did...)
-	if err != nil {
-		problem("Claude Code", err)
-	}
-	did, codexFresh, err := e.registerCodex()
-	r.Did = append(r.Did, did...)
-	if err != nil {
-		problem("Codex", err)
+	// Per user: the MCP server, registered once for every repo this user opens, in every
+	// configuration of each agent. Only the default ones' news shapes the advice: those are the
+	// agent running join's.
+	byAgent, notes := e.homes()
+	r.Notes = append(r.Notes, notes...)
+	var claudeFresh, codexFresh bool
+	var othersFresh []string
+	for i, a := range agents {
+		for j, h := range byAgent[i] {
+			did, fresh, err := a.register(e, ctx, h)
+			r.Did = append(r.Did, did...)
+			if err != nil {
+				problem(h.Label, err)
+			}
+			switch {
+			case !fresh:
+			case j == 0 && a.driver == "claudeAgent":
+				claudeFresh = true
+			case j == 0 && a.driver == "codex":
+				codexFresh = true
+			case a.driver != "claudeAgent" && a.driver != "codex" && !slices.Contains(othersFresh, a.label):
+				othersFresh = append(othersFresh, a.label)
+			}
+		}
 	}
 
 	// Per repo: the hook that shows incoming messages, in every working tree of the clone.
@@ -156,6 +203,11 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 
 	r.Tell = e.advice(claudeFresh, codexFresh, len(r.Problems) > 0)
+	if len(othersFresh) > 0 && len(r.Problems) == 0 {
+		// Before the last paragraph, which is about the page and leaving.
+		last := len(r.Tell) - 1
+		r.Tell = append(r.Tell[:last], othersAdvice(othersFresh), r.Tell[last])
+	}
 	if len(r.Did) == 0 && len(r.Problems) == 0 {
 		r.Did = []string{"Nothing to do: this clone had already joined " + brand.Product}
 	}
@@ -212,12 +264,36 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	r.Tell = []string{
 		brand.Product + " is off for this repo. Agents already open here lose its tools within seconds in Claude Code; in Codex the tools stay listed until the session ends, and say they are off if called.",
 		"The " + brand.Product + " MCP server stays registered with the agents, since that is per user; it does nothing in a repo that hasn't joined. " +
-			"To remove it: `claude mcp remove --scope user " + brand.MCPServer + "`, and delete the [mcp_servers." + brand.MCPServer + "] table from " + filepath.Join(e.CodexHome, "config.toml") + ".",
+			"To remove it: " + e.removal() + ".",
 	}
 	if len(r.Problems) > 0 {
 		return r, errors.New("not everything worked; see above")
 	}
 	return r, nil
+}
+
+// othersAdvice is what to tell about the agents other than Claude Code and Codex that Murmur was
+// just added to, by what each was seen to do (2026-11-01): OpenCode watches its config, Muse and Pi
+// read their servers when a session starts, and Grok is believed to (its documentation).
+func othersAdvice(labels []string) string {
+	s := brand.Product + " was just added to " + strings.Join(labels, ", ") + "."
+	if slices.Contains(labels, "OpenCode") {
+		s += " OpenCode sessions get its tools within seconds, from their next turn."
+	}
+	var restart []string
+	for _, l := range labels {
+		if l != "OpenCode" {
+			restart = append(restart, l)
+		}
+	}
+	if len(restart) > 0 {
+		verb := " loads"
+		if len(restart) > 1 {
+			verb = " load"
+		}
+		s += " " + strings.Join(restart, ", ") + verb + " MCP servers only when a session starts: a session already open needs a new one (in T3 Code, a new thread)."
+	}
+	return s
 }
 
 // advice is what to tell the user after a join, by what this machine and this agent need. Which
