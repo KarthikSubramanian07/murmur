@@ -44,6 +44,11 @@ pun, and "3Sum" is a well-known coding-interview problem that owns its search re
   computer-science term, so its search results belong to tools like HashiCorp's `memberlist`; the
   Homebrew name is taken (a Nostr client) and npm's is a dead 0.0.1 package; and it means talk
   behind someone's back.
+- **RepoTalk** (`repotalk join`). Says what it does, and fits every identifier above. npm, Homebrew
+  and PyPI names are free (checked 2026-10-31). About ten small GitHub repos already use it (the
+  largest has 2★), nearly all "talk to your codebase" chat tools, and `tornadoslims/repotalk` names
+  repotalk.ai as its site. So the name already reads as asking a repo questions, not agents talking
+  through one. repotalk.com, .dev and .ai didn't answer, which doesn't say whether they're registered.
 
 ## Checked on 2026-10-31
 
