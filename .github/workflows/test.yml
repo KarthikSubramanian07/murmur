@@ -1,19 +1,9 @@
 # Every pull request runs the checks each change must pass, so a change's verification doesn't wait
 # on a laptop shared with other agents' test runs, or die when that laptop sleeps (#48).
 #
-# Three jobs run in parallel. `test-macos` and `test-windows` run on GitHub's own runners, which are
-# free for a public repo and start fresh for every job. `test-linux` runs on a self-hosted Spot VM in
-# Google Cloud (4 cores) that runs nothing else; it stops itself when idle and is started again for
-# each job that asks for it (ci/wake). docs/testing.md has the rest.
-#
-# A self-hosted runner runs whatever code reaches it, and it is not wiped between jobs. GitHub's own
-# advice is to keep such runners off public repositories, because anyone can open a pull request
-# from a fork (docs/testing.md, "Pull requests from forks"). So `test-linux`'s `if` lets through
-# only a pull request whose head is a branch of this repo, a push to main and a manual run, and a
-# fork's pull request is checked on GitHub's runners alone. That `if` alone is not a lock: a pull
-# request from a fork runs the workflow file as the fork changed it, so the fork can delete the
-# `if`. What keeps its code off the VM is the repo setting that makes a maintainer approve every
-# outside contributor's workflow run.
+# Three jobs run in parallel, on GitHub's own runners, which are free for a public repo and start
+# fresh for every job. Until 2026-11-01 `test-linux` ran on a self-hosted VM; docs/testing.md says
+# why it went.
 name: test
 
 on:
@@ -65,20 +55,18 @@ jobs:
       - run: go test -race -count=1 -timeout 50m ./...
 
   test-linux:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, t4-ci-linux]
-    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - run: go version
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
       - name: gofmt
         run: |
           out=$(gofmt -l .)
           if [ -n "$out" ]; then echo "$out"; exit 1; fi
       - run: go vet ./...
-      - run: go test -race -count=1 -timeout 40m ./...
-      - name: ci/wake, its own module
-        working-directory: ci/wake
-        run: go vet ./... && go test -count=1 ./...
+      - run: go test -race -count=1 -timeout 50m ./...
