@@ -150,6 +150,10 @@ func newFixtures(now time.Time) *fixtures {
 		"The page shows every session by name. Between hello and the name's push landing, what should it show? I'd rather not invent a placeholder you'll later contradict.")
 	msg(46*time.Minute, "lucid-badger", "quiet-otter", web.ToSession, "Re: What does a session's name look like before it lands?",
 		long)
+	msg(45*time.Minute, "lucid-badger", "quiet-otter", web.ToSession, "And the name can change once",
+		"If the push fails the session takes the next word pair, so don't cache a name past the next poll.")
+	msg(43*time.Minute, "quiet-otter", "lucid-badger", web.ToSession, "Re: And the name can change once",
+		"The page goes by address and looks the name up each time, so that's covered.")
 	msg(30*time.Minute, "velvet-moth", "maya-mbp-91c0", web.ToDevice, "Word lists are in", "")
 	msg(18*time.Minute, "rapid-ibis", "*", web.ToAll, "No rate limit hit at 6 ls-remote/min/device",
 		"Ran 4 devices for 30 minutes at the 10 s poll. No 429s, no secondary limits. Numbers in #15's thread.")
