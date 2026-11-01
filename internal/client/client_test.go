@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/proc"
+	"github.com/a-Fig/murmur/internal/proc"
 )
 
 func lockPath(t *testing.T) (gitDir, lock string) {
@@ -29,7 +29,7 @@ func TestWaitGoneWithNoDaemon(t *testing.T) {
 }
 
 // A clone that never ran a daemon has no state directory, which is no daemon, not a failure: it is
-// what `t4 join --leave` meets in a clone that never joined.
+// what `mur join --leave` meets in a clone that never joined.
 func TestWaitGoneWithNoStateDirectory(t *testing.T) {
 	gitDir := filepath.Join(t.TempDir(), ".git")
 	if held, err := WaitGone(context.Background(), gitDir, time.Second); held || err != nil {

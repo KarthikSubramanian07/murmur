@@ -1,6 +1,9 @@
 # Candidate names
 
-t4 is a working name, and the product name is undecided. A rename touches only `internal/brand`.
+Decided 2026-11-01: the product is Murmur, and its command `mur`. What follows is the search that
+led there.
+
+Until then the working name was t4.
 
 Top picks (2026-10-29):
 

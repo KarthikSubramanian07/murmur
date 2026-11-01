@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // `t3 thread send` takes no key that would make a repeat harmless, so a delivery that failed after

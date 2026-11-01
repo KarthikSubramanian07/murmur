@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/a-Fig/t4/internal/attrib"
+	"github.com/a-Fig/murmur/internal/attrib"
 )
 
 func git(t *testing.T, dir string, args ...string) string {

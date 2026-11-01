@@ -1,7 +1,7 @@
 // Package setup is `init`: it writes the section into AGENTS.md and CLAUDE.md that says a repo
-// uses t4, for a human to review and commit. It is the only part of t4 that writes tracked files
-// in a working tree, and it runs only when a person asks. Joining (package join) is a separate,
-// per-user step that commits nothing.
+// uses Murmur, for a human to review and commit. It is the only part of Murmur that writes tracked
+// files in a working tree, and it runs only when a person asks. Joining (package join) is a
+// separate, per-user step that commits nothing.
 package setup
 
 import (
@@ -13,9 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/gitx"
-	"github.com/a-Fig/t4/internal/jsonedit"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/jsonedit"
 )
 
 // Init sets up the repository containing dir and returns what it changed, one line per file.
@@ -60,8 +60,8 @@ const (
 // markerFiles are the files init puts the marker in: Codex reads AGENTS.md, Claude Code CLAUDE.md.
 var markerFiles = []string{"AGENTS.md", "CLAUDE.md"}
 
-// Marked reports whether the working tree at top says its repo uses t4, which is what makes a
-// repo one that t4 may start in. The marker in either file is enough.
+// Marked reports whether the working tree at top says its repo uses Murmur, which is what makes a
+// repo one that Murmur may start in. The marker in either file is enough.
 func Marked(top string) bool {
 	for _, name := range markerFiles {
 		if b, err := os.ReadFile(filepath.Join(top, name)); err == nil && bytes.Contains(b, []byte(markStart)) {
@@ -72,14 +72,14 @@ func Marked(top string) bool {
 }
 
 // section is what both files get. It is short on purpose, since it sits in files every agent reads
-// whole: it says the repo uses t4 and points to the two pages that say how to join (which an agent
-// does only after asking its user) and how to use the tools. The pages are docs/agents/.
-var section = strings.NewReplacer("t4", brand.Command, "{join}", brand.JoinDoc, "{use}", brand.UseDoc).
+// whole: it says the repo uses Murmur and points to the two pages that say how to join (which an
+// agent does only after asking its user) and how to use the tools. The pages are docs/agents/.
+var section = strings.NewReplacer("{name}", brand.Product, "{join}", brand.JoinDoc, "{use}", brand.UseDoc).
 	Replace(markStart + `
-## t4
-This repo uses t4: coding agents on teammates' machines see and message each other here.
-- To join t4 (ask your user first): {join}
-- To use t4: {use}
+## {name}
+This repo uses {name}: coding agents on teammates' machines see and message each other here.
+- To join {name} (ask your user first): {join}
+- To use {name}: {use}
 ` + markEnd + "\n")
 
 // markerFile puts the section into the file called name under top, creating it if it is missing.
@@ -112,7 +112,7 @@ func markerFile(top, name string) (string, error) {
 			return "", nil
 		}
 		b = append(append(append([]byte{}, b[:start]...), sec...), b[end:]...)
-		return name + ": updated the section telling agents the repo uses " + brand.Name, os.WriteFile(path, b, 0o644)
+		return name + ": updated the section telling agents the repo uses " + brand.Product, os.WriteFile(path, b, 0o644)
 	}
 	if len(b) > 0 && !bytes.HasSuffix(b, []byte("\n\n")) {
 		if bytes.HasSuffix(b, []byte("\n")) {
@@ -126,7 +126,7 @@ func markerFile(top, name string) (string, error) {
 	if !exists {
 		verb = "created, with"
 	}
-	return name + ": " + verb + " a section telling agents the repo uses " + brand.Name, os.WriteFile(path, b, 0o644)
+	return name + ": " + verb + " a section telling agents the repo uses " + brand.Product, os.WriteFile(path, b, 0o644)
 }
 
 // HookEvent is one Claude Code event the hook is installed on, and the matcher of its group.
@@ -138,7 +138,7 @@ type HookEvent struct {
 // HookEvents are the events join installs the hook on. The tool events take every tool, with a
 // matcher of "*": the hook itself skips those that can't commit. PreToolUse and PostToolUseFailure
 // are for finding the commits a call made (#21), and a hook missing from them loses those commits.
-// Before #55 `t4 init` installed these in the committed settings; join does now, so every event
+// Before #55 `mur init` installed these in the committed settings; join does now, so every event
 // that gains a use belongs here.
 var HookEvents = []HookEvent{
 	{"PreToolUse", "*"},
@@ -154,8 +154,9 @@ func HookCommand(exe string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`, "`", "\\`").Replace(filepath.ToSlash(exe)) + `" hook`
 }
 
-// IsHookCommand reports whether a hook's command line is t4's notice hook, whether written by an
-// older init as `t4 hook` or by join (HookCommand) with the binary's full path in quotes.
+// IsHookCommand reports whether a hook's command line is Murmur's notice hook, whether written by
+// an older init as a bare `mur hook` or by join (HookCommand) with the binary's full path in
+// quotes.
 func IsHookCommand(command string) bool {
 	command = strings.TrimSpace(command)
 	exe, rest := command, ""
@@ -178,7 +179,7 @@ func IsHookCommand(command string) bool {
 	return isBinary(exe) && strings.TrimSpace(rest) == "hook"
 }
 
-// isBinary reports whether a command is t4's executable, wherever it is installed.
+// isBinary reports whether a command is Murmur's executable, wherever it is installed.
 func isBinary(command string) bool {
 	if i := strings.LastIndexAny(command, `/\`); i >= 0 {
 		command = command[i+1:]
@@ -186,8 +187,8 @@ func isBinary(command string) bool {
 	return strings.TrimSuffix(strings.ToLower(command), ".exe") == brand.Command
 }
 
-// cleanMCPConfig takes the t4 server out of the project's .mcp.json, where an older init put it.
-// An entry that isn't one init wrote is left, and so is everything else in the file.
+// cleanMCPConfig takes the Murmur server out of the project's .mcp.json, where an older init put
+// it. An entry that isn't one init wrote is left, and so is everything else in the file.
 func cleanMCPConfig(top string) (string, error) {
 	path := filepath.Join(top, ".mcp.json")
 	cfg, raw, ok := readConfig(path)
@@ -220,7 +221,7 @@ func isOwnServer(entry *jsonedit.Object) bool {
 	return isBinary(name)
 }
 
-// cleanClaudeHooks takes t4's notice hook out of the project's .claude/settings.json, where an
+// cleanClaudeHooks takes Murmur's notice hook out of the project's .claude/settings.json, where an
 // older init put it. join puts it in a file that isn't committed instead.
 func cleanClaudeHooks(top string) (string, error) {
 	path := filepath.Join(top, ".claude", "settings.json")
@@ -231,15 +232,15 @@ func cleanClaudeHooks(top string) (string, error) {
 	if !RemoveHooks(cfg) {
 		return "", nil
 	}
-	msg := dropOrWrite(path, cfg, raw, "removed the "+brand.Name+" notice hook an older init added")
+	msg := dropOrWrite(path, cfg, raw, "removed the "+brand.Product+" notice hook an older init added")
 	if cfg.Len() == 0 {
 		os.Remove(filepath.Dir(path)) // only if nothing else is in it
 	}
 	return ".claude/settings.json: " + msg, nil
 }
 
-// RemoveHooks deletes t4's notice hook from a Claude Code settings object, along with the groups,
-// events and "hooks" key it leaves empty, and reports whether it found any.
+// RemoveHooks deletes Murmur's notice hook from a Claude Code settings object, along with the
+// groups, events and "hooks" key it leaves empty, and reports whether it found any.
 func RemoveHooks(cfg *jsonedit.Object) bool { return RemoveHooksExcept(cfg, "") }
 
 // RemoveHooksExcept is RemoveHooks that leaves hooks whose command is exactly keep.
@@ -260,7 +261,7 @@ func RemoveHooksExcept(cfg *jsonedit.Object, keep string) bool {
 			if group, ok := g.(*jsonedit.Object); ok && dropHooks(group, keep) {
 				removed = true
 				if entries, _ := group.Get("hooks"); len(entries.([]any)) == 0 {
-					continue // the group held only t4's hook
+					continue // the group held only Murmur's hook
 				}
 			}
 			kept = append(kept, g)
@@ -280,7 +281,7 @@ func RemoveHooksExcept(cfg *jsonedit.Object, keep string) bool {
 	return found
 }
 
-// dropHooks removes t4's hook commands, but not keep, from a group's "hooks" list and reports
+// dropHooks removes Murmur's hook commands, but not keep, from a group's "hooks" list and reports
 // whether it did.
 func dropHooks(group *jsonedit.Object, keep string) bool {
 	entries, _ := group.Get("hooks")

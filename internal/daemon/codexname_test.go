@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // Tests of a Codex session's name outside T3 (#36). Codex's MCP server learns its thread ID at its
@@ -19,9 +19,9 @@ func (d *device) native(id, thread string) {
 	}
 }
 
-// A Codex CLI session whose MCP server restarts (a new t4 session ID, the same Codex thread) has
-// its old name back once the thread ID arrives; a session that has already shown the name it was
-// given under its t4 ID keeps that name when it learns its thread.
+// A Codex CLI session whose MCP server restarts (a new Murmur session ID, the same Codex thread)
+// has its old name back once the thread ID arrives; a session that has already shown the name it
+// was given under its Murmur ID keeps that name when it learns its thread.
 func TestCodexNameFollowsItsThreadAcrossRestarts(t *testing.T) {
 	remote := newRemote(t)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)

@@ -17,13 +17,13 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/a-Fig/t4/internal/client"
-	"github.com/a-Fig/t4/internal/join"
-	"github.com/a-Fig/t4/internal/proto"
-	"github.com/a-Fig/t4/internal/setup"
+	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/join"
+	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/setup"
 )
 
-// A server that starts a daemon runs this binary as `t4 daemon --git-dir DIR`, which under test is
+// A server that starts a daemon runs this binary as `mur daemon --git-dir DIR`, which under test is
 // the test binary. Here it only notes in DIR that it was asked to, and exits: a test of a server
 // that must not start one looks for that note.
 func TestMain(m *testing.M) {
@@ -245,8 +245,8 @@ func TestReconnectBringsTheLiveClaudeID(t *testing.T) {
 	}
 }
 
-// repo makes a git repository whose files say it uses t4 (if marked), with a daemon that answers
-// for it, and returns the repository's place.
+// repo makes a git repository whose files say it uses Murmur (if marked), with a daemon that
+// answers for it, and returns the repository's place.
 func repo(t *testing.T, marked bool, f *fakeDaemon) join.Place {
 	t.Helper()
 	dir := t.TempDir()
@@ -331,7 +331,7 @@ func settle() { time.Sleep(400 * time.Millisecond) }
 // spawned reports whether anything tried to start a daemon for the clone: the note the test binary
 // leaves when run as one, or the log file the client creates just before it does.
 func spawned(p join.Place) bool {
-	for _, name := range []string{spawnNote, filepath.Join("t4", "daemon.log")} {
+	for _, name := range []string{spawnNote, filepath.Join("murmur", "daemon.log")} {
 		if _, err := os.Stat(filepath.Join(p.GitDir, name)); err == nil {
 			return true
 		}
@@ -339,9 +339,9 @@ func spawned(p join.Place) bool {
 	return false
 }
 
-// A user-scope server starts in every repo the user opens. In one that hasn't invited t4, or that
-// this user hasn't joined, it lists no tools and no instructions, and never reaches a daemon: not to
-// start one, and not to register with one that is already running.
+// A user-scope server starts in every repo the user opens. In one that hasn't invited Murmur, or
+// that this user hasn't joined, it lists no tools and no instructions, and never reaches a daemon:
+// not to start one, and not to register with one that is already running.
 func TestPassiveWhereItIsNotInvited(t *testing.T) {
 	for name, tc := range map[string]struct{ marked, joined bool }{
 		"no marker, not joined": {false, false},
@@ -359,13 +359,13 @@ func TestPassiveWhereItIsNotInvited(t *testing.T) {
 			cs, changed := open(t, p.Top, 25*time.Millisecond)
 			settle()
 			if names := toolNamesOf(t, cs); len(names) != 0 {
-				t.Errorf("tools listed where t4 is off: %q", names)
+				t.Errorf("tools listed where Murmur is off: %q", names)
 			}
 			if got := cs.InitializeResult().Instructions; got != "" {
-				t.Errorf("instructions given where t4 is off: %q", got)
+				t.Errorf("instructions given where Murmur is off: %q", got)
 			}
 			if f.helloCount() != 0 || spawned(p) || changed.Load() != 0 {
-				t.Errorf("hellos=%d spawned=%v list changes=%d: it acted where t4 is off", f.helloCount(), spawned(p), changed.Load())
+				t.Errorf("hellos=%d spawned=%v list changes=%d: it acted where Murmur is off", f.helloCount(), spawned(p), changed.Load())
 			}
 		})
 	}
@@ -378,7 +378,7 @@ func TestPassiveWhereItIsNotInvited(t *testing.T) {
 	})
 }
 
-// A repo with no daemon running, where t4 is off: the server doesn't start one.
+// A repo with no daemon running, where Murmur is off: the server doesn't start one.
 func TestPassiveStartsNoDaemon(t *testing.T) {
 	p := repo(t, true, nil)
 	open(t, p.Top, 25*time.Millisecond)
@@ -424,7 +424,8 @@ func TestJoinThenLeaveWhileRunning(t *testing.T) {
 		t.Fatalf("who: %v %+v", err, res)
 	}
 
-	// Leave: the consent goes, then the daemon stops (as `t4 join --leave` does it, in that order).
+	// Leave: the consent goes, then the daemon stops (as `mur join --leave` does it, in that
+	// order).
 	if _, err := p.ForgetConsent(); err != nil {
 		t.Fatal(err)
 	}
@@ -473,7 +474,7 @@ func TestLeaveBeforeTheServerNoticesStartsNoDaemon(t *testing.T) {
 
 // The server looks at the files every few seconds, and until it does, its registered session is
 // still up. A tool call in that window must not reach a daemon that is still running, or it would
-// publish for a user who has left, or whose repo no longer says it uses t4 (Codex review, 2026-10-29).
+// publish for a user who has left, or whose repo no longer says it uses Murmur (Codex review, 2026-10-29).
 func TestCallAfterLeavingNeverReachesAStillRunningDaemon(t *testing.T) {
 	f := &fakeDaemon{}
 	p := repo(t, true, f)
@@ -505,7 +506,7 @@ func TestCallAfterLeavingNeverReachesAStillRunningDaemon(t *testing.T) {
 		t.Errorf("the daemon was sent %d requests after the user left", f.requestCount()-before)
 	}
 
-	// The same when the repo stops saying it uses t4, say on a checkout of an older branch.
+	// The same when the repo stops saying it uses Murmur, say on a checkout of an older branch.
 	if _, err := p.RecordConsent(); err != nil {
 		t.Fatal(err)
 	}

@@ -11,7 +11,7 @@
 // longer than a moment for a lock, and any trouble is an error for the caller to shrug off.
 //
 // The reader is modernc.org/sqlite: SQLite itself, translated to Go, so it needs no C compiler
-// and cross-compiles like the rest of t4, and its file locking and shared-memory index for the
+// and cross-compiles like the rest of Murmur, and its file locking and shared-memory index for the
 // write-ahead log are SQLite's own, which matters when another process has the file open. It adds
 // about 6 MB to the binary (t4.exe for Windows, 17.7 MB to 23.8 MB, 2026-10-29); ncruces/go-sqlite3,
 // which runs SQLite as WebAssembly, added 10.5 MB on a probe and brings locking of its own.
@@ -27,7 +27,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/a-Fig/t4/internal/t3"
+	"github.com/a-Fig/murmur/internal/t3"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )
@@ -124,7 +124,7 @@ func queryOne(ctx context.Context, cli, home, query, arg string, dest any) error
 }
 
 // OpenReadOnly opens a SQLite database to read only, waiting at most Busy on a lock: for T3's
-// database, and for other agents' state that t4 reads the same way (package title). It opens in
+// database, and for other agents' state that Murmur reads the same way (package title). It opens in
 // SQLite's read-only mode, never immutable, and refuses writes. The caller closes it and bounds its
 // queries with a context.
 func OpenReadOnly(path string) (*sql.DB, error) {

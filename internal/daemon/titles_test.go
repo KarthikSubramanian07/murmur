@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/proto"
-	"github.com/a-Fig/t4/internal/t3"
+	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3"
 
 	_ "modernc.org/sqlite"
 )

@@ -12,7 +12,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/a-Fig/t4/internal/attrib"
+	"github.com/a-Fig/murmur/internal/attrib"
 )
 
 type caseProc struct {

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a-Fig/t4/internal/gitx"
+	"github.com/a-Fig/murmur/internal/gitx"
 )
 
 // committerSlack is how far a committer date may fall before the before snapshot's Time, or

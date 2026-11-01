@@ -50,7 +50,7 @@ func serveLines(t *testing.T, ln net.Listener) *fakeSession {
 // macOS's limit on the path.
 func unixSession(t *testing.T) (*fakeSession, string) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "t4s")
+	dir, err := os.MkdirTemp("", "murs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func (f *fakeSession) next(t *testing.T) string {
 // The session gets the auth line first, then the user message, one JSON object per line.
 func TestSendWritesTheAuthLineThenTheMessage(t *testing.T) {
 	f, path := unixSession(t)
-	text := "Message from quiet-otter via t4:\n\nare you \"on it\"?\n\nReply with `send`.\n"
+	text := "Message from quiet-otter via Murmur:\n\nare you \"on it\"?\n\nReply with `send`.\n"
 	if err := Send(context.Background(), path, "tok-secret", text); err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestSendKeepsTheMessageOnOneLine(t *testing.T) {
 
 // Where nothing listens, Send fails, and what it says holds neither the address nor the token.
 func TestSendFailureHidesTheAddressAndTheToken(t *testing.T) {
-	dir, err := os.MkdirTemp("", "t4s")
+	dir, err := os.MkdirTemp("", "murs")
 	if err != nil {
 		t.Fatal(err)
 	}

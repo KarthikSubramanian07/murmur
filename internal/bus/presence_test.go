@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/bus"
+	"github.com/a-Fig/murmur/internal/bus"
 )
 
-// A presence read from the bus is held to what t4 writes: the branches a session has committed to
-// are on one line each, none empty or repeated, at most bus.MaxCommitted (#21).
-func TestPresenceCleanHoldsCommittedToWhatT4Writes(t *testing.T) {
+// A presence read from the bus is held to what Murmur writes: the branches a session has committed
+// to are on one line each, none empty or repeated, at most bus.MaxCommitted (#21).
+func TestPresenceCleanHoldsCommittedToWhatMurmurWrites(t *testing.T) {
 	many := []string{"a", "b", "c", "d", "e", "f", "g"}
 	p := bus.Presence{Sessions: []bus.SessionInfo{
 		{ID: "s1", Committed: append([]string{"feature/x\ny", "", "a", "a"}, many...)},

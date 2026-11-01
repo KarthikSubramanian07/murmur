@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/attrib"
+	"github.com/a-Fig/murmur/internal/attrib"
 )
 
 // caseEnv is the environment for every git the tests run. Identity and config travel in the
@@ -37,7 +37,7 @@ func caseEnv(extra []string) []string {
 		"GIT_CONFIG_KEY_0=commit.gpgsign", "GIT_CONFIG_VALUE_0=false",
 		"GIT_CONFIG_KEY_1=init.defaultBranch", "GIT_CONFIG_VALUE_1=main",
 		"GIT_CONFIG_KEY_2=core.autocrlf", "GIT_CONFIG_VALUE_2=false",
-		"GIT_CONFIG_KEY_3=core.hooksPath", "GIT_CONFIG_VALUE_3="+filepath.ToSlash(filepath.Join(os.TempDir(), "t4-attrib-no-hooks")),
+		"GIT_CONFIG_KEY_3=core.hooksPath", "GIT_CONFIG_VALUE_3="+filepath.ToSlash(filepath.Join(os.TempDir(), "murmur-attrib-no-hooks")),
 		"GIT_CONFIG_KEY_4=advice.detachedHead", "GIT_CONFIG_VALUE_4=false",
 	)
 	return append(env, extra...)

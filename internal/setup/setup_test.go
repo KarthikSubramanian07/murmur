@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/proto"
-	"github.com/a-Fig/t4/internal/view"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/view"
 )
 
 // repo makes a git repository with the given files, and returns its root.
@@ -62,7 +62,7 @@ func initRepo(t *testing.T, dir string) []string {
 }
 
 // init writes the marker into both files, creating the ones that are missing, and says the repo
-// uses t4 so an agent there knows to ask its user about joining.
+// uses Murmur so an agent there knows to ask its user about joining.
 func TestInitWritesTheMarkerIntoBothFiles(t *testing.T) {
 	// The section is a few lines that point to the pages with the detail, not the detail (Tyler,
 	// 2026-10-29: 5 or 6 lines).
@@ -105,21 +105,22 @@ func TestTheAgentPagesExistAndSayWhatTheSectionPromises(t *testing.T) {
 		return string(b)
 	}
 	join, use := page(brand.JoinDoc), page(brand.UseDoc)
-	for _, want := range []string{"Ask your user", brand.InstallSh, brand.InstallPs1, "t4 version", "t4 join", "t4 join --leave", brand.UseDoc} {
+	for _, want := range []string{"Ask your user", brand.InstallSh, brand.InstallPs1, "mur version", "mur join", "mur join --leave", brand.UseDoc} {
 		if !strings.Contains(join, want) {
 			t.Errorf("the page on joining doesn't say %q", want)
 		}
 	}
-	for _, want := range []string{"`who`", "`lookup`", "`status`", "`send`", "`inbox`", "Message from", "via t4", brand.JoinDoc} {
+	for _, want := range []string{"`who`", "`lookup`", "`status`", "`send`", "`inbox`", "Message from", "via Murmur", brand.JoinDoc} {
 		if !strings.Contains(use, want) {
-			t.Errorf("the page on using t4 doesn't say %q", want)
+			t.Errorf("the page on using Murmur doesn't say %q", want)
 		}
 	}
 }
 
-// The page on using t4 quotes the turn a delivered message becomes. An agent that reads the quote
-// and then meets a header worded differently has no way to tell t4's turn from a user's, so the
-// quote is the turn view.Turn renders, word for word, and this fails if either one is reworded.
+// The page on using Murmur quotes the turn a delivered message becomes. An agent that reads the
+// quote and then meets a header worded differently has no way to tell Murmur's turn from a user's,
+// so the quote is the turn view.Turn renders, word for word, and this fails if either one is
+// reworded.
 func TestTheUsePageQuotesTheDeliveredTurnWordForWord(t *testing.T) {
 	rel := brand.UseDoc[strings.Index(brand.UseDoc, "/main/")+len("/main/"):]
 	b, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(rel)))
@@ -137,7 +138,7 @@ func TestTheUsePageQuotesTheDeliveredTurnWordForWord(t *testing.T) {
 		quoted = append(quoted, line)
 	}
 	if want := strings.Join(quoted, "\n"); !strings.Contains(use, want) {
-		t.Errorf("the page on using t4 doesn't quote the delivered turn; it should contain:\n%s", want)
+		t.Errorf("the page on using Murmur doesn't quote the delivered turn; it should contain:\n%s", want)
 	}
 	// A message to everyone is the one variation in the header, and the page says so.
 	everyone := view.Turn(proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", To: "*", Subject: "x"})
@@ -147,9 +148,10 @@ func TestTheUsePageQuotesTheDeliveredTurnWordForWord(t *testing.T) {
 	}
 }
 
-// A marker in either file is enough for a repo to count as one that uses t4, and no marker is not.
+// A marker in either file is enough for a repo to count as one that uses Murmur, and no marker is
+// not.
 func TestMarkedNeedsAMarker(t *testing.T) {
-	if Marked(repo(t, map[string]string{"AGENTS.md": "# Notes\n", "CLAUDE.md": "t4 is mentioned here\n"})) {
+	if Marked(repo(t, map[string]string{"AGENTS.md": "# Notes\n", "CLAUDE.md": "Murmur is mentioned here\n"})) {
 		t.Error("a repo with no marker is marked")
 	}
 	if !Marked(repo(t, map[string]string{"CLAUDE.md": markStart + "\nold\n" + markEnd + "\n"})) {
@@ -200,7 +202,7 @@ func TestInitLeavesABrokenSection(t *testing.T) {
 const oldMCP = `{
     "mcpServers": {
         "other": {"command": "other", "args": ["serve"]},
-        "t4": {"command": "t4", "args": ["mcp"]}
+        "murmur": {"command": "mur", "args": ["mcp"]}
     },
     "extra": [1, 2]
 }
@@ -210,11 +212,11 @@ const oldSettings = `{
   "permissions": {"allow": ["Bash(ls)"]},
   "hooks": {
     "PostToolUse": [
-      {"matcher": "*", "hooks": [{"type": "command", "command": "t4 hook"}]},
+      {"matcher": "*", "hooks": [{"type": "command", "command": "mur hook"}]},
       {"matcher": "Edit", "hooks": [{"type": "command", "command": "other-hook"}]}
     ],
     "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "t4 hook"}]}
+      {"hooks": [{"type": "command", "command": "mur hook"}]}
     ]
   }
 }
@@ -248,7 +250,7 @@ func TestInitCleansAnOldInstall(t *testing.T) {
 		t.Errorf(".mcp.json:\n%s\nwant:\n%s", got, wantMCP)
 	}
 	settings := read(t, dir, ".claude/settings.json")
-	if strings.Contains(settings, "t4 hook") || !strings.Contains(settings, "other-hook") || !strings.Contains(settings, `"Bash(ls)"`) {
+	if strings.Contains(settings, "mur hook") || !strings.Contains(settings, "other-hook") || !strings.Contains(settings, `"Bash(ls)"`) {
 		t.Errorf(".claude/settings.json:\n%s", settings)
 	}
 	if strings.Contains(settings, "UserPromptSubmit") {
@@ -262,8 +264,8 @@ func TestInitCleansAnOldInstall(t *testing.T) {
 // A file that held nothing but what the older init wrote is deleted, with its directory.
 func TestInitRemovesFilesItOnlyHeld(t *testing.T) {
 	dir := repo(t, map[string]string{
-		".mcp.json":             `{"mcpServers": {"t4": {"command": "t4", "args": ["mcp"]}}}`,
-		".claude/settings.json": `{"hooks": {"PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "t4 hook"}]}]}}`,
+		".mcp.json":             `{"mcpServers": {"murmur": {"command": "mur", "args": ["mcp"]}}}`,
+		".claude/settings.json": `{"hooks": {"PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "mur hook"}]}]}}`,
 	})
 	initRepo(t, dir)
 	if exists(dir, ".mcp.json") || exists(dir, ".claude/settings.json") || exists(dir, ".claude") {
@@ -272,11 +274,12 @@ func TestInitRemovesFilesItOnlyHeld(t *testing.T) {
 }
 
 // A repo set up with the hook on every event (an init from before #55 put it in the committed
-// settings, and added events as the hook learned them) loses all of it, and keeps what isn't t4's.
+// settings, and added events as the hook learned them) loses all of it, and keeps what isn't
+// Murmur's.
 func TestInitRemovesTheHookFromEveryEventItWasOn(t *testing.T) {
 	var events []string
 	for _, ev := range HookEvents {
-		events = append(events, `"`+ev.Name+`": [{"hooks": [{"type": "command", "command": "t4 hook"}]}]`)
+		events = append(events, `"`+ev.Name+`": [{"hooks": [{"type": "command", "command": "mur hook"}]}]`)
 	}
 	dir := repo(t, map[string]string{".claude/settings.json": `{
   "permissions": {"allow": ["Bash(go test:*)"]},
@@ -287,8 +290,8 @@ func TestInitRemovesTheHookFromEveryEventItWasOn(t *testing.T) {
 }`})
 	initRepo(t, dir)
 	got := read(t, dir, ".claude/settings.json")
-	if strings.Contains(got, "t4 hook") {
-		t.Errorf("t4's hook is still there:\n%s", got)
+	if strings.Contains(got, "mur hook") {
+		t.Errorf("Murmur's hook is still there:\n%s", got)
 	}
 	for _, kept := range []string{"Bash(go test:*)", "other-tool"} {
 		if !strings.Contains(got, kept) {
@@ -302,11 +305,11 @@ func TestInitRemovesTheHookFromEveryEventItWasOn(t *testing.T) {
 	}
 }
 
-// A t4 entry that isn't the one init wrote (another program with that name, or the user's own
+// A Murmur entry that isn't the one init wrote (another program with that name, or the user's own
 // settings) is not init's to remove.
 func TestInitLeavesEntriesThatAreNotItsOwn(t *testing.T) {
-	mcp := `{"mcpServers": {"t4": {"command": "node", "args": ["my-t4.js"]}}}`
-	settings := `{"hooks": {"PostToolUse": [{"hooks": [{"type": "command", "command": "other t4 hook"}]}]}}`
+	mcp := `{"mcpServers": {"murmur": {"command": "node", "args": ["my-mur.js"]}}}`
+	settings := `{"hooks": {"PostToolUse": [{"hooks": [{"type": "command", "command": "other mur hook"}]}]}}`
 	dir := repo(t, map[string]string{".mcp.json": mcp, ".claude/settings.json": settings})
 	initRepo(t, dir)
 	if read(t, dir, ".mcp.json") != mcp || read(t, dir, ".claude/settings.json") != settings {
@@ -317,18 +320,18 @@ func TestInitLeavesEntriesThatAreNotItsOwn(t *testing.T) {
 // What join writes is recognised, wherever the binary is, and nothing else is.
 func TestIsHookCommand(t *testing.T) {
 	for command, want := range map[string]bool{
-		"t4 hook":                        true,
-		`"C:/Users/a b/bin/t4.exe" hook`: true,
-		`"/home/a/.local/bin/t4" hook`:   true,
-		`"/home/a/\$tools/t4" hook`:      true,
-		`"/home/a/\"q\"/t4" hook`:        true,
-		"/usr/local/bin/t4 hook":         true,
-		"t4 hook --extra":                false,
-		"t4 who":                         false,
-		"other t4 hook":                  false,
-		`"/home/a/bin/not-t4" hook`:      false,
-		`"unterminated t4 hook`:          false,
-		"":                               false,
+		"mur hook":                        true,
+		`"C:/Users/a b/bin/mur.exe" hook`: true,
+		`"/home/a/.local/bin/mur" hook`:   true,
+		`"/home/a/\$tools/mur" hook`:      true,
+		`"/home/a/\"q\"/mur" hook`:        true,
+		"/usr/local/bin/mur hook":         true,
+		"mur hook --extra":                false,
+		"mur who":                         false,
+		"other mur hook":                  false,
+		`"/home/a/bin/not-mur" hook`:      false,
+		`"unterminated mur hook`:          false,
+		"":                                false,
 	} {
 		if got := IsHookCommand(command); got != want {
 			t.Errorf("IsHookCommand(%q) = %v, want %v", command, got, want)
@@ -349,7 +352,7 @@ func TestHookCommandReachesTheBinaryThroughAShell(t *testing.T) {
 		names = append(names, `q"uote`) // not a legal file name there
 	}
 	for _, name := range names {
-		bin := filepath.Join(t.TempDir(), name, "t4")
+		bin := filepath.Join(t.TempDir(), name, "mur")
 		if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -362,7 +365,7 @@ func TestHookCommandReachesTheBinaryThroughAShell(t *testing.T) {
 			t.Errorf("%s: the shell ran something else: %q, %v\n%s", name, command, err, out)
 		}
 		if !IsHookCommand(command) {
-			t.Errorf("%s: %q isn't recognised as t4's hook", name, command)
+			t.Errorf("%s: %q isn't recognised as Murmur's hook", name, command)
 		}
 	}
 }
@@ -372,7 +375,7 @@ func TestHookCommandUsesForwardSlashesOnWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("only Windows paths have backslashes to convert")
 	}
-	if got, want := HookCommand(`C:\Users\a b\bin\t4.exe`), `"C:/Users/a b/bin/t4.exe" hook`; got != want {
+	if got, want := HookCommand(`C:\Users\a b\bin\mur.exe`), `"C:/Users/a b/bin/mur.exe" hook`; got != want {
 		t.Errorf("got %s, want %s", got, want)
 	}
 }

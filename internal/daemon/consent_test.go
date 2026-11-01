@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/client"
-	"github.com/a-Fig/t4/internal/daemon"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/daemon"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // consentClone is a clone of a fresh remote, and whether its user has joined (changed by the test).
@@ -49,10 +49,10 @@ func TestDaemonWithoutConsentDoesNotStart(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("the daemon is running in a clone that hasn't joined")
 	}
-	if _, err := os.Stat(filepath.Join(gitDir, "t4", "daemon.json")); err == nil {
+	if _, err := os.Stat(filepath.Join(gitDir, "murmur", "daemon.json")); err == nil {
 		t.Error("daemon.json was written")
 	}
-	if refs := git(t, remote, "for-each-ref", "refs/t4"); refs != "" {
+	if refs := git(t, remote, "for-each-ref", "refs/murmur"); refs != "" {
 		t.Errorf("the remote has bus refs:\n%s", refs)
 	}
 }
@@ -83,7 +83,7 @@ func TestDaemonStopsWhenTheUserLeaves(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("the daemon kept running after the user left")
 	}
-	if _, err := os.Stat(filepath.Join(gitDir, "t4", "daemon.json")); err == nil {
+	if _, err := os.Stat(filepath.Join(gitDir, "murmur", "daemon.json")); err == nil {
 		t.Error("daemon.json is still there")
 	}
 }
@@ -140,7 +140,7 @@ func TestDaemonPublishesNothingOnceTheUserHasLeft(t *testing.T) {
 	defer func() { cancel(); <-done }()
 
 	busRefs := func() []string {
-		out := git(t, remote, "for-each-ref", "--format=%(refname)", "refs/t4")
+		out := git(t, remote, "for-each-ref", "--format=%(refname)", "refs/murmur")
 		if out == "" {
 			return nil
 		}

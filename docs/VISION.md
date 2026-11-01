@@ -2,8 +2,10 @@
 
 Status: V1 works, in Go (2026-10-26); the next version, with names, a web page and wake-ups, is
 being built; the web page, an agent joining a repo by itself, and delivery of a message as a turn of
-the receiving session are in (2026-10-29). "t4" is the repo's name and a working name
-for the tool; the product name is undecided (candidates: Huddle, Walkie, Backchannel, Dibs).
+the receiving session are in (2026-10-29). On 2026-10-30 a Claude thread and a Codex thread in T3
+Code, in two clones, each joined after their user said yes and then talked with nobody typing: 15 s
+from question to answer. The product is Murmur, and its command `mur` (Tyler, 2026-11-01); until
+then the repo and the tool were called t4 (`docs/names.md`).
 
 ## The problem
 
@@ -12,8 +14,8 @@ shipping as fast as they can. The agents can't see each other. Two of them build
 flow; one refactors a module another is halfway through extending; a third picks a different
 state library. The humans find out at merge time, or at the demo.
 
-T3 Code already lets sessions on **one machine** discover and message each other. t4 extends that
-to sessions on **different machines working in the same repo**, so agents can settle "who is
+T3 Code already lets sessions on **one machine** discover and message each other. Murmur extends
+that to sessions on **different machines working in the same repo**, so agents can settle "who is
 building what" among themselves, without bringing the humans in.
 
 ## Who it is for, and who it is not
@@ -44,7 +46,7 @@ don't want it. This is not part of scope." Daemons still running V1 keep writing
 Every teammate already has credentials and push access to the repo, so the repo carries the
 messages. No server, no accounts, no extra auth: whoever can push is in.
 
-- Each device appends events to **its own ref**, `refs/t4/mesh/<deviceId>`: one empty commit per
+- Each device appends events to **its own ref**, `refs/murmur/mesh/<deviceId>`: one empty commit per
   event, the payload in the commit message (a readable subject, a JSON body). One writer per ref
   means pushes never race. A message to another session sits in the sender's log, addressed to it.
 - Per-device logs can't settle a race: two devices could each take the same session name (#20)
@@ -54,8 +56,8 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   which makes the ref a compare-and-swap. A refused pusher fetches and decides again with what it
   hadn't seen. V1's claims worked this way; in its test through GitHub (2026-10-26), two machines
   pushed at the same instant three times, and each time exactly one push landed. Session names
-  work this way too, on `refs/t4/names` (see Session names).
-- Presence is separate: `refs/t4/presence/<deviceId>`, force-pushed with the device's current
+  work this way too, on `refs/murmur/names` (see Session names).
+- Presence is separate: `refs/murmur/presence/<deviceId>`, force-pushed with the device's current
   state when it changes and on a heartbeat every 2 minutes. Heartbeats would otherwise flood the
   event log. A presence unchanged for 6 minutes is stale: its device's sessions may not get what
   is sent to them, and `who` and `send` say so.
@@ -79,36 +81,37 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
 - Bus commits carry git's empty tree, so they hold no files and fetching them brings nothing else
   along. The daemon pushes them with `--no-verify` and doesn't sign them: a `pre-push` hook that
   runs the test suite, or a signing prompt, on every message would make the bus unusable. These
-  commits only ever go to `refs/t4/*`, never to a branch.
+  commits only ever go to `refs/murmur/*`, never to a branch.
 - beads (task tracking synced through `refs/dolt/data` on GitHub) shows custom refs hold up at
   scale, and two of its bugs are warnings: `git push --mirror` from an ordinary clone deletes
   custom refs on the remote (beads #5266), and checking an internal branch out in the user's repo
   wiped tracked files (beads #6484).
-- `mesh/<deviceId>`, `presence/<deviceId>` and `names` are the only names under `refs/t4/` t4
-  reads.
+- `mesh/<deviceId>`, `presence/<deviceId>` and `names` are the only names under `refs/murmur/`
+  Murmur reads.
   Device IDs are lowercase letters, digits and dashes, never a name Windows can't hold as a file.
   Anything else there is left on the remote unfetched. Anyone who can push can write any of these
-  refs, so a reader holds what it reads to what t4 writes and builds over junk rather than on it.
-  The remote refuses a ref whose name clashes with another's, so a daemon deletes the refs that
-  would stop t4's own being pushed: those under its own names (`presence/<deviceId>/...`,
-  `mesh/<deviceId>/...`, `names/...`), and `refs/t4/mesh` or `refs/t4/presence` as refs
-  themselves. t4 writes nothing at any of them (found by the Opus reviews of V1, #8, 2026-10-28).
-- Reading: poll `git ls-remote origin 'refs/t4/*'`, which is cheap; fetch only when a SHA has
+  refs, so a reader holds what it reads to what Murmur writes and builds over junk rather than on
+  it. The remote refuses a ref whose name clashes with another's, so a daemon deletes the refs that
+  would stop Murmur's own being pushed: those under its own names (`presence/<deviceId>/...`,
+  `mesh/<deviceId>/...`, `names/...`), and `refs/murmur/mesh` or `refs/murmur/presence` as refs
+  themselves. Murmur writes nothing at any of them (found by the Opus reviews of V1, #8,
+  2026-10-28).
+- Reading: poll `git ls-remote origin 'refs/murmur/*'`, which is cheap; fetch only when a SHA has
   changed. How often is "Speed", below (3 s around a conversation; 10 s before 2026-10-29). A message takes about 6–8 s from a `send` to the
   receiving agent's turn ("Delivering a message as a turn", below); V1, polling every 10 s, took
   about 12 s from a Windows laptop to a macOS machine (2026-10-26), 2 s of it the send.
 - A device is one clone's daemon. Worktrees of a clone share its `.git`, so they share its daemon;
   a second clone on the same machine is a second device. The device ID is the hostname plus four
-  random hex digits (`tyler-laptop-3f2a`), kept with the daemon's other state in `.git/t4/`, which
-  no commit or checkout ever touches. (An earlier draft grouped repos by root commit; per-clone
-  daemons don't need that.)
+  random hex digits (`tyler-laptop-3f2a`), kept with the daemon's other state in `.git/murmur/`,
+  which no commit or checkout ever touches. (An earlier draft grouped repos by root commit;
+  per-clone daemons don't need that.)
 
 ### One daemon per device, a thin MCP server per session
 
 ```
-GitHub (refs/t4/*)
+GitHub (refs/murmur/*)
         ▲  one poller, one writer per device
-  t4 daemon  (per device, per repo)
+  mur daemon  (per device, per repo)
         ▲  local socket
    ┌────┼──────────┬──────────┐
  MCP   MCP        MCP       page
@@ -143,7 +146,7 @@ daemon back after less than 10 minutes down delivers what it missed to the sessi
 reconnect within 30 seconds of its start, and to sessions stopped within the 24 hours.
 
 Sessions reach the daemon over loopback TCP, on a random port written with a random token to
-`.git/t4/daemon.json`. A daemon with no sessions, no open page (see The page for humans) and no
+`.git/murmur/daemon.json`. A daemon with no sessions, no open page (see The page for humans) and no
 T3 thread to wake for 10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
 next sync rather than when it goes stale.
 
@@ -152,11 +155,11 @@ answering ping and refuse whatever came after the version it was built from (the
 and delivering a turn, #57, were the first). So the daemon reports a protocol number
 (`proto.Protocol`, 1 as of 2026-10-30; a daemon from before the number reports none, read as 0) in
 its ping reply, and a client that finds a lower number than its own stops that daemon and starts its
-own: `t4 join`, `t4 ui` and an MCP server registering a session do, since each may start a
+own: `mur join`, `mur ui` and an MCP server registering a session do, since each may start a
 daemon. Only an older daemon is replaced, never a newer one, so two binaries of different ages on
 one machine don't stop each other's daemons for ever, and a number is used, not the version string,
 so that builds from a branch (which all say "dev") are told apart. A client that may not start a
-daemon (the hook and the other commands, which never start one; `t4 stop`, which ends an old one by
+daemon (the hook and the other commands, which never start one; `mur stop`, which ends an old one by
 hand; a user who has left) takes the daemon as it is. The old daemon is asked to stop and
 takes its time: it lets its background work finish for up to 20 seconds and then deletes its
 presence for up to 15, holding the clone's lock throughout, and the new one can't start until the
@@ -170,64 +173,66 @@ why. Raise the number with any change to a request or a reply that an older daem
 ### Joining a repo
 
 Decided 2026-10-29 (#55), built the same day. Tyler's requirement: setup should feel like magic,
-and T3 Code users are the main customers. The user should still know t4 is running and choose to
-join. So a repo that uses t4 says so, in a section of `AGENTS.md` and `CLAUDE.md` that an agent
-reads when it starts; an agent that has no t4 tools asks its user whether to join; and if the user
-says yes, the agent installs t4 and runs `t4 join`, which does the rest. Tyler also decided that
-messaging gets no command-line commands (`who`, `send`, `inbox`, `log` were removed): "If everyone
-is using the CLI, there will be no one to message." Agents message through MCP, humans look at the
-page (`t4 ui`), and the commands left are `init`, `join`, `ui`, `stop`, `version` and `help`.
+and T3 Code users are the main customers. The user should still know Murmur is running and choose to
+join. So a repo that uses Murmur says so, in a section of `AGENTS.md` and `CLAUDE.md` that an agent
+reads when it starts; an agent that has no Murmur tools asks its user whether to join; and if the
+user says yes, the agent installs mur and runs `mur join`, which does the rest. Tyler also decided
+that messaging gets no command-line commands (`who`, `send`, `inbox`, `log` were removed): "If
+everyone is using the CLI, there will be no one to message." Agents message through MCP, humans look
+at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, `version` and
+`help`.
 
-- **The marker.** `t4 init` writes a section between `<!-- t4:start -->` and `<!-- t4:end -->` into
-  both files, creates either if it is missing, and rewrites the section in place on a rerun. The
-  section is six lines, since every agent that opens the repo reads it whole (Tyler, 2026-10-29,
-  after a first version of about twenty): it says the repo uses t4 and links two pages in
-  `docs/agents/`, by raw GitHub address. `join.md` is for an agent without the tools: ask the user,
-  say what joining does, install t4 (the one-line command for macOS and Linux or for Windows
-  PowerShell), run `t4 join`, tell the user what it printed. `use.md` is for an agent with them:
-  keep `status` set, check `who` before sizeable work, answer a message with `send`, and `inbox`
-  for history and as the fallback. The addresses work without login only once the repo is public;
-  until then an agent with GitHub access reads the files in the repo. A test holds the addresses to
-  files that exist. `init` writes no other file. An older `init` had put an `.mcp.json`
-  entry and a hook in `.claude/settings.json`; `init` removes only t4's own entries from those,
+- **The marker.** `mur init` writes a section between `<!-- murmur:start -->` and `<!-- murmur:end
+  -->` into both files, creates either if it is missing, and rewrites the section in place on a
+  rerun. The section is six lines, since every agent that opens the repo reads it whole (Tyler,
+  2026-10-29, after a first version of about twenty): it says the repo uses Murmur and links two
+  pages in `docs/agents/`, by raw GitHub address. `join.md` is for an agent without the tools: ask
+  the user, say what joining does, install mur (the one-line command for macOS and Linux or for
+  Windows PowerShell), run `mur join`, tell the user what it printed. `use.md` is for an agent with
+  them: keep `status` set, check `who` before sizeable work, answer a message with `send`, and
+  `inbox` for history and as the fallback. The addresses work without login only once the repo is
+  public; until then an agent with GitHub access reads the files in the repo. A test holds the
+  addresses to files that exist. `init` writes no other file. An older `init` had put an `.mcp.json`
+  entry and a hook in `.claude/settings.json`; `init` removes only Murmur's own entries from those,
   deletes a file that is left empty, and says so. Committing installs nothing on a teammate's machine.
-- **What `t4 join` writes.** It refuses in a repo without the marker. Everything it writes is
+- **What `mur join` writes.** It refuses in a repo without the marker. Everything it writes is
   outside the repo's tracked files:
 
   | What | Where | Per |
   |---|---|---|
-  | Consent | `.git/t4/joined.json` (mode 0600) | clone, so every worktree of it |
-  | The MCP server, for Claude Code | `claude mcp add --scope user t4 -- <absolute path of t4> mcp`, which writes `.claude.json` in `$CLAUDE_CONFIG_DIR`, else the home directory | user |
-  | Permission for its tools | `mcp__t4` in `permissions.allow` of `settings.json` next to it | user |
-  | The MCP server, for Codex | a `[mcp_servers.t4]` table in `$CODEX_HOME/config.toml`, else `~/.codex/config.toml`: the command, `args = ["mcp", "--agent", "codex"]` and `default_tools_approval_mode = "approve"` | user |
+  | Consent | `.git/murmur/joined.json` (mode 0600) | clone, so every worktree of it |
+  | The MCP server, for Claude Code | `claude mcp add --scope user murmur -- <absolute path of mur> mcp`, which writes `.claude.json` in `$CLAUDE_CONFIG_DIR`, else the home directory | user |
+  | Permission for its tools | `mcp__murmur` in `permissions.allow` of `settings.json` next to it | user |
+  | The MCP server, for Codex | a `[mcp_servers.murmur]` table in `$CODEX_HOME/config.toml`, else `~/.codex/config.toml`: the command, `args = ["mcp", "--agent", "codex"]` and `default_tools_approval_mode = "approve"` | user |
   | The hook, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure` and `UserPromptSubmit` (`setup.HookEvents`) | `.claude/settings.local.json` in each worktree of the clone, kept out of `git status` through the clone's `info/exclude` | clone |
   | The daemon | started, if none is running | clone |
 
   A client that isn't installed is skipped. Each file is edited, never replaced: other servers,
-  settings and comments stay, and a form it can't edit safely (a dotted `mcp_servers.t4.command`
+  settings and comments stay, and a form it can't edit safely (a dotted `mcp_servers.murmur.command`
   key in Codex's TOML, a `permissions` that isn't an object) is a reported problem, not a guess.
   `codex mcp add` is not used, because it rewrites the whole file. The path is absolute so the
   server starts whatever PATH the client has. The hook command is the path in double quotes with
-  forward slashes (`"C:/Users/a b/t4.exe" hook`), because Claude Code runs hook commands through a
+  forward slashes (`"C:/Users/a b/mur.exe" hook`), because Claude Code runs hook commands through a
   shell, which would split a path with a space, eat the backslashes of a Windows one, and expand a
   `$` or backtick in it; those are escaped. Measured to run under Claude Code 2.1.312 with a space
   in the path, 2026-10-29. A config file that is a symbolic link (a dotfiles repository's, say) is
   written through, one that points at a file not yet there included: the file it points to is
   replaced or created and the link stays; a hook file that is a link is emptied, never deleted.
   Run again, `join` changes nothing and says so; it fills in what is missing and repoints an entry
-  whose binary moved. A worktree made after joining has no hook until `t4 join` runs in it again.
-  `t4 join --leave` removes the consent and the hooks and stops the daemon. It leaves the server
+  whose binary moved. A worktree made after joining has no hook until `mur join` runs in it again.
+  `mur join --leave` removes the consent and the hooks and stops the daemon. It leaves the server
   registered, since that is per user and does nothing where the user hasn't joined; its output says
   how to remove it.
 - **What it prints.** What it did, what went wrong, and "Tell your user", chosen from which agent ran
   it (see Reloading MCP servers below), so the agent can say exactly what to do next.
-- **The server stays passive where it isn't invited.** The user-scope entry starts `t4 mcp` in every
-  repo the user opens. The server is on only while the repo says it uses t4 (this working tree's
-  `AGENTS.md` or `CLAUDE.md` has the marker) and this user has joined in this clone, both read from
-  files every 2 seconds. Off, it advertises a tools capability with no tools and no instructions,
-  contacts no daemon, and answers a call that arrives anyway with why it is off. A join turns it on
-  and lists the tools through `tools/list_changed`; a leave removes them. MCP instructions are fixed
-  at initialize, so a server that started off never has them: the pages the section in `AGENTS.md`
+- **The server stays passive where it isn't invited.** The user-scope entry starts `mur mcp` in
+  every repo the user opens. The server is on only while the repo says it uses Murmur (this working
+  tree's `AGENTS.md` or `CLAUDE.md` has the marker) and this user has joined in this clone, both
+  read from files every 2 seconds. Off, it advertises a tools capability with no tools and no
+  instructions, contacts no daemon, and answers a call that arrives anyway with why it is off. A
+  join turns it on and lists the tools through `tools/list_changed`; a leave removes them. MCP
+  instructions are fixed at initialize, so a server that started off never has them: the pages the
+  section in `AGENTS.md`
   and `CLAUDE.md` links to carry that guidance. Nothing relies on the server alone, and the checks differ by
   what the thing is for. The server asks again before each registration with the daemon, before
   starting one, and before forwarding a tool call, since its 2-second look can lag a leave. The
@@ -238,25 +243,25 @@ page (`t4 ui`), and the commands left are `init`, `join`, `ui`, `stop`, `version
   as a turn (the one thing it does to the user's other programs, so a message that comes in by sync
   after a leave waits in the inbox, and isn't counted as a failure), and once a second, when it stops
   itself if the user has left. The last two are what end a daemon that was still starting when
-  `join --leave` ran and so had no `daemon.json` to be found by. `t4 daemon` and `t4 ui` refuse in
+  `join --leave` ran and so had no `daemon.json` to be found by. `mur daemon` and `mur ui` refuse in
   a clone that hasn't joined (so a stale client or a script can't start one). `join --leave`
   forgets the consent before it stops anything, then waits up to 20 seconds for the daemon's lock to
   be free, and reports it as a problem, not as stopped, if it isn't. What it can't close: a push
   already past its check when the leave lands completes, and a starter already past its own
-  check (Windows starts the daemon through WMI, which is slow) can still launch `t4 daemon`, which
+  check (Windows starts the daemon through WMI, which is slow) can still launch `mur daemon`, which
   exits at its consent check before it opens any state or publishes. A repo without the marker, or
-  one the user hasn't joined, gets no daemon, no `refs/t4/*` and nothing published. A clone whose
-  user joined but whose current branch lacks the marker keeps its daemon (it is the user's, for
-  every worktree) and gets no MCP tools there.
+  one the user hasn't joined, gets no daemon, no `refs/murmur/*` and nothing published. A clone
+  whose user joined but whose current branch lacks the marker keeps its daemon (it is the user's,
+  for every worktree) and gets no MCP tools there.
 - **Per user, not per account.** T3 can start Claude Code with its own `CLAUDE_CONFIG_DIR` (a
-  provider with a home path, as `claude_personal` on Tyler's laptop, 2026-10-29). `t4 join` writes
+  provider with a home path, as `claude_personal` on Tyler's laptop, 2026-10-29). `mur join` writes
   to the config directory of the agent that ran it, so a user with a second account has a second
   registration, made when an agent under it joins.
 
 ### Reloading MCP servers
 
 Measured 2026-10-29 on Claude Code 2.1.312, Codex CLI 0.164.0 and T3 Code, with Claude and Codex
-threads. The question was what a session needs after `t4 join`, since the agent that ran it started
+threads. The question was what a session needs after `mur join`, since the agent that ran it started
 before the server was registered.
 
 | Client | A server registered after the session started | `tools/list_changed` from a running server | What loads it |
@@ -274,9 +279,9 @@ Stop and a message; in a terminal Claude Code, exit and `claude --continue`; in 
 thread. When the registration was already there, the Claude Code tools appear in a few seconds.
 Not verified: that `claude --continue` loads the server (inferred from Claude reading its settings
 at start), that Codex honors `default_tools_approval_mode = "approve"` in a live thread (the
-config is valid and `codex mcp get t4` shows it), and which variables Codex sets for the commands
-it runs (`CODEX_THREAD_ID`, `CODEX_SANDBOX`, `CODEX_CI` are assumed; with none, `join`'s advice
-covers every client).
+config is valid and `codex mcp get murmur` shows it), and which variables Codex sets for the
+commands it runs (`CODEX_THREAD_ID`, `CODEX_SANDBOX`, `CODEX_CI` are assumed; with none, `join`'s
+advice covers every client).
 
 More on Codex in T3, from a Codex agent in a T3 thread (Codex 0.164.0, 2026-10-30). T3's Codex
 provider loads a stdio server from `~/.codex/config.toml` in a newly created thread: its echo tool
@@ -284,8 +289,8 @@ worked, with no approval prompt in full-access mode. A thread that existed befor
 added still lacks it on its next turn. Codex's app-server has a `config/mcpServer/reload` request
 that refreshes a running thread without a restart, but the installed T3 never sends it. So `join`
 tells a Codex thread in T3 (Codex's variables plus `T3CODE_CLI_PATH`) to "open a new thread in this
-project to talk to other agents through t4". Still being tested at the time of writing: whether a
-project-level Codex config is read, and approval policy outside full-access mode (findings go to
+project to talk to other agents through Murmur". Still being tested at the time of writing: whether
+a project-level Codex config is read, and approval policy outside full-access mode (findings go to
 #55 as comments).
 
 ### The page for humans
@@ -297,12 +302,12 @@ call.
 
 - **Served by the daemon** on 127.0.0.1, on a random port of its own: the sessions' port speaks the
   daemon's protocol, and the page speaks HTTP to a browser. The address is `web` in
-  `.git/t4/daemon.json`, and the page uses the daemon's token, the same one the sessions use. A
-  daemon that can't open the port logs that and keeps running without the page; `t4 ui` then says
+  `.git/murmur/daemon.json`, and the page uses the daemon's token, the same one the sessions use. A
+  daemon that can't open the port logs that and keeps running without the page; `mur ui` then says
   there is none.
-- **Opened by `t4 ui`**, which starts the daemon if it isn't running, opens the default browser
+- **Opened by `mur ui`**, which starts the daemon if it isn't running, opens the default browser
   and prints the address. The token is in the address's fragment (`#token=`), which a browser
-  keeps from the server; the page reads it and sends it with each request. `t4 ui --no-open`
+  keeps from the server; the page reads it and sends it with each request. `mur ui --no-open`
   prints the address and opens nothing.
 - **What it shows.** Every device the daemon knows, this one first, with each session's name,
   agent, branch, what it is doing, when it started and when it was last active (#21), and the
@@ -314,7 +319,7 @@ call.
   senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
   it never read what was sent while it was away for more than 10 minutes, except what is kept for a
   stopped session's inbox (above).
-- **Settings** (when a session is woken) are saved in `.git/t4/settings.json`, replaced whole.
+- **Settings** (when a session is woken) are saved in `.git/murmur/settings.json`, replaced whole.
   Nothing acts on them yet: waking is #25. Mutes (#27) aren't built, so the page shows none and
   refuses to unmute.
 - **Open page, running daemon.** The page asks for its state every 3 s, 15 s in a hidden tab. A
@@ -333,10 +338,10 @@ active, whether a message would reach it, and its latest messages. A session on 
 the commits it made and the client's session ID, which stay on this device. Git doesn't record
 which session made a commit, so the daemon watches tool calls for them.
 
-- **Bracketing a call.** `t4 join` installs the hook on `PreToolUse`, `PostToolUse` and
+- **Bracketing a call.** `mur join` installs the hook on `PreToolUse`, `PostToolUse` and
   `PostToolUseFailure` as well as `UserPromptSubmit`, with matcher `*` on the three tool events, and
   run again adds what an older join lacks. A repo set up by an `init` from before #55 had the hook
-  in its committed `.claude/settings.json`; `t4 init` removes it there, and the user's `t4 join`
+  in its committed `.claude/settings.json`; `mur init` removes it there, and the user's `mur join`
   installs it in `.claude/settings.local.json`. On `PreToolUse` the daemon snapshots the worktree
   of the hook's working directory (`attrib.Head`: HEAD, branch and every ref tip). On the call's end it
   snapshots again and credits `attrib.NewCommits` between the two to the sessions the hook speaks
@@ -376,10 +381,10 @@ which session made a commit, so the daemon watches tool calls for them.
   It waits at most 5 s for the daemon, which limits its own snapshot to 4 s; one that misses
   credits nothing for that call.
 - **Where it is kept.** Each session's credited commits (SHA, branch, subject and when the call
-  ended; the latest 100) are in `.git/t4/state.json` and nowhere else, for as long as its inbox is
-  kept after it stops (24 hours) and across daemon restarts. Presence carries only the names of the
-  branches it committed to, most recent first, at most 5. A commit made on a detached HEAD is kept
-  and `lookup` lists it as that, but it adds no branch to the list.
+  ended; the latest 100) are in `.git/murmur/state.json` and nowhere else, for as long as its inbox
+  is kept after it stops (24 hours) and across daemon restarts. Presence carries only the names of
+  the branches it committed to, most recent first, at most 5. A commit made on a detached HEAD is
+  kept and `lookup` lists it as that, but it adds no branch to the list.
 - **Last active.** The time of the session's last request to the daemon: any hook event (notices,
   or either end of a call) or any MCP call, `who` included. It is held in memory and goes out with
   the next presence write, a change or the 2-minute heartbeat, and never causes one, so another
@@ -447,7 +452,7 @@ follows the client's own ID: a resume keeps the name, and `/clear` or a fork get
 2026-10-28 on Claude Code 2.1.310 and 2.1.312, T3 Code 0.1.2 and Codex CLI 0.164.0; the
 evidence is in #19.
 
-| Client | The ID | Kept across | New on | Where t4 can read it |
+| Client | The ID | Kept across | New on | Where Murmur can read it |
 |---|---|---|---|---|
 | Claude Code | session ID | compaction, every kind of resume, a killed process resumed | `/clear`, `--fork-session`, `/branch`, switching with `/resume` | A hook's `session_id` on stdin, always current |
 | T3 Code | thread ID | everything, for good | a fork, which is a new thread | Nowhere, as shipped |
@@ -463,7 +468,7 @@ evidence is in #19.
   its parent PID and the hook's request carries `CLAUDE_PID`. On a hook request the sessions
   whose PID is the hook's are the hook's, and each of them not yet on the hook's Claude ID moves
   to it. The key follows the ID, so the session takes the name that key has had, or a new name
-  taken as any is (#20); it keeps its t4 ID, its inbox and its place on the bus, and nothing is
+  taken as any is (#20); it keeps its Murmur ID, its inbox and its place on the bus, and nothing is
   written there. Presence carries the new name, and the daemon's log says each switch in names
   only, since Claude IDs are never published. Two servers in one Claude Code process both move,
   and still don't share a name. A PID moves only the sessions that registered with it, so a hook
@@ -478,13 +483,13 @@ evidence is in #19.
     A daemon that restarts between
     a switch and the server's next call to it can still bring the stale ID back, until the next
     hook corrects it.
-  - *The parent PID.* `t4 join` registers `<absolute path of t4> mcp` with Claude Code (see Joining
-    a repo), so Claude Code starts it itself and the server's parent is the Claude Code process,
-    unless `t4` is a shell or batch shim, or the user wraps it. Seen 2026-10-29 on Windows, with a plain
-    Python server rather than t4: its parent was the `claude.exe` that `CLAUDE_PID` named, and a
+  - *The parent PID.* `mur join` registers `<absolute path of mur> mcp` with Claude Code (see
+    Joining a repo), so Claude Code starts it itself and the server's parent is the Claude Code process,
+    unless `mur` is a shell or batch shim, or the user wraps it. Seen 2026-10-29 on Windows, with a plain
+    Python server rather than Murmur: its parent was the `claude.exe` that `CLAUDE_PID` named, and a
     `cmd.exe` stood between them only where the user's own config said `cmd /c`. A wrapper means
     no PID match, so that session falls back to its Claude ID and doesn't follow.
-  - *When it happens.* `t4 join` installs the hook for `PreToolUse`, `PostToolUse`,
+  - *When it happens.* `mur join` installs the hook for `PreToolUse`, `PostToolUse`,
     `PostToolUseFailure` and `UserPromptSubmit`, not `SessionStart`, so a session moves at the
     first tool call or prompt after the switch, not at the switch. Until then it shows its old name, and what is sent to that reaches it.
   - *Subagents.* A subagent's hooks carry its parent session's `session_id` and `CLAUDE_PID`,
@@ -493,7 +498,7 @@ evidence is in #19.
 - **Under T3 the session is the thread, not the provider's session under it.** The Claude
   session ID under one thread changes when the user switches Claude accounts, and has gone
   A → B → A. T3 gives MCP servers and hooks no way to learn the thread ID. Tyler decided on
-  2026-10-28 not to change T3's source, so t4 looks up the provider's session in T3's database
+  2026-10-28 not to change T3's source, so Murmur looks up the provider's session in T3's database
   (#56, 2026-10-29): "Delivering a message as a turn", below.
 - **Codex's MCP servers get a bare environment,** about 20 Windows core variables and no
   `CODEX_*` or `T3CODE_CLI_PATH` (unless the Codex config forwards it), so the server learns its
@@ -510,14 +515,14 @@ name is the address: `send` takes it, `who` shows it, and notices and `inbox` na
 `device/session` still works. It is what a message carries on the bus, so the event format didn't
 change and a daemon that knows no names delivers by it all the same.
 
-- **Taking a name.** A daemon picks a random name nobody has, commits it on `refs/t4/names` (one
-  commit per assignment: the name, the device, t4's session ID), and pushes with the lease on the
-  registry tip it last read. The name is the session's only if that push lands. If another device
-  got in first the push is refused; the daemon fetches, reads what it missed, and picks again. It
-  stops after 5 refusals in a row and backs off, up to 5 minutes.
+- **Taking a name.** A daemon picks a random name nobody has, commits it on `refs/murmur/names` (one
+  commit per assignment: the name, the device, Murmur's session ID), and pushes with the lease on
+  the registry tip it last read. The name is the session's only if that push lands. If another
+  device got in first the push is refused; the daemon fetches, reads what it missed, and picks
+  again. It stops after 5 refusals in a row and backs off, up to 5 minutes.
 - **A name follows the client's session ID.** The key is the full `ClaudeSession` the MCP server
   gives when it has one (Claude Code's `CLAUDE_CODE_SESSION_ID`), else the Codex thread ID (see
-  below), else the ID t4 gave the session.
+  below), else the ID Murmur gave the session.
   The same key keeps its name across the MCP server restarting, the daemon restarting and a
   resume; different keys never share one. A daemon keeps the key-to-name map in its own state
   file, so the client's ID is never published. A resume of the same client session on another
@@ -531,9 +536,9 @@ change and a daemon that knows no names delivers by it all the same.
   `Native`; the key is then `codex:<threadId>`, after `t3:` and `claude:` in the order of
   preference. Codex keeps the thread ID across resume and compaction and gives a new one on `/new`,
   `/clear` and a fork, which is the life a name should have. So a Codex CLI session whose MCP
-  server restarts is a new t4 session with a new name until its first tool call, and then takes the
-  thread's old name back, as a T3 thread does. A session that already has a name when it learns its
-  thread keeps it for the thread, if the thread has had none. Inside T3 the `t3:` key still wins
+  server restarts is a new Murmur session with a new name until its first tool call, and then takes
+  the thread's old name back, as a T3 thread does. A session that already has a name when it learns
+  its thread keeps it for the thread, if the thread has had none. Inside T3 the `t3:` key still wins
   once the T3 thread is known.
 - **Never reused, whatever happens to the registry.** A daemon keeps every name it has ever seen,
   in the registry's whole history or in any device's presence, and the set never shrinks, so a
@@ -556,19 +561,19 @@ change and a daemon that knows no names delivers by it all the same.
   a device if no session has that name.
 - **A name a session has left.** A session that followed Claude Code to another conversation
   (#9) isn't called its old name any more, but the registry still has that name down for it, as
-  its address is its t4 ID, which doesn't change. A send to the old name reaches the session,
+  its address is its Murmur ID, which doesn't change. A send to the old name reaches the session,
   and says so: the name was its before it moved, and it is called something else now. The
   alternative was an error saying the conversation ended; that would drop messages to a session
   that is alive and could read them, and the sender could do nothing with the error but look up
   the new name that the note gives it (2026-10-29).
 - **A name held by another session (#37, #46).** A `/resume` back to an earlier conversation can put
-  its name on a session whose t4 ID isn't the one the registry has the name down for, and the first
-  session is then retired. A daemon records in its state file the last session to hold each name and
-  the last name each of its sessions held. Mail for a name goes only to a session whose last name is
-  still that name, but for the registry's own session (below). A message for a session of this
-  device that isn't running goes to the session that holds the name it last had, if that one is
-  registered or stopped within `StoppedInbox` and the name is still the last it took: whether it is
-  sent by name or by `device/session`. It is one hop. A holder that has moved to another
+  its name on a session whose Murmur ID isn't the one the registry has the name down for, and the
+  first session is then retired. A daemon records in its state file the last session to hold each
+  name and the last name each of its sessions held. Mail for a name goes only to a session whose
+  last name is still that name, but for the registry's own session (below). A message for a session
+  of this device that isn't running goes to the session that holds the name it last had, if that one
+  is registered or stopped within `StoppedInbox` and the name is still the last it took: whether it
+  is sent by name or by `device/session`. It is one hop. A holder that has moved to another
   conversation since, running or not, gets nothing for the name it left; the message stays in the
   stopped session's kept inbox (2026-10-29). Read from a backlog after a restart, a forwarded
   message is the holder's if it is new enough for either session, so what the stopped session's kept
@@ -601,31 +606,31 @@ the body) that a hook added after one of the agent's own tool calls, and the age
 with `inbox`. That cannot wake an idle agent, and it leaves a teammate's question unanswered until
 the agent happens to call a tool. Tyler's decision (2026-10-29, #57), which replaces notice-only
 delivery: **a message from another agent reaches the receiving session as a turn of its own**, the
-way a message between two T3 threads does. t4's core is two agents talking with nobody typing.
+way a message between two T3 threads does. Murmur's core is two agents talking with nobody typing.
 
 The daemon delivers at once, when a message arrives for a session it can reach:
 
 | Where the session runs | Delivered by | Starts a turn in an idle session |
 |---|---|---|
 | T3 Code, Claude Code or Codex | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
-| Claude Code outside T3 | the session's messaging socket | Unverified: a message t4's code wrote to a session's socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle one has not been tried |
+| Claude Code outside T3 | the session's messaging socket | Unverified: a message Murmur's code wrote to a session's socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle one has not been tried |
 | Codex outside T3, or any delivery that fails | the hook's notice and `inbox`, as before | No |
 
 What the agent reads:
 
 ```
-Message from quiet-otter (Claude Code, on smash's machine) via t4:
+Message from quiet-otter (Claude Code, on smash's machine) via Murmur:
 
 <the subject, then the body>
 
-Reply with t4's `send` to quiet-otter if a reply is needed.
+Reply with Murmur's `send` to quiet-otter if a reply is needed.
 ```
 
-The first and last lines are t4's: the first says that a teammate's agent is speaking, not the
+The first and last lines are Murmur's: the first says that a teammate's agent is speaking, not the
 user (the job the old "envelope" did, so that the agent treats a message as information rather
 than as the user's own typing), and the last says how to answer and that answering is optional.
 The sender's text in between is delivered as written, neither quoted nor wrapped: teammates'
-agents are trusted in t4's model, and a message that reads as a request is meant to be acted on.
+agents are trusted in Murmur's model, and a message that reads as a request is meant to be acted on.
 A body past the limit is cut, as in `inbox`.
 
 - **Marked read.** A delivered message leaves the receiving session's inbox, so neither the hook
@@ -645,15 +650,15 @@ A body past the limit is cut, as in `inbox`.
   lookup only reads: SQLite's read-only mode (never immutable, which would ignore the write-ahead
   log and miss the newest threads), at most 1.5 s on a lock and 4 s in all, and any trouble leaves
   the session with the keys it had before. The reader is `modernc.org/sqlite`, SQLite translated
-  to Go, so `t4` stays one binary built without a C compiler for every platform. The cost is
+  to Go, so `mur` stays one binary built without a C compiler for every platform. The cost is
   size: with everything else in this change, `t4.exe` for Windows grew from 17.7 MB to 23.8 MB
   (12.3 MB to 16.2 MB built with `-s -w`) against `main` on 2026-10-29, almost all of it SQLite.
   `ncruces/go-sqlite3`, SQLite as WebAssembly, added more (10.5 MB on a probe).
 - **The session is its thread.** A session in T3 is named after its thread, not after the
   provider's session under it, so its name stays through account switches, `/clear` and restarts
   (see "Under T3", above). The daemon keeps the thread, the CLI's path and T3's data directory
-  per session in `.git/t4/state.json`, so a message for a session whose MCP server T3 has stopped
-  (after 30 minutes idle, for Claude Code) still finds its thread. The thread, the messaging
+  per session in `.git/murmur/state.json`, so a message for a session whose MCP server T3 has
+  stopped (after 30 minutes idle, for Claude Code) still finds its thread. The thread, the messaging
   token and the socket's address stay on the device: never on the bus, the page or the log. When
   T3 restarts a thread's MCP server, or the connection is made again, the new session has the
   thread and the old one, in its grace or stopped, loses its route: a message for everyone is
@@ -674,8 +679,8 @@ A body past the limit is cut, as in `inbox`.
 - **Codex under T3** gets the thread from `_meta.threadId`, which every tool call carries (all five
   tools note it, `lookup` too), but its MCP servers start with a bare environment, `T3CODE_CLI_PATH`
   not among its variables, so Codex's config must forward it: `env_vars = ["T3CODE_CLI_PATH"]` under
-  `[mcp_servers.t4]` (worked with Codex 0.164.0 under T3 0.1.2, 2026-10-29). `t4 join` writes it,
-  and adds the name to a list the user already has there without touching their other entries; a
+  `[mcp_servers.murmur]` (worked with Codex 0.164.0 under T3 0.1.2, 2026-10-29). `mur join` writes
+  it, and adds the name to a list the user already has there without touching their other entries; a
   list over several lines, or of anything but names, it leaves alone and says what to add by hand.
   Without it the server doesn't know it is in T3, and a Codex session gets notices only. Codex
   reads a project's `.codex/config.toml` only once the project is trusted.
@@ -684,16 +689,16 @@ A body past the limit is cut, as in `inbox`.
   `CLAUDE_CODE_MESSAGING_TOKEN` in every child process, and the MCP server passes both to its
   daemon with its hello. The protocol, as seen on 2.1.312 on 2026-10-29: JSON lines, an auth line
   `{"type":"auth","token":...}`, then `{"type":"user","message":{"role":"user","content":...}}`.
-  The socket answers nothing, so t4 knows a message was written, not that the session took it.
+  The socket answers nothing, so Murmur knows a message was written, not that the session took it.
   The token dies with the session's process, so the socket is used only while the session's MCP
   server is connected. A session inside T3 is never written to this way: the socket there is T3's.
   Claude Code wraps what arrives on the socket in a note of its own that says the message came
-  from another Claude session, not the user (seen 2026-10-29), which suits t4's framing.
-- **A thread that is idle (#87).** T3 stops an idle thread's provider process, and with it t4's MCP
-  server, after about 30 minutes (seen live on 2026-10-30: both threads' sessions stopped at 03:30,
-  half an hour after their last turn), so the session of a thread that is idle is the normal case,
-  and the thread most worth waking. Its route is kept in `state.json` (`T3Routes`) for as long as
-  its inbox is, 24 hours from the stop, and the daemon stays up for as long as it holds one: a
+  from another Claude session, not the user (seen 2026-10-29), which suits Murmur's framing.
+- **A thread that is idle (#87).** T3 stops an idle thread's provider process, and with it Murmur's
+  MCP server, after about 30 minutes (seen live on 2026-10-30: both threads' sessions stopped at
+  03:30, half an hour after their last turn), so the session of a thread that is idle is the normal
+  case, and the thread most worth waking. Its route is kept in `state.json` (`T3Routes`) for as long
+  as its inbox is, 24 hours from the stop, and the daemon stays up for as long as it holds one: a
   daemon that exited 10 minutes after the last session, as it did first, left a message to such a
   thread waiting for the next time anyone used the clone, by when it was past the 15 minutes a
   message may wake a session and arrived as a notice. A route counts only if the page's wake
@@ -701,7 +706,7 @@ A body past the limit is cut, as in `inbox`.
   daemon looks at the remote every 30 s (see "Speed"): about 2,900 `ls-remote` calls in a day of
   waiting, and a sleeping thread wakes up to 30 s later than a working one would. It still pushes its presence every 2 minutes (about 720 pushes a day), which tells others
   the device is there. Claude Code outside T3 has nothing like it: its messaging socket dies with
-  the session. `t4 join --leave` and `t4 stop` end the daemon at once.
+  the session. `mur join --leave` and `mur stop` end the daemon at once.
 - **When a message isn't delivered.** A failed delivery is left to the hook's notice, and the log
   says why, once per session. It is not tried again, except when it plainly never started (no `t3`
   command to run, no socket to connect to), which is tried once more after a pause (2 s). Any other
@@ -729,7 +734,7 @@ A body past the limit is cut, as in `inbox`.
   The page's wake setting (#22) set to "never", for the device or for one session, keeps
   the notice too; otherwise delivery is at once. A daemon that starts looks at the messages its
   inboxes kept, and delivers those that are still young enough.
-- **No loop guard.** Nothing in t4 limits how often two agents answer each other (Tyler's
+- **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
   decision, 2026-10-29). A message to a busy thread is queued as its next turn, not injected into
   the one running, and the AGENTS.md wording asks for coordination, not chatting; beyond that
   only the agents stop a loop.
@@ -762,9 +767,9 @@ A body past the limit is cut, as in `inbox`.
 ## Risks and how the design meets them
 
 - **Agents replying forever.** T3's local messaging stays calm because a reply is plain text in
-  the receiver's own thread; nothing goes back unless the agent deliberately sends again. t4 keeps
-  that: no automatic replies, incoming messages queued rather than steering a running turn, and
-  AGENTS.md wording that asks for coordination, not chatting. No limits or caps on top of that,
+  the receiver's own thread; nothing goes back unless the agent deliberately sends again. Murmur
+  keeps that: no automatic replies, incoming messages queued rather than steering a running turn,
+  and AGENTS.md wording that asks for coordination, not chatting. No limits or caps on top of that,
   now that a message starts a turn without anyone typing (Tyler's decision, 2026-10-29): two
   agents that keep answering each other are stopped by nothing but the agents.
 - **Prompt injection.** Anyone with push access can now put text in front of your agent. That
@@ -796,12 +801,12 @@ what makes Claude Code and Codex sessions first-class.
 A survey on 2026-10-26 found a dozen tools in this space, nearly all from the last few months.
 None uses git as the transport: each needs a hub, a relay or a peer-to-peer network that someone
 runs or that hackathon Wi-Fi can block. That, and setup amounting to "have push access", is
-t4's difference.
+Murmur's difference.
 
 - **openhuddle**: a hub server plus Claude Code hooks; claims (automatic, on edit), presence,
   messages. The closest feature match. Days old, one author, many concepts.
 - **crosstalk** (epode-studio): encrypted rooms through a Cloudflare relay, eight clients. The best
-  message delivery and safety design, the source of the notice-only delivery t4 used until 2026-10-29.
+  message delivery and safety design, the source of the notice-only delivery Murmur used until 2026-10-29.
   Appears macOS-only.
 - **walkie**: peer-to-peer chat between agents (Hyperswarm), the most used (≈253 stars). Messages
   only; no relay, so it can fail behind client isolation.
@@ -810,7 +815,7 @@ t4's difference.
 
 ## Built in Go
 
-One static binary per platform, `t4`, holds the daemon, MCP server, hook and the few commands a
+One static binary per platform, `mur`, holds the daemon, MCP server, hook and the few commands a
 person runs. A teammate installs one file and no runtime. Go cross-compiles for macOS, Linux and Windows from any one
 machine with no C toolchain, where Rust would need Apple's SDK and linker to build for macOS
 from elsewhere. Tyler chose between the two on 2026-10-26. The MCP server uses the official Go
@@ -831,11 +836,11 @@ a git library, so it gets each user's credential helpers, SSH config and URL rew
 ## Open questions
 
 - The name.
-- Should the page's messages outlast a daemon restart? `t4 ui` often starts a fresh daemon, which
+- Should the page's messages outlast a daemon restart? `mur ui` often starts a fresh daemon, which
   has read nothing yet, and the page opens empty. Recent bus commits could be read at start; no code
   does that yet.
 - A worktree made after joining has the tools (the consent is per clone) but no hook, until
-  `t4 join` runs there again. Nothing prompts that, since the agent in it already has the tools.
+  `mur join` runs there again. Nothing prompts that, since the agent in it already has the tools.
   Should the server or the daemon install the hook there?
 - Does Claude Code's messaging socket start a turn in an idle session? Its protocol is known
   and a message written to it arrived in a working session (2026-10-29); an idle one hasn't been

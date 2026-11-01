@@ -12,14 +12,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/names"
-	"github.com/a-Fig/t4/internal/proto"
-	"github.com/a-Fig/t4/internal/view"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/names"
+	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/view"
 )
 
-// Tests of session names (#20): a name is taken by compare-and-swap on refs/t4/names, follows the
-// client's session ID, and is the session's address.
+// Tests of session names (#20): a name is taken by compare-and-swap on refs/murmur/names, follows
+// the client's session ID, and is the session's address.
 
 // seededNames is a reproducible stream of random bytes: devices given streams with the same seed
 // pick the same names in the same order.
@@ -136,7 +136,7 @@ func inboxWant(d *device, sess string, n int) []string {
 	return got
 }
 
-// registry is refs/t4/names on the remote as read from outside t4.
+// registry is refs/murmur/names on the remote as read from outside Murmur.
 type registry struct {
 	tip      string
 	isCommit bool
@@ -150,12 +150,12 @@ func readRegistry(t *testing.T, remote string) registry {
 	work := t.TempDir()
 	git(t, work, "init", "-q")
 	var r registry
-	out := git(t, work, "ls-remote", remote, "refs/t4/names")
+	out := git(t, work, "ls-remote", remote, "refs/murmur/names")
 	if out == "" {
 		return r
 	}
 	// The tip is what was fetched, not what ls-remote showed: a daemon may write in between.
-	git(t, work, "fetch", "-q", remote, "refs/t4/names")
+	git(t, work, "fetch", "-q", remote, "refs/murmur/names")
 	r.tip = git(t, work, "rev-parse", "FETCH_HEAD")
 	if git(t, work, "cat-file", "-t", r.tip) != "commit" {
 		return r
@@ -208,7 +208,7 @@ func busText(t *testing.T, remote, dev string) string {
 	t.Helper()
 	work := t.TempDir()
 	git(t, work, "init", "-q")
-	git(t, work, "fetch", "-q", remote, "refs/t4/mesh/"+dev)
+	git(t, work, "fetch", "-q", remote, "refs/murmur/mesh/"+dev)
 	return git(t, work, "log", "--format=%B", "FETCH_HEAD")
 }
 
@@ -295,7 +295,7 @@ func TestDifferentKeysGetDifferentNames(t *testing.T) {
 	}
 }
 
-// The same key keeps its name: across its MCP server restarting, across the ID t4 gives it
+// The same key keeps its name: across its MCP server restarting, across the ID Murmur gives it
 // changing, and across the daemon restarting, which needs no registry to remember it. Nothing of
 // the client's own session ID goes on the bus.
 func TestSameKeyKeepsItsName(t *testing.T) {
@@ -389,12 +389,12 @@ func TestDamagedRegistryFreesNoName(t *testing.T) {
 	damage := map[string]func(t *testing.T, remote string){
 		"junk over it": func(t *testing.T, remote string) {
 			work, tree := junkTree(t)
-			git(t, work, "push", "-q", "--force", remote, tree+":refs/t4/names")
+			git(t, work, "push", "-q", "--force", remote, tree+":refs/murmur/names")
 		},
 		"deleted": func(t *testing.T, remote string) {
 			git(t, t.TempDir(), "init", "-q") // a scratch repo to push from
 			work, _ := junkTree(t)
-			git(t, work, "push", "-q", remote, ":refs/t4/names")
+			git(t, work, "push", "-q", remote, ":refs/murmur/names")
 		},
 		"rewritten": func(t *testing.T, remote string) {
 			rec := bus.NameRecord{V: bus.Version, Name: nthName(t, 99, 1), Device: "evil-0001", Session: "x", At: time.Now().UTC()}
@@ -404,7 +404,7 @@ func TestDamagedRegistryFreesNoName(t *testing.T) {
 			}
 			work, tree := junkTree(t)
 			sha := gitIn(t, work, msg, "commit-tree", tree)
-			git(t, work, "push", "-q", "--force", remote, sha+":refs/t4/names")
+			git(t, work, "push", "-q", "--force", remote, sha+":refs/murmur/names")
 		},
 	}
 	for _, kind := range []string{"junk over it", "deleted", "rewritten"} {
@@ -449,7 +449,7 @@ func TestDamagedRegistryFreesNoName(t *testing.T) {
 func TestFirstNameOverJunkRegistry(t *testing.T) {
 	remote := newRemote(t)
 	work, tree := junkTree(t)
-	git(t, work, "push", "-q", remote, tree+":refs/t4/names")
+	git(t, work, "push", "-q", remote, tree+":refs/murmur/names")
 	a := newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "claude-alice")
 	name := a.named(alice)
@@ -459,11 +459,11 @@ func TestFirstNameOverJunkRegistry(t *testing.T) {
 }
 
 // A ref under the registry's name keeps the registry off the remote, as one under a device's name
-// does its presence. Nothing t4 writes is there, so daemons delete it.
+// does its presence. Nothing Murmur writes is there, so daemons delete it.
 func TestRefUnderTheRegistryIsDeleted(t *testing.T) {
 	remote := newRemote(t)
 	work, tree := junkTree(t)
-	git(t, work, "push", "-q", remote, tree+":refs/t4/names/x")
+	git(t, work, "push", "-q", remote, tree+":refs/murmur/names/x")
 	a := newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "claude-alice")
 	name := a.named(alice)
@@ -475,7 +475,7 @@ func TestNamesInPresenceAreUsed(t *testing.T) {
 	remote := newRemote(t)
 	taken := nthName(t, 5, 1)
 	at := time.Now().UTC().Format(time.RFC3339Nano)
-	pushMessage(t, remote, "refs/t4/presence/peer-0001", "peer-0001: 1 sessions\n\n"+
+	pushMessage(t, remote, "refs/murmur/presence/peer-0001", "peer-0001: 1 sessions\n\n"+
 		`{"v":1,"device":"peer-0001","host":"peer","at":"`+at+`","sessions":[`+
 		`{"id":"x","name":"`+taken+`","agent":"test","started":"`+at+`"}]}`+"\n")
 	a := newNamedDevice(t, remote, seededNames(5), time.Minute) // would pick `taken` first
@@ -545,7 +545,7 @@ func TestSendByName(t *testing.T) {
 	if n := notices[0]; n.From != alice || n.FromName != an || n.To != bob || n.Subject != "by name" {
 		t.Fatalf("notice: %+v", n)
 	}
-	if text := view.Notices(notices); !strings.Contains(text, "[t4] "+an+" ("+alice+", test)") {
+	if text := view.Notices(notices); !strings.Contains(text, "[Murmur] "+an+" ("+alice+", test)") {
 		t.Fatalf("notice text: %q", text)
 	}
 	inbox := b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"})
@@ -630,7 +630,7 @@ func TestV1PeerWithoutNamesStillWorks(t *testing.T) {
 	an := a.named(alice)
 
 	at := time.Now().UTC().Format(time.RFC3339Nano)
-	pushMessage(t, remote, "refs/t4/presence/old-0001", "old-0001: 1 sessions\n\n"+
+	pushMessage(t, remote, "refs/murmur/presence/old-0001", "old-0001: 1 sessions\n\n"+
 		`{"v":1,"device":"old-0001","host":"old","at":"`+at+`","sessions":[`+
 		`{"id":"x","agent":"claude-code","started":"`+at+`"}]}`+"\n")
 	eventually(t, "the old device's session", func() bool { return a.seesSession("old-0001/x") })
@@ -653,7 +653,7 @@ func TestV1PeerWithoutNamesStillWorks(t *testing.T) {
 		t.Fatalf("send to the old device: %+v", r)
 	}
 
-	pushEvent(t, remote, "refs/t4/mesh/old-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
+	pushEvent(t, remote, "refs/murmur/mesh/old-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
 		From: "old-0001/x", At: time.Now().UTC(), To: alice, Subject: "hello new"})
 	var msgs []proto.MessageView
 	eventually(t, "the old session's message", func() bool {
@@ -663,7 +663,7 @@ func TestV1PeerWithoutNamesStillWorks(t *testing.T) {
 	if m := msgs[0]; m.From != "old-0001/x" || m.FromName != "" || m.FromAgent != "claude-code" {
 		t.Fatalf("notice: %+v", m)
 	}
-	if text := view.Notices(msgs); !strings.Contains(text, `[t4] old-0001/x (claude-code): "hello new"`) {
+	if text := view.Notices(msgs); !strings.Contains(text, `[Murmur] old-0001/x (claude-code): "hello new"`) {
 		t.Fatalf("notice text: %q", text)
 	}
 	_ = an
