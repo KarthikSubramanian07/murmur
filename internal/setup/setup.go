@@ -163,7 +163,7 @@ func markedUpstream(top string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	marked := false
-	if g, err := gitIn(ctx, top); err == nil {
+	if g, _, err := gitIn(ctx, top); err == nil {
 		if remote, err := bus.RemoteFor(ctx, g); err == nil {
 			marked = markedAt(ctx, g, "refs/remotes/"+remote+"/HEAD")
 		}
@@ -194,19 +194,22 @@ func markedAt(ctx context.Context, g gitx.Git, rev string) bool {
 	return false
 }
 
-// gitIn is git for the checkout at top: its own git directory, which for a linked worktree is the
-// one under the clone's worktrees/, so that what git reads for it (a user.name set for this
-// worktree alone, an includeIf on its path) is what git would read in that checkout. It is found
-// without running git when it can be.
-func gitIn(ctx context.Context, top string) (gitx.Git, error) {
-	if dir, _, ok := gitx.Discover(top); ok {
-		return gitx.Git{Dir: dir}, nil
+// gitIn is git for the checkout at top, two ways. clone runs in the clone's common git dir, as the
+// daemon does (one per clone), so the remote is chosen exactly as the daemon chooses it, whatever
+// a worktree's own config says. own runs in the checkout's own git directory, which for a linked
+// worktree is the one under the clone's worktrees/, so that what git reads for the commit (a
+// user.name set for this worktree alone, an includeIf on its path) is what git would read in that
+// checkout. Both are found without running git when they can be.
+func gitIn(ctx context.Context, top string) (clone, own gitx.Git, err error) {
+	if dir, common, ok := gitx.Discover(top); ok {
+		return gitx.Git{Dir: common}, gitx.Git{Dir: dir}, nil
 	}
-	out, err := gitx.RunIn(ctx, top, "rev-parse", "--absolute-git-dir")
-	if err != nil {
-		return gitx.Git{}, fmt.Errorf("not inside a git repository (%s)", top)
+	out, err := gitx.RunIn(ctx, top, "rev-parse", "--path-format=absolute", "--git-common-dir", "--absolute-git-dir")
+	lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(out, "\r", "")), "\n")
+	if err != nil || len(lines) != 2 {
+		return gitx.Git{}, gitx.Git{}, fmt.Errorf("not inside a git repository (%s)", top)
 	}
-	return gitx.Git{Dir: filepath.Clean(strings.TrimSpace(out))}, nil
+	return gitx.Git{Dir: filepath.Clean(lines[0])}, gitx.Git{Dir: filepath.Clean(lines[1])}, nil
 }
 
 // section is what both files get. It is short on purpose, since it sits in files every agent reads

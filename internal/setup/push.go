@@ -55,7 +55,7 @@ func Push(ctx context.Context, dir string) (Pushed, error) {
 	if err != nil {
 		return p, err
 	}
-	g, err := gitIn(ctx, top)
+	g, own, err := gitIn(ctx, top)
 	if err != nil {
 		return p, err
 	}
@@ -75,7 +75,7 @@ func Push(ctx context.Context, dir string) (Pushed, error) {
 			return p, err
 		}
 		var sha string
-		sha, p.Changed, paths, err = buildCommit(ctx, g, tip)
+		sha, p.Changed, paths, err = buildCommit(ctx, g, own, tip)
 		if err != nil {
 			return p, err
 		}
@@ -165,7 +165,10 @@ func setRemoteHead(ctx context.Context, g gitx.Git, remote, tracking string) {
 // buildCommit applies init's steps to the files of the commit tip and returns a commit of the
 // result with tip as its parent, what it changes, and the paths it changes; sha is "" when nothing
 // would change. It writes objects and nothing else: no ref, no index but a temporary one.
-func buildCommit(ctx context.Context, g gitx.Git, tip string) (sha string, changed, paths []string, err error) {
+//
+// The commit is made in own, the checkout's own git dir, so it is by whoever git says the user is
+// there; everything else is in g, the clone's.
+func buildCommit(ctx context.Context, g, own gitx.Git, tip string) (sha string, changed, paths []string, err error) {
 	t := &treeFiles{ctx: ctx, g: g, tip: tip, files: map[string]*treeFile{}}
 	for _, s := range steps {
 		real, b, exists, err := t.read(s.name)
@@ -226,7 +229,7 @@ func buildCommit(ctx context.Context, g gitx.Git, tip string) (sha string, chang
 	if err != nil {
 		return "", nil, nil, err
 	}
-	out, err := g.Run(ctx, commitMessage(changed), "commit-tree", strings.TrimSpace(tree), "-p", tip, "-F", "-")
+	out, err := own.Run(ctx, commitMessage(changed), "commit-tree", strings.TrimSpace(tree), "-p", tip, "-F", "-")
 	if err != nil {
 		if strings.Contains(err.Error(), "identity") || strings.Contains(err.Error(), "who you are") {
 			return "", nil, nil, fmt.Errorf("git doesn't know who you are, so it can't make init's commit; set user.name and user.email: %w", err)

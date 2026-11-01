@@ -65,7 +65,8 @@ It is safe to run twice: it only does what is missing. If it prints a "Problems"
 your user what it says; running `mur join` again retries.
 
 If it says the repo doesn't say it uses Murmur, the section may be on the default branch but not yet
-in this clone: run `git fetch` and `mur join` again. Never run `mur init` to get past this; that is
+in this clone. Fetch from the remote Murmur uses (the one `git config murmur.remote` names, else
+origin), with `git fetch <that remote>`, and run `mur join` again. Never run `mur init` to get past this; that is
 for a user who asked to set Murmur up in a repo:
 https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md
 

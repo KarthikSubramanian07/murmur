@@ -339,7 +339,7 @@ func TestMarkedFollowsLinksInTheCommit(t *testing.T) {
 	g(t, seed, "commit", "-q", "-m", "links")
 	g(t, seed, "push", "-q", "origin", "main")
 	g(t, clone, "fetch", "-q")
-	gi, err := gitIn(context.Background(), clone)
+	gi, _, err := gitIn(context.Background(), clone)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,5 +366,22 @@ func TestPushCommitsAsTheWorktreesUser(t *testing.T) {
 	push(t, wt)
 	if got := g(t, remote, "log", "-1", "--format=%an <%ae>", "main"); got != "Worktree Person <wt@example.com>" {
 		t.Errorf("the commit's author is %s", got)
+	}
+}
+
+// The remote is the clone's, as the daemon (one per clone) chooses it: a murmur.remote set for one
+// worktree alone doesn't send init's commit elsewhere.
+func TestPushUsesTheClonesRemoteNotAWorktreesOwn(t *testing.T) {
+	remote, _, clone := remoteWithClone(t)
+	other := filepath.Join(filepath.Dir(clone), "other.git")
+	g(t, clone, "init", "-q", "--bare", "--initial-branch=main", other)
+	g(t, clone, "remote", "add", "other", other)
+	wt := filepath.Join(filepath.Dir(clone), "wt")
+	g(t, clone, "worktree", "add", "-q", "-b", "wt", wt)
+	g(t, clone, "config", "extensions.worktreeConfig", "true")
+	g(t, wt, "config", "--worktree", "murmur.remote", "other")
+	p := push(t, wt)
+	if p.Remote != "origin" || g(t, remote, "rev-parse", "main") != p.SHA {
+		t.Errorf("pushed %+v", p)
 	}
 }
