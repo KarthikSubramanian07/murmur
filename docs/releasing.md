@@ -43,6 +43,17 @@ those don't say:
   `install.sh`'s PATH edit doesn't reach it; anything that must find mur from there uses the
   absolute path the installer prints.
 
+## Building from source
+
+With Go 1.26 or later:
+
+```sh
+git clone https://github.com/a-Fig/murmur && cd murmur
+go build -o ~/bin/mur ./cmd/mur      # anywhere on PATH; mur.exe on Windows
+```
+
+Such a build says `0.1.0-dev` in `mur version`; see "The version" above.
+
 ## While the repo is private
 
 Until `a-Fig/murmur` is public (#54), even the script can't be fetched without a login. On

@@ -2,8 +2,10 @@
 
 Status: V1 works, in Go (2026-10-26); the next version, with names, a web page and wake-ups, is
 being built; the web page, an agent joining a repo by itself, and delivery of a message as a turn of
-the receiving session are in (2026-10-29). The product is Murmur, and its command `mur` (Tyler,
-2026-11-01); until then the repo and the tool were called t4 (`docs/names.md`).
+the receiving session are in (2026-10-29). On 2026-10-30 a Claude thread and a Codex thread in T3
+Code, in two clones, each joined after their user said yes and then talked with nobody typing: 15 s
+from question to answer. The product is Murmur, and its command `mur` (Tyler, 2026-11-01); until
+then the repo and the tool were called t4 (`docs/names.md`).
 
 ## The problem
 
