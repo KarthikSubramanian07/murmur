@@ -38,7 +38,9 @@ export default {
 };
 
 // A browser's Accept never names text/markdown, so markdown is served only when it is named and
-// ranked at least as high as text/html (ties go to markdown: whoever named it wants it).
+// ranked at least as high as text/html (ties go to markdown: whoever named it wants it). HTML's
+// rank is its own entry's, else text/*'s, else */*'s, as HTTP resolves it: a client that sends
+// `text/markdown;q=0.1, text/*` prefers HTML.
 function prefersMarkdown(accept) {
   if (!accept) return false;
   const q = {};
@@ -48,7 +50,8 @@ function prefersMarkdown(accept) {
     q[type.trim()] = qp ? parseFloat(qp.slice(2)) || 0 : 1;
   }
   const md = q['text/markdown'] ?? 0;
-  return md > 0 && md >= (q['text/html'] ?? 0);
+  const html = q['text/html'] ?? q['text/*'] ?? q['*/*'] ?? 0;
+  return md > 0 && md >= html;
 }
 
 // The page from the cache if it was fetched from GitHub in the last FRESH_SECONDS; else from GitHub;
