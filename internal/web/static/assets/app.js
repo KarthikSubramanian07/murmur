@@ -27,6 +27,8 @@ const ui = {
   filter: null, // a session name
   messageMode: localStorage.getItem(MODE_KEY) === "conversations" ? "conversations" : "recent",
   conversation: null, // the open conversation's key
+  conversationAnchor: null, // a message in it
+  chatListTop: 0,
   muting: new Set(),
 };
 
@@ -542,12 +544,19 @@ function conversationOf(m) {
 // put them back in order.
 function conversations() {
   const byKey = new Map();
+  const times = new Map();
+  const now = Date.now();
+  let prev = 0;
   for (const m of visibleMessages()) {
+    // A clock can be wrong. One with no time goes where it arrived, and one in the future can't
+    // hold a conversation at the top of the list or stay below the replies to it.
+    prev = Math.min(when(m.at) || prev, now);
+    times.set(m, prev);
     const c = conversationOf(m);
     if (!byKey.has(c.key)) byKey.set(c.key, { ...c, messages: [] });
     byKey.get(c.key).messages.push(m);
   }
-  const time = (m) => when(m.at) || 0;
+  const time = (m) => times.get(m);
   const list = [...byKey.values()];
   for (const c of list) c.messages.sort((a, b) => time(a) - time(b));
   const latest = (c) => time(c.messages[c.messages.length - 1]);
@@ -573,10 +582,14 @@ function conversationsPage() {
   const list = conversations();
   // On a wide page a conversation is always open, and stays open while others get newer. On a
   // narrow one the list and a conversation take turns, so the list is where it starts.
-  if (!list.some((c) => c.key === ui.conversation)) {
-    ui.conversation = list.length && !NARROW.matches ? list[0].key : null;
+  // A name landing changes a conversation's key, so one that has gone is looked for by a message
+  // it held before settling for the newest.
+  if (ui.conversation && !list.some((c) => c.key === ui.conversation)) {
+    ui.conversation = list.find((c) => c.messages.some((m) => m.id === ui.conversationAnchor))?.key || null;
   }
+  if (!ui.conversation && list.length && !NARROW.matches) ui.conversation = list[0].key;
   const open = list.find((c) => c.key === ui.conversation);
+  ui.conversationAnchor = open?.messages[0].id;
   return h(
     "div",
     { class: "page chat-page" },
@@ -625,7 +638,7 @@ function conversationPane(c) {
   const senders = new Set(c.messages.map(fromName));
   const about = [
     c.kind === "all" && "Every session",
-    c.kind === "device" && "Every session on this device",
+    c.kind === "device" && "Every session on " + c.title,
     plural(c.messages.length, "message"),
     c.kind !== "dm" && plural(senders.size, "sender"),
   ]
@@ -723,8 +736,8 @@ function chatMessage(m, from, at, head) {
 function chatScroll() {
   const list = root.querySelector(".chat-list");
   const thread = root.querySelector(".chat-thread");
+  if (list?.clientHeight) ui.chatListTop = list.scrollTop; // hidden, it reads 0: a narrow page's open conversation
   return {
-    list: list ? list.scrollTop : 0,
     key: thread?.dataset.conversation,
     top: thread ? thread.scrollTop : 0,
     atEnd: !thread || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 48,
@@ -734,7 +747,7 @@ function chatScroll() {
 function restoreChatScroll(was) {
   const list = root.querySelector(".chat-list");
   const thread = root.querySelector(".chat-thread");
-  if (list) list.scrollTop = was.list;
+  if (list) list.scrollTop = ui.chatListTop;
   if (thread) thread.scrollTop = thread.dataset.conversation === was.key && !was.atEnd ? was.top : thread.scrollHeight;
 }
 
@@ -1102,6 +1115,7 @@ let last = "";
 let timer;
 let inflight = false;
 let polled = false;
+let scrolledAt = 0;
 
 async function poll() {
   if (inflight) return;
@@ -1118,12 +1132,13 @@ async function poll() {
     ui.conn = "down";
   }
   inflight = false;
-  // Rebuild only when something changed, and leave a minutes field being typed in alone, and text
-  // being selected, which a rebuild would drop.
-  const sig = JSON.stringify([ui.state, ui.messages.length, ui.conn]);
+  // Rebuild only when something changed, and leave alone a minutes field being typed in, text being
+  // selected, and a pane being scrolled: a rebuild would drop the selection or stop the scroll.
+  const sig = JSON.stringify([ui.state, ui.cursor, ui.conn]);
   const typing = document.activeElement?.tagName === "INPUT";
   const selecting = document.getSelection()?.isCollapsed === false;
-  if (sig !== last && !typing && !selecting) {
+  const scrolling = Date.now() - scrolledAt < 1000;
+  if (sig !== last && !typing && !selecting && !scrolling) {
     last = sig;
     render();
   }
@@ -1160,5 +1175,7 @@ window.addEventListener("hashchange", () => {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && ui.token && ui.conn !== "denied") poll();
 });
+document.addEventListener("scroll", () => (scrolledAt = Date.now()), { capture: true, passive: true });
+NARROW.addEventListener("change", render);
 setInterval(tick, 10000);
 start();
