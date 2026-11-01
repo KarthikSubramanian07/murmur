@@ -21,11 +21,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/gitx"
-	"github.com/a-Fig/t4/internal/proc"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/proc"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // Options configure a daemon. Zero values take the defaults in docs/VISION.md.
@@ -77,10 +77,10 @@ type Options struct {
 	// TitleEvery is how often the titles of the sessions' conversations are read from their
 	// clients' state, and the least time between two reads of one: 5 s (#66).
 	TitleEvery time.Duration
-	// Consent says whether the user has joined t4 in this clone (nil: always). A daemon exists only
-	// for a user who did: it won't start without it, refuses requests once it is gone, and stops
-	// within ConsentPoll of it going, so a leave that races a daemon still starting ends that daemon
-	// too.
+	// Consent says whether the user has joined Murmur in this clone (nil: always). A daemon exists
+	// only for a user who did: it won't start without it, refuses requests once it is gone, and
+	// stops within ConsentPoll of it going, so a leave that races a daemon still starting ends that
+	// daemon too.
 	Consent     func() bool
 	ConsentPoll time.Duration // how often to look; 1 s
 	Log         *log.Logger
@@ -146,8 +146,8 @@ func (o *Options) defaults() {
 // ErrRunning means another daemon already holds this clone's lock.
 var ErrRunning = errors.New("a daemon is already running for this clone")
 
-// ErrNoConsent means the user hasn't joined t4 in this clone, or has left since.
-var ErrNoConsent = errors.New("this clone hasn't joined t4")
+// ErrNoConsent means the user hasn't joined Murmur in this clone, or has left since.
+var ErrNoConsent = errors.New("this clone hasn't joined " + brand.Product)
 
 // push publishes to the bus, if the user still has this clone joined. The checks at start and on
 // each request leave a window for a leave to land in, and the loops that publish on their own (the
@@ -789,7 +789,7 @@ func (d *Daemon) loadState() error {
 	if d.st.T3Routes == nil {
 		d.st.T3Routes = map[string]t3Route{}
 	}
-	// V1's daemons also put notes about claims in inboxes, as from t4 itself, which no address
+	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.
 	for sess, box := range d.st.Inbox {
 		if box = slices.DeleteFunc(box, func(m *inMsg) bool { return m.Event.From == brand.Name }); len(box) == 0 {

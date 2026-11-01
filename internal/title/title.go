@@ -2,11 +2,11 @@
 // that runs it, for `who` to show next to the session's name when the agent hasn't set a status.
 //
 // Each client keeps its titles in its own files, which belong to it, are versioned by it, and are
-// open for writing in it while t4 reads them (seen 2026-10-30: T3 0.1.x, Codex 0.164.0, Claude Code
-// 2.1.312). So every reader only reads, waits no longer than a moment, and says what went wrong as
-// an error, which the caller shrugs off: a missing file, table or column, a lock, and a file
-// written in a shape this code hasn't met are all errors, never a crash. A reader that finds the
-// conversation but no title returns "" and no error: it has none, or the user cleared it.
+// open for writing in it while Murmur reads them (seen 2026-10-30: T3 0.1.x, Codex 0.164.0, Claude
+// Code 2.1.312). So every reader only reads, waits no longer than a moment, and says what went
+// wrong as an error, which the caller shrugs off: a missing file, table or column, a lock, and a
+// file written in a shape this code hasn't met are all errors, never a crash. A reader that finds
+// the conversation but no title returns "" and no error: it has none, or the user cleared it.
 //
 // Where a title lives, and what is not it:
 //
@@ -36,9 +36,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/scrub"
-	"github.com/a-Fig/t4/internal/t3db"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/scrub"
+	"github.com/a-Fig/murmur/internal/t3db"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )

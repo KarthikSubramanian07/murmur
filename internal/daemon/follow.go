@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/a-Fig/t4/internal/bus"
+	"github.com/a-Fig/murmur/internal/bus"
 )
 
 // Following Claude Code's session ID (#9), and finding the holder of a name (#37).
@@ -13,8 +13,8 @@ import (
 // A Claude Code session's ID changes under it on /clear, /branch and a switch with /resume, and an
 // MCP server's copy never does, so the daemon learns the live ID from the hook, which always has
 // it, and pairs the hook with its sessions by process: the hook's CLAUDE_PID is the MCP server's
-// parent. A session that follows keeps its t4 ID and its inbox; its key, and so its name, change.
-// docs/VISION.md ("When a session stays the same session") has the reasons.
+// parent. A session that follows keeps its Murmur ID and its inbox; its key, and so its name,
+// change. docs/VISION.md ("When a session stays the same session") has the reasons.
 
 // uniqueKeyLocked is key, unless another live session has it, or has the name it would bring: two
 // live sessions of one client session (two MCP servers in it) would share a name, and a name is an

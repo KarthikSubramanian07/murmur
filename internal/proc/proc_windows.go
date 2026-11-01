@@ -53,17 +53,17 @@ var powershellPath = filepath.Join(os.Getenv("SystemRoot"), "System32", "Windows
 // it does for a process that has already exited.
 var findProcess = os.FindProcess
 
-// wmiStartScript asks WMI to create the process named by T4_WMI_COMMAND, in the directory named by
-// T4_WMI_DIR, with the environment named by T4_WMI_ENV, and prints its PID. WMI creates it outside
-// the caller's job object (the research for #19 found it survives a job that forbids breakaway).
-// ShowWindow 0 keeps any console hidden. EnvironmentVariables replaces the environment rather than
-// adding to it, so the whole caller environment is passed.
+// wmiStartScript asks WMI to create the process named by MURMUR_WMI_COMMAND, in the directory named
+// by MURMUR_WMI_DIR, with the environment named by MURMUR_WMI_ENV, and prints its PID. WMI creates
+// it outside the caller's job object (the research for #19 found it survives a job that forbids
+// breakaway). ShowWindow 0 keeps any console hidden. EnvironmentVariables replaces the environment
+// rather than adding to it, so the whole caller environment is passed.
 const wmiStartScript = `$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$environment = [string[]]@($env:T4_WMI_ENV -split ',' | Where-Object { $_ } | ForEach-Object { [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_)) })
+$environment = [string[]]@($env:MURMUR_WMI_ENV -split ',' | Where-Object { $_ } | ForEach-Object { [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_)) })
 $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0; EnvironmentVariables = $environment }
-$createArgs = @{ CommandLine = $env:T4_WMI_COMMAND; ProcessStartupInformation = $startup }
-if ($env:T4_WMI_DIR) { $createArgs.CurrentDirectory = $env:T4_WMI_DIR }
+$createArgs = @{ CommandLine = $env:MURMUR_WMI_COMMAND; ProcessStartupInformation = $startup }
+if ($env:MURMUR_WMI_DIR) { $createArgs.CurrentDirectory = $env:MURMUR_WMI_DIR }
 $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments $createArgs
 if ($r.ReturnValue -ne 0) { throw ('Win32_Process.Create returned ' + $r.ReturnValue) }
 [Console]::Out.Write($r.ProcessId)`
@@ -168,8 +168,8 @@ func createThroughWMI(cmdline, dir string, env []string) (int, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, powershellPath, "-NoProfile", "-NonInteractive",
 		"-EncodedCommand", encodePowerShell(wmiStartScript))
-	cmd.Env = append(os.Environ(), "T4_WMI_COMMAND="+cmdline, "T4_WMI_DIR="+dir,
-		"T4_WMI_ENV="+encodeEnv(env))
+	cmd.Env = append(os.Environ(), "MURMUR_WMI_COMMAND="+cmdline, "MURMUR_WMI_DIR="+dir,
+		"MURMUR_WMI_ENV="+encodeEnv(env))
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 	out, err := cmd.Output()
 	if err != nil {
@@ -194,7 +194,7 @@ func parseWMIPID(out string) (int, error) {
 	return pid, nil
 }
 
-// encodeEnv packs environment entries for T4_WMI_ENV: each entry base64-encoded, so an entry's
+// encodeEnv packs environment entries for MURMUR_WMI_ENV: each entry base64-encoded, so an entry's
 // quotes, spaces and non-ASCII letters survive, and the entries separated by commas, which base64
 // never contains.
 func encodeEnv(env []string) string {

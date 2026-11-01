@@ -5,11 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/bus"
+	"github.com/a-Fig/murmur/internal/bus"
 )
 
 // The registry is writable by anyone with push access, so what a reader takes from it is held to
-// what t4 writes: names names.Generate could make, addresses in their own alphabets, this version.
+// what Murmur writes: names names.Generate could make, addresses in their own alphabets, this
+// version.
 func TestNameRecordClaims(t *testing.T) {
 	at := time.Now().UTC()
 	cases := []struct {

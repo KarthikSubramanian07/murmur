@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/client"
-	"github.com/a-Fig/t4/internal/hook"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/hook"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // fakeDaemon serves the daemon's protocol for the clone at gitDir: answer gives the response line

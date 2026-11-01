@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/attrib"
+	"github.com/a-Fig/murmur/internal/attrib"
 )
 
 // backdate makes a commit whose committer date is when, so that rule 3 treats it as made before

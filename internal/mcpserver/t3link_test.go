@@ -9,7 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/a-Fig/t4/internal/client"
+	"github.com/a-Fig/murmur/internal/client"
 )
 
 // More tests of how the server finds its T3 thread (#57), across the server's turning on and off.
@@ -90,9 +90,9 @@ func TestLinkMadeOnReactivationStillFindsItsThread(t *testing.T) {
 	}
 }
 
-// A daemon that refuses the route is one that has no such request, left running by an older t4. The
-// session works, and messages for it come as notices: the server says so, once, and not at every
-// attempt.
+// A daemon that refuses the route is one that has no such request, left running by an older mur.
+// The session works, and messages for it come as notices: the server says so, once, and not at
+// every attempt.
 func TestARefusedRouteIsLoggedOnce(t *testing.T) {
 	fastSeek(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "claude-session-1")

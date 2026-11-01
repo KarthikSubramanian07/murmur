@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/t3"
+	"github.com/a-Fig/murmur/internal/t3"
 )
 
 // The fixture is a state database like T3's, as far as the lookup goes: the table, its columns,
@@ -324,10 +324,10 @@ func titleFixture(t *testing.T, stmts ...string) string {
 
 func TestTitleOfReadsTheThreadsTitle(t *testing.T) {
 	home := titleFixture(t,
-		`INSERT INTO orchestration_v2_projection_threads VALUES ('thread-a', 'Offer Help to T4 Session', '{"title":"Offer Help to T4 Session"}')`,
+		`INSERT INTO orchestration_v2_projection_threads VALUES ('thread-a', 'Offer Help to Murmur Session', '{"title":"Offer Help to Murmur Session"}')`,
 		`INSERT INTO orchestration_v2_projection_threads VALUES ('thread-untitled', NULL, '{}')`)
 	ctx := context.Background()
-	if got, err := TitleOf(ctx, "", home, "thread-a"); err != nil || got != "Offer Help to T4 Session" {
+	if got, err := TitleOf(ctx, "", home, "thread-a"); err != nil || got != "Offer Help to Murmur Session" {
 		t.Errorf("got %q, %v", got, err)
 	}
 	if got, err := TitleOf(ctx, "", home, "thread-untitled"); err != nil || got != "" {

@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/a-Fig/t4/internal/join"
-	"github.com/a-Fig/t4/internal/setup"
+	"github.com/a-Fig/murmur/internal/join"
+	"github.com/a-Fig/murmur/internal/setup"
 )
 
-// `t4 ui` starts the clone's daemon, prints the page's address with the token in its fragment, and
+// `mur ui` starts the clone's daemon, prints the page's address with the token in its fragment, and
 // hands the same address to the browser; --no-open leaves the browser alone.
 func TestUIPrintsAndOpensThePage(t *testing.T) {
 	_, clone := cloneOf(t, t.TempDir())
@@ -79,7 +79,7 @@ func TestUIPrintsAndOpensThePage(t *testing.T) {
 }
 
 // The page is the daemon's, and a daemon runs only for a user who joined in the clone: without that,
-// `t4 ui` says so and starts nothing.
+// `mur ui` says so and starts nothing.
 func TestUIWithoutJoiningStartsNoDaemon(t *testing.T) {
 	_, clone := cloneOf(t, t.TempDir())
 	t.Cleanup(func() { stopDaemon(clone) })
@@ -88,7 +88,7 @@ func TestUIWithoutJoiningStartsNoDaemon(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "hasn't joined") {
 		t.Fatalf("got %v, want an error saying the clone hasn't joined", err)
 	}
-	if opened || exists(filepath.Join(clone, ".git", "t4")) {
+	if opened || exists(filepath.Join(clone, ".git", "murmur")) {
 		t.Error("a daemon was started, or a browser opened, for a clone that hasn't joined")
 	}
 }

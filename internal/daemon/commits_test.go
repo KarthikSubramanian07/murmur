@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/hook"
-	"github.com/a-Fig/t4/internal/names"
-	"github.com/a-Fig/t4/internal/proto"
-	"github.com/a-Fig/t4/internal/view"
-	"github.com/a-Fig/t4/internal/web"
+	"github.com/a-Fig/murmur/internal/hook"
+	"github.com/a-Fig/murmur/internal/names"
+	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/view"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // Tests of the commits a session is credited with, of when it was last active, and of lookup
@@ -98,12 +98,12 @@ func commitSHAs(det *proto.SessionDetail) []string {
 	return out
 }
 
-// allBus is the text of every commit under refs/t4/ on the remote: all that the bus carries.
+// allBus is the text of every commit under refs/murmur/ on the remote: all that the bus carries.
 func allBus(t *testing.T, remote string) string {
 	t.Helper()
 	work := t.TempDir()
 	git(t, work, "init", "-q")
-	git(t, work, "fetch", "-q", remote, "+refs/t4/*:refs/t4/*")
+	git(t, work, "fetch", "-q", remote, "+refs/murmur/*:refs/murmur/*")
 	return git(t, work, "log", "--format=%B", "--all")
 }
 
@@ -123,7 +123,7 @@ func noneOnBus(t *testing.T, remote string, texts ...string) {
 
 func presenceTip(t *testing.T, d *device, remote string) string {
 	t.Helper()
-	return strings.Fields(git(t, d.tree(), "ls-remote", remote, "refs/t4/presence/"+d.self()))[0]
+	return strings.Fields(git(t, d.tree(), "ls-remote", remote, "refs/murmur/presence/"+d.self()))[0]
 }
 
 // A tool call that commits is credited to the session, with the branch, in lookup on its own
@@ -511,7 +511,7 @@ func TestHookBracketsToolCalls(t *testing.T) {
 }
 
 // With no daemon running, PreToolUse prints nothing and returns promptly: a tool is never held up
-// by t4 being down, and nothing makes the hook exit with an error (2 would block the tool).
+// by Murmur being down, and nothing makes the hook exit with an error (2 would block the tool).
 func TestPreToolUseWithTheDaemonDownIsSilent(t *testing.T) {
 	slowHook(t)
 	remote := newRemote(t)

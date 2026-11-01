@@ -10,9 +10,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/gitx"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/gitx"
 )
 
 // IsCommit answers only for what it can tell: a commit, or not one (a tree, an object that isn't

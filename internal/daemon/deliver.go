@@ -8,12 +8,12 @@ import (
 	"sort"
 	"time"
 
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/msgsock"
-	"github.com/a-Fig/t4/internal/proto"
-	"github.com/a-Fig/t4/internal/t3"
-	"github.com/a-Fig/t4/internal/view"
-	"github.com/a-Fig/t4/internal/web"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/msgsock"
+	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3"
+	"github.com/a-Fig/murmur/internal/view"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // Delivering a message as a turn (#57). A message that arrives for a session is put into the

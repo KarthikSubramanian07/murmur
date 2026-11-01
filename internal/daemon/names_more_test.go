@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/names"
-	"github.com/a-Fig/t4/internal/proto"
-	"github.com/a-Fig/t4/internal/view"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/names"
+	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/view"
 )
 
 // More tests of session names (#20), written to probe what names_test.go leaves open: names a
@@ -99,7 +99,7 @@ func registryCommits(t *testing.T, remote string) (work string, shas []string) {
 	t.Helper()
 	work = t.TempDir()
 	git(t, work, "init", "-q")
-	git(t, work, "fetch", "-q", remote, "refs/t4/names")
+	git(t, work, "fetch", "-q", remote, "refs/murmur/names")
 	return work, strings.Fields(git(t, work, "rev-list", "--reverse", "FETCH_HEAD"))
 }
 
@@ -109,10 +109,10 @@ func tipIsSnapshot(t *testing.T, remote string, want ...string) bool {
 	t.Helper()
 	work := t.TempDir()
 	git(t, work, "init", "-q")
-	if git(t, work, "ls-remote", remote, "refs/t4/names") == "" {
+	if git(t, work, "ls-remote", remote, "refs/murmur/names") == "" {
 		return false
 	}
-	git(t, work, "fetch", "-q", remote, "refs/t4/names")
+	git(t, work, "fetch", "-q", remote, "refs/murmur/names")
 	if git(t, work, "cat-file", "-t", "FETCH_HEAD") != "commit" {
 		return false
 	}
@@ -324,7 +324,7 @@ func TestRewoundRegistryFreesNoName(t *testing.T) {
 	if len(shas) != 3 {
 		t.Fatalf("the registry has %d commits, want 3", len(shas))
 	}
-	git(t, work, "push", "-q", "--force", remote, shas[0]+":refs/t4/names")
+	git(t, work, "push", "-q", "--force", remote, shas[0]+":refs/murmur/names")
 
 	eventually(t, "a root snapshot of every name", func() bool { return tipIsSnapshot(t, remote, taken...) })
 	b := newDeviceWith(t, remote, func(d *device) { d.names = seededNames(31) })
@@ -350,7 +350,7 @@ func TestRepairSurvivesACommitBeforeIt(t *testing.T) {
 
 	a.pushOffline(remote, true)
 	work, shas := registryCommits(t, remote)
-	git(t, work, "push", "-q", "--force", remote, shas[0]+":refs/t4/names")
+	git(t, work, "push", "-q", "--force", remote, shas[0]+":refs/murmur/names")
 	eventually(t, "a to see that the registry lost a name", func() bool {
 		st, ok := a.namesState()
 		return ok && st.Repair && st.Tip == shas[0]
@@ -363,7 +363,7 @@ func TestRepairSurvivesACommitBeforeIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pushMessage(t, remote, "refs/t4/names", msg)
+	pushMessage(t, remote, "refs/murmur/names", msg)
 	_, after := registryCommits(t, remote)
 	eventually(t, "a to read the new commit", func() bool {
 		st, ok := a.namesState()
@@ -379,20 +379,20 @@ func TestRepairSurvivesACommitBeforeIt(t *testing.T) {
 	}
 }
 
-// What isn't a t4 registry at the tip, a blob or an unrelated commit, frees no name, including one
-// seen only in another device's presence: the next write is a root commit holding every name, and a
-// daemon that joins once that presence is gone learns them from it.
+// What isn't a Murmur registry at the tip, a blob or an unrelated commit, frees no name, including
+// one seen only in another device's presence: the next write is a root commit holding every name,
+// and a daemon that joins once that presence is gone learns them from it.
 func TestGarbageRegistryTip(t *testing.T) {
 	garbage := map[string]func(t *testing.T, remote string){
 		"blob": func(t *testing.T, remote string) {
 			work, _ := junkTree(t)
 			blob := gitIn(t, work, "not a registry\n", "hash-object", "-w", "--stdin")
-			git(t, work, "push", "-q", "--force", remote, blob+":refs/t4/names")
+			git(t, work, "push", "-q", "--force", remote, blob+":refs/murmur/names")
 		},
 		"unrelated commit": func(t *testing.T, remote string) {
 			work, tree := junkTree(t)
 			sha := gitIn(t, work, "names: none\n\n{not json\n", "commit-tree", tree)
-			git(t, work, "push", "-q", "--force", remote, sha+":refs/t4/names")
+			git(t, work, "push", "-q", "--force", remote, sha+":refs/murmur/names")
 		},
 	}
 	for _, kind := range []string{"blob", "unrelated commit"} {
@@ -400,7 +400,7 @@ func TestGarbageRegistryTip(t *testing.T) {
 			remote := newRemote(t)
 			p := draws(t, 52, 1)[0]
 			at := time.Now().UTC().Format(time.RFC3339Nano)
-			pushMessage(t, remote, "refs/t4/presence/peer-0001", "peer-0001: 1 sessions\n\n"+
+			pushMessage(t, remote, "refs/murmur/presence/peer-0001", "peer-0001: 1 sessions\n\n"+
 				`{"v":1,"device":"peer-0001","host":"peer","at":"`+at+`","sessions":[`+
 				`{"id":"x","name":"`+p.name+`","agent":"test","started":"`+at+`"}]}`+"\n")
 			a := newDeviceWith(t, remote, func(d *device) { d.names, d.stale = seededNames(51), time.Minute })
@@ -412,7 +412,7 @@ func TestGarbageRegistryTip(t *testing.T) {
 			eventually(t, "a root snapshot of every name", func() bool { return tipIsSnapshot(t, remote, n1, p.name) })
 
 			work, _ := junkTree(t)
-			git(t, work, "push", "-q", remote, ":refs/t4/presence/peer-0001")
+			git(t, work, "push", "-q", remote, ":refs/murmur/presence/peer-0001")
 			eventually(t, "the peer gone from a", func() bool { return !a.seesSession("peer-0001/x") })
 			b := newDeviceWith(t, remote, func(d *device) {
 				d.names = offering(seededNames(51), p) // would pick the peer's, then a's
@@ -440,12 +440,12 @@ func TestNameOnlyInPresenceIsUsed(t *testing.T) {
 	eventually(t, "b's presence with the name", func() bool {
 		work := t.TempDir()
 		git(t, work, "init", "-q")
-		git(t, work, "fetch", "-q", remote, "refs/t4/presence/"+b.self())
+		git(t, work, "fetch", "-q", remote, "refs/murmur/presence/"+b.self())
 		return strings.Contains(git(t, work, "log", "-1", "--format=%B", "FETCH_HEAD"), pick.name)
 	})
 	b.pushOffline(remote, true)
 	work, tree := junkTree(t)
-	git(t, work, "push", "-q", "--force", remote, tree+":refs/t4/names")
+	git(t, work, "push", "-q", "--force", remote, tree+":refs/murmur/names")
 
 	a := newDeviceWith(t, remote, func(d *device) {
 		d.names, d.stale = offering(seededNames(62), pick, pick, pick), time.Minute
@@ -588,8 +588,8 @@ func sorted(s []string) []string {
 }
 
 // The client's own session ID goes nowhere on the bus: not in the registry, presence, any event
-// or any object a fetch of refs/t4/* brings, whatever the session does, including a second server
-// in the same client session, a stop and return, a daemon restart and a registry repair.
+// or any object a fetch of refs/murmur/* brings, whatever the session does, including a second
+// server in the same client session, a stop and return, a daemon restart and a registry repair.
 func TestClientSessionIDIsNeverOnTheBus(t *testing.T) {
 	const secret = "zq-secret-claude-session-0000-1111"
 	remote := newRemote(t)
@@ -614,13 +614,13 @@ func TestClientSessionIDIsNeverOnTheBus(t *testing.T) {
 	a.restart()
 	a.session("aaaaaa", secret)
 	work, tree := junkTree(t)
-	git(t, work, "push", "-q", "--force", remote, tree+":refs/t4/names")
+	git(t, work, "push", "-q", "--force", remote, tree+":refs/murmur/names")
 	eventually(t, "the registry repaired", func() bool { return tipIsSnapshot(t, remote, an, bn) })
 	eventually(t, "alice back on b", func() bool { return b.nameOf(alice) == an })
 
 	dump := t.TempDir()
 	git(t, dump, "init", "-q")
-	git(t, dump, "fetch", "-q", remote, "+refs/t4/*:refs/t4/*")
+	git(t, dump, "fetch", "-q", remote, "+refs/murmur/*:refs/murmur/*")
 	everything := git(t, dump, "cat-file", "--batch-all-objects", "--batch") + git(t, dump, "for-each-ref")
 	for _, bad := range []string{secret, "secret-claude", "claude:"} {
 		if strings.Contains(everything, bad) {

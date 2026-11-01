@@ -12,8 +12,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/a-Fig/t4/internal/join/jointest"
-	"github.com/a-Fig/t4/internal/setup"
+	"github.com/a-Fig/murmur/internal/join/jointest"
+	"github.com/a-Fig/murmur/internal/setup"
 )
 
 var (
@@ -43,7 +43,7 @@ func exeName(name string) string {
 func fakeClaude(t *testing.T) string {
 	t.Helper()
 	binOnce.Do(func() {
-		binDir, binError = os.MkdirTemp("", "t4-join-bin")
+		binDir, binError = os.MkdirTemp("", "mur-join-bin")
 		if binError == nil {
 			jointest.CopySelf(t, filepath.Join(binDir, exeName("claude")))
 		}
@@ -67,7 +67,7 @@ func newSandbox(t *testing.T, withClaude bool) *sandbox {
 	root := t.TempDir()
 	sb := &sandbox{root: root, log: filepath.Join(root, "claude.log")}
 	sb.Env = Env{
-		Exe:        filepath.Join(root, "bin", exeName("t4")),
+		Exe:        filepath.Join(root, "bin", exeName("mur")),
 		ClaudeDir:  filepath.Join(root, "claude"),
 		ClaudeJSON: filepath.Join(root, "claude", ".claude.json"),
 		CodexHome:  filepath.Join(root, "codex"),
@@ -130,16 +130,16 @@ func TestRegisterClaudeAddsTheServerOnce(t *testing.T) {
 		t.Fatalf("first: did=%q fresh=%v err=%v", did, fresh, err)
 	}
 	cfg := read(t, sb.ClaudeJSON)
-	for _, want := range []string{`"numStartups": 7`, `"other"`, `"theme": "dark"`, `"t4"`, filepath.ToSlash(sb.Exe), `"mcp"`} {
+	for _, want := range []string{`"numStartups": 7`, `"other"`, `"theme": "dark"`, `"murmur"`, filepath.ToSlash(sb.Exe), `"mcp"`} {
 		if !strings.Contains(strings.ReplaceAll(cfg, `\\`, "/"), want) {
 			t.Errorf(".claude.json lacks %s:\n%s", want, cfg)
 		}
 	}
-	if strings.Index(cfg, `"numStartups"`) > strings.Index(cfg, `"mcpServers"`) || strings.Index(cfg, `"other"`) > strings.Index(cfg, `"t4"`) {
+	if strings.Index(cfg, `"numStartups"`) > strings.Index(cfg, `"mcpServers"`) || strings.Index(cfg, `"other"`) > strings.Index(cfg, `"murmur"`) {
 		t.Errorf("the user's keys moved:\n%s", cfg)
 	}
 	settings := read(t, filepath.Join(sb.ClaudeDir, "settings.json"))
-	if want := "{\n    \"model\": \"x\",\n    \"permissions\": {\n        \"allow\": [\n            \"Bash(ls)\",\n            \"mcp__t4\"\n        ],\n        \"deny\": []\n    },\n    \"theme\": \"dark\"\n}\n"; settings != want {
+	if want := "{\n    \"model\": \"x\",\n    \"permissions\": {\n        \"allow\": [\n            \"Bash(ls)\",\n            \"mcp__murmur\"\n        ],\n        \"deny\": []\n    },\n    \"theme\": \"dark\"\n}\n"; settings != want {
 		t.Errorf("settings.json:\n%s\nwant:\n%s", settings, want)
 	}
 
@@ -158,12 +158,12 @@ func TestRegisterClaudeAddsTheServerOnce(t *testing.T) {
 // and not added twice.
 func TestRegisterClaudeReplacesAStaleServer(t *testing.T) {
 	sb := newSandbox(t, true)
-	write(t, sb.ClaudeJSON, `{"mcpServers": {"t4": {"type": "stdio", "command": "/old/t4", "args": ["mcp"], "env": {}}}}`)
+	write(t, sb.ClaudeJSON, `{"mcpServers": {"murmur": {"type": "stdio", "command": "/old/mur", "args": ["mcp"], "env": {}}}}`)
 	if _, fresh, err := sb.registerClaude(context.Background()); err != nil || !fresh {
 		t.Fatalf("fresh=%v err=%v", fresh, err)
 	}
 	cfg := strings.ReplaceAll(read(t, sb.ClaudeJSON), `\\`, "/")
-	if strings.Contains(cfg, "/old/t4") || !strings.Contains(cfg, filepath.ToSlash(sb.Exe)) || strings.Count(cfg, `"t4"`) != 1 {
+	if strings.Contains(cfg, "/old/mur") || !strings.Contains(cfg, filepath.ToSlash(sb.Exe)) || strings.Count(cfg, `"murmur"`) != 1 {
 		t.Errorf(".claude.json:\n%s", cfg)
 	}
 }
@@ -177,7 +177,7 @@ func TestRegisterClaudeWithoutTheCommand(t *testing.T) {
 		t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
 	}
 	cfg := read(t, sb.ClaudeJSON)
-	if !strings.Contains(cfg, `"keep": true`) || !strings.Contains(cfg, `"t4"`) || !strings.Contains(cfg, `"type": "stdio"`) {
+	if !strings.Contains(cfg, `"keep": true`) || !strings.Contains(cfg, `"murmur"`) || !strings.Contains(cfg, `"type": "stdio"`) {
 		t.Errorf(".claude.json:\n%s", cfg)
 	}
 	if _, fresh, _ := sb.registerClaude(context.Background()); fresh {
@@ -220,7 +220,7 @@ func TestRegisterCodexKeepsTheConfig(t *testing.T) {
 		t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
 	}
 	got := read(t, path)
-	if !strings.HasPrefix(got, before) || !strings.Contains(got, "[mcp_servers.t4]") {
+	if !strings.HasPrefix(got, before) || !strings.Contains(got, "[mcp_servers.murmur]") {
 		t.Errorf("config.toml:\n%s", got)
 	}
 	if _, fresh, err := sb.registerCodex(); err != nil || fresh {
@@ -247,7 +247,7 @@ func TestRegisterCodexWritesThroughASymlink(t *testing.T) {
 	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
 		t.Errorf("the link was replaced by a file (%v)", err)
 	}
-	if got := read(t, target); !strings.HasPrefix(got, "model = ") || !strings.Contains(got, "[mcp_servers.t4]") {
+	if got := read(t, target); !strings.HasPrefix(got, "model = ") || !strings.Contains(got, "[mcp_servers.murmur]") {
 		t.Errorf("the file the link points to:\n%s", got)
 	}
 }
@@ -285,7 +285,7 @@ func clone(t *testing.T) (Place, string) {
 // Taking it out leaves the user's other settings and deletes a file that held only the hook.
 func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 	p, other := clone(t)
-	exe := filepath.Join(t.TempDir(), "a b", "bin", "t4") // a path with a space, in this OS's own form
+	exe := filepath.Join(t.TempDir(), "a b", "bin", "mur") // a path with a space, in this OS's own form
 	command, err := json.Marshal(setup.HookCommand(exe))
 	if err != nil {
 		t.Fatal(err)
@@ -320,11 +320,11 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 	}
 
 	// The binary moved: the hook names the new path and there is still one of it.
-	if _, err := installHooks(ctx, p, `/new/t4`); err != nil {
+	if _, err := installHooks(ctx, p, `/new/mur`); err != nil {
 		t.Fatal(err)
 	}
 	got := read(t, filepath.Join(p.Top, ".claude", "settings.local.json"))
-	if strings.Contains(got, "a b") || strings.Count(got, `/new/t4`) != len(setup.HookEvents) {
+	if strings.Contains(got, "a b") || strings.Count(got, `/new/mur`) != len(setup.HookEvents) {
 		t.Errorf("after the binary moved:\n%s", got)
 	}
 
@@ -341,7 +341,7 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 	}
 }
 
-// Whether t4 may run is the repo's invitation and the user's consent together, read from files.
+// Whether Murmur may run is the repo's invitation and the user's consent together, read from files.
 func TestActiveNeedsTheMarkerAndTheConsent(t *testing.T) {
 	p, _ := clone(t)
 	if !p.Marked() || p.Joined() || p.Active() {
@@ -357,7 +357,7 @@ func TestActiveNeedsTheMarkerAndTheConsent(t *testing.T) {
 		t.Error("not active after joining")
 	}
 
-	// A working tree without the marker (an older branch) is not one t4 runs in, joined or not.
+	// A working tree without the marker (an older branch) is not one Murmur runs in, joined or not.
 	os.Remove(filepath.Join(p.Top, "AGENTS.md"))
 	os.Remove(filepath.Join(p.Top, "CLAUDE.md"))
 	if p.Marked() || p.Active() || !p.Joined() {

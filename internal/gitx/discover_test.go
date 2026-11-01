@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/a-Fig/t4/internal/gitx"
+	"github.com/a-Fig/murmur/internal/gitx"
 )
 
 // A directory in one repository that is a link into another is in the other, as git sees it: git

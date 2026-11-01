@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/attrib"
+	"github.com/a-Fig/murmur/internal/attrib"
 )
 
 func hid_g(t *testing.T, dir string, args ...string) string {

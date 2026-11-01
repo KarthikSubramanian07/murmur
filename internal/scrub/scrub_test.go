@@ -52,7 +52,7 @@ func TestPasses(t *testing.T) {
 		"set STRIPE_SECRET_KEY in your .env, not here",
 		"TOKEN=<your token>",
 		"PASSWORD=${DB_PASSWORD}",
-		"see https://github.com/a-Fig/t4/pull/7",
+		"see https://github.com/a-Fig/murmur/pull/7",
 		"the sk- prefix is for keys",
 		"hf_",
 		"hf_short",

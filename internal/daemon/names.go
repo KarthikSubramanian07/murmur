@@ -7,13 +7,13 @@ import (
 	"maps"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/names"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/names"
 )
 
 // Session names (#20). A session's name is two words (quiet-otter), unique in the repo and never
-// reused. It is taken by compare-and-swap on one shared ref, refs/t4/names: each commit on it
+// reused. It is taken by compare-and-swap on one shared ref, refs/murmur/names: each commit on it
 // records one assignment, and a name is the session's only if the leased push of that commit
 // lands. docs/VISION.md has the reasons.
 //
@@ -37,8 +37,8 @@ const (
 // across /clear, restarts of its MCP server and switches of Claude account (#56); else the
 // client's own session ID when it gives one, so that a resume, or an MCP server restarting, is the
 // same session: Claude Code's, or the thread ID Codex gives every tool call (native, #36);
-// otherwise the ID t4 gave the session. The kinds are kept apart so that no ID of one can equal an
-// ID of another.
+// otherwise the ID Murmur gave the session. The kinds are kept apart so that no ID of one can equal
+// an ID of another.
 func nameKey(t3Thread, claude, native, id string) string {
 	if t3Thread != "" {
 		return "t3:" + t3Thread

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/gitx"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/gitx"
 )
 
 // ErrRejected means the remote refused a push because the ref wasn't what the push expected:
@@ -262,7 +262,7 @@ func (r *Repo) IsAncestor(ctx context.Context, a, b string) (bool, error) {
 	return false, err
 }
 
-// recordSep and fieldSep cannot appear in what t4 writes: subjects are collapsed to one line
+// recordSep and fieldSep cannot appear in what Murmur writes: subjects are collapsed to one line
 // and the JSON body escapes control characters.
 const (
 	recordSep = "\x1e"

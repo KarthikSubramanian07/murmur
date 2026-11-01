@@ -5,12 +5,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/a-Fig/t4/internal/brand"
+	"github.com/a-Fig/murmur/internal/brand"
 )
 
-// registerCodex puts t4's MCP server in Codex's config.toml, for this user in every project. fresh
-// reports whether the file changed. Codex isn't touched on a machine that has neither its command
-// nor its home directory.
+// registerCodex puts Murmur's MCP server in Codex's config.toml, for this user in every project.
+// fresh reports whether the file changed. Codex isn't touched on a machine that has neither its
+// command nor its home directory.
 func (e Env) registerCodex() (did []string, fresh bool, err error) {
 	if _, lerr := e.look("codex"); lerr != nil && !isDir(e.CodexHome) {
 		return nil, false, nil

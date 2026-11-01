@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // Tests from the review of delivering messages as turns (#57): what a restart, a hook, a thread

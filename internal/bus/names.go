@@ -4,15 +4,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/a-Fig/t4/internal/names"
+	"github.com/a-Fig/murmur/internal/names"
 )
 
-// NameRecord is one commit of the name registry, refs/t4/names. An assignment names the session
+// NameRecord is one commit of the name registry, refs/murmur/names. An assignment names the session
 // that took Name. A snapshot, which a new root carries after the registry was lost or overwritten,
 // lists every name its writer knew to be used, so that daemons joining later learn them all.
 // Both can be in one commit.
 //
-// The client's own session ID is never written here: Session is the ID t4 gave the session.
+// The client's own session ID is never written here: Session is the ID Murmur gave the session.
 type NameRecord struct {
 	V       int       `json:"v"`
 	Name    string    `json:"name,omitempty"`
@@ -34,7 +34,7 @@ func (r NameRecord) Subject() string {
 
 // Claims returns the names a record read from the registry holds, each with its session's address
 // ("" if unknown). Anyone with push access can write the registry, so a reader holds it to what
-// t4 writes: only names that names.Generate could make, and addresses in their own alphabets.
+// Murmur writes: only names that names.Generate could make, and addresses in their own alphabets.
 func (r NameRecord) Claims() map[string]string {
 	claims := map[string]string{}
 	if r.V != Version {

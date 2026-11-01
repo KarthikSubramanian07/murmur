@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/web"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // What keeps a daemon with no sessions up, and how often it looks at the remote then (#87).

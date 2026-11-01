@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // Tests of a session whose MCP server process restarts: its connection drops and the same
@@ -32,7 +32,7 @@ func busLines(d *device, addr, verb string) int {
 // meshTip is the tip of dev's log on the remote.
 func meshTip(t *testing.T, d *device, remote, dev string) string {
 	t.Helper()
-	return git(t, filepath.Dir(d.gitDir), "ls-remote", remote, "refs/t4/mesh/"+dev)
+	return git(t, filepath.Dir(d.gitDir), "ls-remote", remote, "refs/murmur/mesh/"+dev)
 }
 
 // restartedMCP is a session's MCP server process, new, registering under the session's ID again.

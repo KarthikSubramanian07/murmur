@@ -1,11 +1,9 @@
-# Pushing a tag like v0.1.0 publishes a release: t4 built for macOS, Linux and Windows (amd64 and
+# Pushing a tag like v0.1.0 publishes a release: mur built for macOS, Linux and Windows (amd64 and
 # arm64), with a SHA256SUMS file that install.sh and install.ps1 check their download against (#58).
 #
-# It runs on the same self-hosted runner as test.yml, at the same background priority and with the
-# same memory check, for the reasons in docs/testing.md. Unlike test.yml it needs no `if` to keep
-# other people's code off that runner: only a tag push starts it, only people with write access
-# can push a tag here, and a tag pushed to a fork runs in the fork. docs/releasing.md says how to
-# cut a release.
+# It runs on GitHub's own Linux runner, which cross-compiles every target (CGO_ENABLED=0). Only a
+# tag push starts it, only people with write access can push a tag here, and a tag pushed to a fork
+# runs in the fork. docs/releasing.md says how to cut a release.
 name: release
 
 on:
@@ -21,26 +19,19 @@ concurrency:
 
 jobs:
   release:
-    runs-on: [self-hosted, t4-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      GOMAXPROCS: '2'
-      GOFLAGS: -p=1
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - name: Check the tag and that the runner's machine has room
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Check the tag
         run: |
           if ! printf '%s' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
             echo "::error::The tag $GITHUB_REF_NAME is not a version like v1.2.3 or v1.2.3-pre.1, so nothing was released."
-            exit 1
-          fi
-          # macOS keeps swap allocated long after memory frees up, so swap in use says little;
-          # the kernel's free percentage says whether there is room now.
-          free=$(memory_pressure | sed -nE 's/.*free percentage: ([0-9]+)%.*/\1/p')
-          if [ -n "$free" ] && [ "$free" -lt 20 ]; then
-            echo "::error::The runner's machine is short of memory (${free}% free), so nothing was released. Re-run the job later."
             exit 1
           fi
           go version
@@ -53,16 +44,16 @@ jobs:
             arch=${target#*/}
             ext=''
             if [ "$os" = windows ]; then ext=.exe; fi
-            CGO_ENABLED=0 GOOS=$os GOARCH=$arch taskpolicy -b nice -n 20 \
-              go build -trimpath -ldflags "-X main.version=$version" -o "dist/t4-$os-$arch$ext" ./cmd/t4
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
+              go build -trimpath -ldflags "-X main.version=$version" -o "dist/mur-$os-$arch$ext" ./cmd/mur
           done
           # The runner's own binary must report the tag's version, or `-X` missed its variable.
-          out=$(dist/t4-$(go env GOHOSTOS)-$(go env GOHOSTARCH) version)
+          out=$(dist/mur-$(go env GOHOSTOS)-$(go env GOHOSTARCH) version)
           case "$out" in
             *" $version") ;;
             *) echo "::error::The built binary says \"$out\", not the version $version."; exit 1 ;;
           esac
-          (cd dist && shasum -a 256 t4-* > SHA256SUMS && cat SHA256SUMS)
+          (cd dist && sha256sum mur-* > SHA256SUMS && cat SHA256SUMS)
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,4 +1,4 @@
-module github.com/a-Fig/t4
+module github.com/a-Fig/murmur
 
 go 1.26.0
 

@@ -27,7 +27,7 @@ const (
 
 // Protocol is the version of this protocol that the daemon speaks, reported in its ping reply. A
 // client that finds a daemon with a lower number than its own stops it and starts its own, since an
-// upgraded t4 would otherwise keep talking to the daemon the old one left running, which answers
+// upgraded mur would otherwise keep talking to the daemon the old one left running, which answers
 // ping and not what came after. A daemon from before the number reports none, which reads as 0.
 // Raise it with any change to a request or a reply that an older daemon can't serve:
 //

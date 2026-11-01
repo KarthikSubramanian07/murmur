@@ -1,22 +1,22 @@
 #!/bin/sh
-# Installs t4 on macOS or Linux: downloads the latest release's binary for this machine, checks it
-# against the release's SHA256SUMS, puts it in ~/.local/bin, and adds that folder to PATH if it
-# isn't there. It never needs sudo. Windows has install.ps1.
+# Installs Murmur's command, mur, on macOS or Linux: downloads the latest release's binary for this
+# machine, checks it against the release's SHA256SUMS, puts it in ~/.local/bin, and adds that
+# folder to PATH if it isn't there. It never needs sudo. Windows has install.ps1.
 #
-#   curl -fsSL https://raw.githubusercontent.com/a-Fig/t4/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh
 #
 # Environment:
-#   T4_VERSION    install this release (v0.1.0 or 0.1.0) instead of the latest stable one
-#   GITHUB_TOKEN  download through the GitHub API, which also works for a private copy of the repo
-#   T4_REPO       fetch releases of this repo (owner/name) instead of a-Fig/t4
+#   MURMUR_VERSION  install this release (v0.1.0 or 0.1.0) instead of the latest stable one
+#   GITHUB_TOKEN    download through the GitHub API, which works while the repo is private
+#   MURMUR_REPO     fetch releases of this repo (owner/name) instead of a-Fig/murmur
 #
 # docs/releasing.md says where the binaries come from and what the checksum does and doesn't prove.
 set -eu
 
-repo=${T4_REPO:-a-Fig/t4}
+repo=${MURMUR_REPO:-a-Fig/murmur}
 
 say() { printf '%s\n' "$*"; }
-die() { printf 't4 install: %s\n' "$*" >&2; exit 1; }
+die() { printf 'mur install: %s\n' "$*" >&2; exit 1; }
 
 [ -n "${HOME:-}" ] || die 'HOME is not set, so there is nowhere to install to.'
 command -v curl >/dev/null 2>&1 || die 'curl is required and was not found.'
@@ -25,27 +25,27 @@ case $(uname -s) in
   Darwin) os=darwin ;;
   Linux) os=linux ;;
   MINGW* | MSYS* | CYGWIN*) die 'this is Windows: run install.ps1 in PowerShell instead.' ;;
-  *) die "unsupported operating system $(uname -s); t4 has binaries for macOS, Linux and Windows." ;;
+  *) die "unsupported operating system $(uname -s); Murmur has binaries for macOS, Linux and Windows." ;;
 esac
 
 case $(uname -m) in
   x86_64 | amd64) arch=amd64 ;;
   arm64 | aarch64) arch=arm64 ;;
-  *) die "unsupported architecture $(uname -m); t4 has binaries for amd64 and arm64." ;;
+  *) die "unsupported architecture $(uname -m); Murmur has binaries for amd64 and arm64." ;;
 esac
 # A shell running under Rosetta reports x86_64 on an Apple Silicon Mac; the hardware answers truthfully.
 if [ "$os" = darwin ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then
   arch=arm64
 fi
 
-asset=t4-$os-$arch
+asset=mur-$os-$arch
 dir=$HOME/.local/bin
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/t4-install.XXXXXX") || die 'could not make a temporary folder.'
-trap 'rm -rf "$tmp"; rm -f "$dir/.t4.new.$$"' EXIT INT TERM
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/mur-install.XXXXXX") || die 'could not make a temporary folder.'
+trap 'rm -rf "$tmp"; rm -f "$dir/.mur.new.$$"' EXIT INT TERM
 
 tag=
-if [ -n "${T4_VERSION:-}" ]; then
-  case $T4_VERSION in v*) tag=$T4_VERSION ;; *) tag=v$T4_VERSION ;; esac
+if [ -n "${MURMUR_VERSION:-}" ]; then
+  case $MURMUR_VERSION in v*) tag=$MURMUR_VERSION ;; *) tag=v$MURMUR_VERSION ;; esac
 fi
 
 # fetch NAME: downloads that release asset to $tmp/NAME.
@@ -59,7 +59,7 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
   if [ -n "$tag" ]; then api=$api/tags/$tag; else api=$api/latest; fi
   curl -q -fsS --retry 2 -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' \
     -o "$tmp/release.json" "$api" ||
-    die "could not read the release at $api (is the token valid, with access to $repo, and does the release exist? 'latest' skips prereleases; pin one with T4_VERSION. To download without a token, unset GITHUB_TOKEN)."
+    die "could not read the release at $api (is the token valid, with access to $repo, and does the release exist? 'latest' skips prereleases; pin one with MURMUR_VERSION. To download without a token, unset GITHUB_TOKEN)."
   fetch() {
     # Asset objects list "url" (ending /releases/assets/<id>) before "name". Splitting on commas
     # puts every field on its own line, so this works whether or not the JSON is pretty-printed.
@@ -112,9 +112,9 @@ say 'Checksum OK.'
 mkdir -p "$dir" || die "could not create $dir."
 # Copy next to the destination and rename over it: the rename is atomic, and replacing a running
 # binary by rename is safe on macOS and Linux (copying over it would fail with "text file busy").
-cp "$tmp/$asset" "$dir/.t4.new.$$" || die "could not write to $dir."
-chmod 755 "$dir/.t4.new.$$"
-mv -f "$dir/.t4.new.$$" "$dir/t4" || die "could not put t4 at $dir/t4."
+cp "$tmp/$asset" "$dir/.mur.new.$$" || die "could not write to $dir."
+chmod 755 "$dir/.mur.new.$$"
+mv -f "$dir/.mur.new.$$" "$dir/mur" || die "could not put mur at $dir/mur."
 
 # The rc file should hold the literal $HOME, not this shell's value of it, and add the folder only
 # if it's missing, since a login profile that sources .bashrc runs this twice.
@@ -139,7 +139,7 @@ case ":$PATH:" in
 $login"
         ;;
       */fish)
-        files=$HOME/.config/fish/conf.d/t4.fish
+        files=$HOME/.config/fish/conf.d/murmur.fish
         # shellcheck disable=SC2016
         line='contains $HOME/.local/bin $PATH; or set -gx PATH $HOME/.local/bin $PATH'
         ;;
@@ -151,9 +151,9 @@ $login"
 '
     set -f   # $files is split on newlines only; a glob character in HOME must not expand
     for f in $files; do
-      if [ -f "$f" ] && grep -qF '# added by the t4 installer' "$f"; then continue; fi
+      if [ -f "$f" ] && grep -qF '# added by the Murmur installer' "$f"; then continue; fi
       mkdir -p "$(dirname "$f")"
-      printf '\n# added by the t4 installer\n%s\n' "$line" >>"$f"
+      printf '\n# added by the Murmur installer\n%s\n' "$line" >>"$f"
       changed="$changed $f"
     done
     IFS=$oldifs
@@ -165,11 +165,11 @@ $login"
     fi
     if [ "$os" = darwin ]; then
       path_note="$path_note
-Apps started from the Dock don't read those files, so they won't find t4 on PATH; run it by the absolute path below."
+Apps started from the Dock don't read those files, so they won't find mur on PATH; run it by the absolute path below."
     fi
     ;;
 esac
 
-"$dir/t4" version || die "installed $dir/t4 but it did not run; the file is at that path."
-say "Installed: $dir/t4"
+"$dir/mur" version || die "installed $dir/mur but it did not run; the file is at that path."
+say "Installed: $dir/mur"
 if [ -n "$path_note" ]; then say "$path_note"; else say "$dir is already on PATH."; fi

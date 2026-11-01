@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/client"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/client"
 )
 
 // Env is the user's machine as join sees it: where it writes, which of the agent programs are
@@ -105,7 +105,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 	if !p.Marked() {
 		return r, fmt.Errorf("this repo doesn't say it uses %[1]s: neither AGENTS.md nor CLAUDE.md has the %[1]s section. "+
-			"A teammate adds it with `%[1]s init` and commits it; to try it alone, run `%[1]s init` here", brand.Command)
+			"A teammate adds it with `%[2]s init` and commits it; to try it alone, run `%[2]s init` here", brand.Product, brand.Command)
 	}
 	problem := func(what string, err error) { r.Problems = append(r.Problems, what+": "+err.Error()) }
 
@@ -134,9 +134,9 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	if news, err := p.RecordConsent(); err != nil {
 		problem("recording that you joined", err)
 	} else if news {
-		r.Did = append(r.Did, "Recorded that you joined "+brand.Name+" in this clone ("+p.consentPath()+")")
+		r.Did = append(r.Did, "Recorded that you joined "+brand.Product+" in this clone ("+p.consentPath()+")")
 	}
-	// A daemon left running by an older t4 answers, but can't do what this one does (deliver a message
+	// A daemon left running by an older mur answers, but can't do what this one does (deliver a message
 	// as a turn, for one): it is replaced, which Connect does for a client that may start daemons.
 	c, err := client.Connect(ctx, p.GitDir, false)
 	switch {
@@ -150,13 +150,13 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		if _, err := client.Connect(ctx, p.GitDir, true); err != nil {
 			problem("replacing the daemon of an older version", err)
 		} else {
-			r.Did = append(r.Did, "Replaced this clone's daemon, which was left running by an older version of "+brand.Name)
+			r.Did = append(r.Did, "Replaced this clone's daemon, which was left running by an older version of "+brand.Product)
 		}
 	}
 
 	r.Tell = e.advice(claudeFresh, codexFresh, len(r.Problems) > 0)
 	if len(r.Did) == 0 && len(r.Problems) == 0 {
-		r.Did = []string{"Nothing to do: this clone had already joined " + brand.Name}
+		r.Did = []string{"Nothing to do: this clone had already joined " + brand.Product}
 	}
 	if len(r.Problems) > 0 {
 		return r, errors.New("joined, but not everything worked; see above")
@@ -180,7 +180,7 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	if had, err := p.ForgetConsent(); err != nil {
 		problem("removing the record that you joined", err)
 	} else if had {
-		r.Did = append(r.Did, "Removed the record that you joined "+brand.Name+" in this clone")
+		r.Did = append(r.Did, "Removed the record that you joined "+brand.Product+" in this clone")
 	}
 	trees, err := removeHooks(ctx, p)
 	for _, t := range trees {
@@ -206,11 +206,11 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 
 	if len(r.Did) == 0 && len(r.Problems) == 0 {
-		r.Did = []string{"Nothing to undo: this clone hadn't joined " + brand.Name}
+		r.Did = []string{"Nothing to undo: this clone hadn't joined " + brand.Product}
 	}
 	r.Tell = []string{
-		brand.Name + " is off for this repo. Agents already open here lose its tools within seconds in Claude Code; in Codex the tools stay listed until the session ends, and say they are off if called.",
-		"The " + brand.Name + " MCP server stays registered with the agents, since that is per user; it does nothing in a repo that hasn't joined. " +
+		brand.Product + " is off for this repo. Agents already open here lose its tools within seconds in Claude Code; in Codex the tools stay listed until the session ends, and say they are off if called.",
+		"The " + brand.Product + " MCP server stays registered with the agents, since that is per user; it does nothing in a repo that hasn't joined. " +
 			"To remove it: `claude mcp remove --scope user " + brand.MCPServer + "`, and delete the [mcp_servers." + brand.MCPServer + "] table from " + filepath.Join(e.CodexHome, "config.toml") + ".",
 	}
 	if len(r.Problems) > 0 {
@@ -231,24 +231,24 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 	var out []string
 	switch {
 	case e.getenv("CLAUDECODE") == "1" && e.getenv("T3CODE_CLI_PATH") != "" && claudeFresh:
-		out = append(out, brand.Name+" was just added to Claude Code, and this conversation started before that, so it doesn't have the tools yet. "+
-			"To load them: press Stop in T3, then send any message (T3 restarts Claude with "+brand.Name+" loaded); starting a new thread works too.")
+		out = append(out, brand.Product+" was just added to Claude Code, and this conversation started before that, so it doesn't have the tools yet. "+
+			"To load them: press Stop in T3, then send any message (T3 restarts Claude with "+brand.Product+" loaded); starting a new thread works too.")
 	case e.getenv("CLAUDECODE") == "1" && claudeFresh:
-		out = append(out, brand.Name+" was just added to Claude Code, and this conversation started before that, so it doesn't have the tools yet. "+
-			"To load them: exit, and run `claude --continue` in this repo, which resumes this conversation with "+brand.Name+" loaded.")
+		out = append(out, brand.Product+" was just added to Claude Code, and this conversation started before that, so it doesn't have the tools yet. "+
+			"To load them: exit, and run `claude --continue` in this repo, which resumes this conversation with "+brand.Product+" loaded.")
 	case e.getenv("CLAUDECODE") == "1":
-		out = append(out, brand.Name+" is on for this repo. Its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox) show up in this conversation "+
+		out = append(out, brand.Product+" is on for this repo. Its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox) show up in this conversation "+
 			"within a few seconds. If they haven't after a minute, start a new conversation.")
 	case e.looksLikeCodex() && e.getenv("T3CODE_CLI_PATH") != "":
 		// T3's Codex provider loads the server in a thread created after it was registered, and
 		// never in an older one, which T3 doesn't refresh (docs/VISION.md, "Reloading MCP servers").
-		out = append(out, brand.Name+" is on for this repo, but Codex loads MCP servers only in a thread that starts after they were added, so this thread doesn't have the tools: "+
-			"open a new thread in this project to talk to other agents through "+brand.Name+".")
+		out = append(out, brand.Product+" is on for this repo, but Codex loads MCP servers only in a thread that starts after they were added, so this thread doesn't have the tools: "+
+			"open a new thread in this project to talk to other agents through "+brand.Product+".")
 	case e.looksLikeCodex():
-		out = append(out, brand.Name+" is on for this repo. Codex loads MCP servers only when a session starts, so this session doesn't have the tools: "+
+		out = append(out, brand.Product+" is on for this repo. Codex loads MCP servers only when a session starts, so this session doesn't have the tools: "+
 			"start a new session in this repo to get them.")
 	default:
-		out = append(out, brand.Name+" is on for this repo. Claude Code sessions pick up its tools within seconds if "+brand.Name+" was already registered with Claude Code, "+
+		out = append(out, brand.Product+" is on for this repo. Claude Code sessions pick up its tools within seconds if "+brand.Product+" was already registered with Claude Code, "+
 			"and otherwise after a restart (press Stop and send a message in T3; `claude --continue` in a terminal). "+
 			"Codex loads them only in a new thread or session.")
 	}

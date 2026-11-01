@@ -1,4 +1,4 @@
-// Package gitx runs the git binary. Running git, rather than linking a git library, gives t4
+// Package gitx runs the git binary. Running git, rather than linking a git library, gives Murmur
 // each user's credential helpers, SSH config and URL rewrites with no configuration of its own.
 package gitx
 
