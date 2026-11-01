@@ -53,19 +53,3 @@ go build -o ~/bin/mur ./cmd/mur      # anywhere on PATH; mur.exe on Windows
 ```
 
 Such a build says `0.1.0-dev` in `mur version`; see "The version" above.
-
-## While the repo is private
-
-Until `a-Fig/murmur` is public (#54), even the script can't be fetched without a login. On
-2026-10-29 the way to install was:
-
-```sh
-gh api repos/a-Fig/murmur/contents/install.sh -H 'Accept: application/vnd.github.raw' | GITHUB_TOKEN=$(gh auth token) sh
-```
-
-and in PowerShell (`Out-String` joins the script's lines into one input for `iex`):
-
-```powershell
-$env:GITHUB_TOKEN = gh auth token
-gh api repos/a-Fig/murmur/contents/install.ps1 -H 'Accept: application/vnd.github.raw' | Out-String | iex
-```

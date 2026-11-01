@@ -35,7 +35,7 @@ const (
 	// agent to, as raw text: how to join (docs/agents/join.md) and how to use the tools
 	// (docs/agents/use.md). SetupDoc (docs/agents/setup.md) is how an agent sets Murmur up in a
 	// repo that doesn't use it yet, for a user who asked; the README points to it. They read
-	// without login once the repo is public.
+	// without login, as the repo is public.
 	JoinDoc  = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md"
 	UseDoc   = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md"
 	SetupDoc = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md"
