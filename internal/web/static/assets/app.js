@@ -381,6 +381,7 @@ function sessionRow(d, s) {
   const open = () => {
     ui.filter = s.addr || s.name;
     ui.conversation = null;
+    ui.chatListTop = 0;
     go("messages");
   };
   return h(
@@ -540,26 +541,18 @@ function conversationOf(m) {
 }
 
 // Newest conversation first, and each one's messages oldest first. The page holds messages as they
-// arrived, device by device, so a reply can be held ahead of what it answers; the senders' clocks
-// put them back in order.
+// arrived, device by device, so a reply can be held ahead of what it answers; sortAt, from the
+// senders' clocks, puts them back in order.
 function conversations() {
   const byKey = new Map();
-  const times = new Map();
-  const now = Date.now();
-  let prev = 0;
   for (const m of visibleMessages()) {
-    // A clock can be wrong. One with no time goes where it arrived, and one in the future can't
-    // hold a conversation at the top of the list or stay below the replies to it.
-    prev = Math.min(when(m.at) || prev, now);
-    times.set(m, prev);
     const c = conversationOf(m);
     if (!byKey.has(c.key)) byKey.set(c.key, { ...c, messages: [] });
     byKey.get(c.key).messages.push(m);
   }
-  const time = (m) => times.get(m);
   const list = [...byKey.values()];
-  for (const c of list) c.messages.sort((a, b) => time(a) - time(b));
-  const latest = (c) => time(c.messages[c.messages.length - 1]);
+  for (const c of list) c.messages.sort((a, b) => a.sortAt - b.sortAt);
+  const latest = (c) => c.messages[c.messages.length - 1].sortAt;
   return list.sort((a, b) => latest(b) - latest(a));
 }
 
@@ -578,6 +571,8 @@ function conversationIcon(c) {
   return h("span", { class: "avatar-pair" }, c.pair.map(avatar));
 }
 
+let chatMoved = false; // the open conversation has just changed key, and is still the one being read
+
 function conversationsPage() {
   const list = conversations();
   // On a wide page a conversation is always open, and stays open while others get newer. On a
@@ -586,10 +581,11 @@ function conversationsPage() {
   // it held before settling for the newest.
   if (ui.conversation && !list.some((c) => c.key === ui.conversation)) {
     ui.conversation = list.find((c) => c.messages.some((m) => m.id === ui.conversationAnchor))?.key || null;
+    chatMoved = ui.conversation != null;
   }
   if (!ui.conversation && list.length && !NARROW.matches) ui.conversation = list[0].key;
   const open = list.find((c) => c.key === ui.conversation);
-  ui.conversationAnchor = open?.messages[0].id;
+  ui.conversationAnchor = open?.messages[open.messages.length - 1].id;
   return h(
     "div",
     { class: "page chat-page" },
@@ -599,7 +595,11 @@ function conversationsPage() {
       : h(
           "div",
           { class: "chat" + (open ? " chat-open" : "") },
-          h("nav", { class: "chat-list", "aria-label": "Conversations" }, list.map(conversationRow)),
+          h(
+            "nav",
+            { class: "chat-list", "aria-label": "Conversations", onscroll: (e) => (ui.chatListTop = e.target.scrollTop) },
+            list.map(conversationRow),
+          ),
           open && conversationPane(open),
         ),
   );
@@ -616,6 +616,7 @@ function conversationRow(c) {
       "data-key": "c-" + c.key,
       onclick: () => {
         ui.conversation = c.key;
+        ui.conversationAnchor = c.messages[c.messages.length - 1].id; // the key can be out of date
         render();
       },
     },
@@ -734,9 +735,7 @@ function chatMessage(m, from, at, head) {
 // A render builds the panes anew. The list keeps its place. So does a conversation being read
 // further up; one that is open at its end, or just opened, shows its newest message.
 function chatScroll() {
-  const list = root.querySelector(".chat-list");
   const thread = root.querySelector(".chat-thread");
-  if (list?.clientHeight) ui.chatListTop = list.scrollTop; // hidden, it reads 0: a narrow page's open conversation
   return {
     key: thread?.dataset.conversation,
     top: thread ? thread.scrollTop : 0,
@@ -748,7 +747,9 @@ function restoreChatScroll(was) {
   const list = root.querySelector(".chat-list");
   const thread = root.querySelector(".chat-thread");
   if (list) list.scrollTop = ui.chatListTop;
-  if (thread) thread.scrollTop = thread.dataset.conversation === was.key && !was.atEnd ? was.top : thread.scrollHeight;
+  const same = chatMoved || thread?.dataset.conversation === was.key;
+  chatMoved = false;
+  if (thread) thread.scrollTop = same && !was.atEnd ? was.top : thread.scrollHeight;
 }
 
 function messageRow(m) {
@@ -1090,6 +1091,8 @@ function deny(token) {
   render();
 }
 
+let arrivedAt = 0; // the sort time of the message before
+
 async function fetchMessages() {
   for (let pages = 0; pages < 20; pages++) {
     const r = await api("/api/messages?cursor=" + encodeURIComponent(ui.cursor));
@@ -1099,6 +1102,10 @@ async function fetchMessages() {
       if (m.toKind === "session") learn(m.toAddr, m.to);
       if (ui.ids.has(m.id)) continue;
       ui.ids.add(m.id);
+      // A clock can be wrong. A message with no time goes where it arrived, and one from the future
+      // counts as arriving now, so it can't hold its conversation at the top of the list or stay
+      // below the replies to it.
+      arrivedAt = m.sortAt = Math.min(when(m.at) || arrivedAt, Date.now());
       ui.messages.push(m);
       added++;
     }
@@ -1153,11 +1160,12 @@ async function poll() {
 function start() {
   const token = takeToken();
   if (token !== ui.token) {
-    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null });
+    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0 });
     ui.ids = new Set();
     named.clear();
     for (const key of [...minuteEdits.keys()]) cancelMinutes(key);
     confirmed = null;
+    arrivedAt = 0;
     last = "";
     polled = false;
   }
