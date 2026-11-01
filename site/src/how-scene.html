@@ -347,6 +347,11 @@
   }
 
   .pill span { grid-area: 1 / 1; white-space: nowrap; }
+  /* The flap: only while it is a message. The word sits below the flap's point. */
+  .flap { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
+  .flap path { fill: none; stroke: #000; stroke-width: calc(var(--u) * 2); stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+  #pillM { color: #000; font-size: calc(var(--u) * 19); }
+  @media (max-aspect-ratio: 1/1), (max-width: 999px) { #pillM { font-size: calc(var(--u) * 12); } }
   #pillT { color: transparent; -webkit-background-clip: text; background-clip: text; }
 
   .clock { z-index: 2; left: calc(var(--u) * 580); top: calc(var(--u) * 392); width: calc(var(--u) * 240); text-align: center; color: var(--cream); }
@@ -554,7 +559,7 @@
       <div class="seat">Alice's laptop</div>
     </div>
 
-    <div class="pill" id="pill" aria-hidden="true" data-artifact><span id="pillM">message</span><span id="pillT">commit</span></div>
+    <div class="pill" id="pill" aria-hidden="true" data-artifact><svg class="flap" id="flap" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M0 0L50 40L100 0"/></svg><span id="pillM">message</span><span id="pillT">commit</span></div>
 
     <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><g id="deckArt"><rect x="22" y="0" width="536" height="5" fill="#C9C5AC"/><path d="M22 0H558L580 106H0Z" fill="#F7F4E4"/><rect x="22" y="0" width="536" height="3" fill="#C9C5AC"/><path d="M63.4 7.0L91.3 7.0L89.8 16.5L61.7 16.5ZM96.1 7.0L124.0 7.0L122.8 16.5L94.7 16.5ZM128.8 7.0L156.7 7.0L155.7 16.5L127.6 16.5ZM161.5 7.0L189.4 7.0L188.7 16.5L160.6 16.5ZM194.3 7.0L222.1 7.0L221.6 16.5L193.6 16.5ZM227.0 7.0L254.9 7.0L254.6 16.5L226.5 16.5ZM259.7 7.0L287.6 7.0L287.6 16.5L259.5 16.5ZM292.4 7.0L320.3 7.0L320.5 16.5L292.4 16.5ZM325.1 7.0L353.0 7.0L353.5 16.5L325.4 16.5ZM357.9 7.0L385.7 7.0L386.4 16.5L358.4 16.5ZM390.6 7.0L418.5 7.0L419.4 16.5L391.3 16.5ZM423.3 7.0L451.2 7.0L452.4 16.5L424.3 16.5ZM456.0 7.0L483.9 7.0L485.3 16.5L457.2 16.5ZM488.7 7.0L516.6 7.0L518.3 16.5L490.2 16.5ZM61.3 18.7L99.6 18.7L98.1 29.3L59.5 29.3ZM104.5 18.7L130.4 18.7L129.1 29.3L103.0 29.3ZM135.3 18.7L161.2 18.7L160.2 29.3L134.0 29.3ZM166.1 18.7L192.0 18.7L191.2 29.3L165.1 29.3ZM196.9 18.7L222.8 18.7L222.3 29.3L196.2 29.3ZM227.7 18.7L253.7 18.7L253.4 29.3L227.2 29.3ZM258.6 18.7L284.5 18.7L284.4 29.3L258.3 29.3ZM289.4 18.7L315.3 18.7L315.5 29.3L289.4 29.3ZM320.2 18.7L346.1 18.7L346.6 29.3L320.4 29.3ZM351.0 18.7L376.9 18.7L377.6 29.3L351.5 29.3ZM381.8 18.7L407.7 18.7L408.7 29.3L382.5 29.3ZM412.6 18.7L438.5 18.7L439.7 29.3L413.6 29.3ZM443.4 18.7L469.4 18.7L470.8 29.3L444.7 29.3ZM474.2 18.7L518.7 18.7L520.5 29.3L475.7 29.3ZM59.1 31.5L107.1 31.5L105.4 43.2L57.1 43.2ZM112.0 31.5L138.2 31.5L136.8 43.2L110.4 43.2ZM143.1 31.5L169.3 31.5L168.2 43.2L141.8 43.2ZM174.2 31.5L200.4 31.5L199.6 43.2L173.2 43.2ZM205.4 31.5L231.5 31.5L231.0 43.2L204.6 43.2ZM236.5 31.5L262.6 31.5L262.4 43.2L236.0 43.2ZM267.6 31.5L293.8 31.5L293.8 43.2L267.4 43.2ZM298.7 31.5L324.9 31.5L325.2 43.2L298.8 43.2ZM329.8 31.5L356.0 31.5L356.6 43.2L330.2 43.2ZM360.9 31.5L387.1 31.5L388.0 43.2L361.5 43.2ZM392.0 31.5L418.2 31.5L419.3 43.2L392.9 43.2ZM423.2 31.5L449.3 31.5L450.7 43.2L424.3 43.2ZM454.3 31.5L520.9 31.5L522.9 43.2L455.7 43.2ZM56.7 45.4L120.9 45.4L119.2 58.2L54.5 58.2ZM125.9 45.4L152.3 45.4L151.0 58.2L124.3 58.2ZM157.3 45.4L183.7 45.4L182.7 58.2L156.0 58.2ZM188.7 45.4L215.2 45.4L214.5 58.2L187.8 58.2ZM220.2 45.4L246.6 45.4L246.2 58.2L219.5 58.2ZM251.6 45.4L278.1 45.4L278.0 58.2L251.3 58.2ZM283.1 45.4L309.5 45.4L309.7 58.2L283.0 58.2ZM314.5 45.4L341.0 45.4L341.4 58.2L314.7 58.2ZM345.9 45.4L372.4 45.4L373.2 58.2L346.5 58.2ZM377.4 45.4L403.8 45.4L404.9 58.2L378.2 58.2ZM408.8 45.4L435.3 45.4L436.7 58.2L410.0 58.2ZM440.3 45.4L523.3 45.4L525.5 58.2L441.7 58.2ZM54.1 60.4L83.1 60.4L81.0 74.3L51.6 74.3ZM88.1 60.4L117.1 60.4L115.4 74.3L86.1 74.3ZM122.2 60.4L158.0 60.4L156.7 74.3L120.5 74.3ZM163.1 60.4L348.8 60.4L349.4 74.3L161.8 74.3ZM353.8 60.4L389.7 60.4L390.7 74.3L354.5 74.3ZM394.7 60.4L423.7 60.4L425.1 74.3L395.8 74.3ZM428.8 60.4L457.8 60.4L459.5 74.3L430.2 74.3ZM462.9 60.4L491.9 60.4L493.9 74.3L464.6 74.3ZM496.9 60.4L525.9 60.4L528.4 74.3L499.0 74.3Z" fill="#0E1B45"/><path d="M216.0 79.5L364.0 79.5L365.2 103.0L214.8 103.0Z" fill="#E4E0CA"/><path d="M0 106H580V110Q580 118 572 118H8Q0 118 0 110Z" fill="#D5D1B8"/><path d="M254 106H326V109Q326 112 323 112H257Q254 112 254 109Z" fill="#BDB99F"/></g></defs></svg>
   </div></div></div></div>
@@ -615,8 +620,8 @@
   // On the route the commit is a labelled pill. It morphs into the row's dot over the run between
   // the panel's edge and the dot: dist is that run, per flight, in drawing units.
   const SHAPE = {
-    w: { full: [112, 40], dot: 22, dist: [145, 255, 105, 295], edge: [500, 900], bx: 240, ax: 1160, bs: 326, as: 1074, dw: 1400, nodes: [[276, 160, 376, 248], [1024, 160, 1124, 248]] },
-    t: { full: [70, 24], dot: 14, dist: [63, 143, 63, 143], edge: [76, 282], bx: 60, ax: 290, bs: 27, as: 331, dw: 358, nodes: [[-8, 401, 62, 461], [296, 401, 366, 461]] },
+    w: { env: [90, 56], drop: 10, full: [112, 40], dot: 22, dist: [145, 255, 105, 295], edge: [500, 900], bx: 240, ax: 1160, bs: 326, as: 1074, dw: 1400, nodes: [[276, 160, 376, 248], [1024, 160, 1124, 248]] },
+    t: { env: [58, 36], drop: 6, full: [70, 24], dot: 14, dist: [63, 143, 63, 143], edge: [76, 282], bx: 60, ax: 290, bs: 27, as: 331, dw: 358, nodes: [[-8, 401, 62, 461], [296, 401, 366, 461]] },
   };
   let paths = [], stems = {}, shape = SHAPE.w, screens = {};
   function choosePaths() {
@@ -738,7 +743,9 @@
     if (at) {
       const mm = copy ? 1 : smooth(m), inFlight = msg || !onRoute ? 1 : 1 - mm;
       const k = msg || (!onRoute) ? size : inFlight;
-      const wide = shape.dot + (shape.full[0] - shape.dot) * k, high = shape.dot + (shape.full[1] - shape.dot) * k;
+      // A message is an envelope and a commit a pill; msg runs between them on the daemon's strip.
+      const big = i => shape.full[i] + (shape.env[i] - shape.full[i]) * msg;
+      const wide = shape.dot + (big(0) - shape.dot) * k, high = shape.dot + (big(1) - shape.dot) * k;
       pill.style.setProperty('--pw', wide.toFixed(1));
       pill.style.setProperty('--ph', high.toFixed(1));
       pill.style.borderRadius = `calc(var(--u) * ${msg ? 7 + (shape.full[1] / 2 - 7) * (1 - msg) : 27})`;
@@ -747,18 +754,20 @@
       const leftSide = at.x < (shape.edge[0] + shape.edge[1]) / 2;
       const split = (x, w) => clamp(((leftSide ? shape.edge[0] : shape.edge[1]) - (x - w / 2)) / w) * 100;
       const two = (out, inn, s) => `linear-gradient(90deg, ${leftSide ? out : inn} ${s}%, ${leftSide ? inn : out} ${s}%)`;
-      pill.style.background = onRoute ? two('#FDEE8C', '#225BFF', split(at.x, wide)) : '#FDEE8C';
+      const white = msg * k, mix = (a, b) => Math.round(a + (255 - a) * white);
+      pill.style.background = onRoute ? two('#FDEE8C', '#225BFF', split(at.x, wide)) : `rgb(${mix(253)}, ${mix(238)}, ${mix(140)})`;
       // On a node's cream, or off the route, it needs an edge.
       const overNode = shape.nodes.some(([x0, y0, x1, y1]) => at.x + wide / 2 > x0 && at.x - wide / 2 < x1 && at.y + high / 2 > y0 && at.y - high / 2 < y1);
-      pill.style.boxShadow = onRoute && !overNode ? 'none' : '0 0 0 calc(var(--u) * 2) var(--ink)';
+      pill.style.boxShadow = onRoute && !overNode ? 'none' : `0 0 0 calc(var(--u) * 2) ${msg > .5 ? '#000' : 'var(--ink)'}`;
       const label = $('pillT'), tw = label.offsetWidth * shape.dw / scene.offsetWidth;
       label.style.backgroundImage = onRoute ? two('#0E1B45', '#FFFBEA', split(at.x, tw)) : 'linear-gradient(#0E1B45, #0E1B45)';
       // The swap: one word fades most of the way out, the other takes over from there, never both.
       label.style.opacity = copy ? 0 : onRoute ? clamp(1 - m * 2.2) : msg < .5 ? .2 + .8 * (1 - 2 * msg) : 0;
       // While the pill grows from a dot the word grows with it, so it is never clipped or missing.
       $('pillM').style.opacity = onRoute || msg < .5 ? 0 : .2 + .8 * (2 * msg - 1);
+      $('flap').style.opacity = $('pillM').style.opacity;
       const word = $('pillM').offsetWidth * shape.dw / scene.offsetWidth;
-      $('pillM').style.transform = size < 1 ? `scale(${clamp((wide - 6 * (1 - size)) / word).toFixed(3)})` : '';
+      $('pillM').style.transform = `translateY(calc(var(--u) * ${(shape.drop * k).toFixed(1)}))` + (size < 1 ? ` scale(${clamp((wide - 6 * (1 - size)) / word).toFixed(3)})` : '');
       pill.style.transform = `translate(calc(var(--u) * ${at.x.toFixed(1)}), calc(var(--u) * ${at.y.toFixed(1)})) translate(-50%, -50%)`;
     }
   }
