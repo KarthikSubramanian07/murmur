@@ -25,7 +25,7 @@ const ui = {
   rowErrors: {},
   expanded: new Set(),
   filter: null, // a session name
-  messageMode: localStorage.getItem(MODE_KEY) === "conversations" ? "conversations" : "recent",
+  messageMode: localStorage.getItem(MODE_KEY) === "recent" ? "recent" : "conversations",
   conversation: null, // the open conversation's key
   conversationAnchor: null, // a message in it
   chatListTop: 0,
