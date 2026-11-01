@@ -63,7 +63,11 @@ func EnvFromProcess() (Env, error) {
 		config = filepath.Join(home, ".config")
 	}
 	e.OpenCodeDir, e.MuseDir = filepath.Join(config, "opencode"), filepath.Join(config, "muse")
-	if e.PiDir = os.Getenv("PI_CODING_AGENT_DIR"); e.PiDir == "" {
+	// Pi reads a leading ~ in PI_CODING_AGENT_DIR as the home directory (Codex's review of #136).
+	if e.PiDir = os.Getenv("PI_CODING_AGENT_DIR"); strings.HasPrefix(e.PiDir, "~") {
+		e.PiDir = expandHome(e.PiDir, home)
+	}
+	if e.PiDir == "" {
 		e.PiDir = filepath.Join(home, ".pi", "agent")
 	}
 	if e.GrokHome = os.Getenv("GROK_HOME"); e.GrokHome == "" {

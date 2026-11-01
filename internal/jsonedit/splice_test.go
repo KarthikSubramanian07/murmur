@@ -96,3 +96,16 @@ func TestGetIn(t *testing.T) {
 		t.Errorf("%v %v", found, err)
 	}
 }
+
+// An item that is in the list, but before a rule that would override it, is moved to the end.
+func TestAppendInMovesTheItemLast(t *testing.T) {
+	src := "{\n  \"p\": [\n    \"mine\",\n    \"x\",\n    \"deny-all\",\n    \"x\",\n    \"ask\"\n  ]\n}\n"
+	got, changed, err := AppendIn(src, []string{"p"}, "x")
+	want := "{\n  \"p\": [\n    \"mine\",\n    \"deny-all\",\n    \"ask\",\n    \"x\"\n  ]\n}\n"
+	if err != nil || !changed || got != want {
+		t.Errorf("got %q (%v, %v), want %q", got, changed, err, want)
+	}
+	if _, changed, _ := AppendIn(got, []string{"p"}, "x"); changed {
+		t.Error("moved an item that was last already")
+	}
+}

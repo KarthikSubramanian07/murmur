@@ -442,8 +442,10 @@ func SetIn(text string, path []string, v any) (out string, changed bool, err err
 	return text, false, nil // not reached
 }
 
-// AppendIn returns text with item at the end of the array at path, unless the array has it already;
-// a missing array is made, with item in it. Its refusals are SetIn's, and a path that ends at
+// AppendIn returns text with item last in the array at path: unchanged if it is last already, and
+// otherwise added at the end, any copy of it earlier in the array taken out. Last, because a list of
+// rules where the last that matches counts (OpenCode's permissions) would let a later rule override
+// it. A missing array is made, with item in it. Its refusals are SetIn's, and a path that ends at
 // something other than an array.
 func AppendIn(text string, path []string, item any) (out string, changed bool, err error) {
 	root, err := parseText(text)
@@ -466,10 +468,22 @@ func AppendIn(text string, path []string, item any) (out string, changed bool, e
 			if m.value.kind != '[' {
 				return "", false, fmt.Errorf("%q isn't a list", strings.Join(path, "."))
 			}
-			for _, it := range m.value.items {
-				if same(text[it.start:it.end], item) {
-					return text, false, nil
+			items := m.value.items
+			if len(items) > 0 && same(text[items[len(items)-1].start:items[len(items)-1].end], item) {
+				return text, false, nil
+			}
+			// An earlier copy goes, with what separates it from the item after it, from the end
+			// back so that the offsets before it hold.
+			removed := false
+			for j := len(items) - 2; j >= 0; j-- {
+				if same(text[items[j].start:items[j].end], item) {
+					text = text[:items[j].start] + text[items[j+1].start:]
+					removed = true
 				}
+			}
+			if removed {
+				out, _, err := AppendIn(text, path, item)
+				return out, err == nil, err
 			}
 			out, err := insertInto(text, m.value, "", item)
 			return out, err == nil, err

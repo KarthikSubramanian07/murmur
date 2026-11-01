@@ -301,9 +301,9 @@ since it wasn't installed). The details, and where each came from, are in the co
 
 | Agent | Where join writes | How a session is told apart | Inside T3 |
 |---|---|---|---|
-| OpenCode | `mcp.servers.murmur` in `opencode.json(c)` in `~/.config/opencode`, `"codemode": false`, and a `murmur_*` allow rule appended to `permissions` | One server process serves every session in a directory; each call names its session in `_meta["ai.opencode/sessionID"]`, and the server keeps a registration per session that calls | The session ID is T3's native ID for the thread |
+| OpenCode | `mcp.servers.murmur` in `~/.config/opencode/opencode.jsonc` if there (OpenCode reads it after `opencode.json`, whose own murmur entry is made the same), else `opencode.json`; `"codemode": false`; a `murmur_*` allow rule kept last in `permissions`, where the last matching rule counts | One server process serves every session in a directory; each call names its session in `_meta["ai.opencode/sessionID"]`, and the server keeps a registration per session that calls | The session ID is T3's native ID for the thread |
 | Muse Code | `mcpServers.murmur` in `~/.config/muse/settings.json`, `"mode": "optional"`, `env` forwarding `T3CODE_CLI_PATH` and, on Windows, the home variables, as `${VAR:-}` | One process per session, with `MUSE_SESSION_ID` | The same ID |
-| Pi | an extension, `extensions/murmur.ts` in `~/.pi/agent`, that registers the server with the session's file in `MURMUR_PI_SESSION_FILE` | One process per session | T3 knows a Pi thread by that file (not tried: Pi is off in T3 on the laptop) |
+| Pi | an extension, `extensions/murmur.ts` in `~/.pi/agent` (a `~` in `PI_CODING_AGENT_DIR` is the home, as for Pi), that registers the server with the session's file in `MURMUR_PI_SESSION_FILE`; a `murmur` server in Pi's `mcp.json`, which Pi would run instead, is reported | One process per session | T3 knows a Pi thread by that file (not tried: Pi is off in T3 on the laptop) |
 | Grok | `[mcp_servers.murmur]` in `~/.grok/config.toml`, and `MCPTool(murmur__*)` in `[permission] allow` | One process per session, with `GROK_SESSION_ID` | Expected to be the ACP session ID T3 records (not tried) |
 
 - **Edited, not rewritten.** JSON and JSONC files are edited as text (`jsonedit.SetIn`,
@@ -316,7 +316,8 @@ since it wasn't installed). The details, and where each came from, are in the co
   environment on to their servers, and one started from a Claude Code session carries that
   session's `CLAUDE_CODE_SESSION_ID`. An agent's own session ID becomes the session's Murmur ID by
   hash, since Muse's and OpenCode's IDs begin with the time and two of them often share six
-  characters. A session of the shared OpenCode server is registered at its first call and dropped
+  characters. A T3 instance with no directory of its own gets the user's default, not the directory
+  of the instance that ran join. A session of the shared OpenCode server is registered at its first call and dropped
   after 30 minutes without one, as a stopped session is; its T3 route outlives that as any does.
 - **Delivery.** Inside T3 the existing `t3 thread send` delivery needed nothing new: an OpenCode and
   a Muse thread each took a message as a turn and answered it with `send`, nobody typing

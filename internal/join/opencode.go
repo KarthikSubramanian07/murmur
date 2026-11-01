@@ -23,8 +23,10 @@ import (
 //     shares, and names the session in each call's _meta (see internal/mcpserver, sharedAgent). The
 //     process gets OpenCode's environment, T3CODE_CLI_PATH included when T3 started OpenCode.
 //   - Its permissions allow everything unless a rule says otherwise, and the last matching rule
-//     counts: join appends {"action": "murmur_*", "resource": "*", "effect": "allow"} to the
+//     counts: join keeps {"action": "murmur_*", "resource": "*", "effect": "allow"} last in the
 //     top-level "permissions", so a broad rule of the user's doesn't make each call ask.
+//   - With both opencode.json and opencode.jsonc there, OpenCode reads the .jsonc last, and its
+//     entries win (Codex's review of #136, 2026-11-01): join writes there.
 //   - It watches its config: a server added while it runs connects within seconds, and a session
 //     already open has its tools from its next turn.
 
@@ -38,15 +40,18 @@ func openCodeAllowRule() *jsonedit.Object {
 	return r
 }
 
-// openCodeFile is the config file in dir join edits: opencode.json if it is there, else
-// opencode.jsonc if that is, else a new opencode.json.
-func openCodeFile(dir string) string {
-	for _, name := range []string{"opencode.json", "opencode.jsonc"} {
-		if p := filepath.Join(dir, name); exists(p) {
-			return p
-		}
+// openCodeFile is the config file in dir join edits: opencode.jsonc if it is there, which OpenCode
+// reads after opencode.json, so that what it says wins; else opencode.json, new if need be. other
+// is opencode.json when both are there, "" otherwise.
+func openCodeFile(dir string) (path, other string) {
+	json, jsonc := filepath.Join(dir, "opencode.json"), filepath.Join(dir, "opencode.jsonc")
+	switch {
+	case exists(jsonc) && exists(json):
+		return jsonc, json
+	case exists(jsonc):
+		return jsonc, ""
 	}
-	return filepath.Join(dir, "opencode.json")
+	return json, ""
 }
 
 // registerOpenCodeAt puts Murmur's server in OpenCode's config in h and allows its tools. OpenCode
@@ -58,7 +63,7 @@ func (e Env) registerOpenCodeAt(h agentHome) (did []string, fresh bool, err erro
 	if _, lerr := e.look("opencode"); lerr != nil && h.Bin == "" && !isDir(h.Dir) {
 		return nil, false, nil
 	}
-	path := openCodeFile(h.Dir)
+	path, other := openCodeFile(h.Dir)
 	b, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, false, err
@@ -75,23 +80,47 @@ func (e Env) registerOpenCodeAt(h agentHome) (did []string, fresh bool, err erro
 	if err != nil {
 		return nil, false, fmt.Errorf("%s: %w, so the server wasn't added", path, err)
 	}
+	// OpenCode merges the two files, so an entry for the server in the one read first would add
+	// its keys to the one join writes (a "disabled": true, say): it is made the same.
+	var otherDid []string
+	if other != "" {
+		ob, err := os.ReadFile(other)
+		if err != nil {
+			return nil, false, err
+		}
+		if _, found, err := jsonedit.GetIn(string(ob), []string{"mcp", "servers", brand.MCPServer}); err != nil {
+			return nil, false, fmt.Errorf("%s: %w", other, err)
+		} else if found {
+			oout, ochanged, err := jsonedit.SetIn(string(ob), []string{"mcp", "servers", brand.MCPServer}, entry)
+			if err != nil {
+				return nil, false, fmt.Errorf("%s: %w", other, err)
+			}
+			if ochanged {
+				if err := writeAtomic(other, []byte(oout), 0o644); err != nil {
+					return nil, false, fmt.Errorf("%s: %w", other, err)
+				}
+				otherDid = append(otherDid, h.Label+": made the "+brand.MCPServer+" server in "+other+" the same as in "+path)
+			}
+		}
+	}
 	if !changed && !allowed {
-		return nil, false, nil
+		return otherDid, len(otherDid) > 0, nil
 	}
 	if err := writeAtomic(path, []byte(out), 0o644); err != nil {
 		return nil, false, fmt.Errorf("%s: %w", path, err)
 	}
+	did = otherDid
 	if changed {
 		did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project ("+path+")")
 	}
 	if allowed {
 		did = append(did, h.Label+": allowed "+brand.Product+"'s tools, so they don't ask each time ("+path+", permissions)")
 	}
-	return did, changed, nil
+	return did, changed || len(otherDid) > 0, nil
 }
 
 func openCodeRemoval(_ Env, h agentHome) string {
-	path := openCodeFile(h.Dir)
+	path, _ := openCodeFile(h.Dir)
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return ""

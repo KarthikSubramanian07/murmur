@@ -116,7 +116,7 @@ func TestJoinRegistersInEveryHomeT3Runs(t *testing.T) {
 		}
 		return n
 	}
-	if count("claudeAgent") != 3 || count("codex") != 2 || count("muse") != 1 || count("opencode") != 0 || count("grok") != 0 {
+	if count("claudeAgent") != 3 || count("codex") != 2 || count("muse") != 1 || count("opencode") != 0 || count("grok") != 1 {
 		t.Fatalf("homes %+v", byAgent)
 	}
 	if !strings.Contains(strings.Join(notes, "\n"), `Pi as T3 Code's "Pi" is turned off`) {

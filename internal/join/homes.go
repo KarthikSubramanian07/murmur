@@ -95,6 +95,10 @@ func (e Env) t3Home(a agent, in t3Instance) (agentHome, bool) {
 			h.Dir, h.JSON = filepath.Join(e.Home, ".claude"), filepath.Join(e.Home, ".claude.json")
 		}
 		return h, true
+	case e.Home != "":
+		// The default as T3 would see it, not as this process does: the agent running join may be
+		// another instance, with its own XDG_CONFIG_HOME.
+		h.Dir = filepath.Join(append([]string{e.Home}, userDefault[a.driver]...)...)
 	default:
 		h.Dir = e.defaultHome(a).Dir
 	}
@@ -102,6 +106,15 @@ func (e Env) t3Home(a agent, in t3Instance) (agentHome, bool) {
 		h.JSON = filepath.Join(h.Dir, ".claude.json")
 	}
 	return h, h.Dir != ""
+}
+
+// userDefault is each other agent's configuration directory under the user's home when nothing
+// moves it.
+var userDefault = map[string][]string{
+	"opencode": {".config", "opencode"},
+	"muse":     {".config", "muse"},
+	"pi":       {".pi", "agent"},
+	"grok":     {".grok"},
 }
 
 // homes lists, for each agent, every configuration join registers in: the default first, then the

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/jsonedit"
 )
 
 // Pi (the pi coding agent, 0.99) has MCP built in: servers in mcp.json in its agent directory
@@ -67,7 +68,7 @@ func (e Env) registerPiAt(h agentHome) (did []string, fresh bool, err error) {
 	b, err := os.ReadFile(path)
 	switch {
 	case err == nil && strings.ReplaceAll(string(b), "\r\n", "\n") == want:
-		return nil, false, nil
+		return nil, false, piMCPConflict(h.Dir)
 	case err == nil && !strings.HasPrefix(string(b), "// Written by `"+brand.Command+" join`"):
 		return nil, false, fmt.Errorf("%s is there and isn't the one join writes, so it was left alone", path)
 	case err != nil && !os.IsNotExist(err):
@@ -76,7 +77,22 @@ func (e Env) registerPiAt(h agentHome) (did []string, fresh bool, err error) {
 	if err := writeAtomic(path, []byte(want), 0o644); err != nil {
 		return nil, false, fmt.Errorf("%s: %w", path, err)
 	}
-	return []string{h.Label + ": registered the " + brand.MCPServer + " MCP server for you, in every project, through an extension (" + path + ")"}, true, nil
+	return []string{h.Label + ": registered the " + brand.MCPServer + " MCP server for you, in every project, through an extension (" + path + ")"}, true, piMCPConflict(h.Dir)
+}
+
+// piMCPConflict is an error if Pi's mcp.json in dir has a server named murmur, which Pi runs instead
+// of the extension's: with whatever command it names, and without the session's file (Codex's
+// review of #136). join leaves the user's file alone and says what to delete.
+func piMCPConflict(dir string) error {
+	path := filepath.Join(dir, "mcp.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if _, found, _ := jsonedit.GetIn(string(b), []string{"mcpServers", brand.MCPServer}); found {
+		return fmt.Errorf("%s has a server named %s, which Pi runs instead of %s's extension: delete it from there", path, brand.MCPServer, brand.Product)
+	}
+	return nil
 }
 
 func piRemoval(_ Env, h agentHome) string {
