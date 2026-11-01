@@ -65,8 +65,14 @@ func initRepo(t *testing.T, dir string) []string {
 // uses Murmur so an agent there knows to ask its user about joining.
 func TestInitWritesTheMarkerIntoBothFiles(t *testing.T) {
 	// The section is a few lines that point to the pages with the detail, not the detail (Tyler,
-	// 2026-10-29: 5 or 6 lines).
-	if n := strings.Count(strings.TrimSpace(section), "\n") + 1; n > 6 {
+	// 2026-10-29: 5 or 6 lines). Blank lines don't count: his wording of 2026-11-01 (#124) has one.
+	n := 0
+	for _, line := range strings.Split(section, "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	if n > 6 {
 		t.Errorf("the section is %d lines, want 6 at most:\n%s", n, section)
 	}
 	dir := repo(t, map[string]string{"AGENTS.md": "# Notes\nkeep this\n"})
