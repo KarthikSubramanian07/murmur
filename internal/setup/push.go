@@ -55,7 +55,7 @@ func Push(ctx context.Context, dir string) (Pushed, error) {
 	if err != nil {
 		return p, err
 	}
-	g, err := gitOf(ctx, top)
+	g, err := gitIn(ctx, top)
 	if err != nil {
 		return p, err
 	}
@@ -80,7 +80,9 @@ func Push(ctx context.Context, dir string) (Pushed, error) {
 			return p, err
 		}
 		if sha == "" {
-			// The default branch already says the repo uses Murmur.
+			// The default branch already says the repo uses Murmur (if this was a retry, a
+			// teammate's push did), and nothing of init's is pushed.
+			p.SHA = ""
 			setRemoteHead(ctx, g, p.Remote, tracking)
 			if !markedTree(top) {
 				p.Checkout = fmt.Sprintf("this checkout gets the section once %s is merged into its branch", p.Branch)
@@ -151,11 +153,11 @@ func fetchTip(ctx context.Context, g gitx.Git, remote, branch string) (string, e
 	return strings.TrimSpace(out), nil
 }
 
-// setRemoteHead points refs/remotes/<remote>/HEAD at the default branch if nothing set it, since
-// that is the ref Marked reads.
+// setRemoteHead points refs/remotes/<remote>/HEAD at the default branch init found, since that is
+// the ref Marked reads: one nothing set, or one left naming a branch that is no longer the default.
 func setRemoteHead(ctx context.Context, g gitx.Git, remote, tracking string) {
 	head := "refs/remotes/" + remote + "/HEAD"
-	if _, err := g.Run(ctx, "", "symbolic-ref", "-q", head); err != nil {
+	if cur, err := g.Run(ctx, "", "symbolic-ref", "-q", head); err != nil || strings.TrimSpace(cur) != tracking {
 		g.Run(ctx, "", "symbolic-ref", head, tracking)
 	}
 }
@@ -371,7 +373,7 @@ func pullURL(remoteURL, base, head string) string {
 
 // fastForward moves the checkout at top to sha, the commit just pushed, when that is safe: it is on
 // the default branch, its HEAD is an ancestor of sha, and the files the commit changes have no local
-// changes, staged, unstaged or untracked. git pull would refuse a file with an uncommitted change
+// changes, staged, unstaged, untracked or ignored (merge would overwrite an ignored file). git pull would refuse a file with an uncommitted change
 // even when it matches what the pull brings (checked 2026-11-01), so a checkout left with init's
 // edits uncommitted would be stuck. Otherwise it says why the checkout was left alone.
 func fastForward(ctx context.Context, top string, repo *bus.Repo, branch, sha string, paths []string) (bool, string) {
@@ -388,14 +390,14 @@ func fastForward(ctx context.Context, top string, repo *bus.Repo, branch, sha st
 		return false, "this checkout's " + branch + " has commits " + repo.Remote + " doesn't, so " + later
 	}
 	// --no-optional-locks: looking must not write the index, which status otherwise refreshes.
-	status, err := gitx.RunIn(ctx, top, append([]string{"--no-optional-locks", "status", "--porcelain", "--untracked-files=all", "--"}, paths...)...)
+	status, err := gitx.RunIn(ctx, top, append([]string{"--no-optional-locks", "status", "--porcelain", "--untracked-files=all", "--ignored", "--"}, paths...)...)
 	if err != nil {
 		return false, later
 	}
 	if strings.TrimSpace(status) != "" {
 		return false, "this checkout has local changes to " + strings.Join(paths, ", ") + ", so " + later
 	}
-	if _, err := gitx.RunIn(ctx, top, "merge", "--ff-only", "--quiet", sha); err != nil {
+	if _, err := gitx.RunIn(ctx, top, "merge", "--ff-only", "--no-overwrite-ignore", "--quiet", sha); err != nil {
 		return false, "fast-forwarding this checkout failed (" + err.Error() + "), so " + later
 	}
 	return true, ""

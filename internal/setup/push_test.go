@@ -267,3 +267,104 @@ func TestPullURL(t *testing.T) {
 		}
 	}
 }
+
+// An AGENTS.md or CLAUDE.md the user has locally, untracked and ignored, is theirs: the checkout
+// isn't fast-forwarded over it.
+func TestPushDoesNotOverwriteAnIgnoredFile(t *testing.T) {
+	_, _, clone := remoteWithClone(t)
+	exclude := filepath.Join(clone, ".git", "info", "exclude")
+	os.MkdirAll(filepath.Dir(exclude), 0o755)
+	os.WriteFile(exclude, []byte("CLAUDE.md\n"), 0o644)
+	os.WriteFile(filepath.Join(clone, "CLAUDE.md"), []byte("my own notes\n"), 0o644)
+	p := push(t, clone)
+	if p.FastForwarded || !strings.Contains(p.Checkout, "local changes") {
+		t.Errorf("pushed %+v", p)
+	}
+	if got := read(t, clone, "CLAUDE.md"); got != "my own notes\n" {
+		t.Errorf("CLAUDE.md is now:\n%s", got)
+	}
+}
+
+// A refs/remotes/origin/HEAD left naming an old default branch is pointed at the one init pushed
+// to, since that is what Marked reads.
+func TestPushRepointsAStaleRemoteHead(t *testing.T) {
+	_, _, clone := remoteWithClone(t)
+	g(t, clone, "update-ref", "refs/remotes/origin/old", "HEAD")
+	g(t, clone, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/old")
+	push(t, clone)
+	if got := g(t, clone, "symbolic-ref", "refs/remotes/origin/HEAD"); got != "refs/remotes/origin/main" {
+		t.Errorf("origin/HEAD names %s", got)
+	}
+}
+
+// A retry that finds a teammate already put the section on main pushes nothing and says so, not
+// the commit of the attempt that was rejected.
+func TestPushRetryThatFindsTheSectionPushesNothing(t *testing.T) {
+	remote, seed, clone := remoteWithClone(t)
+	beforePush = func(try int) {
+		if try == 1 {
+			os.WriteFile(filepath.Join(seed, "AGENTS.md"), []byte("# Notes\nkeep this\n\n"+section), 0o644)
+			os.WriteFile(filepath.Join(seed, "CLAUDE.md"), []byte(section), 0o644)
+			g(t, seed, "add", "AGENTS.md", "CLAUDE.md")
+			g(t, seed, "commit", "-q", "-m", "a teammate's init")
+			g(t, seed, "push", "-q", "origin", "main")
+		}
+	}
+	t.Cleanup(func() { beforePush = func(int) {} })
+	p := push(t, clone)
+	if p.SHA != "" {
+		t.Errorf("reported %s as pushed", p.SHA)
+	}
+	if got := g(t, remote, "rev-parse", "main"); got != g(t, seed, "rev-parse", "HEAD") {
+		t.Errorf("main is %s, not the teammate's commit", got)
+	}
+}
+
+// Both marker files may be links to one file elsewhere in the repo; the marker there counts.
+func TestMarkedFollowsLinksInTheCommit(t *testing.T) {
+	_, seed, clone := remoteWithClone(t)
+	os.MkdirAll(filepath.Join(seed, "docs"), 0o755)
+	os.WriteFile(filepath.Join(seed, "docs", "AI.md"), []byte(section), 0o644)
+	g(t, seed, "rm", "-q", "AGENTS.md")
+	g(t, seed, "add", "docs/AI.md")
+	for _, name := range markerFiles {
+		cmd := exec.Command("git", "hash-object", "-w", "--stdin")
+		cmd.Dir, cmd.Stdin = seed, strings.NewReader("docs/AI.md")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		g(t, seed, "update-index", "--add", "--cacheinfo", "120000,"+strings.TrimSpace(string(out))+","+name)
+	}
+	g(t, seed, "commit", "-q", "-m", "links")
+	g(t, seed, "push", "-q", "origin", "main")
+	g(t, clone, "fetch", "-q")
+	gi, err := gitIn(context.Background(), clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !markedAt(context.Background(), gi, "refs/remotes/origin/HEAD") {
+		t.Error("the marker behind the links isn't seen")
+	}
+}
+
+// The commit is made as the person in the checkout init ran in, by that worktree's own config.
+func TestPushCommitsAsTheWorktreesUser(t *testing.T) {
+	remote, _, clone := remoteWithClone(t)
+	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
+		old, had := os.LookupEnv(k)
+		os.Unsetenv(k)
+		if had {
+			t.Cleanup(func() { os.Setenv(k, old) })
+		}
+	}
+	wt := filepath.Join(filepath.Dir(clone), "wt")
+	g(t, clone, "worktree", "add", "-q", "-b", "wt", wt)
+	g(t, clone, "config", "extensions.worktreeConfig", "true")
+	g(t, wt, "config", "--worktree", "user.name", "Worktree Person")
+	g(t, wt, "config", "--worktree", "user.email", "wt@example.com")
+	push(t, wt)
+	if got := g(t, remote, "log", "-1", "--format=%an <%ae>", "main"); got != "Worktree Person <wt@example.com>" {
+		t.Errorf("the commit's author is %s", got)
+	}
+}

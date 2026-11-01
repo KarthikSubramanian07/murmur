@@ -20,7 +20,6 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
-	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/jsonedit"
 )
@@ -164,7 +163,7 @@ func markedUpstream(top string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	marked := false
-	if g, err := gitOf(ctx, top); err == nil {
+	if g, err := gitIn(ctx, top); err == nil {
 		if remote, err := bus.RemoteFor(ctx, g); err == nil {
 			marked = markedAt(ctx, g, "refs/remotes/"+remote+"/HEAD")
 		}
@@ -176,19 +175,38 @@ func markedUpstream(top string) bool {
 }
 
 // markedAt reports whether either marker file in the commit rev has the marker. A rev that names
-// nothing isn't marked.
+// nothing isn't marked. git grep is one process but reads a symbolic link as the path it holds, so
+// without a match the files are read again as Push reads them, following links.
 func markedAt(ctx context.Context, g gitx.Git, rev string) bool {
-	_, err := g.Run(ctx, "", append([]string{"grep", "-q", "-F", "-e", markStart, rev, "--"}, markerFiles...)...)
-	return err == nil
+	if _, err := g.Run(ctx, "", append([]string{"grep", "-q", "-F", "-e", markStart, rev, "--"}, markerFiles...)...); err == nil {
+		return true
+	}
+	tip, err := g.Run(ctx, "", "rev-parse", "--verify", "--quiet", rev+"^{commit}")
+	if err != nil {
+		return false
+	}
+	t := &treeFiles{ctx: ctx, g: g, tip: strings.TrimSpace(tip), files: map[string]*treeFile{}}
+	for _, name := range markerFiles {
+		if _, b, ok, err := t.read(name); err == nil && ok && bytes.Contains(b, []byte(markStart)) {
+			return true
+		}
+	}
+	return false
 }
 
-// gitOf is the clone containing top, by its git common dir, found without running git when it can be.
-func gitOf(ctx context.Context, top string) (gitx.Git, error) {
-	if _, common, ok := gitx.Discover(top); ok {
-		return gitx.Git{Dir: common}, nil
+// gitIn is git for the checkout at top: its own git directory, which for a linked worktree is the
+// one under the clone's worktrees/, so that what git reads for it (a user.name set for this
+// worktree alone, an includeIf on its path) is what git would read in that checkout. It is found
+// without running git when it can be.
+func gitIn(ctx context.Context, top string) (gitx.Git, error) {
+	if dir, _, ok := gitx.Discover(top); ok {
+		return gitx.Git{Dir: dir}, nil
 	}
-	dir, err := client.FindGitDir(ctx, top)
-	return gitx.Git{Dir: dir}, err
+	out, err := gitx.RunIn(ctx, top, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return gitx.Git{}, fmt.Errorf("not inside a git repository (%s)", top)
+	}
+	return gitx.Git{Dir: filepath.Clean(strings.TrimSpace(out))}, nil
 }
 
 // section is what both files get. It is short on purpose, since it sits in files every agent reads
