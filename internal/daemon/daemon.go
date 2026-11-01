@@ -56,6 +56,10 @@ type Options struct {
 	// NameRetry is how long the first retry after a failed name assignment waits: 15 s. It
 	// doubles with each failure in a row.
 	NameRetry time.Duration
+	// NamePool is how many names a daemon keeps registered ahead for sessions it has yet to start,
+	// so that a new session has its name at once, without the remote: 3. Negative: none, and every
+	// session waits for its name to land in the registry.
+	NamePool int
 	// PushRetry is how long a delivery of a message as a turn that never got started (no `t3`
 	// to run, no socket to connect to) waits before its one retry: 2 s. Any other failure may have
 	// delivered the message, so it is not repeated, and a second failure of this kind too leaves
@@ -118,6 +122,9 @@ func (o *Options) defaults() {
 	}
 	if o.NameRetry == 0 {
 		o.NameRetry = 15 * time.Second
+	}
+	if o.NamePool == 0 {
+		o.NamePool = 3
 	}
 	if o.PushRetry == 0 {
 		o.PushRetry = 2 * time.Second
@@ -415,6 +422,13 @@ type state struct {
 	NamesTip    string `json:"namesTip,omitempty"`
 	NamesGood   string `json:"namesGood,omitempty"`
 	NamesRepair bool   `json:"namesRepair,omitempty"`
+	// NamePool is the names the registry has set aside for this device that no session has taken
+	// yet, oldest first. NameBinds is each name a session took from the pool whose assignment to it
+	// isn't in the registry yet, with the session's ID. Reserved is each name the registry has set
+	// aside for a device, this one or another, that no session is known to have, with the device.
+	NamePool  []string          `json:"namePool,omitempty"`
+	NameBinds map[string]string `json:"nameBinds,omitempty"`
+	Reserved  map[string]string `json:"reservedNames,omitempty"`
 
 	// Commits is the commits credited to each session on this device (see credit), oldest first, by
 	// the session's ID. They are kept as long as the session's inbox is, and never leave the device.
@@ -778,7 +792,7 @@ func (d *Daemon) loadState() error {
 	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},
 		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
-		T3Routes: map[string]t3Route{}}
+		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -819,6 +833,12 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.T3Routes == nil {
 		d.st.T3Routes = map[string]t3Route{}
+	}
+	if d.st.NameBinds == nil {
+		d.st.NameBinds = map[string]string{}
+	}
+	if d.st.Reserved == nil {
+		d.st.Reserved = map[string]string{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

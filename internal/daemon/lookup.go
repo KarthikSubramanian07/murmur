@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -56,7 +57,7 @@ func (d *Daemon) lookupAddrLocked(target string) (string, error) {
 	case names.Valid(target):
 		addr, ok := d.resolveNameLocked(target)
 		if !ok {
-			return "", fmt.Errorf("no session is named %q. who shows the names in use.", target)
+			return "", errors.New(d.noSuchNameLocked(target))
 		}
 		return addr, nil
 	}

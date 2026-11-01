@@ -598,10 +598,33 @@ name is the address: `send` takes it, `who` shows it, and notices and `inbox` na
 change and a daemon that knows no names delivers by it all the same.
 
 - **Taking a name.** A daemon picks a random name nobody has, commits it on `refs/murmur/names` (one
-  commit per assignment: the name, the device, Murmur's session ID), and pushes with the lease on
-  the registry tip it last read. The name is the session's only if that push lands. If another
-  device got in first the push is refused; the daemon fetches, reads what it missed, and picks
-  again. It stops after 5 refusals in a row and backs off, up to 5 minutes.
+  commit per record: the name, the device, and Murmur's session ID, or no session for a name set
+  aside, below), and pushes with the lease on the registry tip it last read. The name is the
+  device's only if that push lands. If another device got in first the push is refused; the
+  daemon fetches, reads what it missed, and picks again. It stops after 5 refusals in a row and
+  backs off, up to 5 minutes. What it has to record at one moment goes in one push, as a chain of
+  commits, one record each.
+- **Names set aside (#141, 2026-11-01).** A name took 2–16 s to land after its session started,
+  with the network up (a push to GitHub, and a retry when GitHub refused it), and a session showed
+  as pending all that time; in an outage it waited for the network. So a daemon keeps 3 names
+  (`NamePool`) registered ahead for sessions it has yet to start: a commit with the name and the
+  device and no session. A session with no name takes the oldest at once, without the remote, and
+  it is the session's name for good, as any name is. The daemon then records the assignment, the
+  name, the device and the session, as it records any, and sets another name aside in the same
+  push. The names are unique because they were registered before anyone used them.
+  - *How others read one.* A daemon that knows reservations records the device; a later
+    assignment of the name counts only from that device. A daemon that predates them reads a
+    commit with no session as a name in use by a session it doesn't know, so it never hands the
+    name out either. Until the assignment lands, other devices find the session by the name in
+    its device's presence, as they find any live session.
+  - *Sending to one nobody has taken* is an error, but not "no session is named": it says that
+    device has set the name aside for a session it has yet to start. A daemon that predates
+    reservations says no session has it.
+  - *A device that never comes back* leaves its names set aside for good. That burns at most 3
+    names a device, out of 1.25 million, and a name is never reused anyway. A daemon that loses its
+    state file burns its pool the same way.
+  - *The first start* with no network has no pool: its sessions are pending, at
+    `device/session`, as below, until the remote is reachable.
 - **A name follows the client's session ID.** The key is the full `ClaudeSession` the MCP server
   gives when it has one (Claude Code's `CLAUDE_CODE_SESSION_ID`), else the Codex thread ID (see
   below), else the ID Murmur gave the session.
@@ -633,9 +656,9 @@ change and a daemon that knows no names delivers by it all the same.
   that records the daemon's own pushes, so it can predate the daemon's first name (#80,
   2026-10-30; the first version took it for a deletion and replaced the registry's history with a
   snapshot).
-- **Without the remote.** A session that can't get its name works as `device/session`, with its
-  name shown as pending, and the daemon keeps trying in the background, and at once when it can
-  reach the remote again.
+- **Without the remote.** A session that finds no name set aside and can't get one works as
+  `device/session`, with its name shown as pending, and the daemon keeps trying in the
+  background, and at once when it can reach the remote again.
 - **Sending to a name.** A name is looked up in the sessions on this device, then in this device's
   record of its last holder (see A name held by another session), then in other devices'
   presence, then in the registry, so a message to a session that has stopped is kept for it like

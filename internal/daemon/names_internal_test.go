@@ -31,13 +31,14 @@ func namedDaemon(t *testing.T) (d *Daemon, remote string) {
 	runGit(t, root, "init", "-q", "--bare", remote)
 	clone := filepath.Join(root, "clone")
 	runGit(t, root, "clone", "-q", "--no-local", remote, clone)
-	opt := Options{GitDir: filepath.Join(clone, ".git"), Log: log.New(io.Discard, "", 0)}
+	opt := Options{GitDir: filepath.Join(clone, ".git"), Log: log.New(io.Discard, "", 0), NamePool: -1}
 	opt.defaults()
 	d, err := open(context.Background(), opt, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.attemptName(context.Background(), &wanted{id: "aaaaaa", key: nameKey("", "", "", "aaaaaa")}); err != nil {
+	w := nameWork{wants: []wanted{{id: "aaaaaa", key: nameKey("", "", "", "aaaaaa")}}}
+	if err := d.pushNames(context.Background(), w); err != nil {
 		t.Fatal(err)
 	}
 	if d.st.NamesGood == "" || d.st.NamesGood != d.st.NamesTip {
@@ -65,8 +66,8 @@ func TestListingFromBeforeTheFirstNameIsNotALostRegistry(t *testing.T) {
 	if d.st.NamesTip != tip || d.st.NamesGood != tip {
 		t.Errorf("the registry's tip became %q, last read in full %q; want both %q", d.st.NamesTip, d.st.NamesGood, tip)
 	}
-	if w, repair := d.nextName(); w != nil || repair {
-		t.Errorf("the assigner has work to do: session %v, repair %v", w, repair)
+	if w := d.nextNames(); !w.empty() {
+		t.Errorf("the assigner has work to do: %+v", w)
 	}
 	if got, err := d.repo.RemoteRef(ctx, brand.NamesRef); err != nil || got != tip {
 		t.Errorf("the registry on the remote is %q (%v); it should still be %q", got, err, tip)
@@ -86,7 +87,7 @@ func TestRegistryDeletedFromTheRemoteIsStillALostRegistry(t *testing.T) {
 	if !d.st.NamesRepair {
 		t.Error("a registry deleted from the remote was not set to be repaired")
 	}
-	if w, repair := d.nextName(); w != nil || !repair {
-		t.Errorf("the assigner has session %v and repair %v; want a repair and no session", w, repair)
+	if w := d.nextNames(); !w.repair || len(w.wants)+len(w.binds)+w.reserve != 0 {
+		t.Errorf("the assigner has %+v; want a repair and nothing else", w)
 	}
 }
