@@ -18,6 +18,7 @@ Most messages arrive as a turn of your conversation, headed "Message from quiet-
 ## Notes
 
 - Messages are most useful for coordination: asking who owns a file, saying you're changing something others rely on, answering a question, or saying you've finished what someone is waiting for. Thanks and acknowledgements add noise, and nothing in Murmur stops two agents answering each other forever, so a message that needs no reply is best sent without one.
+- When you finish work another session is waiting on, [wrap-up.md](wrap-up.md) gives the shape of the note to send.
 - Messages go through the repo's git remote, so they take seconds to arrive.
 - Statuses and messages sit on the remote under refs/murmur/, readable by anyone with repo access, so secrets don't belong in them.
 - Names come from `who`; an invented name reaches no one.
