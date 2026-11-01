@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // Tests of delivering a message into a session as a turn (#57). `t3` is a stand-in: the test
@@ -22,10 +22,10 @@ import (
 
 // fakeT3Env names the file the stand-in appends its calls to; fakeT3FailEnv, if set, makes it fail.
 const (
-	fakeT3Env     = "T4_TEST_FAKE_T3"
-	fakeT3FailEnv = "T4_TEST_FAKE_T3_FAIL"
+	fakeT3Env     = "MURMUR_TEST_FAKE_T3"
+	fakeT3FailEnv = "MURMUR_TEST_FAKE_T3_FAIL"
 	// fakeT3SleepEnv, if set to a duration, makes the stand-in take that long, as a `t3` that is busy.
-	fakeT3SleepEnv = "T4_TEST_FAKE_T3_SLEEP"
+	fakeT3SleepEnv = "MURMUR_TEST_FAKE_T3_SLEEP"
 )
 
 func TestMain(m *testing.M) {
@@ -165,8 +165,8 @@ func TestMessageForAT3SessionIsDeliveredAsATurn(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Message from " + aliceName + " (test",
-		"via " + brand.Name + ":\n\nauth middleware?\n\n" + body + "\n",
-		"Reply with " + brand.Name + "'s `send` to " + aliceName + " if a reply is needed.",
+		"via " + brand.Product + ":\n\nauth middleware?\n\n" + body + "\n",
+		"Reply with " + brand.Product + "'s `send` to " + aliceName + " if a reply is needed.",
 	} {
 		if !strings.Contains(c.Stdin, want) {
 			t.Errorf("the turn lacks %q:\n%s", want, c.Stdin)
@@ -199,7 +199,7 @@ func TestMessagesForOneSessionAreDeliveredInOrder(t *testing.T) {
 	eventually(t, "three deliveries", func() bool { return len(calls()) >= 3 })
 	holds(t, "three deliveries, no more", time.Second, func() bool { return len(calls()) == 3 })
 	for i, c := range calls() {
-		if !strings.Contains(c.Stdin, "via "+brand.Name+":\n\n"+want[i]+"\n") {
+		if !strings.Contains(c.Stdin, "via "+brand.Product+":\n\n"+want[i]+"\n") {
 			t.Errorf("delivery %d was %q, want %q", i, c.Stdin, want[i])
 		}
 	}

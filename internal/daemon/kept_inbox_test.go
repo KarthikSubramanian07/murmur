@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // Tests of #30: a stopped session's inbox is kept, and it is kept through a daemon that was gone
@@ -99,7 +99,7 @@ func TestKeptInboxCatchesUpAfterALongOutage(t *testing.T) {
 		forgedMessage(old, bdev+"/bbbbbb", "after the inbox would have run out", time.Now().Add(2*time.Hour)),
 		forgedMessage(old, bdev+"/bbbbbb", "forged, while the daemon was down", stoppedAt.Add(time.Minute)),
 	} {
-		pushEvent(t, remote, "refs/t4/mesh/"+old, e)
+		pushEvent(t, remote, "refs/murmur/mesh/"+old, e)
 	}
 	b.start()
 
@@ -150,7 +150,7 @@ func TestFirstStartStillSkipsAllHistory(t *testing.T) {
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "history"})
-	pushEvent(t, remote, "refs/t4/mesh/old-0001", forgedMessage("old-0001", "*", "more history", time.Now()))
+	pushEvent(t, remote, "refs/murmur/mesh/old-0001", forgedMessage("old-0001", "*", "more history", time.Now()))
 	b := newDevice(t, remote)
 	b.session("bbbbbb", "")
 	holds(t, "nothing from history", time.Second, func() bool {

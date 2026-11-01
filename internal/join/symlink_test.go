@@ -37,7 +37,7 @@ func TestRegisterCodexWritesThroughADanglingSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustBeLink(t, link)
-	if got := read(t, filepath.Join(sb.root, "dotfiles", "codex.toml")); !strings.Contains(got, "[mcp_servers.t4]") {
+	if got := read(t, filepath.Join(sb.root, "dotfiles", "codex.toml")); !strings.Contains(got, "[mcp_servers.murmur]") {
 		t.Errorf("the file the link points to:\n%s", got)
 	}
 }
@@ -52,7 +52,7 @@ func TestHookFileThatIsALinkIsKeptThroughJoinAndLeave(t *testing.T) {
 	link := filepath.Join(p.Top, ".claude", "settings.local.json")
 	linkOrSkip(t, target, link)
 
-	exe := filepath.Join(t.TempDir(), "bin", "t4")
+	exe := filepath.Join(t.TempDir(), "bin", "mur")
 	if _, err := installHooks(context.Background(), p, exe); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestRegisterCodexFollowsDotDotThroughALink(t *testing.T) {
 	if _, _, err := sb.registerCodex(); err != nil {
 		t.Fatal(err)
 	}
-	if got := read(t, filepath.Join(sb.root, "dotfiles", "settings.toml")); !strings.Contains(got, "[mcp_servers.t4]") {
+	if got := read(t, filepath.Join(sb.root, "dotfiles", "settings.toml")); !strings.Contains(got, "[mcp_servers.murmur]") {
 		t.Errorf("the file the link leads to:\n%s", got)
 	}
 	if got := read(t, filepath.Join(sb.CodexHome, "settings.toml")); strings.Contains(got, "mcp_servers") {

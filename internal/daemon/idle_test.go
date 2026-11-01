@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // A T3 thread idle for half an hour loses its MCP server, and with it its session; its route is

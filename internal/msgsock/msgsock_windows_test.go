@@ -14,7 +14,7 @@ import (
 
 // On Windows Claude Code's socket is a named pipe, which has its own way to dial.
 func TestSendToANamedPipe(t *testing.T) {
-	path := fmt.Sprintf(`\\.\pipe\LOCAL\t4-msgsock-test-%d`, os.Getpid())
+	path := fmt.Sprintf(`\\.\pipe\LOCAL\mur-msgsock-test-%d`, os.Getpid())
 	ln, err := winio.ListenPipe(path, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func TestSendToANamedPipe(t *testing.T) {
 
 // A pipe nobody serves fails without giving away its name or the token.
 func TestSendToAMissingPipeHidesTheName(t *testing.T) {
-	path := `\\.\pipe\LOCAL\t4-msgsock-no-such-pipe-77c1`
+	path := `\\.\pipe\LOCAL\mur-msgsock-no-such-pipe-77c1`
 	err := Send(context.Background(), path, "tok-secret-77c1", "x")
 	if err == nil {
 		t.Fatal("sending to nothing worked")

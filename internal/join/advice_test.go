@@ -9,11 +9,11 @@ func envWith(vars map[string]string) Env {
 	return Env{Getenv: func(k string) string { return vars[k] }}
 }
 
-// A Codex thread in T3 Code that existed before t4 was added to Codex's config keeps lacking the
-// tools, and T3 never refreshes it, so the agent is told to open a new thread, in these words
+// A Codex thread in T3 Code that existed before Murmur was added to Codex's config keeps lacking
+// the tools, and T3 never refreshes it, so the agent is told to open a new thread, in these words
 // (Tyler, 2026-10-30, from a Codex agent's measurements in T3).
 func TestAdviceForACodexThreadInT3SaysToOpenANewThread(t *testing.T) {
-	const want = "open a new thread in this project to talk to other agents through t4"
+	const want = "open a new thread in this project to talk to other agents through Murmur"
 	for _, fresh := range []bool{true, false} {
 		e := envWith(map[string]string{"CODEX_THREAD_ID": "019a", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"})
 		got := strings.Join(e.advice(false, fresh, false), "\n")

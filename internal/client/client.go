@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/gitx"
-	"github.com/a-Fig/t4/internal/proc"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/proc"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // ErrNoDaemon means no daemon is running for the clone and the caller didn't ask for one.
@@ -81,8 +81,8 @@ func Connect(ctx context.Context, gitDir string, spawn bool) (*Client, error) {
 }
 
 // connect finds the clone's daemon. One that speaks an older protocol than this binary (left running
-// by the t4 it replaced) is stopped and replaced if the client may start daemons; a client that may
-// not, such as `t4 stop`, which has to be able to stop it, takes it as it is.
+// by the mur it replaced) is stopped and replaced if the client may start daemons; a client that
+// may not, such as `mur stop`, which has to be able to stop it, takes it as it is.
 func (c *Client) connect(ctx context.Context) error {
 	if c.load() && c.ping(ctx) == nil {
 		if !c.Outdated() || !c.mayStart() {

@@ -12,17 +12,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/join/jointest"
+	"github.com/a-Fig/murmur/internal/join/jointest"
 )
 
-// These tests run t4 as a user would: a copy of the test binary named t4 behaves as the t4 command
-// (TestMain hands it to main), and one named claude as a stand-in for Claude Code's command, so that
-// nothing here runs the real claude or touches the real user's settings. A daemon that a command
-// starts is the same copy run as `t4 daemon`.
+// These tests run mur as a user would: a copy of the test binary named mur behaves as the mur
+// command (TestMain hands it to main), and one named claude as a stand-in for Claude Code's
+// command, so that nothing here runs the real claude or touches the real user's settings. A daemon
+// that a command starts is the same copy run as `mur daemon`.
 func TestMain(m *testing.M) {
 	jointest.RunIfFakeClaude()
 	name := strings.TrimSuffix(strings.ToLower(filepath.Base(os.Args[0])), ".exe")
-	if name == "t4" || (len(os.Args) > 1 && os.Args[1] == "daemon") {
+	if name == "mur" || (len(os.Args) > 1 && os.Args[1] == "daemon") {
 		main()
 		return
 	}
@@ -46,17 +46,17 @@ func exeName(name string) string {
 	return name
 }
 
-// binaries makes the t4 and claude copies, once for all the tests. T4_UNDER_TEST names a built t4
-// to use in place of this test binary's copy, which is how these tests are run against another
+// binaries makes the mur and claude copies, once for all the tests. MURMUR_UNDER_TEST names a built
+// mur to use in place of this test binary's copy, which is how these tests are run against another
 // version: the tests that describe new behaviour fail on the version before it.
-func binaries(t *testing.T) (t4, claude string) {
+func binaries(t *testing.T) (mur, claude string) {
 	t.Helper()
 	binOnce.Do(func() {
-		if binDir, binErr = os.MkdirTemp("", "t4-bin"); binErr == nil {
-			if other := os.Getenv("T4_UNDER_TEST"); other != "" {
-				binErr = copyFile(other, filepath.Join(binDir, exeName("t4")))
+		if binDir, binErr = os.MkdirTemp("", "mur-bin"); binErr == nil {
+			if other := os.Getenv("MURMUR_UNDER_TEST"); other != "" {
+				binErr = copyFile(other, filepath.Join(binDir, exeName("mur")))
 			} else {
-				jointest.CopySelf(t, filepath.Join(binDir, exeName("t4")))
+				jointest.CopySelf(t, filepath.Join(binDir, exeName("mur")))
 			}
 			jointest.CopySelf(t, filepath.Join(binDir, exeName("claude")))
 		}
@@ -64,7 +64,7 @@ func binaries(t *testing.T) (t4, claude string) {
 	if binErr != nil {
 		t.Fatal(binErr)
 	}
-	return filepath.Join(binDir, exeName("t4")), filepath.Join(binDir, exeName("claude"))
+	return filepath.Join(binDir, exeName("mur")), filepath.Join(binDir, exeName("claude"))
 }
 
 func copyFile(src, dst string) error {
@@ -102,7 +102,7 @@ func cloneOf(t *testing.T, root string) (remote, clone string) {
 func stopDaemon(clone string) {
 	runStop(context.Background(), []string{"-C", clone}, &bytes.Buffer{})
 	for end := time.Now().Add(15 * time.Second); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
-		if _, err := os.Stat(filepath.Join(clone, ".git", "t4", "daemon.json")); err != nil {
+		if _, err := os.Stat(filepath.Join(clone, ".git", "murmur", "daemon.json")); err != nil {
 			return
 		}
 	}
@@ -113,7 +113,7 @@ func stopDaemon(clone string) {
 type box struct {
 	t         *testing.T
 	root      string
-	t4        string // the t4 command
+	mur       string // the mur command
 	claude    string // the stand-in claude
 	home      string
 	claudeDir string // CLAUDE_CONFIG_DIR
@@ -126,9 +126,9 @@ type box struct {
 
 func newBox(t *testing.T) *box {
 	t.Helper()
-	t4, claude := binaries(t)
+	mur, claude := binaries(t)
 	root := t.TempDir()
-	b := &box{t: t, root: root, t4: t4, claude: claude,
+	b := &box{t: t, root: root, mur: mur, claude: claude,
 		home:      filepath.Join(root, "home"),
 		claudeDir: filepath.Join(root, "home", "claude-config"),
 		codexHome: filepath.Join(root, "home", "codex"),
@@ -160,16 +160,16 @@ func (b *box) env() []string {
 		"HOME="+b.home, "USERPROFILE="+b.home,
 		"CLAUDE_CONFIG_DIR="+b.claudeDir, "CODEX_HOME="+b.codexHome,
 		jointest.LogEnv+"="+b.log,
-		"PATH="+filepath.Dir(b.t4)+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"PATH="+filepath.Dir(b.mur)+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 }
 
-// run runs t4 with the given arguments in dir and returns its output and exit status.
+// run runs mur with the given arguments in dir and returns its output and exit status.
 func (b *box) run(dir string, args ...string) (string, int) {
 	b.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, b.t4, args...)
+	cmd := exec.CommandContext(ctx, b.mur, args...)
 	cmd.Dir = dir
 	cmd.Env = append(b.env(), b.extraEnv...)
 	var out bytes.Buffer
@@ -179,7 +179,7 @@ func (b *box) run(dir string, args ...string) (string, int) {
 		return out.String(), ee.ExitCode()
 	}
 	if err != nil {
-		b.t.Fatalf("t4 %s: %v\n%s", strings.Join(args, " "), err, out.String())
+		b.t.Fatalf("mur %s: %v\n%s", strings.Join(args, " "), err, out.String())
 	}
 	return out.String(), 0
 }
@@ -188,7 +188,7 @@ func (b *box) mustRun(dir string, args ...string) string {
 	b.t.Helper()
 	out, code := b.run(dir, args...)
 	if code != 0 {
-		b.t.Fatalf("t4 %s: exit %d\n%s", strings.Join(args, " "), code, out)
+		b.t.Fatalf("mur %s: exit %d\n%s", strings.Join(args, " "), code, out)
 	}
 	return out
 }
@@ -229,7 +229,7 @@ func snapshot(t *testing.T, roots ...string) map[string]string {
 				return nil
 			}
 			if strings.Contains(filepath.ToSlash(path), "/.git/") {
-				return nil // git's own bookkeeping changes on any command, and the daemon owns .git/t4
+				return nil // git's own bookkeeping changes on any command, and the daemon owns .git/murmur
 			}
 			b, _ := os.ReadFile(path)
 			snap[path] = string(b)

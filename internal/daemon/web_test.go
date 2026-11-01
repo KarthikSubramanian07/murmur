@@ -17,16 +17,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/client"
-	"github.com/a-Fig/t4/internal/proto"
-	"github.com/a-Fig/t4/internal/web"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // Tests of the page for humans (#22): the daemon serves it, and answers its API from what it
 // already holds. The tests reach it as a browser does, over HTTP with the token from the address
-// that `t4 ui` prints.
+// that `mur ui` prints.
 
 // page is one device's page, reached the way a browser reaches it.
 type page struct {
@@ -329,7 +329,7 @@ func TestPageNeedsTheToken(t *testing.T) {
 	}
 }
 
-// infoFile reads daemon.json, where sessions and `t4 ui` find the daemon.
+// infoFile reads daemon.json, where sessions and `mur ui` find the daemon.
 func (d *device) infoFile(t *testing.T) proto.Info {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(d.gitDir, brand.StateDir, "daemon.json"))
@@ -715,7 +715,7 @@ func TestSessionKeepsDaemonUpWithPage(t *testing.T) {
 func TestPageMessagesAfterAFailedFirstSync(t *testing.T) {
 	remote := newRemote(t)
 	a := newDevice(t, remote)
-	pushEvent(t, remote, "refs/t4/mesh/old-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
+	pushEvent(t, remote, "refs/murmur/mesh/old-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
 		From: "old-0001/x", At: time.Now().Add(-10 * time.Minute).UTC(), To: "*", Subject: "backlog"})
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)

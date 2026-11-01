@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/gitx"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // How often a daemon polls follows the conversation (#93): Poll for FastFor after a message goes

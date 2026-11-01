@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/a-Fig/t4/internal/attrib"
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/gitx"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/attrib"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // Which commits are a session's, and when it was last active (#21). docs/VISION.md has the

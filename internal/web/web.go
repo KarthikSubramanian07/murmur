@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
+	"github.com/a-Fig/murmur/internal/brand"
 )
 
 //go:embed static
@@ -61,7 +61,7 @@ func New(src Source, token, repoDir string) *Server {
 func NewWithPRs(src Source, token string, prs LookupPR) *Server {
 	s := &Server{src: src, token: token, prs: newPRCache(prs), mux: http.NewServeMux()}
 	var page bytes.Buffer
-	if err := index.Execute(&page, struct{ Name string }{brand.Name}); err != nil {
+	if err := index.Execute(&page, struct{ Name string }{brand.Product}); err != nil {
 		panic(err) // the template is embedded, so this is a bug, not a condition
 	}
 	s.page = page.Bytes()

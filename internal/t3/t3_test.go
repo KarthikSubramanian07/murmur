@@ -14,10 +14,10 @@ import (
 )
 
 // The tests of Send run the test binary again as the `t3` command: it records what it was given,
-// then does what T4_TEST_FAKE_T3_MODE says.
+// then does what MURMUR_TEST_FAKE_T3_MODE says.
 const (
-	fakeEnv     = "T4_TEST_FAKE_T3"
-	fakeModeEnv = "T4_TEST_FAKE_T3_MODE"
+	fakeEnv     = "MURMUR_TEST_FAKE_T3"
+	fakeModeEnv = "MURMUR_TEST_FAKE_T3_MODE"
 )
 
 func TestMain(m *testing.M) {

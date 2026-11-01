@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // Delivery is the one thing the daemon does to the user's other programs, so it stops with the
@@ -40,7 +40,7 @@ func TestNoTurnIsDeliveredForAUserWhoHasLeft(t *testing.T) {
 	a.send("aaaaaa", bob, "after joining again", "")
 	eventually(t, "both messages", func() bool { return len(calls()) >= 2 })
 	for i, want := range []string{"while gone", "after joining again"} {
-		if got := calls()[i].Stdin; !strings.Contains(got, "via "+brand.Name+":\n\n"+want+"\n") {
+		if got := calls()[i].Stdin; !strings.Contains(got, "via "+brand.Product+":\n\n"+want+"\n") {
 			t.Errorf("delivery %d was %q, want %q", i, got, want)
 		}
 	}

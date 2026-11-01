@@ -1,6 +1,6 @@
 // Package jointest is what the tests of join share: a stand-in for the claude command, so that no
 // test runs the real one against the real user's settings, and a way to make a copy of the running
-// test binary under another name (t4, claude), since the tests exercise t4 by running it.
+// test binary under another name (mur, claude), since the tests exercise mur by running it.
 package jointest
 
 import (
@@ -11,11 +11,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/a-Fig/t4/internal/jsonedit"
+	"github.com/a-Fig/murmur/internal/jsonedit"
 )
 
 // LogEnv names the file the stand-in appends the arguments of each run to, one line per run.
-const LogEnv = "T4_FAKE_CLAUDE_LOG"
+const LogEnv = "MURMUR_FAKE_CLAUDE_LOG"
 
 // RunIfFakeClaude does what the claude command does and exits, when this process was started under
 // that name. Tests call it first thing in TestMain.
@@ -100,7 +100,7 @@ func fakeClaude(args []string) error {
 	return os.WriteFile(path, out, 0o600)
 }
 
-// CopySelf copies the running test binary to dst. A copy named t4 behaves as t4 when the test's
+// CopySelf copies the running test binary to dst. A copy named mur behaves as mur when the test's
 // TestMain hands over to main, and one named claude as the stand-in.
 func CopySelf(t testing.TB, dst string) {
 	t.Helper()

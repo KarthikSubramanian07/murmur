@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // A session back within StoppedInbox may register again before its daemon's catch-up has read

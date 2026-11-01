@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/a-Fig/t4/internal/setup"
+	"github.com/a-Fig/murmur/internal/setup"
 )
 
-// hookEvents reads which events a settings file runs a t4 hook on, with the matcher of each.
+// hookEvents reads which events a settings file runs a mur hook on, with the matcher of each.
 func hookEvents(t *testing.T, path string) map[string]string {
 	t.Helper()
 	var cfg struct {
@@ -53,7 +53,7 @@ func wantHookEvents() map[string]string {
 // only) adds the events it lacks, and doesn't double the ones it has or touch the user's own hooks.
 func TestJoinCompletesAnOlderHookInstall(t *testing.T) {
 	p, _ := clone(t)
-	exe := filepath.Join(t.TempDir(), "bin", "t4")
+	exe := filepath.Join(t.TempDir(), "bin", "mur")
 	command, err := json.Marshal(setup.HookCommand(exe))
 	if err != nil {
 		t.Fatal(err)

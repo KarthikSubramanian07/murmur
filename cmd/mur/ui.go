@@ -11,14 +11,14 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/client"
-	"github.com/a-Fig/t4/internal/join"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/join"
 )
 
 // runUI opens the page for humans: the daemon serves it, and starts if it isn't running. The
 // address carries the daemon's token in its fragment, so whoever has the address has the page; it
-// is printed for the terminal's owner, who already holds the token in .git/t4/daemon.json.
+// is printed for the terminal's owner, who already holds the token in .git/murmur/daemon.json.
 func runUI(ctx context.Context, args []string, out io.Writer, open func(url string) error) error {
 	fs, dir := flags("ui")
 	noOpen := fs.Bool("no-open", false, "only print the page's address; don't open a browser")
@@ -29,8 +29,8 @@ func runUI(ctx context.Context, args []string, out io.Writer, open func(url stri
 		return err
 	}
 	if !join.Joined(gitDir) {
-		return fmt.Errorf("this clone hasn't joined %[1]s, and the page is the daemon's, which runs only for a user who has: "+
-			"ask the agent in this repo to join, or run `%[1]s join`", brand.Command)
+		return fmt.Errorf("this clone hasn't joined %s, and the page is the daemon's, which runs only for a user who has: "+
+			"ask the agent in this repo to join, or run `%s join`", brand.Product, brand.Command)
 	}
 	c, err := client.Connect(ctx, gitDir, true)
 	if err != nil {
@@ -39,8 +39,8 @@ func runUI(ctx context.Context, args []string, out io.Writer, open func(url stri
 	url, err := c.PageURL()
 	if errors.Is(err, client.ErrNoPage) {
 		return fmt.Errorf("the daemon isn't serving the page. If it was started by an older version, "+
-			"stop it with `t4 stop` and run this again; if not, the reason is in %s",
-			filepath.Join(client.StateDir(gitDir), "daemon.log"))
+			"stop it with `%s stop` and run this again; if not, the reason is in %s",
+			brand.Command, filepath.Join(client.StateDir(gitDir), "daemon.log"))
 	}
 	if err != nil {
 		return err

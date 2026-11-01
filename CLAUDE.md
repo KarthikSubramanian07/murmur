@@ -1,11 +1,12 @@
-# t4: notes for Claude Code
+# Murmur: notes for Claude Code
 
-t4 lets coding agents on different teammates' machines, in the same private repo, discover and
+Murmur lets coding agents on different teammates' machines, in the same private repo, discover and
 message each other, with git refs on GitHub as the transport. V1 exists (2026-10-26): one Go
-binary, `cmd/t4`, with its packages in `internal/`; `go test ./...` runs it all, and every pull
+binary, `cmd/mur`, with its packages in `internal/`; `go test ./...` runs it all, and every pull
 request runs it on macOS, Windows and Linux in CI (`docs/testing.md`).
 `docs/VISION.md` is the design and its reasons; read it before proposing architecture, and change
-it when a decision changes. The name lives in `internal/brand`, so a rename is one file.
+it when a decision changes. The name lives in `internal/brand`, so a rename is that file plus the
+module path.
 
 ## Writing for whoever comes next
 
@@ -15,13 +16,13 @@ this file loads into every session, so it stays short and points into `docs/` fo
 
 ## Words that mean two things
 
-- **t4.** The repo, and the tool's working name. The product name is undecided; don't spread "t4"
-  into identifiers that would be hard to rename. Candidate names are in `docs/names.md`.
+- **Murmur, mur, t4.** Murmur is the product and the repo (`a-Fig/murmur`); `mur` is the command
+  people type. The repo and the tool were t4 until 2026-11-01 (`docs/names.md`).
 - **session.** One agent conversation (a T3 thread, a Claude Code or Codex session). One device
   runs many.
-- **device.** One clone's t4 daemon; the clone's worktrees share it, and a second clone on the
-  same machine is a second device. It owns one ref, `refs/t4/mesh/<deviceId>`.
-- **mesh, bus.** The set of `refs/t4/*` refs on the remote that carry events.
+- **device.** One clone's mur daemon; the clone's worktrees share it, and a second clone on the
+  same machine is a second device. It owns one ref, `refs/murmur/mesh/<deviceId>`.
+- **mesh, bus.** The set of `refs/murmur/*` refs on the remote that carry events.
 
 ## Traps
 
@@ -29,7 +30,7 @@ this file loads into every session, so it stays short and points into `docs/` fo
   that checkout at the same moment. Bus writes use plumbing (`commit-tree`, `push <sha>:<ref>`);
   a checkout of a bus ref, even briefly, would wreck someone's work.
 - On Windows, Git Bash rewrites POSIX-looking arguments into Windows paths unless
-  `MSYS_NO_PATHCONV=1` is set; refs like `refs/t4/...` are safe, absolute paths are not.
+  `MSYS_NO_PATHCONV=1` is set; refs like `refs/murmur/...` are safe, absolute paths are not.
 
 ## Issue labels
 

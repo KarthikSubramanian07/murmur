@@ -47,7 +47,7 @@ func jsonAt(t *testing.T, path string, keys ...string) any {
 	return v
 }
 
-// init says the repo uses t4 in both files, and puts nothing else in the repo; join, run by an agent
+// init says the repo uses Murmur in both files, and puts nothing else in the repo; join, run by an agent
 // after its user agreed, does the rest on the user's side only. Running it again changes nothing,
 // and --leave takes this repo's part back out.
 func TestInitJoinAndLeave(t *testing.T) {
@@ -57,18 +57,18 @@ func TestInitJoinAndLeave(t *testing.T) {
 	b.mustRun(b.clone, "init")
 	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
 		got := readFile(t, filepath.Join(b.clone, name))
-		for _, want := range []string{"<!-- t4:start -->", "ask your user first", "docs/agents/join.md", "docs/agents/use.md", "<!-- t4:end -->"} {
+		for _, want := range []string{"<!-- murmur:start -->", "ask your user first", "docs/agents/join.md", "docs/agents/use.md", "<!-- murmur:end -->"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("%s after init doesn't say %q:\n%s", name, want, got)
 			}
 		}
 	}
-	for _, name := range []string{".mcp.json", ".claude", "t4"} {
+	for _, name := range []string{".mcp.json", ".claude", "murmur"} {
 		if exists(filepath.Join(b.clone, name)) {
 			t.Errorf("init wrote %s into the repo", name)
 		}
 	}
-	if exists(b.claudeJSON()) || exists(b.codexConfig()) || exists(filepath.Join(b.clone, ".git", "t4")) {
+	if exists(b.claudeJSON()) || exists(b.codexConfig()) || exists(filepath.Join(b.clone, ".git", "murmur")) {
 		t.Fatal("init touched the user's settings or started something")
 	}
 
@@ -78,15 +78,15 @@ func TestInitJoinAndLeave(t *testing.T) {
 	}
 
 	// Registered once for the user, with this binary's full path, and its tools allowed.
-	server, _ := jsonAt(t, b.claudeJSON(), "mcpServers", "t4").(map[string]any)
-	if cmd, _ := server["command"].(string); server == nil || !sameFile(cmd, b.t4) || !reflect.DeepEqual(server["args"], []any{"mcp"}) {
+	server, _ := jsonAt(t, b.claudeJSON(), "mcpServers", "murmur").(map[string]any)
+	if cmd, _ := server["command"].(string); server == nil || !sameFile(cmd, b.mur) || !reflect.DeepEqual(server["args"], []any{"mcp"}) {
 		t.Errorf("Claude Code's server: %v", server)
 	}
-	if allow, _ := jsonAt(t, b.claudeSettings(), "permissions", "allow").([]any); !reflect.DeepEqual(allow, []any{"mcp__t4"}) {
+	if allow, _ := jsonAt(t, b.claudeSettings(), "permissions", "allow").([]any); !reflect.DeepEqual(allow, []any{"mcp__murmur"}) {
 		t.Errorf("Claude Code's allow list: %v", allow)
 	}
 	toml := readFile(t, b.codexConfig())
-	if !strings.Contains(toml, "[mcp_servers.t4]") || !strings.Contains(toml, `args = ["mcp", "--agent", "codex"]`) || !strings.Contains(toml, `default_tools_approval_mode = "approve"`) {
+	if !strings.Contains(toml, "[mcp_servers.murmur]") || !strings.Contains(toml, `args = ["mcp", "--agent", "codex"]`) || !strings.Contains(toml, `default_tools_approval_mode = "approve"`) {
 		t.Errorf("Codex's config:\n%s", toml)
 	}
 
@@ -103,7 +103,7 @@ func TestInitJoinAndLeave(t *testing.T) {
 	if strings.Contains(status, ".claude") || strings.Contains(status, ".mcp.json") {
 		t.Errorf("join left files that a commit would pick up:\n%s", status)
 	}
-	if !exists(filepath.Join(b.clone, ".git", "t4", "joined.json")) || !exists(filepath.Join(b.clone, ".git", "t4", "daemon.json")) {
+	if !exists(filepath.Join(b.clone, ".git", "murmur", "joined.json")) || !exists(filepath.Join(b.clone, ".git", "murmur", "daemon.json")) {
 		t.Error("join didn't record consent and start the daemon")
 	}
 
@@ -127,16 +127,16 @@ func TestInitJoinAndLeave(t *testing.T) {
 	if !strings.Contains(out, "Removed the record") {
 		t.Errorf("leave's output:\n%s", out)
 	}
-	if exists(filepath.Join(b.clone, ".git", "t4", "joined.json")) || exists(filepath.Join(b.clone, ".git", "t4", "daemon.json")) {
+	if exists(filepath.Join(b.clone, ".git", "murmur", "joined.json")) || exists(filepath.Join(b.clone, ".git", "murmur", "daemon.json")) {
 		t.Error("consent or the daemon survived --leave")
 	}
 	if exists(filepath.Join(b.clone, ".claude", "settings.local.json")) || exists(filepath.Join(b.clone, ".claude")) {
 		t.Error("the hook survived --leave")
 	}
-	if jsonAt(t, b.claudeJSON(), "mcpServers", "t4") == nil || !strings.Contains(readFile(t, b.codexConfig()), "[mcp_servers.t4]") {
+	if jsonAt(t, b.claudeJSON(), "mcpServers", "murmur") == nil || !strings.Contains(readFile(t, b.codexConfig()), "[mcp_servers.murmur]") {
 		t.Error("--leave unregistered the server for every repo")
 	}
-	if !strings.Contains(readFile(t, filepath.Join(b.clone, "AGENTS.md")), "<!-- t4:start -->") {
+	if !strings.Contains(readFile(t, filepath.Join(b.clone, "AGENTS.md")), "<!-- murmur:start -->") {
 		t.Error("--leave touched the repo's files")
 	}
 	if out = b.mustRun(b.clone, "join", "--leave"); !strings.Contains(out, "Nothing to undo") {
@@ -145,7 +145,7 @@ func TestInitJoinAndLeave(t *testing.T) {
 
 	// And back in.
 	b.mustRun(b.clone, "join")
-	if !exists(filepath.Join(b.clone, ".git", "t4", "joined.json")) || !exists(filepath.Join(b.clone, ".claude", "settings.local.json")) {
+	if !exists(filepath.Join(b.clone, ".git", "murmur", "joined.json")) || !exists(filepath.Join(b.clone, ".claude", "settings.local.json")) {
 		t.Error("joining again after leaving didn't join")
 	}
 }
@@ -163,10 +163,10 @@ func TestJoinKeepsTheUsersConfig(t *testing.T) {
 	b.mustRun(b.clone, "join")
 
 	cfg := readFile(t, b.claudeJSON())
-	if !(strings.Index(cfg, "numStartups") < strings.Index(cfg, "mcpServers") && strings.Index(cfg, `"other"`) < strings.Index(cfg, `"t4"`) && strings.Index(cfg, `"t4"`) < strings.Index(cfg, "theme")) {
+	if !(strings.Index(cfg, "numStartups") < strings.Index(cfg, "mcpServers") && strings.Index(cfg, `"other"`) < strings.Index(cfg, `"murmur"`) && strings.Index(cfg, `"murmur"`) < strings.Index(cfg, "theme")) {
 		t.Errorf(".claude.json lost the order of the user's keys:\n%s", cfg)
 	}
-	if allow, _ := jsonAt(t, b.claudeSettings(), "permissions", "allow").([]any); !reflect.DeepEqual(allow, []any{"Bash(ls)", "mcp__t4"}) {
+	if allow, _ := jsonAt(t, b.claudeSettings(), "permissions", "allow").([]any); !reflect.DeepEqual(allow, []any{"Bash(ls)", "mcp__murmur"}) {
 		t.Errorf("allow list: %v", allow)
 	}
 	if got := readFile(t, b.codexConfig()); !strings.HasPrefix(got, codex) {
@@ -183,27 +183,27 @@ func TestJoinKeepsTheUsersConfig(t *testing.T) {
 	}
 }
 
-// A Codex thread in T3 that began before t4 was added never gets its tools, so what join prints for
-// it is to open a new thread (Tyler, 2026-10-30), in these words.
+// A Codex thread in T3 that began before Murmur was added never gets its tools, so what join prints
+// for it is to open a new thread (Tyler, 2026-10-30), in these words.
 func TestJoinInACodexThreadInT3SaysToOpenANewThread(t *testing.T) {
 	b := newBox(t)
 	b.extraEnv = []string{"CODEX_THREAD_ID=019a", "T3CODE_CLI_PATH=" + filepath.Join(b.root, "t3", "bin", "t3")}
 	b.mustRun(b.clone, "init")
 	out := b.mustRun(b.clone, "join")
-	if want := "open a new thread in this project to talk to other agents through t4"; !strings.Contains(out, want) {
+	if want := "open a new thread in this project to talk to other agents through Murmur"; !strings.Contains(out, want) {
 		t.Errorf("join's output doesn't say %q:\n%s", want, out)
 	}
 }
 
-// join does nothing in a repo that doesn't say it uses t4: the user's yes was to this repo's invitation.
+// join does nothing in a repo that doesn't say it uses Murmur: the user's yes was to this repo's invitation.
 func TestJoinNeedsTheMarker(t *testing.T) {
 	b := newBox(t)
 	out, code := b.run(b.clone, "join")
-	if code == 0 || !strings.Contains(out, "doesn't say it uses t4") {
+	if code == 0 || !strings.Contains(out, "doesn't say it uses Murmur") {
 		t.Errorf("exit %d:\n%s", code, out)
 	}
-	if exists(b.claudeJSON()) || exists(b.codexConfig()) || exists(filepath.Join(b.clone, ".git", "t4")) || exists(filepath.Join(b.clone, ".claude")) {
-		t.Error("join changed something in a repo that doesn't use t4")
+	if exists(b.claudeJSON()) || exists(b.codexConfig()) || exists(filepath.Join(b.clone, ".git", "murmur")) || exists(filepath.Join(b.clone, ".claude")) {
+		t.Error("join changed something in a repo that doesn't use Murmur")
 	}
 }
 
@@ -214,23 +214,23 @@ func TestTheMessagingCommandsAreGone(t *testing.T) {
 	for _, cmd := range []string{"who", "send", "inbox", "log"} {
 		out, code := b.run(b.clone, cmd)
 		if code != 2 || !strings.Contains(out, "unknown command") {
-			t.Errorf("t4 %s: exit %d, want 2 and an unknown command\n%s", cmd, code, out)
+			t.Errorf("mur %s: exit %d, want 2 and an unknown command\n%s", cmd, code, out)
 		}
 	}
 	help := b.mustRun(b.clone, "help")
-	for _, gone := range []string{"t4 who", "t4 send", "t4 inbox", "t4 log"} {
+	for _, gone := range []string{"mur who", "mur send", "mur inbox", "mur log"} {
 		if strings.Contains(help, gone) {
 			t.Errorf("help still lists %q:\n%s", gone, help)
 		}
 	}
-	for _, kept := range []string{"t4 init", "t4 join", "t4 ui", "t4 stop"} {
+	for _, kept := range []string{"mur init", "mur join", "mur ui", "mur stop"} {
 		if !strings.Contains(help, kept) {
 			t.Errorf("help doesn't list %q:\n%s", kept, help)
 		}
 	}
 	for _, kept := range []string{"version", "stop"} {
 		if _, code := b.run(b.clone, kept); code != 0 {
-			t.Errorf("t4 %s: exit %d", kept, code)
+			t.Errorf("mur %s: exit %d", kept, code)
 		}
 	}
 }
@@ -241,28 +241,28 @@ func TestDaemonWillNotRunInAClonethatHasNotJoined(t *testing.T) {
 	b := newBox(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, b.t4, "daemon", "-C", b.clone)
+	cmd := exec.CommandContext(ctx, b.mur, "daemon", "-C", b.clone)
 	cmd.Env = b.env()
 	out, err := cmd.CombinedOutput()
 	if err == nil || ctx.Err() != nil || !strings.Contains(string(out), "hasn't joined") {
 		t.Errorf("the daemon ran (err %v, timed out %v):\n%s", err, ctx.Err() != nil, out)
 	}
-	if exists(filepath.Join(b.clone, ".git", "t4", "daemon.json")) {
+	if exists(filepath.Join(b.clone, ".git", "murmur", "daemon.json")) {
 		t.Error("it left a daemon.json")
 	}
 }
 
-// remoteRefs lists the t4 refs on the remote, where teammates would see them.
+// remoteRefs lists the Murmur refs on the remote, where teammates would see them.
 func remoteRefs(t *testing.T, b *box) string {
 	t.Helper()
-	return strings.TrimSpace(git(t, b.remote, "for-each-ref", "refs/t4"))
+	return strings.TrimSpace(git(t, b.remote, "for-each-ref", "refs/murmur"))
 }
 
-// mcpSession starts `t4 mcp` in the clone, as an agent's client does, and connects to it.
+// mcpSession starts `mur mcp` in the clone, as an agent's client does, and connects to it.
 func (b *box) mcpSession(t *testing.T) *mcp.ClientSession {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.Command(b.t4, "mcp", "-C", b.clone)
+	cmd := exec.Command(b.mur, "mcp", "-C", b.clone)
 	cmd.Env = append(b.env(), b.extraEnv...)
 	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test-client"}, nil).Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
 	if err != nil {
@@ -309,24 +309,24 @@ func eventually(t *testing.T, what string, cond func() bool) {
 func quiet(t *testing.T, b *box, what string) {
 	t.Helper()
 	time.Sleep(3 * time.Second) // longer than it waits between looks, and than a daemon takes to start
-	if exists(filepath.Join(b.clone, ".git", "t4")) {
+	if exists(filepath.Join(b.clone, ".git", "murmur")) {
 		t.Errorf("%s: a daemon's directory exists", what)
 	}
-	if refs := strings.TrimSpace(git(t, b.clone, "for-each-ref", "refs/t4")) + remoteRefs(t, b); refs != "" {
-		t.Errorf("%s: t4 refs exist: %s", what, refs)
+	if refs := strings.TrimSpace(git(t, b.clone, "for-each-ref", "refs/murmur")) + remoteRefs(t, b); refs != "" {
+		t.Errorf("%s: Murmur refs exist: %s", what, refs)
 	}
 }
 
-// The user-scope server starts in every repo the user opens. Where the repo hasn't invited t4, or
-// this user hasn't joined, it has no tools and no instructions, starts no daemon and writes no ref,
-// locally or on the remote.
+// The user-scope server starts in every repo the user opens. Where the repo hasn't invited Murmur,
+// or this user hasn't joined, it has no tools and no instructions, starts no daemon and writes no
+// ref, locally or on the remote.
 func TestTheMCPServerIsPassiveWhereItIsNotInvited(t *testing.T) {
 	b := newBox(t)
 
-	// A repo that doesn't use t4.
+	// A repo that doesn't use Murmur.
 	cs := b.mcpSession(t)
 	if names := tools(t, cs); len(names) != 0 {
-		t.Errorf("tools in a repo that doesn't use t4: %q", names)
+		t.Errorf("tools in a repo that doesn't use Murmur: %q", names)
 	}
 	quiet(t, b, "no marker")
 	cs.Close()
@@ -363,7 +363,7 @@ func TestTheMCPServerFollowsJoinAndLeave(t *testing.T) {
 	b.mustRun(b.clone, "join", "--leave")
 	eventually(t, "the tools to go", func() bool { return len(tools(t, cs)) == 0 })
 	time.Sleep(3 * time.Second)
-	if exists(filepath.Join(b.clone, ".git", "t4", "daemon.json")) {
+	if exists(filepath.Join(b.clone, ".git", "murmur", "daemon.json")) {
 		t.Error("a daemon is running after --leave")
 	}
 }

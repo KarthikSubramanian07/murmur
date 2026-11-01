@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/a-Fig/t4/internal/brand"
-	"github.com/a-Fig/t4/internal/gitx"
-	"github.com/a-Fig/t4/internal/jsonedit"
-	"github.com/a-Fig/t4/internal/setup"
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/jsonedit"
+	"github.com/a-Fig/murmur/internal/setup"
 )
 
 // The notice hook goes in .claude/settings.local.json, the file Claude Code reads for one user's
@@ -199,7 +199,7 @@ func ignoreHookFile(gitDir string) error {
 		add = "\n" + add
 	}
 	if len(b) == 0 {
-		add = "# " + brand.Name + ": the notice hook is this user's, not the repo's\n" + add
+		add = "# " + brand.Product + ": the notice hook is this user's, not the repo's\n" + add
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {

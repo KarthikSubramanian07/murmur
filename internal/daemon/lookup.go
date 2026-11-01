@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/a-Fig/t4/internal/bus"
-	"github.com/a-Fig/t4/internal/names"
-	"github.com/a-Fig/t4/internal/proto"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/names"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // lookup (#21) gathers what the daemon knows about one session: what presence shows of anyone's,

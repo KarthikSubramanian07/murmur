@@ -26,8 +26,8 @@ const (
 	helperSleep  = "proc-helper-sleep"  // args: optionally --log FILE, as a WMI start passes it
 	helperArgv   = "proc-helper-argv"   // args: arguments..., --log FILE; writes what it received to FILE
 	readyMarker  = "proc helper: ready" // followed by the sleeper's PID
-	envFindFails = "T4_PROC_TEST_FIND_FAILS"
-	envProbe     = "T4_PROC_TEST_PROBE"
+	envFindFails = "MURMUR_PROC_TEST_FIND_FAILS"
+	envProbe     = "MURMUR_PROC_TEST_PROBE"
 )
 
 func TestMain(m *testing.M) {
@@ -311,9 +311,9 @@ func TestStartDetachedWithoutJob(t *testing.T) {
 // TestWindowsCommandLineRoundTrip checks that the command line handed to WMI splits back into the
 // same argv, including a path with spaces (the Desktop path has them) and awkward quoting.
 func TestWindowsCommandLineRoundTrip(t *testing.T) {
-	path := `C:\Users\dev\Desktop\My Project\t4\t4.exe`
+	path := `C:\Users\dev\Desktop\My Project\murmur\mur.exe`
 	args := []string{
-		"daemon", "--git-dir", `C:\Users\dev\Desktop\My Project\t4\.git`,
+		"daemon", "--git-dir", `C:\Users\dev\Desktop\My Project\murmur\.git`,
 		"--log", `C:\dir with "quotes"\ends with a slash\`,
 	}
 	got, err := windows.DecomposeCommandLine(windowsCommandLine(path, args))
