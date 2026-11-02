@@ -112,11 +112,16 @@
      side by side between the two sessions they come from. */
   .c-finch  { left: 7%;    top: 62px;  --tilt: -2deg; }
   .c-wren   { right: 8%;   top: 44px;  --tilt: 1.5deg; }
+  /* The text is centered in .page, which is at least as tall as the window, so in a window taller
+     than 900px it sits lower than these four were placed for and would run into them. --drop moves
+     them down by as much as the text moved past where it is at 900px tall; at 900px and below it is
+     0 and they stay where they were (#142). The 50% is of .page's height, as top's percentages are. */
+  .cards { --drop: max(0px, 50% - 450px); }
   /* These two run off the page; the extra padding on that side keeps all their text on it. */
-  .c-otter  { left: -28px;  top: 556px; --tilt: 1.5deg;  width: calc(clamp(232px, 21.5%, 300px) + 28px); padding-left: 44px; }
-  .c-heron  { right: -28px; top: 576px; --tilt: -1.5deg; width: calc(clamp(232px, 21.5%, 300px) + 28px); padding-right: 44px; }
-  .c-ask    { right: calc(50% + 12px); top: 628px; --tilt: -1deg; }
-  .c-reply  { left: calc(50% + 12px); top: 664px; --tilt: 1deg; }
+  .c-otter  { left: -28px;  top: calc(556px + var(--drop)); --tilt: 1.5deg;  width: calc(clamp(232px, 21.5%, 300px) + 28px); padding-left: 44px; }
+  .c-heron  { right: -28px; top: calc(576px + var(--drop)); --tilt: -1.5deg; width: calc(clamp(232px, 21.5%, 300px) + 28px); padding-right: 44px; }
+  .c-ask    { right: calc(50% + 12px); top: calc(628px + var(--drop)); --tilt: -1deg; }
+  .c-reply  { left: calc(50% + 12px); top: calc(664px + var(--drop)); --tilt: 1deg; }
 
   /* Below this the headline takes the whole width, so cards move under it. */
   @media (max-width: 1099px) {
