@@ -613,7 +613,11 @@ change and a daemon that knows no names delivers by it all the same.
   name, the device and the session, as it records any, and sets another name aside in the same
   push. The names are unique because they were registered before anyone used them.
   - *How others read one.* A daemon that knows reservations records the device; a later
-    assignment of the name counts only from that device. A daemon that predates them reads a
+    assignment of the name counts only from that device, and a reservation of a name already in
+    use counts for nothing, so a reader of the whole history and one that reads only what is new
+    agree. A repair's new root sets the outstanding names aside again, each for its device, ahead
+    of its snapshot of the rest. A taken name is its session's address at once, on its own
+    device, even before the assignment lands. A daemon that predates them reads a
     commit with no session as a name in use by a session it doesn't know, so it never hands the
     name out either. Until the assignment lands, other devices find the session by the name in
     its device's presence, as they find any live session.

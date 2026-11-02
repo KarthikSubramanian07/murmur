@@ -93,11 +93,13 @@ func (d *Daemon) noteNameLocked(name, addr string) bool {
 func (d *Daemon) processNames(ctx context.Context, sha string) {
 	d.mu.Lock()
 	tip, good, checked := d.st.NamesTip, d.st.NamesGood, d.namesChecked
-	reservedBefore := maps.Clone(d.st.Reserved)
 	d.mu.Unlock()
 	if checked && tip == sha {
 		return
 	}
+	d.mu.Lock()
+	usedBefore, reservedBefore := maps.Clone(d.st.Used), maps.Clone(d.st.Reserved)
+	d.mu.Unlock()
 	fail := func(err error) {
 		if ctx.Err() == nil {
 			d.log.Printf("reading the names registry: %v", err)
@@ -179,8 +181,13 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 		}
 		claims := rec.Claims()
 		if name, dev, ok := rec.Reservation(); ok {
-			if _, taken := read[name]; !taken {
-				reserved[name] = dev // a name already taken is nobody's to set aside
+			// A name already taken is nobody's to set aside: not one taken earlier in this read,
+			// nor one this daemon knew of before it. A reader of the whole history would have
+			// read that earlier, and the two must agree on whose a name is.
+			_, taken := read[name]
+			_, known := usedBefore[name]
+			if !taken && !known {
+				reserved[name] = dev
 			}
 		} else if rec.Session != "" {
 			// The assignment of a name set aside: only the device it was set aside for can give
@@ -375,6 +382,9 @@ func (d *Daemon) nameForKeyLocked(key, id string) string {
 	d.st.NamePool = d.st.NamePool[1:]
 	d.st.NameKeys[key] = name
 	d.st.NameBinds[name] = id
+	// The session's address for the name from now on, as the registry will say once the binding
+	// lands: a session that moves to another conversation before then is still found by it.
+	d.noteNameLocked(name, bus.Addr(d.device, id))
 	d.saveLocked()
 	d.kickNames() // to put the session in the registry, and fill the pool again
 	d.log.Printf("session %s is named %s, a name set aside for it", bus.Addr(d.device, id), name)
@@ -465,12 +475,21 @@ func (d *Daemon) pickName(used map[string]string, taken map[string]bool) (string
 // pushNames pushes w to the registry as one chain of commits on the tip last read, leased on it. It
 // lands only if no one else moved the registry since, which is what makes each fresh name in it
 // this device's. When the tip isn't a commit, or the registry needs repairing, the chain starts
-// from a new root holding a snapshot of every used name, leased on whatever the tip is. It returns
+// from a new root holding a snapshot of every used name, and the names set aside as reservations
+// again, leased on whatever the tip is. It returns
 // bus.ErrRejected if the lease failed.
 func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
+	// The repair flag is read with the tip it goes with: a sync between nextNames and here may have
+	// found the registry rewound, and building on the new tip without the snapshot would lose names.
 	d.mu.Lock()
-	tip := d.st.NamesTip
+	tip, repair := d.st.NamesTip, d.st.NamesRepair
 	used := maps.Clone(d.st.Used)
+	aside := map[string]string{} // names set aside that no session is known to have, to their device
+	for name, dev := range d.st.Reserved {
+		if used[name] == "" {
+			aside[name] = dev
+		}
+	}
 	d.mu.Unlock()
 
 	at := time.Now().UTC()
@@ -505,9 +524,6 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		reserved = append(reserved, name)
 		recs = append(recs, rec(name, ""))
 	}
-	if len(recs) == 0 {
-		recs = append(recs, bus.NameRecord{V: bus.Version, At: at}) // a repair on its own
-	}
 	parent := tip
 	if parent != "" {
 		ok, err := d.repo.IsCommit(ctx, parent)
@@ -518,8 +534,22 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 			parent = "" // junk is never something to build on
 		}
 	}
-	if parent == "" || w.repair {
+	if parent == "" || repair {
+		// A new root. The names set aside go in it as reservations again, first, so a daemon that
+		// joins later still knows whose they are; the rest of the used names go in the snapshot.
+		var again []bus.NameRecord
+		for _, name := range sortedKeys(aside) {
+			again = append(again, bus.NameRecord{V: bus.Version, Name: name, Device: aside[name], At: at})
+			delete(used, name)
+		}
+		recs = append(again, recs...)
+		if len(recs) == 0 {
+			recs = append(recs, bus.NameRecord{V: bus.Version, At: at}) // a repair on its own
+		}
 		parent, recs[0].Used = "", used
+	}
+	if len(recs) == 0 {
+		return nil // nothing to record: a repair that a sync has meanwhile found unneeded
 	}
 	sha := parent
 	for _, r := range recs {
