@@ -226,3 +226,50 @@ func TestReservationOfANameAlreadySetAsideIsIgnored(t *testing.T) {
 		t.Fatalf("%s is set aside for %q", name, got)
 	}
 }
+
+// A name a daemon knows with no session and no device, from a snapshot that kept no devices, gains
+// its device from the first reservation it reads, whether it reads only what is new or the whole
+// history again, as a reader starting fresh does; and an assignment from another device is then
+// refused (Codex's second review of #144).
+func TestKnownNameWithNoDeviceGainsItsReservation(t *testing.T) {
+	for _, whole := range []bool{false, true} {
+		d, _ := namedDaemon(t)
+		ctx := context.Background()
+		const name = "quiet-otter"
+		d.st.Used[name] = "" // read before, from a snapshot that kept no devices
+		forge := func(parent string, r bus.NameRecord) string {
+			msg, err := bus.Encode(r, r.Subject())
+			if err != nil {
+				t.Fatal(err)
+			}
+			sha, err := d.repo.NewCommit(ctx, parent, msg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return sha
+		}
+		parent := d.st.NamesTip
+		reservation := bus.NameRecord{V: bus.Version, Name: name, Device: "owner-0001"}
+		if whole {
+			// Another daemon's repair: a new root, the reservation first, the rest in its snapshot.
+			parent = ""
+			reservation.Used = map[string]string{}
+			for n, addr := range d.st.Used {
+				if n != name {
+					reservation.Used[n] = addr
+				}
+			}
+		}
+		tip := forge(parent, reservation)
+		tip = forge(tip, bus.NameRecord{V: bus.Version, Name: name, Device: "intruder-0001", Session: "s1"})
+		d.advMu.Lock()
+		d.processNames(ctx, tip)
+		d.advMu.Unlock()
+		if got := d.st.Reserved[name]; got != "owner-0001" {
+			t.Errorf("whole history %v: %s is set aside for %q", whole, name, got)
+		}
+		if got := d.st.Used[name]; got != "" {
+			t.Errorf("whole history %v: %s is taken as %s's", whole, name, got)
+		}
+	}
+}

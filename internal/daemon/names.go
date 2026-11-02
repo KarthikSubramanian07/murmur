@@ -181,12 +181,16 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 		}
 		claims := rec.Claims()
 		if name, dev, ok := rec.Reservation(); ok {
-			// A name already taken is nobody's to set aside: not one taken earlier in this read,
-			// nor one this daemon knew of before it. A reader of the whole history would have
-			// read that earlier, and the two must agree on whose a name is.
-			_, taken := read[name]
-			_, known := usedBefore[name]
-			if !taken && !known {
+			// The first reservation of a name gives it its device; a later one counts for nothing,
+			// nor does one of a name a session already has. What was learned before this read
+			// counts as read, so a daemon that reads only what is new agrees with one that reads
+			// the whole history. A name known with no session and no device (from a snapshot
+			// that kept no devices) still gains one, as it would for a reader starting fresh.
+			_, owned := reserved[name]
+			if _, ok := reservedBefore[name]; ok {
+				owned = true
+			}
+			if !owned && read[name] == "" && usedBefore[name] == "" {
 				reserved[name] = dev
 			}
 		} else if rec.Session != "" {
