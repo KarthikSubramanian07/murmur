@@ -57,8 +57,10 @@ type Options struct {
 	// doubles with each failure in a row.
 	NameRetry time.Duration
 	// NamePool is how many names a daemon keeps registered ahead for sessions it has yet to start,
-	// so that a new session has its name at once, without the remote: 3. Negative: none, and every
-	// session waits for its name to land in the registry.
+	// so that a new session has its name at once, without the remote: 10, enough for a burst of new
+	// sessions (T3 reopening several threads at once) while the remote is slow or down. Whenever it
+	// holds fewer, the daemon sets more aside. Negative: none, and every session waits for its name
+	// to land in the registry.
 	NamePool int
 	// PushRetry is how long a delivery of a message as a turn that never got started (no `t3`
 	// to run, no socket to connect to) waits before its one retry: 2 s. Any other failure may have
@@ -124,7 +126,7 @@ func (o *Options) defaults() {
 		o.NameRetry = 15 * time.Second
 	}
 	if o.NamePool == 0 {
-		o.NamePool = 3
+		o.NamePool = 10
 	}
 	if o.PushRetry == 0 {
 		o.PushRetry = 2 * time.Second

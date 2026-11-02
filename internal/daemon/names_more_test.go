@@ -438,6 +438,10 @@ func TestNameOnlyInPresenceIsUsed(t *testing.T) {
 		t.Fatalf("b is named %s, want %s", got, pick.name)
 	}
 	eventually(t, "b's presence with the name", func() bool {
+		// A device pushes one ref at a time, so b's presence can land after its name does.
+		if git(t, remote, "for-each-ref", "refs/murmur/presence/"+b.self()) == "" {
+			return false
+		}
 		work := t.TempDir()
 		git(t, work, "init", "-q")
 		git(t, work, "fetch", "-q", remote, "refs/murmur/presence/"+b.self())
