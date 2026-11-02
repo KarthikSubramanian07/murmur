@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -14,8 +15,10 @@ import (
 
 // Session names (#20). A session's name is two words (quiet-otter), unique in the repo and never
 // reused. It is taken by compare-and-swap on one shared ref, refs/murmur/names: each commit on it
-// records one assignment, and a name is the session's only if the leased push of that commit
-// lands. docs/VISION.md has the reasons.
+// records one assignment or reservation, and a name is this device's only if the leased push of
+// that commit lands. A device keeps a few names set aside that way (the pool), so a new session
+// takes one at once, without the remote, and the registry is told which session took it after.
+// docs/VISION.md has the reasons.
 //
 // What a daemon holds, in state.json:
 //   - Used: every name it has ever seen, from the registry's history or another device's
@@ -25,6 +28,9 @@ import (
 //     name for good, across MCP server restarts, daemon restarts and resumes.
 //   - NamesTip and NamesGood: the registry's tip as last examined, which is the lease for the next push, and
 //     the last tip that was a commit and was read in full.
+//   - NamePool, NameBinds and Reserved: the names set aside for this device that no session has
+//     taken, those taken whose assignment isn't in the registry yet, and every device's names set
+//     aside that no session is known to have.
 
 const (
 	// nameTries is how many pushes in a row may be refused, because another device took the
@@ -69,6 +75,9 @@ func (d *Daemon) noteNameLocked(name, addr string) bool {
 		return false
 	}
 	d.st.Used[name] = addr
+	if addr != "" {
+		delete(d.st.Reserved, name) // set aside no longer: a session has it
+	}
 	return true
 }
 
@@ -88,6 +97,9 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	if checked && tip == sha {
 		return
 	}
+	d.mu.Lock()
+	usedBefore, reservedBefore := maps.Clone(d.st.Used), maps.Clone(d.st.Reserved)
+	d.mu.Unlock()
 	fail := func(err error) {
 		if ctx.Err() == nil {
 			d.log.Printf("reading the names registry: %v", err)
@@ -161,12 +173,38 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 		disturbed = sha != "" || good != ""
 	}
 	read := map[string]string{}
+	reserved := map[string]string{} // the reservations read, name to device
 	for _, c := range commits {
 		var rec bus.NameRecord
 		if bus.Decode(c.Message, &rec) != nil {
 			continue
 		}
-		for name, addr := range rec.Claims() {
+		claims := rec.Claims()
+		if name, dev, ok := rec.Reservation(); ok {
+			// The first reservation of a name gives it its device; a later one counts for nothing,
+			// nor does one of a name a session already has. What was learned before this read
+			// counts as read, so a daemon that reads only what is new agrees with one that reads
+			// the whole history. A name known with no session and no device (from a snapshot
+			// that kept no devices) still gains one, as it would for a reader starting fresh.
+			_, owned := reserved[name]
+			if _, ok := reservedBefore[name]; ok {
+				owned = true
+			}
+			if !owned && read[name] == "" && usedBefore[name] == "" {
+				reserved[name] = dev
+			}
+		} else if rec.Session != "" {
+			// The assignment of a name set aside: only the device it was set aside for can give
+			// it to a session.
+			owner, ok := reserved[rec.Name]
+			if !ok {
+				owner, ok = reservedBefore[rec.Name]
+			}
+			if _, has := claims[rec.Name]; has && ok && owner != rec.Device {
+				claims[rec.Name] = ""
+			}
+		}
+		for name, addr := range claims {
 			if cur, ok := read[name]; !ok || cur == "" {
 				read[name] = addr
 			}
@@ -179,6 +217,11 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	for name, addr := range read {
 		if d.noteNameLocked(name, addr) {
 			changed = true
+		}
+	}
+	for name, dev := range reserved {
+		if _, ok := d.st.Reserved[name]; !ok && d.st.Used[name] == "" {
+			d.st.Reserved[name], changed = dev, true
 		}
 	}
 	d.st.NamesTip = sha
@@ -251,6 +294,19 @@ func (d *Daemon) resolveNameLocked(name string) (addr string, ok bool) {
 	return addr, addr != ""
 }
 
+// noSuchNameLocked is what to tell someone who asked for a name that resolveNameLocked finds no
+// session for. A name a device has set aside is in use, but nobody can be sent to yet. Caller
+// holds mu.
+func (d *Daemon) noSuchNameLocked(name string) string {
+	switch dev, ok := d.st.Reserved[name]; {
+	case ok && dev == d.device:
+		return fmt.Sprintf("no session has the name %q yet: this device has set it aside for a session it has yet to start. who shows the names in use.", name)
+	case ok:
+		return fmt.Sprintf("no session has the name %q yet: device %s has set it aside for a session it has yet to start. who shows the names in use.", name, dev)
+	}
+	return fmt.Sprintf("no session is named %q. who shows the names in use.", name)
+}
+
 // namesByAddrLocked inverts the registry: the name of each session whose address it knows.
 // Caller holds mu.
 func (d *Daemon) namesByAddrLocked() map[string]string {
@@ -297,32 +353,97 @@ func (d *Daemon) nameLoop(ctx context.Context) {
 	}
 }
 
-// wanted is a session that needs a name.
+// wanted is a session that needs a name, and has no pool to take one from.
 type wanted struct{ id, key string }
 
-// nextName finds the next session without a name, and whether the registry needs repairing.
-func (d *Daemon) nextName() (w *wanted, repair bool) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for _, s := range d.sortedSessionsLocked() {
-		if s.name == "" {
-			return &wanted{id: s.id, key: s.key}, d.st.NamesRepair
-		}
-	}
-	return nil, d.st.NamesRepair
+// bound is a name a session took from the pool, which the registry doesn't have down for it yet.
+type bound struct{ name, id string }
+
+// nameWork is what the assigner has to push to the registry, all in one push: the assignments of
+// names sessions took from the pool, fresh names for sessions that found the pool empty, names to
+// set aside to fill the pool again, and a repair. One push carries them as a chain of commits, one
+// record each, so a reader reads them as it reads any history.
+type nameWork struct {
+	binds   []bound
+	wants   []wanted
+	reserve int
+	repair  bool
 }
 
-// assignPending names every session that has no name and repairs the registry if it needs it. A
-// push refused because another device moved the registry first is tried again with a fresh name,
-// after reading what is new, up to nameTries times in a row.
+func (w nameWork) empty() bool {
+	return len(w.binds) == 0 && len(w.wants) == 0 && w.reserve == 0 && !w.repair
+}
+
+// nameForKeyLocked is the name for a session of key, id: the name the key has, else the oldest in
+// the pool, which becomes the key's for good, at once and without the remote. The registry is told
+// which session took it later (see bound). "" if the key has none and the pool is empty: the
+// session waits for the assigner. Caller holds mu.
+func (d *Daemon) nameForKeyLocked(key, id string) string {
+	if name := d.st.NameKeys[key]; name != "" || len(d.st.NamePool) == 0 {
+		return name
+	}
+	name := d.st.NamePool[0]
+	d.st.NamePool = d.st.NamePool[1:]
+	d.st.NameKeys[key] = name
+	d.st.NameBinds[name] = id
+	// The session's address for the name from now on, as the registry will say once the binding
+	// lands: a session that moves to another conversation before then is still found by it.
+	d.noteNameLocked(name, bus.Addr(d.device, id))
+	d.saveLocked()
+	d.kickNames() // to put the session in the registry, and fill the pool again
+	d.log.Printf("session %s is named %s, a name set aside for it", bus.Addr(d.device, id), name)
+	return name
+}
+
+// givePoolLocked gives names from the pool to the sessions that have none, which started while the
+// pool was empty. Caller holds mu.
+func (d *Daemon) givePoolLocked() {
+	for _, s := range d.sortedSessionsLocked() {
+		if s.name != "" {
+			continue
+		}
+		if d.setNameLocked(s, d.nameForKeyLocked(s.key, s.id)); s.name != "" {
+			d.kickPresence()
+		}
+	}
+}
+
+// nextNames hands out what the pool has to sessions that have no name, and says what is left for
+// the registry.
+func (d *Daemon) nextNames() nameWork {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.givePoolLocked()
+	var w nameWork
+	keys := map[string]bool{}
+	for _, s := range d.sortedSessionsLocked() {
+		if s.name == "" && !keys[s.key] {
+			keys[s.key] = true // sessions of one key share its name: one assignment for them all
+			w.wants = append(w.wants, wanted{id: s.id, key: s.key})
+		}
+	}
+	for _, name := range sortedKeys(d.st.NameBinds) {
+		w.binds = append(w.binds, bound{name: name, id: d.st.NameBinds[name]})
+	}
+	if d.opt.NamePool > len(d.st.NamePool) {
+		w.reserve = d.opt.NamePool - len(d.st.NamePool)
+	}
+	w.repair = d.st.NamesRepair
+	return w
+}
+
+// assignPending pushes what nextNames finds until there is nothing left: names for the sessions
+// that have none, the pool's names in the registry, and a repair if the registry needs one. A push
+// refused because another device moved the registry first is tried again with fresh names, after
+// reading what is new, up to nameTries times in a row.
 func (d *Daemon) assignPending(ctx context.Context) error {
 	refused := 0
 	for ctx.Err() == nil {
-		w, repair := d.nextName()
-		if w == nil && !repair {
+		w := d.nextNames()
+		if w.empty() {
 			return nil
 		}
-		err := d.attemptName(ctx, w)
+		err := d.pushNames(ctx, w)
 		switch {
 		case err == nil:
 			refused = 0
@@ -330,7 +451,7 @@ func (d *Daemon) assignPending(ctx context.Context) error {
 			if refused++; refused >= nameTries {
 				return fmt.Errorf("the registry moved under %d pushes in a row", nameTries)
 			}
-			// Fetch, and merge what is new into the used names; the next try takes a fresh name.
+			// Fetch, and merge what is new into the used names; the next try takes fresh names.
 			if err := d.pollOnce(ctx); err != nil {
 				return err
 			}
@@ -341,38 +462,71 @@ func (d *Daemon) assignPending(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// pickName chooses a random name that is not known to be in use.
-func (d *Daemon) pickName(used map[string]string) (string, error) {
+// pickName chooses a random name that is not known to be in use, nor in taken.
+func (d *Daemon) pickName(used map[string]string, taken map[string]bool) (string, error) {
 	for range 1000 {
 		name, err := names.Generate(d.nameSrc)
 		if err != nil {
 			return "", err
 		}
-		if _, taken := used[name]; !taken {
+		if _, ok := used[name]; !ok && !taken[name] {
 			return name, nil
 		}
 	}
 	return "", errors.New("no unused name found")
 }
 
-// attemptName pushes one commit to the registry: the assignment of a fresh name to w (nil for a
-// repair on its own), on the tip last read, leased on it. It lands only if no one else moved the
-// registry since, which is what makes the name w's. When the tip isn't a commit, or the registry
-// needs repairing, the commit is a new root holding a snapshot of every used name instead, leased
-// on whatever the tip is. It returns bus.ErrRejected if the lease failed.
-func (d *Daemon) attemptName(ctx context.Context, w *wanted) error {
+// pushNames pushes w to the registry as one chain of commits on the tip last read, leased on it. It
+// lands only if no one else moved the registry since, which is what makes each fresh name in it
+// this device's. When the tip isn't a commit, or the registry needs repairing, the chain starts
+// from a new root holding a snapshot of every used name, and the names set aside as reservations
+// again, leased on whatever the tip is. It returns
+// bus.ErrRejected if the lease failed.
+func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
+	// The repair flag is read with the tip it goes with: a sync between nextNames and here may have
+	// found the registry rewound, and building on the new tip without the snapshot would lose names.
 	d.mu.Lock()
 	tip, repair := d.st.NamesTip, d.st.NamesRepair
 	used := maps.Clone(d.st.Used)
+	aside := map[string]string{} // names set aside that no session is known to have, to their device
+	for name, dev := range d.st.Reserved {
+		if used[name] == "" {
+			aside[name] = dev
+		}
+	}
 	d.mu.Unlock()
 
-	rec := bus.NameRecord{V: bus.Version, At: time.Now().UTC()}
-	if w != nil {
-		name, err := d.pickName(used)
+	at := time.Now().UTC()
+	rec := func(name, session string) bus.NameRecord {
+		return bus.NameRecord{V: bus.Version, Name: name, Device: d.device, Session: session, At: at}
+	}
+	var recs []bus.NameRecord
+	for _, b := range w.binds {
+		recs = append(recs, rec(b.name, b.id))
+	}
+	taken := map[string]bool{}
+	pick := func() (string, error) {
+		name, err := d.pickName(used, taken)
+		taken[name] = true
+		return name, err
+	}
+	given := make([]string, len(w.wants))
+	for i, s := range w.wants {
+		name, err := pick()
 		if err != nil {
 			return err
 		}
-		rec.Name, rec.Device, rec.Session = name, d.device, w.id
+		given[i] = name
+		recs = append(recs, rec(name, s.id))
+	}
+	var reserved []string
+	for range w.reserve {
+		name, err := pick()
+		if err != nil {
+			return err
+		}
+		reserved = append(reserved, name)
+		recs = append(recs, rec(name, ""))
 	}
 	parent := tip
 	if parent != "" {
@@ -385,15 +539,31 @@ func (d *Daemon) attemptName(ctx context.Context, w *wanted) error {
 		}
 	}
 	if parent == "" || repair {
-		parent, rec.Used = "", used
+		// A new root. The names set aside go in it as reservations again, first, so a daemon that
+		// joins later still knows whose they are; the rest of the used names go in the snapshot.
+		var again []bus.NameRecord
+		for _, name := range sortedKeys(aside) {
+			again = append(again, bus.NameRecord{V: bus.Version, Name: name, Device: aside[name], At: at})
+			delete(used, name)
+		}
+		recs = append(again, recs...)
+		if len(recs) == 0 {
+			recs = append(recs, bus.NameRecord{V: bus.Version, At: at}) // a repair on its own
+		}
+		parent, recs[0].Used = "", used
 	}
-	msg, err := bus.Encode(rec, rec.Subject())
-	if err != nil {
-		return err
+	if len(recs) == 0 {
+		return nil // nothing to record: a repair that a sync has meanwhile found unneeded
 	}
-	sha, err := d.repo.NewCommit(ctx, parent, msg)
-	if err != nil {
-		return err
+	sha := parent
+	for _, r := range recs {
+		msg, err := bus.Encode(r, r.Subject())
+		if err != nil {
+			return err
+		}
+		if sha, err = d.repo.NewCommit(ctx, sha, msg); err != nil {
+			return err
+		}
 	}
 	if err := d.push(ctx, sha, brand.NamesRef, bus.Lease, tip); err != nil {
 		return err
@@ -408,23 +578,44 @@ func (d *Daemon) attemptName(ctx context.Context, w *wanted) error {
 	defer d.mu.Unlock()
 	d.known[brand.NamesRef] = sha
 	if d.st.NamesTip == tip {
-		// Nothing newer was read meanwhile; this commit, on a tip that was read in full, is read.
+		// Nothing newer was read meanwhile; this chain, on a tip that was read in full, is read.
 		d.st.NamesTip, d.st.NamesGood, d.st.NamesRepair = sha, sha, false
 	}
-	if w != nil {
-		addr := bus.Addr(d.device, w.id)
-		d.noteNameLocked(rec.Name, addr)
-		d.st.NameKeys[w.key] = rec.Name
-		for _, s := range d.sessions {
-			if s.key == w.key && s.name == "" {
-				d.setNameLocked(s, rec.Name)
+	for _, b := range w.binds {
+		d.noteNameLocked(b.name, bus.Addr(d.device, b.id))
+		if d.st.NameBinds[b.name] == b.id {
+			delete(d.st.NameBinds, b.name)
+		}
+		d.noteLocked(at, rec(b.name, b.id).Subject())
+	}
+	for i, s := range w.wants {
+		name, addr := given[i], bus.Addr(d.device, s.id)
+		d.noteNameLocked(name, addr)
+		d.noteLocked(at, rec(name, s.id).Subject())
+		if d.st.NameKeys[s.key] != "" {
+			// The key found a name of its own while this was pushed (its session moved to a
+			// thread that has one): this name is the session's in the registry, and that's all.
+			continue
+		}
+		d.st.NameKeys[s.key] = name
+		for _, o := range d.sessions {
+			if o.key == s.key && o.name == "" {
+				d.setNameLocked(o, name)
 			}
 		}
-		d.noteLocked(rec.At, rec.Subject())
-		d.log.Printf("session %s is named %s", addr, rec.Name)
+		d.log.Printf("session %s is named %s", addr, name)
 	}
+	for _, name := range reserved {
+		d.noteNameLocked(name, "")
+		d.st.Reserved[name] = d.device
+		d.st.NamePool = append(d.st.NamePool, name)
+	}
+	if len(reserved) > 0 {
+		d.log.Printf("set aside for sessions to come: %s", strings.Join(reserved, ", "))
+	}
+	d.givePoolLocked() // to sessions that started while this was pushed, and found the pool empty
 	d.saveLocked()
-	if w != nil {
+	if len(w.wants) > 0 {
 		d.kickPresence()
 	}
 	return nil

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
 )
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -31,13 +32,14 @@ func namedDaemon(t *testing.T) (d *Daemon, remote string) {
 	runGit(t, root, "init", "-q", "--bare", remote)
 	clone := filepath.Join(root, "clone")
 	runGit(t, root, "clone", "-q", "--no-local", remote, clone)
-	opt := Options{GitDir: filepath.Join(clone, ".git"), Log: log.New(io.Discard, "", 0)}
+	opt := Options{GitDir: filepath.Join(clone, ".git"), Log: log.New(io.Discard, "", 0), NamePool: -1}
 	opt.defaults()
 	d, err := open(context.Background(), opt, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.attemptName(context.Background(), &wanted{id: "aaaaaa", key: nameKey("", "", "", "aaaaaa")}); err != nil {
+	w := nameWork{wants: []wanted{{id: "aaaaaa", key: nameKey("", "", "", "aaaaaa")}}}
+	if err := d.pushNames(context.Background(), w); err != nil {
 		t.Fatal(err)
 	}
 	if d.st.NamesGood == "" || d.st.NamesGood != d.st.NamesTip {
@@ -65,8 +67,8 @@ func TestListingFromBeforeTheFirstNameIsNotALostRegistry(t *testing.T) {
 	if d.st.NamesTip != tip || d.st.NamesGood != tip {
 		t.Errorf("the registry's tip became %q, last read in full %q; want both %q", d.st.NamesTip, d.st.NamesGood, tip)
 	}
-	if w, repair := d.nextName(); w != nil || repair {
-		t.Errorf("the assigner has work to do: session %v, repair %v", w, repair)
+	if w := d.nextNames(); !w.empty() {
+		t.Errorf("the assigner has work to do: %+v", w)
 	}
 	if got, err := d.repo.RemoteRef(ctx, brand.NamesRef); err != nil || got != tip {
 		t.Errorf("the registry on the remote is %q (%v); it should still be %q", got, err, tip)
@@ -86,7 +88,188 @@ func TestRegistryDeletedFromTheRemoteIsStillALostRegistry(t *testing.T) {
 	if !d.st.NamesRepair {
 		t.Error("a registry deleted from the remote was not set to be repaired")
 	}
-	if w, repair := d.nextName(); w != nil || !repair {
-		t.Errorf("the assigner has session %v and repair %v; want a repair and no session", w, repair)
+	if w := d.nextNames(); !w.repair || len(w.wants)+len(w.binds)+w.reserve != 0 {
+		t.Errorf("the assigner has %+v; want a repair and nothing else", w)
+	}
+}
+
+// claimsAt gathers what the registry's history up to sha holds, and the reservations in it.
+func claimsAt(t *testing.T, d *Daemon, sha string) (claims, aside map[string]string) {
+	t.Helper()
+	commits, err := d.repo.Log(context.Background(), "", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, aside = map[string]string{}, map[string]string{}
+	for _, c := range commits {
+		var rec bus.NameRecord
+		if bus.Decode(c.Message, &rec) != nil {
+			continue
+		}
+		for name, addr := range rec.Claims() {
+			if claims[name] == "" {
+				claims[name] = addr
+			}
+		}
+		if name, dev, ok := rec.Reservation(); ok {
+			aside[name] = dev
+		}
+	}
+	return claims, aside
+}
+
+// A sync can find the registry rewound after the assigner took its work and before it pushes.
+// The push is built on the tip it reads, so it must make the repair that tip needs, whatever the
+// work said: building on a rewound tip without the snapshot would lose names for good (Codex's
+// review of #144).
+func TestRepairFoundAfterTheWorkWasTakenIsMade(t *testing.T) {
+	d, remote := namedDaemon(t)
+	ctx := context.Background()
+	first := d.st.NamesTip
+	key := nameKey("", "", "", "aaaaab")
+	if err := d.pushNames(ctx, nameWork{wants: []wanted{{id: "aaaaab", key: key}}}); err != nil {
+		t.Fatal(err)
+	}
+	lost := d.st.NameKeys[key]
+	w := nameWork{reserve: 1} // taken before the rewind is read
+
+	runGit(t, t.TempDir(), "--git-dir", remote, "update-ref", brand.NamesRef, first)
+	d.advMu.Lock()
+	d.processNames(ctx, first)
+	d.advMu.Unlock()
+	if !d.st.NamesRepair {
+		t.Fatal("the rewind wasn't noticed")
+	}
+	if err := d.pushNames(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	tip, err := d.repo.RemoteRef(ctx, brand.NamesRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims, _ := claimsAt(t, d, tip); claims[lost] == "" {
+		t.Fatalf("the registry lost %s: %v", lost, claims)
+	}
+}
+
+// A session that takes a name from the pool is found by it at once, even after it moves to another
+// conversation before the registry has it down for the name (Codex's review of #144).
+func TestNameFromThePoolIsTheSessionsAddressAtOnce(t *testing.T) {
+	d, _ := namedDaemon(t)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.st.NamePool = []string{"quiet-otter"}
+	s := &session{id: "bbbbbb", key: "claude:one"}
+	d.sessions[s.id] = s
+	d.setNameLocked(s, d.nameForKeyLocked(s.key, s.id))
+	if s.name != "quiet-otter" {
+		t.Fatalf("the session took %q from the pool", s.name)
+	}
+	s.key, d.st.NameKeys["claude:two"] = "claude:two", "limber-geode"
+	d.setNameLocked(s, "limber-geode") // it followed Claude Code to a conversation with a name
+	if addr, ok := d.resolveNameLocked("quiet-otter"); !ok || addr != bus.Addr(d.device, "bbbbbb") {
+		t.Fatalf("quiet-otter resolves to %q, %v", addr, ok)
+	}
+}
+
+// A repaired registry keeps the names set aside as reservations, with their devices, so a daemon
+// that joins later knows whose they are (Codex's review of #144).
+func TestRepairKeepsNamesSetAside(t *testing.T) {
+	d, _ := namedDaemon(t)
+	ctx := context.Background()
+	d.st.Used["quiet-otter"], d.st.Reserved["quiet-otter"] = "", "other-0001"
+	d.st.NamesRepair = true
+	if err := d.pushNames(ctx, nameWork{repair: true}); err != nil {
+		t.Fatal(err)
+	}
+	claims, aside := claimsAt(t, d, d.st.NamesTip)
+	if aside["quiet-otter"] != "other-0001" {
+		t.Fatalf("the repaired registry sets aside %v", aside)
+	}
+	for name := range d.st.Used {
+		if _, ok := claims[name]; !ok {
+			t.Fatalf("the repaired registry lost %s", name)
+		}
+	}
+}
+
+// A second reservation of a name already set aside, read in an incremental sync, is ignored as a
+// reader of the whole history ignores it, so the two agree on who may assign the name (Codex's
+// review of #144).
+func TestReservationOfANameAlreadySetAsideIsIgnored(t *testing.T) {
+	d, _ := namedDaemon(t)
+	ctx := context.Background()
+	if err := d.pushNames(ctx, nameWork{reserve: 1}); err != nil {
+		t.Fatal(err)
+	}
+	name := d.st.NamePool[0]
+	forge := func(parent string, r bus.NameRecord) string {
+		msg, err := bus.Encode(r, r.Subject())
+		if err != nil {
+			t.Fatal(err)
+		}
+		sha, err := d.repo.NewCommit(ctx, parent, msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sha
+	}
+	tip := forge(d.st.NamesTip, bus.NameRecord{V: bus.Version, Name: name, Device: "intruder-0001"})
+	tip = forge(tip, bus.NameRecord{V: bus.Version, Name: name, Device: "intruder-0001", Session: "s1"})
+	d.advMu.Lock()
+	d.processNames(ctx, tip)
+	d.advMu.Unlock()
+	if got := d.st.Used[name]; got != "" {
+		t.Fatalf("%s, set aside for this device, is taken as %s's", name, got)
+	}
+	if got := d.st.Reserved[name]; got != d.device {
+		t.Fatalf("%s is set aside for %q", name, got)
+	}
+}
+
+// A name a daemon knows with no session and no device, from a snapshot that kept no devices, gains
+// its device from the first reservation it reads, whether it reads only what is new or the whole
+// history again, as a reader starting fresh does; and an assignment from another device is then
+// refused (Codex's second review of #144).
+func TestKnownNameWithNoDeviceGainsItsReservation(t *testing.T) {
+	for _, whole := range []bool{false, true} {
+		d, _ := namedDaemon(t)
+		ctx := context.Background()
+		const name = "quiet-otter"
+		d.st.Used[name] = "" // read before, from a snapshot that kept no devices
+		forge := func(parent string, r bus.NameRecord) string {
+			msg, err := bus.Encode(r, r.Subject())
+			if err != nil {
+				t.Fatal(err)
+			}
+			sha, err := d.repo.NewCommit(ctx, parent, msg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return sha
+		}
+		parent := d.st.NamesTip
+		reservation := bus.NameRecord{V: bus.Version, Name: name, Device: "owner-0001"}
+		if whole {
+			// Another daemon's repair: a new root, the reservation first, the rest in its snapshot.
+			parent = ""
+			reservation.Used = map[string]string{}
+			for n, addr := range d.st.Used {
+				if n != name {
+					reservation.Used[n] = addr
+				}
+			}
+		}
+		tip := forge(parent, reservation)
+		tip = forge(tip, bus.NameRecord{V: bus.Version, Name: name, Device: "intruder-0001", Session: "s1"})
+		d.advMu.Lock()
+		d.processNames(ctx, tip)
+		d.advMu.Unlock()
+		if got := d.st.Reserved[name]; got != "owner-0001" {
+			t.Errorf("whole history %v: %s is set aside for %q", whole, name, got)
+		}
+		if got := d.st.Used[name]; got != "" {
+			t.Errorf("whole history %v: %s is taken as %s's", whole, name, got)
+		}
 	}
 }

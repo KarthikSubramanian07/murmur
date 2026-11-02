@@ -56,6 +56,10 @@ type Options struct {
 	// NameRetry is how long the first retry after a failed name assignment waits: 15 s. It
 	// doubles with each failure in a row.
 	NameRetry time.Duration
+	// NamePool is how many names a daemon keeps registered ahead for sessions it has yet to start,
+	// so that a new session has its name at once, without the remote: 3. Negative: none, and every
+	// session waits for its name to land in the registry.
+	NamePool int
 	// PushRetry is how long a delivery of a message as a turn that never got started (no `t3`
 	// to run, no socket to connect to) waits before its one retry: 2 s. Any other failure may have
 	// delivered the message, so it is not repeated, and a second failure of this kind too leaves
@@ -119,6 +123,9 @@ func (o *Options) defaults() {
 	if o.NameRetry == 0 {
 		o.NameRetry = 15 * time.Second
 	}
+	if o.NamePool == 0 {
+		o.NamePool = 3
+	}
 	if o.PushRetry == 0 {
 		o.PushRetry = 2 * time.Second
 	}
@@ -154,12 +161,40 @@ var ErrNoConsent = errors.New("this clone hasn't joined " + brand.Product)
 // stops the daemon only a second later, and a daemon that was still starting has no daemon.json
 // for Stop to find. goodbye is not a publication in that sense and doesn't come through here: it
 // takes the device off the remote.
+//
+// A device pushes one ref at a time. Its presence, its log and the names registry used to be pushed
+// each from its own goroutine, and a session starting or stopping set off two or three pushes in
+// the same second; GitHub then refused one of them now and then with "[remote rejected] (failed)",
+// which is not a lease refusal and cost a retry (see "Git is the transport" in docs/VISION.md).
 func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, expect string) error {
+	if !d.takePush(ctx) {
+		return ctx.Err()
+	}
+	defer d.donePush()
+	// After the wait, which can be a push or two long: a leave may have landed meanwhile.
 	if !d.consented() {
 		return ErrNoConsent
 	}
+	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
+	defer cancel()
 	return d.repo.Push(ctx, sha, ref, mode, expect)
 }
+
+// pushTimeout bounds one push, so a push that hangs doesn't hold up the device's others for good.
+const pushTimeout = time.Minute
+
+// takePush waits for this device's turn to push, and reports whether it got it before ctx ended.
+// donePush gives the turn back.
+func (d *Daemon) takePush(ctx context.Context) bool {
+	select {
+	case d.pushOne <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (d *Daemon) donePush() { <-d.pushOne }
 
 // consented reports whether the user's consent to run in this clone stands.
 func (d *Daemon) consented() bool { return d.opt.Consent == nil || d.opt.Consent() }
@@ -242,6 +277,7 @@ type Daemon struct {
 	pushSem  chan struct{} // bounds the deliveries running at once
 	nameKick chan struct{} // wakes nameLoop, the only user of nameSrc
 	nameSrc  io.Reader
+	pushOne  chan struct{} // held while this device pushes to the remote (see push)
 	quit     chan struct{}
 	quitOnce sync.Once
 
@@ -386,6 +422,13 @@ type state struct {
 	NamesTip    string `json:"namesTip,omitempty"`
 	NamesGood   string `json:"namesGood,omitempty"`
 	NamesRepair bool   `json:"namesRepair,omitempty"`
+	// NamePool is the names the registry has set aside for this device that no session has taken
+	// yet, oldest first. NameBinds is each name a session took from the pool whose assignment to it
+	// isn't in the registry yet, with the session's ID. Reserved is each name the registry has set
+	// aside for a device, this one or another, that no session is known to have, with the device.
+	NamePool  []string          `json:"namePool,omitempty"`
+	NameBinds map[string]string `json:"nameBinds,omitempty"`
+	Reserved  map[string]string `json:"reservedNames,omitempty"`
 
 	// Commits is the commits credited to each session on this device (see credit), oldest first, by
 	// the session's ID. They are kept as long as the session's inbox is, and never leave the device.
@@ -536,7 +579,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
-		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes),
+		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{},
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
 	}
@@ -611,6 +654,14 @@ func (d *Daemon) stop() { d.quitOnce.Do(func() { close(d.quit) }) }
 func (d *Daemon) goodbye() {
 	ctx, cancel := context.WithTimeout(context.Background(), proto.GoodbyeTimeout)
 	defer cancel()
+	// In turn with the device's other pushes, as push does, but not through it: the goodbye takes
+	// the device off the remote, which a leave wants too. A push still holding the turn, from work
+	// that didn't drain in time, gets half the goodbye's time to finish; then it goes anyway.
+	wait, stopWait := context.WithTimeout(ctx, proto.GoodbyeTimeout/2)
+	if d.takePush(wait) {
+		defer d.donePush()
+	}
+	stopWait()
 	if err := d.repo.Push(ctx, "", d.presenceRef(), bus.FastForward, ""); err != nil {
 		d.log.Printf("removing presence: %v", err)
 	}
@@ -741,7 +792,7 @@ func (d *Daemon) loadState() error {
 	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},
 		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
-		T3Routes: map[string]t3Route{}}
+		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -782,6 +833,12 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.T3Routes == nil {
 		d.st.T3Routes = map[string]t3Route{}
+	}
+	if d.st.NameBinds == nil {
+		d.st.NameBinds = map[string]string{}
+	}
+	if d.st.Reserved == nil {
+		d.st.Reserved = map[string]string{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

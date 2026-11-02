@@ -516,7 +516,7 @@ func (d *Daemon) rekeyLocked(s *session, key string) {
 		d.st.NameKeys[key] = s.name
 		d.saveLocked()
 	}
-	d.setNameLocked(s, d.st.NameKeys[key])
+	d.setNameLocked(s, d.nameForKeyLocked(key, s.id))
 	if s.name == "" {
 		d.kickNames()
 	}

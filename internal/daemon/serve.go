@@ -164,7 +164,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		// session may have taken its key and name, and s, back, holds the name now. As any taking
 		// of a name does, that also takes what was kept for the name (see adoptLocked).
 		s.key = key
-		d.setNameLocked(s, d.st.NameKeys[key])
+		d.setNameLocked(s, d.nameForKeyLocked(key, s.id))
 		s.dropped = time.Time{}
 		close(s.takeover)
 		s.takeover = nil
@@ -460,7 +460,10 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 			}
 			to, toName = addr, to
 		case !isDevice:
-			return fail(fmt.Sprintf("no session is named %q. who shows the names in use.", to))
+			d.mu.Lock()
+			why := d.noSuchNameLocked(to)
+			d.mu.Unlock()
+			return fail(why)
 		}
 	}
 	var note string
@@ -615,7 +618,7 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 		d.saveLocked()
 	}
 	// After its own inbox is settled, which an expired stop empties: the name may bring more.
-	d.setNameLocked(s, d.st.NameKeys[key])
+	d.setNameLocked(s, d.nameForKeyLocked(key, h.ID))
 	d.sessions[h.ID] = s
 	d.noteConversationLocked() // a session starts: its agent is about to look around, and may send
 	return s

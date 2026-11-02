@@ -138,7 +138,7 @@ func (d *Daemon) followLocked(s *session, claude string) {
 	from := s.name
 	s.claudeSession = claude
 	s.key = d.uniqueKeyLocked(nameKey(s.route.T3Thread, claude, s.route.Native, s.id), s.id)
-	d.setNameLocked(s, d.st.NameKeys[s.key])
+	d.setNameLocked(s, d.nameForKeyLocked(s.key, s.id))
 	if s.name == "" {
 		d.kickNames()
 	}

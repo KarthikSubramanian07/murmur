@@ -81,6 +81,9 @@ type device struct {
 	keep   time.Duration // StoppedInbox; likewise
 	names  io.Reader     // NameSource; nil takes crypto/rand's
 	retry  time.Duration // NameRetry; zero takes 200 ms
+	// pool is NamePool. Zero takes none (-1), so the tests written before the pool see each session
+	// wait for its name to land, one assignment at a time, as they were written to.
+	pool int
 	// beat is the heartbeat; zero takes 500 ms.
 	beat time.Duration
 	// snapshot is how long the daemon lets a tool call's snapshot take; zero takes a minute, as
@@ -158,6 +161,10 @@ func (d *device) start() {
 	if idle == 0 {
 		idle = -1
 	}
+	pool := d.pool
+	if pool == 0 {
+		pool = -1
+	}
 	snapshot := d.snapshot
 	if snapshot == 0 {
 		snapshot = time.Minute
@@ -173,7 +180,7 @@ func (d *device) start() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
 			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll,
-			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry, PushRetry: pushRetry,
+			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, Log: logger})
 		if err != nil {

@@ -72,3 +72,29 @@ func TestNameRecordRoundTrip(t *testing.T) {
 		t.Fatalf("subject %q", got)
 	}
 }
+
+// A reservation sets a name aside for a device with no session yet. A reader that predates
+// reservations sees in it, through Claims, a name in use by a session it doesn't know, so it never
+// hands the name out; a reader that knows them learns the device.
+func TestNameReservation(t *testing.T) {
+	rec := bus.NameRecord{V: bus.Version, Name: "quiet-otter", Device: "tyler-3f2a", At: time.Now().UTC()}
+	if got := rec.Claims(); len(got) != 1 || got["quiet-otter"] != "" {
+		t.Fatalf("claims %v, want quiet-otter in use with no address", got)
+	}
+	if name, dev, ok := rec.Reservation(); !ok || name != "quiet-otter" || dev != "tyler-3f2a" {
+		t.Fatalf("reservation %q %q %v", name, dev, ok)
+	}
+	if got := rec.Subject(); got != "quiet-otter set aside for tyler-3f2a" {
+		t.Fatalf("subject %q", got)
+	}
+	for _, r := range []bus.NameRecord{
+		{V: bus.Version, Name: "quiet-otter", Device: "tyler-3f2a", Session: "s1"}, // an assignment
+		{V: bus.Version, Name: "quiet-otter", Device: "Tyler 3f2a"},                // not a device
+		{V: bus.Version, Name: "Quiet Otter", Device: "tyler-3f2a"},                // not a name
+		{V: bus.Version + 1, Name: "quiet-otter", Device: "tyler-3f2a"},            // another version
+	} {
+		if _, _, ok := r.Reservation(); ok {
+			t.Errorf("%+v read as a reservation", r)
+		}
+	}
+}
