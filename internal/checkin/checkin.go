@@ -19,7 +19,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -198,38 +197,52 @@ func checkInIfDue(ctx context.Context, o Options) error {
 	return os.Rename(tmp, statePath(o.GitDir))
 }
 
-// userID is this user account's ID, made the first time: 16 random bytes, in hex. Two daemons
-// making it at once both end up with the one that was written first.
+// userID is this user account's ID, made the first time: 16 random bytes, in hex. The file is
+// written whole under another name and then hard-linked into place, which fails if it exists, so a
+// daemon never reads half a file and two making it at once both end up with the first one linked.
 func userID(dir string) (string, error) {
 	path := filepath.Join(dir, "id")
-	if b, err := os.ReadFile(path); err == nil {
-		if id := strings.TrimSpace(string(b)); validHex(id, 32) {
-			return id, nil
-		}
-		os.Remove(path) // not one this package wrote; replace it
+	if id, ok := readID(path); ok {
+		return id, nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
 	buf := make([]byte, 16)
 	rand.Read(buf)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, os.ErrExist) {
-		b, err := os.ReadFile(path)
-		if id := strings.TrimSpace(string(b)); err == nil && validHex(id, 32) {
-			return id, nil
-		}
-		return "", fmt.Errorf("unreadable %s", path)
+	tmp, err := os.CreateTemp(dir, "id-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tmp.Name())
+	_, err = tmp.WriteString(hex.EncodeToString(buf) + "\n")
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
 	}
 	if err != nil {
 		return "", err
 	}
-	id := hex.EncodeToString(buf)
-	_, err = f.WriteString(id + "\n")
-	if cerr := f.Close(); err == nil {
-		err = cerr
+	if err := os.Link(tmp.Name(), path); err != nil {
+		// Something else is there: another daemon's ID, or a file this package didn't write,
+		// which is replaced (rename overwrites; whichever replacement lands last is the ID).
+		// Or the file system has no hard links, and the rename is all there is.
+		if id, ok := readID(path); ok {
+			return id, nil
+		}
+		if err := os.Rename(tmp.Name(), path); err != nil {
+			return "", err
+		}
 	}
-	return id, err
+	if id, ok := readID(path); ok {
+		return id, nil
+	}
+	return "", fmt.Errorf("unreadable %s", path)
+}
+
+func readID(path string) (string, bool) {
+	b, err := os.ReadFile(path)
+	id := strings.TrimSpace(string(b))
+	return id, err == nil && validHex(id, 32)
 }
 
 func validHex(s string, n int) bool {

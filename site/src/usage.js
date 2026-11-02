@@ -19,10 +19,10 @@ export async function checkIn(request, env, ctx) {
   if (request.method !== 'POST') {
     return new Response('Only POST.\n', { status: 405, headers: { Allow: 'POST' } });
   }
-  const text = await request.text();
+  const text = await readUpTo(request, 1024);
+  if (text === null) return new Response('Too long for a check-in.\n', { status: 413 });
   let c;
   try {
-    if (text.length > 1024) throw new Error('too long');
     c = JSON.parse(text);
   } catch {
     return new Response('Not a check-in.\n', { status: 400 });
@@ -31,11 +31,42 @@ export async function checkIn(request, env, ctx) {
     return new Response('Not a check-in.\n', { status: 400 });
   }
   const day = new Date().toISOString().slice(0, 10);
-  ctx.waitUntil(env.DB.prepare(
-    `INSERT INTO checkins (day, user, team, version, os, arch) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-     ON CONFLICT (day, user, team) DO UPDATE SET version = excluded.version, os = excluded.os, arch = excluded.arch`,
-  ).bind(day, c.user, c.team, c.version, c.os, c.arch).run());
+  // Stored before the answer, so a check-in that isn't kept fails and the daemon tries again.
+  try {
+    await env.DB.prepare(
+      `INSERT INTO checkins (day, user, team, version, os, arch) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+       ON CONFLICT (day, user, team) DO UPDATE SET version = excluded.version, os = excluded.os, arch = excluded.arch`,
+    ).bind(day, c.user, c.team, c.version, c.os, c.arch).run();
+  } catch (err) {
+    console.log(`storing a check-in: ${err}`);
+    return new Response('Not stored; try again later.\n', { status: 503 });
+  }
   return Response.json({ latest: await latestRelease(ctx) }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+// The body as text, or null if it is longer than max bytes, without reading past max.
+async function readUpTo(request, max) {
+  if (Number(request.headers.get('Content-Length')) > max) return null;
+  if (!request.body) return '';
+  const reader = request.body.getReader(), chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.byteLength;
+  }
+  return new TextDecoder().decode(all);
 }
 
 // The latest release's version, without the v, from GitHub at most once an hour per data center;

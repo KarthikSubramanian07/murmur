@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -192,5 +193,44 @@ func TestUserIDIsKept(t *testing.T) {
 	b, err := userID(dir)
 	if err != nil || a != b {
 		t.Fatalf("second ID %q (%v), first %q", b, err, a)
+	}
+}
+
+// Daemons for several clones can start at once; they must all end up with one ID.
+func TestUserIDConcurrent(t *testing.T) {
+	dir := t.TempDir()
+	ids := make([]string, 16)
+	var wg sync.WaitGroup
+	for i := range ids {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			id, err := userID(dir)
+			if err != nil {
+				t.Error(err)
+			}
+			ids[i] = id
+		}()
+	}
+	wg.Wait()
+	for _, id := range ids[1:] {
+		if id != ids[0] {
+			t.Fatalf("IDs differ: %q", ids)
+		}
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("%d files left in the ID's folder, want 1", len(entries))
+	}
+}
+
+func TestUserIDReplacesJunk(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "id"), []byte("not an id"), 0o600)
+	id, err := userID(dir)
+	if err != nil || !validHex(id, 32) {
+		t.Fatalf("userID = %q, %v", id, err)
+	}
+	if again, _ := userID(dir); again != id {
+		t.Errorf("second ID %q, first %q", again, id)
 	}
 }
