@@ -32,6 +32,11 @@ joining does:
   file changes, and nothing is committed or pushed to a branch. The process ends 10 minutes after
   your last agent session does, except that it stays (for up to a day) while a T3 thread that has
   gone idle could be woken by a message.
+- Once a day, while that process runs, it checks in with murmur.afig.dev, which is how Murmur
+  counts its active users and learns of a newer release. It sends a random ID for this user
+  account on this machine, a one-way hash of the repo's address, mur's version and the OS: no
+  names, messages, branches or paths. `DO_NOT_TRACK=1` or `MURMUR_NO_USAGE=1` in the environment,
+  or `git config --global murmur.usage false`, turns it off.
 - Joining can be undone in this repo with `mur join --leave`. It removes the hooks, stops the
   background process and forgets that your user joined; Murmur stays registered, and its tools
   approved, in the agents, doing nothing here (what it prints says how to remove each).

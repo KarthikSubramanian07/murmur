@@ -89,6 +89,9 @@ type Options struct {
 	Consent     func() bool
 	ConsentPoll time.Duration // how often to look; 1 s
 	Log         *log.Logger
+	// CheckIn, if set, runs in the background for as long as the daemon serves: the daily
+	// check-in that counts active users (internal/checkin). Tests leave it unset.
+	CheckIn func(context.Context)
 }
 
 func (o *Options) defaults() {
@@ -556,6 +559,9 @@ func Run(ctx context.Context, opt Options) error {
 	}
 	if opt.Consent != nil {
 		go d.consentLoop(ctx)
+	}
+	if opt.CheckIn != nil {
+		go opt.CheckIn(ctx)
 	}
 	select {
 	case <-ctx.Done():

@@ -44,4 +44,11 @@ const (
 	// spell them out, so a test holds them to these.
 	InstallSh  = "https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh"
 	InstallPs1 = "https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1"
+
+	// CheckInURL is where a daemon checks in once a day, which is how active users are counted, and
+	// learns the latest release (internal/checkin). ConfigUsage set to false in git config, or
+	// NoUsageEnv or DO_NOT_TRACK set in the environment, turns that off.
+	CheckInURL  = "https://murmur.afig.dev/v1/checkin"
+	ConfigUsage = Name + ".usage"
+	NoUsageEnv  = "MURMUR_NO_USAGE"
 )

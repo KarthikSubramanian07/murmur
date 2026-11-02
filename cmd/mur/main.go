@@ -12,12 +12,14 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/checkin"
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/daemon"
 	"github.com/a-Fig/murmur/internal/hook"
@@ -79,6 +81,7 @@ func main() {
 		err = runUI(ctx, args, os.Stdout, browse)
 	case "version", "--version":
 		fmt.Println(brand.Command, version)
+		noteNewer(ctx, os.Stderr)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 	default:
@@ -132,12 +135,38 @@ func runDaemon(ctx context.Context, args []string) error {
 	if !join.Joined(*gitDir) {
 		return fmt.Errorf("this clone hasn't joined %s, so its daemon won't run (`%s join` joins, after asking the user)", brand.Product, brand.Command)
 	}
+	logger := log.New(os.Stderr, "", log.LstdFlags)
+	if off, why := checkin.Off(ctx, os.Getenv, *gitDir); off {
+		logger.Printf("no daily check-in: %s", why)
+	}
 	err := daemon.Run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
-		Consent: func() bool { return join.Joined(*gitDir) }, Log: log.New(os.Stderr, "", log.LstdFlags)})
+		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
+		CheckIn: func(ctx context.Context) {
+			checkin.Run(ctx, checkin.Options{Version: version, GitDir: *gitDir, Log: logger})
+		}})
 	if errors.Is(err, daemon.ErrRunning) {
 		return nil // another client started one first; that one serves
 	}
 	return err
+}
+
+// noteNewer says so when the clone in the current directory last heard of a newer release, from its
+// daily check-in. It writes to stderr, so stdout stays the one line scripts read.
+func noteNewer(ctx context.Context, w io.Writer) {
+	gitDir, err := client.FindGitDir(ctx, ".")
+	if err != nil {
+		return
+	}
+	if latest := checkin.Newer(gitDir, version); latest != "" {
+		fmt.Fprintf(w, "%s %s is out. To update, run the install again:\n  %s\n", brand.Product, latest, installLine())
+	}
+}
+
+func installLine() string {
+	if runtime.GOOS == "windows" {
+		return "irm " + brand.InstallPs1 + " | iex"
+	}
+	return "curl -fsSL " + brand.InstallSh + " | sh"
 }
 
 // redirectOutput sends this process's stdout and stderr to the file, appending. WMI gives a process
