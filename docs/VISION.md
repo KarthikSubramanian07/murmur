@@ -606,8 +606,9 @@ change and a daemon that knows no names delivers by it all the same.
   commits, one record each.
 - **Names set aside (#141, 2026-11-01).** A name took 2–16 s to land after its session started,
   with the network up (a push to GitHub, and a retry when GitHub refused it), and a session showed
-  as pending all that time; in an outage it waited for the network. So a daemon keeps 3 names
-  (`NamePool`) registered ahead for sessions it has yet to start: a commit with the name and the
+  as pending all that time; in an outage it waited for the network. So a daemon keeps 10 names
+  (`NamePool`; 3 in v0.2.2, 10 since #145 so a burst of new sessions or a long outage doesn't
+  empty it) registered ahead for sessions it has yet to start: a commit with the name and the
   device and no session. A session with no name takes the oldest at once, without the remote, and
   it is the session's name for good, as any name is. The daemon then records the assignment, the
   name, the device and the session, as it records any, and sets another name aside in the same
@@ -624,7 +625,7 @@ change and a daemon that knows no names delivers by it all the same.
   - *Sending to one nobody has taken* is an error, but not "no session is named": it says that
     device has set the name aside for a session it has yet to start. A daemon that predates
     reservations says no session has it.
-  - *A device that never comes back* leaves its names set aside for good. That burns at most 3
+  - *A device that never comes back* leaves its names set aside for good. That burns at most 10
     names a device, out of 1.25 million, and a name is never reused anyway. A daemon that loses its
     state file burns its pool the same way.
   - *The first start* with no network has no pool: its sessions are pending, at
