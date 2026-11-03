@@ -231,6 +231,8 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		switch {
 		case ref == brand.NamesRef:
 			d.processNames(ctx, sha)
+		case ref == brand.ConfigRef:
+			d.readConfig(ctx, sha)
 		case strings.HasPrefix(ref, brand.MeshPrefix):
 			if _, ok := meshDevice(ref); ok {
 				d.advanceMesh(ctx, ref, sha)
@@ -287,7 +289,7 @@ func readable(listed map[string]string) map[string]string {
 		_, mesh := meshDevice(ref)
 		presence := strings.HasPrefix(ref, brand.PresencePrefix) &&
 			bus.ValidDevice(strings.TrimPrefix(ref, brand.PresencePrefix))
-		if mesh || presence || ref == brand.NamesRef {
+		if mesh || presence || ref == brand.NamesRef || ref == brand.ConfigRef {
 			refs[ref] = sha
 		}
 	}
@@ -479,6 +481,19 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		}
 		if !d.sealOKLocked(dev, ref, c) {
 			continue
+		}
+		if e.Type == bus.Encrypted {
+			in, err := bus.DecryptEvent(e, d.device, d.boxKey)
+			if err != nil {
+				if !errors.Is(err, bus.ErrNotForUs) {
+					d.log.Printf("%s: %s doesn't decrypt: %v", ref, short(c.SHA), err)
+				}
+				continue
+			}
+			if in.Clean(); !in.Valid() {
+				continue
+			}
+			e = in
 		}
 		if junked && e.At.Before(hidden.Add(-time.Minute)) {
 			continue // history the junk hid when this device first looked
@@ -700,7 +715,21 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		d.mu.Unlock()
 		return
 	}
+	// A box key counts only from a sealed presence, which only its device can write.
+	if k := pres.BoxKey; k != "" && !d.unsealed[dev] && d.st.BoxKeys[dev] != k {
+		d.st.BoxKeys[dev] = k
+		d.saveLocked()
+	}
 	d.mu.Unlock()
+	if pres.Enc != nil {
+		open, err := bus.DecryptPresence(pres, d.device, d.boxKey)
+		if err != nil {
+			// Encrypted before this device's key was known there: its sessions show at the
+			// device's next heartbeat, which is encrypted for this one too.
+			open = bus.Presence{V: pres.V, Device: dev, At: pres.At, Host: "encrypted", Sessions: []bus.SessionInfo{}}
+		}
+		pres = open
+	}
 	pres.Clean()
 	changed := time.Now()
 	if p == nil {
@@ -749,9 +778,15 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	ref := d.meshRef()
+	d.mu.Lock()
+	wire, err := d.encryptEventLocked(e)
+	d.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	lease := ""
 	for attempt := 0; ; attempt++ {
-		sha, err := d.repo.NewRecord(ctx, ref, d.ownTip, e, e.Line())
+		sha, err := d.repo.NewRecord(ctx, ref, d.ownTip, wire, wire.Line())
 		if err != nil {
 			return err
 		}
@@ -968,9 +1003,18 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 		pres.Sessions = append(pres.Sessions, info)
 	}
+	pres.BoxKey = bus.BoxPublic(d.boxKey)
+	subject := fmt.Sprintf("%s: %d sessions", d.device, len(pres.Sessions))
+	if d.st.Encrypted {
+		subject = d.device + " (encrypted)"
+	}
+	pres, err := d.encryptPresenceLocked(pres)
 	d.mu.Unlock()
+	if err != nil {
+		return err
+	}
 
-	sha, err := d.repo.NewRecord(ctx, d.presenceRef(), "", pres, fmt.Sprintf("%s: %d sessions", d.device, len(pres.Sessions)))
+	sha, err := d.repo.NewRecord(ctx, d.presenceRef(), "", pres, subject)
 	if err != nil {
 		return err
 	}
