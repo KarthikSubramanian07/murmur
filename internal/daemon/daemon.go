@@ -283,7 +283,12 @@ type Daemon struct {
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
 	writeMu sync.Mutex // serializes appends to this device's log
-	ownTip  string     // the remote's tip of this device's log, as last known; under writeMu
+	// cutMu keeps a write in step with the switch to encryption (#156): an event or presence is
+	// encoded and pushed under its read lock, and the switch takes the write lock, so nothing
+	// encoded in the clear is pushed once the switch is made. Taken before mu, never under advMu
+	// by a writer.
+	cutMu  sync.RWMutex
+	ownTip string // the remote's tip of this device's log, as last known; under writeMu
 
 	// setMu guards settings and settings.json. It is taken alone, never with another lock held.
 	setMu    sync.Mutex

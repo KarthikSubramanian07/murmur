@@ -235,3 +235,18 @@ func DecryptPresence(p Presence, dev string, k *ecdh.PrivateKey) (Presence, erro
 	p.Host, p.Owner, p.Sessions, p.Enc = s.Host, s.Owner, s.Sessions, nil
 	return p, nil
 }
+
+// ValidBoxKey says whether s is a box key a box can be made for: an X25519 public key, in base64,
+// that agrees a secret with another key. A low-order point, such as all zeros, agrees none.
+func ValidBoxKey(s string) bool {
+	raw, err := b64.DecodeString(s)
+	if err != nil {
+		return false
+	}
+	pub, err := ecdh.X25519().NewPublicKey(raw)
+	if err != nil {
+		return false
+	}
+	_, err = NewBoxKey().ECDH(pub)
+	return err == nil
+}

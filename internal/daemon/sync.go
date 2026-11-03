@@ -715,10 +715,23 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		d.mu.Unlock()
 		return
 	}
-	// A box key counts only from a sealed presence, which only its device can write.
-	if k := pres.BoxKey; k != "" && !d.unsealed[dev] && d.st.BoxKeys[dev] != k {
-		d.st.BoxKeys[dev] = k
-		d.saveLocked()
+	// A box key counts only from a sealed presence, which only its device can write, and only
+	// as long as its device goes on publishing it: one gone means a Murmur that can't decrypt.
+	// One that isn't a usable key is never stored, or every box made for all would fail on it.
+	if !d.unsealed[dev] {
+		k := pres.BoxKey
+		if k != "" && !bus.ValidBoxKey(k) {
+			d.log.Printf("%s: %s publishes a box key that isn't one; leaving it out", ref, dev)
+			k = ""
+		}
+		if d.st.BoxKeys[dev] != k {
+			if k == "" {
+				delete(d.st.BoxKeys, dev)
+			} else {
+				d.st.BoxKeys[dev] = k
+			}
+			d.saveLocked()
+		}
 	}
 	d.mu.Unlock()
 	if pres.Enc != nil {
@@ -726,7 +739,8 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		if err != nil {
 			// Encrypted before this device's key was known there: its sessions show at the
 			// device's next heartbeat, which is encrypted for this one too.
-			open = bus.Presence{V: pres.V, Device: dev, At: pres.At, Host: "encrypted", Sessions: []bus.SessionInfo{}}
+			open = bus.Presence{V: pres.V, Device: dev, At: pres.At, Host: "encrypted", Sessions: []bus.SessionInfo{},
+				BoxKey: pres.BoxKey}
 		}
 		pres = open
 	}
@@ -778,6 +792,13 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	ref := d.meshRef()
+	d.cutMu.RLock()
+	cut := true
+	defer func() {
+		if cut {
+			d.cutMu.RUnlock()
+		}
+	}()
 	d.mu.Lock()
 	wire, err := d.encryptEventLocked(e)
 	d.mu.Unlock()
@@ -796,6 +817,8 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 			err = d.push(ctx, sha, ref, bus.Lease, lease)
 		}
 		if err == nil {
+			d.cutMu.RUnlock() // landed; what follows takes advMu
+			cut = false
 			d.ownTip = sha
 			if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
 				d.log.Printf("updating local %s: %v", ref, err)
@@ -968,6 +991,8 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	// Not cut short by shutdown: a push killed mid-flight can still land, after the goodbye.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
+	d.cutMu.RLock()
+	defer d.cutMu.RUnlock()
 	d.mu.Lock()
 	cwds := map[string]string{}
 	for id, s := range d.sessions {

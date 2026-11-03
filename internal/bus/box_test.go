@@ -2,6 +2,7 @@ package bus_test
 
 import (
 	"crypto/ecdh"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -91,5 +92,18 @@ func TestEncryptedPresence(t *testing.T) {
 	got, err := bus.DecryptPresence(read, "dev-a", k)
 	if err != nil || got.Host != p.Host || got.Owner != p.Owner || len(got.Sessions) != 1 || got.Sessions[0].Doing != "secret work" {
 		t.Fatalf("opened %+v, %v", got, err)
+	}
+}
+
+// A box key is checked before it is used: one that isn't base64, isn't 32 bytes, or is a point that
+// agrees no secret (all zeros) would fail every box made for it (#160 review).
+func TestValidBoxKey(t *testing.T) {
+	if !bus.ValidBoxKey(bus.BoxPublic(bus.NewBoxKey())) {
+		t.Error("a real key refused")
+	}
+	for _, k := range []string{"", "not base64!", "AAAA", base64.StdEncoding.EncodeToString(make([]byte, 32))} {
+		if bus.ValidBoxKey(k) {
+			t.Errorf("%q taken as a key", k)
+		}
 	}
 }

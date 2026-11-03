@@ -92,6 +92,8 @@ func (d *Daemon) readConfig(ctx context.Context, sha string) {
 	}
 	var cfg bus.Config
 	state, seal := bus.Open(c.Message, brand.ConfigRef, c.Parents)
+	d.cutMu.Lock() // a write under way lands first; any after it is encrypted
+	defer d.cutMu.Unlock()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.configSHA = sha
@@ -116,7 +118,9 @@ func (d *Daemon) encrypt(ctx context.Context, force bool) proto.Response {
 	}
 	var behind []string
 	for _, id := range sortedKeys(d.peers) {
-		if !d.staleLocked(d.peers[id]) && (d.unsealed[id] || d.st.BoxKeys[id] == "") {
+		// The device's latest presence, not the keys kept: one that rolled back to an older
+		// Murmur stops publishing its key.
+		if p := d.peers[id]; !d.staleLocked(p) && (d.unsealed[id] || p.pres.BoxKey == "" || d.st.BoxKeys[id] == "") {
 			behind = append(behind, id)
 		}
 	}
@@ -134,12 +138,14 @@ func (d *Daemon) encrypt(ctx context.Context, force bool) proto.Response {
 	if err != nil {
 		return proto.Response{Error: "turning encryption on: " + err.Error()}
 	}
+	d.cutMu.Lock()
 	d.mu.Lock()
 	d.configSHA = sha
 	d.st.Encrypted = true
 	d.saveLocked()
 	d.kickPresence()
 	d.mu.Unlock()
+	d.cutMu.Unlock()
 	d.log.Printf("encryption turned on for this repo")
 	note := "Encryption is on: from now on every device in this repo encrypts what it writes to the bus."
 	if len(behind) > 0 {

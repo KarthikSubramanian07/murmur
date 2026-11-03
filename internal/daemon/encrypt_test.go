@@ -96,3 +96,32 @@ func TestEncryptRefusesForOlderDevices(t *testing.T) {
 		t.Fatal("it went out in the clear")
 	}
 }
+
+// A device that published a box key and then stopped, as one rolled back to a Murmur that only
+// signs does, can't take part: mur encrypt goes by its latest presence, not the key it once had.
+func TestEncryptGoesByTheLatestPresence(t *testing.T) {
+	remote := newRemote(t)
+	a := newDevice(t, remote, time.Minute)
+	a.session("aaaaaa", "")
+	key := bus.NewKey()
+	ref := brand.PresencePrefix + "rolled-0001"
+	publish := func(boxKey, doing string) {
+		p := bus.Presence{V: bus.Version, Device: "rolled-0001", Host: "h", At: time.Now().UTC(), BoxKey: boxKey,
+			Sessions: []bus.SessionInfo{{ID: "x", Agent: "test", Doing: doing, Started: time.Now().UTC()}}}
+		msg, err := bus.EncodeSigned(p, "p", key, "rolled-0001", ref, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		work := t.TempDir()
+		git(t, work, "init", "-q")
+		sha := gitIn(t, work, msg, "commit-tree", git(t, work, "hash-object", "-t", "tree", "--stdin"))
+		git(t, work, "push", "-q", "--force", remote, sha+":"+ref)
+	}
+	publish(bus.BoxPublic(bus.NewBoxKey()), "with a key")
+	a.waitDoing("", "rolled-0001/x", "with a key")
+	publish("", "rolled back")
+	a.waitDoing("", "rolled-0001/x", "rolled back")
+	if r := a.do(proto.Request{Op: proto.OpEncrypt}); r.Error == "" || !strings.Contains(r.Error, "rolled-0001") {
+		t.Fatalf("encrypt with a device that rolled back: %+v", r)
+	}
+}
