@@ -680,8 +680,20 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		return
 	}
 	d.mu.Lock()
-	if !d.sealOKLocked(dev, ref, c) {
-		// Not the device's own, so no sign that it is alive: what it last said stands.
+	// A presence has no parent, so a seal can't pin its place: an old one of the device's own,
+	// pushed again, would seal as well as it did. It is refused for being no newer, by the
+	// device's own clock, than the last one taken.
+	replayed := false
+	if ok := d.sealOKLocked(dev, ref, c); ok && !d.unsealed[dev] {
+		last, seen := d.presAt[dev]
+		if replayed = seen && !pres.At.After(last); !replayed {
+			d.presAt[dev] = pres.At
+		}
+	} else if !ok {
+		replayed = true
+	}
+	if replayed {
+		// Not the device's own now, so no sign that it is alive: what it last said stands.
 		if p != nil {
 			p.sha, p.listed = sha, sha
 		}

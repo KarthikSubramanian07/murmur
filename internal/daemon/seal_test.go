@@ -148,3 +148,37 @@ func TestLostKeyMeansANewDevice(t *testing.T) {
 		t.Fatalf("a device that had no key record became %s, was %s", after, dev)
 	}
 }
+
+// A device's own sealed presence, pushed again after a newer one, isn't taken: it would roll its
+// sessions back, or keep a device that left looking alive.
+func TestReplayedPresenceIsIgnored(t *testing.T) {
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newDevice(t, remote)
+	b.beat = time.Hour // so the device doesn't write over the replay before a reads it
+	b.stop()
+	b.start()
+	bob, _ := b.session("bbbbbb", "")
+	b.do(proto.Request{Op: proto.OpStatus, Session: "bbbbbb", Doing: "the old status"})
+	a.waitDoing("", bob, "the old status")
+	ref := brand.PresencePrefix + b.self()
+	sha, _, _ := strings.Cut(git(t, t.TempDir(), "ls-remote", remote, ref), "\t")
+	work := t.TempDir()
+	git(t, work, "init", "-q")
+	git(t, work, "fetch", "-q", remote, sha)
+	msg := git(t, work, "log", "-1", "--format=%B", sha)
+
+	b.do(proto.Request{Op: proto.OpStatus, Session: "bbbbbb", Doing: "the new status"})
+	a.waitDoing("", bob, "the new status")
+
+	time.Sleep(1100 * time.Millisecond) // a new committer time, so a new SHA
+	again := gitIn(t, work, msg+"\n", "commit-tree", git(t, work, "hash-object", "-t", "tree", "--stdin"))
+	git(t, work, "push", "-q", "--force", remote, again+":"+ref)
+	eventually(t, "a to list the replay", func() bool {
+		return strings.Contains(git(t, a.gitDir, "ls-remote", remote, ref), again)
+	})
+	time.Sleep(2 * time.Second)
+	if d, _ := a.doingIn("", bob); d != "the new status" {
+		t.Fatalf("after the replay, a shows %q", d)
+	}
+}

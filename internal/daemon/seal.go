@@ -117,13 +117,17 @@ func short(sha string) string {
 }
 
 // nameSealOK decides whether a commit of the name registry is to be read. The registry is one
-// ref every device writes, so a record is checked against the device that sealed it, and that
-// device may record names only for itself, but in a new root: a daemon repairing the registry
-// writes every device's reservations into it again (see pushNames). An unsealed record is
-// checked against the device it names, so that one from a device that seals is refused. An
-// unsealed root, or a snapshot naming no device, is read as before: daemons from before seals
-// write them, and the names a snapshot lists only ever add to those known to be used. Caller
-// doesn't hold mu.
+// ref every device writes, and seals do less for it than for a device's own refs. A sealed record
+// is checked against the device that sealed it, which may give names only to its own sessions; it
+// may set a name aside for another device, as a daemon repairing the registry does for every
+// device's reservations (see pushNames). A record with a bad seal, or sealed with a key that isn't
+// its sealer's, is refused.
+//
+// An unsealed record is read as before, whichever device it names. Refusing those for a device
+// that seals would refuse that device's own records from before it sealed, which a reader joining
+// later comes to after pinning its key (#155 review), and gain little: a snapshot, which any
+// device may write, can list any name for any address, and a name already known to be someone's
+// never moves. Caller doesn't hold mu.
 func (d *Daemon) nameSealOK(rec bus.NameRecord, c bus.Commit) bool {
 	state, seal := bus.Open(c.Message, brand.NamesRef, c.Parents)
 	d.mu.Lock()
@@ -133,16 +137,19 @@ func (d *Daemon) nameSealOK(rec bus.NameRecord, c bus.Commit) bool {
 		if !d.sealOKLocked(seal.By, brand.NamesRef, c) {
 			return false
 		}
-		if rec.Name != "" && rec.Device != seal.By && c.Parents != "" {
-			d.log.Printf("%s: ignoring %s, in which %s records a name for %s", brand.NamesRef, short(c.SHA), seal.By, rec.Device)
+		if rec.Name != "" && rec.Session != "" && rec.Device != seal.By {
+			d.log.Printf("%s: ignoring %s, in which %s gives a name to a session of %s", brand.NamesRef, short(c.SHA), seal.By, rec.Device)
 			return false
 		}
 		return true
 	case bus.BadSeal:
-		return d.sealOKLocked(rec.Device, brand.NamesRef, c) // false, and says so
+		dev := rec.Device
+		if !bus.ValidDevice(dev) {
+			dev = "an unknown device"
+		}
+		d.log.Printf("%s: ignoring %s, whose seal doesn't hold", brand.NamesRef, short(c.SHA))
+		d.forged[dev] = time.Now()
+		return false
 	}
-	if c.Parents == "" || rec.Name == "" || !bus.ValidDevice(rec.Device) {
-		return true
-	}
-	return d.sealOKLocked(rec.Device, brand.NamesRef, c)
+	return true
 }

@@ -227,8 +227,11 @@ type Daemon struct {
 	peers    map[string]*peer
 	// unsealed is the devices whose last record read carried no seal, from a daemon that predates
 	// seals; forged is when a record claiming a device last failed its seal (see sealOKLocked).
-	unsealed   map[string]bool
-	forged     map[string]time.Time
+	unsealed map[string]bool
+	forged   map[string]time.Time
+	// presAt is the time, by its writer's clock, of each device's last sealed presence taken; a
+	// sealed presence no newer is a replay (see updatePeer). Kept past a device's goodbye.
+	presAt     map[string]time.Time
 	known      map[string]string // local copy of each bus ref: ref → SHA last fetched
 	st         state
 	recent     []proto.EventView
@@ -595,7 +598,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	d := &Daemon{
 		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
-		unsealed: map[string]bool{}, forged: map[string]time.Time{},
+		unsealed: map[string]bool{}, forged: map[string]time.Time{}, presAt: map[string]time.Time{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
 		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
@@ -616,7 +619,12 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}
-	d.st.Keys[d.device] = bus.PublicKey(d.key)
+	if d.st.Keys[d.device] != bus.PublicKey(d.key) {
+		// Saved at once: a key lost before this is saved would leave the device under its old ID
+		// with a new key, which its peers refuse (see loadIdentity).
+		d.st.Keys[d.device] = bus.PublicKey(d.key)
+		d.saveLocked()
+	}
 	d.loadSettings()
 	wall := now.Round(0)
 	if !d.st.Initialized || wall.Sub(d.st.LastSync) > catchUpLimit {

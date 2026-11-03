@@ -143,15 +143,19 @@ every device seals everything it writes, in every repo.
   device but not sealed with that key: unsealed (so a seal can't be stripped off), or sealed with
   another. Until a device has sealed anything, its unsealed records are read as before, since
   daemons from before seals write nothing else; `who` and the page show it as unverified.
-- **The name registry** is one ref every device writes. A record is checked against the device
-  that sealed it, which may record names only for itself, but in a new root, where a repairing
-  daemon writes every device's reservations again. An unsealed record is checked against the
-  device it names. An unsealed root, or a snapshot naming no device, is read as before: the names
-  a snapshot lists only ever add to those known to be used.
+- **The name registry** is one ref every device writes, and seals do less for it. A sealed record
+  is checked against the device that sealed it, which may give names only to its own sessions, and
+  may set names aside for any device, as a daemon repairing the registry does for all of them. An
+  unsealed record is read as before, whichever device it names: refusing those for a device that
+  seals would refuse its records from before it did, which a reader joining later reads after
+  pinning its key, and would gain little, since a snapshot, which any device may write, can list
+  any name for any address. A name already known to be someone's never moves, sealed or not.
 - **What it doesn't stop.** Whoever seals first for a device is pinned: someone who can push could
   seal a record for a device before the device does, and its own records would then be refused.
   That is what a team of people who can all push already trust each other with. A presence has no
-  parent, so an old one can be pushed again and is taken until the device's next heartbeat. And
+  parent, so a seal can't pin its place; a sealed presence no newer, by its writer's clock, than
+  the last one taken from the device is refused as a replay. A reader that restarts takes the
+  first it reads. And
   anyone who can push can still delete or overwrite refs, stopping delivery; seals stop
   impersonation, not interference. A record refused is logged, and `who` and the page show the
   device's last refused one.
