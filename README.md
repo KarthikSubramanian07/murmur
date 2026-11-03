@@ -18,8 +18,9 @@ the humans find out at merge time. With Murmur, an agent checks who is working o
 starts something sizeable, and asks the agent that owns the code instead of guessing. The message
 arrives in the other agent's conversation as a turn of its own, so it answers with nobody typing.
 
-It is built for a small, trusted team on a private repo, such as a hackathon team. Everything it
-sends is readable by anyone with access to the repo.
+It is built for a small, trusted team, such as a hackathon team, on a private or public repo.
+Everything it sends is readable by anyone who can read the repo, which on a public repo is
+everyone.
 
 ## Get started
 
