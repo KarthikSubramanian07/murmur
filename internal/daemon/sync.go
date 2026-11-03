@@ -783,7 +783,7 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 		if err != nil {
 			return err
 		}
-		if err := d.repo.Fetch(ctx, []string{ref}); err != nil {
+		if err := d.fetchOwnLog(ctx, ref); err != nil {
 			return err
 		}
 		over, err := d.overOwnLog(ctx, tip)
@@ -800,6 +800,25 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 		// first sync, or a copied .git. Build on the remote's tip instead.
 		d.ownTip = tip
 	}
+}
+
+// fetchOwnLog fetches this device's log for appendEvent, after a push of it was refused. A sync
+// may be fetching the same ref at that moment, and git then refuses one of the two updates of the
+// local copy ("incorrect old value provided"), which would fail the send. So it is tried again a
+// few times. Caller holds writeMu.
+func (d *Daemon) fetchOwnLog(ctx context.Context, ref string) error {
+	var err error
+	for i := 0; i < 4; i++ {
+		if err = d.repo.Fetch(ctx, []string{ref}); err == nil || ctx.Err() != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(i+1) * 100 * time.Millisecond):
+		}
+	}
+	return err
 }
 
 // overOwnLog says whether the remote's tip of this device's log is something to replace rather

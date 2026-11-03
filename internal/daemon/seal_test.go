@@ -59,7 +59,9 @@ func TestForgedRecordsOfASealingDeviceAreIgnored(t *testing.T) {
 		}
 		return msg
 	})
-	b.do(proto.Request{Op: proto.OpSend, To: alice, Subject: "second, sealed"})
+	if r := b.do(proto.Request{Op: proto.OpSend, To: alice, Subject: "second, sealed"}); r.Error != "" {
+		t.Fatalf("send after the forgeries: %s", r.Error)
+	}
 	eventually(t, "the second message", func() bool { return logHas(a, "second, sealed") })
 
 	var got []string
