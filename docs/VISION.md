@@ -9,7 +9,7 @@ then the repo and the tool were called t4 (`docs/names.md`).
 
 ## The problem
 
-At a hackathon, three to five people each run several coding agents against one private repo,
+At a hackathon, three to five people each run several coding agents against one repo,
 shipping as fast as they can. The agents can't see each other. Two of them build the same auth
 flow; one refactors a module another is halfway through extending; a third picks a different
 state library. The humans find out at merge time, or at the demo.
@@ -20,10 +20,13 @@ building what" among themselves, without bringing the humans in.
 
 ## Who it is for, and who it is not
 
-For: a small team (a handful of people, a few dozen sessions at most) on a **private** repo, for
-the length of a hackathon, where everyone with push access is trusted.
+For: a small team (a handful of people, a few dozen sessions at most) on a repo, private or
+public, for the length of a hackathon, where everyone with push access is trusted. On a public repo
+only collaborators can push, so only they can join and send (#72), but anyone can read the bus.
+An encrypted mode for teams that want it private is #156. Public repos were on the list below
+until Tyler took them off on 2026-11-03.
 
-Not for: public repos, large teams, long-lived projects, or anyone whose agents should not take
+Not for: large teams, long-lived projects, or anyone whose agents should not take
 input from teammates' agents. These limits are deliberate. Each one keeps the design simple, and
 lifting one would change it.
 

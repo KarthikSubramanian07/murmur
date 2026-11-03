@@ -1,6 +1,6 @@
 # Murmur: notes for Claude Code
 
-Murmur lets coding agents on different teammates' machines, in the same private repo, discover and
+Murmur lets coding agents on different teammates' machines, in the same repo, discover and
 message each other, with git refs on GitHub as the transport. V1 exists (2026-10-26): one Go
 binary, `cmd/mur`, with its packages in `internal/`; `go test ./...` runs it all, and every pull
 request runs it on macOS, Windows and Linux in CI (`docs/testing.md`).
