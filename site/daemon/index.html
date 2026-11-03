@@ -204,11 +204,19 @@
   html:not(.js) .end .links { display: flex; flex-wrap: wrap; margin-top: 16px; }
   html:not(.js) .after { display: none; }
   .baked svg { display: block; width: 100%; height: auto; margin-bottom: 28px; }
+  /* A hint to scroll, for the first screen only: it fades once the page moves. */
+  .scroll-hint { position: fixed; left: 50%; bottom: clamp(16px, 4vh, 32px); z-index: 20; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--cream); font-size: 13px; font-weight: 500; letter-spacing: .02em; opacity: .8; pointer-events: none; transition: opacity .4s; }
+  .scroll-hint svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; animation: hint-nudge 1.8s ease-in-out infinite; }
+  .scroll-hint.gone { opacity: 0; }
+  @keyframes hint-nudge { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
+  @media (prefers-reduced-motion: reduce) { .scroll-hint svg { animation: none; } }
 </style>
 <script>document.documentElement.classList.add('js'); if (matchMedia('(prefers-reduced-motion: reduce)').matches) document.documentElement.classList.add('static');</script>
 </head>
 <body>
 <div class="progress" id="progress" aria-hidden="true"></div>
+<div class="scroll-hint" id="scrollHint" aria-hidden="true">Scroll<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
+<script>(() => { const h = document.getElementById('scrollHint'), off = () => { if (scrollY > 40) { h.classList.add('gone'); removeEventListener('scroll', off); } }; addEventListener('scroll', off, { passive: true }); off(); })();</script>
 
 <main class="track" id="track">
   <div class="stage" id="stage"><svg id="world" role="img" aria-label="One drawing, growing as the page scrolls: a laptop and a conversation, MCP servers, the Murmur daemon, refs on GitHub, a second laptop, the poll rate, delivery, presence, names and what survives what. The notes beside it say what each part does."></svg></div>
