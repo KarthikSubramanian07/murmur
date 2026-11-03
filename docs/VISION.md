@@ -44,7 +44,8 @@ don't want it. This is not part of scope." Daemons still running V1 keep writing
 ### Git is the transport, GitHub the hub
 
 Every teammate already has credentials and push access to the repo, so the repo carries the
-messages. No server, no accounts, no extra auth: whoever can push is in.
+messages. No server, no accounts, no extra auth: whoever can push is in. (One thing does leave the
+repo: a daily check-in that counts active users; see Counting active users.)
 
 - Each device appends events to **its own ref**, `refs/murmur/mesh/<deviceId>`: one empty commit per
   event, the payload in the commit message (a readable subject, a JSON body). One writer per ref
@@ -873,6 +874,31 @@ A body past the limit is cut, as in `inbox`.
     teammates and don't predict a reply, and other devices' messages for sessions elsewhere.
   - A failed poll keeps the back-off above, from whatever the rate was.
   - All four numbers are options, so a test can shrink them.
+
+### Counting active users
+
+Tyler's goal for the project is 100 active users (2026-11-02), and the transport hides them: every
+team's traffic stays in its own repo, and release downloads count installs, not use. So each
+daemon checks in (#148, `internal/checkin`): when it starts and every hour after, if this clone
+hasn't checked in this UTC day, it posts to `https://murmur.afig.dev/v1/checkin`:
+
+- `user`: 16 random bytes in hex, made once per user account on the machine and kept in the user
+  config dir (`murmur/id`), so every clone of that account is one user;
+- `team`: the first 16 bytes of a SHA-256 of the bus remote's address, reduced to host and path
+  (https and ssh clones of one repo agree). It isn't salted, so whoever holds the stats can confirm
+  a repo they can name; nobody can list the repos from it;
+- `version`, `os`, `arch`.
+
+The answer is the latest release, kept in the state dir's `checkin.json`; `mur version` says so on
+stderr when it is newer. A daemon runs only while a joined clone has a session open, or for 10
+minutes after, so a check-in means someone used Murmur that day. "Active" is a check-in in the last
+7 days. The site keeps one row per user, team and day in D1 (`site/migrations`), no IP addresses,
+and shows the counts on a page at `/stats` that only Tyler's key opens (`site/src/usage.js`).
+`DO_NOT_TRACK` or `MURMUR_NO_USAGE` in the daemon's environment, or `murmur.usage` false in git
+config, turns check-ins off; a development build (`-dev`) never sends one. join.md tells the user
+before they agree.
+
+What it can't see: a person with two machines is two users, and one who turned check-ins off is none.
 
 ## Risks and how the design meets them
 
