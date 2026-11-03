@@ -5,6 +5,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -214,15 +215,20 @@ type Daemon struct {
 	repo    *bus.Repo
 	dir     string
 	device  string
+	key     ed25519.PrivateKey // seals what this device writes to the bus
 	host    string
 	owner   string
 	token   string
 	started time.Time
 	log     *log.Logger
 
-	mu         sync.Mutex
-	sessions   map[string]*session
-	peers      map[string]*peer
+	mu       sync.Mutex
+	sessions map[string]*session
+	peers    map[string]*peer
+	// unsealed is the devices whose last record read carried no seal, from a daemon that predates
+	// seals; forged is when a record claiming a device last failed its seal (see sealOKLocked).
+	unsealed   map[string]bool
+	forged     map[string]time.Time
 	known      map[string]string // local copy of each bus ref: ref → SHA last fetched
 	st         state
 	recent     []proto.EventView
@@ -444,6 +450,10 @@ type state struct {
 	// been idle for 30 minutes, and a message is still delivered to the thread, which wakes it.
 	// Local only, like NameKeys. It is kept as long as the session's inbox is.
 	T3Routes map[string]t3Route `json:"t3Routes,omitempty"`
+
+	// Keys is each device's public key as first seen sealing a record, this device's own included:
+	// from then on only records sealed with that key are taken as the device's (see sealOKLocked).
+	Keys map[string]string `json:"keys,omitempty"`
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if
@@ -585,19 +595,20 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	d := &Daemon{
 		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
+		unsealed: map[string]bool{}, forged: map[string]time.Time{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
 		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{},
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
 	}
-	device, err := loadDevice(dir)
+	device, key, err := loadIdentity(dir, opt.Log)
 	if err != nil {
 		return nil, err
 	}
-	d.device = device
+	d.device, d.key = device, key
 	d.host, _ = os.Hostname()
-	d.repo = &bus.Repo{Git: gitx.Git{Dir: opt.GitDir}, Name: device, Email: device + "@" + brand.Name + ".invalid"}
+	d.repo = &bus.Repo{Git: gitx.Git{Dir: opt.GitDir}, Name: device, Email: device + "@" + brand.Name + ".invalid", Key: key}
 	if d.repo.Remote, err = bus.RemoteFor(ctx, d.repo.Git); err != nil {
 		return nil, err
 	}
@@ -605,6 +616,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}
+	d.st.Keys[d.device] = bus.PublicKey(d.key)
 	d.loadSettings()
 	wall := now.Round(0)
 	if !d.st.Initialized || wall.Sub(d.st.LastSync) > catchUpLimit {
@@ -800,7 +812,8 @@ func (d *Daemon) loadState() error {
 	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},
 		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
-		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{}}
+		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
+		Keys: map[string]string{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -847,6 +860,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Reserved == nil {
 		d.st.Reserved = map[string]string{}
+	}
+	if d.st.Keys == nil {
+		d.st.Keys = map[string]string{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

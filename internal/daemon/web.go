@@ -109,7 +109,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Reachable: !d.staleLocked(p),
-			LastSeen: p.lastChange}
+			LastSeen: p.lastChange, Unsealed: d.unsealed[id], Forged: d.forged[id]}
 		for _, ps := range p.pres.Sessions {
 			if ps.ID == proto.CLISession {
 				continue // V1 daemons list their CLI

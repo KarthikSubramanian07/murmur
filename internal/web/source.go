@@ -38,7 +38,12 @@ type Device struct {
 	// Reachable says the device's heartbeat is current, so its sessions can get messages now.
 	Reachable bool      `json:"reachable"`
 	LastSeen  time.Time `json:"lastSeen"` // when this daemon last saw the device's presence change
-	Sessions  []Session `json:"sessions"`
+	// Unsealed says the device's records carry no seal: its daemon predates #155, and nothing
+	// proves what it writes is its own. Forged is when this daemon last ignored a record that
+	// claimed to be the device's and failed its seal; zero if none has since it started.
+	Unsealed bool      `json:"unsealed,omitempty"`
+	Forged   time.Time `json:"forged,omitzero"`
+	Sessions []Session `json:"sessions"`
 }
 
 // Session is one agent session.

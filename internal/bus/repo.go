@@ -2,6 +2,7 @@ package bus
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -27,6 +28,7 @@ var ErrRefused = errors.New("refused by the server")
 type Commit struct {
 	SHA     string
 	Time    time.Time // committer time, the writer's clock
+	Parents string    // space-separated, as git lists them; "" for a root commit
 	Message string
 }
 
@@ -49,6 +51,9 @@ type Repo struct {
 	// Name and Email sign bus commits as the device, so no commit-tree depends on the user's
 	// git identity being configured.
 	Name, Email string
+	// Key seals the records NewRecord writes (see Seal). A repo without one writes them unsealed,
+	// as daemons did before seals.
+	Key ed25519.PrivateKey
 
 	treeMu    sync.Mutex // the daemon's goroutines all write through one Repo
 	emptyTree string
@@ -90,6 +95,22 @@ func (r *Repo) NewCommit(ctx context.Context, parent, message string) (string, e
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// NewRecord writes v as the commit after parent ("" for a root commit), sealed for ref, the ref
+// it is to be pushed to. Like NewCommit, it moves no ref.
+func (r *Repo) NewRecord(ctx context.Context, ref, parent string, v any, subject string) (string, error) {
+	var msg string
+	var err error
+	if r.Key != nil {
+		msg, err = EncodeSigned(v, subject, r.Key, r.Name, ref, parent)
+	} else {
+		msg, err = Encode(v, subject)
+	}
+	if err != nil {
+		return "", err
+	}
+	return r.NewCommit(ctx, parent, msg)
 }
 
 // ListRemote returns every bus ref on the remote and its SHA. It is one round trip and
@@ -276,7 +297,7 @@ const (
 // Log returns the commits after from (exclusive; "" for the start) up to to, oldest first.
 func (r *Repo) Log(ctx context.Context, from, to string) ([]Commit, error) {
 	args := []string{"log", "--no-show-signature", "--no-color", "--reverse",
-		"--format=%H%x00%ct%x00%B%x1e", to}
+		"--format=%H%x00%ct%x00%P%x00%B%x1e", to}
 	if from != "" {
 		args = append(args, "^"+from)
 	}
@@ -287,12 +308,12 @@ func (r *Repo) Log(ctx context.Context, from, to string) ([]Commit, error) {
 	var commits []Commit
 	for _, rec := range strings.Split(out, recordSep) {
 		rec = strings.TrimLeft(rec, "\r\n")
-		parts := strings.SplitN(rec, fieldSep, 3)
-		if len(parts) != 3 {
+		parts := strings.SplitN(rec, fieldSep, 4)
+		if len(parts) != 4 {
 			continue
 		}
 		secs, _ := strconv.ParseInt(parts[1], 10, 64)
-		commits = append(commits, Commit{SHA: parts[0], Time: time.Unix(secs, 0), Message: parts[2]})
+		commits = append(commits, Commit{SHA: parts[0], Time: time.Unix(secs, 0), Parents: parts[2], Message: parts[3]})
 	}
 	return commits, nil
 }
@@ -300,16 +321,16 @@ func (r *Repo) Log(ctx context.Context, from, to string) ([]Commit, error) {
 // ReadCommit returns one commit.
 func (r *Repo) ReadCommit(ctx context.Context, sha string) (Commit, error) {
 	out, err := r.Git.Run(ctx, "", "log", "-1", "--no-show-signature", "--no-color",
-		"--format=%H%x00%ct%x00%B", sha, "--")
+		"--format=%H%x00%ct%x00%P%x00%B", sha, "--")
 	if err != nil {
 		return Commit{}, err
 	}
-	parts := strings.SplitN(out, fieldSep, 3)
-	if len(parts) != 3 {
+	parts := strings.SplitN(out, fieldSep, 4)
+	if len(parts) != 4 {
 		return Commit{}, fmt.Errorf("unreadable commit %s", sha)
 	}
 	secs, _ := strconv.ParseInt(parts[1], 10, 64)
-	return Commit{SHA: parts[0], Time: time.Unix(secs, 0), Message: parts[2]}, nil
+	return Commit{SHA: parts[0], Time: time.Unix(secs, 0), Parents: parts[2], Message: parts[3]}, nil
 }
 
 // RemoteFor names the remote a clone's bus lives on: the one `git config murmur.remote` names,

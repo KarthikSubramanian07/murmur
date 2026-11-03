@@ -129,6 +129,12 @@ func Who(r proto.Response) string {
 		default:
 			fmt.Fprintf(&b, "\n%s (%s, seen %s)\n", d.ID, who, Ago(d.LastSeen))
 		}
+		if d.Unsealed {
+			b.WriteString("  unverified: its Murmur predates signed records, so nothing proves what it writes is its own\n")
+		}
+		if !d.Forged.IsZero() {
+			fmt.Fprintf(&b, "  a record claiming to be from it failed its signature %s, and was ignored\n", Ago(d.Forged))
+		}
 		if len(d.Sessions) == 0 {
 			b.WriteString("  no sessions\n")
 		}

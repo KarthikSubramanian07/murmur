@@ -339,6 +339,19 @@ function sessionsPage() {
           h("span", { class: "device-name truncate" }, d.id),
           d.owner && h("span", { class: "device-id truncate" }, d.owner),
           d.self && h("span", { class: "badge badge-outline" }, "This device"),
+          d.unsealed &&
+            h(
+              "span",
+              { class: "badge badge-outline", title: "Its Murmur predates signed records, so nothing proves what it writes is its own" },
+              "Unverified",
+            ),
+          when(d.forged) &&
+            h(
+              "span",
+              { class: "device-state", title: "A record claiming to be from this device failed its signature and was ignored" },
+              h("span", { class: "dot warn" }),
+              agoEl("span", "", when(d.forged), "Forged record ignored · "),
+            ),
           !d.reachable &&
             h(
               "span",

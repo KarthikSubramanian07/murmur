@@ -477,6 +477,9 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		if from, _ := bus.SplitAddr(e.From); from != dev {
 			continue // a device's log carries only its own sessions' events
 		}
+		if !d.sealOKLocked(dev, ref, c) {
+			continue
+		}
 		if junked && e.At.Before(hidden.Add(-time.Minute)) {
 			continue // history the junk hid when this device first looked
 		}
@@ -676,6 +679,16 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		d.sawPresence(dev, sha, true)
 		return
 	}
+	d.mu.Lock()
+	if !d.sealOKLocked(dev, ref, c) {
+		// Not the device's own, so no sign that it is alive: what it last said stands.
+		if p != nil {
+			p.sha, p.listed = sha, sha
+		}
+		d.mu.Unlock()
+		return
+	}
+	d.mu.Unlock()
 	pres.Clean()
 	changed := time.Now()
 	if p == nil {
@@ -724,13 +737,9 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	ref := d.meshRef()
-	msg, err := bus.Encode(e, e.Line())
-	if err != nil {
-		return err
-	}
 	lease := ""
 	for attempt := 0; ; attempt++ {
-		sha, err := d.repo.NewCommit(ctx, d.ownTip, msg)
+		sha, err := d.repo.NewRecord(ctx, ref, d.ownTip, e, e.Line())
 		if err != nil {
 			return err
 		}
@@ -949,11 +958,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	d.mu.Unlock()
 
-	msg, err := bus.Encode(pres, fmt.Sprintf("%s: %d sessions", d.device, len(pres.Sessions)))
-	if err != nil {
-		return err
-	}
-	sha, err := d.repo.NewCommit(ctx, "", msg)
+	sha, err := d.repo.NewRecord(ctx, d.presenceRef(), "", pres, fmt.Sprintf("%s: %d sessions", d.device, len(pres.Sessions)))
 	if err != nil {
 		return err
 	}

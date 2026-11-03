@@ -582,7 +582,7 @@ func (d *Daemon) whoLocked(you string) []proto.Device {
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := proto.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, LastSeen: p.lastChange,
-			Stale: d.staleLocked(p)}
+			Stale: d.staleLocked(p), Unsealed: d.unsealed[id], Forged: d.forged[id]}
 		for _, s := range p.pres.Sessions {
 			if s.ID == proto.CLISession {
 				continue // V1 daemons list their CLI, which only claims needed

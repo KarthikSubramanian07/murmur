@@ -91,9 +91,10 @@ repo: a daily check-in that counts active users; see Counting active users.)
   it, so a `send` made while presence is being pushed waits about a second more. Pushes from
   different devices can still meet on GitHub; a refused one is retried as before.
 - Bus commits carry git's empty tree, so they hold no files and fetching them brings nothing else
-  along. The daemon pushes them with `--no-verify` and doesn't sign them: a `pre-push` hook that
-  runs the test suite, or a signing prompt, on every message would make the bus unusable. These
-  commits only ever go to `refs/murmur/*`, never to a branch.
+  along. The daemon pushes them with `--no-verify` and doesn't sign them with git: a `pre-push`
+  hook that runs the test suite, or a signing prompt, on every message would make the bus
+  unusable. It seals what is in them instead (see Seals). These commits only ever go to
+  `refs/murmur/*`, never to a branch.
 - beads (task tracking synced through `refs/dolt/data` on GitHub) shows custom refs hold up at
   scale, and two of its bugs are warnings: `git push --mirror` from an ordinary clone deletes
   custom refs on the remote (beads #5266), and checking an internal branch out in the user's repo
@@ -117,6 +118,45 @@ repo: a daily check-in that counts active users; see Counting active users.)
   random hex digits (`tyler-laptop-3f2a`), kept with the daemon's other state in `.git/murmur/`,
   which no commit or checkout ever touches. (An earlier draft grouped repos by root commit;
   per-clone daemons don't need that.)
+
+### Seals
+
+Added 2026-11-03 (#155). A record says which device wrote it, and without a seal nothing backs
+that: anyone who can push can write any ref, git tells a reader nothing about who pushed (a
+commit's author is whatever its writer put), and GitHub's push webhook and its repository
+activity API, which do name the pusher, say nothing about custom refs (the activity API returned
+nothing for `refs/murmur/names` on 2026-11-03). Some pushers are deploy keys, with no account at
+all. So a message could name any sender, a presence any sessions. Tyler decided on 2026-11-03 that
+every device seals everything it writes, in every repo.
+
+- **The key.** Each device has an Ed25519 key, made with its ID and kept beside it in
+  `.git/murmur/key`. A device whose key is lost while its state shows it had one takes a new ID,
+  since its peers would refuse a new key under the old one; one that never had a key, from before
+  seals, keeps its ID.
+- **What a seal covers.** The record's JSON as written, byte for byte, bound to the ref it goes on
+  and the commit it follows. A seal copied to another ref, or pushed again after another commit,
+  doesn't hold. The seal is the JSON's last member, `"seal":{"by","key","sig"}`, and the signed
+  bytes are the object without it, so a field a reader doesn't know is covered too. Daemons from
+  before seals ignore the member, as they ignore any field they don't know.
+- **Pinned on first sight.** A reader takes a device's key from the first sealed record it reads
+  for the device, and keeps it in `state.json`. From then on it refuses any record claiming that
+  device but not sealed with that key: unsealed (so a seal can't be stripped off), or sealed with
+  another. Until a device has sealed anything, its unsealed records are read as before, since
+  daemons from before seals write nothing else; `who` and the page show it as unverified.
+- **The name registry** is one ref every device writes. A record is checked against the device
+  that sealed it, which may record names only for itself, but in a new root, where a repairing
+  daemon writes every device's reservations again. An unsealed record is checked against the
+  device it names. An unsealed root, or a snapshot naming no device, is read as before: the names
+  a snapshot lists only ever add to those known to be used.
+- **What it doesn't stop.** Whoever seals first for a device is pinned: someone who can push could
+  seal a record for a device before the device does, and its own records would then be refused.
+  That is what a team of people who can all push already trust each other with. A presence has no
+  parent, so an old one can be pushed again and is taken until the device's next heartbeat. And
+  anyone who can push can still delete or overwrite refs, stopping delivery; seals stop
+  impersonation, not interference. A record refused is logged, and `who` and the page show the
+  device's last refused one.
+- **Refusing unsealed records.** Devices that have never sealed are still read. When to refuse
+  them, once every daemon in use seals, is Tyler's to decide.
 
 ### One daemon per device, a thin MCP server per session
 
@@ -912,7 +952,8 @@ What it can't see: a person with two machines is two users, and one who turned c
 - **Prompt injection.** Anyone with push access can now put text in front of your agent. That
   matches the trust model (a hackathon team), and a delivered message is text in front of the
   agent as a turn of its own, delivered as written; messages never get to bypass the receiving
-  user's permission mode, and the framing's first line keeps their origin visible.
+  user's permission mode, and the framing's first line keeps their origin visible. Seals make
+  that line true: a message from a device that seals can't be forged by another (see Seals).
 - **Leaked secrets.** Everything on the bus stays in repo history, readable by anyone with read
   access, and agents do paste `.env` values. Everything a session sends (its messages and status
   line) is scanned first, and a match blocks the send rather than being redacted, so the

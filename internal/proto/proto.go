@@ -170,12 +170,17 @@ type Response struct {
 
 // Device is one device as `who` shows it.
 type Device struct {
-	ID       string        `json:"id"`
-	Host     string        `json:"host"`
-	Owner    string        `json:"owner,omitempty"`
-	Self     bool          `json:"self,omitempty"`
-	Stale    bool          `json:"stale,omitempty"`
-	LastSeen time.Time     `json:"lastSeen"` // when this daemon last saw its presence change
+	ID       string    `json:"id"`
+	Host     string    `json:"host"`
+	Owner    string    `json:"owner,omitempty"`
+	Self     bool      `json:"self,omitempty"`
+	Stale    bool      `json:"stale,omitempty"`
+	LastSeen time.Time `json:"lastSeen"` // when this daemon last saw its presence change
+	// Unsealed says the device's records carry no seal: its daemon predates #155, and nothing
+	// proves what it writes is its own. Forged is when this daemon last ignored a record that
+	// claimed to be the device's and failed its seal; zero if none has since it started.
+	Unsealed bool          `json:"unsealed,omitempty"`
+	Forged   time.Time     `json:"forged,omitzero"`
 	Sessions []SessionView `json:"sessions"`
 }
 

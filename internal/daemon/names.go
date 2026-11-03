@@ -176,7 +176,7 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	reserved := map[string]string{} // the reservations read, name to device
 	for _, c := range commits {
 		var rec bus.NameRecord
-		if bus.Decode(c.Message, &rec) != nil {
+		if bus.Decode(c.Message, &rec) != nil || !d.nameSealOK(rec, c) {
 			continue
 		}
 		claims := rec.Claims()
@@ -557,11 +557,8 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 	}
 	sha := parent
 	for _, r := range recs {
-		msg, err := bus.Encode(r, r.Subject())
-		if err != nil {
-			return err
-		}
-		if sha, err = d.repo.NewCommit(ctx, sha, msg); err != nil {
+		var err error
+		if sha, err = d.repo.NewRecord(ctx, brand.NamesRef, sha, r, r.Subject()); err != nil {
 			return err
 		}
 	}
