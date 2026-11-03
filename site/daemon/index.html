@@ -387,7 +387,8 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
     byLineA: 'M1692 290V440',
     byB: y => `M290 246V${y - 20}Q290 ${y} 270 ${y}H163`,
     byLineB: 'M290 290V440',
-    toChipA: 'M1590 190V366', toChipF: 'M290 246H375V366', toChipO: 'M640 246H230Q205 246 205 266V366',
+    // A dot sent to a server stops at the chip's edge, not on its label.
+    toChipA: 'M1590 190V342', toChipF: 'M290 246H375V342', toChipO: 'M640 246H230Q205 246 205 266V342',
     lane: { a: 'M1470 270H1296Q1280 270 1280 286V430Q1280 446 1264 446H1240', s: 'M830 590H620Q604 590 604 574V462Q604 446 620 446H640' },
     tape: { x0: 640, head: 1590, y: -124, h: 70, scale: 950 / 600, tick: 2.2, reg: -28, mark: -136, drop: 'M1590 -54V120', pingV: 14 },
     read: { x: 1704, y: -252, big: 96, sub: 23, log: -158, anchor: 'end' },
@@ -433,7 +434,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
     byLineA: 'M300 996V1014',
     byB: y => `M300 74V${y}H173`,
     byLineB: 'M300 96V118',
-    toChipA: 'M300 948H98', toChipF: 'M300 74H502V48', toChipO: 'M300 74H98V48',
+    toChipA: 'M300 948H146', toChipF: 'M300 74H502V68', toChipO: 'M300 74H98V68',
     lane: { a: 'M180 974H4V778H30', s: 'M890 612V778H570' },
     tape: { x0: 26, head: 574, y: 826, h: 38, scale: 548 / 300, tick: 1.4, reg: 888, mark: 818, drop: 'M574 864V900', pingV: 26 },
     read: { x: 34, y: 668, big: 62, sub: 21, log: 770 },
@@ -1578,7 +1579,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       }
       showTag(tg.inboxF, W('busy', .88, .93) * (1 - W('presence', 0, .06)));
       showTag(tg.codex, W('busy', .68, .74) * (1 - W('presence', 0, .06)));
-      if (t >= at('busy', .9) && t < at('presence')) spot(ch.f, ch.cyB, 9, C.butter);
+      if (t >= at('busy', .9) && t < at('presence')) spot(ch.f, L.tall ? ch.yB + ch.h : ch.yB, 9, C.butter);
       fill(rInB, t >= at('finale', .6) ? clamp(ss(W('finale', .6, .7)) * fp.inB.getTotalLength() / rInB.len) : t >= at('busy', .56) && t < at('presence') ? clamp(ss(W('busy', .56, .78)) * fp.inB.getTotalLength() / rInB.len) : 0);
 
       // --- Presence ---
