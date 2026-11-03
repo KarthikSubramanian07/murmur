@@ -183,4 +183,11 @@ func TestReplayedPresenceIsIgnored(t *testing.T) {
 	if d, _ := a.doingIn("", bob); d != "the new status" {
 		t.Fatalf("after the replay, a shows %q", d)
 	}
+	// Nor after a restarts, when the replay is the copy of the presence it has.
+	a.stop()
+	a.start()
+	time.Sleep(2 * time.Second)
+	if d, _ := a.doingIn("", bob); d == "the old status" {
+		t.Fatal("after a restart, a took the replay")
+	}
 }

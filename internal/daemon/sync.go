@@ -685,9 +685,10 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	// device's own clock, than the last one taken.
 	replayed := false
 	if ok := d.sealOKLocked(dev, ref, c); ok && !d.unsealed[dev] {
-		last, seen := d.presAt[dev]
+		last, seen := d.st.PresenceAt[dev]
 		if replayed = seen && !pres.At.After(last); !replayed {
-			d.presAt[dev] = pres.At
+			d.st.PresenceAt[dev] = pres.At
+			d.saveLocked()
 		}
 	} else if !ok {
 		replayed = true
@@ -969,7 +970,15 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			s.branch = b
 		}
 	}
-	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, At: time.Now().UTC(),
+	// Later than the last presence written, even if the clock has stepped back since: readers
+	// refuse one no newer as a replay.
+	at := time.Now().UTC()
+	if last := d.st.PresenceAt[d.device]; !at.After(last) {
+		at = last.Add(time.Millisecond)
+	}
+	d.st.PresenceAt[d.device] = at
+	d.saveLocked()
+	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, At: at,
 		Sessions: []bus.SessionInfo{}}
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must

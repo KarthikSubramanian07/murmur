@@ -154,8 +154,9 @@ every device seals everything it writes, in every repo.
   seal a record for a device before the device does, and its own records would then be refused.
   That is what a team of people who can all push already trust each other with. A presence has no
   parent, so a seal can't pin its place; a sealed presence no newer, by its writer's clock, than
-  the last one taken from the device is refused as a replay. A reader that restarts takes the
-  first it reads. And
+  the last one taken from the device is refused as a replay. Readers keep that time in
+  `state.json`, so a replay refused once is refused after a restart too, and a writer's presence
+  time is always later than its last, whatever its clock does. And
   anyone who can push can still delete or overwrite refs, stopping delivery; seals stop
   impersonation, not interference. A record refused is logged, and `who` and the page show the
   device's last refused one.

@@ -227,11 +227,8 @@ type Daemon struct {
 	peers    map[string]*peer
 	// unsealed is the devices whose last record read carried no seal, from a daemon that predates
 	// seals; forged is when a record claiming a device last failed its seal (see sealOKLocked).
-	unsealed map[string]bool
-	forged   map[string]time.Time
-	// presAt is the time, by its writer's clock, of each device's last sealed presence taken; a
-	// sealed presence no newer is a replay (see updatePeer). Kept past a device's goodbye.
-	presAt     map[string]time.Time
+	unsealed   map[string]bool
+	forged     map[string]time.Time
 	known      map[string]string // local copy of each bus ref: ref → SHA last fetched
 	st         state
 	recent     []proto.EventView
@@ -457,6 +454,12 @@ type state struct {
 	// Keys is each device's public key as first seen sealing a record, this device's own included:
 	// from then on only records sealed with that key are taken as the device's (see sealOKLocked).
 	Keys map[string]string `json:"keys,omitempty"`
+	// PresenceAt is the time, by its writer's clock, of each device's last sealed presence taken;
+	// a sealed presence no newer is a replay (see updatePeer). It is kept past a device's goodbye
+	// and across restarts, so a replay refused once is refused after a restart too. This device's
+	// own entry is the time of the last presence it wrote, which the next is always later than,
+	// whatever its clock does.
+	PresenceAt map[string]time.Time `json:"presenceAt,omitempty"`
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if
@@ -598,7 +601,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	d := &Daemon{
 		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
-		unsealed: map[string]bool{}, forged: map[string]time.Time{}, presAt: map[string]time.Time{},
+		unsealed: map[string]bool{}, forged: map[string]time.Time{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
 		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
@@ -821,7 +824,7 @@ func (d *Daemon) loadState() error {
 		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
-		Keys: map[string]string{}}
+		Keys: map[string]string{}, PresenceAt: map[string]time.Time{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -871,6 +874,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Keys == nil {
 		d.st.Keys = map[string]string{}
+	}
+	if d.st.PresenceAt == nil {
+		d.st.PresenceAt = map[string]time.Time{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.
