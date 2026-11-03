@@ -1,8 +1,10 @@
 // Counting active users (#148): the daily check-in every daemon sends (internal/checkin says what
-// it sends and how a user turns it off), and the private page that shows Tyler the counts.
+// it sends and how a user turns it off), and the private page that shows Tyler the counts, with
+// the same numbers as markdown and JSON for an agent he gives a key to (#150).
 // Check-ins are kept in D1 (migrations/), one row per user, team and UTC day.
 
 import statsHtml from './stats.html';
+import { prefersMarkdown } from './accept.js';
 
 const RELEASES = 'https://api.github.com/repos/a-Fig/murmur/releases/latest';
 const LATEST_KEY = 'https://murmur.afig.dev/_cache/latest-release';
@@ -91,17 +93,33 @@ async function latestRelease(ctx) {
   }
 }
 
-// /stats, /stats/data and /stats?key=...: the page, its numbers, and the link that lets a browser
-// in. The key is the STATS_KEY secret; the link keeps it in a cookie, so it leaves the address bar
-// at once. Without the key, as without the secret, the page doesn't exist.
+// The stats, for whoever holds a key: Tyler in a browser, and agents he gives one to (#150).
+//
+// - /stats: the page in a browser; the report below for anything else, or a browser whose Accept
+//   asks for markdown.
+// - /stats/report.md: the numbers as markdown, for an agent.
+// - /stats/data?days=N: the numbers as JSON, which the page draws.
+//
+// The keys are the STATS_KEY secret: one or more, separated by spaces or commas, so each reader has
+// its own and one can be revoked by putting the secret again without it. A key is taken from a
+// `?key=` in the address, an `Authorization: Bearer` header, or the cookie a browser is given: a
+// browser that opens /stats?key=... is sent to /stats with the key in a cookie, so it leaves the
+// address bar at once. Anything else is answered in place, since a fetch tool may follow a redirect
+// without keeping the cookie. Without a key, as without the secret, none of it exists.
 export async function stats(request, env) {
   const url = new URL(request.url);
   const notFound = () => new Response('Not found.\n', { status: 404, headers: { 'X-Robots-Tag': 'noindex' } });
-  const key = env.STATS_KEY;
-  if (!key) return notFound();
+  const keys = String(env.STATS_KEY || '').split(/[\s,]+/).filter(Boolean);
+  if (keys.length === 0) return notFound();
   const given = url.searchParams.get('key');
-  if (url.pathname === '/stats' && given !== null) {
-    if (!(await same(given, key))) return notFound();
+  const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get('Authorization') || '')?.[1];
+  const cookie = (request.headers.get('Cookie') || '').split(';').map(s => s.trim()).find(s => s.startsWith(COOKIE + '='));
+  const inCookie = cookie ? safeDecode(cookie.slice(COOKIE.length + 1)) : null;
+  const key = given ?? bearer ?? inCookie;
+  if (key === null || !(await anyOf(key, keys))) return notFound();
+
+  const page = url.pathname === '/stats' || url.pathname === '/stats/';
+  if (page && given !== null && request.headers.get('Sec-Fetch-Mode') === 'navigate') {
     return new Response(null, {
       status: 303,
       headers: {
@@ -111,17 +129,35 @@ export async function stats(request, env) {
       },
     });
   }
-  const cookie = (request.headers.get('Cookie') || '').split(';').map(s => s.trim()).find(s => s.startsWith(COOKIE + '='));
-  if (!cookie || !(await same(decodeURIComponent(cookie.slice(COOKIE.length + 1)), key))) return notFound();
   const headers = { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' };
-  if (url.pathname === '/stats' || url.pathname === '/stats/') {
-    return new Response(statsHtml, { headers: { ...headers, 'Content-Type': 'text/html; charset=utf-8' } });
+  const days = Math.min(730, Math.max(14, parseInt(url.searchParams.get('days'), 10) || 90));
+  const fromCookie = given === null && bearer === undefined;
+  if (page && fromCookie && !prefersMarkdown(request.headers.get('Accept'))) {
+    return new Response(statsHtml, {
+      headers: { ...headers, 'Content-Type': 'text/html; charset=utf-8', Link: '</stats/report.md>; rel="alternate"; type="text/markdown"' },
+    });
   }
-  if (url.pathname === '/stats/data') {
-    const days = Math.min(730, Math.max(14, parseInt(url.searchParams.get('days'), 10) || 90));
-    return Response.json(await numbers(env.DB, days), { headers });
+  if (page || url.pathname === '/stats/report.md') {
+    const text = report(await numbers(env.DB, days), url.origin);
+    return new Response(text, { headers: { ...headers, 'Content-Type': 'text/markdown; charset=utf-8' } });
   }
+  if (url.pathname === '/stats/data') return Response.json(await numbers(env.DB, days), { headers });
   return notFound();
+}
+
+function safeDecode(s) {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return null;
+  }
+}
+
+// Whether key is one of keys, comparing with every one so the time taken doesn't say which.
+async function anyOf(key, keys) {
+  let found = false;
+  for (const k of keys) found = (await same(key, k)) || found;
+  return found;
 }
 
 async function same(a, b) {
@@ -195,4 +231,74 @@ export async function numbers(db, days) {
     teamSizes: sizes,
     teamList: teams.results.slice(0, 50).map(t => ({ ...t, team: t.team.slice(0, 8) })),
   };
+}
+
+// The numbers as markdown, for an agent: what the page shows, in tables, with what they mean.
+export function report(n, origin) {
+  const pct = Math.round((100 * n.active) / n.goal);
+  const diff = n.active - n.activeBefore;
+  const change = diff === 0 ? 'the same as' : `${diff > 0 ? 'up' : 'down'} ${Math.abs(diff)} from`;
+  const table = (head, rows) =>
+    [head, head.map(() => '---'), ...rows].map(r => `| ${r.join(' | ')} |`).join('\n');
+  const byDay = new Map(n.series.map(s => [s.day, s]));
+  const weeks = [...n.newByWeek].reverse().map(w => {
+    const s = byDay.get(w.end) || { wau: 0, teams: 0 };
+    return [w.end, s.wau, s.teams, w.n];
+  });
+  const recent = n.series.slice(-14).reverse().map(s => [s.day, s.dau, s.wau]);
+  const tally = (rows, what) => (rows.length ? table([what, 'Active users'], rows.map(r => [r.k, r.n])) : 'None yet.');
+  const teams = n.teamList.length
+    ? table(['Team', 'Active users', 'Users ever', 'First check-in', 'Last check-in'], n.teamList.map(t => [t.team, t.active, t.users, t.first, t.last]))
+    : 'None yet.';
+  return `# Murmur's active users, ${n.today}
+
+**${n.active} active users**, ${pct}% of the goal of ${n.goal} (${Math.max(0, n.goal - n.active)} to go), ${change} the ${n.activeDays} days before (${n.activeBefore}).
+
+${table(['Measure', 'Count'], [
+    ['Active users (a check-in in the last 7 days)', n.active],
+    ['Users today', n.activeToday],
+    ['Active teams', n.teams],
+    [`New users (first check-in in the last ${n.activeDays} days)`, n.newUsers],
+    ['Returning active users', Math.max(0, n.active - n.newUsers)],
+    ['Users ever', n.allUsers],
+    ['Teams ever', n.allTeams],
+  ])}
+
+## By week
+
+Each week is the ${n.activeDays} days ending on the date shown, back over the last ${n.days} days; the newest first.
+
+${table(['Week ending', 'Active users', 'Active teams', 'New users'], weeks)}
+
+## The last 14 days
+
+${table(['Day', 'Users that day', `Active users (${n.activeDays} days ending that day)`], recent)}
+
+## Active users' versions
+
+${tally(n.versions, 'Version')}
+
+## Active users' systems
+
+${tally(n.systems, 'OS/arch')}
+
+## Active teams by size
+
+${table(['Active users', 'Teams'], n.teamSizes.map(s => [s.k, s.n]))}
+
+## Teams
+
+Most active first, at most 50. A team is shown by the first 8 characters of its hash.
+
+${teams}
+
+## What the numbers mean
+
+- A **user** is one user account on one machine, known by a random ID, so one person on two machines counts twice.
+- A **team** is one repo, known by a hash of its remote's address. No names, repos, messages or paths are sent.
+- A daemon checks in at most once a UTC day, and only while one of its sessions is open or for 10 minutes after, so a check-in means someone used Murmur that day. Days are UTC.
+- Check-ins began with Murmur 0.2.3 (2026-11-03); older versions never send one, and a user can turn them off.
+
+The same numbers as JSON: ${origin}/stats/data?days=N (N from 14 to 730, default 90), with the same key. This page takes \`?days=N\` too.
+`;
 }

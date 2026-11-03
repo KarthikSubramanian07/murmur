@@ -1,9 +1,10 @@
 // The Worker in front of the static site (wrangler.jsonc's run_worker_first lists the paths it takes).
-// It does three things the assets can't:
+// It does four things the assets can't:
 // - serves the agent pages, docs/agents/*.md, pulled from the repo (#140);
 // - answers `/` with the setup page instead of the HTML when the request prefers markdown;
 // - slices the videos for Range requests;
-// - takes the daemons' daily check-ins and serves the page that counts them (src/usage.js).
+// - takes the daemons' daily check-ins and serves the page that counts them, and the same numbers
+//   as markdown and JSON for an agent (src/usage.js).
 
 // Bundled at deploy (the Text rule in wrangler.jsonc), as the copy of last resort when GitHub can't
 // be reached and this data center has no cached copy.
@@ -11,6 +12,7 @@ import setupMd from '../../docs/agents/setup.md';
 import joinMd from '../../docs/agents/join.md';
 import useMd from '../../docs/agents/use.md';
 import { checkIn, stats } from './usage.js';
+import { prefersMarkdown } from './accept.js';
 
 const RAW = 'https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/';
 const SITE = 'https://murmur.afig.dev';
@@ -40,23 +42,6 @@ export default {
     return video(request, env); // the *.mp4 paths
   },
 };
-
-// A browser's Accept never names text/markdown, so markdown is served only when it is named and
-// ranked at least as high as text/html (ties go to markdown: whoever named it wants it). HTML's
-// rank is its own entry's, else text/*'s, else */*'s, as HTTP resolves it: a client that sends
-// `text/markdown;q=0.1, text/*` prefers HTML.
-function prefersMarkdown(accept) {
-  if (!accept) return false;
-  const q = {};
-  for (const part of accept.split(',')) {
-    const [type, ...params] = part.trim().toLowerCase().split(';');
-    const qp = params.map(p => p.trim()).find(p => p.startsWith('q='));
-    q[type.trim()] = qp ? parseFloat(qp.slice(2)) || 0 : 1;
-  }
-  const md = q['text/markdown'] ?? 0;
-  const html = q['text/html'] ?? q['text/*'] ?? q['*/*'] ?? 0;
-  return md > 0 && md >= html;
-}
 
 // The page from the cache if it was fetched from GitHub in the last FRESH_SECONDS; else from GitHub;
 // else, if GitHub is unreachable or answers with an error, the last good copy this data center kept;

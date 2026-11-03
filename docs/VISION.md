@@ -893,7 +893,8 @@ The answer is the latest release, kept in the state dir's `checkin.json`; `mur v
 stderr when it is newer. A daemon runs only while a joined clone has a session open, or for 10
 minutes after, so a check-in means someone used Murmur that day. "Active" is a check-in in the last
 7 days. The site keeps one row per user, team and day in D1 (`site/migrations`), no IP addresses,
-and shows the counts on a page at `/stats` that only Tyler's key opens (`site/src/usage.js`).
+and shows the counts on a page at `/stats` that only a key opens (`site/src/usage.js`): Tyler's, or one
+he gives an agent, which reads them as markdown at `/stats/report.md` or JSON at `/stats/data` (#150).
 `DO_NOT_TRACK` or `MURMUR_NO_USAGE` in the daemon's environment, or `murmur.usage` false in git
 config, turns check-ins off; a development build (`-dev`) never sends one. join.md tells the user
 before they agree.
