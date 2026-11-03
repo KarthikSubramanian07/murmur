@@ -8,6 +8,7 @@
 <meta name="robots" content="noindex">
 <title>Murmur · Active users</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="alternate" type="text/markdown" href="/stats/report.md" title="These numbers as markdown, for an agent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -440,7 +441,8 @@ function render() {
   barChart($('systems'), d.systems, 'active users');
   teamTable($('teams'), d.teamList);
   $('footer').textContent = 'A user is one machine’s user account, by a random ID; a team is one repo, by a hash of its remote. ' +
-    'Daemons check in at most once a UTC day, and only while one of their sessions is open.';
+    'Daemons check in at most once a UTC day, and only while one of their sessions is open. ' +
+    'For an agent, the same numbers are at /stats/report.md (markdown) and /stats/data (JSON).';
 }
 
 async function load() {
