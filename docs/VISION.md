@@ -97,6 +97,14 @@ repo: a daily check-in that counts active users; see Counting active users.)
   along. The daemon pushes them with `--no-verify` and doesn't sign them: a `pre-push` hook that
   runs the test suite, or a signing prompt, on every message would make the bus unusable. These
   commits only ever go to `refs/murmur/*`, never to a branch.
+- Nor does a record carry a signature of the device's own, so a device can write records that
+  claim to come from another (#155). Only accounts with push access can write `refs/murmur/*`
+  (a fork can't), and any of them could already push code. A signature would stop one of them
+  posing as another teammate's device, and little else: a message gets no authority from who sent
+  it, and an agent can inject a prompt under its own name. A full version was built and set aside
+  on 2026-11-03 (Tyler's decision): Ed25519 keys per device, pinned on first sight, with replay
+  checks, about 860 lines, on branch `bus-signing` (PR #159, closed unmerged). Encryption (#156)
+  would need it back, to know whose a box key is.
 - beads (task tracking synced through `refs/dolt/data` on GitHub) shows custom refs hold up at
   scale, and two of its bugs are warnings: `git push --mirror` from an ordinary clone deletes
   custom refs on the remote (beads #5266), and checking an internal branch out in the user's repo
