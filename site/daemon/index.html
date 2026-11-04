@@ -1,0 +1,1898 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How the Murmur daemon works</title>
+<meta name="description" content="One drawing of the Murmur daemon, built part by part: why it exists, how a message becomes a commit on a side ref, how it polls, delivers, and survives.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --blue: #225BFF;
+    --butter: #FDEE8C;
+    --cream: #FFFBEA;
+    --ink: #0E1B45;
+    --ink-soft: #3A4670;
+    --shade: #1A47CF;
+    --badge-bg: #DCE6FF;
+    --badge-ink: #1640BF;
+    --green: #17A34A;
+    --red: #E5342B;
+    --mono: ui-monospace, Menlo, Consolas, monospace;
+    --note-w: clamp(280px, 24vw, 340px);
+    --pin: 13vh;
+    --split: 54svh;
+    --ease: cubic-bezier(.22, .8, .24, 1);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { background: var(--blue); color: var(--cream); }
+  body {
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: clip;
+  }
+
+  /* The stage and the notes share one grid cell: the stage sticks, the notes scroll over it. */
+  .track { display: grid; position: relative; }
+  .stage, .notes { grid-area: 1 / 1; min-width: 0; }
+  .stage { position: sticky; top: 0; height: 100vh; height: 100svh; align-self: start; overflow: hidden; background: var(--blue); }
+  .stage svg { display: block; width: 100%; height: 100%; }
+  .notes { position: relative; z-index: 2; pointer-events: none; }
+  .ch { height: calc(var(--len) * 100vh); height: calc(var(--len) * 100svh); padding-left: clamp(20px, 2.6vw, 40px); }
+  /* The words sit on the blue, one passage at a time. With the drawing moving, a passage fades in as its
+     chapter starts and out as it ends (see scene.js); a blue margin keeps the drawing from showing through. */
+  .note {
+    pointer-events: auto;
+    position: sticky;
+    top: var(--pin);
+    width: var(--note-w);
+    color: var(--cream);
+  }
+  .note p { font-size: clamp(18px, 1.55vw, 22px); font-weight: 500; line-height: 1.45; letter-spacing: -.008em; text-wrap: balance; }
+  .note code { font: 500 .88em/1 var(--mono); color: var(--butter); white-space: nowrap; }
+  .note .s { display: block; }
+  /* Each line hides only the drawing directly behind its own words. */
+  html.js:not(.static) .note:not(.hero) .s { width: fit-content; background: var(--blue); box-shadow: 0 0 0 8px var(--blue); }
+  /* A definition some readers need and others skip: smaller and quieter than the line it explains. */
+  .note .aside { font-size: .78em; font-weight: 400; opacity: .72; margin-top: 4px; }
+  html.js:not(.static) .note:not(.hero) {
+    position: fixed;
+    top: clamp(24px, 5vh, 48px);
+    left: clamp(20px, 2.6vw, 40px);
+    width: auto;
+    max-width: calc(100vw - 2 * clamp(20px, 2.6vw, 40px));
+    opacity: 0;
+    visibility: hidden;
+  }
+  .note pre {
+    margin-top: 11px;
+    padding: 10px 12px;
+    border-radius: 9px;
+    background: var(--ink);
+    color: var(--cream);
+    font: 12.5px/1.42 var(--mono);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .note pre b { color: var(--butter); font-weight: 400; }
+
+  /* The first note is the page's title, directly on the blue, like the home page's. */
+  .note.hero { background: none; box-shadow: none; color: var(--cream); padding: 0; top: clamp(24px, 9vh, 96px); width: calc(var(--note-w) + 56px); }
+  /* Back to the home page: a quiet glass pill that fills with butter, like the page's one button, on hover. */
+  .back {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    height: 42px;
+    padding: 0 18px 0 12px;
+    margin-bottom: clamp(20px, 6vh, 56px);
+    border-radius: 999px;
+    background: rgba(255, 251, 234, .1);
+    box-shadow: inset 0 0 0 1px rgba(255, 251, 234, .26);
+    color: var(--cream);
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    text-decoration: none;
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    transition: background-color .35s var(--ease), box-shadow .35s var(--ease), color .35s var(--ease), transform .2s var(--ease);
+  }
+  .back svg { flex: none; display: block; }
+  .back .arrow { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .35s var(--ease); }
+  .back .mark { width: 22px; height: 22px; }
+  .back .mark rect:first-child { fill: var(--cream); transition: fill .35s var(--ease); }
+  .back .mark rect + rect { fill: var(--blue); }
+  .back .mark path { fill: none; stroke: var(--cream); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; transition: stroke .35s var(--ease); }
+  .back:hover { background: var(--butter); box-shadow: inset 0 0 0 1px var(--butter); color: var(--ink); }
+  .back:hover .arrow { transform: translateX(-3px); }
+  .back:hover .mark rect:first-child { fill: var(--ink); }
+  .back:hover .mark path { stroke: var(--butter); }
+  .back:active { transform: scale(.97); }
+  .back:focus-visible, .end a:focus-visible, .after a:focus-visible { outline: 3px solid var(--cream); outline-offset: 3px; border-radius: 999px; }
+  h1 { font-size: clamp(38px, 4.1vw, 58px); font-weight: 700; letter-spacing: -.035em; line-height: 1.04; color: var(--butter); text-wrap: balance; }
+
+  /* The last note is a band along the foot of the finished drawing. */
+  .end {
+    pointer-events: auto;
+    position: sticky;
+    top: calc(100vh - 82px);
+    top: calc(100svh - 82px);
+    margin-left: calc(-1 * clamp(20px, 2.6vw, 40px));
+    height: 82px;
+    padding: 0 clamp(20px, 2.6vw, 40px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px 26px;
+    color: var(--cream);
+  }
+  .end p { font-size: 19px; font-weight: 600; line-height: 1.35; max-width: 34ch; text-wrap: balance; }
+  .end .links { display: flex; flex: none; align-items: center; gap: 8px 22px; }
+  .button {
+    display: inline-block;
+    padding: 14px 24px;
+    border-radius: 999px;
+    background: var(--butter);
+    color: var(--ink);
+    font-size: 16px;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .button:hover { background: var(--cream); }
+  .quiet { color: var(--cream); font-size: 15px; font-weight: 500; text-underline-offset: 3px; white-space: nowrap; }
+  .after { display: none; }
+
+  .progress { position: fixed; left: 0; right: 0; top: 0; height: 3px; z-index: 5; background: var(--butter); transform: scaleX(0); transform-origin: 0 0; opacity: .85; pointer-events: none; }
+
+  /* World text. Sizes are set from the camera, so nothing lands under 12 px on screen. */
+  svg text { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: var(--ink); text-rendering: geometricPrecision; white-space: pre; }
+  svg .mono { font-family: var(--mono); }
+  svg .b { font-weight: 700; }
+  svg .m { font-weight: 600; }
+  svg .cream { fill: var(--cream); }
+  svg .butter { fill: var(--butter); }
+  svg .soft { fill: var(--ink-soft); }
+  svg .pale { fill: #C3C9DC; }
+  svg .red { fill: var(--red); }
+  svg .blue { fill: var(--blue); }
+  svg .bink { fill: var(--badge-ink); }
+
+  /* Stacked, as the home page's film stacks: the drawing above, the notes beneath it. */
+  @media (max-aspect-ratio: 1/1), (max-width: 999px) {
+    .stage { z-index: 3; clip-path: inset(0 0 calc(100% - var(--split)) 0); }
+    .notes { z-index: 2; }
+    .ch { padding: 0 10px; }
+    .note { top: calc(var(--split) + 14px); width: auto; max-width: 560px; margin: 0 auto; padding: 0 6px; }
+    html.js:not(.static) .note:not(.hero) { top: calc(var(--split) + 14px); left: 0; right: 0; max-width: none; padding: 0 16px; }
+    .note p { font-size: 18px; line-height: 1.42; }
+    .note pre { margin-top: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.36; }
+    .note.hero { top: calc(var(--split) + 8px); width: auto; max-width: 560px; padding: 0 6px; }
+    .back { margin-bottom: 14px; }
+    h1 { font-size: clamp(32px, 9.6vw, 48px); }
+    .end { display: none; }
+    .after p { font-size: 20px; font-weight: 600; line-height: 1.35; text-align: center; max-width: 18em; text-wrap: balance; margin-bottom: 8px; }
+    .after { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 34px 20px 60px; }
+  }
+
+  /* Reduced motion, and no JS: the page is a column, and in reduced motion each section has its finished figure. */
+  .static .track { display: block; }
+  .static .stage { display: none; }
+  .static .progress { display: none; }
+  .static .notes { pointer-events: auto; max-width: 1040px; margin: 0 auto; padding: clamp(24px, 6vh, 64px) clamp(14px, 3vw, 32px) 40px; }
+  .static .ch { height: auto; padding: 0; margin-bottom: clamp(36px, 7vh, 72px); }
+  .static .note { position: static; width: auto; max-width: 640px; }
+  .static .note + .note, html:not(.js) .note + .note { margin-top: 14px; }
+  .static .note.hero { width: auto; }
+  .static .end { position: static; display: flex; flex-wrap: wrap; height: auto; margin: 0; padding: 0; justify-content: flex-start; }
+  .static .end .links { display: flex; flex-wrap: wrap; flex: 1 1 100%; min-width: 0; }
+  .static .after { display: none; }
+  .static .back, .static .back .arrow { transition: none; }
+  .fig { display: block; width: 100vw; margin-left: calc(50% - 50vw); height: clamp(320px, 66vh, 680px); margin-bottom: 14px; }
+  .fig text { pointer-events: none; }
+  @media (max-aspect-ratio: 1/1), (max-width: 999px) { .fig { height: min(112vw, 72svh); } .ch[data-id="finale"] .fig { height: min(216vw, 96svh); } }
+  html:not(.js) .track { display: block; }
+  html:not(.js) .stage, html:not(.js) .progress { display: none; }
+  html:not(.js) .notes { pointer-events: auto; max-width: 720px; margin: 0 auto; padding: 32px 16px 40px; }
+  html:not(.js) .ch { height: auto; padding: 0; margin-bottom: 28px; }
+  html:not(.js) .note { position: static; width: auto; }
+  html:not(.js) .end { position: static; display: block; height: auto; margin: 0; padding: 0; }
+  html:not(.js) .end .links { display: flex; flex-wrap: wrap; margin-top: 16px; }
+  html:not(.js) .after { display: none; }
+  .baked svg { display: block; width: 100%; height: auto; margin-bottom: 28px; }
+  /* A hint to scroll, for the first screen only: it fades once the page moves. */
+  .scroll-hint { position: fixed; left: 50%; bottom: clamp(16px, 4vh, 32px); z-index: 20; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--cream); font-size: 13px; font-weight: 500; letter-spacing: .02em; opacity: .8; pointer-events: none; transition: opacity .4s; }
+  .scroll-hint svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; animation: hint-nudge 1.8s ease-in-out infinite; }
+  .scroll-hint.gone { opacity: 0; }
+  @keyframes hint-nudge { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
+  @media (prefers-reduced-motion: reduce) { .scroll-hint svg { animation: none; } }
+</style>
+<script>document.documentElement.classList.add('js'); if (matchMedia('(prefers-reduced-motion: reduce)').matches) document.documentElement.classList.add('static');</script>
+</head>
+<body>
+<div class="progress" id="progress" aria-hidden="true"></div>
+<div class="scroll-hint" id="scrollHint" aria-hidden="true">Scroll<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
+<script>(() => { const h = document.getElementById('scrollHint'), off = () => { if (scrollY > 40) { h.classList.add('gone'); removeEventListener('scroll', off); } }; addEventListener('scroll', off, { passive: true }); off(); })();</script>
+
+<main class="track" id="track">
+  <div class="stage" id="stage"><svg id="world" role="img" aria-label="One drawing, growing as the page scrolls: a laptop and a conversation, MCP servers, the Murmur daemon, refs on GitHub, a second laptop, the poll rate, delivery, presence, names and what survives what. The notes beside it say what each part does."></svg></div>
+
+  <div class="notes" id="notes">
+    <noscript><div class="baked"><svg role="img" aria-label="One drawing, growing as the page scrolls: a laptop and a conversation, MCP servers, the Murmur daemon, refs on GitHub, a second laptop, the poll rate, delivery, presence, names and what survives what. The notes beside it say what each part does." viewBox="-96.80 -180.16 2073.60 1296.00"><defs><clipPath id="c1winO"><rect rx="4" x="36" y="454" width="332.28" height="312"></rect></clipPath><clipPath id="c1winF"><rect rx="4" x="371.28" y="454" width="172.72" height="312"></rect></clipPath><clipPath id="c1winH"><rect rx="4" x="1336" y="454" width="508" height="312"></rect></clipPath><clipPath id="c1winW"><rect rx="4" x="762" y="680" width="356" height="208"></rect></clipPath><clipPath id="c1winP"><rect rx="4" x="1118" y="680" width="0.01" height="208"></rect></clipPath><clipPath id="tape1"><rect x="440" y="-176" width="1150" height="168"></rect></clipPath><clipPath id="pc1"><rect x="640" y="0" width="600" height="476"></rect></clipPath></defs><g><g display="inline" opacity="1"><g clip-path="url(#tape1)"><g transform="translate(640 0)"><rect x="0" y="-124" width="950" height="70" rx="6" fill="#1A47CF"></rect><path d="M4.75 -118v58M9.5 -118v58M14.25 -118v58M19 -118v58M23.75 -118v58M28.5 -118v58M33.25 -118v58M38 -118v58M42.75 -118v58M47.5 -118v58M52.25 -118v58M57 -118v58M61.75 -118v58M66.5 -118v58M71.25 -118v58M76 -118v58M80.75 -118v58M85.5 -118v58M90.25 -118v58M95 -118v58M99.75 -118v58M104.5 -118v58M109.25 -118v58M114 -118v58M118.75 -118v58M123.5 -118v58M133 -118v58M137.75 -118v58M142.5 -118v58M147.25 -118v58M152 -118v58M156.75 -118v58M161.5 -118v58M166.25 -118v58M171 -118v58M175.75 -118v58M180.5 -118v58M185.25 -118v58M190 -118v58M194.75 -118v58M199.5 -118v58M204.25 -118v58M209 -118v58M213.75 -118v58M218.5 -118v58M223.25 -118v58M228 -118v58M232.75 -118v58M237.5 -118v58M242.25 -118v58M247 -118v58M251.75 -118v58M256.5 -118v58M261.25 -118v58M266 -118v58M270.75 -118v58M275.5 -118v58M280.25 -118v58M285 -118v58M289.75 -118v58M294.5 -118v58M299.25 -118v58M304 -118v58M308.75 -118v58M313.5 -118v58M318.25 -118v58M323 -118v58M327.75 -118v58M332.5 -118v58M337.25 -118v58M342 -118v58M346.75 -118v58M351.5 -118v58M356.25 -118v58M361 -118v58M365.75 -118v58M370.5 -118v58M375.25 -118v58M380 -118v58M384.75 -118v58M389.5 -118v58M394.25 -118v58M399 -118v58M403.75 -118v58M408.5 -118v58M413.25 -118v58M418 -118v58M427.5 -118v58M446.5 -118v58M470.25 -118v58M494 -118v58M517.75 -118v58M541.5 -118v58M565.25 -118v58M589 -118v58M612.75 -118v58M636.5 -118v58M660.25 -118v58M665 -118v58M712.5 -118v58M760 -118v58M807.5 -118v58M855 -118v58M902.5 -118v58M918.33 -118v58M923.08 -118v58M927.83 -118v58M932.58 -118v58M937.33 -118v58M942.08 -118v58M946.83 -118v58" fill="none" stroke="#FDEE8C" stroke-width="2.2"></path><path d="M0 -130v82M128.25 -130v82" fill="none" stroke="#FFFBEA" stroke-width="3.6"></path><path d="M2 -46H408.67" stroke="rgba(255,251,234,.42)" stroke-width="2" fill="none"></path><text x="2" y="-26" class="m cream" visibility="visible" font-size="18">every 3 s</text><path d="M413.67 -46H662" stroke="rgba(255,251,234,.42)" stroke-width="2" fill="none"></path><text x="413.67" y="-26" class="m cream" visibility="visible" font-size="18">every 15 s</text><path d="M667 -46H915.33" stroke="rgba(255,251,234,.42)" stroke-width="2" fill="none"></path><text x="667" y="-26" class="m cream" visibility="visible" font-size="18">every 30 s</text></g></g></g><g display="inline" opacity="1"><path d="M1590 -54V120" fill="none" stroke="rgba(255,251,234,.42)" stroke-width="2.5" stroke-dasharray="3 8" stroke-linecap="round"></path><rect x="1588" y="-132" width="4" height="86" rx="2" fill="#FFFBEA"></rect></g><g display="inline" opacity="1"><path d="M290 190H640" fill="none" stroke="rgba(255,251,234,.42)" stroke-width="2.5" stroke-dasharray="3 8" stroke-linecap="round"></path><path d="M290 190H640" fill="none" stroke="#FDEE8C" stroke-width="5" stroke-linejoin="round" pathLength="1" stroke-dasharray="1.0000 1" display="inline" opacity="1"></path><path d="M640 246H290" fill="none" stroke="rgba(255,251,234,.42)" stroke-width="2.5" stroke-dasharray="3 8" stroke-linecap="round"></path><path d="M640 246H290" fill="none" stroke="#FDEE8C" stroke-width="5" stroke-linejoin="round" pathLength="1" stroke-dasharray="1.0000 1" display="inline" opacity="1"></path><text x="525" y="180" class="mono cream" text-anchor="middle" display="inline" visibility="visible" font-size="17.57" opacity="1">git push</text></g><g display="inline" opacity="1"><path d="M1240 190H1590" fill="none" stroke="rgba(255,251,234,.42)" stroke-width="2.5" stroke-dasharray="3 8" stroke-linecap="round"></path><path d="M1240 190H1590" fill="none" stroke="#FDEE8C" stroke-width="5" stroke-linejoin="round" pathLength="1" stroke-dasharray="1.0000 1" display="inline" opacity="1"></path><path d="M1590 246H1240" fill="none" stroke="rgba(255,251,234,.42)" stroke-width="2.5" stroke-dasharray="3 8" stroke-linecap="round"></path><path d="M1590 246H1240" fill="none" stroke="#FDEE8C" stroke-width="5" stroke-linejoin="round" pathLength="1" stroke-dasharray="1.0000 1" display="inline" opacity="1"></path><text x="1355" y="180" class="mono cream" text-anchor="middle" display="inline" visibility="visible" font-size="17.57" opacity="1">git fetch</text></g><g display="inline" opacity="1"><path d="M940 556H626Q610 556 610 540V318Q610 302 626 302H640" fill="none" stroke="rgba(255,251,234,.42)" stroke-width="2.5" stroke-dasharray="3 8" stroke-linecap="round"></path><path d="M940 556H626Q610 556 610 540V318Q610 302 626 302H640" fill="none" stroke="#FDEE8C" stroke-width="5" stroke-linejoin="round" pathLength="1" stroke-dasharray="0 1"></path></g><g></g><g display="inline" opacity="1"><rect x="640" y="8" width="600" rx="14" fill="#1A47CF" height="476"></rect><rect x="640" y="0" width="600" rx="14" fill="#F7F4E4" height="476"></rect><path d="M654 0H1226Q1240 0 1240 14V44H640V14Q640 0 654 0Z" fill="#0E1B45"></path><text x="656" y="30" class="b cream" visibility="visible" font-size="22">GitHub</text><text x="656" y="70" class="soft" visibility="visible" font-size="18">branches</text><text x="1224" y="70" class="b soft" text-anchor="end" visibility="visible" font-size="18">+0</text><path d="M668 92H1190M716 92C756 92 744 136 784 136H1150M866 92C906 92 894 114 934 114H1200" fill="none" stroke="#A5A9B4" stroke-width="3"></path><circle cx="716" cy="92" r="6.5" fill="#A5A9B4"></circle><circle cx="866" cy="92" r="6.5" fill="#A5A9B4"></circle><circle cx="1030" cy="92" r="6.5" fill="#A5A9B4"></circle><circle cx="1190" cy="92" r="6.5" fill="#A5A9B4"></circle><circle cx="960" cy="114" r="6.5" fill="#A5A9B4"></circle><circle cx="1085" cy="114" r="6.5" fill="#A5A9B4"></circle><circle cx="1200" cy="114" r="6.5" fill="#A5A9B4"></circle><circle cx="820" cy="136" r="6.5" fill="#A5A9B4"></circle><circle cx="985" cy="136" r="6.5" fill="#A5A9B4"></circle><circle cx="1150" cy="136" r="6.5" fill="#A5A9B4"></circle></g><g display="inline" opacity="1"><rect x="640" y="150" width="600" height="56" fill="#FDEE8C"></rect><rect x="640" y="187.5" width="600" height="5" fill="#225BFF"></rect><rect x="640" y="205" width="600" height="2" fill="rgba(14,27,69,.14)"></rect><text x="656" y="174" class="mono b" visibility="visible" font-size="19">refs/murmur/mesh/bob-laptop-3f2a</text><text x="1226" y="174" class="mono bink" text-anchor="end" visibility="visible" font-size="18">43c052a</text></g><g display="inline" opacity="1"><rect x="640" y="206" width="600" height="56" fill="#FDEE8C"></rect><rect x="640" y="243.5" width="600" height="5" fill="#225BFF"></rect><rect x="640" y="261" width="600" height="2" fill="rgba(14,27,69,.14)"></rect><text x="656" y="230" class="mono b" visibility="visible" font-size="19">refs/murmur/mesh/alice-mbp-91c0</text><text x="1226" y="230" class="mono bink" text-anchor="end" visibility="visible" font-size="18">4c08589</text></g><g display="inline" opacity="1"><rect x="640" y="262" width="600" height="56" fill="#FDEE8C"></rect><rect x="640" y="299.5" width="600" height="5" fill="#225BFF"></rect><text x="656" y="286" class="mono b" visibility="visible" font-size="19">refs/murmur/mesh/sam-desktop-7be1</text><text x="1226" y="286" class="mono bink" text-anchor="end" visibility="visible" font-size="18">6d1fa02</text></g><g display="inline" opacity="1"><g><rect x="640" y="330" width="600" height="30" fill="#EFECDD"></rect><rect x="640" y="359.5" width="600" height="1" fill="rgba(14,27,69,.12)"></rect><text x="656" y="351" class="mono soft" visibility="visible" font-size="17.57">refs/murmur/presence/bob-laptop-3f2a</text><circle cx="1220" cy="345" r="7" fill="#0E1B45"></circle></g><g><rect x="640" y="360" width="600" height="30" fill="#EFECDD"></rect><rect x="640" y="389.5" width="600" height="1" fill="rgba(14,27,69,.12)"></rect><text x="656" y="381" class="mono soft" visibility="visible" font-size="17.57">refs/murmur/presence/alice-mbp-91c0</text><circle cx="1220" cy="375" r="7" fill="#0E1B45"></circle></g><g display="inline" opacity="1"><rect x="640" y="390" width="600" height="30" fill="#EFECDD"></rect><rect x="640" y="419.5" width="600" height="1" fill="rgba(14,27,69,.12)"></rect><text x="656" y="411" class="mono soft" visibility="visible" font-size="17.57">refs/murmur/presence/sam-desktop-7be1</text><circle cx="1220" cy="405" r="7" fill="#0E1B45"></circle></g></g><g display="inline" opacity="1"><rect x="640" y="428" width="600" height="36" fill="#FDEE8C"></rect><text x="656" y="453" class="mono b" display="inline" opacity="1" visibility="visible" font-size="17.57">refs/murmur/names</text><text x="1226" y="453" class="mono bink" text-anchor="end" visibility="visible" font-size="17.57">8d04c7a</text></g><g><circle cx="930" cy="190" r="9" fill="#225BFF" display="inline" opacity="1"></circle><circle cx="985" cy="190" r="9" fill="#225BFF" display="inline" opacity="1"></circle><circle cx="1190" cy="246" r="9" fill="#225BFF" display="inline" opacity="1"></circle><circle cx="1040" cy="190" r="9" fill="#225BFF" display="inline" opacity="1"></circle><circle cx="1095" cy="190" r="9" fill="#225BFF" display="inline" opacity="1"></circle><circle cx="1150" cy="190" r="9" fill="#225BFF" display="inline" opacity="1"></circle><circle cx="1205" cy="190" r="9" fill="#225BFF" display="inline" opacity="1"></circle><circle cx="1130" cy="246" r="9" fill="#225BFF" display="inline" opacity="1"></circle><circle cx="1070" cy="246" r="9" fill="#225BFF" display="inline" opacity="1"></circle><circle cx="1010" cy="246" r="9" fill="#225BFF" display="inline" opacity="1"></circle><circle cx="930" cy="302" r="9" fill="#225BFF" display="inline" opacity="1"></circle></g><g display="inline" opacity="1"><path d="M40 440H540Q558 440 558 458V776H22V458Q22 440 40 440Z" fill="#FFFBEA"></path><rect x="36" y="454" width="508" height="312" rx="6" fill="#0E1B45"></rect><use href="#deckArt" transform="translate(0 776) scale(1 1)"></use><text x="290" y="928" class="m cream" text-anchor="middle" visibility="visible" font-size="26">Bob's laptop</text></g><g display="inline" opacity="1"><g clip-path="url(#c1winO)"><rect fill="#0E1B45" x="36" y="454" width="332.28" height="312"></rect><rect fill="#16265C" x="36" y="454" width="332.28" height="36"></rect><circle r="5.5" fill="#2BD06A" cx="50" cy="472"></circle><text x="62" y="478" class="mono pale" visibility="visible" font-size="18">quiet-otter</text><text x="50" y="511" class="mono cream" visibility="visible" font-size="20">Are you changing the</text><text x="50" y="535" class="mono cream" visibility="visible" font-size="20">auth middleware?</text><rect rx="7" fill="#FDEE8C" display="inline" x="43" y="547" width="318.28" height="85.96" transform=""></rect><text x="50" y="570.57" class="mono soft" display="inline" visibility="visible" font-size="17.57" opacity="1">from brave-heron</text><text x="50" y="594.56" class="mono " display="inline" visibility="visible" font-size="20" opacity="1">No, that's yours.</text><text x="50" y="618.16" class="mono " display="inline" visibility="visible" font-size="20" opacity="1">I'm only in cookies.</text></g></g><g display="inline" opacity="1"><g clip-path="url(#c1winF)"><rect fill="#0E1B45" x="371.28" y="454" width="172.72" height="312"></rect><rect fill="#16265C" x="371.28" y="454" width="172.72" height="36"></rect><circle r="5.5" fill="#5C688F" cx="385.28" cy="472"></circle><text x="397.28" y="478" class="mono pale" visibility="visible" font-size="18">calm-finch</text></g></g><g display="inline" opacity="1"><path fill="none" stroke="#FFFBEA" stroke-width="2.5" d="M205 290V342M205 390V440"></path><g display="inline" opacity="1"><rect rx="9" width="112" height="48" fill="#FFFBEA" x="149" y="342"></rect><text x="205" y="372" class="mono b" text-anchor="middle" visibility="visible" font-size="18">mur mcp</text></g></g><g display="inline" opacity="1"><path fill="none" stroke="#FFFBEA" stroke-width="2.5" d="M375 290V342M375 390V440"></path><g display="inline" opacity="1"><rect rx="9" width="112" height="48" fill="#FFFBEA" x="319" y="342"></rect><text x="375" y="372" class="mono b" text-anchor="middle" visibility="visible" font-size="18">mur mcp</text></g></g><g display="inline" opacity="1"><g transform=""><rect x="170" y="127" width="240" height="170" rx="12" fill="#1A47CF"></rect><rect x="170" y="120" width="240" height="170" rx="12" fill="#0E1B45"></rect><circle cx="188" cy="145" r="6" fill="#2BD06A"></circle><text x="202" y="152" class="b cream" visibility="visible" font-size="21">Murmur daemon</text></g></g><g display="inline" opacity="1"><path d="M1340 440H1840Q1858 440 1858 458V776H1322V458Q1322 440 1340 440Z" fill="#FFFBEA"></path><rect x="1336" y="454" width="508" height="312" rx="6" fill="#0E1B45"></rect><use href="#deckArt" transform="translate(1300 776) scale(1 1)"></use><text x="1590" y="928" class="m cream" text-anchor="middle" visibility="visible" font-size="26">Alice's laptop</text></g><g display="inline" opacity="1"><g clip-path="url(#c1winH)"><rect fill="#0E1B45" x="1336" y="454" width="508" height="312"></rect><rect fill="#16265C" x="1336" y="454" width="508" height="36"></rect><circle r="5.5" fill="#5C688F" cx="1350" cy="472"></circle><text x="1362" y="478" class="mono pale" visibility="visible" font-size="18">brave-heron</text><rect rx="7" fill="#FDEE8C" display="inline" x="1344" y="499" width="492" height="105.03" transform=""></rect><text x="1350" y="524" class="mono soft" display="inline" visibility="visible" font-size="19" opacity="1">from quiet-otter</text><text x="1350" y="555.41" class="mono " display="inline" visibility="visible" font-size="27.2" opacity="1">Are you changing the</text><text x="1350" y="587.5" class="mono " display="inline" visibility="visible" font-size="27.2" opacity="1">auth middleware?</text><text x="1350" y="633.95" class="mono cream" visibility="visible" font-size="27.2">No, that's yours. I'm</text><text x="1350" y="666.05" class="mono cream" visibility="visible" font-size="27.2">only in cookies.</text></g></g><g display="inline" opacity="1"><path fill="none" stroke="#FFFBEA" stroke-width="2.5" d="M1590 290V342M1590 390V440"></path><g display="inline" opacity="1"><rect rx="9" width="112" height="48" fill="#FFFBEA" x="1534" y="342"></rect><text x="1590" y="372" class="mono b" text-anchor="middle" visibility="visible" font-size="18">mur mcp</text></g></g><g display="inline" opacity="1"><g transform=""><rect x="1470" y="127" width="240" height="170" rx="12" fill="#1A47CF"></rect><rect x="1470" y="120" width="240" height="170" rx="12" fill="#0E1B45"></rect><circle cx="1488" cy="145" r="6" fill="#2BD06A"></circle><text x="1502" y="152" class="b cream" visibility="visible" font-size="21">Murmur daemon</text></g></g><g display="inline" opacity="1"><rect x="910" y="900" width="60" height="34" fill="#D5D1B8"></rect><rect x="850" y="934" width="180" height="13" rx="5" fill="#FFFBEA"></rect><rect x="750" y="668" width="380" height="232" rx="14" fill="#FFFBEA"></rect><rect x="762" y="680" width="356" height="208" rx="6" fill="#0E1B45"></rect><text x="940" y="978" class="m cream" text-anchor="middle" visibility="visible" font-size="24">Sam's machine</text></g><g display="inline" opacity="1"><g clip-path="url(#c1winW)"><rect fill="#0E1B45" x="762" y="680" width="356" height="208"></rect><rect fill="#16265C" x="762" y="680" width="356" height="36"></rect><circle r="5.5" fill="#2BD06A" cx="776" cy="698"></circle><text x="788" y="704" class="mono pale" visibility="visible" font-size="18">solar-wren</text><text x="774" y="741.2" class="mono pale" visibility="visible" font-size="18">Building the</text><text x="774" y="762.8" class="mono pale" visibility="visible" font-size="18">settings view</text><rect rx="7" fill="#FDEE8C" display="inline" x="770" y="773.6" width="340" height="34.2"></rect><text x="778" y="796.86" class="mono soft" display="inline" visibility="visible" font-size="18" opacity="1">from brave-heron</text></g></g><g display="inline" opacity="1"><path fill="none" stroke="#FFFBEA" stroke-width="2.5" d="M940 608V620M940 654V668"></path><g display="inline" opacity="1"><rect rx="9" width="112" height="34" fill="#FFFBEA" x="884" y="620"></rect><text x="940" y="643" class="mono b" text-anchor="middle" visibility="visible" font-size="18">mur mcp</text></g></g><g display="inline" opacity="1"><g display="inline" opacity="1"><rect x="830" y="503" width="220" height="112" rx="12" fill="#1A47CF"></rect><rect x="830" y="496" width="220" height="112" rx="12" fill="#0E1B45"></rect><circle cx="848" cy="521" r="6" fill="#2BD06A"></circle><text x="862" y="528" class="b cream" visibility="visible" font-size="21">Murmur daemon</text></g></g><g display="inline" opacity="1"><path d="M1692 290V440" fill="none" stroke="#FDEE8C" stroke-width="5" pathLength="1" stroke-dasharray="1.000 1"></path><path d="M290 290V440" fill="none" stroke="#FDEE8C" stroke-width="5" pathLength="1" stroke-dasharray="1.000 1" display="inline" opacity="1"></path></g><g display="inline" opacity="1"><text x="290" y="50" class="b butter" text-anchor="middle" style="letter-spacing:-.05em;font-variant-numeric:tabular-nums" font-size="112">15 s</text></g><g display="inline" opacity="1"><rect width="30" height="19" rx="5" fill="#FDEE8C" display="inline" x="1066" y="500"></rect><rect width="30" height="19" rx="5" fill="#FDEE8C" display="inline" x="1102" y="500"></rect><rect width="30" height="19" rx="5" fill="#FDEE8C" display="inline" x="1138" y="500"></rect><rect width="30" height="19" rx="5" fill="#FDEE8C" display="inline" x="1174" y="500"></rect><rect width="30" height="19" rx="5" fill="#FDEE8C" display="inline" x="1210" y="500"></rect><rect width="30" height="19" rx="5" fill="#FDEE8C" display="inline" x="1066" y="525"></rect><rect width="30" height="19" rx="5" fill="#FDEE8C" display="inline" x="1102" y="525"></rect><rect width="30" height="19" rx="5" fill="#FDEE8C" display="inline" x="1138" y="525"></rect><rect width="30" height="19" rx="5" fill="#FDEE8C" display="inline" x="1174" y="525"></rect><rect width="30" height="19" rx="5" fill="#FDEE8C" display="inline" x="1210" y="525"></rect></g><g></g><g></g></g></svg></div></noscript>
+    <section class="ch" data-id="open" style="--len:.85">
+      <div class="note hero">
+        <a class="back" href="/"><svg class="arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><rect x="5" y="8.5" width="22" height="15" rx="2"/><path d="M6 9.5 16 17.5 26 9.5"/></svg>Murmur</a>
+        <h1>How the Murmur daemon works</h1>
+      </div>
+    </section>
+
+    <section class="ch" data-id="obvious race" data-w=".6 .65" style="--len:1.25">
+      <div class="note">
+        <p data-prose><span class="s">Murmur messages are git commits on GitHub.</span> <span class="s">In the simplest design, each session's MCP server pushes its own.</span></p>
+      </div>
+      <div class="note">
+        <p data-prose><span class="s">But two sessions means two MCP servers pushing to the same ref.</span> <span class="s">One of the pushes is rejected.</span></p>
+      </div>
+    </section>
+
+    <section class="ch" data-id="dies" style="--len:.75">
+      <div class="note">
+        <p data-prose><span class="s">An MCP server only acts when its agent calls a tool, so it can't wait for a reply.</span></p>
+      </div>
+    </section>
+
+    <section class="ch" data-id="daemon" style="--len:.65">
+      <div class="note">
+        <p data-prose><span class="s">So each clone runs one Murmur daemon, the only process that talks to GitHub.</span> <span class="s">Every MCP server talks to the daemon.</span> <span class="s aside">A daemon is a small program that keeps running in the background.</span></p>
+      </div>
+    </section>
+
+    <section class="ch" data-id="commit secret" data-w="1.05 .45" style="--len:1.5">
+      <div class="note">
+        <p data-prose><span class="s">The daemon turns a message into a commit with no files.</span> <span class="s">It never touches your working tree.</span></p>
+        <noscript><pre data-artifact>tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904
+parent c4c0bcd0d44af73ea326995e86e2668ae0d6b469
+author bob-laptop-3f2a &lt;bob-laptop-3f2a@murmur.invalid&gt; 1793667564 -0800
+committer bob-laptop-3f2a &lt;bob-laptop-3f2a@murmur.invalid&gt; 1793667564 -0800
+
+bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth middleware?
+
+{"v":1,"id":"5bca390e","type":"message","from":"bob-laptop-3f2a/3f9a1c","at":"2026-11-03T00:59:24Z","to":"alice-mbp-91c0/7bd204","subject":"Are you changing the auth middleware?"}</pre></noscript>
+      </div>
+      <div class="note">
+        <p data-prose><span class="s">Commits stay in history forever, so a message with a secret in it is blocked.</span></p>
+      </div>
+    </section>
+
+    <section class="ch" data-id="split" style="--len:.95">
+      <div class="note">
+        <p data-prose><span class="s">A second laptop brings the race back.</span> <span class="s">So each daemon pushes only to its own ref.</span></p>
+      </div>
+    </section>
+
+    <section class="ch" data-id="side" style="--len:.8">
+      <div class="note">
+        <p data-prose><span class="s">These refs are not branches.</span> <span class="s">A message doesn't run GitHub Actions or send webhooks, and <code>git pull</code> skips it.</span></p>
+      </div>
+    </section>
+
+    <section class="ch" data-id="ask rate" data-w=".5 1.1" style="--len:1.6">
+      <div class="note">
+        <p data-prose><span class="s">Git can't notify anyone, so the daemon polls GitHub.</span></p>
+      </div>
+      <div class="note">
+        <p data-prose><span class="s">Agents can wait a few seconds, so it polls fast only during a conversation.</span></p>
+      </div>
+    </section>
+
+    <section class="ch" data-id="deliver busy" data-w=".85 .65" style="--len:1.5">
+      <div class="note">
+        <p data-prose><span class="s">In T3, the daemon starts a new turn in the agent's conversation.</span></p>
+      </div>
+      <div class="note">
+        <p data-prose><span class="s">A busy agent gets the message as its next turn.</span></p>
+      </div>
+    </section>
+
+    <section class="ch" data-id="presence" style="--len:.95">
+      <div class="note">
+        <p data-prose><span class="s">Each daemon pushes a heartbeat every 2 minutes.</span> <span class="s">When Sam's machine sleeps, the others mark it stale after 6 minutes.</span></p>
+      </div>
+    </section>
+
+    <section class="ch" data-id="names pool" data-w=".8 .5" style="--len:1.3">
+      <div class="note">
+        <p data-prose><span class="s">Names are the one thing every daemon must agree on, so they share one ref.</span> <span class="s">A push with <code>--force-with-lease</code> fails if another daemon got there first.</span></p>
+      </div>
+      <div class="note">
+        <p data-prose><span class="s">Each daemon keeps 10 names ready, so a new session doesn't wait for one.</span></p>
+      </div>
+    </section>
+
+    <section class="ch" data-id="grace exit" data-w=".7 .8" style="--len:1.5">
+      <div class="note">
+        <p data-prose><span class="s">If a session's MCP server restarts within 60 seconds, the session carries on.</span></p>
+      </div>
+      <div class="note">
+        <p data-prose><span class="s">After 10 minutes with no session, the daemon exits and deletes its heartbeat.</span></p>
+      </div>
+    </section>
+
+    <section class="ch" data-id="limits" style="--len:.6">
+      <div class="note">
+        <p data-prose><span class="s">Murmur is for small teams that trust everyone with push access.</span> <span class="s">Anyone who can read the repo can read the messages.</span> <span class="s">Only GitHub is tested.</span></p>
+      </div>
+    </section>
+
+    <section class="ch" data-id="finale" style="--len:1.4">
+      <div class="end" id="end">
+        <p data-prose>A question and its answer took 15 seconds.</p>
+        <div class="links">
+          <a class="button" href="https://github.com/a-Fig/murmur">Get Murmur on GitHub</a>
+          <a class="quiet" href="https://github.com/a-Fig/murmur/blob/main/docs/VISION.md">Read the design doc</a>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<div class="after">
+  <a class="button" href="https://github.com/a-Fig/murmur">Get Murmur on GitHub</a>
+  <a class="quiet" href="https://github.com/a-Fig/murmur/blob/main/docs/VISION.md">Read the design doc</a>
+</div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><g id="deckArt"><rect x="22" y="0" width="536" height="5" fill="#C9C5AC"/><path d="M22 0H558L580 106H0Z" fill="#F7F4E4"/><rect x="22" y="0" width="536" height="3" fill="#C9C5AC"/><path d="M63.4 7.0L91.3 7.0L89.8 16.5L61.7 16.5ZM96.1 7.0L124.0 7.0L122.8 16.5L94.7 16.5ZM128.8 7.0L156.7 7.0L155.7 16.5L127.6 16.5ZM161.5 7.0L189.4 7.0L188.7 16.5L160.6 16.5ZM194.3 7.0L222.1 7.0L221.6 16.5L193.6 16.5ZM227.0 7.0L254.9 7.0L254.6 16.5L226.5 16.5ZM259.7 7.0L287.6 7.0L287.6 16.5L259.5 16.5ZM292.4 7.0L320.3 7.0L320.5 16.5L292.4 16.5ZM325.1 7.0L353.0 7.0L353.5 16.5L325.4 16.5ZM357.9 7.0L385.7 7.0L386.4 16.5L358.4 16.5ZM390.6 7.0L418.5 7.0L419.4 16.5L391.3 16.5ZM423.3 7.0L451.2 7.0L452.4 16.5L424.3 16.5ZM456.0 7.0L483.9 7.0L485.3 16.5L457.2 16.5ZM488.7 7.0L516.6 7.0L518.3 16.5L490.2 16.5ZM61.3 18.7L99.6 18.7L98.1 29.3L59.5 29.3ZM104.5 18.7L130.4 18.7L129.1 29.3L103.0 29.3ZM135.3 18.7L161.2 18.7L160.2 29.3L134.0 29.3ZM166.1 18.7L192.0 18.7L191.2 29.3L165.1 29.3ZM196.9 18.7L222.8 18.7L222.3 29.3L196.2 29.3ZM227.7 18.7L253.7 18.7L253.4 29.3L227.2 29.3ZM258.6 18.7L284.5 18.7L284.4 29.3L258.3 29.3ZM289.4 18.7L315.3 18.7L315.5 29.3L289.4 29.3ZM320.2 18.7L346.1 18.7L346.6 29.3L320.4 29.3ZM351.0 18.7L376.9 18.7L377.6 29.3L351.5 29.3ZM381.8 18.7L407.7 18.7L408.7 29.3L382.5 29.3ZM412.6 18.7L438.5 18.7L439.7 29.3L413.6 29.3ZM443.4 18.7L469.4 18.7L470.8 29.3L444.7 29.3ZM474.2 18.7L518.7 18.7L520.5 29.3L475.7 29.3ZM59.1 31.5L107.1 31.5L105.4 43.2L57.1 43.2ZM112.0 31.5L138.2 31.5L136.8 43.2L110.4 43.2ZM143.1 31.5L169.3 31.5L168.2 43.2L141.8 43.2ZM174.2 31.5L200.4 31.5L199.6 43.2L173.2 43.2ZM205.4 31.5L231.5 31.5L231.0 43.2L204.6 43.2ZM236.5 31.5L262.6 31.5L262.4 43.2L236.0 43.2ZM267.6 31.5L293.8 31.5L293.8 43.2L267.4 43.2ZM298.7 31.5L324.9 31.5L325.2 43.2L298.8 43.2ZM329.8 31.5L356.0 31.5L356.6 43.2L330.2 43.2ZM360.9 31.5L387.1 31.5L388.0 43.2L361.5 43.2ZM392.0 31.5L418.2 31.5L419.3 43.2L392.9 43.2ZM423.2 31.5L449.3 31.5L450.7 43.2L424.3 43.2ZM454.3 31.5L520.9 31.5L522.9 43.2L455.7 43.2ZM56.7 45.4L120.9 45.4L119.2 58.2L54.5 58.2ZM125.9 45.4L152.3 45.4L151.0 58.2L124.3 58.2ZM157.3 45.4L183.7 45.4L182.7 58.2L156.0 58.2ZM188.7 45.4L215.2 45.4L214.5 58.2L187.8 58.2ZM220.2 45.4L246.6 45.4L246.2 58.2L219.5 58.2ZM251.6 45.4L278.1 45.4L278.0 58.2L251.3 58.2ZM283.1 45.4L309.5 45.4L309.7 58.2L283.0 58.2ZM314.5 45.4L341.0 45.4L341.4 58.2L314.7 58.2ZM345.9 45.4L372.4 45.4L373.2 58.2L346.5 58.2ZM377.4 45.4L403.8 45.4L404.9 58.2L378.2 58.2ZM408.8 45.4L435.3 45.4L436.7 58.2L410.0 58.2ZM440.3 45.4L523.3 45.4L525.5 58.2L441.7 58.2ZM54.1 60.4L83.1 60.4L81.0 74.3L51.6 74.3ZM88.1 60.4L117.1 60.4L115.4 74.3L86.1 74.3ZM122.2 60.4L158.0 60.4L156.7 74.3L120.5 74.3ZM163.1 60.4L348.8 60.4L349.4 74.3L161.8 74.3ZM353.8 60.4L389.7 60.4L390.7 74.3L354.5 74.3ZM394.7 60.4L423.7 60.4L425.1 74.3L395.8 74.3ZM428.8 60.4L457.8 60.4L459.5 74.3L430.2 74.3ZM462.9 60.4L491.9 60.4L493.9 74.3L464.6 74.3ZM496.9 60.4L525.9 60.4L528.4 74.3L499.0 74.3Z" fill="#0E1B45"/><path d="M216.0 79.5L364.0 79.5L365.2 103.0L214.8 103.0Z" fill="#E4E0CA"/><path d="M0 106H580V110Q580 118 572 118H8Q0 118 0 110Z" fill="#D5D1B8"/><path d="M254 106H326V109Q326 112 323 112H257Q254 112 254 109Z" fill="#BDB99F"/></g></defs></svg>
+
+<script>
+// One drawing, one number. t runs from 0 to the number of chapters: its whole part is the chapter,
+// its fraction how far through. paint(t) sets every attribute from t alone, with no timers and no
+// transitions, so the drawing runs backwards as well as forwards and any frame can be asked for.
+(() => {
+  const ORDER = ['open', 'obvious', 'race', 'dies', 'daemon', 'commit', 'secret', 'split', 'side', 'ask', 'rate', 'deliver', 'busy', 'presence', 'names', 'pool', 'grace', 'exit', 'limits', 'finale'];
+  const T = Object.fromEntries(ORDER.map((id, i) => [id, i]));
+  const N = ORDER.length;
+  const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+  const lerp = (a, b, f) => a + (b - a) * f;
+  const ss = f => f * f * (3 - 2 * f);
+  const oc = f => 1 - (1 - f) ** 3;
+  const io = f => (f < .5 ? 4 * f * f * f : 1 - (-2 * f + 2) ** 3 / 2);
+  const MINPX = 12.2;
+  const C = { blue: '#225BFF', butter: '#FDEE8C', cream: '#FFFBEA', ink: '#0E1B45', soft: '#3A4670', shade: '#1A47CF', bar: '#16265C', red: '#E5342B', green: '#2BD06A', idle: '#5C688F', grey: '#A5A9B4', panel: '#F7F4E4', row: '#EFECDD', line: 'rgba(255,251,234,.42)' };
+
+  // ---------- The two layouts: the same parts, in different places ----------
+  const WIDE = {
+    tall: false, fs: { label: 18, mono: 16, small: 15.5, name: 22, row: 17, ref: 19, pres: 17.5 }, ln: 5,
+    lap: { W: 580, lidW: 536, lidH: 336, deckH: 118, bar: 36, full: 34, half: 20 },
+    uB: { x: 0, top: 440 }, uA: { x: 1300, top: 440 },
+    chip: { w: 112, h: 48, single: 290, o: 205, f: 375, a: 1590, yB: 342, yA: 342, cyB: 366, cyA: 366, stemTop: 290 },
+    dB: { x: 170, y: 120, w: 240, h: 170, cx: 290, out: 190, inn: 246, label: 152, sub: 276 },
+    dA: { x: 1470, y: 120, w: 240, h: 170, cx: 1590, inn: 190, out: 246, label: 152, sub: 276 },
+    dS: { x: 830, y: 496, w: 220, h: 112, cx: 940, out: 556, label: 528, sub: 590 },
+    p: { x: 640, y: 0, w: 600, head: 44, heads: 70, stages: [274, 330, 432, 476] },
+    graph: { d: 'M668 92H1190M716 92C756 92 744 136 784 136H1150M866 92C906 92 894 114 934 114H1200', dots: [[716, 92], [866, 92], [1030, 92], [1190, 92], [960, 114], [1085, 114], [1200, 114], [820, 136], [985, 136], [1150, 136]], main: 92 },
+    rows: { shared: { y: 150, h: 112 }, b: { y: 150, h: 56, line: 190 }, a: { y: 206, h: 56, line: 246 }, s: { y: 262, h: 56, line: 302 }, pres: [{ y: 330, h: 30 }, { y: 360, h: 30 }, { y: 390, h: 30 }], names: { y: 428, h: 36 } },
+    dotX: { b: [930, 985, 1040, 1095, 1150, 1205], a: [1190, 1130, 1070, 1010], s: [930] },
+    preO: x => `M${x} 342V206Q${x} 190 ${x + 16} 190H640`,
+    preF: x => `M${x} 342V262Q${x} 246 ${x + 16} 246H640`,
+    outB: 'M290 190H640', inB: 'M640 246H290', inA: 'M1240 190H1590', outA: 'M1590 246H1240',
+    outS: 'M940 556H626Q610 556 610 540V318Q610 302 626 302H640',
+    branch: 'M410 92H668',
+    upB: (x, y) => `M${x} ${y}V214Q${x} 190 ${x + 24} 190H290`,
+    upA: y => `M1590 ${y}V246`,
+    byA: y => `M1590 190H1676Q1692 190 1692 206V${y - 16}Q1692 ${y} 1676 ${y}H1590`,
+    byLineA: 'M1692 290V440',
+    byB: y => `M290 246V${y - 20}Q290 ${y} 270 ${y}H163`,
+    byLineB: 'M290 290V440',
+    // A dot sent to a server stops at the chip's edge, not on its label.
+    toChipA: 'M1590 190V342', toChipF: 'M290 246H375V342', toChipO: 'M640 246H230Q205 246 205 266V342',
+    lane: { a: 'M1470 270H1296Q1280 270 1280 286V430Q1280 446 1264 446H1240', s: 'M830 590H620Q604 590 604 574V462Q604 446 620 446H640' },
+    tape: { x0: 640, head: 1590, y: -124, h: 70, scale: 950 / 600, tick: 2.2, reg: -28, mark: -136, drop: 'M1590 -54V120', pingV: 14 },
+    read: { x: 1704, y: -252, big: 96, sub: 23, log: -158, anchor: 'end' },
+    clock: { x: 290, y: 50, size: 112, label: 24, ly: 86, anchor: 'middle' },
+    stale: { x: 1590, y: 60, size: 66, ly: 92 },
+    sam: { x: 750, y: 668, w: 380, h: 232, stand: [910, 900, 60, 34], base: [850, 934, 180, 13], seat: [940, 978], chipY: 620, chipH: 34, chipW: 112, one: 940, cw: 850, cp: 1030 },
+    tray: { x: 1066, y: 500, w: 30, h: 19, gap: 6 },
+    side: { y: -74, h: 52, xs: [640, 842, 1044], w: 196 },
+    sheet: { x: 462, y: -56, w: 760, fs: 15.5, lh: 23.5 },
+    err: { x: 450, y: 130 },
+    seats: true,
+    frames: {
+      lap: [-30, 400, 610, 950], lapChip: [-30, 310, 610, 950], obvious: [-30, -30, 1260, 950], race: [-30, 120, 1100, 950],
+      chipZoom: [-30, 240, 700, 860], daemonWide: [-30, 40, 1000, 950], daemonTight: [110, 84, 700, 330], pillRise: [40, 84, 620, 680],
+      sheet: [150, -80, 1240, 340], err: [110, 60, 1060, 400], all: [-30, -30, 1910, 950], aIn: [1060, 80, 1910, 950], splitTop: [150, -40, 1730, 760], transit: [150, -40, 1730, 760], panel: [620, -96, 1262, 300], panelRows: [620, 40, 1262, 300],
+      ask: [1100, 30, 1760, 330], rate: [620, -352, 1730, 300], rateNear: [1150, -352, 1730, 300], rateTape: [620, -190, 1730, 310], aLap: [1270, 90, 1900, 950], aLid: [1280, 320, 1900, 950],
+      bFinch: [-30, 110, 620, 950], presence: [580, -20, 1910, 990], sam: [600, 240, 1280, 990], stale: [700, -40, 1730, 990], names: [540, -6, 1730, 640], pool: [720, 440, 1280, 990],
+      limits: [600, -210, 1270, 340], finale: [-30, -160, 1910, 992],
+    },
+    log: { daemon: [440, 296], rate: [650, -206], pool: [640, 1000], reconn: [640, 1000], exit: [620, 1000], limits: [640, -190], stale: [1150, 470] },
+  };
+
+  const TALL = {
+    tall: true, fs: { label: 20, mono: 19, small: 19, name: 22, row: 19 }, ln: 5,
+    lap: { W: 580, lidW: 536, lidH: 224, deckH: 56, bar: 30, full: 30, half: 20 },
+    uB: { x: 10, top: 118 }, uA: { x: 10, top: 1014 },
+    chip: { w: 96, h: 40, single: 300, o: 98, f: 502, a: 98, yB: 28, yA: 928, cyB: 48, cyA: 948, stemTop: null },
+    dB: { x: 180, y: 0, w: 240, h: 96, cx: 300, out: 48, inn: 74, label: 28, sub: null },
+    dA: { x: 180, y: 900, w: 240, h: 96, cx: 300, inn: 948, out: 974, label: 928, sub: null },
+    dS: { x: 770, y: 516, w: 240, h: 96, cx: 890, out: 564, label: 544, sub: null },
+    p: { x: 30, y: 430, w: 540, head: 36, heads: 54, stages: [636, 680, 766, 804] },
+    graph: { d: 'M46 496H554M90 496C120 496 112 522 142 522H530M230 496C260 496 252 509 282 509H548', dots: [[90, 496], [230, 496], [380, 496], [530, 496], [320, 509], [430, 509], [548, 509], [190, 522], [340, 522], [500, 522]], main: 496 },
+    rows: { shared: { y: 530, h: 94 }, b: { y: 530, h: 47, line: 566 }, a: { y: 577, h: 47, line: 613 }, s: { y: 624, h: 47, line: 660 }, pres: [{ y: 678, h: 27 }, { y: 705, h: 27 }, { y: 732, h: 27 }], names: { y: 762, h: 32 } },
+    dotX: { b: [280, 335, 390, 445, 500, 545], a: [540, 490, 440, 390], s: [290] },
+    preO: x => `M${x - 48} 48H-6V566H30`,
+    preF: x => `M${x + 48} 48H606V613H570`,
+    outB: 'M300 48H392V-14H-6V566H30', inB: 'M30 613H-20V-28H408V74H300', inA: 'M570 566H606V948H300', outA: 'M300 974H620V613H570',
+    outS: 'M890 564H570',
+    branch: 'M30 496H46',
+    upB: (x, y) => `M${x} ${y}V48H300`,
+    upA: y => `M98 ${y}V974H300`,
+    byA: y => `M300 948V${y - 12}Q300 ${y} 300 ${y}`,
+    byLineA: 'M300 996V1014',
+    byB: y => `M300 74V${y}H173`,
+    byLineB: 'M300 96V118',
+    toChipA: 'M300 948H146', toChipF: 'M300 74H502V68', toChipO: 'M300 74H98V68',
+    lane: { a: 'M180 974H4V778H30', s: 'M890 612V778H570' },
+    tape: { x0: 26, head: 574, y: 826, h: 38, scale: 548 / 300, tick: 1.4, reg: 888, mark: 818, drop: 'M574 864V900', pingV: 26 },
+    read: { x: 34, y: 668, big: 62, sub: 21, log: 770 },
+    clock: { x: 300, y: -52, size: 54, label: 22, ly: -52, anchor: 'inline' },
+    stale: { x: 300, y: 862, size: 44, ly: 890 },
+    sam: { x: 710, y: 684, w: 360, h: 190, stand: [860, 874, 60, 26], base: [810, 900, 160, 12], seat: [890, 940], chipY: 632, chipH: 34, chipW: 96, one: 890, cw: 800, cp: 980 },
+    tray: { x: 1022, y: 520, w: 26, h: 18, gap: 5 },
+    side: { y: 372, h: 50, xs: [30, 212, 394], w: 176 },
+    sheet: { x: 80, y: 104, w: 440, fs: 14.4, lh: 19.6 },
+    err: { x: 40, y: 112 },
+    seats: true,
+    frames: {
+      lap: [-14, 104, 614, 440], lapChip: [-14, 10, 614, 440], obvious: [-30, 10, 636, 690], race: [-30, 10, 636, 690],
+      chipZoom: [-14, 10, 614, 340], daemonWide: [-30, -40, 636, 460], daemonTight: [176, -30, 424, 120], pillRise: [40, -30, 560, 340],
+      sheet: [76, 96, 524, 430], err: [30, -30, 570, 300], all: [-34, -92, 640, 1340], aIn: [-34, 410, 640, 1010], splitTop: [-34, 410, 640, 1010], transit: [-34, 410, 640, 1010], panel: [10, 350, 590, 690], panelRows: [10, 470, 590, 690],
+      ask: [130, 540, 640, 1010], rate: [6, 596, 620, 1000], rateNear: [6, 596, 620, 1000], rateTape: [6, 780, 620, 1000], aLap: [-14, 880, 614, 1320], aLid: [-14, 980, 614, 1320],
+      bFinch: [-14, -40, 614, 400], presence: [560, 424, 1120, 960], sam: [660, 424, 1120, 960], stale: [0, 610, 630, 1010], names: [-14, 620, 620, 1010], pool: [690, 424, 1110, 960],
+      limits: [10, 300, 590, 690], finale: [-34, -92, 640, 1320],
+    },
+    log: { daemon: [36, 300], rate: [34, 708], pool: [640, 960], reconn: [640, 960], exit: [640, 960], limits: [20, 284], stale: [30, 1090] },
+  };
+
+  // ---------- The script: when each part is born, who has the light, where the camera is ----------
+  const at = (id, f = 0) => T[id] + f;
+  const BORN = {
+    lapB: -1, winO: -1,
+    chipO: at('obvious', .04), pre: at('obvious', .04), panel: at('obvious', .04), shared: at('obvious', .04),
+    winF: at('race', .04), chipF: at('race', .04),
+    dmB: at('daemon'), routeB: at('daemon', .12),
+    sheet: at('commit', .36),
+    lapA: at('split', .06), winH: at('split', .06), chipH: at('split', .06), dmA: at('split', .06), routeA: at('split', .1),
+    rowB: at('split', .46), rowA: at('split', .46),
+    side: at('side', .04),
+    tape: at('rate'), read: at('rate'), drop: at('rate'),
+    by: at('deliver', .34),
+    sam: at('presence', .02), winW: at('presence', .02), chipW: at('presence', .02), dmS: at('presence', .02), routeS: at('presence', .04), rowS: at('presence', .02), pres: at('presence', .08),
+    names: at('names', .02), lanes: at('names', .04),
+    tray: at('pool'), winP: at('pool', .3), chipP: at('pool', .3),
+    clock: at('finale', .08),
+  };
+  const DIES = { pre: at('daemon', .3), shared: at('split', .56), side: at('ask', .04), read: at('deliver'), lanes: at('pool'), winP: at('grace', .9), chipP: at('grace', .9), sheet: at('secret') };
+  const DIM = .28;
+  const FOCUS = [
+    [at('open'), { lapB: 1, winO: 1 }],
+    [at('obvious'), { lapB: 1, winO: 1, chipO: 1, pre: 1, panel: .9, shared: 1 }],
+    [at('race'), { lapB: .55, winO: .7, winF: 1, chipO: 1, chipF: 1, pre: 1, panel: .55, shared: 1 }],
+    [at('dies'), { lapB: 1, winO: 1, winF: .4, chipO: 1, chipF: .5, pre: .4, panel: .3, shared: .4 }],
+    [at('daemon'), { dmB: 1, routeB: 1, chipO: .9, chipF: .9, lapB: .45, winO: .5, winF: .5, panel: .55, shared: .8, pre: .5 }],
+    [at('commit'), { dmB: 1, winO: 1, lapB: .75, chipO: .5, chipF: .25, routeB: 1, panel: .4, shared: .6, sheet: 1 }],
+    [at('commit', .36), { dmB: 1, sheet: 1, lapB: .2, winO: .2, routeB: .4, panel: .22, shared: .3 }],
+    [at('commit', .76), { dmB: 1, routeB: 1, panel: .8, shared: 1, lapB: .3, winO: .4 }],
+    [at('secret'), { dmB: 1, winO: 1, lapB: .6, panel: .2, shared: .3, routeB: .3 }],
+    [at('split'), { lapA: 1, winH: 1, chipH: .9, dmA: 1, dmB: 1, routeA: 1, routeB: 1, panel: .75, shared: 1, rowB: 1, rowA: 1, lapB: 1, winO: 1, winF: .9, chipO: .8, chipF: .8 }],
+    [at('side'), { panel: 1, side: 1, shared: 1, rowB: 1, rowA: 1, routeB: .6 }],
+    [at('ask'), { dmA: 1, routeA: 1, rowB: 1, rowA: .7, panel: .6, routeB: .5 }],
+    [at('rate'), { tape: 1, read: 1, drop: 1, dmA: 1, routeA: 1, panel: .24, rowB: .28, rowA: .28, routeB: .15, dmB: .15 }],
+    [at('deliver'), { lapA: 1, winH: 1, chipH: 1, dmA: 1, by: 1, routeA: .6, tape: .22, drop: .22 }],
+    [at('busy', .5), { lapB: 1, winF: 1, chipF: 1, dmB: 1, winO: .35, chipO: .3, routeB: .7, rowA: .5 }],
+    [at('presence'), { sam: 1, winW: 1, chipW: 1, dmS: 1, routeS: 1, rowS: 1, pres: 1, panel: .7, rowB: .5, rowA: .5, dmA: .9, routeA: .4 }],
+    [at('presence', .44), { pres: 1, dmA: 1, sam: 1, winW: 1, chipW: .6, dmS: .6, routeS: .3, rowS: .35, panel: .5, rowB: .2, rowA: .2, routeA: .3, routeB: .1, lapA: .2, winH: .2, chipH: .2, lapB: .1, winO: .1, winF: .1, chipO: .1, chipF: .1, tape: .12, drop: .12 }],
+    [at('names'), { names: 1, lanes: 1, dmS: 1, dmA: 1, panel: .5, rowS: .16, rowB: .16, rowA: .16, pres: .14, routeS: 0, routeA: 0, routeB: 0, sam: 0, winW: 0, chipW: 0, lapA: 0, winH: 0, chipH: 0, lapB: 0, winO: 0, winF: 0, chipO: 0, chipF: 0, dmB: 0, tape: 0, drop: 0, by: 0 }],
+    [at('pool'), { tray: 1, dmS: 1, sam: 1, winW: 1, winP: 1, chipP: 1, chipW: .8 }],
+    [at('grace'), { sam: .9, winP: 1, chipP: 1, winW: .4, chipW: .4, dmS: 1, pres: .8, panel: .3, tray: .35 }],
+    [at('exit'), { dmS: 1, sam: 1, winW: 1, chipW: .8, pres: 1, rowS: .8, panel: .55, routeS: 1, tray: .4, rowA: .8 }],
+    [at('limits'), { panel: 1, rowB: 1, rowA: 1, rowS: 1, pres: 1, names: 1, routeA: .4, routeB: .4 }],
+    [at('finale', .02), 'all'],
+  ];
+  const FADE = .1;
+
+  // [chapter, f, frame]: the camera eases between neighbours, and holds where two share a frame.
+  const CAMERA = [
+    ['open', 0, 'lap'], ['open', .8, 'lap'],
+    ['obvious', .12, 'lapChip'], ['obvious', .42, 'lapChip'], ['obvious', .7, 'obvious'],
+    ['race', .12, 'race'], ['race', .92, 'race'],
+    ['dies', .14, 'chipZoom'], ['dies', 1, 'chipZoom'],
+    ['daemon', .14, 'daemonWide'], ['daemon', .92, 'daemonWide'],
+    ['commit', .1, 'pillRise'], ['commit', .18, 'daemonTight'], ['commit', .36, 'daemonTight'], ['commit', .5, 'sheet'], ['commit', .76, 'sheet'], ['commit', .92, 'daemonWide'],
+    ['secret', .1, 'pillRise'], ['secret', .34, 'err'], ['secret', .9, 'err'],
+    ['split', .06, 'aIn'], ['split', .14, 'aIn'], ['split', .23, 'splitTop'], ['split', .95, 'splitTop'],
+    ['side', .12, 'panel'], ['side', .95, 'panel'],
+    ['ask', .14, 'ask'], ['ask', .9, 'ask'],
+    ['rate', .06, 'rateNear'], ['rate', .2, 'rateNear'], ['rate', .46, 'rate'], ['rate', .97, 'rate'],
+    ['deliver', .12, 'aLap'], ['deliver', .4, 'aLap'], ['deliver', .64, 'aLid'], ['deliver', 1, 'aLid'],
+    ['busy', .1, 'aLid'], ['busy', .44, 'aLid'], ['busy', .54, 'transit'], ['busy', .68, 'bFinch'], ['busy', 1, 'bFinch'],
+    ['presence', .1, 'presence'], ['presence', .24, 'sam'], ['presence', .42, 'sam'], ['presence', .54, 'stale'], ['presence', .96, 'stale'],
+    ['names', .12, 'names'], ['names', .95, 'names'],
+    ['pool', .12, 'pool'], ['pool', 1, 'pool'],
+    ['grace', 1, 'pool'],
+    ['exit', 1, 'sam'],
+    ['limits', .14, 'limits'], ['limits', .9, 'limits'],
+    ['finale', .04, 'all'], ['finale', .2, 'finale'], ['finale', 1, 'finale'],
+  ].map(([id, f, frame]) => ({ t: at(id, f), frame }));
+
+  // What a reduced-motion figure shows for each section: its finished state.
+  // The words' band across the top: down to the foot of the longest passage, measured once per window size.
+  let bandKey = '', bandH = 0;
+  const bandHeight = () => {
+    const key = innerWidth + 'x' + innerHeight;
+    if (key !== bandKey) {
+      bandKey = key;
+      bandH = Math.max(0, ...[...document.querySelectorAll('.note:not(.hero)')].map(n => n.getBoundingClientRect().bottom));
+    }
+    return bandH;
+  };
+  const STILL = { open: .5, obvious: .96, race: .72, dies: .96, daemon: .96, commit: .62, secret: .55, split: .95, side: .95, ask: .9, rate: .985, deliver: .95, busy: .96, presence: .88, names: .95, pool: .95, grace: .8, exit: .95, limits: .9, finale: 1 };
+
+  // ---------- The poll rate: the real sequence of ls-remotes, one tick each ----------
+  const SIM_END = 600;
+  const TICKS = (() => {
+    const ticks = [];
+    let s = 0;
+    while (s < 260) { ticks.push(s); s += 3; }
+    let gap = 3;
+    while (s < 420) { ticks.push(s); s += gap; gap = gap === 3 ? 6 : gap === 6 ? 12 : 15; }
+    s = 420;
+    while (s < 580) { ticks.push(s); s += 30; }
+    s = 580;
+    while (s <= SIM_END) { ticks.push(s); s += 3; }
+    return ticks;
+  })();
+  const FETCHES = [0, 81];
+  const SCRUB = [[0, 0], [.2, 30], [.42, 260], [.52, 300], [.68, 420], [.84, 570], [.96, 600], [1, 600]];
+  const simAt = f => {
+    for (let i = 1; i < SCRUB.length; i++) if (f <= SCRUB[i][0]) return lerp(SCRUB[i - 1][1], SCRUB[i][1], (f - SCRUB[i - 1][0]) / (SCRUB[i][0] - SCRUB[i - 1][0]));
+    return SIM_END;
+  };
+  const rateAt = s => (s < 260 ? 3 : s < 266 ? 6 : s < 278 ? 12 : s < 420 ? 15 : s < 580 ? 30 : 3);
+
+  const COMMIT_W = [
+    ['tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904', 'tree'],
+    ['parent c4c0bcd0d44af73ea326995e86e2668ae0d6b469'],
+    ['author bob-laptop-3f2a <bob-laptop-3f2a@murmur.invalid> 1793667564 -0800'],
+    ['committer bob-laptop-3f2a <bob-laptop-3f2a@murmur.invalid> 1793667564 -0800'],
+    [''],
+    ['bob-laptop-3f2a/3f9a1c -> alice-mbp-91c0/7bd204: Are you changing the auth', 'subj'],
+    ['middleware?', 'subj'],
+    [''],
+    ['{"v":1,"id":"5bca390e","type":"message","from":"bob-laptop-3f2a/3f9a1c",'],
+    [' "at":"2026-11-03T00:59:24Z","to":"alice-mbp-91c0/7bd204",'],
+    [' "subject":"Are you changing the auth middleware?"}'],
+  ];
+  const COMMIT_T = [
+    ['tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904', 'tree'],
+    ['parent c4c0bcd0d44af73ea326995e86e2668ae0d6b469'],
+    ['author bob-laptop-3f2a'],
+    ['  <bob-laptop-3f2a@murmur.invalid> 1793667564 -0800'],
+    ['committer bob-laptop-3f2a'],
+    ['  <bob-laptop-3f2a@murmur.invalid> 1793667564 -0800'],
+    [''],
+    ['bob-laptop-3f2a/3f9a1c -> alice-mbp-91c0/7bd204:', 'subj'],
+    ['  Are you changing the auth middleware?', 'subj'],
+    [''],
+    ['{"v":1,"id":"5bca390e","type":"message",'],
+    [' "from":"bob-laptop-3f2a/3f9a1c",'],
+    [' "at":"2026-11-03T00:59:24Z",'],
+    [' "to":"alice-mbp-91c0/7bd204",'],
+    [' "subject":"Are you changing the auth middleware?"}'],
+  ];
+  const ERROR_W = ['not sent: this contains what looks like a GitHub token.', 'Everything sent through the bus stays in the repo\'s', 'history; remove it and send again'];
+  const ERROR_T = ['not sent: this contains what looks like a', 'GitHub token. Everything sent through the', 'bus stays in the repo\'s history; remove it', 'and send again'];
+
+  let uid = 0;
+
+  // ---------- One scene: an svg, a layout, and a paint(t) ----------
+  function makeScene(svg, L, opts = {}) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const id = ++uid;
+    const S = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) if (attrs[k] != null) e.setAttribute(k, attrs[k]); if (parent) parent.append(e); return e; };
+    const A = (e, k, v) => { const m = e.__m || (e.__m = {}); if (m[k] !== v) { m[k] = v; e.setAttribute(k, v); } };
+    const O = (e, v) => { const o = +v.toFixed(3); if (o <= .004) A(e, 'display', 'none'); else { A(e, 'display', 'inline'); A(e, 'opacity', o); } };
+    const fmt = n => +n.toFixed(2);
+    const { fs } = L;
+    svg.textContent = '';
+    const defs = S('defs', {}, svg);
+    const world = S('g', {}, svg);
+
+    const labels = [];
+    // A label's size is fixed in the world, so the camera sets its size on screen. keep: it grows to
+    // stay readable when the camera pulls back. Otherwise it goes when it would drop below 12 px.
+    const text = (parent, x, y, str, o = {}) => {
+      const e = S('text', { x, y, class: o.cls || null, 'text-anchor': o.anchor || null }, parent);
+      e.textContent = str;
+      if (o.artifact) e.setAttribute('data-artifact', '');
+      labels.push({ e, size: o.size || fs.label, keep: o.keep !== false && !o.fixed, fixed: !!o.fixed, solid: !!o.solid });
+      return labels[labels.length - 1];
+    };
+    const tags = [];
+    // A small cream tag with a word on it, for what the drawing can't say by itself.
+    const tag = (parent, x, y, str, o = {}) => {
+      const g = S('g', {}, parent);
+      const r = S('rect', { rx: 7, fill: o.bg || C.cream }, g);
+      const l = text(g, x, y, str, { size: o.size || fs.small, cls: (o.cls || 'm') + (o.mono ? ' mono' : ''), keep: true, anchor: o.anchor, solid: true });
+      const t = { g, r, l, x, y, str, anchor: o.anchor || 'start', mono: !!o.mono };
+      tags.push(t);
+      return t;
+    };
+    const part = (name, parent = world) => { const g = S('g', {}, parent); parts[name] = g; return g; };
+    const parts = {};
+
+    // --- Layers, back to front ---
+    const lTape = part('tape');
+    const lDrop = part('drop');
+    const lRead = part('read');
+    const lPre = part('pre');
+    const lLanes = part('lanes');
+    const lRouteB = part('routeB'), lRouteA = part('routeA'), lRouteS = part('routeS');
+    const lBranchLine = S('g', {}, world);
+
+    // --- GitHub ---
+    const P = L.p, PX1 = P.x + P.w;
+    const lPanel = part('panel');
+    const pShade = S('rect', { x: P.x, y: P.y + 8, width: P.w, rx: 14, fill: C.shade }, lPanel);
+    const pBody = S('rect', { x: P.x, y: P.y, width: P.w, rx: 14, fill: C.panel }, lPanel);
+    S('path', { d: `M${P.x + 14} ${P.y}H${PX1 - 14}Q${PX1} ${P.y} ${PX1} ${P.y + 14}V${P.y + P.head}H${P.x}V${P.y + 14}Q${P.x} ${P.y} ${P.x + 14} ${P.y}Z`, fill: C.ink }, lPanel);
+    text(lPanel, P.x + 16, P.y + P.head / 2 + 8, 'GitHub', { size: 22, cls: 'b cream' });
+    text(lPanel, P.x + 16, P.y + P.heads, 'branches', { size: fs.label, cls: 'soft' });
+    const plusZero = text(lPanel, PX1 - 16, P.y + P.heads, '+0', { size: fs.label, cls: 'b soft', anchor: 'end' });
+    S('path', { d: L.graph.d, fill: 'none', stroke: C.grey, 'stroke-width': 3 }, lPanel);
+    L.graph.dots.forEach(([x, y]) => S('circle', { cx: x, cy: y, r: L.tall ? 5 : 6.5, fill: C.grey }, lPanel));
+    const branchDot = S('circle', { r: 8, fill: C.red, display: 'none' }, lPanel);
+
+    const R = L.rows;
+    const rowBand = (name, r) => {
+      const g = part(name);
+      S('rect', { x: P.x, y: r.y, width: P.w, height: r.h, fill: C.butter }, g);
+      return g;
+    };
+    const lShared = rowBand('shared', R.shared);
+    S('rect', { x: P.x, y: R.b.line - 2.5, width: P.w, height: 5, fill: C.blue }, lShared);
+    S('rect', { x: P.x, y: R.a.line - 2.5, width: P.w, height: 5, fill: C.blue }, lShared);
+    const sharedLabel = text(lShared, P.x + 16, R.b.y + (L.tall ? 25 : 24), 'one shared ref', { size: fs.row, cls: 'mono b' });
+    const rowText = (g, r, s, sha) => {
+      text(g, P.x + 16, r.y + (L.tall ? 25 : 24), s, { size: fs.ref || fs.row, cls: 'mono b', artifact: true });
+      if (!sha) return null;
+      const l = text(g, PX1 - 14, r.y + (L.tall ? 25 : 24), sha, { size: (fs.ref || fs.row) - 1, cls: 'mono bink', anchor: 'end', artifact: true });
+      l.roomFor = 42;
+      return l;
+    };
+    const lRowB = rowBand('rowB', R.b), lRowA = rowBand('rowA', R.a), lRowS = rowBand('rowS', R.s);
+    [[lRowB, R.b], [lRowA, R.a], [lRowS, R.s]].forEach(([g, r]) => S('rect', { x: P.x, y: r.line - 2.5, width: P.w, height: 5, fill: C.blue }, g));
+    S('rect', { x: P.x, y: R.b.y + R.b.h - 1, width: P.w, height: 2, fill: 'rgba(14,27,69,.14)' }, lRowB);
+    S('rect', { x: P.x, y: R.a.y + R.a.h - 1, width: P.w, height: 2, fill: 'rgba(14,27,69,.14)' }, lRowA);
+    const shaB = rowText(lRowB, R.b, 'refs/murmur/mesh/bob-laptop-3f2a', 'c4c0bcd');
+    const shaA = rowText(lRowA, R.a, 'refs/murmur/mesh/alice-mbp-91c0', '4c08589');
+    rowText(lRowS, R.s, 'refs/murmur/mesh/sam-desktop-7be1', '6d1fa02');
+    const lPres = part('pres');
+    const presDot = [], presRow = [];
+    [['bob-laptop-3f2a', '4e1660d'], ['alice-mbp-91c0', '16ac816'], ['sam-desktop-7be1', '91b3c7e']].forEach(([dev, sha], i) => {
+      const r = R.pres[i], g = S('g', {}, lPres);
+      S('rect', { x: P.x, y: r.y, width: P.w, height: r.h, fill: C.row }, g);
+      S('rect', { x: P.x, y: r.y + r.h - .5, width: P.w, height: 1, fill: 'rgba(14,27,69,.12)' }, g);
+      text(g, P.x + 16, r.y + r.h - (L.tall ? 7 : 9), `refs/murmur/presence/${dev}`, { size: fs.pres || fs.row - 1, cls: 'mono soft', artifact: true });
+      presDot[i] = S('circle', { cx: PX1 - 20, cy: r.y + r.h / 2, r: 7, fill: C.ink }, g);
+      presRow[i] = g;
+    });
+    const lNames = part('names');
+    S('rect', { x: P.x, y: R.names.y, width: P.w, height: R.names.h, fill: C.butter }, lNames);
+    const namesLabel = text(lNames, P.x + 16, R.names.y + R.names.h - (L.tall ? 9 : 11), 'refs/murmur/names', { size: fs.row, cls: 'mono b', artifact: true });
+    const namesRec = text(lNames, PX1 - 14, R.names.y + R.names.h - (L.tall ? 9 : 11), '8d04c7a', { size: fs.row - 1, cls: 'mono bink', anchor: 'end', artifact: true });
+
+    // Commits on the rows: each appears at its t and stays.
+    const rowDots = [];
+    const addDot = (g, x, y, born, dies = Infinity) => { const c = S('circle', { cx: x, cy: y, r: L.tall ? 7.5 : 9, fill: C.blue, display: 'none' }, g); rowDots.push({ c, born, dies, r: L.tall ? 7.5 : 9 }); };
+    const dotsLayer = S('g', {}, world);
+    const dx = L.dotX;
+
+    // --- A device: laptop, windows, MCP servers, daemon ---
+    const lap = L.lap;
+    const lidX = u => u.x + (lap.W - lap.lidW) / 2;
+    const disp = u => ({ x: lidX(u) + 14, y: u.top + 14, w: lap.lidW - 28, h: lap.lidH - 24 });
+    const laptop = (name, u, seat) => {
+      const g = part(name), x = lidX(u), y = u.top, w = lap.lidW, h = lap.lidH;
+      S('path', { d: `M${x + 18} ${y}H${x + w - 18}Q${x + w} ${y} ${x + w} ${y + 18}V${y + h}H${x}V${y + 18}Q${x} ${y} ${x + 18} ${y}Z`, fill: C.cream }, g);
+      const d = disp(u);
+      S('rect', { x: d.x, y: d.y, width: d.w, height: d.h, rx: 6, fill: C.ink }, g);
+      const dk = S('use', { href: '#deckArt', transform: `translate(${u.x} ${y + h}) scale(1 ${fmt(lap.deckH / 118)})` }, g);
+      dk.setAttribute('href', '#deckArt');
+      text(g, u.x + lap.W / 2, y + h + lap.deckH + (L.tall ? 25 : 34), seat, { size: L.tall ? 20 : 26, cls: 'm cream', anchor: 'middle' });
+      return g;
+    };
+
+    const windows = {};
+    const makeWin = (name, title) => {
+      const g = part(name);
+      const clip = S('clipPath', { id: `c${id}${name}` }, defs);
+      const cr = S('rect', { rx: 4 }, clip);
+      const body = S('g', { 'clip-path': `url(#c${id}${name})` }, g);
+      const bg = S('rect', { fill: C.ink }, body);
+      const bar = S('rect', { fill: C.bar }, body);
+      const dot = S('circle', { r: L.tall ? 5 : 5.5, fill: C.idle }, body);
+      const ttl = text(body, 0, 0, title, { size: L.tall ? 19 : 18, cls: 'mono pale' });
+      const w = { g, body, cr, bg, bar, dot, ttl, x: 0, y: 0, w: 0, h: 0 };
+      w.set = (x, y, wd, h) => {
+        Object.assign(w, { x, y, w: wd, h });
+        const X = fmt(x), Y = fmt(y), W = fmt(wd), H = fmt(h);
+        for (const e of [cr, bg]) { A(e, 'x', X); A(e, 'y', Y); A(e, 'width', W); A(e, 'height', H); }
+        A(bar, 'x', X); A(bar, 'y', Y); A(bar, 'width', W); A(bar, 'height', lap.bar);
+        A(dot, 'cx', fmt(x + 14)); A(dot, 'cy', fmt(y + lap.bar / 2));
+        A(ttl.e, 'x', fmt(x + 26)); A(ttl.e, 'y', fmt(y + lap.bar / 2 + 6));
+      };
+      windows[name] = w;
+      return w;
+    };
+    // A line of a conversation, sized and placed each frame.
+    const line = (w, cls, keep = true) => text(w.body, 0, 0, '', { cls: 'mono ' + cls, size: 20, keep, solid: keep });
+    const place = (l, x, y, size) => { A(l.e, 'x', fmt(x)); A(l.e, 'y', fmt(y)); l.size = size; };
+    const setStr = (l, s) => { if (l.e.textContent !== s) l.e.textContent = s; };
+    const band = w => S('rect', { rx: L.tall ? 5 : 7, fill: C.butter, display: 'none' }, w.body);
+
+    const chip = (name, str, h = L.chip.h, w = L.chip.w) => {
+      const g = part(name);
+      const stem = S('path', { fill: 'none', stroke: C.cream, 'stroke-width': 2.5 }, g);
+      const dash = S('rect', { rx: 9, width: w, height: h, fill: 'none', stroke: C.cream, 'stroke-width': 2.5, 'stroke-dasharray': '5 6', display: 'none' }, g);
+      const live = S('g', {}, g);
+      const r = S('rect', { rx: 9, width: w, height: h, fill: C.cream }, live);
+      const l = text(live, 0, 0, str, { size: L.tall ? 19 : 18, cls: 'mono b', anchor: 'middle' });
+      const c = { g, stem, r, l, dash, live, w, h };
+      c.set = (x, y, dead = 0, stemD = '') => {
+        A(r, 'x', fmt(x - w / 2)); A(r, 'y', fmt(y));
+        A(dash, 'x', fmt(x - w / 2)); A(dash, 'y', fmt(y));
+        A(l.e, 'x', fmt(x)); A(l.e, 'y', fmt(y + h / 2 + 6));
+        A(stem, 'd', stemD);
+        O(live, 1 - dead);
+        O(dash, dead);
+      };
+      return c;
+    };
+
+    const daemon = (name, d) => {
+      const g = part(name);
+      const inner = S('g', {}, g);
+      S('rect', { x: d.x, y: d.y + 7, width: d.w, height: d.h, rx: 12, fill: C.shade }, inner);
+      const body = S('rect', { x: d.x, y: d.y, width: d.w, height: d.h, rx: 12, fill: C.ink }, inner);
+      const led = S('circle', { cx: d.x + 18, cy: d.label - 7, r: 6, fill: C.green }, inner);
+      const lab = text(inner, d.x + 32, d.label, 'Murmur daemon', { size: L.tall ? 20 : 21, cls: 'b cream' });
+      const sub = d.sub ? text(inner, d.x + 18, d.sub, 'one per clone', { size: fs.small, cls: 'mono pale', keep: false }) : null;
+      const dash = S('rect', { x: d.x, y: d.y, width: d.w, height: d.h, rx: 12, fill: C.blue, stroke: C.cream, 'stroke-width': 2.5, 'stroke-dasharray': '6 7', display: 'none' }, g);
+      const gone = text(g, d.x + d.w / 2, d.y + d.h / 2 + 7, 'exited', { size: 20, cls: 'm cream', anchor: 'middle' });
+      return { g, inner, body, led, lab, sub, dash, gone };
+    };
+
+    const lapB = laptop('lapB', L.uB, 'Bob\'s laptop');
+    const dB0 = disp(L.uB), dA0 = disp(L.uA);
+    const winO = makeWin('winO', 'quiet-otter'), winF = makeWin('winF', 'calm-finch');
+    const oDoing1 = line(winO, 'pale', false), oDoing2 = line(winO, 'pale', false);
+    setStr(oDoing1, 'Rewriting the auth'); setStr(oDoing2, 'middleware');
+    const oQ1 = line(winO, 'cream'), oQ2 = line(winO, 'cream');
+    const oBand = band(winO);
+    const oFrom = line(winO, 'soft'), oA1 = line(winO, ''), oA2 = line(winO, '');
+    setStr(oFrom, 'from brave-heron'); setStr(oA1, 'No, that\'s yours.'); setStr(oA2, 'I\'m only in cookies.');
+    const caret = S('rect', { fill: C.cream, display: 'none' }, winO.body);
+    const fDoing1 = line(winF, 'pale', false), fDoing2 = line(winF, 'pale', false);
+    setStr(fDoing1, 'Fixing the deploy'); setStr(fDoing2, 'script');
+
+    const chipO = chip('chipO', 'mur mcp'), chipF = chip('chipF', 'mur mcp');
+    const lDmB = daemon('dmB', L.dB);
+
+    const lapA = laptop('lapA', L.uA, 'Alice\'s laptop');
+    const winH = makeWin('winH', 'brave-heron');
+    const hDoing1 = line(winH, 'pale', false), hBand = band(winH), hFrom = line(winH, 'soft'), hQ1 = line(winH, ''), hQ2 = line(winH, ''), hR1 = line(winH, 'cream'), hR2 = line(winH, 'cream'), hQueued = line(winH, 'pale');
+    setStr(hDoing1, 'Adding session cookies');
+    setStr(hFrom, 'from quiet-otter'); setStr(hQ1, 'Are you changing the'); setStr(hQ2, 'auth middleware?');
+    const caretH = S('rect', { fill: C.cream, display: 'none' }, winH.body);
+    const qBox = S('rect', { rx: 6, fill: 'none', stroke: C.butter, 'stroke-width': 2, 'stroke-dasharray': '5 5', display: 'none' }, winH.body);
+    const chipH = chip('chipH', 'mur mcp');
+    const lDmA = daemon('dmA', L.dA);
+
+    // Sam's machine is a desktop: a monitor on a stand.
+    const lSam = part('sam');
+    const M = L.sam;
+    S('rect', { x: M.stand[0], y: M.stand[1], width: M.stand[2], height: M.stand[3], fill: '#D5D1B8' }, lSam);
+    S('rect', { x: M.base[0], y: M.base[1], width: M.base[2], height: M.base[3], rx: 5, fill: C.cream }, lSam);
+    S('rect', { x: M.x, y: M.y, width: M.w, height: M.h, rx: 14, fill: C.cream }, lSam);
+    const mDisp = { x: M.x + 12, y: M.y + 12, w: M.w - 24, h: M.h - 24 };
+    S('rect', { x: mDisp.x, y: mDisp.y, width: mDisp.w, height: mDisp.h, rx: 6, fill: C.ink }, lSam);
+    text(lSam, M.seat[0], M.seat[1], 'Sam\'s machine', { size: L.tall ? 20 : 24, cls: 'm cream', anchor: 'middle' });
+    const winW = makeWin('winW', 'solar-wren'), winP = makeWin('winP', 'polar-walnut');
+    const wDoing1 = line(winW, 'pale', false), wDoing2 = line(winW, 'pale', false);
+    setStr(wDoing1, 'Building the'); setStr(wDoing2, 'settings view');
+    const wBand = band(winW), wFrom = line(winW, 'soft');
+    setStr(wFrom, 'from brave-heron');
+    const sleepShade = S('rect', { x: mDisp.x, y: mDisp.y, width: mDisp.w, height: mDisp.h, rx: 6, fill: '#070E26', display: 'none' }, world);
+    const chipW = chip('chipW', 'mur mcp', M.chipH, M.chipW), chipP = chip('chipP', 'mur mcp', M.chipH, M.chipW);
+    const lDmS = daemon('dmS', L.dS);
+
+    // --- Lines ---
+    const route = (parent, d) => {
+      const base = S('path', { d, fill: 'none', stroke: C.line, 'stroke-width': 2.5, 'stroke-dasharray': '3 8', 'stroke-linecap': 'round' }, parent);
+      const fl = S('path', { d, fill: 'none', stroke: C.butter, 'stroke-width': L.ln, 'stroke-linejoin': 'round', pathLength: 1, 'stroke-dasharray': '0 1' }, parent);
+      const len = base.getTotalLength ? base.getTotalLength() : 0;
+      return { base, fl, len, d };
+    };
+    const fill = (r, e) => { A(r.fl, 'stroke-dasharray', `${e.toFixed(4)} 1`); O(r.fl, e <= 0 ? 0 : L.tall && e >= .999 ? .3 : 1); };
+    const preO = S('path', { fill: 'none', stroke: C.cream, 'stroke-width': 3, 'stroke-linejoin': 'round' }, lPre);
+    const preF = S('path', { fill: 'none', stroke: C.cream, 'stroke-width': 3, 'stroke-linejoin': 'round' }, lPre);
+    const rOutB = route(lRouteB, L.outB), rInB = route(lRouteB, L.inB);
+    const rInA = route(lRouteA, L.inA), rOutA = route(lRouteA, L.outA);
+    const rOutS = route(lRouteS, L.outS);
+    const pushLabel = text(lRouteB, L.tall ? 8 : 525, L.tall ? 420 : 180, 'git push', { size: fs.mono, cls: 'mono cream', anchor: L.tall ? 'start' : 'middle', keep: !L.tall });
+    const fetchLabel = text(lRouteA, L.tall ? 598 : 1355, L.tall ? 918 : 180, 'git fetch', { size: fs.mono, cls: 'mono cream', anchor: L.tall ? 'end' : 'middle', keep: !L.tall });
+    const branchLine = S('path', { d: L.branch, fill: 'none', stroke: C.cream, 'stroke-width': 3, 'stroke-dasharray': '5 6', display: 'none' }, lBranchLine);
+    const laneA = S('path', { d: L.lane.a, fill: 'none', stroke: C.cream, 'stroke-width': 2.5, 'stroke-dasharray': '4 7' }, lLanes);
+    const laneS = S('path', { d: L.lane.s, fill: 'none', stroke: C.cream, 'stroke-width': 2.5, 'stroke-dasharray': '4 7' }, lLanes);
+    const lBy = part('by');
+    const byA = S('path', { d: L.byLineA, fill: 'none', stroke: C.butter, 'stroke-width': L.ln, pathLength: 1 }, lBy);
+    const byB = S('path', { d: L.byLineB, fill: 'none', stroke: C.butter, 'stroke-width': L.ln, pathLength: 1 }, lBy);
+
+    // Paths only flown along, never drawn.
+    const hidden = S('g', { visibility: 'hidden' }, world);
+    const flightPath = d => S('path', { d, fill: 'none' }, hidden);
+    const ptAt = (p, f) => p.getPointAtLength(clamp(f) * p.getTotalLength());
+    const fp = {
+      outB: flightPath(`${L.outB}H${dx.b[0]}`),
+      outB2: L.outB,
+      inA: flightPath(`M${dx.b[0]} ${R.b.line}H${PX1}${L.inA.replace(/^M[^A-Z]*/, '').replace(/^H/, 'H')}`),
+      outA: flightPath(`${L.outA}H${dx.a[0]}`),
+      inB: flightPath(`M${dx.a[0]} ${R.a.line}H${P.x}${L.inB.replace(/^M[^A-Z]*/, '')}`),
+      preO: flightPath(''), preF: flightPath(''),
+      toChipA: flightPath(L.toChipA), toChipF: flightPath(L.toChipF), toChipO: flightPath(L.toChipO),
+      outS: flightPath(L.outS),
+      laneA: flightPath(L.lane.a), laneS: flightPath(L.lane.s),
+      pingA: flightPath(L.tall ? 'M300 948H606V566H570' : 'M1470 190H1240'),
+    };
+    const chipPath = S('path', { fill: 'none' }, hidden);
+
+    // --- The tape ---
+    const tp = L.tape;
+    const tClip = S('clipPath', { id: `tape${id}` }, defs);
+    S('rect', { x: tp.x0 - 200, y: tp.mark - 40, width: tp.head - tp.x0 + 200, height: tp.reg - tp.mark + 60 }, tClip);
+    const tWrap = S('g', { 'clip-path': `url(#tape${id})` }, lTape);
+    const tInner = S('g', {}, tWrap);
+    const tBg = S('rect', { x: 0, y: tp.y, width: SIM_END * tp.scale, height: tp.h, rx: 6, fill: C.shade }, tInner);
+    const tickD = TICKS.filter(s => !FETCHES.includes(s)).map(s => `M${fmt(s * tp.scale)} ${tp.y + 6}v${tp.h - 12}`).join('');
+    S('path', { d: tickD, fill: 'none', stroke: C.butter, 'stroke-width': tp.tick }, tInner);
+    S('path', { d: FETCHES.map(s => `M${fmt(s * tp.scale)} ${tp.y - 6}v${tp.h + 12}`).join(''), fill: 'none', stroke: C.cream, 'stroke-width': tp.tick + 1.4 }, tInner);
+    [[0, 260, 'every 3 s'], [260, 420, 'every 15 s'], [420, 580, 'every 30 s']].forEach(([a, b, s]) => {
+      S('path', { d: `M${fmt(a * tp.scale + 2)} ${tp.reg - 18}H${fmt(b * tp.scale - 3)}`, stroke: C.line, 'stroke-width': 2, fill: 'none' }, tInner);
+      text(tInner, fmt(a * tp.scale + 2), tp.reg + 2, s, { size: fs.label, cls: 'm cream' });
+    });
+    [[0, 'a message'], [81, 'another'], [260, '3 min later'], [420, 'last session stops'], [580, 'session starts', 'end']].forEach(([s, str, anchor]) => {
+      text(tInner, fmt(s * tp.scale), tp.mark - 2, str, { size: fs.small, cls: 'cream', keep: false, anchor });
+    });
+    S('path', { d: tp.drop, fill: 'none', stroke: C.line, 'stroke-width': 2.5, 'stroke-dasharray': '3 8', 'stroke-linecap': 'round' }, lDrop);
+    const head = S('rect', { x: tp.head - 2, y: tp.y - 8, width: 4, height: tp.h + 16, rx: 2, fill: C.cream }, lDrop);
+    const rd = L.read;
+    const readBig = text(lRead, rd.x, rd.y, 'every 3 s', { size: rd.big, cls: 'b butter', fixed: true, anchor: rd.anchor });
+    const readSub = text(lRead, rd.x, rd.y + rd.sub + (L.tall ? 8 : 14), '', { size: rd.sub, cls: 'm cream', anchor: rd.anchor });
+    readBig.e.setAttribute('style', 'letter-spacing:-.04em;font-variant-numeric:tabular-nums');
+
+    // --- The clock of the film ---
+    const lClock = part('clock');
+    const CK = L.clock;
+    const clkN = text(lClock, CK.anchor === 'inline' ? 0 : CK.x, CK.y, '7', { size: CK.size, cls: 'b cream', anchor: CK.anchor === 'inline' ? 'start' : 'middle', fixed: true });
+    clkN.e.setAttribute('style', 'letter-spacing:-.05em;font-variant-numeric:tabular-nums');
+
+    // --- Side chips: what a branch push wakes up ---
+    const lSide = part('side');
+    const sideCard = (x, title) => {
+      const g = S('g', {}, lSide);
+      const r = S('rect', { x, y: L.side.y, width: L.side.w, height: L.side.h, rx: 10, fill: C.cream }, g);
+      text(g, x + 12, L.side.y + 21, title, { size: L.tall ? 18 : 16.5, cls: 'soft' });
+      const v = text(g, x + 12, L.side.y + 43, '0', { size: L.tall ? 18 : 18, cls: 'b' });
+      return { g, r, v };
+    };
+    const sdA = sideCard(L.side.xs[0], 'Actions'), sdW = sideCard(L.side.xs[1], 'push webhooks'), sdP = sideCard(L.side.xs[2], 'git pull');
+
+    // --- The set-aside names ---
+    const lTray = part('tray');
+    const TR = L.tray, trayChips = [];
+    for (let i = 0; i < 11; i++) trayChips[i] = S('rect', { width: TR.w, height: TR.h, rx: 5, fill: C.butter, display: 'none' }, lTray);
+
+    // --- Things that fly ---
+    const lFly = S('g', {}, world);
+    const spots = [];
+    for (let i = 0; i < 18; i++) spots[i] = S('circle', { display: 'none' }, lFly);
+    let spotN = 0;
+    const spot = (x, y, r = 8, fillC = C.butter, o = 1, stroke) => { const c = spots[spotN++]; if (!c) return; A(c, 'cx', fmt(x)); A(c, 'cy', fmt(y)); A(c, 'r', fmt(r)); A(c, 'fill', fillC); A(c, 'stroke', stroke || 'none'); A(c, 'stroke-width', stroke ? 2.5 : 0); O(c, o); };
+
+    // The pill. Outside the panel it is butter; over the panel, a second copy clipped to the panel's
+    // rect is blue, so the line and the pill counterchange at the edge as they do in the film.
+    const pClip = S('clipPath', { id: `pc${id}` }, defs);
+    const pClipR = S('rect', { x: P.x, y: P.y, width: P.w }, pClip);
+    const makePill = () => {
+      const g = S('g', { display: 'none' }, lFly);
+      const r = S('rect', { fill: C.butter }, g);
+      const m = text(g, 0, 0, 'message', { size: 22, cls: 'b', anchor: 'middle', fixed: true });
+      const c = text(g, 0, 0, 'commit', { size: 26, cls: 'b', anchor: 'middle', fixed: true });
+      m.e.setAttribute('style', 'letter-spacing:-.02em');
+      c.e.setAttribute('style', 'letter-spacing:-.02em');
+      const inG = S('g', { 'clip-path': `url(#pc${id})`, display: 'none' }, g);
+      const r2 = S('rect', { fill: C.blue }, inG);
+      const c2 = text(inG, 0, 0, 'commit', { size: 26, cls: 'b cream', anchor: 'middle', fixed: true });
+      c2.e.setAttribute('style', 'letter-spacing:-.02em');
+      return { g, r, m, c, r2, c2, inG };
+    };
+    const pill = makePill();
+    const SZ = L.tall ? { env: [118, 52], full: [116, 42], dot: 15, fm: 21.5, fc: 24 } : { env: [118, 56], full: [124, 44], dot: 18, fm: 22, fc: 26 };
+    // msg: 1 a message, 0 a commit. size: 0 a dot, 1 full. edge: its outline, on a node or off the route.
+    const setPill = (x, y, { msg = 0, size = 1, edge = 0, cA = null, overPanel = false, red = 0, o = 1 } = {}) => {
+      A(pill.g, 'display', 'inline');
+      A(pill.g, 'opacity', o);
+      const big = i => SZ.full[i] + (SZ.env[i] - SZ.full[i]) * msg;
+      const w = SZ.dot + (big(0) - SZ.dot) * size, h = SZ.dot + (big(1) - SZ.dot) * size;
+      const rad = msg ? 7 + (SZ.full[1] / 2 - 7) * (1 - msg) : Math.min(h, w) / 2;
+      const setR = r => { A(r, 'x', fmt(x - w / 2)); A(r, 'y', fmt(y - h / 2)); A(r, 'width', fmt(w)); A(r, 'height', fmt(h)); A(r, 'rx', fmt(Math.min(rad, h / 2))); };
+      setR(pill.r);
+      A(pill.r, 'fill', red ? C.red : C.butter);
+      A(pill.r, 'stroke', edge ? (red ? C.cream : C.ink) : 'none');
+      A(pill.r, 'stroke-width', edge ? 2.5 : 0);
+      // The swap: one word fades most of the way out, the other takes over from there, never both.
+      const mO = msg < .5 ? 0 : .2 + .8 * (2 * msg - 1);
+      const cO = cA != null ? cA : msg < .5 ? .2 + .8 * (1 - 2 * msg) : 0;
+      A(pill.m.e, 'x', fmt(x)); A(pill.m.e, 'y', fmt(y + SZ.fm * .36)); pill.m.size = SZ.fm * clamp(size, .3); O(pill.m.e, size < .35 ? 0 : mO);
+      A(pill.m.e, 'fill', red ? C.cream : C.ink);
+      A(pill.c.e, 'x', fmt(x)); A(pill.c.e, 'y', fmt(y + SZ.fc * .36)); pill.c.size = SZ.fc; O(pill.c.e, size < .6 ? 0 : cO);
+      if (overPanel) {
+        A(pill.inG, 'display', 'inline');
+        setR(pill.r2);
+        A(pill.c2.e, 'x', fmt(x)); A(pill.c2.e, 'y', fmt(y + SZ.fc * .36)); pill.c2.size = SZ.fc; O(pill.c2.e, size < .6 ? 0 : cO);
+      } else A(pill.inG, 'display', 'none');
+    };
+    // A name, flying to the shared ref.
+    const nameChip = () => {
+      const g = S('g', { display: 'none' }, lFly);
+      const r = S('rect', { rx: 8, fill: C.butter, stroke: C.ink, 'stroke-width': 2 }, g);
+      const l = text(g, 0, 0, '', { size: fs.mono, cls: 'mono b', anchor: 'middle', fixed: false });
+      return { g, r, l };
+    };
+    const nA = nameChip(), nS = nameChip(), nT = nameChip();
+    let charR = .6;
+    const setName = (n, x, y, s, o = 1, red = false) => {
+      O(n.g, o);
+      if (o <= 0) return;
+      setStr(n.l, s);
+      const fsz = Math.max(n.l.size, MINPX / zNow);
+      const w = s.length * fsz * charR + 18, h = fsz + 14;
+      // Phones: the name stays on screen, and under the names row rather than over its record.
+      if (L.tall) { x = clamp(x, w / 2 - 10, P.x + P.w + 30 - w / 2); y = Math.max(y, R.names.y + R.names.h + h / 2 + 2); }
+      A(n.r, 'x', fmt(x - w / 2)); A(n.r, 'y', fmt(y - h / 2)); A(n.r, 'width', fmt(w)); A(n.r, 'height', fmt(h));
+      A(n.r, 'fill', red ? C.red : C.butter);
+      A(n.l.e, 'x', fmt(x)); A(n.l.e, 'y', fmt(y + fsz * .34));
+      A(n.l.e, 'fill', red ? C.cream : C.ink);
+    };
+
+    // --- Tags and cards: above everything ---
+    const lTop = S('g', {}, world);
+    const tg = {
+      refused: tag(lTop, L.tall ? 62 : 430, L.tall ? 690 : 292, 'rejected (fetch first)', { mono: true, cls: 'b red' }),
+      cantStart: tag(lTop, L.tall ? 120 : 280, L.tall ? 100 : 372, 'can\'t start a turn', { cls: 'b red' }),
+      restarts: tag(lTop, L.tall ? 120 : 280, L.tall ? 100 : 372, 'restarts: 0', { cls: 'b red', mono: true }),
+      loop: tag(lTop, L.tall ? 412 : 442, L.tall ? 92 : 392, '127.0.0.1:49732', { mono: true, size: fs.small }),
+      refusedA: tag(lTop, L.tall ? 330 : 1262, L.tall ? 700 : 298, 'rejected (fetch first)', { mono: true, cls: 'b red' }),
+      landed: tag(lTop, L.tall ? 300 : 940, L.tall ? 412 : -24, 'both landed', { cls: 'b', anchor: 'middle' }),
+      lsr: tag(lTop, L.tall ? 136 : 1132, L.tall ? 856 : 98, 'git ls-remote origin \'refs/murmur/*\'', { mono: true, size: fs.small }),
+      fetch: tag(lTop, L.tall ? 136 : 1270, L.tall ? 856 : 98, 'git fetch', { mono: true, cls: 'b' }),
+      stopped: tag(lTop, L.tall ? 160 : 1650, L.tall ? 912 : 372, 'stopped by T3', { size: fs.small }),
+      cantStartA: tag(lTop, L.tall ? 160 : 1650, L.tall ? 912 : 372, 'can\'t start a turn', { cls: 'b red' }),
+      t3send: tag(lTop, L.tall ? 30 : 1330, L.tall ? 1008 : 416, 't3 thread send <thread> -', { mono: true, size: fs.small, cls: 'b' }),
+      nobody: tag(lTop, L.tall ? 300 : 1590, L.tall ? 1274 : 856, 'nobody typing', { size: fs.small, anchor: 'middle', cls: 'b' }),
+      hop: tag(lTop, L.tall ? 300 : 1590, L.tall ? 1214 : 716, 'about 6 to 8 s after send', { size: fs.small, anchor: 'middle' }),
+      inboxF: tag(lTop, L.tall ? 330 : 440, L.tall ? 90 : 372, 'inbox: 1', { mono: true, cls: 'b', size: fs.small }),
+      codex: tag(lTop, L.tall ? 322 : 316, L.tall ? 300 : 620, 'Codex, outside T3', { size: fs.small }),
+      lease: tag(lTop, L.tall ? 200 : 1070, L.tall ? 818 : 494, '--force-with-lease', { mono: true, cls: 'b', size: fs.small }),
+      leaseNo: tag(lTop, L.tall ? 60 : 1310, L.tall ? 848 : 494, 'rejected (stale info)', { mono: true, cls: 'b red', size: fs.small }),
+      stale: tag(lTop, L.tall ? 40 : 1250, L.tall ? 750 : 405, 'stale', { cls: 'b red' }),
+      kept: tag(lTop, L.tall ? 700 : 1096, L.tall ? 672 : 637, 'inbox kept 24 hours', { size: fs.small, cls: 'b' }),
+      grace: tag(lTop, L.tall ? 840 : 1030, L.tall ? 650 : 650, '60 s', { mono: true, cls: 'b' }),
+      noBus: tag(lTop, L.tall ? 712 : 1080, L.tall ? 492 : 450, 'nothing written to the bus', { size: fs.small }),
+      noNet: tag(lTop, L.tall ? 712 : 1068, L.tall ? 500 : 584, 'no network', { size: fs.small, cls: 'b' }),
+      night: tag(lTop, L.tall ? 712 : 1068, L.tall ? 500 : 584, 'overnight', { size: fs.small, cls: 'b' }),
+      morning: tag(lTop, L.tall ? 712 : 1068, L.tall ? 500 : 584, 'next morning', { size: fs.small, cls: 'b' }),
+    };
+
+    // Ink cards: real output.
+    const relayouts = [];
+    const card = (lines, x, y, size, o = {}) => {
+      const g = S('g', { 'data-artifact': '' }, lTop);
+      const r = S('rect', { x, y, rx: 9, fill: o.bg || C.ink }, g);
+      const ls = lines.map(l => text(g, x + 14, y, l, { size, cls: 'mono ' + (o.cls || 'cream'), solid: true }));
+      const chars = Math.max(...lines.map(l => l.length));
+      relayouts.push(z => {
+        const fz = Math.max(size, MINPX / z);
+        A(r, 'width', fmt(chars * fz * charR + 28)); A(r, 'height', fmt(lines.length * fz * 1.42 + 20));
+        ls.forEach((l, i) => A(l.e, 'y', fmt(y + 12 + fz * 1.02 + i * fz * 1.42)));
+      });
+      return g;
+    };
+    const lg = L.log;
+    const cards = L.tall ? {
+      daemon: card(['device bob-laptop-3f2a, remote "origin",', 'listening on 127.0.0.1:49732'], lg.daemon[0], lg.daemon[1], 20),
+      rate30: card(['no session is live and no page open;', 'looking at the remote every 30s, not every 3s'], lg.rate[0], lg.rate[1], 20),
+      rate3: card(['a session is live or a page open; looking at', 'the remote every 3s, less often while nothing', 'is said'], lg.rate[0], lg.rate[1], 20),
+      pool: card(['session sam-desktop-7be1/c41e77 is named', 'polar-walnut, a name set aside for it'], lg.pool[0], lg.pool[1], 18),
+      reconn: card(['session sam-desktop-7be1/c41e77 reconnected'], lg.reconn[0], lg.reconn[1], 18),
+      stopped: card(['session sam-desktop-7be1/c41e77 stopped'], lg.reconn[0], lg.reconn[1], 18),
+      exit: card(['no sessions, no page open and no T3 thread', 'to wake for 10m0s; exiting'], lg.exit[0], lg.exit[1], 18),
+      who: card(['sam-desktop-7be1 (sam on sam-desktop) STALE:', 'last seen 6m ago; messages may not reach it;', 'its 1 session is not listed'], lg.stale[0], lg.stale[1], 20),
+      limits: card(['git log refs/murmur/mesh/bob-laptop-3f2a', '', 'bob-laptop-3f2a/3f9a1c -> alice-mbp-91c0/', '7bd204: Are you changing the auth middleware?'], lg.limits[0], lg.limits[1], 20),
+    } : {
+      daemon: card(['device bob-laptop-3f2a, remote "origin",', 'listening on 127.0.0.1:49732'], lg.daemon[0], lg.daemon[1], 16),
+      rate30: card(['no session is live and no page open; looking at the remote every 30s, not every 3s'], lg.rate[0], lg.rate[1], 15.5),
+      rate3: card(['a session is live or a page open; looking at the remote every 3s, less often while nothing is said'], lg.rate[0], lg.rate[1], 15.5),
+      pool: card(['session sam-desktop-7be1/c41e77 is named polar-walnut,', 'a name set aside for it'], lg.pool[0], lg.pool[1], 15.5),
+      reconn: card(['session sam-desktop-7be1/c41e77 reconnected'], lg.reconn[0], lg.reconn[1], 15.5),
+      stopped: card(['session sam-desktop-7be1/c41e77 stopped'], lg.reconn[0], lg.reconn[1], 15.5),
+      exit: card(['no sessions, no page open and no T3 thread to wake', 'for 10m0s; exiting'], lg.exit[0], lg.exit[1], 15.5),
+      who: card(['sam-desktop-7be1 (sam on sam-desktop) STALE: last seen 6m ago;', 'messages may not reach it; its 1 session is not listed'], lg.stale[0], lg.stale[1], 15.5),
+      limits: card(['git log refs/murmur/mesh/bob-laptop-3f2a', '', 'bob-laptop-3f2a/3f9a1c -> alice-mbp-91c0/7bd204: Are you changing the', 'auth middleware?'], lg.limits[0], lg.limits[1], 16),
+    };
+
+    // The commit, as a sheet of paper unfolding from the pill.
+    const lSheet = part('sheet', lTop);
+    lSheet.setAttribute('data-artifact', '');
+    const SH = L.sheet, cl = L.tall ? COMMIT_T : COMMIT_W;
+    const sheetH = cl.length * SH.lh + 28;
+    const sheetInner = S('g', {}, lSheet);
+    const sShade = S('rect', { x: SH.x, rx: 14, fill: C.shade }, sheetInner);
+    const sBody = S('rect', { x: SH.x, y: SH.y, rx: 14, fill: C.cream }, sheetInner);
+    const treeMark = S('rect', { x: SH.x + 8, y: SH.y + 13, width: 0, rx: 4, fill: C.butter }, sheetInner);
+    const sLines = cl.map(([s, kind]) => text(sheetInner, SH.x + 16, 0, s, { size: SH.fs, cls: 'mono' + (kind === 'subj' ? ' b' : kind === 'tree' ? ' b' : ' soft'), solid: true }));
+    const treeNote = L.tall ? null : text(sheetInner, 0, 0, 'git\'s empty tree: no files', { size: SH.fs, cls: 'm blue' });
+    let sheetW = SH.w;
+    relayouts.push(z => {
+      const k = Math.max(1, MINPX / z / SH.fs), lh = SH.lh * k;
+      sheetW = SH.w * k;
+      for (const e of [sShade, sBody]) { A(e, 'width', fmt(sheetW)); A(e, 'height', fmt(cl.length * lh + 28)); }
+      A(sShade, 'y', fmt(SH.y + 8));
+      A(treeMark, 'height', fmt(lh));
+      sLines.forEach((l, i) => A(l.e, 'y', fmt(SH.y + 14 + lh * (i + .74))));
+      if (treeNote) { A(treeNote.e, 'x', fmt(SH.x + SH.fs * k * charR * 45 + 34)); A(treeNote.e, 'y', fmt(SH.y + 14 + lh * .74)); }
+    });
+
+    // The error a blocked send gets.
+    const lErr = S('g', { 'data-artifact': '' }, lTop);
+    {
+      const ls = L.tall ? ERROR_T : ERROR_W, size = L.tall ? 17.5 : 18, chars = Math.max(...ls.map(s => s.length));
+      const r = S('rect', { x: L.err.x, y: L.err.y, rx: 10, fill: C.cream }, lErr);
+      const es = ls.map((s, i) => text(lErr, L.err.x + 16, 0, s, { size, cls: 'mono ' + (i === 0 ? 'b red' : 'soft'), solid: true }));
+      relayouts.push(z => {
+        const fz = Math.max(size, MINPX / z);
+        A(r, 'width', fmt(chars * fz * charR + 32)); A(r, 'height', fmt(ls.length * fz * 1.42 + 24));
+        es.forEach((l, i) => A(l.e, 'y', fmt(L.err.y + 12 + fz * 1.08 + i * fz * 1.42)));
+      });
+    }
+
+    // Rings: a countdown drawn round a part.
+    const ring = () => S('circle', { fill: 'none', stroke: C.butter, 'stroke-width': 5, pathLength: 1, 'stroke-linecap': 'round', display: 'none', transform: '' }, lTop);
+    const graceRing = ring(), exitRing = ring();
+    const bigNum = text(lTop, 0, 0, '', { size: L.stale.size, cls: 'b butter', anchor: 'middle', fixed: true });
+    bigNum.e.setAttribute('style', 'letter-spacing:-.04em;font-variant-numeric:tabular-nums');
+    const bigLab = text(lTop, 0, 0, '', { size: fs.small, cls: 'm cream', anchor: 'middle' });
+
+    // Commits on the rows, from the story's dates.
+    addDot(dotsLayer, dx.b[0], R.b.line, at('commit', 1));
+    addDot(dotsLayer, dx.b[1], R.b.line, at('split', .42), Infinity);
+    addDot(dotsLayer, dx.a[0], R.a.line, at('split', .84));
+    addDot(dotsLayer, dx.b[2], R.b.line, at('split', .84));
+    for (let i = 0; i < 3; i++) addDot(dotsLayer, dx.b[3 + i], R.b.line, at('side', .74 + i * .07));
+    addDot(dotsLayer, dx.a[1], R.a.line, at('busy', .6));
+    addDot(dotsLayer, dx.a[2], R.a.line, at('exit', .62));
+    addDot(dotsLayer, dx.a[3], R.a.line, at('finale', .515));
+    addDot(dotsLayer, dx.s[0], R.s.line, at('presence', .14));
+    // In the obvious design, commits arrive on the shared row and go when it does.
+    const preDots = [];
+    preDots.push({ x: dx.b[0], y: R.b.line, born: at('obvious', .72) }, { x: dx.b[1], y: R.b.line, born: at('race', .44) }, { x: dx.a[0] - 40, y: R.a.line, born: at('race', .76) });
+    preDots.forEach(d => { d.c = S('circle', { cx: d.x, cy: d.y, r: L.tall ? 7.5 : 9, fill: C.blue, display: 'none' }, dotsLayer); });
+
+    // --- The camera ---
+    const safeBase = () => {
+      const W = svg.clientWidth || svg.getBoundingClientRect().width, H = svg.clientHeight || svg.getBoundingClientRect().height;
+      if (opts.fit) { const all = { x: 6, y: 6, w: W - 12, h: H - 12 }; return { W, H, h: all, a: all, b: all }; }
+      if (L.tall) {
+        const split = H * .54, a = { x: 6, y: 8, w: W - 12, h: split - 14 };
+        return { W, H, h: a, a, b: { x: 6, y: 8, w: W - 12, h: H - 16 } };
+      }
+      // The title sits on the left, so the opening frame is to its right. After it the words run across the
+      // top, one sentence a line, as wide as they need, and the drawing has the full width below them.
+      const band = bandHeight(), h1 = document.querySelector('h1');
+      const left = h1 ? h1.getBoundingClientRect().right + 40 : W * .35;
+      return { W, H, h: { x: left, y: 22, w: W - left - 22, h: H - 44 }, a: { x: 22, y: band + 22, w: W - 44, h: H - band - 40 }, b: { x: 18, y: 14, w: W - 36, h: H - 14 - 86 } };
+    };
+    const fit = (name, s) => {
+      const [x0, y0, x1, y1] = L.frames[name];
+      const z = Math.min(s.w / (x1 - x0), s.h / (y1 - y0), 2.3);
+      return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, z };
+    };
+    let zNow = 1;
+    const camAt = (t, sb) => {
+      const box = (p, q, r) => ({ x: lerp(p.x, q.x, r), y: lerp(p.y, q.y, r), w: lerp(p.w, q.w, r), h: lerp(p.h, q.h, r) });
+      const s = box(box(sb.h, sb.a, ss(clamp((t - .72) / .34))), sb.b, ss(clamp((t - at('finale', .04)) / .16)));
+      let i = CAMERA.findIndex(k => k.t > t);
+      if (i < 0) i = CAMERA.length;
+      const a = CAMERA[Math.max(0, i - 1)], b = CAMERA[Math.min(CAMERA.length - 1, i)];
+      const ca = fit(a.frame, s), cb = fit(b.frame, s);
+      const f = a === b ? 0 : io(clamp((t - a.t) / (b.t - a.t)));
+      const z = Math.exp(lerp(Math.log(ca.z), Math.log(cb.z), f));
+      const cx = lerp(ca.cx, cb.cx, f), cy = lerp(ca.cy, cb.cy, f);
+      return { z, x: cx - (s.x + s.w / 2) / z, y: cy - (s.y + s.h / 2) / z, w: sb.W / z, h: sb.H / z };
+    };
+
+    const levelOf = (name, t) => {
+      const born = BORN[name];
+      if (born == null || t < born) return 0;
+      const birth = ss(clamp((t - born) / .08));
+      const death = DIES[name] != null ? 1 - ss(clamp((t - DIES[name]) / .08)) : 1;
+      let i = 0;
+      while (i + 1 < FOCUS.length && FOCUS[i + 1][0] <= t) i++;
+      const val = k => { const m = FOCUS[k][1]; return m === 'all' ? 1 : m[name] != null ? m[name] : DIM; };
+      const v = i > 0 ? lerp(val(i - 1), val(i), ss(clamp((t - FOCUS[i][0]) / FADE))) : val(i);
+      return v * birth * death;
+    };
+    const names = Object.keys(parts);
+
+    // Sets every tag's box from its text at the current camera.
+    const layoutLabels = z => {
+      for (const l of labels) {
+        const s = l.size;
+        if (l.fixed) { A(l.e, 'font-size', s); continue; }
+        const px = s * z;
+        // Too small to read goes by visibility, because display belongs to whoever is fading the label.
+        const gone = (l.keep ? !l.solid && px < MINPX * .6 : px < MINPX) || (l.roomFor && l.roomFor * charR * MINPX / z > P.w - 28);
+        A(l.e, 'visibility', gone ? 'hidden' : 'visible');
+        if (!gone) A(l.e, 'font-size', l.keep ? fmt(Math.max(s, MINPX / z)) : s);
+      }
+      for (const f of relayouts) f(z);
+      for (const t of tags) {
+        if (t.g.__m && t.g.__m.display === 'none') continue;
+        const size = Math.max(t.l.size, MINPX / z);
+        const chars = t.l.e.textContent.length;
+        const w = chars * size * (t.mono ? charR : .54) + 16, h = size + 12;
+        const x = t.anchor === 'middle' ? t.x - w / 2 : t.anchor === 'end' ? t.x - w : t.x;
+        A(t.r, 'x', fmt(x)); A(t.r, 'y', fmt(t.y - h / 2)); A(t.r, 'width', fmt(w)); A(t.r, 'height', fmt(h));
+        A(t.l.e, 'x', fmt(t.anchor === 'middle' ? t.x : x + 8)); A(t.l.e, 'y', fmt(t.y + size * .35));
+        A(t.l.e, 'text-anchor', t.anchor === 'middle' ? 'middle' : 'start');
+      }
+    };
+    const showTag = (t, o) => O(t.g, o);
+    const win = (id2, a, b, c, d) => clamp((t0 - T[id2] - a) / (b - a)) * (1 - clamp((t0 - T[id2] - c) / (d - c)));
+    let t0 = 0;
+
+    const windowText = (w, l, x, y, size) => place(l, x, y, size);
+
+    let measured = false;
+    const measure = () => {
+      if (measured) return;
+      const p = S('text', { class: 'mono', 'font-size': 100, y: -9999 }, world);
+      p.textContent = 'MMMMMMMMMM';
+      const v = p.getComputedTextLength ? p.getComputedTextLength() / 1000 : .6;
+      if (v > .3) { charR = v; measured = true; }
+      p.remove();
+    };
+
+    // ---------- paint(t): everything below is a function of t ----------
+    function paint(t) {
+      t0 = t;
+      measure();
+      const sb = safeBase();
+      if (!(sb.W > 40 && sb.H > 40)) return;
+      const cam = camAt(t, sb);
+      zNow = cam.z;
+      A(svg, 'viewBox', `${cam.x.toFixed(2)} ${cam.y.toFixed(2)} ${cam.w.toFixed(2)} ${cam.h.toFixed(2)}`);
+      const z = cam.z;
+      const F = id2 => clamp(t - T[id2]);
+      const W = (id2, a, b) => clamp((t - T[id2] - a) / (b - a));
+      const IN = (id2, a, b) => t >= T[id2] + a && t < T[id2] + b;
+      spotN = 0;
+      A(pill.g, 'display', 'none');
+
+      for (const n of names) if (parts[n] !== lSheet) O(parts[n], levelOf(n, t));
+      O(lSheet, levelOf('sheet', t));
+
+      // --- Panel height: it grows as rows are added ---
+      const stages = P.stages;
+      let pH = stages[0];
+      pH = lerp(pH, stages[1], ss(clamp((t - at('presence')) / .08)));
+      pH = lerp(pH, stages[2], ss(clamp((t - at('presence', .06)) / .08)));
+      pH = lerp(pH, stages[3], ss(clamp((t - at('names')) / .08)));
+      A(pBody, 'height', fmt(pH - P.y)); A(pShade, 'height', fmt(pH - P.y));
+      A(pClipR, 'height', fmt(pH - P.y));
+
+      // --- Windows ---
+      const u = dB0;
+      const finchIn = ss(W('race', .04, .2));
+      const finchW = lerp(u.w / 2 - 2, u.w * .34, ss(W('finale', .02, .14)));
+      const oW = lerp(u.w, u.w - finchW - 3, finchIn);
+      winO.set(u.x, u.y, oW, u.h);
+      winF.set(u.x + u.w - finchW * finchIn, u.y, Math.max(finchW * finchIn, .01), u.h);
+      const fsO = lerp(lap.full, lap.half, finchIn), lh = fsO * 1.2, tx = u.x + (L.tall ? 12 : 14);
+      let yy = u.y + lap.bar + fsO * .95;
+      const dFs = Math.max(fsO * .62, L.tall ? 15 : 15);
+      const showDoing = !L.tall || finchIn < .01 || z > .9;
+      place(oDoing1, tx, yy - fsO * .3, dFs); place(oDoing2, tx, yy - fsO * .3 + dFs * 1.2, dFs);
+      O(oDoing1.e, showDoing ? (1 - W('obvious', .02, .1) * .4) : 0); O(oDoing2.e, showDoing ? (1 - W('obvious', .02, .1) * .4) : 0);
+      const doingRoom = showDoing ? clamp((dFs * z - 11.2) / 1.6) : 0;
+      yy = u.y + lap.bar + dFs * 2.7 * doingRoom + fsO * (.95 + .1 * (1 - doingRoom));
+      const qStr = ['Are you changing the', 'auth middleware?'];
+      const qN = Math.round(W('obvious', .1, .36) * (qStr[0].length + qStr[1].length));
+      setStr(oQ1, qStr[0].slice(0, qN)); setStr(oQ2, qStr[1].slice(0, Math.max(0, qN - qStr[0].length)));
+      place(oQ1, tx, yy, fsO); place(oQ2, tx, yy + lh, fsO);
+      const qY = yy + lh * .4;
+      if (qN > 0 && qN < qStr[0].length + qStr[1].length) {
+        const row2 = qN > qStr[0].length, n = row2 ? qN - qStr[0].length : qN, real = Math.max(fsO, MINPX / z);
+        A(caret, 'display', 'inline'); A(caret, 'x', fmt(tx + n * real * charR)); A(caret, 'y', fmt((row2 ? yy + lh : yy) - real * .82)); A(caret, 'width', fmt(real * .56)); A(caret, 'height', fmt(real * 1.02));
+      } else A(caret, 'display', 'none');
+      const oActive = t >= at('obvious', .1) && t < at('obvious', .5) || t >= at('finale', .79);
+      A(winO.dot, 'fill', oActive ? C.green : C.idle);
+
+      // Bob's answer band, only at the very end.
+      const bandO = t >= at('finale', .78);
+      const landO = W('finale', .78, .82);
+      const oBy = yy + lh * 1.5;
+      const realFs = Math.max(fsO, MINPX / z), rFsSmall = Math.max(fsO * .62, MINPX / z), oBh = rFsSmall * 1.25 + realFs * 2.4 + 16;
+      A(oBand, 'display', bandO ? 'inline' : 'none');
+      if (bandO) {
+        A(oBand, 'x', fmt(u.x + 7)); A(oBand, 'y', fmt(oBy)); A(oBand, 'width', fmt(oW - 14)); A(oBand, 'height', fmt(oBh));
+        A(oBand, 'transform', landO < 1 ? `translate(${fmt(u.x + oW / 2)} ${fmt(oBy + oBh / 2)}) scale(${fmt(.95 + .05 * landO + .025 * Math.sin(landO * Math.PI))}) translate(${fmt(-(u.x + oW / 2))} ${fmt(-(oBy + oBh / 2))})` : '');
+      }
+      place(oFrom, tx, oBy + 6 + rFsSmall, fsO * .62); place(oA1, tx, oBy + 6 + rFsSmall * 1.25 + realFs * .98, fsO); place(oA2, tx, oBy + 6 + rFsSmall * 1.25 + realFs * 2.16, fsO);
+      [oFrom, oA1, oA2].forEach(l => O(l.e, bandO ? 1 : 0));
+      const fx = winF.x + (L.tall ? 12 : 14);
+      place(fDoing1, fx, u.y + lap.bar + fsO * .95, dFs); place(fDoing2, fx, u.y + lap.bar + fsO * .95 + dFs * 1.2, dFs);
+
+      // Alice's window.
+      const h0 = dA0;
+      winH.set(h0.x, h0.y, h0.w, h0.h);
+      const hFs = L.tall ? 21 : lap.full * .8, hx = h0.x + (L.tall ? 12 : 14);
+      const hReal = Math.max(hFs, MINPX / z), hSmall = Math.max(L.tall ? 15 : 19, MINPX / z);
+      place(hDoing1, hx, h0.y + lap.bar + hSmall * 1.35, L.tall ? 15 : 19);
+      const hClear = ss(W('finale', .06, .16));
+      const hBy = h0.y + lap.bar + lerp(hSmall * 1.9, 9, hClear);
+      const hBh = hSmall * 1.25 + hReal * 2.4 + 16;
+      const hLand = t >= at('deliver', .66), hl = W('deliver', .66, .72);
+      A(hBand, 'display', hLand ? 'inline' : 'none');
+      if (hLand) {
+        A(hBand, 'x', fmt(h0.x + 8)); A(hBand, 'y', fmt(hBy)); A(hBand, 'width', fmt(h0.w - 16)); A(hBand, 'height', fmt(hBh));
+        const cxB = h0.x + h0.w / 2, cyB = hBy + hBh / 2;
+        A(hBand, 'transform', hl < 1 ? `translate(${fmt(cxB)} ${fmt(cyB)}) scale(${fmt(.95 + .05 * hl + .025 * Math.sin(hl * Math.PI))}) translate(${fmt(-cxB)} ${fmt(-cyB)})` : '');
+      }
+      place(hFrom, hx, hBy + 6 + hSmall, L.tall ? 15 : 19); place(hQ1, hx, hBy + 6 + hSmall * 1.25 + hReal * .98, hFs); place(hQ2, hx, hBy + 6 + hSmall * 1.25 + hReal * 2.16, hFs);
+      [hFrom, hQ1, hQ2].forEach(l => O(l.e, hLand ? 1 : 0));
+      const hRy = hBy + hBh + hReal * 1.1;
+      const rStr = ['No, that\'s yours. I\'m', 'only in cookies.'];
+      const rN = Math.round(W('finale', .2, .27) * (rStr[0].length + rStr[1].length));
+      setStr(hR1, rStr[0].slice(0, rN)); setStr(hR2, rStr[1].slice(0, Math.max(0, rN - rStr[0].length)));
+      place(hR1, hx, hRy, hFs); place(hR2, hx, hRy + hReal * 1.18, hFs);
+      if (rN > 0 && rN < rStr[0].length + rStr[1].length) {
+        const row2 = rN > rStr[0].length, n = row2 ? rN - rStr[0].length : rN;
+        A(caretH, 'display', 'inline'); A(caretH, 'x', fmt(hx + n * hReal * charR)); A(caretH, 'y', fmt((row2 ? hRy + hReal * 1.18 : hRy) - hReal * .82)); A(caretH, 'width', fmt(hReal * .56)); A(caretH, 'height', fmt(hReal * 1.02));
+      } else A(caretH, 'display', 'none');
+      A(winH.dot, 'fill', (t >= at('deliver', .66) && t < at('finale', .29)) ? C.green : C.idle);
+      const qd = ss(W('busy', .3, .36)) * (1 - ss(W('finale', .06, .12)));
+      setStr(hQueued, '1 queued: its next turn');
+      const qFs = Math.max(L.tall ? 16 : 18, MINPX / z), qTop = hBy + hBh + 8;
+      place(hQueued, hx + 4, qTop + qFs * 1.15, L.tall ? 16 : 18);
+      O(hQueued.e, qd);
+      O(qBox, qd); A(qBox, 'x', fmt(h0.x + 8)); A(qBox, 'y', fmt(qTop)); A(qBox, 'width', fmt(h0.w - 16)); A(qBox, 'height', fmt(qFs * 1.7));
+      O(hDoing1.e, 1 - hClear);
+
+      // Sam's windows.
+      const pIn = ss(W('pool', .3, .44)) * (1 - ss(W('grace', .84, .96)));
+      const wGone = ss(W('exit', .02, .1)) * (1 - ss(W('exit', .84, .92)));
+      const mh = mDisp.w / 2 - 2;
+      const wW = lerp(mDisp.w, mh, pIn);
+      winW.set(mDisp.x, mDisp.y, wW, mDisp.h);
+      winP.set(mDisp.x + mDisp.w - mh * pIn, mDisp.y, Math.max(mh * pIn, .01), mDisp.h);
+      O(winW.g, levelOf('winW', t) * (1 - wGone));
+      const wf = L.tall ? 16 : 18;
+      place(wDoing1, mDisp.x + 12, mDisp.y + lap.bar + wf * 1.4, wf); place(wDoing2, mDisp.x + 12, mDisp.y + lap.bar + wf * 2.6, wf);
+      const wMsg = t >= at('exit', .88);
+      A(wBand, 'display', wMsg ? 'inline' : 'none');
+      if (wMsg) { const by = mDisp.y + lap.bar + wf * 3.2; const wh = wf * 1.9; A(wBand, 'x', mDisp.x + 8); A(wBand, 'y', fmt(by)); A(wBand, 'width', fmt(wW - 16)); A(wBand, 'height', fmt(wh)); place(wFrom, mDisp.x + 16, by + wh * .68, wf); }
+      O(wFrom.e, wMsg ? 1 : 0);
+      A(winW.dot, 'fill', C.green);
+      A(winP.dot, 'fill', C.green);
+      // A display that has gone to sleep.
+      const sleep = t >= at('presence') ? ss(W('presence', .3, .36)) * (1 - ss(W('presence', .92, 1))) : 0;
+      const night = ss(W('exit', .48, .56)) * (1 - ss(W('exit', .74, .82)));
+      O(sleepShade, levelOf('sam', t) * Math.max(sleep, night));
+      if (sleep > 0) { O(parts.dmS, levelOf('dmS', t) * (1 - .7 * sleep)); O(parts.chipW, levelOf('chipW', t) * (1 - .8 * sleep)); O(parts.routeS, levelOf('routeS', t) * (1 - .7 * sleep)); }
+
+      // --- MCP servers ---
+      const ch = L.chip;
+      const dDied = id2 => ss(W(id2, 0, .02));
+      const flick = (from, to, n, tt = t) => {
+        if (tt < from || tt >= to) return 0;
+        const x = (tt - from) / (to - from) * n, fr = x - Math.floor(x);
+        return fr < .4 ? 1 : 0;
+      };
+      const oX = lerp(ch.single, ch.o, ss(W('race', .02, .14)));
+      const fX = ch.f;
+      const restartsF = W('dies', .46, .98);
+      const oDead = Math.max(flick(at('dies', .46), at('dies', .98), 8), flick(at('daemon', .44), at('daemon', .8), 3), flick(at('grace', 2), at('grace', 2), 1));
+      const stem = (x, top) => (L.tall ? `M${x} ${ch.yB + ch.h}V${L.uB.top}` : `M${x} ${top}V${ch.yB}M${x} ${ch.yB + ch.h}V${L.uB.top}`);
+      const hasD = t >= at('daemon', .05);
+      chipO.set(oX, ch.yB, oDead, hasD ? (L.tall ? `M${oX + 48} ${ch.cyB}H${L.dB.x}M${oX} ${ch.yB + ch.h}V${L.uB.top}` : stem(oX, ch.stemTop)) : (L.tall ? `M${oX} ${ch.yB + ch.h}V${L.uB.top}` : `M${oX} ${ch.yB + ch.h}V${L.uB.top}`));
+      const fDead = flick(at('daemon', .5), at('daemon', .74), 2);
+      chipF.set(fX, ch.yB, fDead, hasD ? (L.tall ? `M${fX - 48} ${ch.cyB}H${L.dB.x + L.dB.w}M${fX} ${ch.yB + ch.h}V${L.uB.top}` : stem(fX, ch.stemTop)) : `M${fX} ${ch.yB + ch.h}V${L.uB.top}`);
+      // brave-heron's MCP server has been stopped by T3 when the message arrives; that is the point.
+      const hDead = t >= at('deliver') && t < at('finale', .12) ? 1 : 0;
+      chipH.set(ch.a, ch.yA, hDead, L.tall ? `M${ch.a + 48} ${ch.cyA}H${L.dA.x}M${ch.a} ${ch.yA + ch.h}V${L.uA.top}` : `M${ch.a} ${ch.stemTop}V${ch.yA}M${ch.a} ${ch.yA + ch.h}V${L.uA.top}`);
+      // Sam's.
+      const chipSY = M.chipY, wx = lerp(M.one, M.cw, pIn);
+      const pDead = t >= at('grace', .05) && t < at('grace', .42) || t >= at('grace', .55) ? 1 : 0;
+      chipW.set(wx, chipSY, wGone, `M${wx} ${L.dS.y + L.dS.h}V${chipSY}M${wx} ${chipSY + M.chipH}V${M.y}`);
+      chipP.set(M.cp, chipSY, pDead, `M${M.cp} ${L.dS.y + L.dS.h}V${chipSY}M${M.cp} ${chipSY + M.chipH}V${M.y}`);
+
+      // --- The obvious design's lines ---
+      A(preO, 'd', L.preO(oX));
+      A(preF, 'd', L.preF(fX));
+      O(preF, finchIn);
+      A(fp.preO, 'd', L.preO(oX));
+      A(fp.preF, 'd', L.preF(fX));
+      preDots.forEach(d => { const o = t >= d.born ? 1 - ss(W('daemon', .05, .25)) : 0; O(d.c, o * levelOf('shared', t)); });
+
+      // Pre-daemon pings: one stream per process, the daemon replaces both with one.
+      const pings = (path, n, speed, phase, o, rad = 6) => {
+        const f = (t * speed + phase) % 1;
+        for (let i = 0; i < n; i++) {
+          const g = (f + i / n) % 1;
+          const pt = ptAt(path, g);
+          spot(pt.x, pt.y, rad, C.cream, o * Math.min(1, g * 8, (1 - g) * 8));
+        }
+      };
+      if (t >= at('obvious', .46) && t < at('daemon', .3)) {
+        const ov = W('obvious', .46, .56) * (1 - W('daemon', .05, .25));
+        pings(fp.preO, 2, 7, 0, ov * (t < at('race', .28) ? 1 : .55));
+        if (finchIn > .9) pings(fp.preF, 2, 7, .35, ov * .55);
+      }
+
+      // A commit along the obvious route.
+      if (IN('obvious', .46, .72)) {
+        const f = W('obvious', .46, .72), e = oc(f), pt = ptAt(fp.preO, e);
+        spot(pt.x, pt.y, 10, C.butter, Math.min(1, f * 10));
+      }
+      // Two push together: one lands, one is refused, fetches, rebases, retries.
+      let refused = 0;
+      if (IN('race', .28, .78)) {
+        const f = W('race', .28, .44), e = ss(f), a = ptAt(fp.preO, e), b = ptAt(fp.preF, Math.min(e, .985));
+        if (f < 1) spot(a.x, a.y, 10, C.butter);
+        const bounce = W('race', .44, .56), retry = W('race', .6, .76);
+        if (bounce <= 0) spot(b.x, b.y, 10, C.butter);
+        else if (retry <= 0) { const q = ptAt(fp.preF, .985 - .22 * ss(bounce)); spot(q.x, q.y, 11, C.red, 1, C.cream); refused = 1; }
+        else if (retry < 1) { const q = ptAt(fp.preF, .765 + .235 * ss(retry)); spot(q.x, q.y, 10, C.butter); }
+      }
+      showTag(tg.refused, refused * levelOf('shared', t) * (t >= at('race', .44) ? 1 : 0));
+
+      // The reply stops at the server, and the server dies with it.
+      let stopAt = 0;
+      if (IN('dies', .04, .54)) {
+        const f = ss(W('dies', .04, .2)), q = ptAt(fp.toChipO, f);
+        const chipRed = W('dies', .46, .5);
+        spot(oX, 0, 0, C.butter, 0);
+        if (t < at('dies', .46)) spot(q.x, q.y, 10, C.butter, Math.min(1, W('dies', .04, .08) * 2));
+        stopAt = W('dies', .2, .26) * (1 - chipRed);
+      }
+      showTag(tg.cantStart, stopAt);
+      const rCount = Math.min(8, Math.ceil(restartsF * 8));
+      setStr(tg.restarts.l, `restarts: ${rCount}, in about 2 days`);
+      showTag(tg.restarts, t >= at('dies', .48) && t < at('daemon', .04) ? 1 : 0);
+
+      // --- Daemon: lands with some weight ---
+      const dLand = W('daemon', 0, .12);
+      if (dLand > 0 && dLand < 1) {
+        const s = .86 + .14 * oc(dLand) + .04 * Math.sin(dLand * Math.PI);
+        A(lDmB.inner, 'transform', `translate(${L.dB.cx} ${L.dB.y + L.dB.h / 2}) scale(${fmt(s)}) translate(${-L.dB.cx} ${-(L.dB.y + L.dB.h / 2)})`);
+      } else A(lDmB.inner, 'transform', '');
+      const aLand = W('split', .06, .16);
+      A(lDmA.inner, 'transform', aLand > 0 && aLand < 1 ? `translate(${L.dA.cx} ${L.dA.y + L.dA.h / 2}) scale(${fmt(.88 + .12 * oc(aLand))}) translate(${-L.dA.cx} ${-(L.dA.y + L.dA.h / 2)})` : '');
+      // After the daemon: one stream.
+      if (IN('daemon', .24, .98)) {
+        const o = W('daemon', .24, .34);
+        for (let i = 0; i < 3; i++) { const g = ((t * 4) + i / 3) % 1, pt = ptAt(fp.outB, g * .6); spot(pt.x, pt.y, 6, C.cream, o * Math.min(1, g * 8, (1 - g) * 8)); }
+      }
+      showTag(tg.loop, W('daemon', .3, .4) * (1 - W('commit', 0, .06)));
+      O(cards.daemon, W('daemon', .36, .46) * (1 - W('commit', 0, .06)));
+
+      // --- The required moment: rises off the screen, holds on the daemon, the word changes, it goes ---
+      const up = L.upB(oX, qY);
+      A(chipPath, 'd', up);
+      const msgRise = (a, b) => { const f = W('commit', a, b), g = ss(f), pt = ptAt(chipPath, g); return { pt, f }; };
+      const landRow = (path, e, i) => {
+        const pt = ptAt(path, e), len = path.getTotalLength();
+        const dist = Math.abs(dx.b[0] - P.x) + SZ.full[0] / 2;
+        const m = clamp(1 - (1 - e) * len / dist);
+        setPill(pt.x, pt.y, { msg: 0, size: 1 - ss(m), cA: clamp(1 - m * 2.2), overPanel: pt.x + 80 > P.x && pt.x - 80 < PX1 });
+        return pt;
+      };
+      if (IN('commit', .0, .16)) {
+        const { pt, f } = msgRise(.0, .16);
+        setPill(pt.x, pt.y, { msg: 1, size: clamp(f / .3), edge: 1 });
+      } else if (IN('commit', .16, .2)) {
+        setPill(L.dB.cx, L.dB.out, { msg: 1, edge: 1 });
+      } else if (IN('commit', .2, .34)) {
+        // On the strip the word changes: this is the only place a message becomes a commit.
+        setPill(L.dB.cx, L.dB.out, { msg: 1 - W('commit', .2, .34), edge: 1 });
+      } else if (IN('commit', .34, .84)) {
+        setPill(L.dB.cx, L.dB.out, { msg: 0, edge: 1 });
+      } else if (IN('commit', .84, 1)) {
+        landRow(fp.outB, oc(W('commit', .84, 1)));
+      }
+      // The sheet opens from the pill.
+      const sh = ss(W('commit', .36, .46)) * (1 - ss(W('commit', .74, .82)));
+      if (sh > 0) {
+        const sx = SH.x + SH.w / 2, sy = SH.y + sheetH / 2;
+        const ox = L.dB.cx - sx, oy = L.dB.out - sy;
+        A(sheetInner, 'transform', `translate(${fmt(sx + ox * (1 - sh))} ${fmt(sy + oy * (1 - sh))}) scale(${fmt(.25 + .75 * sh)}) translate(${-sx} ${-sy})`);
+      }
+      O(sheetInner, sh);
+      A(treeMark, 'width', fmt((sheetW - 16) * ss(W('commit', .5, .58))));
+      fill(rOutB, t >= at('commit', .84) ? clamp(oc(W('commit', .84, 1)) * fp.outB.getTotalLength() / rOutB.len) : 0);
+
+      // --- Blocked ---
+      if (t >= at('secret') && t < at('split')) {
+        const up2 = W('secret', .06, .3), back = W('secret', .62, .9);
+        if (up2 > 0 && up2 < 1) { const pt = ptAt(chipPath, ss(up2)); setPill(pt.x, pt.y, { msg: 1, size: clamp(up2 / .3), edge: 1 }); }
+        else if (up2 >= 1 && back <= 0) setPill(L.dB.cx, L.dB.out, { msg: 1, edge: 1, red: W('secret', .34, .4) });
+        else if (back > 0 && back < 1) { const pt = ptAt(chipPath, 1 - ss(back)); setPill(pt.x, pt.y, { msg: 1, edge: 1, red: 1, size: 1 - clamp((back - .7) / .3) }); }
+      }
+      O(lErr, W('secret', .36, .46) * (1 - W('secret', .96, 1)));
+
+      // --- Alice brings the race back, then the row splits ---
+      const sp = ss(W('split', .46, .58));
+      O(lShared, levelOf('shared', t));
+      O(sharedLabel.e, 1 - sp);
+      let refA = 0;
+      if (IN('split', .22, .46)) {
+        const f = W('split', .22, .36), e = ss(f), a = ptAt(fp.outB, e);
+        if (f < 1) spot(a.x, a.y, 10, a.x > P.x ? C.blue : C.butter);
+        const b0 = W('split', .22, .34), bounce = W('split', .36, .46);
+        const q = ptAt(fp.outA, Math.min(ss(b0) * .52 - .12 * ss(bounce), .52));
+        spot(q.x, q.y, b0 >= 1 ? 11 : 10, b0 >= 1 ? C.red : C.butter, 1, b0 >= 1 ? C.cream : null);
+        refA = b0 >= 1 ? 1 : 0;
+      }
+      showTag(tg.refusedA, refA);
+      if (IN('split', .62, .84)) {
+        const e = ss(W('split', .62, .84));
+        const a = ptAt(fp.outB, e), b = ptAt(fp.outA, e);
+        const ax = lerp(a.x, dx.b[2], clamp((a.x - dx.b[0]) / 60) * 0) ;
+        spot(ax + (e * (dx.b[2] - dx.b[0])), a.y, 10, a.x > P.x ? C.blue : C.butter);
+        spot(b.x, b.y, 10, b.x < PX1 ? C.blue : C.butter);
+      }
+      showTag(tg.landed, W('split', .84, .9) * (1 - W('split', .98, 1)));
+      fill(rOutA, t >= at('split', .62) ? clamp(ss(W('split', .62, .84)) * fp.outA.getTotalLength() / rOutA.len) : 0);
+
+      // --- Side ref: the branch experiment, then the stream ---
+      A(branchLine, 'display', t >= at('side', .1) && t < at('side', .42) ? 'inline' : 'none');
+      const toBranch = W('side', .12, .3);
+      if (toBranch > 0 && toBranch < 1) {
+        const x = lerp(L.tall ? -6 : 410, L.graph.dots[3][0], io(toBranch));
+        spot(x, L.graph.main, 10, x < P.x ? C.butter : C.red, 1, x < P.x ? null : C.cream);
+      }
+      const fired = t >= at('side', .3);
+      A(branchDot, 'display', fired && t < at('side', .46) ? 'inline' : 'none');
+      A(branchDot, 'cx', L.graph.dots[3][0]); A(branchDot, 'cy', L.graph.main);
+      const custom = t >= at('side', .46);
+      setStr(sdA.v, fired ? '1 run' : '0 runs'); setStr(sdW.v, fired ? '1 delivery' : '0 deliveries'); setStr(sdP.v, custom ? 'skips these' : fired ? 'fetches it' : 'nothing new');
+      const hot = fired && !custom ? 'b red' : 'b';
+      A(sdA.v.e, 'class', hot); A(sdW.v.e, 'class', hot); A(sdP.v.e, 'class', hot);
+      if (IN('side', .46, .68)) {
+        const e = ss(W('side', .46, .68)), x = lerp(P.x, dx.b[2] + 0, e);
+        spot(x, R.b.line, 10, C.blue);
+      }
+      for (let i = 0; i < 3; i++) {
+        const a = .68 + i * .07, f = W('side', a, a + .07);
+        if (f > 0 && f < 1) spot(lerp(P.x, dx.b[3 + i], oc(f)), R.b.line, 10, C.blue);
+      }
+      const zeroBig = W('side', .7, .8) * (1 - W('ask', 0, .1));
+      plusZero.size = fs.label * (1 + .5 * zeroBig);
+
+      // --- Polling ---
+      const shaFlip = t >= at('ask', .5);
+      setStr(shaB, shaFlip ? '43c052a' : 'c4c0bcd');
+      A(shaB.e, 'class', shaFlip && t < at('ask', .9) ? 'mono b red' : 'mono bink');
+      showTag(tg.lsr, W('ask', .1, .18) * (1 - W('ask', .54, .6)));
+      showTag(tg.fetch, W('ask', .58, .64) * (1 - W('ask', .96, 1)));
+      if (IN('ask', .1, .54)) {
+        const n = 3;
+        for (let i = 0; i < n; i++) { const g = ((t * 6.5) + i / n) % 1, pt = ptAt(fp.pingA, g); spot(pt.x, pt.y, 7, C.cream, W('ask', .1, .16) * Math.min(1, g * 8, (1 - g) * 8)); }
+      }
+      if (IN('ask', .6, .9)) {
+        const e = ss(W('ask', .6, .88)), pt = ptAt(fp.inA, e);
+        spot(pt.x, pt.y, pt.x < PX1 ? 8 : 10, pt.x < PX1 ? C.blue : C.butter);
+      }
+      fill(rInA, clamp((ss(W('ask', .6, .88)) * fp.inA.getTotalLength() - (PX1 - dx.b[0])) / rInA.len));
+
+      // --- The tape comes out of Alice's daemon ---
+      const fRate = F('rate');
+      const sim = simAt(fRate);
+      if (t >= at('rate')) {
+        A(tInner, 'transform', `translate(${fmt(tp.head - sim * tp.scale)} 0)`);
+        A(tBg, 'width', fmt(sim * tp.scale));
+        const v = rateAt(sim);
+        setStr(readBig, sim < 1 ? 'every 3 s' : `every ${v} s`);
+        setStr(readSub, v === 3 ? '1,200 an hour, around a conversation' : v === 15 ? '240 an hour, a session live and quiet' : v === 30 ? '120 an hour, nobody here' : 'doubling, while nothing is said');
+        O(cards.rate30, sim >= 424 && sim < 576 ? 1 : 0);
+        O(cards.rate3, sim >= 580 && t < at('deliver') ? 1 : 0);
+        // Each dot on the line is one ls-remote: the same ticks, further apart in space.
+        if (t < at('deliver', .1)) {
+          const len = fp.pingA.getTotalLength(), o = W('rate', .02, .06) * (1 - W('deliver', 0, .08));
+          let seen = 0;
+          for (let i = TICKS.length - 1; i >= 0 && seen < 9; i--) {
+            if (TICKS[i] > sim) continue;
+            const d = (sim - TICKS[i]) * tp.pingV;
+            if (d > len) break;
+            const pt = fp.pingA.getPointAtLength(d);
+            spot(pt.x, pt.y, 6.5, C.cream, o * Math.min(1, (len - d) / 20));
+            seen++;
+          }
+        }
+      } else { O(cards.rate30, 0); O(cards.rate3, 0); }
+
+      // --- Delivery ---
+      showTag(tg.stopped, W('deliver', .02, .08) * (1 - W('deliver', .1, .14)));
+      const toServer = W('deliver', .1, .24), stuck = W('deliver', .24, .28) * (1 - W('deliver', .4, .44));
+      if (toServer > 0 && t < at('deliver', .44)) {
+        const pt = ptAt(fp.toChipA, ss(toServer));
+        spot(pt.x, pt.y, 10, C.butter, 1 - W('deliver', .4, .44));
+      }
+      showTag(tg.cantStartA, stuck);
+      showTag(tg.t3send, W('deliver', .4, .46) * (1 - W('busy', .46, .52)));
+      const byD = ss(W('deliver', .34, .46));
+      A(byA, 'stroke-dasharray', `${byD.toFixed(3)} 1`);
+      const byPathA = L.byA(hBy + hBh / 2);
+      A(chipPath, 'd', byPathA);
+      if (IN('deliver', .46, .68)) {
+        const f = W('deliver', .46, .66), pt = ptAt(chipPath, ss(f));
+        setPill(pt.x, pt.y, { msg: 1, size: clamp(f / .2), edge: 1, o: 1 - W('deliver', .66, .68) });
+      }
+      showTag(tg.nobody, W('deliver', .72, .78) * (1 - W('busy', .44, .5)));
+      showTag(tg.hop, W('deliver', .74, .8) * (1 - W('busy', .04, .1)));
+
+      // Busy: it takes a queue; out of reach: an inbox.
+      if (IN('busy', .1, .3)) {
+        const pt = ptAt(chipPath, ss(W('busy', .1, .3)));
+        spot(pt.x, pt.y, 9, C.butter);
+      }
+      if (IN('busy', .56, .9)) {
+        const e = ss(W('busy', .56, .78)), pt = ptAt(fp.inB, e);
+        const g = W('busy', .78, .9), q = ptAt(fp.toChipF, ss(g));
+        if (g <= 0) spot(pt.x, pt.y, pt.x > P.x ? 8 : 10, pt.x > P.x ? C.blue : C.butter);
+        else spot(q.x, q.y, 10, C.butter);
+      }
+      showTag(tg.inboxF, W('busy', .88, .93) * (1 - W('presence', 0, .06)));
+      showTag(tg.codex, W('busy', .68, .74) * (1 - W('presence', 0, .06)));
+      if (t >= at('busy', .9) && t < at('presence')) spot(ch.f, L.tall ? ch.yB + ch.h : ch.yB, 9, C.butter);
+      fill(rInB, t >= at('finale', .6) ? clamp(ss(W('finale', .6, .7)) * fp.inB.getTotalLength() / rInB.len) : t >= at('busy', .56) && t < at('presence') ? clamp(ss(W('busy', .56, .78)) * fp.inB.getTotalLength() / rInB.len) : 0);
+
+      // --- Presence ---
+      const fp2 = F('presence');
+      const minutes = lerp(0, 9, clamp((fp2 - .14) / .76));
+      const asleep = minutes >= 2.6 && t < at('presence', .92);
+      const beat = (dev, i) => {
+        if (t < at('presence', .08)) return;
+        const last = Math.floor(minutes / 2) * 2 + (i * .17);
+        const ago = minutes - last;
+        return ago;
+      };
+      [0, 1, 2].forEach(i => {
+        const dead = i === 2 && (asleep || (t >= at('exit', .5) && t < at('exit', .84)));
+        const ago = beat(i, i);
+        const pulse = ago != null && ago >= 0 && ago < .5 && t < at('presence', 1) && !dead ? 1 - ago / .5 : 0;
+        A(presDot[i], 'r', fmt(7 + 7 * pulse));
+        A(presDot[i], 'fill', pulse > .2 ? C.blue : C.ink);
+      });
+      // Sam's last heartbeat is pushed at minute 2.34 (see beat()); Alice's daemon sees it at its next 3 s poll.
+      const SEEN = 2.4, since = t >= at('presence', .14) ? minutes - SEEN : 0;
+      const staleNow = since >= 6 && t < at('presence', .92);
+      const readerMin = clamp(since, 0, 6);
+      const showClock = W('presence', .44, .5) * (1 - W('presence', .92, .98));
+      if (showClock > 0) {
+        const mm = Math.floor(readerMin), secs = Math.floor((readerMin - mm) * 60);
+        setStr(bigNum, `${mm}:${String(secs).padStart(2, '0')}`);
+        A(bigNum.e, 'x', L.stale.x); A(bigNum.e, 'y', L.stale.y); A(bigNum.e, 'class', readerMin >= 6 ? 'b red' : 'b butter');
+        setStr(bigLab, L.tall ? 'since Sam\'s presence changed' : 'since Sam\'s presence changed, by this clock');
+        A(bigLab.e, 'x', L.stale.x); A(bigLab.e, 'y', L.stale.ly);
+      }
+      const exitT = W('exit', .1, .46);
+      const showExit = exitT > 0 && t < at('exit', .5);
+      if (showExit) {
+        const left = 10 * (1 - exitT), mm = Math.floor(left), secs = Math.floor((left - mm) * 60);
+        setStr(bigNum, `${mm}:${String(secs).padStart(2, '0')}`);
+        A(bigNum.e, 'class', 'b butter');
+        A(bigNum.e, 'x', L.tall ? 890 : 1170); A(bigNum.e, 'y', L.tall ? 505 : 590);
+        setStr(bigLab, 'no sessions, no open page');
+        A(bigLab.e, 'x', L.tall ? 890 : 1170); A(bigLab.e, 'y', L.tall ? 458 : 616);
+      }
+      O(bigNum.e, Math.max(showClock, showExit ? 1 : 0));
+      O(bigLab.e, Math.max(showClock, showExit ? 1 : 0));
+      if (L.tall) O(parts.tape, levelOf('tape', t) * (1 - showClock));
+      showTag(tg.stale, staleNow ? 1 : 0);
+      O(cards.who, staleNow ? 1 : 0);
+      const presSamGone = ss(W('exit', .46, .52)) * (1 - ss(W('exit', .84, .9)));
+      O(presRow[2], (staleNow ? .4 : 1) * (1 - presSamGone));
+
+      // --- Names ---
+      const fN = F('names');
+      A(laneA, 'stroke-dasharray', '4 7'); A(laneS, 'stroke-dasharray', '4 7');
+      const lx = n => n;
+      showTag(tg.lease, W('names', .12, .2) * (1 - W('names', .94, 1)));
+      showTag(tg.leaseNo, t >= at('names', .4) && t < at('names', .6) ? 1 : 0);
+      if (fN > 0 && fN < 1) {
+        const ga = W('names', .14, .4), gs = W('names', .14, .36);
+        const a = ptAt(fp.laneA, ss(ga) * .98), s = ptAt(fp.laneS, ss(gs));
+        const refused = fN >= .4 && fN < .6;
+        const back = W('names', .4, .56), again = W('names', .62, .86);
+        if (gs < 1) setName(nS, s.x, s.y, 'creamy-duiker');
+        else setName(nS, 0, 0, '', 0);
+        if (ga < 1) setName(nA, a.x, a.y, 'creamy-duiker');
+        else if (again <= 0) { const q = ptAt(fp.laneA, .98 - .5 * ss(back)); setName(nA, q.x, q.y, back > .6 ? 'creamy-duiker' : 'creamy-duiker', 1, back < .6); }
+        else if (again < 1) { const q = ptAt(fp.laneA, .48 + .52 * ss(again)); setName(nA, q.x, q.y, 'paramount-village'); }
+        else setName(nA, 0, 0, '', 0);
+      } else { setName(nA, 0, 0, '', 0); setName(nS, 0, 0, '', 0); }
+      const rec = t >= at('names', .86) ? 'paramount-village -> alice-mbp-91c0/2e60bd' : t >= at('names', .36) ? 'creamy-duiker -> sam-desktop-7be1/a81c0e' : '8d04c7a';
+      setStr(namesRec, t >= at('pool') ? '8d04c7a' : rec);
+      // Where the record and the ref's name can't both fit, the record wins while it is news.
+      if (L.tall || namesRec.e.textContent.length * charR * Math.max(fs.row - 1, MINPX / z) + 17 * charR * Math.max(fs.row, MINPX / z) > P.w - 48) O(namesLabel.e, t >= at('names', .36) && t < at('pool') ? 0 : 1);
+      else O(namesLabel.e, 1);
+
+      // --- The pool ---
+      const fillN = Math.round(W('pool', .02, .22) * 10);
+      const taken = t >= at('pool', .3) ? 1 : 0;
+      const refill = t >= at('pool', .72) ? 1 : 0;
+      const chipAt = i => ({ x: TR.x + (i % 5) * (TR.w + TR.gap), y: TR.y + Math.floor(i / 5) * (TR.h + TR.gap) });
+      trayChips.forEach((c, i) => {
+        const shift = ss(W('pool', .46, .56));
+        const idx = i - taken * shift;
+        const p0 = chipAt(Math.max(0, Math.floor(idx))), p1 = chipAt(Math.max(0, Math.ceil(idx)));
+        const fr = idx - Math.floor(idx), q = { x: lerp(p0.x, p1.x, fr), y: lerp(p0.y, p1.y, fr) };
+        A(c, 'x', fmt(q.x)); A(c, 'y', fmt(q.y));
+        const visible = (i < fillN && !(i === 0 && taken)) || (i === 10 && refill);
+        A(c, 'display', visible ? 'inline' : 'none');
+      });
+      const flyN = W('pool', .28, .46);
+      if (flyN > 0 && flyN < 1) {
+        const a = chipAt(0), bx = lerp(a.x, M.cp - 20, ss(flyN)), by = lerp(a.y, mDisp.y + lap.bar / 2, ss(flyN));
+        setName(nT, bx, by, 'polar-walnut');
+      } else setName(nT, 0, 0, '', 0);
+      showTag(tg.noNet, W('pool', .3, .36) * (1 - W('pool', .62, .68)));
+      O(cards.pool, W('pool', .5, .58) * (1 - W('pool', .96, 1)));
+      // --- Grace ---
+      const gr = t >= at('grace', .05) && t < at('grace', .42) ? W('grace', .05, .42) * (40 / 60) : t >= at('grace', .55) && t < at('grace', .9) ? W('grace', .55, .86) : -1;
+      if (gr >= 0) {
+        A(graceRing, 'display', 'inline'); A(graceRing, 'cx', M.cp); A(graceRing, 'cy', chipSY + M.chipH / 2); A(graceRing, 'r', 66);
+        A(graceRing, 'stroke-dasharray', `${(1 - gr).toFixed(3)} 1`);
+        A(graceRing, 'transform', `rotate(-90 ${M.cp} ${chipSY + M.chipH / 2})`);
+        setStr(tg.grace.l, `${Math.ceil(60 * (1 - gr))} s`);
+        showTag(tg.grace, 1);
+      } else { A(graceRing, 'display', 'none'); showTag(tg.grace, 0); }
+      showTag(tg.noBus, t >= at('grace', .42) && t < at('grace', .55) ? 1 : 0);
+      O(cards.reconn, t >= at('grace', .42) && t < at('grace', .55) ? 1 : 0);
+      O(cards.stopped, t >= at('grace', .86) && t < at('exit', .08) ? 1 : 0);
+      showTag(tg.kept, W('grace', .88, .94) * (1 - W('exit', .42, .46)));
+      A(exitRing, 'display', 'none');
+      // --- Exit ---
+      O(cards.exit, W('exit', .4, .46) * (1 - W('exit', .54, .58)));
+      const dGone = ss(W('exit', .46, .5)) * (1 - ss(W('exit', .78, .84)));
+      O(lDmS.inner, 1 - dGone);
+      O(lDmS.dash, dGone);
+      O(lDmS.gone.e, dGone);
+      A(lDmS.led, 'fill', C.green);
+      // The other two daemons never exit in this story.
+      O(lDmB.dash, 0); O(lDmB.gone.e, 0); O(lDmA.dash, 0); O(lDmA.gone.e, 0);
+      showTag(tg.night, W('exit', .54, .6) * (1 - W('exit', .72, .76)));
+      showTag(tg.morning, W('exit', .78, .82));
+      if (t >= at('exit', .95) && false) showTag(tg.morning, 0);
+      if (t >= at('limits')) showTag(tg.morning, 0);
+      if (IN('exit', .84, .92)) {
+        const pt = ptAt(fp.outS, 1 - ss(W('exit', .84, .92)));
+        spot(pt.x, pt.y, 9, C.butter);
+      }
+
+      // --- Limits ---
+      O(cards.limits, W('limits', .14, .24) * (1 - W('limits', .96, 1)));
+
+      // --- Finale: the answer, the whole way ---
+      if (t >= at('finale')) {
+        const up3 = L.upA(hRy);
+        A(chipPath, 'd', up3);
+        const out = at('finale');
+        if (IN('finale', .27, .33)) { const f = W('finale', .27, .33), pt = ptAt(chipPath, ss(f)); setPill(pt.x, pt.y, { msg: 1, size: clamp(f / .3), edge: 1 }); }
+        else if (IN('finale', .33, .35)) setPill(L.dA.cx, L.dA.out, { msg: 1, edge: 1 });
+        else if (IN('finale', .35, .42)) setPill(L.dA.cx, L.dA.out, { msg: 1 - W('finale', .35, .42), edge: 1 });
+        else if (IN('finale', .42, .52)) {
+          const e = oc(W('finale', .42, .52)), pt = ptAt(fp.outA, e), len = fp.outA.getTotalLength();
+          const dist = Math.abs(PX1 - dx.a[3]) + SZ.full[0] / 2, m = clamp(1 - (1 - e) * len / dist);
+          const yes = dx.a[0];
+          setPill(pt.x, pt.y, { msg: 0, size: 1 - ss(m), cA: clamp(1 - m * 2.2), overPanel: pt.x - 80 < PX1 });
+        } else if (IN('finale', .6, .7)) {
+          const e = ss(W('finale', .6, .7)), pt = ptAt(fp.inB, e);
+          spot(pt.x, pt.y, pt.x > P.x ? 8 : 10, pt.x > P.x ? C.blue : C.butter);
+        } else if (IN('finale', .7, .79)) {
+          const q = L.byB(oBy + oBh / 2);
+          A(chipPath, 'd', q);
+          const f = W('finale', .7, .78), pt = ptAt(chipPath, ss(f));
+          setPill(pt.x, pt.y, { msg: 1, size: clamp(f / .2), edge: 1, o: 1 - W('finale', .78, .79) });
+        }
+        const secs = Math.floor(lerp(7, 15, clamp(W('finale', .2, .79))));
+        setStr(clkN, `${Math.min(15, secs)} s`);
+        const done = t >= at('finale', .79);
+        A(clkN.e, 'class', done ? 'b butter' : 'b cream');
+        
+      }
+      A(byB, 'stroke-dasharray', `${ss(W('finale', .68, .74)).toFixed(3)} 1`);
+      O(byB, t >= at('finale', .68) ? 1 : 0);
+
+      // Lines settle once they have carried something.
+      O(pushLabel.e, t >= at('commit', .84) ? 1 : 0);
+      O(fetchLabel.e, t >= at('ask', .6) ? 1 : 0);
+
+      // Row dots.
+      for (const d of rowDots) {
+        if (t < d.born) { A(d.c, 'display', 'none'); continue; }
+        const f = clamp((t - d.born) / .05), s = 1 + .35 * Math.sin(f * Math.PI);
+        A(d.c, 'display', 'inline'); A(d.c, 'r', fmt(d.r * s));
+        A(d.c, 'opacity', fmt(Math.max(levelOf('shared', t), levelOf('rowB', t), levelOf('panel', t))));
+      }
+
+      // Unused flyers go away.
+      for (let i = spotN; i < spots.length; i++) A(spots[i], 'display', 'none');
+      layoutLabels(z);
+    }
+
+    return { paint, parts };
+  }
+
+  // ---------- Page wiring ----------
+  const root = document.documentElement;
+  const stacked = matchMedia('(max-aspect-ratio: 1/1), (max-width: 999px)');
+  const layout = () => (stacked.matches ? TALL : WIDE);
+
+  if (root.classList.contains('static')) {
+    // Reduced motion: every section gets its own copy of the drawing, stopped at its finished state.
+    const NS = 'http://www.w3.org/2000/svg';
+    const figures = [];
+    // Each chapter gets one finished figure, above its own passage when it has one.
+    document.querySelectorAll('.ch').forEach(ch => {
+      const ids = ch.dataset.id.split(' '), notes = [...ch.querySelectorAll('.note')];
+      const own = notes.length === ids.length && ids.length > 1;
+      const figs = ids.map((id, i) => {
+        const fig = document.createElementNS(NS, 'svg');
+        fig.setAttribute('class', 'fig');
+        fig.setAttribute('role', 'img');
+        fig.setAttribute('aria-label', `The drawing at this point: ${(own ? notes[i] : ch).querySelector('h1, p').textContent}`);
+        figures.push({ fig, t: T[id] + STILL[id] });
+        return fig;
+      });
+      if (ids[0] === 'open') ch.append(...figs);
+      else if (own) figs.forEach((f, i) => notes[i].before(f));
+      else ch.prepend(...figs);
+    });
+    const draw = () => figures.forEach(f => { makeScene(f.fig, layout(), { fit: true }).paint(f.t); });
+    draw();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(draw);
+    let drawnW = innerWidth;
+    addEventListener('resize', () => { if (innerWidth !== drawnW) { drawnW = innerWidth; draw(); } });
+    window.__ready = true;
+    return;
+  }
+
+  const svg = document.getElementById('world');
+  const track = document.getElementById('track');
+  const stage = document.getElementById('stage');
+  const end = document.getElementById('end');
+  const progress = document.getElementById('progress');
+  let scene, tops = [], yEnd = 1, pin = 0, topY = 0;
+
+  function measurePage() {
+    const sections = [...document.querySelectorAll('.ch')];
+    topY = track.getBoundingClientRect().top + scrollY;
+    // A chapter starts when its section's top reaches this line, so its note is arriving, not gone.
+    pin = innerHeight * (stacked.matches ? .62 : .7);
+    // A section holds one or more chapters, splitting its height by data-w.
+    tops = [];
+    for (const s of sections) {
+      const ids = s.dataset.id.split(' '), ws = (s.dataset.w || '1').split(' ').map(Number);
+      const sum = ws.reduce((a, b) => a + b, 0);
+      let acc = 0;
+      ids.forEach((id, k) => { tops[T[id]] = s.offsetTop + s.offsetHeight * acc / sum; acc += ws[k]; });
+    }
+    yEnd = track.offsetHeight - innerHeight + pin;
+  }
+  const tFromScroll = () => {
+    const y = scrollY - topY + pin;
+    const first = pin;
+    if (y <= first) return 0;
+    for (let i = 0; i < N; i++) {
+      const a = i === 0 ? first : tops[i], b = i + 1 < N ? tops[i + 1] : yEnd;
+      if (y < b) return i + clamp((y - a) / (b - a));
+    }
+    return N;
+  };
+
+  // The camera follows a smoothed copy of t, so a mouse wheel's steps don't read as jumps. It is
+  // only display smoothing: where it settles is exactly what scroll position says.
+  let shown = 0, target = 0, last = 0, running = false;
+  const clip = t => {
+    const open = ss(clamp((t - T.finale - .04) / .16));
+    stage.style.clipPath = stacked.matches ? `inset(0 0 ${((1 - open) * 46).toFixed(2)}% 0)` : '';
+    const cta = clamp((t - T.finale - .86) / .07);
+    end.style.opacity = stacked.matches ? clamp(1 - (t - T.finale) / .06) : cta;
+    end.style.visibility = (stacked.matches ? t - T.finale > .06 : cta <= 0) ? 'hidden' : 'visible';
+    progress.style.transform = `scaleX(${(t / N).toFixed(4)})`;
+  };
+  // One passage at a time: each fades in as its first chapter starts and out as its last one ends. The
+  // title fades before the first passage arrives where it sits.
+  // A section with a passage per chapter shows them in turn; one passage spans all its section's chapters.
+  const passages = [...document.querySelectorAll('.ch')].flatMap(s => {
+    const ids = s.dataset.id.split(' '), notes = [...s.querySelectorAll('.note')];
+    if (notes.length === ids.length && ids.length > 1) return notes.map((n, i) => ({ n, a: T[ids[i]], b: T[ids[i]] + 1 }));
+    return notes.map(n => ({ n, a: T[ids[0]], b: T[ids[ids.length - 1]] + 1 }));
+  });
+  const fade = t => passages.forEach(p => {
+    const o = p.a === 0 ? 1 - clamp((t - .78) / .2) : clamp((t - p.a) / .1) * clamp((p.b - t) / .08);
+    p.n.style.opacity = o.toFixed(3);
+    p.n.style.visibility = o > .002 ? 'visible' : 'hidden';
+  });
+  const draw = t => { scene.paint(Math.min(t, N - 1e-4)); clip(t); fade(t); };
+  function tick(now) {
+    const dt = Math.min(64, now - last);
+    last = now;
+    shown += (target - shown) * (1 - Math.exp(-dt / 60));
+    if (Math.abs(target - shown) < .0006) { shown = target; running = false; }
+    draw(shown);
+    if (running) requestAnimationFrame(tick);
+  }
+  const onScroll = () => {
+    target = tFromScroll();
+    if (!running) { running = true; last = performance.now(); requestAnimationFrame(tick); }
+  };
+  let built = null, builtW = 0;
+  // On a phone the finished drawing takes the whole screen, so its sentence waits below it, with the buttons.
+  const endLine = end.querySelector('p'), after = document.querySelector('.after');
+  const placeEnd = () => { if (stacked.matches) after.prepend(endLine); else end.prepend(endLine); };
+  function setup() {
+    placeEnd();
+    if (layout() !== built || innerWidth !== builtW) {
+      built = layout();
+      builtW = innerWidth;
+      scene = makeScene(svg, built);
+    }
+    measurePage();
+    target = shown = tFromScroll();
+    draw(shown);
+  }
+  addEventListener('scroll', onScroll, { passive: true });
+  addEventListener('resize', setup);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(setup);
+  setup();
+
+  // For tests: ask for any frame.
+  window.__seek = (id, f = 0) => {
+    const i = T[id], a = i === 0 ? pin : tops[i], b = i + 1 < N ? tops[i + 1] : yEnd;
+    scrollTo({ top: a + (b - a) * f + topY - pin, behavior: 'instant' });
+    shown = target = i + f; running = false; draw(shown);
+    return shown;
+  };
+  window.__ready = true;
+})();
+</script>
+</body>
+</html>
