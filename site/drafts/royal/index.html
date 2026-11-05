@@ -37,15 +37,15 @@
     --sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     /* Grain: fractal noise, grey, tiled. Kept faint; it is there to be felt more than seen. */
     --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    /* Reeded glass: one 14px flute is a bright left edge rolling off into shade on its right. */
+    /* The face of each 12px reed: a bright hairline on its left edge, a dark one on its right, and
+       a faint roll between. It matches the period of the refraction in the hero's SVG filter. */
     --flutes: repeating-linear-gradient(90deg,
-      rgba(255, 255, 255, 0) 0px,
-      rgba(255, 255, 255, .20) 1.5px,
-      rgba(255, 255, 255, .07) 4.5px,
-      rgba(255, 255, 255, 0) 7px,
-      rgba(28, 15, 61, .12) 10.5px,
-      rgba(28, 15, 61, .27) 13.25px,
-      rgba(255, 255, 255, 0) 14px);
+      rgba(255, 255, 255, .16) 0px,
+      rgba(255, 255, 255, .05) 1px,
+      rgba(255, 255, 255, 0) 5px,
+      rgba(28, 15, 61, .05) 9px,
+      rgba(28, 15, 61, .22) 11px,
+      rgba(28, 15, 61, .30) 12px);
   }
   * { box-sizing: border-box; margin: 0; }
   html, body { background: var(--purple); color: var(--white); }
@@ -64,36 +64,21 @@
     align-items: center;
     justify-content: center;
     isolation: isolate;
-    background: linear-gradient(180deg, #7A43DD 0%, var(--purple) 45%, #6634C8 100%);
+    background: linear-gradient(180deg, #7845DC 0%, #6C3BD3 55%, var(--purple) 100%);
   }
 
-  /* The light behind the glass: a warm gold figure out of focus, with deeper violet shapes beside it.
-     One layer the size of the hero, blurred once; it never moves, so the blur is drawn once. The gold
-     sits low and to the sides so the headline stays on purple. */
-  .glass, .glass::before, .glass::after { position: absolute; pointer-events: none; }
-  .glass { inset: 0; z-index: 0; overflow: hidden; }
-  .glass::before {
-    content: "";
-    inset: -12%;
-    background:
-      radial-gradient(10% 13% at 74% 76%, rgba(255, 226, 170, .9), rgba(255, 226, 170, 0) 75%),
-      radial-gradient(24% 28% at 74% 77%, rgba(237, 177, 88, 1), rgba(237, 177, 88, 0) 72%),
-      radial-gradient(10% 16% at 82% 60%, rgba(237, 177, 88, .55), rgba(237, 177, 88, 0) 72%),
-      radial-gradient(19% 18% at 17% 84%, rgba(237, 177, 88, .85), rgba(237, 177, 88, 0) 72%),
-      radial-gradient(8% 30% at 64% 66%, rgba(40, 16, 98, .85), rgba(40, 16, 98, 0) 72%),
-      radial-gradient(16% 34% at 32% 52%, rgba(52, 23, 122, .75), rgba(52, 23, 122, 0) 70%),
-      radial-gradient(26% 26% at 54% 28%, rgba(66, 30, 140, .6), rgba(66, 30, 140, 0) 70%),
-      radial-gradient(18% 24% at 90% 22%, rgba(150, 104, 232, .5), rgba(150, 104, 232, 0) 70%),
-      radial-gradient(14% 20% at 10% 30%, rgba(150, 104, 232, .35), rgba(150, 104, 232, 0) 70%);
-    filter: blur(40px);
-  }
-  /* The reeds over it. Soft light lets each flute catch the gold and sink into the violet. */
-  .glass::after {
-    content: "";
-    inset: 0;
-    background: var(--flutes);
-    mix-blend-mode: soft-light;
-  }
+  /* The light behind the glass: a gold figure smeared sideways, as if it moved while the shutter was
+     open, with a dark violet shape beside it and over its edge. It is an inline SVG drawn once: the
+     shapes are blurred more across than down, then an feDisplacementMap pushes each 12px strip
+     sideways by a sawtooth ramp, which is what reeded glass does to what is behind it. Nothing moves,
+     so the filter runs once; the text sits above it, untouched. */
+  .glass { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+    /* It fades out at the foot of the hero, so the ground runs on into page 2 without a seam. */
+    -webkit-mask-image: linear-gradient(180deg, #000 82%, transparent 100%); mask-image: linear-gradient(180deg, #000 82%, transparent 100%); }
+  .glass svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .glass .narrow { display: none; }
+  /* The reed faces over the refracted light. Soft light keeps them from greying the purple. */
+  .glass::after { content: ""; position: absolute; inset: 0; background: var(--flutes); mix-blend-mode: soft-light; }
   /* Grain, faint, for tactility. */
   .page::before {
     content: "";
@@ -104,17 +89,7 @@
     background: var(--grain);
     background-size: 180px 180px;
     mix-blend-mode: overlay;
-    opacity: .16;
-  }
-  /* A second, plain pass of the reeds, so the stripes still read where soft light has little to work on. */
-  .page::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    background: var(--flutes);
-    opacity: .14;
+    opacity: .12;
   }
 
   .center { text-align: center; padding: 0 24px; position: relative; z-index: 1; }
@@ -226,17 +201,9 @@
     .card { position: static; width: 88%; padding: 14px 16px; }
     .c-finch, .c-wren { display: none; }
     .c-heron, .c-reply { align-self: flex-end; }
-    /* On a narrow screen the gold gathers at the foot of the hero, under the cards. */
-    .glass::before {
-      inset: -8%;
-      background:
-        radial-gradient(42% 16% at 72% 78%, rgba(237, 177, 88, .9), rgba(237, 177, 88, 0) 72%),
-        radial-gradient(30% 10% at 18% 94%, rgba(237, 177, 88, .6), rgba(237, 177, 88, 0) 72%),
-        radial-gradient(22% 18% at 40% 70%, rgba(52, 23, 122, .7), rgba(52, 23, 122, 0) 70%),
-        radial-gradient(40% 18% at 30% 22%, rgba(74, 35, 153, .55), rgba(74, 35, 153, 0) 70%),
-        radial-gradient(30% 12% at 86% 30%, rgba(156, 112, 235, .45), rgba(156, 112, 235, 0) 70%);
-      filter: blur(36px);
-    }
+    /* On a narrow screen the figure is redrawn for the tall hero: same shapes, smaller blur. */
+    .glass .wide-g { display: none; }
+    .glass .narrow { display: inline; }
   }
 
   /* ---------- Page 2 ---------- */
@@ -255,15 +222,12 @@
     z-index: 0;
     pointer-events: none;
     background:
-      var(--grain),
       var(--flutes),
       radial-gradient(40% 22% at 50% 88%, rgba(237, 177, 88, .34), rgba(237, 177, 88, 0) 75%),
       radial-gradient(30% 26% at 12% 70%, rgba(52, 23, 122, .45), rgba(52, 23, 122, 0) 75%),
       radial-gradient(30% 26% at 90% 64%, rgba(52, 23, 122, .4), rgba(52, 23, 122, 0) 75%),
       linear-gradient(180deg, var(--purple) 0%, #6A37CE 60%, var(--purple-deep) 100%);
-    background-size: 180px 180px, auto, auto, auto, auto, auto;
-    background-blend-mode: soft-light, soft-light, normal, normal, normal, normal;
-    opacity: .9;
+    background-blend-mode: soft-light, normal, normal, normal, normal;
   }
 
   /* The film was rendered on its own deeper purple, so it is shown as a screen: an ink bezel with
@@ -394,7 +358,7 @@
 </head>
 <body>
 <main class="page">
-  <div class="glass" aria-hidden="true"></div>
+  <div class="glass" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg"><defs><filter id="reed" filterUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="64 14" result="b"/><feImage href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2560' height='1600'%3E%3Cdefs%3E%3ClinearGradient id='r'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(255,128,0)'/%3E%3C/linearGradient%3E%3Cpattern id='p' width='12' height='1600' patternUnits='userSpaceOnUse'%3E%3Crect width='12' height='1600' fill='url(%23r)'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='2560' height='1600' fill='url(%23p)'/%3E%3C/svg%3E" x="0" y="0" width="2560" height="1600" preserveAspectRatio="none" result="saw"/><feDisplacementMap in="b" in2="saw" scale="34" xChannelSelector="R" yChannelSelector="G"/></filter><filter id="reed-n" filterUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="34 10" result="b"/><feImage href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2560' height='1600'%3E%3Cdefs%3E%3ClinearGradient id='r'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(255,128,0)'/%3E%3C/linearGradient%3E%3Cpattern id='p' width='12' height='1600' patternUnits='userSpaceOnUse'%3E%3Crect width='12' height='1600' fill='url(%23r)'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='2560' height='1600' fill='url(%23p)'/%3E%3C/svg%3E" x="0" y="0" width="2560" height="1600" preserveAspectRatio="none" result="saw"/><feDisplacementMap in="b" in2="saw" scale="26" xChannelSelector="R" yChannelSelector="G"/></filter></defs><g class="wide-g" filter="url(#reed)"><ellipse cx="17%" cy="58%" rx="21%" ry="4.5%" fill="#EDB158" opacity=".7"/><ellipse cx="25%" cy="65%" rx="15%" ry="17%" fill="#EDB158"/><ellipse cx="22%" cy="80%" rx="22%" ry="5.5%" fill="#EDB158" opacity=".85"/><ellipse cx="30%" cy="54%" rx="11%" ry="4%" fill="#EDB158" opacity=".7"/><ellipse cx="22%" cy="64%" rx="8%" ry="8%" fill="#F7D193"/><ellipse cx="51%" cy="32%" rx="7%" ry="14%" fill="#2E1580"/><ellipse cx="46%" cy="58%" rx="10%" ry="11%" fill="#3B1D99"/><ellipse cx="54%" cy="72%" rx="10%" ry="22%" fill="#3B1D99"/><ellipse cx="84%" cy="88%" rx="11%" ry="4%" fill="#EDB158" opacity=".45"/></g><g class="narrow" filter="url(#reed-n)"><ellipse cx="24%" cy="56%" rx="46%" ry="5.5%" fill="#EDB158"/><ellipse cx="14%" cy="64%" rx="36%" ry="3%" fill="#EDB158" opacity=".85"/><ellipse cx="34%" cy="50%" rx="26%" ry="2%" fill="#EDB158" opacity=".6"/><ellipse cx="18%" cy="57%" rx="18%" ry="3%" fill="#F7D193"/><ellipse cx="62%" cy="44%" rx="22%" ry="5%" fill="#2E1580"/><ellipse cx="80%" cy="62%" rx="22%" ry="9%" fill="#3B1D99"/><ellipse cx="86%" cy="90%" rx="30%" ry="2.5%" fill="#EDB158" opacity=".5"/></g></svg></div>
   <p class="agent-note" data-prose>Setting this up with a coding agent? Send it this link. Agents: follow <a href="https://murmur.afig.dev/setup">https://murmur.afig.dev/setup</a>, and ask your user first.</p>
   <div class="center">
     <h1><span>Intra-repo agent communication.</span> <span>Your agents work better as a team.</span></h1>
