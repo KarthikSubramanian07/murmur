@@ -162,7 +162,7 @@ const PALETTES = {
   classic: { name: 'Classic', colors: ['#225BFF', '#FFFBEA', '#FDEE8C'] },
   royal:   { name: 'Royal',   colors: ['#723CD6', '#FCFFFF', '#EDB158'] },
 };
-const KINDS = { live: 'Live site', plain: 'Plain', tex: 'Textured', name: 'Textured + name', calm: 'Refracted, calm', calm2: 'Calm, round 2', stage: 'Royal look, blue', hero: 'Wordmark hero' };
+const KINDS = { live: 'Live site', plain: 'Plain', tex: 'Textured', name: 'Textured + name', calm: 'Refracted, calm', calm2: 'Calm, round 2', stage: 'Royal look, blue', tight: 'Tight', hero: 'Wordmark hero' };
 
 const SITES = [
   { id: 'live',         palette: 'live',    kind: 'live',  url: '../' },
@@ -194,6 +194,9 @@ const SITES = [
   { id: 'classic-calm-glass-bubbles', palette: 'classic', kind: 'calm2', url: 'classic-calm-glass-bubbles/', note: 'Glass bubbles' },
   { id: 'classic-calm-spotlight',     palette: 'classic', kind: 'calm2', url: 'classic-calm-spotlight/',     note: 'Spotlight' },
   { id: 'classic-calm-night',         palette: 'classic', kind: 'calm2', url: 'classic-calm-night/',         note: 'Night' },
+  { id: 'classic-tight-butter-word', palette: 'classic', kind: 'tight', url: 'classic-tight-butter-word/', note: 'Butter word' },
+  { id: 'classic-tight-beam',        palette: 'classic', kind: 'tight', url: 'classic-tight-beam/',        note: 'Beam' },
+  { id: 'classic-tight-plain',       palette: 'classic', kind: 'tight', url: 'classic-tight-plain/',       note: 'Plain' },
   { id: 'classic-stage',          palette: 'classic', kind: 'stage', url: 'classic-stage/',          note: 'Stage' },
   { id: 'classic-stage-messages', palette: 'classic', kind: 'stage', url: 'classic-stage-messages/', note: 'Stage + messages' },
   { id: 'classic-dusk',           palette: 'classic', kind: 'stage', url: 'classic-dusk/',           note: 'Dusk' },
@@ -213,6 +216,7 @@ const FILTERS = [
   { key: 'calm', label: 'Refracted, calm', test: s => s.kind === 'calm' },
   { key: 'calm2', label: 'Calm, round 2', test: s => s.kind === 'calm2' },
   { key: 'stage', label: 'Royal look, blue', test: s => s.kind === 'stage' },
+  { key: 'tight', label: 'Tight', test: s => s.kind === 'tight' },
   { key: 'hero', label: 'Wordmark hero', test: s => s.kind === 'hero' },
   ...['lagoon', 'signal', 'classic', 'royal'].map(p => ({
     key: p, label: PALETTES[p].name, dot: PALETTES[p].colors[2], test: s => s.palette === p,
