@@ -12,7 +12,7 @@
 <link rel="alternate" type="text/markdown" href="/setup" title="Setting Murmur up, for coding agents">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   /* "Paper": cream is the ground, ink the text and the few dark panels, and Murmur Blue the one
      loud accent. Everything else is a tint of those three. */
@@ -29,9 +29,9 @@
     --ink-faint: #7C839C;
     --hair: rgba(14, 27, 69, .12);
     --hair-strong: rgba(14, 27, 69, .22);
-    --serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+    --serif: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    --mono: ui-monospace, Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; margin: 0; }
   html, body { background: var(--cream); color: var(--ink); }
@@ -57,14 +57,14 @@
   .center { text-align: center; padding: 0 24px; position: relative; z-index: 1; }
   h1 {
     font-family: var(--serif);
-    font-size: clamp(min(44px, 12vw), 6.4vw, 92px);
-    font-weight: 400;
-    letter-spacing: -.02em;
-    line-height: 1;
+    font-size: clamp(min(38px, 11vw), 5.6vw, 76px);
+    font-weight: 700;
+    letter-spacing: -.035em;
+    line-height: 1.04;
     color: var(--ink);
   }
   h1 span { display: block; white-space: nowrap; }
-  h1 em { font-style: italic; color: var(--blue); }
+  h1 em { font-style: normal; color: var(--blue); }
   .center p {
     max-width: 600px;
     margin: 28px auto 0;
@@ -206,13 +206,13 @@
     padding: clamp(80px, 13vh, 140px) 24px clamp(64px, 10vh, 112px);
   }
   .route-in { max-width: 960px; margin: 0 auto; }
-  #how .route h2, #setup h2 { font-family: var(--serif); font-size: clamp(40px, 4.4vw, 60px); font-weight: 400; letter-spacing: -.015em; line-height: 1.02; }
+  #how .route h2, #setup h2 { font-family: var(--serif); font-size: clamp(32px, 3.4vw, 44px); font-weight: 700; letter-spacing: -.03em; line-height: 1.1; }
   #how .route h2 { margin-bottom: 40px; text-align: center; }
   .route figure { margin: 0; }
   .route .fig-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: clamp(8px, 2vw, 28px); box-shadow: 0 30px 60px -40px rgba(14, 27, 69, .35); }
   .route svg { display: block; width: 100%; height: auto; }
   .route .tall { display: none; }
-  .route figcaption { margin-top: 22px; font-family: var(--serif); font-style: italic; font-size: 22px; line-height: 1.35; color: var(--ink-soft); text-align: center; text-wrap: balance; }
+  .route figcaption { margin-top: 22px; font-size: 17px; line-height: 1.35; color: var(--ink-soft); text-align: center; text-wrap: balance; }
   .route svg text { font-family: var(--sans); fill: var(--ink); }
   .route .ct { fill: #FFFEF9; stroke: var(--line); stroke-width: 1; }
   .route .ct-h { fill: var(--node); }
@@ -271,7 +271,7 @@
   .copy:focus-visible { outline: 2px solid var(--blue-on-ink); outline-offset: 2px; }
   .steps { list-style: none; padding: 0; margin-top: 56px; border-top: 1px solid var(--ink); }
   .steps > li { display: grid; grid-template-columns: 3em minmax(0, 14em) minmax(0, 1fr); column-gap: 18px; padding: 26px 0; border-bottom: 1px solid var(--hair); }
-  .n { font-family: var(--serif); font-size: 30px; font-weight: 400; color: var(--ink-faint); line-height: .95; }
+  .n { font-size: 18px; font-weight: 700; color: var(--ink-faint); line-height: .95; }
   .actor { font-size: 17px; font-weight: 600; letter-spacing: -.015em; line-height: 1.45; }
   .do p { font-size: 15.5px; line-height: 1.6; max-width: 62ch; color: var(--ink-soft); }
   .do p + .cmds, .do .cmds + p, .do .cmds + .cmds { margin-top: 10px; }
