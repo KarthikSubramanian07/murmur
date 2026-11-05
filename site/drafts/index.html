@@ -162,7 +162,7 @@ const PALETTES = {
   classic: { name: 'Classic', colors: ['#225BFF', '#FFFBEA', '#FDEE8C'] },
   royal:   { name: 'Royal',   colors: ['#723CD6', '#FCFFFF', '#EDB158'] },
 };
-const KINDS = { live: 'Live site', plain: 'Plain', tex: 'Textured', hero: 'Wordmark hero' };
+const KINDS = { live: 'Live site', plain: 'Plain', tex: 'Textured', name: 'Textured + name', hero: 'Wordmark hero' };
 
 const SITES = [
   { id: 'live',         palette: 'live',    kind: 'live',  url: '../' },
@@ -171,9 +171,15 @@ const SITES = [
   { id: 'hero-lagoon',  palette: 'lagoon',  kind: 'hero',  url: 'hero/lagoon.html', note: 'Waterline' },
   { id: 'signal',       palette: 'signal',  kind: 'plain', url: 'signal/' },
   { id: 'signal-tex',   palette: 'signal',  kind: 'tex',   url: 'signal-tex/' },
+  { id: 'signal-tex-refract', palette: 'signal', kind: 'name', url: 'signal-tex-refract/', note: 'Refracted' },
+  { id: 'signal-tex-cut',     palette: 'signal', kind: 'name', url: 'signal-tex-cut/',     note: 'Cut glass' },
+  { id: 'signal-tex-surface', palette: 'signal', kind: 'name', url: 'signal-tex-surface/', note: 'Surface' },
   { id: 'hero-signal',  palette: 'signal',  kind: 'hero',  url: 'hero/signal.html' },
   { id: 'classic',      palette: 'classic', kind: 'plain', url: 'classic/' },
   { id: 'classic-tex',  palette: 'classic', kind: 'tex',   url: 'classic-tex/' },
+  { id: 'classic-tex-refract', palette: 'classic', kind: 'name', url: 'classic-tex-refract/', note: 'Refracted' },
+  { id: 'classic-tex-cut',     palette: 'classic', kind: 'name', url: 'classic-tex-cut/',     note: 'Cut glass' },
+  { id: 'classic-tex-surface', palette: 'classic', kind: 'name', url: 'classic-tex-surface/', note: 'Surface' },
   { id: 'hero-classic', palette: 'classic', kind: 'hero',  url: 'hero/classic.html', note: 'Echo' },
   { id: 'royal',        palette: 'royal',   kind: 'tex',   url: 'royal/' },
   { id: 'hero-royal',   palette: 'royal',   kind: 'hero',  url: 'hero/royal.html' },
@@ -184,6 +190,7 @@ const FILTERS = [
   { key: 'all', label: 'All', test: () => true },
   { key: 'plain', label: 'Plain', test: s => s.kind === 'plain' },
   { key: 'tex', label: 'Textured', test: s => s.kind === 'tex' },
+  { key: 'name', label: 'Textured + name', test: s => s.kind === 'name' },
   { key: 'hero', label: 'Wordmark hero', test: s => s.kind === 'hero' },
   ...['lagoon', 'signal', 'classic', 'royal'].map(p => ({
     key: p, label: PALETTES[p].name, dot: PALETTES[p].colors[2], test: s => s.palette === p,
