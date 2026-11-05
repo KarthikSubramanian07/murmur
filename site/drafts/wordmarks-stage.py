@@ -141,7 +141,9 @@ CSS = f'''
   .st-compact .st-copy p {{ margin-top: 16px; }}
   .st-compact .button {{ margin-top: 24px; }}
   .st-compact .st-bubbles {{ margin-top: 26px; }}
-  .st-big .st-mark {{ font-size: min(27vw, 52vh); }}
+  /* Wider tracking than the others: at this size the refraction smears each edge by ~12px, and at
+     -.06em the r's arm ran into the next m. */
+  .st-big .st-mark {{ font-size: min(23.5vw, 50vh); letter-spacing: .01em; text-indent: .01em; }}
   .st-butter .st-mark {{ color: rgba(253, 238, 140, .92); }}
   @media (max-width: 1100px) {{ .st h1 span {{ white-space: normal; text-wrap: balance; }} }}
   /* On a phone the name stacks, mur over mur, so it can stay big. */
@@ -157,6 +159,7 @@ CSS = f'''
     .st .st-bubbles .card {{ width: 88%; }}
     .st .st-bubbles .c-reply {{ align-self: flex-end; margin-top: 0; }}
     .st-overlap .st-copy {{ padding-top: 30vh; }}
+    .st-big .st-mark {{ font-size: 40vw; }}
   }}'''
 
 for name, v in VARIANTS.items():
