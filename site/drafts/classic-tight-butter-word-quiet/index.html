@@ -363,6 +363,31 @@
   .center { margin-top: 120px; }
   .cards { --drop: max(84px, 50% - 366px); }
   @media (max-width: 1099px) { .c-reply { align-self: flex-end; } }
+</style>
+</head>
+<body>
+<main class="page">
+<style>
+
+  /* Hero-only phone spacing keeps the name separate from the headline. */
+  @media (max-width: 1099px) {
+    .page .glass .word { transform: translateY(218px); }
+    .page .center { margin-top: 0; padding-top: 148px; }
+  }
+  @media (max-width: 480px) {
+    .page h1 { font-size: 32px; }
+    .page .center { padding-left: 20px; padding-right: 20px; }
+    .page .cards { margin-top: 32px; }
+  }
+
+  .page .glass g[filter="url(#reed-t)"] .word,
+  .page .glass g[filter="url(#reed-tn)"] .word { fill: #FFF6C4; fill-opacity: .65; }
+  .page .glass g[filter="url(#reed-tc)"] .word,
+  .page .glass g[filter="url(#reed-tcn)"] .word { fill: var(--butter); fill-opacity: 1; }
+  .page h1 span + span { color: var(--cream); }
+  .page .button { background: var(--cream); }
+  .page .message { background: rgba(255,251,234,.09); color: var(--cream); border: 1px solid rgba(255,251,234,.23); box-shadow: none; }
+  .page .glass g[filter="url(#reed)"], .page .glass g[filter="url(#reed-n)"] { opacity: .24; }
 
   /* ---------- Tight: one compact group, centred, so the word sits lower ---------- */
   @media (min-width: 1100px) {
@@ -389,31 +414,6 @@
   @media (min-width: 1100px) {
     .glass .word { transform: translateY(calc(max(410px, 50vh) + 4.37vw - 84px - 1.05 * min(74px, 5.4vw))); }
   }
-</style>
-</head>
-<body>
-<main class="page">
-<style>
-
-  /* Hero-only phone spacing keeps the name separate from the headline. */
-  @media (max-width: 1099px) {
-    .page .glass .word { transform: translateY(218px); }
-    .page .center { margin-top: 0; padding-top: 148px; }
-  }
-  @media (max-width: 480px) {
-    .page h1 { font-size: 32px; }
-    .page .center { padding-left: 20px; padding-right: 20px; }
-    .page .cards { margin-top: 32px; }
-  }
-
-  .page .glass g[filter="url(#reed-t)"] .word,
-  .page .glass g[filter="url(#reed-tn)"] .word { fill: #FFF6C4; fill-opacity: .65; }
-  .page .glass g[filter="url(#reed-tc)"] .word,
-  .page .glass g[filter="url(#reed-tcn)"] .word { fill: var(--butter); fill-opacity: 1; }
-  .page h1 span + span { color: var(--cream); }
-  .page .button { background: var(--cream); }
-  .page .message { background: rgba(255,251,234,.09); color: var(--cream); border: 1px solid rgba(255,251,234,.23); box-shadow: none; }
-  .page .glass g[filter="url(#reed)"], .page .glass g[filter="url(#reed-n)"] { opacity: .24; }
 </style>
   <div class="glass" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg"><defs><filter id="reed" filterUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="64 14" result="b"/><feImage href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2560' height='1600'%3E%3Cdefs%3E%3ClinearGradient id='r'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(255,128,0)'/%3E%3C/linearGradient%3E%3Cpattern id='p' width='12' height='1600' patternUnits='userSpaceOnUse'%3E%3Crect width='12' height='1600' fill='url(%23r)'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='2560' height='1600' fill='url(%23p)'/%3E%3C/svg%3E" x="0" y="0" width="2560" height="1600" preserveAspectRatio="none" result="saw"/><feDisplacementMap in="b" in2="saw" scale="34" xChannelSelector="R" yChannelSelector="G"/></filter><filter id="reed-n" filterUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="34 10" result="b"/><feImage href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2560' height='1600'%3E%3Cdefs%3E%3ClinearGradient id='r'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(255,128,0)'/%3E%3C/linearGradient%3E%3Cpattern id='p' width='12' height='1600' patternUnits='userSpaceOnUse'%3E%3Crect width='12' height='1600' fill='url(%23r)'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='2560' height='1600' fill='url(%23p)'/%3E%3C/svg%3E" x="0" y="0" width="2560" height="1600" preserveAspectRatio="none" result="saw"/><feDisplacementMap in="b" in2="saw" scale="26" xChannelSelector="R" yChannelSelector="G"/></filter><filter id="reed-t" filterUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="4 1.2" result="b"/><feImage href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2560' height='1600'%3E%3Cdefs%3E%3ClinearGradient id='r'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='.5' stop-color='rgb(255,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(0,128,0)'/%3E%3C/linearGradient%3E%3Cpattern id='p' width='12' height='1600' patternUnits='userSpaceOnUse'%3E%3Crect width='12' height='1600' fill='url(%23r)'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='2560' height='1600' fill='url(%23p)'/%3E%3C/svg%3E" x="0" y="0" width="2560" height="1600" preserveAspectRatio="none" result="saw"/><feDisplacementMap in="b" in2="saw" scale="14" xChannelSelector="R" yChannelSelector="G"/></filter><filter id="reed-tn" filterUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="3 1" result="b"/><feImage href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2560' height='1600'%3E%3Cdefs%3E%3ClinearGradient id='r'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='.5' stop-color='rgb(255,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(0,128,0)'/%3E%3C/linearGradient%3E%3Cpattern id='p' width='12' height='1600' patternUnits='userSpaceOnUse'%3E%3Crect width='12' height='1600' fill='url(%23r)'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='2560' height='1600' fill='url(%23p)'/%3E%3C/svg%3E" x="0" y="0" width="2560" height="1600" preserveAspectRatio="none" result="saw"/><feDisplacementMap in="b" in2="saw" scale="12" xChannelSelector="R" yChannelSelector="G"/></filter><filter id="reed-tc" filterUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="1 0.3" result="b"/><feImage href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2560' height='1600'%3E%3Cdefs%3E%3ClinearGradient id='r'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='.5' stop-color='rgb(255,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(0,128,0)'/%3E%3C/linearGradient%3E%3Cpattern id='p' width='12' height='1600' patternUnits='userSpaceOnUse'%3E%3Crect width='12' height='1600' fill='url(%23r)'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='2560' height='1600' fill='url(%23p)'/%3E%3C/svg%3E" x="0" y="0" width="2560" height="1600" preserveAspectRatio="none" result="saw"/><feDisplacementMap in="b" in2="saw" scale="8" xChannelSelector="R" yChannelSelector="G"/></filter><filter id="reed-tcn" filterUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="0.8 0.3" result="b"/><feImage href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2560' height='1600'%3E%3Cdefs%3E%3ClinearGradient id='r'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='.5' stop-color='rgb(255,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(0,128,0)'/%3E%3C/linearGradient%3E%3Cpattern id='p' width='12' height='1600' patternUnits='userSpaceOnUse'%3E%3Crect width='12' height='1600' fill='url(%23r)'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='2560' height='1600' fill='url(%23p)'/%3E%3C/svg%3E" x="0" y="0" width="2560" height="1600" preserveAspectRatio="none" result="saw"/><feDisplacementMap in="b" in2="saw" scale="8" xChannelSelector="R" yChannelSelector="G"/></filter></defs><g class="wide-g" filter="url(#reed)"></g><g class="wide-g"><g filter="url(#reed-t)"><text class="word" text-anchor="middle" x="50%" y="0" fill="#FDEE8C" fill-opacity=".8">murmur</text></g><g filter="url(#reed-tc)"><text class="word" text-anchor="middle" x="50%" y="0" fill="#FFFBEA" fill-opacity=".8">murmur</text></g></g><g class="narrow" filter="url(#reed-n)"></g><g class="narrow"><g filter="url(#reed-tn)"><text class="word" text-anchor="middle" x="50%" y="0" fill="#FDEE8C" fill-opacity=".8">murmur</text></g><g filter="url(#reed-tcn)"><text class="word" text-anchor="middle" x="50%" y="0" fill="#FFFBEA" fill-opacity=".8">murmur</text></g></g></svg></div>
   <p class="agent-note" data-prose>Setting this up with a coding agent? Send it this link. Agents: follow <a href="https://murmur.afig.dev/setup">https://murmur.afig.dev/setup</a>, and ask your user first.</p>

@@ -50,6 +50,10 @@ NO_BUBBLES = '''
 JOBS = [
     ('classic-calm-butter-word', 'classic-tight-butter-word', ''),
     ('classic-calm-butter-word', 'classic-tight-butter-word-quiet', NO_BUBBLES),
+    ('classic-calm-butter-word', 'classic-tight-butter-word-quiet-button', NO_BUBBLES + '''
+  /* The button in butter too, as on the other pages; cream on hover. */
+  .page .button { background: var(--butter); }
+  .page .button:hover { background: var(--cream); }'''),
     ('classic-calm-beam', 'classic-tight-plain', ''),          # Beam's page, with the beam gone
     ('classic-calm-beam', 'classic-tight-plain-quiet', NO_BUBBLES),
 ]
@@ -59,7 +63,10 @@ for src, dst, extra in JOBS:
     html, n1 = WIDE.subn(lambda m: m.group(1) + m.group(3), base, 1)
     html, n2 = NARROW.subn(lambda m: m.group(1) + m.group(3), html, 1)
     assert n1 == n2 == 1
-    html = html.replace('</style>', CSS + extra + '\n</style>', 1)
+    # Into the last <style> up to the end of the hero, so these rules come after any the base page
+    # added (classic-calm-butter-word has a second block inside <main> that sets the button to cream).
+    i = html.rindex('</style>', 0, html.index('</main>'))
+    html = html[:i] + CSS + extra + '\n' + html[i:]
     assert html[html.index('</main>'):] == base[base.index('</main>'):]
     d = D / dst
     d.mkdir(exist_ok=True)
