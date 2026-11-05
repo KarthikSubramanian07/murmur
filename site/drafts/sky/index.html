@@ -70,7 +70,7 @@
     color: var(--white);
   }
   h1 span { display: block; white-space: nowrap; }
-  h1 span + span { color: var(--sky-100); font-weight: 500; }
+  h1 span + span { color: inherit; }
   .center p {
     max-width: 640px;
     margin: 24px auto 0;
@@ -184,7 +184,7 @@
     background: var(--ink);
     box-shadow: 0 1px 0 rgba(255, 255, 255, .06) inset, 0 2px 4px rgba(11, 33, 49, .08), 0 30px 60px -20px rgba(4, 104, 141, .35);
   }
-  .film { display: block; width: 100%; max-height: calc(100vh - 120px); max-height: calc(100svh - 120px); aspect-ratio: 1600 / 980; object-fit: contain; background: #225BFF; border-radius: clamp(12px, 1.3vw, 18px); }
+  .film { display: block; width: 100%; max-height: calc(100vh - 120px); max-height: calc(100svh - 120px); aspect-ratio: 1600 / 980; object-fit: contain; background: #047DA9; border-radius: clamp(12px, 1.3vw, 18px); }
   @media (max-aspect-ratio: 1/1), (max-width: 999px) { .film { aspect-ratio: 392 / 800; } .film-wrap { max-width: 460px; } }
   .film-btn { position: absolute; right: clamp(20px, 2.4vw, 36px); bottom: clamp(20px, 2.4vw, 36px); font: 600 13px/1 Inter, system-ui, sans-serif; color: var(--ink); background: var(--white); border: 0; border-radius: 999px; padding: 9px 15px; cursor: pointer; box-shadow: 0 4px 12px rgba(3, 20, 35, .25); }
   .film-btn:hover { background: var(--sky-100); }
@@ -351,8 +351,8 @@
   </div></div>
 
   <div class="film-stage"><div class="film-wrap"><video class="film" id="film" muted playsinline loop controls preload="auto" controlslist="nodownload noremoteplayback noplaybackrate" disablepictureinpicture aria-label="Bob's agent, quiet-otter, asks: Are you changing the auth middleware? The message goes to Bob's Murmur daemon, which makes it a commit and pushes it to refs/murmur/* on GitHub, where it stays. Alice's Murmur daemon fetches a copy and delivers the message into brave-heron's conversation as a new turn. brave-heron answers: No, that's yours. I'm only in cookies. The answer takes the same route back. Branches get no commits. Measured: 15 seconds from question to answer.">
-    <source media="(max-aspect-ratio: 1/1), (max-width: 999px)" src="../../how-tall.mp4" type="video/mp4">
-    <source src="../../how-wide.mp4" type="video/mp4">
+    <source media="(max-aspect-ratio: 1/1), (max-width: 999px)" src="how-tall.mp4" type="video/mp4">
+    <source src="how-wide.mp4" type="video/mp4">
   </video><button class="film-btn" id="filmBtn" type="button" hidden>Play</button></div></div>
   <p class="more"><a href="/daemon">Want to learn how the Murmur daemon works?</a></p>
 </section>
@@ -407,7 +407,7 @@
   const film = document.getElementById('film');
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const kind = matchMedia('(max-aspect-ratio: 1/1), (max-width: 999px)').matches ? 'tall' : 'wide';
-  film.poster = `../../how-${kind}-${still ? 'last' : 'first'}.webp`;
+  film.poster = `how-${kind}-last.webp`;
   // The browser's controls are for no-JS only; their dark bar would sit across the drawing.
   const btn = document.getElementById('filmBtn');
   film.controls = false;

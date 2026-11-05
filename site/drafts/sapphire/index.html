@@ -28,7 +28,6 @@
     --ink-soft: #46597F;
     --on-blue: rgba(255, 255, 255, .82);
     --hair: rgba(3, 28, 71, .10);
-    --video-blue: #225BFF;  /* baked into the film; used only behind it */
     --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --display: "Inter Tight", "Inter", system-ui, sans-serif;
     --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
@@ -65,7 +64,7 @@
     color: var(--white);
   }
   h1 span { display: block; white-space: nowrap; }
-  h1 span + span { color: var(--ocean); }
+  h1 span + span { color: rgba(255, 255, 255, .62); }
   .center p {
     max-width: 640px;
     margin: 28px auto 0;
@@ -186,7 +185,7 @@
     border: 1px solid rgba(0, 211, 251, .22);
     box-shadow: 0 1px 0 rgba(255,255,255,.06) inset, 0 40px 80px rgba(2, 12, 36, .45);
   }
-  .film { display: block; width: 100%; max-height: 86vh; max-height: 86svh; aspect-ratio: 1600 / 980; object-fit: contain; background: var(--video-blue); border-radius: clamp(11px, 1.2vw, 16px); }
+  .film { display: block; width: 100%; max-height: 86vh; max-height: 86svh; aspect-ratio: 1600 / 980; object-fit: contain; background: #0A2F78; border-radius: clamp(11px, 1.2vw, 16px); }
   @media (max-aspect-ratio: 1/1), (max-width: 999px) { .film { aspect-ratio: 392 / 800; } }
   .film-btn { position: absolute; right: clamp(20px, 2.4vw, 36px); bottom: clamp(20px, 2.4vw, 36px); font: 600 13px/1 var(--sans); color: var(--white); background: rgba(3, 28, 71, .82); border: 1px solid rgba(255,255,255,.18); border-radius: 999px; padding: 9px 15px; cursor: pointer; backdrop-filter: blur(6px); }
   .film-btn:hover { background: var(--navy); border-color: var(--jade); }
@@ -247,7 +246,7 @@
   .route .srv-v { stroke-width: 2; stroke-linecap: round; opacity: .55; }
   .route .srv-d { fill: #2BC46A; }
   /* The one red on the site: the server Murmur doesn't need. */
-  .route .x-big { fill: none; stroke: #E5342B; stroke-width: 11; stroke-linecap: round; }
+  .route .x-big { fill: none; stroke: var(--navy); stroke-width: 11; stroke-linecap: round; }
   .route svg .lk-blue-t { fill: var(--sapphire); font-weight: 500; }
   .route svg .lk-mute-t { fill: #61708E; }
   @media (max-width: 759px) {
@@ -357,8 +356,8 @@
   </div></div>
 
   <div class="film-wrap"><div class="film-frame"><video class="film" id="film" muted playsinline loop controls preload="auto" controlslist="nodownload noremoteplayback noplaybackrate" disablepictureinpicture aria-label="Bob's agent, quiet-otter, asks: Are you changing the auth middleware? The message goes to Bob's Murmur daemon, which makes it a commit and pushes it to refs/murmur/* on GitHub, where it stays. Alice's Murmur daemon fetches a copy and delivers the message into brave-heron's conversation as a new turn. brave-heron answers: No, that's yours. I'm only in cookies. The answer takes the same route back. Branches get no commits. Measured: 15 seconds from question to answer.">
-    <source media="(max-aspect-ratio: 1/1), (max-width: 999px)" src="../../how-tall.mp4" type="video/mp4">
-    <source src="../../how-wide.mp4" type="video/mp4">
+    <source media="(max-aspect-ratio: 1/1), (max-width: 999px)" src="how-tall.mp4" type="video/mp4">
+    <source src="how-wide.mp4" type="video/mp4">
   </video><button class="film-btn" id="filmBtn" type="button" hidden>Play</button></div></div>
   <p class="more"><a href="/daemon">Want to learn how the Murmur daemon works?</a></p>
 </section>
@@ -413,7 +412,7 @@
   const film = document.getElementById('film');
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const kind = matchMedia('(max-aspect-ratio: 1/1), (max-width: 999px)').matches ? 'tall' : 'wide';
-  film.poster = `../../how-${kind}-${still ? 'last' : 'first'}.webp`;
+  film.poster = `how-${kind}-last.webp`;
   // The browser's controls are for no-JS only; their dark bar would sit across the drawing.
   const btn = document.getElementById('filmBtn');
   film.controls = false;
