@@ -162,7 +162,7 @@ const PALETTES = {
   classic: { name: 'Classic', colors: ['#225BFF', '#FFFBEA', '#FDEE8C'] },
   royal:   { name: 'Royal',   colors: ['#723CD6', '#FCFFFF', '#EDB158'] },
 };
-const KINDS = { live: 'Live site', plain: 'Plain', tex: 'Textured', name: 'Textured + name', calm: 'Refracted, calm', hero: 'Wordmark hero' };
+const KINDS = { live: 'Live site', plain: 'Plain', tex: 'Textured', name: 'Textured + name', calm: 'Refracted, calm', calm2: 'Calm, round 2', hero: 'Wordmark hero' };
 
 const SITES = [
   { id: 'live',         palette: 'live',    kind: 'live',  url: '../' },
@@ -184,6 +184,16 @@ const SITES = [
   { id: 'classic-calm-messages', palette: 'classic', kind: 'calm', url: 'classic-calm-messages/', note: 'Messages' },
   { id: 'classic-calm-type',     palette: 'classic', kind: 'calm', url: 'classic-calm-type/',     note: 'Type only' },
   { id: 'classic-calm-whisper',  palette: 'classic', kind: 'calm', url: 'classic-calm-whisper/',  note: 'Whisper' },
+  { id: 'classic-calm-horizon',    palette: 'classic', kind: 'calm2', url: 'classic-calm-horizon/',    note: 'Horizon' },
+  { id: 'classic-calm-beam',       palette: 'classic', kind: 'calm2', url: 'classic-calm-beam/',       note: 'Beam' },
+  { id: 'classic-calm-wide-reeds', palette: 'classic', kind: 'calm2', url: 'classic-calm-wide-reeds/', note: 'Wide reeds' },
+  { id: 'classic-calm-wave',       palette: 'classic', kind: 'calm2', url: 'classic-calm-wave/',       note: 'Wave' },
+  { id: 'classic-calm-frost',      palette: 'classic', kind: 'calm2', url: 'classic-calm-frost/',      note: 'Frost' },
+  { id: 'classic-calm-butter-word',   palette: 'classic', kind: 'calm2', url: 'classic-calm-butter-word/',   note: 'Butter word' },
+  { id: 'classic-calm-drift',         palette: 'classic', kind: 'calm2', url: 'classic-calm-drift/',         note: 'Drift' },
+  { id: 'classic-calm-glass-bubbles', palette: 'classic', kind: 'calm2', url: 'classic-calm-glass-bubbles/', note: 'Glass bubbles' },
+  { id: 'classic-calm-spotlight',     palette: 'classic', kind: 'calm2', url: 'classic-calm-spotlight/',     note: 'Spotlight' },
+  { id: 'classic-calm-night',         palette: 'classic', kind: 'calm2', url: 'classic-calm-night/',         note: 'Night' },
   { id: 'hero-classic', palette: 'classic', kind: 'hero',  url: 'hero/classic.html', note: 'Echo' },
   { id: 'royal',        palette: 'royal',   kind: 'tex',   url: 'royal/' },
   { id: 'hero-royal',   palette: 'royal',   kind: 'hero',  url: 'hero/royal.html' },
@@ -196,6 +206,7 @@ const FILTERS = [
   { key: 'tex', label: 'Textured', test: s => s.kind === 'tex' },
   { key: 'name', label: 'Textured + name', test: s => s.kind === 'name' },
   { key: 'calm', label: 'Refracted, calm', test: s => s.kind === 'calm' },
+  { key: 'calm2', label: 'Calm, round 2', test: s => s.kind === 'calm2' },
   { key: 'hero', label: 'Wordmark hero', test: s => s.kind === 'hero' },
   ...['lagoon', 'signal', 'classic', 'royal'].map(p => ({
     key: p, label: PALETTES[p].name, dot: PALETTES[p].colors[2], test: s => s.palette === p,
