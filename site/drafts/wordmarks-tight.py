@@ -1,4 +1,4 @@
-"""Tighter versions of classic-calm-butter-word and classic-calm-beam.
+"""Tight versions of classic-calm-butter-word and classic-calm-beam, with plain glass behind the word.
 
 The word, headline, line, button and bubbles become one compact group centred on the screen, so
 the word sits lower. Only the hero changes.
@@ -38,21 +38,28 @@ CSS = '''
 WIDE = re.compile(r'(<g class="wide-g" filter="url\(#reed\)">)(.*?)(</g>)')
 NARROW = re.compile(r'(<g class="narrow" filter="url\(#reed-n\)">)(.*?)(</g>)')
 
+# Without the two message bubbles the group is about 104px shorter, so the word moves down by half that.
+NO_BUBBLES = '''
+  /* No bubbles: the group is the word, the headline, the line and the button. */
+  .cards { display: none; }
+  @media (min-width: 1100px) {
+    .glass .word { transform: translateY(calc(max(410px, 50vh) + 4.37vw - 84px - 1.05 * min(74px, 5.4vw))); }
+  }'''
+
+# Every page here has nothing behind the glass but the word: the light shapes are removed.
 JOBS = [
-    ('classic-calm-butter-word', 'classic-tight-butter-word', False),
-    ('classic-calm-beam', 'classic-tight-beam', False),
-    # The same as the beam, with nothing at all behind the glass but the word.
-    ('classic-calm-beam', 'classic-tight-plain', True),
+    ('classic-calm-butter-word', 'classic-tight-butter-word', ''),
+    ('classic-calm-butter-word', 'classic-tight-butter-word-quiet', NO_BUBBLES),
+    ('classic-calm-beam', 'classic-tight-plain', ''),          # Beam's page, with the beam gone
+    ('classic-calm-beam', 'classic-tight-plain-quiet', NO_BUBBLES),
 ]
 
-for src, dst, empty in JOBS:
+for src, dst, extra in JOBS:
     base = (D / src / 'index.html').read_text(encoding='utf-8')
-    html = base
-    if empty:
-        html, n1 = WIDE.subn(lambda m: m.group(1) + m.group(3), html, 1)
-        html, n2 = NARROW.subn(lambda m: m.group(1) + m.group(3), html, 1)
-        assert n1 == n2 == 1
-    html = html.replace('</style>', CSS + '\n</style>', 1)
+    html, n1 = WIDE.subn(lambda m: m.group(1) + m.group(3), base, 1)
+    html, n2 = NARROW.subn(lambda m: m.group(1) + m.group(3), html, 1)
+    assert n1 == n2 == 1
+    html = html.replace('</style>', CSS + extra + '\n</style>', 1)
     assert html[html.index('</main>'):] == base[base.index('</main>'):]
     d = D / dst
     d.mkdir(exist_ok=True)
