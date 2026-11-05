@@ -61,7 +61,7 @@ VARIANTS = {
     'tight-royal': dict(light='', mark_top='40%', bubbles=False, cls=' st-big'),
     'tight-royal-butter': dict(light='', mark_top='40%', bubbles=False, cls=' st-big st-butter'),
     # The same, trimmed: a smaller word, the line on two lines, the agent note on one.
-    'tight-royal-butter-trim': dict(light='', mark_top='42%', bubbles=False, cls=' st-big st-butter st-trim'),
+    'tight-royal-butter-trim': dict(light='', mark_top='42%', bubbles=False, cls=' st-big st-butter st-trim', inline=True),
     # The straight port: the figure behind the word, the copy at the foot of the screen.
     'stage': dict(light=light(HAZE, FIGURE), mark_top='45%', bubbles=False, cls=''),
     # The same, with the two messages under the button.
@@ -148,6 +148,12 @@ CSS = f'''
   .st-big .st-mark {{ font-size: min(23.5vw, 50vh); letter-spacing: .01em; text-indent: .01em; }}
   .st-butter .st-mark {{ color: rgba(253, 238, 140, .92); }}
   .st-trim .st-mark {{ font-size: min(19vw, 42vh); }}
+  /* The inline word: in the copy's flow but still under the glass. The copy stops being its own
+     stacking context, so the word can sit under the reeds (z 0) while the text sits over them (z 2). */
+  .st-trim .st-copy {{ z-index: auto; margin: auto 0; }}
+  .st-trim .st-copy > :not(.st-mark) {{ position: relative; z-index: 2; }}
+  .st .st-mark.st-inline {{ position: relative; z-index: 0; left: auto; right: auto; top: auto; transform: none;
+    display: block; margin: 0 0 .12em; filter: blur(2.5px) url(#st-reeds); }}
   @media (min-width: 1000px) {{
     .st-trim .agent-note {{ max-width: none; white-space: nowrap; }}
     .st-trim .st-copy p {{ max-width: 740px; }}
@@ -167,14 +173,22 @@ CSS = f'''
     .st .st-bubbles .c-reply {{ align-self: flex-end; margin-top: 0; }}
     .st-overlap .st-copy {{ padding-top: 30vh; }}
     .st-big .st-mark {{ font-size: 40vw; }}
+    .st .st-mark.st-inline {{ filter: blur(2px) url(#st-reeds-sm); }}
   }}'''
 
 for name, v in VARIANTS.items():
     bubbles = f'\n  <div class="st-bubbles">{ASK}{REPLY}</div>' if v['bubbles'] else ''
+    mark = '<div class="st-mark"><span>mur</span><span>mur</span></div>'
+    # inline: the word sits in the copy's flow, a fixed gap above the headline, instead of being
+    # pinned to a height of the screen, and the group is centred, so the gap holds at any size.
+    if v.get('inline'):
+        behind_mark, copy_mark = '', '\n    ' + mark.replace('class="st-mark"', 'class="st-mark st-inline" aria-hidden="true"')
+    else:
+        behind_mark, copy_mark = mark, ''
     hero = (f'<main class="st{v["cls"]}" style="--mark-top: {v["mark_top"]}">\n  {FILTERS}\n'
-            f'  <div class="st-behind" aria-hidden="true">{v["light"]}<div class="st-mark"><span>mur</span><span>mur</span></div></div>\n'
+            f'  <div class="st-behind" aria-hidden="true">{v["light"]}{behind_mark}</div>\n'
             f'  <div class="st-glass" aria-hidden="true"></div>\n  {NOTE}\n'
-            f'  <div class="st-copy">\n    {H1}\n    {P}\n    {BTN}\n  </div>{bubbles}\n</main>')
+            f'  <div class="st-copy">{copy_mark}\n    {H1}\n    {P}\n    {BTN}\n  </div>{bubbles}\n</main>')
     html = base.replace(MAIN, hero, 1).replace('</style>', CSS + '\n</style>', 1)
     assert html.index('</main>') and html[html.index('</main>'):] == base[base.index('</main>'):]
     d = D / f'classic-{name}'
