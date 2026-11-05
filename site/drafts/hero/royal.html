@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Murmur: intra-repo agent communication</title>
+<meta name="description" content="Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.">
+<link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+<link rel="icon" href="../../favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="../../apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* Hero concept, Royal palette. One idea: the name stands behind reeded glass. The gold light and
+     the word "murmur" are one layer, out of focus and bent by the flutes (an SVG displacement map
+     with the same 10px period as the drawn stripes); everything you read sits crisp on the near side
+     of the glass. Lowercase, because m-u-r is all vertical stems, and the stems rhyme with the reeds. */
+  :root {
+    --purple: #723CD6;
+    --purple-deep: #6235CF;
+    --violet-shadow: #33188A;
+    --gold: #EDB158;
+    --ink: #1C0F3D;
+    --white: #FCFFFF;
+    --lav: #D9CBF7;
+    --mono: ui-monospace, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    /* One 10px flute: a hairline of light on its left edge, rolling off into shade on its right. */
+    --flutes: repeating-linear-gradient(90deg,
+      rgba(255, 255, 255, .16) 0px,
+      rgba(255, 255, 255, .04) 1.2px,
+      rgba(255, 255, 255, 0) 4px,
+      rgba(28, 15, 61, 0) 6px,
+      rgba(28, 15, 61, .16) 9px,
+      rgba(28, 15, 61, .26) 10px);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { background: var(--purple); color: var(--white); }
+  body { font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+
+  .hero {
+    position: relative;
+    min-height: 100vh;
+    min-height: 100svh;
+    overflow: clip;
+    isolation: isolate;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 24px 56px;
+    text-align: center;
+    background: linear-gradient(180deg, #6738D3 0%, var(--purple-deep) 100%);
+  }
+
+  /* Behind the glass: light and name together, so the flutes bend both the same way. */
+  .behind {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    filter: url(#reeds);
+  }
+  @media (max-width: 600px) { .behind { filter: url(#reeds-sm); } }
+  /* Three layers, back to front: a warm haze, the figure, then the name in front of it.
+     The figure: one near-opaque gold shape and a dark violet one beside it, smeared sideways as if
+     it moved while the shutter was open (an SVG blur much wider than it is tall). */
+  .light { position: absolute; inset: 0; width: 100%; height: 100%; }
+  /* The wordmark: Royal White, warmed where the gold is behind it, softened as glass would. */
+  .mark {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: var(--mark-top, 36%);
+    transform: translateY(-50%);
+    font-size: min(27vw, 52vh);
+    font-weight: 700;
+    letter-spacing: -.06em;
+    line-height: .8;
+    text-indent: -.06em;
+    white-space: nowrap;
+    color: rgba(252, 255, 255, .86);
+    filter: blur(2.5px);
+  }
+  .mark span { display: inline-block; }
+
+  /* The glass itself, drawn over what it bends: highlights and shade, then grain. */
+  .glass {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: var(--grain), var(--flutes);
+    background-size: 180px 180px, auto;
+    mix-blend-mode: soft-light;
+    opacity: .7;
+  }
+  .hero::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: var(--flutes);
+    opacity: .55;
+  }
+
+  /* The near side of the glass. */
+  .agent-note, .copy { position: relative; z-index: 2; }
+  .agent-note {
+    padding-top: 18px;
+    max-width: 640px;
+    font-size: 13.5px;
+    line-height: 1.4;
+    color: rgba(252, 255, 255, .78);
+    text-wrap: balance;
+  }
+  .agent-note a { color: var(--white); font-weight: 500; text-decoration-color: rgba(237, 177, 88, .85); text-underline-offset: 3px; }
+
+  .copy { margin-top: auto; }
+  h1 {
+    font-size: clamp(34px, 4.3vw, 62px);
+    font-weight: 600;
+    letter-spacing: -.04em;
+    line-height: 1.05;
+    color: var(--white);
+    text-shadow: 0 1px 2px rgba(28, 15, 61, .3), 0 4px 18px rgba(28, 15, 61, .35), 0 10px 60px rgba(28, 15, 61, .4);
+  }
+  h1 span { display: block; white-space: nowrap; }
+  h1 span + span { color: var(--lav); }
+  .copy p {
+    max-width: 600px;
+    margin: 22px auto 0;
+    font-size: 18px;
+    line-height: 1.55;
+    color: rgba(252, 255, 255, .88);
+    text-wrap: balance;
+    text-shadow: 0 1px 16px rgba(28, 15, 61, .5);
+  }
+  .button {
+    display: inline-block;
+    margin-top: 30px;
+    padding: 15px 26px;
+    border-radius: 999px;
+    background: var(--gold);
+    color: var(--ink);
+    font-size: 16px;
+    font-weight: 600;
+    text-decoration: none;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, .45) inset, 0 16px 36px -14px rgba(28, 15, 61, .8);
+    transition: transform .15s ease;
+  }
+  .button:hover { transform: translateY(-1px); }
+  .button:focus-visible { outline: 3px solid var(--white); outline-offset: 3px; }
+
+  @media (max-width: 1100px) { h1 span { white-space: normal; text-wrap: balance; } }
+  /* On a phone the name stacks, mur over mur, so it can stay big; the copy then sits over the
+     lower half of it, still on the near side of the glass. */
+  @media (max-width: 600px) {
+    .hero { padding: 0 16px 40px; }
+    .mark { --mark-top: 33%; font-size: 46vw; line-height: .72; }
+    .mark span { display: block; }
+    h1 { font-size: clamp(32px, 9.4vw, 42px); }
+    .copy p { font-size: 16.5px; margin-top: 18px; }
+    .button { margin-top: 24px; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <!-- The flutes as a displacement map: a red ramp 0 to 255 across each 10px, tiled. Each flute shows
+       a slice of what is behind it, squeezed, so edges break and shift at every stripe. -->
+  <filter id="reeds" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+    <feImage x="0" y="0" width="10" height="10" preserveAspectRatio="none" result="ramp"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10'%3E%3ClinearGradient id='g'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(255,128,0)'/%3E%3C/linearGradient%3E%3Crect width='10' height='10' fill='url(%23g)'/%3E%3C/svg%3E"/>
+    <feTile in="ramp" result="map"/>
+    <feDisplacementMap in="SourceGraphic" in2="map" scale="24" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+  <!-- On a phone the letters are smaller against the same flutes, so the bend is smaller too. -->
+    <filter id="reeds-sm" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+    <feImage x="0" y="0" width="10" height="10" preserveAspectRatio="none" result="ramp"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10'%3E%3ClinearGradient id='g'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(255,128,0)'/%3E%3C/linearGradient%3E%3Crect width='10' height='10' fill='url(%23g)'/%3E%3C/svg%3E"/>
+    <feTile in="ramp" result="map"/>
+    <feDisplacementMap in="SourceGraphic" in2="map" scale="14" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+</svg>
+<main class="hero">
+  <div class="behind" aria-hidden="true">
+    <svg class="light" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <filter id="smear" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="52 8"/></filter>
+        <filter id="smear-soft" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="140 40"/></filter>
+      </defs>
+      <g filter="url(#smear-soft)">
+        <ellipse cx="690" cy="360" rx="300" ry="170" fill="#EDB158" opacity=".45"/>
+      </g>
+    </svg>
+    <svg class="light" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
+      <g filter="url(#smear)">
+        <!-- the gold figure: head, shoulders, body, and the streaks it leaves to the left as it moves -->
+        <ellipse cx="715" cy="150" rx="96" ry="78" fill="#EDB158"/>
+        <path d="M590 240 C660 215 800 215 870 250 L890 450 C870 530 770 560 640 550 C590 510 570 360 590 240Z" fill="#EDB158"/>
+        <rect x="400" y="160" width="340" height="40" rx="20" fill="#EDB158" opacity=".9"/>
+        <rect x="350" y="300" width="400" height="44" rx="22" fill="#EDB158" opacity=".7"/>
+        <rect x="440" y="470" width="320" height="40" rx="20" fill="#F2C47E" opacity=".8"/>
+        <rect x="380" y="560" width="300" height="26" rx="13" fill="#EDB158" opacity=".5"/>
+        <!-- the dark violet shadow beside it, overlapping its right edge -->
+        <ellipse cx="910" cy="135" rx="88" ry="74" fill="#2E1580"/>
+        <path d="M820 220 C880 200 1000 210 1050 250 L1090 560 C1070 700 960 770 870 750 C840 600 830 400 820 220Z" fill="#33188A" opacity=".95"/>
+        <rect x="900" y="330" width="320" height="40" rx="20" fill="#3B1D99" opacity=".7"/>
+        <rect x="930" y="600" width="280" height="34" rx="17" fill="#2E1580" opacity=".6"/>
+      </g>
+    </svg>
+    <div class="mark"><span>mur</span><span>mur</span></div>
+  </div>
+  <div class="glass" aria-hidden="true"></div>
+  <p class="agent-note">Setting this up with a coding agent? Send it this link. Agents: follow <a href="https://murmur.afig.dev/setup">https://murmur.afig.dev/setup</a>, and ask your user first.</p>
+  <div class="copy">
+    <h1><span>Intra-repo agent communication.</span> <span>Your agents work better as a team.</span></h1>
+    <p>Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.</p>
+    <a class="button" href="https://github.com/a-Fig/murmur">Get Murmur on GitHub</a>
+  </div>
+</main>
+</body>
+</html>
