@@ -60,6 +60,8 @@ VARIANTS = {
     # The Royal layout on plain glass: nothing behind the word. Shown in the gallery's Tight group.
     'tight-royal': dict(light='', mark_top='40%', bubbles=False, cls=' st-big'),
     'tight-royal-butter': dict(light='', mark_top='40%', bubbles=False, cls=' st-big st-butter'),
+    # The same, trimmed: a smaller word, the line on two lines, the agent note on one.
+    'tight-royal-butter-trim': dict(light='', mark_top='42%', bubbles=False, cls=' st-big st-butter st-trim'),
     # The straight port: the figure behind the word, the copy at the foot of the screen.
     'stage': dict(light=light(HAZE, FIGURE), mark_top='45%', bubbles=False, cls=''),
     # The same, with the two messages under the button.
@@ -145,6 +147,11 @@ CSS = f'''
      -.06em the r's arm ran into the next m. */
   .st-big .st-mark {{ font-size: min(23.5vw, 50vh); letter-spacing: .01em; text-indent: .01em; }}
   .st-butter .st-mark {{ color: rgba(253, 238, 140, .92); }}
+  .st-trim .st-mark {{ font-size: min(19vw, 42vh); }}
+  @media (min-width: 1000px) {{
+    .st-trim .agent-note {{ max-width: none; white-space: nowrap; }}
+    .st-trim .st-copy p {{ max-width: 740px; }}
+  }}
   @media (max-width: 1100px) {{ .st h1 span {{ white-space: normal; text-wrap: balance; }} }}
   /* On a phone the name stacks, mur over mur, so it can stay big. */
   @media (max-width: 600px) {{
