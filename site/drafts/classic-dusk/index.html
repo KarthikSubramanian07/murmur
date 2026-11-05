@@ -383,7 +383,7 @@
   /* It fades into the blue of page 2 at the foot. */
   .st::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 90px; z-index: 1; pointer-events: none;
     background: linear-gradient(180deg, transparent, #225BFF); }
-  .st .agent-note { position: relative; z-index: 2; top: auto; padding-top: 18px; max-width: 640px; text-wrap: balance; }
+  .st .agent-note { position: relative; z-index: 2; top: auto; margin: 0; padding-top: 18px; max-width: 640px; text-wrap: balance; }
   .st .st-copy { position: relative; z-index: 2; margin-top: auto; }
   .st h1 { font-size: clamp(34px, 4.3vw, 62px); text-shadow: 0 1px 2px rgba(14, 27, 69, .25), 0 4px 18px rgba(14, 27, 69, .3), 0 10px 60px rgba(14, 27, 69, .35); }
   .st .st-copy p { max-width: 600px; margin: 22px auto 0; font-size: 18px; line-height: 1.55; text-wrap: balance;
@@ -415,6 +415,8 @@
   .st-compact .st-copy p { margin-top: 16px; }
   .st-compact .button { margin-top: 24px; }
   .st-compact .st-bubbles { margin-top: 26px; }
+  .st-big .st-mark { font-size: min(27vw, 52vh); }
+  .st-butter .st-mark { color: rgba(253, 238, 140, .92); }
   @media (max-width: 1100px) { .st h1 span { white-space: normal; text-wrap: balance; } }
   /* On a phone the name stacks, mur over mur, so it can stay big. */
   @media (max-width: 600px) {
