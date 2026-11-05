@@ -460,6 +460,8 @@
      z 0 or above). Its shader draws the light and refracts it through the 12px reeds itself, so the
      SVG filters never re-run. Without WebGL the canvas stays empty and shows a still drawn in CSS
      instead (.no-gl): a soft diagonal band. */
+  /* The foot fade into page 2 goes under the light (same layer, earlier), so the band reaches the bottom edge. */
+  .st::before { z-index: 0; }
   .st .st-gl { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
   .st.no-gl .st-gl { background: linear-gradient(117deg, transparent 30%, rgba(255, 251, 234, .1) 42%, rgba(255, 251, 234, .16) 46%, rgba(253, 238, 140, .08) 52%, transparent 62%); }
 </style>
