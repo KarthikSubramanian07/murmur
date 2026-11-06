@@ -172,6 +172,10 @@
     .note p { font-size: 18px; line-height: 1.42; }
     .note pre { margin-top: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.36; }
     .note.hero { top: calc(var(--split) + 8px); width: auto; max-width: 560px; padding: 0 6px; }
+    /* Held in place like the passages, since its section is shorter than the title is low. */
+    html.js:not(.static) .note.hero { position: fixed; left: 0; right: 0; max-width: none; padding: 0 16px; }
+    /* The hint sits at the foot of the drawing, clear of the title below it. */
+    html.js:not(.static) .scroll-hint { bottom: auto; top: calc(var(--split) - 46px); }
     .back { margin-bottom: 14px; }
     h1 { font-size: clamp(32px, 9.6vw, 48px); }
     .end { display: none; }
@@ -355,6 +359,8 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
   const ORDER = ['open', 'obvious', 'race', 'dies', 'daemon', 'commit', 'secret', 'split', 'side', 'ask', 'rate', 'deliver', 'busy', 'presence', 'names', 'pool', 'grace', 'exit', 'limits', 'finale'];
   const T = Object.fromEntries(ORDER.map((id, i) => [id, i]));
   const N = ORDER.length;
+  // Stacked (phones): the drawing's height in px, above the band the notes sit in. Set by fitSplit().
+  let splitH = 0;
   const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
   const lerp = (a, b, f) => a + (b - a) * f;
   const ss = f => f * f * (3 - 2 * f);
@@ -1107,7 +1113,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       const W = svg.clientWidth || svg.getBoundingClientRect().width, H = svg.clientHeight || svg.getBoundingClientRect().height;
       if (opts.fit) { const all = { x: 6, y: 6, w: W - 12, h: H - 12 }; return { W, H, h: all, a: all, b: all }; }
       if (L.tall) {
-        const split = H * .54, a = { x: 6, y: 8, w: W - 12, h: split - 14 };
+        const split = splitH || H * .54, a ={ x: 6, y: 8, w: W - 12, h: split - 14 };
         return { W, H, h: a, a, b: { x: 6, y: 8, w: W - 12, h: H - 16 } };
       }
       // The title sits on the left, so the opening frame is to its right. After it the words run across the
@@ -1832,7 +1838,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
   let shown = 0, target = 0, last = 0, running = false;
   const clip = t => {
     const open = ss(clamp((t - T.finale - .04) / .16));
-    stage.style.clipPath = stacked.matches ? `inset(0 0 ${((1 - open) * 46).toFixed(2)}% 0)` : '';
+    stage.style.clipPath = stacked.matches ? `inset(0 0 ${((1 - open) * (stage.clientHeight - splitH)).toFixed(1)}px 0)` : '';
     const cta = clamp((t - T.finale - .86) / .07);
     end.style.opacity = stacked.matches ? clamp(1 - (t - T.finale) / .06) : cta;
     end.style.visibility = (stacked.matches ? t - T.finale > .06 : cta <= 0) ? 'hidden' : 'visible';
@@ -1868,8 +1874,18 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
   // On a phone the finished drawing takes the whole screen, so its sentence waits below it, with the buttons.
   const endLine = end.querySelector('p'), after = document.querySelector('.after');
   const placeEnd = () => { if (stacked.matches) after.prepend(endLine); else end.prepend(endLine); };
+  // Stacked, the notes take a band at the foot of the screen as tall as the longest of them, and the
+  // drawing has everything above it. A fixed split left a third of a phone's screen empty blue.
+  const fitSplit = () => {
+    if (!stacked.matches) { splitH = 0; root.style.removeProperty('--split'); return; }
+    const H = stage.clientHeight || innerHeight;
+    const band = Math.max(...[...document.querySelectorAll('.note')].map(n => n.offsetHeight));
+    splitH = Math.round(clamp(H - band - 14 - 30, H * .54, H * .8));
+    root.style.setProperty('--split', splitH + 'px');
+  };
   function setup() {
     placeEnd();
+    fitSplit();
     if (layout() !== built || innerWidth !== builtW) {
       built = layout();
       builtW = innerWidth;
