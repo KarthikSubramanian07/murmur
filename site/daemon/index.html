@@ -195,7 +195,7 @@
   .static .back, .static .back .arrow { transition: none; }
   .fig { display: block; width: 100vw; margin-left: calc(50% - 50vw); height: clamp(320px, 66vh, 680px); margin-bottom: 14px; }
   .fig text { pointer-events: none; }
-  @media (max-aspect-ratio: 1/1), (max-width: 999px) { .fig { height: min(112vw, 72svh); } .ch[data-id="finale"] .fig { height: min(216vw, 96svh); } }
+  @media (max-aspect-ratio: 1/1), (max-width: 999px) { .fig { height: min(150vw, 88svh); } }
   html:not(.js) .track { display: block; }
   html:not(.js) .stage, html:not(.js) .progress { display: none; }
   html:not(.js) .notes { pointer-events: auto; max-width: 720px; margin: 0 auto; padding: 32px 16px 40px; }
@@ -410,52 +410,6 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       limits: [600, -210, 1270, 340], finale: [-30, -160, 1910, 992], finTop: [-30, -160, 1910, 992], finBot: [-30, -160, 1910, 992],
     },
     log: { daemon: [440, 296], rate: [650, -206], pool: [640, 1000], reconn: [640, 1000], exit: [620, 1000], limits: [640, -190], stale: [1150, 470] },
-  };
-
-  const TALL = {
-    tall: true, fs: { label: 20, mono: 19, small: 19, name: 22, row: 19 }, ln: 5,
-    lap: { W: 580, lidW: 536, lidH: 336, deckH: 118, bar: 30, full: 30, half: 20 },
-    uB: { x: 10, top: 118 }, uA: { x: 10, top: 1188 },
-    chip: { w: 96, h: 40, single: 300, o: 98, f: 502, a: 98, yB: 28, yA: 1102, cyB: 48, cyA: 1122, stemTop: null },
-    dB: { x: 180, y: 0, w: 240, h: 96, cx: 300, out: 48, inn: 74, label: 28, sub: null },
-    dA: { x: 180, y: 1074, w: 240, h: 96, cx: 300, inn: 1122, out: 1148, label: 1102, sub: null },
-    dS: { x: 770, y: 690, w: 240, h: 96, cx: 890, out: 738, label: 718, sub: null },
-    p: { x: 30, y: 604, w: 540, head: 36, heads: 54, stages: [810, 854, 940, 978] },
-    graph: { d: 'M46 670H554M90 670C120 670 112 696 142 696H530M230 670C260 670 252 683 282 683H548', dots: [[90, 670], [230, 670], [380, 670], [530, 670], [320, 683], [430, 683], [548, 683], [190, 696], [340, 696], [500, 696]], main: 670 },
-    rows: { shared: { y: 704, h: 94 }, b: { y: 704, h: 47, line: 740 }, a: { y: 751, h: 47, line: 787 }, s: { y: 798, h: 47, line: 834 }, pres: [{ y: 852, h: 27 }, { y: 879, h: 27 }, { y: 906, h: 27 }], names: { y: 936, h: 32 } },
-    dotX: { b: [280, 335, 390, 445, 500, 545], a: [540, 490, 440, 390], s: [290] },
-    preO: x => `M${x - 48} 48H-6V740H30`,
-    preF: x => `M${x + 48} 48H606V787H570`,
-    outB: 'M300 48H392V-14H-6V740H30', inB: 'M30 787H-20V-28H408V74H300', inA: 'M570 740H606V1122H300', outA: 'M300 1148H620V787H570',
-    outS: 'M890 738H570',
-    branch: 'M30 670H46',
-    upB: (x, y) => `M${x} ${y}V48H300`,
-    upA: y => `M98 ${y}V1148H300`,
-    byA: y => `M300 1122V${y - 12}Q300 ${y} 300 ${y}`,
-    byLineA: 'M300 1170V1188',
-    byB: y => `M300 74V${y}H173`,
-    byLineB: 'M300 96V118',
-    toChipA: 'M300 1122H146', toChipF: 'M300 74H502V68', toChipO: 'M300 74H98V68',
-    lane: { a: 'M180 1148H4V952H30', s: 'M890 786V952H570' },
-    tape: { x0: 26, head: 574, y: 1000, h: 38, scale: 548 / 300, tick: 1.4, reg: 1062, mark: 992, drop: 'M574 1038V1074', pingV: 26 },
-    read: { x: 34, y: 842, big: 62, sub: 21, log: 944 },
-    clock: { x: 300, y: -52, size: 54, label: 22, ly: -52, anchor: 'inline' },
-    stale: { x: 300, y: 1036, size: 44, ly: 1064 },
-    sam: { x: 710, y: 858, w: 360, h: 190, stand: [860, 1048, 60, 26], base: [810, 1074, 160, 12], seat: [890, 1114], chipY: 806, chipH: 34, chipW: 96, one: 890, cw: 800, cp: 980 },
-    tray: { x: 1022, y: 694, w: 26, h: 18, gap: 5 },
-    side: { y: 484, h: 50, xs: [30, 212, 394], w: 176 },
-    sheet: { x: 80, y: 104, w: 440, fs: 14.4, lh: 19.6 },
-    err: { x: 40, y: 112 },
-    seats: true,
-    frames: {
-      lap: [-14, 104, 614, 614], lapChip: [-14, 10, 614, 614], obvious: [-30, 10, 636, 864], race: [-30, 10, 636, 864],
-      chipZoom: [-14, 10, 614, 340], daemonWide: [-30, -40, 636, 634], daemonTight: [176, -30, 424, 120], pillRise: [40, -30, 560, 340],
-      sheet: [76, -30, 524, 604], err: [30, -30, 570, 300], all: [-34, 560, 640, 1700], aIn: [-34, 584, 640, 1184], splitTop: [-34, 584, 640, 1184], transit: [-34, 584, 640, 1184], panel: [10, 462, 590, 864], panelRows: [10, 644, 590, 864],
-      ask: [130, 714, 640, 1184], rate: [6, 770, 620, 1174], rateNear: [6, 770, 620, 1174], rateTape: [6, 954, 620, 1174], aLap: [-14, 1054, 614, 1668], aLid: [-14, 1154, 614, 1668],
-      bFinch: [-14, -40, 614, 574], presence: [560, 598, 1120, 1134], sam: [660, 598, 1120, 1134], stale: [0, 784, 630, 1184], names: [-14, 794, 620, 1184], pool: [690, 598, 1110, 1134],
-      limits: [10, 300, 590, 864], finale: [-34, -92, 640, 1668], finTop: [-34, -92, 640, 1000], finBot: [-34, 560, 640, 1700],
-    },
-    log: { daemon: [36, 300], rate: [34, 882], pool: [640, 1134], reconn: [640, 1134], exit: [640, 1134], limits: [20, 284], stale: [30, 1264] },
   };
 
   // ---------- The script: when each part is born, who has the light, where the camera is ----------
@@ -1774,10 +1728,875 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
     return { paint, parts };
   }
 
+  // ---------- The phone: a drawing of its own, in screen pixels ----------
+  // Stacked screens don't get the desktop drawing under a camera. The svg's viewBox is the screen, so a 15 px
+  // label is 15 px. Each chapter has one small scene, laid out from the live size of the area below its words,
+  // and as t crosses into a chapter every part eases from where the last scene had it to where this one does.
+  function makePhone(svg, opts = {}) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const pid = ++uid;
+    const S = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) if (attrs[k] != null) e.setAttribute(k, attrs[k]); if (parent) parent.append(e); return e; };
+    const A = (e, k, v) => { const m = e.__m || (e.__m = {}); if (m[k] !== v) { m[k] = v; e.setAttribute(k, v); } };
+    const O = (e, v) => { const o = +v.toFixed(3); if (o <= .004) A(e, 'display', 'none'); else { A(e, 'display', 'inline'); A(e, 'opacity', o); } };
+    const fmt = n => +n.toFixed(2);
+    const XY = (e, x, y) => { A(e, 'x', fmt(x)); A(e, 'y', fmt(y)); };
+    const BOX = (e, x, y, w, h) => { XY(e, x, y); A(e, 'width', fmt(Math.max(0, w))); A(e, 'height', fmt(Math.max(0, h))); };
+    const tx = (parent, cls, size, str = '', anchor = null) => { const e = S('text', { class: cls, 'font-size': size, 'text-anchor': anchor }, parent); e.textContent = str; return e; };
+    const setT = (e, s) => { if (e.textContent !== s) e.textContent = s; };
+    const vl = (x, y1, y2) => `M${fmt(x)} ${fmt(y1)}V${fmt(y2)}`;
+    const mn = (...a) => Math.min(...a);
+    svg.textContent = '';
+    const defs = S('defs', {}, svg);
+    const L0 = S('g', {}, svg), L1 = S('g', {}, svg), L2 = S('g', {}, svg), L3 = S('g', {}, svg);
+
+    // Widths: the mono font's advance is measured once; Inter's, per string, only when a string changes.
+    let charR = .6, measured = false, gen = 0;
+    const measure = () => {
+      if (measured) return;
+      const p = S('text', { class: 'mono', 'font-size': 100, y: -9999 }, svg);
+      p.textContent = 'MMMMMMMMMM';
+      const v = p.getComputedTextLength ? p.getComputedTextLength() / 1000 : 0;
+      if (v > .3) { charR = v; measured = true; }
+      p.remove();
+    };
+    const mw = (s, size) => s.length * size * charR;
+    const iw = e => {
+      if (e.__g !== gen || e.__s !== e.textContent) {
+        const v = e.getComputedTextLength ? e.getComputedTextLength() : 0;
+        if (!(v > 0)) return e.textContent.length * 8.4;
+        e.__w = v; e.__g = gen; e.__s = e.textContent;
+      }
+      return e.__w;
+    };
+    const wrap = (s, n) => {
+      const out = [];
+      let cur = '';
+      for (const w of s.split(' ')) { if (!cur) cur = w; else if ((cur + ' ' + w).length <= n) cur += ' ' + w; else { out.push(cur); cur = w; } }
+      if (cur) out.push(cur);
+      return out;
+    };
+    const along = (pts, f) => {
+      const seg = [];
+      let L = 0;
+      for (let i = 1; i < pts.length; i++) { const d = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); seg.push(d); L += d; }
+      let r = clamp(f) * L;
+      for (let i = 0; i < seg.length; i++) {
+        if (r <= seg[i] || i === seg.length - 1) { const k = seg[i] ? Math.min(1, r / seg[i]) : 0; return { x: lerp(pts[i][0], pts[i + 1][0], k), y: lerp(pts[i][1], pts[i + 1][1], k) }; }
+        r -= seg[i];
+      }
+      return { x: pts[0][0], y: pts[0][1] };
+    };
+
+    // --- Pools: lines, tags and dots made on first use, hidden when a frame doesn't use them ---
+    const linePool = {}, lineUsed = new Set();
+    const LS = {
+      dash: { stroke: C.line, 'stroke-width': 2.5, 'stroke-dasharray': '3 8', 'stroke-linecap': 'round' },
+      solid: { stroke: C.cream, 'stroke-width': 2.5 },
+      fill: { stroke: C.butter, 'stroke-width': 4, pathLength: 1 },
+    };
+    const line = (key, d, o, style = 'dash', prog = 1) => {
+      if (!(o > .004)) return;
+      let e = linePool[key];
+      if (!e) e = linePool[key] = S('path', { fill: 'none', ...LS[style] }, L0);
+      lineUsed.add(key);
+      A(e, 'd', d); O(e, o);
+      if (style === 'fill') A(e, 'stroke-dasharray', `${clamp(prog).toFixed(4)} 1`);
+    };
+    const tagPool = {}, tagUsed = new Set();
+    const tag = (key, x, y, str, o = 1, { cls = 'm', mono = false, size = 13.5, anchor = 'middle', bg = C.cream } = {}) => {
+      if (!(o > .004)) return;
+      let t = tagPool[key];
+      if (!t) { const g = S('g', {}, L3); t = tagPool[key] = { g, r: S('rect', { rx: 7 }, g), l: S('text', {}, g) }; }
+      tagUsed.add(key);
+      O(t.g, o);
+      A(t.l, 'class', cls + (mono ? ' mono' : '')); A(t.l, 'font-size', size); setT(t.l, str); A(t.r, 'fill', bg);
+      const w = (mono ? mw(str, size) : iw(t.l)) + 18, h = size + 12;
+      const x0 = clamp(anchor === 'start' ? x : anchor === 'end' ? x - w : x - w / 2, 6, VW - 6 - w);
+      BOX(t.r, x0, y - h / 2, w, h); XY(t.l, x0 + 9, y + size * .36);
+    };
+    const spots = [];
+    for (let i = 0; i < 24; i++) spots.push(S('circle', { display: 'none' }, L2));
+    let spotN = 0;
+    const spot = (x, y, r = 7, fill = C.butter, o = 1, stroke = null) => {
+      const c = spots[spotN++];
+      if (!c) return;
+      A(c, 'cx', fmt(x)); A(c, 'cy', fmt(y)); A(c, 'r', fmt(r)); A(c, 'fill', fill); A(c, 'stroke', stroke || 'none'); A(c, 'stroke-width', stroke ? 2 : 0); O(c, o);
+    };
+
+    // --- GitHub: a card whose rows come and go ---
+    const ROWS = ['shared', 'b', 'a', 's', 'pb', 'pa', 'ps', 'names'];
+    const ROWH = { shared: 46, b: 46, a: 46, s: 46, pb: 32, pa: 32, ps: 32, names: 54 };
+    const ROWL = { shared: 'one shared ref', b: 'refs/murmur/mesh/bob-laptop-3f2a', a: 'refs/murmur/mesh/alice-mbp-91c0', s: 'refs/murmur/mesh/sam-desktop-7be1', pb: 'refs/murmur/presence/bob-laptop-3f2a', pa: 'refs/murmur/presence/alice-mbp-91c0', ps: 'refs/murmur/presence/sam-desktop-7be1', names: 'refs/murmur/names' };
+    const SHA = { b: 'c4c0bcd', a: '4c08589', s: '6d1fa02', names: '8d04c7a' };
+    const ghH = r => 30 + ROWS.reduce((s, k) => s + ROWH[k] * (r[k] || 0), 0) + 8;
+    const gh = (() => {
+      const g = S('g', {}, L1);
+      const shade = S('rect', { rx: 12, fill: C.shade }, g), body = S('rect', { rx: 12, fill: C.panel }, g);
+      const rowsG = S('g', {}, g);
+      const head = S('rect', { rx: 12, fill: C.ink }, g), headSq = S('rect', { fill: C.ink }, g);
+      const ttl = tx(g, 'b cream', 16, 'GitHub');
+      const rows = {};
+      for (const k of ROWS) {
+        const rg = S('g', {}, rowsG), pres = k[0] === 'p', ref = !pres && k !== 'names';
+        const bg = S('rect', { fill: pres ? C.row : C.butter }, rg);
+        const ln = ref ? S('rect', { fill: C.blue }, rg) : null;
+        const sep = S('rect', { fill: 'rgba(14,27,69,.12)' }, rg);
+        const lab = tx(rg, pres ? 'mono soft' : 'mono b', 13, ROWL[k]);
+        const sha = SHA[k] ? tx(rg, 'mono bink', 13, SHA[k], 'end') : null;
+        const dots = ref ? [0, 1, 2, 3, 4, 5, 6, 7].map(() => S('circle', { r: 6, fill: C.blue, display: 'none' }, rg)) : [];
+        const pd = pres ? S('circle', { r: 6, fill: C.ink }, rg) : null;
+        const rec = k === 'names' ? tx(rg, 'mono bink', 13, '') : null;
+        rows[k] = { g: rg, bg, ln, sep, lab, sha, dots, pd, rec, dim: 1 };
+      }
+      return { g, shade, body, head, headSq, ttl, rows };
+    })();
+    const drawGh = (p, cnt, pop) => {
+      const G = { x: p.x, y: p.y, w: p.w, rows: {} };
+      let y = p.y + 30;
+      for (const k of ROWS) {
+        const v = p.r[k], h = ROWH[k] * v, R = gh.rows[k];
+        G.rows[k] = { y, h, line: y + 33, mid: y + h / 2 };
+        if (v <= .01 || p.o <= .004) { A(R.g, 'display', 'none'); y += h; continue; }
+        O(R.g, v * v * v * R.dim);
+        BOX(R.bg, p.x, y, p.w, h); BOX(R.sep, p.x, y + h - 1, p.w, 1);
+        XY(R.lab, p.x + 12, y + (R.pd ? 21 : 19));
+        if (R.ln) {
+          BOX(R.ln, p.x, y + 31, p.w, 4);
+          const n = Math.min(8, cnt[k] || 0);
+          R.dots.forEach((c, j) => {
+            if (j >= n) { A(c, 'display', 'none'); return; }
+            A(c, 'display', 'inline'); A(c, 'cx', fmt(p.x + 20 + j * 22)); A(c, 'cy', fmt(y + 33)); A(c, 'r', fmt(j === n - 1 ? 6 * (1 + .5 * (pop[k] || 0)) : 6));
+          });
+        }
+        if (R.pd) { A(R.pd, 'cx', fmt(p.x + p.w - 18)); A(R.pd, 'cy', fmt(y + h / 2)); }
+        if (R.sha) { XY(R.sha, p.x + p.w - 12, y + 19); O(R.sha, mw(ROWL[k], 13) + mw(R.sha.textContent, 13) + 40 <= p.w ? 1 : 0); }
+        if (R.rec) XY(R.rec, p.x + 12, y + 41);
+        y += h;
+      }
+      G.h = y - p.y + 8;
+      O(gh.g, p.o);
+      if (p.o > .004) { BOX(gh.shade, p.x, p.y + 6, p.w, G.h); BOX(gh.body, p.x, p.y, p.w, G.h); BOX(gh.head, p.x, p.y, p.w, 30); BOX(gh.headSq, p.x, p.y + 18, p.w, 12); XY(gh.ttl, p.x + 12, p.y + 21); }
+      return G;
+    };
+
+    // --- What a push to a branch would wake, and doesn't ---
+    const side = (() => {
+      const g = S('g', {}, L1);
+      const items = [['GitHub Actions', '0 runs', 'soft'], ['push webhooks', '0 deliveries', 'soft'], ['git pull', 'skips these', 'mono soft']].map(([a, b, c]) => ({ bg: S('rect', { rx: 10, fill: C.cream }, g), l: tx(g, c, 15, a), v: tx(g, 'b', 15, b, 'end') }));
+      return { g, items };
+    })();
+    const drawSide = p => {
+      O(side.g, p.o);
+      if (p.o <= .004) return;
+      side.items.forEach((it, j) => { const y = p.y + j * 54; BOX(it.bg, p.x, y, p.w, 46); XY(it.l, p.x + 14, y + 28.5); XY(it.v, p.x + p.w - 14, y + 28.5); });
+    };
+
+    // --- The names set aside ---
+    const tray = (() => { const g = S('g', {}, L1), cs = []; for (let k = 0; k < 11; k++) cs.push(S('rect', { width: 34, height: 22, rx: 6, fill: C.butter, display: 'none' }, g)); return { g, cs }; })();
+    const chipAt = (p, k) => ({ x: p.cx - 101 + (k % 5) * 42, y: p.y + 34 + Math.floor(k / 5) * 30 });
+
+    // --- Daemons ---
+    const mkDm = () => {
+      const g = S('g', {}, L1), inner = S('g', {}, g);
+      const sh = S('rect', { rx: 11, fill: C.shade }, inner), r = S('rect', { rx: 11, fill: C.ink }, inner);
+      const halo = S('circle', { fill: C.green, display: 'none' }, inner), led = S('circle', { r: 5.5, fill: C.green }, inner);
+      const lab = tx(inner, 'b cream', 15, 'Murmur daemon'), sub = tx(inner, 'mono pale', 13, 'one per clone', 'middle');
+      const dash = S('rect', { rx: 11, fill: C.blue, stroke: C.cream, 'stroke-width': 2, 'stroke-dasharray': '6 6', display: 'none' }, g);
+      const gone = tx(g, 'm cream', 15, 'exited', 'middle');
+      return { g, inner, sh, r, halo, led, lab, sub, dash, gone };
+    };
+    const dmHt = p => 48 + 18 * p.sub, dmTop = p => p.cy - dmHt(p) / 2, dmBot = p => p.cy + dmHt(p) / 2;
+    const drawDm = (d, p, { gone = 0, pulse = 0, pop = 1, hideSub = 0 } = {}) => {
+      O(d.g, p.o);
+      if (p.o <= .004) return;
+      const h = dmHt(p), x = p.cx - p.w / 2, y = p.cy - h / 2;
+      O(d.inner, 1 - gone); O(d.dash, gone); O(d.gone, gone);
+      BOX(d.sh, x, y + 5, p.w, h); BOX(d.r, x, y, p.w, h); BOX(d.dash, x, y, p.w, h);
+      const lw = iw(d.lab), lx = p.cx - (lw + 17) / 2, ly = y + 29.5 - 3.5 * p.sub;
+      XY(d.lab, lx + 17, ly);
+      for (const c of [d.led, d.halo]) { A(c, 'cx', fmt(lx + 5.5)); A(c, 'cy', fmt(ly - 5)); }
+      A(d.halo, 'r', fmt(5.5 + 9 * pulse)); O(d.halo, pulse * .45);
+      XY(d.sub, p.cx, y + 51); O(d.sub, p.sub * (1 - hideSub));
+      XY(d.gone, p.cx, p.cy + 5);
+      A(d.inner, 'transform', pop !== 1 ? `translate(${fmt(p.cx)} ${fmt(p.cy)}) scale(${pop.toFixed(3)}) translate(${fmt(-p.cx)} ${fmt(-p.cy)})` : '');
+    };
+    const dmB = mkDm(), dmA = mkDm(), dmS = mkDm();
+
+    // --- MCP servers ---
+    const mkChip = () => {
+      const g = S('g', {}, L1), live = S('g', {}, g);
+      const r = S('rect', { rx: 8, width: 78, height: 30, fill: C.cream }, live), l = tx(live, 'mono b', 13.5, 'mur mcp', 'middle');
+      // Stopped: an outline where the server was.
+      const dash = S('g', { display: 'none' }, g);
+      const dr = S('rect', { rx: 8, width: 78, height: 30, fill: C.blue, stroke: C.cream, 'stroke-width': 2, 'stroke-dasharray': '5 5' }, dash);
+      const dl = tx(dash, 'mono m cream', 13.5, 'mur mcp', 'middle');
+      return { g, live, r, l, dash, dr, dl };
+    };
+    const drawChip = (c, p, dead = 0) => {
+      O(c.g, p.o);
+      if (p.o <= .004) return;
+      XY(c.r, p.cx - 39, p.cy - 15); XY(c.dr, p.cx - 39, p.cy - 15); XY(c.l, p.cx, p.cy + 4.8); XY(c.dl, p.cx, p.cy + 4.8);
+      O(c.live, 1 - dead); O(c.dash, dead);
+    };
+    const chO = mkChip(), chF = mkChip(), chH = mkChip(), chP = mkChip();
+
+    // --- Machines: desktop's laptop, at the size the scene asks, never squashed ---
+    const LAPR = 454 / 580, lapH = w => w * LAPR + 26;
+    const mkLap = seat => {
+      const g = S('g', {}, L1), body = S('g', {}, g);
+      S('path', { d: 'M40 0H540Q558 0 558 18V336H22V18Q22 0 40 0Z', fill: C.cream }, body);
+      S('rect', { x: 36, y: 14, width: 508, height: 312, rx: 6, fill: C.ink }, body);
+      S('use', { href: '#deckArt', transform: 'translate(0 336)' }, body);
+      return { g, body, lab: tx(g, 'm cream', 15, seat, 'middle') };
+    };
+    const drawLap = (l, p) => {
+      O(l.g, p.o);
+      if (p.o <= .004) return;
+      const s = p.w / 580;
+      A(l.body, 'transform', `translate(${fmt(p.cx - p.w / 2)} ${fmt(p.y)}) scale(${s.toFixed(4)})`);
+      XY(l.lab, p.cx, p.y + 454 * s + 19);
+    };
+    const dispOf = p => { const s = p.w / 580; return { x: p.cx - p.w / 2 + 36 * s, y: p.y + 14 * s, w: 508 * s, h: 312 * s }; };
+    const SAMR = 279 / 380, samH = w => w * SAMR + 26;
+    const mkSam = () => {
+      const g = S('g', {}, L1), body = S('g', {}, g);
+      S('rect', { x: 160, y: 232, width: 60, height: 34, fill: '#D5D1B8' }, body);
+      S('rect', { x: 100, y: 266, width: 180, height: 13, rx: 5, fill: C.cream }, body);
+      S('rect', { x: 0, y: 0, width: 380, height: 232, rx: 14, fill: C.cream }, body);
+      S('rect', { x: 12, y: 12, width: 356, height: 208, rx: 6, fill: C.ink }, body);
+      return { g, body, lab: tx(g, 'm cream', 15, 'Sam\'s machine', 'middle') };
+    };
+    const drawSam = (l, p) => {
+      O(l.g, p.o);
+      if (p.o <= .004) return;
+      const s = p.w / 380;
+      A(l.body, 'transform', `translate(${fmt(p.cx - p.w / 2)} ${fmt(p.y)}) scale(${s.toFixed(4)})`);
+      XY(l.lab, p.cx, p.y + 279 * s + 19);
+    };
+    const sDispOf = p => { const s = p.w / 380; return { x: p.cx - p.w / 2 + 12 * s, y: p.y + 12 * s, w: 356 * s, h: 208 * s }; };
+
+    // A session's window: a title bar with its name, and a few lines of what it is doing.
+    const mkWin = name => {
+      const g = S('g', {}, L1);
+      const cr = S('rect', { rx: 4 }, S('clipPath', { id: `pw${pid}${name}` }, defs));
+      const body = S('g', { 'clip-path': `url(#pw${pid}${name})` }, g);
+      const bg = S('rect', { fill: C.ink }, body), bar = S('rect', { fill: C.bar }, body);
+      const dot = S('circle', { r: 4, fill: C.idle }, body);
+      const ttl = tx(body, 'mono pale', 13, name);
+      const band = S('rect', { rx: 5, fill: C.butter, display: 'none' }, body);
+      const box = S('rect', { rx: 5, fill: 'none', stroke: C.butter, 'stroke-width': 1.6, 'stroke-dasharray': '4 4', display: 'none' }, body);
+      const ls = [];
+      for (let i = 0; i < 9; i++) ls.push(tx(body, 'mono', 13));
+      return { g, cr, bg, bar, dot, ttl, band, box, ls, name };
+    };
+    const LH = 17;
+    const drawWin = (w, r, sp) => {
+      const o = sp.o == null ? 1 : sp.o;
+      if (o <= .004 || r.w < 3) { A(w.g, 'display', 'none'); return; }
+      O(w.g, o);
+      BOX(w.cr, r.x, r.y, r.w, r.h); BOX(w.bg, r.x, r.y, r.w, r.h); BOX(w.bar, r.x, r.y, r.w, 22);
+      A(w.dot, 'cx', fmt(r.x + 11)); A(w.dot, 'cy', fmt(r.y + 11)); A(w.dot, 'fill', sp.green ? C.green : C.idle);
+      XY(w.ttl, r.x + 21, r.y + 15.5);
+      O(w.ttl, (mw(w.name, 13) + 28 <= r.w ? 1 : 0) * (sp.ttl == null ? 1 : sp.ttl));
+      // Too narrow to say anything readable: it says nothing.
+      const cpl = Math.floor((r.w - 16) / (13 * charR)), ok = cpl >= 9 && r.h > 50;
+      let n = 0, y = r.y + 22 + 19;
+      const put = (s, cls, a) => { const e = w.ls[n++]; if (!e) return; setT(e, s); A(e, 'class', 'mono ' + cls); XY(e, r.x + 8, y); O(e, a); y += LH; };
+      if (ok) for (const l of sp.lines || []) { const a = l.o == null ? 1 : l.o; if (a > .004 && l.s) for (const s of wrap(l.s, cpl)) put(s, l.cls || 'cream', a); }
+      const b = sp.band;
+      if (ok && b && b.o > .004) {
+        const ls = [...(b.from ? [['from ' + b.from, 'soft']] : []), ...wrap(b.msg, cpl).map(s => [s, ''])];
+        BOX(w.band, r.x + 4, y - 14, r.w - 8, ls.length * LH + 3); O(w.band, b.o);
+        ls.forEach(([s, c]) => put(s, c, b.o));
+        y += 8;
+      } else A(w.band, 'display', 'none');
+      if (ok && sp.queue > .004) {
+        const ls = wrap('1 queued: its next turn', cpl);
+        BOX(w.box, r.x + 4, y - 14, r.w - 8, ls.length * LH + 3); O(w.box, sp.queue);
+        ls.forEach(s => put(s, 'pale', sp.queue));
+      } else A(w.box, 'display', 'none');
+      for (; n < w.ls.length; n++) A(w.ls[n], 'display', 'none');
+    };
+
+    const lapB = mkLap('Bob\'s laptop'), winO = mkWin('quiet-otter'), winF = mkWin('calm-finch');
+    const lapA = mkLap('Alice\'s laptop'), winH = mkWin('brave-heron');
+    const sam = mkSam(), winW = mkWin('solar-wren'), winP = mkWin('polar-walnut');
+    const sleepR = S('rect', { rx: 4, fill: '#070E26', display: 'none' }, L1);
+
+    // --- Things that move ---
+    const ring = S('circle', { fill: 'none', stroke: C.butter, 'stroke-width': 5, pathLength: 1, 'stroke-linecap': 'round', display: 'none' }, L2);
+    const pill = (() => { const g = S('g', { display: 'none' }, L2); return { g, r: S('rect', {}, g), m: tx(g, 'b', 15, 'message', 'middle'), c: tx(g, 'b', 15, 'commit', 'middle') }; })();
+    // msg: 1 a message, 0 a commit. size: 0 a dot, 1 a pill.
+    const pillAt = (x, y, { msg = 1, size = 1, red = 0, o = 1 } = {}) => {
+      O(pill.g, o);
+      const w = lerp(14, lerp(78, 92, msg), size), h = lerp(14, 32, size);
+      BOX(pill.r, x - w / 2, y - h / 2, w, h); A(pill.r, 'rx', fmt(Math.min(lerp(h / 2, 8, msg), h / 2)));
+      A(pill.r, 'fill', red ? C.red : C.butter); A(pill.r, 'stroke', size > .5 ? (red ? C.cream : C.ink) : 'none'); A(pill.r, 'stroke-width', 2);
+      const tO = clamp((size - .6) / .4);
+      XY(pill.m, x, y + 5.3); XY(pill.c, x, y + 5.3);
+      O(pill.m, tO * (msg < .5 ? 0 : .2 + .8 * (2 * msg - 1))); O(pill.c, tO * (msg < .5 ? .2 + .8 * (1 - 2 * msg) : 0));
+      A(pill.m, 'class', red ? 'b cream' : 'b');
+    };
+    const mkName = () => { const g = S('g', { display: 'none' }, L2); return { g, r: S('rect', { rx: 8, stroke: C.ink, 'stroke-width': 2 }, g), l: tx(g, 'mono b', 13, '', 'middle') }; };
+    const nA = mkName(), nS = mkName(), nT = mkName();
+    const nameAt = (n, x, y, s, o = 1, red = false) => {
+      O(n.g, o);
+      if (o <= .004) return;
+      setT(n.l, s);
+      const w = mw(s, 13) + 18, h = 28;
+      x = clamp(x, w / 2 + 6, VW - 6 - w / 2);
+      BOX(n.r, x - w / 2, y - h / 2, w, h); A(n.r, 'fill', red ? C.red : C.butter);
+      XY(n.l, x, y + 4.6); A(n.l, 'class', red ? 'mono b cream' : 'mono b');
+    };
+
+    // --- Cards: real output, short enough to read ---
+    const mkCard = (lines, bg, minChars = 0) => {
+      const g = S('g', { display: 'none', 'data-artifact': '' }, L3), inner = S('g', {}, g);
+      const sh = S('rect', { rx: 10, fill: C.shade }, inner), r = S('rect', { rx: 10, fill: bg }, inner);
+      const hl = S('rect', { rx: 4, fill: C.butter, width: 0 }, inner);
+      const ls = lines.map(([s, c]) => tx(inner, 'mono ' + c, 14, s));
+      return { g, inner, sh, r, hl, ls, n: lines.length, chars: Math.max(minChars, ...lines.map(l => l[0].length)) };
+    };
+    const cardH = (c, maxW) => { const fs = clamp((maxW - 28) / (c.chars * charR), 13, 14); return c.n * fs * 1.4 + 18; };
+    const drawCard = (c, cx, cy, o, maxW, { sc = 1, ox = cx, oy = cy } = {}) => {
+      O(c.g, o);
+      if (o <= .004) return null;
+      const fs = clamp((maxW - 28) / (c.chars * charR), 13, 14), lh = fs * 1.4;
+      const w = c.chars * fs * charR + 28, h = c.n * lh + 18, x = cx - w / 2, y = cy - h / 2;
+      BOX(c.sh, x, y + 6, w, h); BOX(c.r, x, y, w, h);
+      c.ls.forEach((e, j) => { A(e, 'font-size', fmt(fs)); XY(e, x + 14, y + 9 + lh * (j + .76)); });
+      A(c.inner, 'transform', sc < 1 ? `translate(${fmt(lerp(ox, cx, sc))} ${fmt(lerp(oy, cy, sc))}) scale(${fmt(.3 + .7 * sc)}) translate(${fmt(-cx)} ${fmt(-cy)})` : '');
+      return { x, y, w, h, fs, lh };
+    };
+    const commitC = mkCard([['tree 4b825dc', 'b'], ['parent c4c0bcd', 'soft'], ['author bob-laptop-3f2a', 'soft'], ['', ''], ['bob-laptop-3f2a/3f9a1c ->', 'b'], ['alice-mbp-91c0/7bd204:', 'b'], ['Are you changing the auth', 'b'], ['middleware?', 'b']], C.cream, 38);
+    const treeNote = tx(commitC.inner, 'm blue', 13, 'git\'s empty tree: no files');
+    const errC = mkCard([['not sent: this contains what', 'b red'], ['looks like a GitHub token.', 'b red'], ['Everything sent through the bus', 'soft'], ['stays in the repo\'s history;', 'soft'], ['remove it and send again', 'soft']], C.cream);
+    const logC = mkCard([['git log refs/murmur/mesh/', 'butter'], ['        bob-laptop-3f2a', 'butter'], ['', ''], ['bob-laptop-3f2a/3f9a1c ->', 'cream'], ['alice-mbp-91c0/7bd204:', 'cream'], ['Are you changing the auth', 'cream'], ['middleware?', 'cream']], C.ink);
+
+    // Big readouts: the poll rate, a clock, a countdown.
+    const bigN = tx(L3, 'b butter', 48, '', 'middle');
+    bigN.setAttribute('style', 'letter-spacing:-.03em;font-variant-numeric:tabular-nums');
+    const bigL = tx(L3, 'm cream', 14, '', 'middle');
+    const bigDot = S('circle', { fill: C.butter, display: 'none' }, L3);
+
+    // ---------- Where the words leave room ----------
+    let key = '', VW = 0, VH = 0, vH = 0, heroB = 0, endH = 0, noteB = [];
+    const noteOf = [];
+    document.querySelectorAll('.ch').forEach(sec => {
+      const ids = sec.dataset.id.split(' '), ns = [...sec.querySelectorAll('.note:not(.hero)')];
+      ids.forEach((c, k) => { noteOf[T[c]] = ns.length === ids.length ? ns[k] : ns[0]; });
+    });
+    const dims = () => {
+      const k = innerWidth + 'x' + innerHeight + (document.fonts ? document.fonts.status : '');
+      if (k === key) return;
+      key = k; gen++;
+      const r = svg.getBoundingClientRect();
+      VW = svg.clientWidth || r.width; VH = svg.clientHeight || r.height;
+      vH = opts.fit ? VH : Math.min(VH, innerHeight);
+      if (opts.fit) return;
+      const hero = document.querySelector('.note.hero'), endEl = document.getElementById('end');
+      heroB = hero ? hero.getBoundingClientRect().bottom : 0;
+      endH = endEl ? endEl.offsetHeight : 0;
+      noteB = ORDER.map((c, i) => (noteOf[i] ? noteOf[i].getBoundingClientRect().bottom : 0));
+    };
+    // The area below this chapter's words (below the title at the start, above the closing band at the end).
+    const area = i => {
+      if (opts.fit) return { x: 12, y: 10, w: VW - 24, h: VH - 20 };
+      const m = VW < 400 ? 14 : 18, fin = ORDER[i] === 'finale';
+      const top = i === 0 ? heroB + 18 : fin ? 18 : noteB[i] + 22;
+      const bot = i === 0 ? vH - 58 : fin ? vH - endH - 8 : vH - 16;
+      return { x: m, y: top, w: VW - 2 * m, h: Math.max(120, bot - top) };
+    };
+
+    // ---------- One scene per chapter: where each part is, and how much of it shows ----------
+    const R0 = { shared: 0, b: 0, a: 0, s: 0, pb: 0, pa: 0, ps: 0, names: 0 };
+    const LN0 = { pre: 0, chipDm: 0, stem: 0, dmGh: 0, dmLap: 0, lapGh: 0 };
+    const blank = Ar => {
+      const p = () => ({ cx: Ar.x + Ar.w / 2, cy: Ar.y + Ar.h / 2, x: Ar.x, y: Ar.y + Ar.h / 2, w: 220, o: 0, sub: 0 });
+      return {
+        top: Ar.y, splitB: 0, splitS: 0, wS: 1, t3x: Ar.x + Ar.w / 2,
+        lapB: p(), lapA: p(), sam: p(), chipO: p(), chipF: p(), chipH: p(), chipP: p(), dmB: p(), dmA: p(), dmS: p(),
+        gh: { ...p(), r: { ...R0 } }, side: p(), tray: p(), big: p(), card: p(), ln: { ...LN0 },
+      };
+    };
+    const startY = (Ar, total) => Ar.y + Math.max(0, (Ar.h - total) / 2);
+    const scene = (i, Ar, f) => {
+      const ch = ORDER[i], s = blank(Ar), cx = Ar.x + Ar.w / 2, cw = Math.min(Ar.w, 460), x0 = cx - cw / 2;
+      const colW = (cw - 14) / 2, cL = x0 + colW / 2, cR = x0 + cw - colW / 2, dmW = Math.min(cw * .72, 250);
+      const E = (a, b) => ss(clamp((f - a) / (b - a)));
+      const card = (y, r, o = 1) => { s.gh = { x: x0, y, w: cw, o, r: { ...R0, ...r } }; };
+      switch (ch) {
+        case 'open': {
+          const w = clamp((Ar.h - 26) / LAPR, 140, Math.min(cw * .92, 380));
+          s.lapB = { cx, y: startY(Ar, lapH(w)), w, o: 1 };
+          break;
+        }
+        case 'obvious': case 'race': case 'dies': case 'daemon': case 'commit': case 'secret': {
+          // One laptop, its MCP servers, GitHub above; from 'daemon' on, the daemon between them.
+          const dm = i >= T.daemon, rows = { shared: 1 };
+          const gH = ghH(rows), dH = dm ? 66 : 0;
+          let g1 = dm ? 36 : 56, g2 = dm ? 30 : 0, g3 = 26;
+          const fixed = gH + g1 + dH + g2 + 30 + g3;
+          const w = clamp((Ar.h - fixed - 26) / LAPR, 150, Math.min(cw * .88, 330));
+          // Room to spare goes to the gaps, so the parts don't huddle in the middle of a tall screen.
+          const ex = Math.max(0, Ar.h - fixed - lapH(w));
+          g1 += Math.min(ex * .25, 44); g2 += dm ? Math.min(ex * .1, 16) : 0; g3 += Math.min(ex * .1, 16);
+          let y = startY(Ar, gH + g1 + dH + g2 + 30 + g3 + lapH(w));
+          card(y, rows); y += gH + g1;
+          if (dm) { s.dmB = { cx, cy: y + dH / 2, w: dmW, o: 1, sub: 1 }; y += dH + g2; }
+          const cy = y + 15;
+          y += 30 + g3;
+          s.lapB = { cx, y, w, o: 1 };
+          const split = ch === 'obvious' ? 0 : ch === 'race' ? E(.04, .2) : 1, d = dispOf(s.lapB);
+          s.splitB = split;
+          s.chipO = { cx: d.x + d.w * (.5 - .25 * split), cy, o: 1 };
+          s.chipF = { cx: d.x + d.w * .75, cy, o: split };
+          s.ln = { ...LN0, pre: dm ? 0 : 1, chipDm: dm ? 1 : 0, stem: 1, dmGh: dm ? 1 : 0 };
+          break;
+        }
+        case 'split': {
+          // Two devices side by side under GitHub; the shared row splits in two.
+          const alice = E(.06, .16), sp = E(.46, .58);
+          const gH = ghH({ b: 1, a: 1 });
+          let g1 = 46, g2 = 28;
+          const w = clamp((Ar.h - gH - g1 - 50 - g2 - 26) / LAPR, 120, colW);
+          const ex = Math.max(0, Ar.h - gH - g1 - 50 - g2 - lapH(w));
+          g1 += Math.min(ex * .3, 70); g2 += Math.min(ex * .12, 24);
+          let y = startY(Ar, gH + g1 + 50 + g2 + lapH(w));
+          card(y, { shared: 1 - sp, b: sp, a: sp }); y += gH + g1;
+          s.dmB = { cx: cL, cy: y + 25, w: colW, o: 1, sub: 0 }; s.dmA = { cx: cR, cy: y + 25, w: colW, o: alice, sub: 0 };
+          y += 50 + g2;
+          s.lapB = { cx: cL, y, w, o: 1 }; s.lapA = { cx: cR, y, w, o: alice };
+          // Half a small laptop is too narrow to read, so Bob's laptop shows quiet-otter alone from here.
+          s.ln = { ...LN0, dmGh: 1, dmLap: 1 };
+          break;
+        }
+        case 'side': {
+          const gH = ghH({ b: 1, a: 1 }), sH = 3 * 46 + 2 * 8, g1 = 30 + Math.min(Math.max(0, Ar.h - gH - 30 - sH) * .2, 40);
+          const y = startY(Ar, gH + g1 + sH);
+          card(y, { b: 1, a: 1 });
+          s.side = { x: x0, y: y + gH + g1, w: cw, o: 1 };
+          break;
+        }
+        case 'ask': case 'rate': {
+          const gH = ghH({ b: 1, a: 1 }), big = 22 + 120, g1 = 90 + Math.min(Math.max(0, Ar.h - gH - 90 - 50 - big) * .3, 50);
+          let y = startY(Ar, gH + g1 + 50 + big);
+          card(y, { b: 1, a: 1 }); y += gH + g1;
+          s.dmA = { cx, cy: y + 25, w: dmW, o: 1, sub: 0 };
+          s.big = { cx, y: y + 50 + 22, o: ch === 'rate' ? 1 : 0 };
+          s.ln = { ...LN0, dmGh: 1 };
+          break;
+        }
+        case 'deliver': case 'busy': {
+          // Alice's daemon above her laptop: its MCP server, stopped, to one side; T3's way in to the other.
+          const g1 = 44, g2 = 40, foot = 34;
+          const w = clamp((Ar.h - 50 - g1 - 30 - g2 - foot - 26) / LAPR, 200, Math.min(cw, 380));
+          let y = startY(Ar, 50 + g1 + 30 + g2 + lapH(w) + foot);
+          s.dmA = { cx, cy: y + 25, w: dmW, o: 1, sub: 0 }; y += 50 + g1;
+          s.chipH = { cx: cx - Math.min(cw * .28, dmW / 2 - 30), cy: y + 15, o: 1 }; y += 30 + g2;
+          s.lapA = { cx, y, w, o: 1 };
+          s.t3x = cx + cw * .1;
+          s.ln = { ...LN0, chipDm: 1, stem: 1 };
+          break;
+        }
+        case 'presence': {
+          const rows = { pb: 1, pa: 1, ps: 1 }, gH = ghH(rows), g1 = 24, clk = 82, g2 = 24;
+          const w = clamp((Ar.h - gH - g1 - clk - g2 - 26) / SAMR, 170, Math.min(cw * .74, 290));
+          let y = startY(Ar, gH + g1 + clk + g2 + samH(w));
+          card(y, rows); y += gH + g1;
+          s.big = { cx, y, o: 1 }; y += clk + g2;
+          s.sam = { cx, y, w, o: 1 };
+          break;
+        }
+        case 'names': {
+          const rows = { names: 1 }, gH = ghH(rows), g1 = clamp(Ar.h * .24, 110, 160), foot = 84;
+          let y = startY(Ar, gH + g1 + 50 + foot);
+          card(y, rows); y += gH + g1;
+          s.dmA = { cx: cL, cy: y + 25, w: colW, o: 1, sub: 0 }; s.dmS = { cx: cR, cy: y + 25, w: colW, o: 1, sub: 0 };
+          s.ln = { ...LN0, dmGh: 1 };
+          break;
+        }
+        case 'pool': {
+          const g1 = 50, trH = 34 + 52, g2 = 36;
+          const w = clamp((Ar.h - 50 - g1 - trH - g2 - 26) / SAMR, 200, Math.min(cw * .86, 320));
+          let y = startY(Ar, 50 + g1 + trH + g2 + samH(w));
+          s.dmS = { cx, cy: y + 25, w: dmW, o: 1, sub: 0 }; y += 50 + g1;
+          s.tray = { cx, y, o: 1 }; y += trH + g2;
+          s.sam = { cx, y, w, o: 1 };
+          s.splitS = E(.3, .44);
+          break;
+        }
+        case 'grace': {
+          const g1 = 64, g2 = 54;
+          const w = clamp((Ar.h - 50 - g1 - 30 - g2 - 26) / SAMR, 200, Math.min(cw * .86, 320));
+          let y = startY(Ar, 50 + g1 + 30 + g2 + samH(w));
+          s.dmS = { cx, cy: y + 25, w: dmW, o: 1, sub: 0 }; y += 50 + g1;
+          const cy = y + 15;
+          y += 30 + g2;
+          s.sam = { cx, y, w, o: 1 };
+          s.splitS = 1 - E(.86, .96);
+          const d = sDispOf(s.sam);
+          s.chipP = { cx: d.x + d.w * .75, cy, o: 1 - E(.86, .96) };
+          s.ln = { ...LN0, chipDm: 1, stem: 1 };
+          break;
+        }
+        case 'exit': {
+          const rows = { pb: 1, pa: 1, ps: 1 }, gH = ghH(rows), g1 = 34, clk = 78, g2 = 20;
+          const w = clamp((Ar.h - gH - g1 - 50 - 14 - clk - g2 - 26) / SAMR, 150, Math.min(cw * .7, 260));
+          let y = startY(Ar, gH + g1 + 50 + 14 + clk + g2 + samH(w));
+          card(y, { ...rows, ps: 1 - E(.52, .64) }); y += gH + g1;
+          s.dmS = { cx, cy: y + 25, w: dmW, o: 1, sub: 0 }; y += 50 + 14;
+          s.big = { cx, y, o: 1 - E(.46, .52) }; y += clk + g2;
+          s.sam = { cx, y, w, o: 1 };
+          s.wS = 1 - E(.02, .1);
+          s.ln = { ...LN0, dmGh: 1 };
+          break;
+        }
+        case 'limits': {
+          const rows = { b: 1, a: 1, s: 1, names: 1 }, gH = ghH(rows), g1 = 26, cH = cardH(logC, cw);
+          const y = startY(Ar, gH + g1 + cH);
+          card(y, rows);
+          s.card = { cx, y: y + gH + g1 + cH / 2, o: 1 };
+          break;
+        }
+        case 'finale': {
+          // Everything at once, small: Bob and Alice above GitHub, and the clock.
+          const rows = { b: 1, a: 1 }, gH = ghH(rows), clk = 62, g1 = 14;
+          let g2 = 58;
+          const w = clamp((Ar.h - clk - g1 - g2 - gH - 26) / LAPR, 110, colW);
+          g2 += Math.min(Math.max(0, Ar.h - clk - g1 - g2 - gH - lapH(w)) * .3, 30);
+          let y = startY(Ar, clk + g1 + lapH(w) + g2 + gH);
+          s.big = { cx, y, o: 1 }; y += clk + g1;
+          s.lapB = { cx: cL, y, w, o: 1 }; s.lapA = { cx: cR, y, w, o: 1 }; y += lapH(w) + g2;
+          card(y, rows);
+          s.ln = { ...LN0, lapGh: 1 };
+          break;
+        }
+      }
+      return s;
+    };
+    // Between two scenes: numbers ease. A part only one of them shows keeps its place and fades: a leaving
+    // part in the first half of the change, an arriving one in the second, so the two never sit on each other.
+    const mix = (a, b, f) => {
+      if (typeof b === 'number') return lerp(a, b, f);
+      const o = {};
+      for (const k in b) {
+        const x = a[k], y = b[k];
+        if (y && typeof y === 'object' && 'o' in y && x.o <= 0) o[k] = { ...mix({ ...y, o: 0 }, y, f), o: y.o * clamp(2 * f - 1) };
+        else if (y && typeof y === 'object' && 'o' in y && y.o <= 0) o[k] = { ...mix(x, { ...x, o: 0 }, f), o: x.o * (1 - clamp(2 * f)) };
+        else o[k] = mix(x, y, f);
+      }
+      return o;
+    };
+    const BL = .14;
+    const Q = 'Are you changing the auth middleware?', ANS = 'No, that\'s yours. I\'m only in cookies.';
+    const mmss = v => { const m = Math.floor(v), sec = Math.floor((v - m) * 60); return `${m}:${String(sec).padStart(2, '0')}`; };
+    const EVENTS = [[0, 'a message'], [81, 'another'], [260, '3 min later'], [420, 'last session stops'], [580, 'session starts']];
+
+    // ---------- paint(t): every attribute from t alone ----------
+    function paint(t) {
+      measure(); dims();
+      if (!(VW > 40 && VH > 40)) return;
+      const i = Math.min(N - 1, Math.floor(t)), f = t - i, Ar = area(i);
+      let st = scene(i, Ar, f);
+      if (i > 0 && f < BL) st = mix(scene(i - 1, area(i - 1), 1), st, ss(f / BL));
+      A(svg, 'viewBox', `0 0 ${fmt(VW)} ${fmt(VH)}`);
+      if (!opts.fit) svg.parentNode.style.clipPath = `inset(${Math.max(0, st.top - 12).toFixed(1)}px 0 0 0)`;
+      spotN = 0; lineUsed.clear(); tagUsed.clear();
+      A(pill.g, 'display', 'none'); [nA, nS, nT].forEach(n => A(n.g, 'display', 'none'));
+      O(bigN, 0); O(bigL, 0); O(bigDot, 0); A(ring, 'display', 'none');
+      const W = (c, a, b) => clamp((t - T[c] - a) / (b - a));
+      const IN = (c, a, b) => t >= T[c] + a && t < T[c] + b;
+      const cx = Ar.x + Ar.w / 2;
+
+      // --- GitHub ---
+      const cnt = { s: 1 }, born = { shared: [], b: [], a: [] };
+      if (t < at('daemon')) born.shared = [at('obvious', .72), at('race', .44), at('race', .76)];
+      else born.shared = [at('commit', .97), at('split', .36)];
+      born.b = [-1, -1, at('split', .84), at('side', .3), at('side', .6), at('ask', .48), at('finale', .24)];
+      born.a = [at('split', .84), at('finale', .72)];
+      const pop = {};
+      for (const k in born) {
+        cnt[k] = born[k].filter(b => t >= b).length;
+        pop[k] = Math.max(0, ...born[k].map(b => (t >= b ? Math.sin(Math.PI * clamp((t - b) / .05)) : 0)));
+      }
+      const R = gh.rows;
+      const shaFlip = t >= at('ask', .5);
+      setT(R.b.sha, shaFlip ? '43c052a' : 'c4c0bcd'); A(R.b.sha, 'class', shaFlip && t < at('ask', .9) ? 'mono b red' : 'mono bink');
+      setT(R.names.rec, t >= at('names', .86) ? 'paramount-village -> alice-mbp-91c0' : t >= at('names', .36) ? 'creamy-duiker -> sam-desktop-7be1' : '');
+      const minutes = lerp(0, 9, clamp((t - T.presence - .14) / .76)), asleep = minutes >= 2.6 && t < at('names');
+      const since = clamp(minutes - 2.4, 0, 6), staleNow = since >= 6 && t < at('names');
+      R.ps.dim = staleNow ? .4 : 1;
+      const G = drawGh(st.gh, cnt, pop);
+      const ghBot = st.gh.y + ghH(st.gh.r);
+      const slot = (k, n) => [G.x + 20 + Math.min(7, n) * 22, G.rows[k].line];
+      ['pb', 'pa', 'ps'].forEach((k, j) => {
+        const age = (((minutes - j * .5) % 2) + 2) % 2;
+        const on = IN('presence', .1, 1) && minutes >= j * .5 && !(j === 2 && asleep);
+        const p = on ? clamp(1 - age / .45) : 0;
+        A(R[k].pd, 'r', fmt(6 + 5 * p)); A(R[k].pd, 'fill', p > .15 ? C.blue : C.ink);
+      });
+      drawSide(st.side);
+
+      // --- Daemons ---
+      const dLand = W('daemon', 0, .12), aLand = W('split', .06, .16);
+      let pulseA = 0;
+      if (t >= at('rate') && t < at('deliver')) {
+        const sim = simAt(t - T.rate);
+        let last = 0;
+        for (const k of TICKS) { if (k > sim) break; last = k; }
+        pulseA = clamp(1 - (sim - last) / 1.6);
+      }
+      const sGone = t >= at('exit') ? ss(W('exit', .46, .5)) : 0;
+      // While a message sits on the daemon, it sits where 'one per clone' was.
+      const onDm = t >= at('commit') && t < at('secret') ? W('commit', .1, .16) * (1 - W('commit', .84, .9)) : t >= at('secret') && t < at('split') ? W('secret', .22, .3) * (1 - W('secret', .62, .7)) : 0;
+      drawDm(dmB, st.dmB, { pop: dLand > 0 && dLand < 1 ? .86 + .14 * oc(dLand) + .04 * Math.sin(dLand * Math.PI) : 1, hideSub: onDm });
+      drawDm(dmA, st.dmA, { pulse: pulseA, pop: aLand > 0 && aLand < 1 ? .88 + .12 * oc(aLand) : 1 });
+      drawDm(dmS, st.dmS, { gone: sGone });
+
+      // --- MCP servers: they come and go with their sessions ---
+      const flick = (from, to, n) => { if (t < from || t >= to) return 0; const x = (t - from) / (to - from) * n; return x - Math.floor(x) < .4 ? 1 : 0; };
+      drawChip(chO, st.chipO, Math.max(flick(at('dies', .46), at('dies', .98), 8), flick(at('daemon', .44), at('daemon', .8), 3)));
+      drawChip(chF, st.chipF, flick(at('daemon', .5), at('daemon', .74), 2));
+      drawChip(chH, st.chipH, t >= at('deliver') && t < at('finale') ? 1 : 0);
+      drawChip(chP, st.chipP, IN('grace', .05, .42) || t >= at('grace', .55) ? 1 : 0);
+
+      // --- Machines and their windows ---
+      drawLap(lapB, st.lapB); drawLap(lapA, st.lapA); drawSam(sam, st.sam);
+      const dB = dispOf(st.lapB), sp = st.splitB, half = dB.w * .5 * sp;
+      const rO = { x: dB.x, y: dB.y, w: dB.w - half - (sp > .01 ? 1.5 : 0), h: dB.h }, rF = { x: dB.x + dB.w - half + 1.5, y: dB.y, w: half - 1.5, h: dB.h };
+      let oSpec;
+      if (t < at('obvious', .1)) oSpec = { lines: [{ s: 'Rewriting the auth middleware', cls: 'pale' }] };
+      else if (t < at('finale')) oSpec = { lines: [{ s: Q.slice(0, Math.round(W('obvious', .1, .36) * Q.length)) }], green: IN('obvious', .1, .5) };
+      else { const ans = W('finale', .8, .84); oSpec = { lines: [{ s: Q.slice(0, Math.round(W('finale', .02, .1) * Q.length)), o: 1 - ans }], band: { msg: ANS, o: ans }, green: t >= at('finale', .8) }; }
+      drawWin(winO, rO, { ...oSpec, o: st.lapB.o });
+      drawWin(winF, rF, { lines: [{ s: 'Fixing the deploy script', cls: 'pale' }], o: st.lapB.o * (sp > .01 ? 1 : 0) });
+      const rH = dispOf(st.lapA);
+      let hSpec;
+      if (t < at('deliver', .66)) hSpec = { lines: [{ s: 'Adding session cookies', cls: 'pale' }] };
+      else if (t < at('finale')) hSpec = { band: { from: 'quiet-otter', msg: Q, o: 1 }, green: true, queue: ss(W('busy', .3, .36)) };
+      else {
+        const rep = Math.round(W('finale', .48, .58) * ANS.length);
+        hSpec = { lines: [{ s: ANS.slice(0, rep) }], band: { msg: Q, o: W('finale', .4, .44) * (1 - W('finale', .46, .5)) }, green: IN('finale', .4, .62) };
+      }
+      drawWin(winH, rH, { ...hSpec, o: st.lapA.o });
+      const dS = sDispOf(st.sam), sps = st.splitS, halfS = dS.w * .5 * sps;
+      const rW = { x: dS.x, y: dS.y, w: dS.w - halfS - (sps > .01 ? 1.5 : 0), h: dS.h }, rP = { x: dS.x + dS.w - halfS + 1.5, y: dS.y, w: halfS - 1.5, h: dS.h };
+      drawWin(winW, rW, { lines: [{ s: 'Building the settings view', cls: 'pale' }], green: true, o: st.sam.o * st.wS });
+      drawWin(winP, rP, { lines: [], green: true, ttl: t >= at('pool', .46) ? 1 : 0, o: st.sam.o * (sps > .01 ? 1 : 0) });
+      // A display that has gone to sleep.
+      const sleep = t >= at('presence') ? ss(W('presence', .3, .36)) * (1 - W('names', 0, .06)) : 0;
+      BOX(sleepR, dS.x, dS.y, dS.w, dS.h); O(sleepR, st.sam.o * sleep * .85);
+      if (staleNow) tag('stale', dS.x + dS.w / 2, dS.y + dS.h / 2, 'stale', st.sam.o, { cls: 'b red', size: 16 });
+
+      // --- Lines between the parts ---
+      for (const [k, c] of [['pO', st.chipO], ['pF', st.chipF]]) line(k, vl(c.cx, c.cy - 15, ghBot - 4), mn(c.o, st.gh.o) * st.ln.pre);
+      for (const [k, c, d] of [['cO', st.chipO, st.dmB], ['cF', st.chipF, st.dmB], ['cH', st.chipH, st.dmA], ['cP', st.chipP, st.dmS]]) line(k, vl(c.cx, dmBot(d), c.cy - 15), mn(c.o, d.o) * st.ln.chipDm, 'solid');
+      for (const [k, c, l] of [['sO', st.chipO, st.lapB], ['sF', st.chipF, st.lapB], ['sH', st.chipH, st.lapA], ['sP', st.chipP, st.sam]]) line(k, vl(c.cx, c.cy + 15, l.y + 2), mn(c.o, l.o) * st.ln.stem, 'solid');
+      for (const [k, d] of [['gB', st.dmB], ['gA', st.dmA], ['gS', st.dmS]]) line(k, vl(d.cx, dmTop(d), ghBot - 4), mn(d.o, st.gh.o) * st.ln.dmGh * (k === 'gS' ? 1 - sGone : 1));
+      for (const [k, d, l] of [['lB', st.dmB, st.lapB], ['lA', st.dmA, st.lapA]]) line(k, vl(d.cx, dmBot(d), l.y + 2), mn(d.o, l.o) * st.ln.dmLap, 'solid');
+      for (const [k, l] of [['fB', st.lapB], ['fA', st.lapA]]) line(k, vl(l.cx, l.y + l.w * LAPR + 32, st.gh.y + 2), mn(l.o, st.gh.o) * st.ln.lapGh);
+      const preMid = (ghBot + st.chipO.cy - 15) / 2, dmMid = d => (ghBot + dmTop(d)) / 2;
+      tag('push1', st.chipO.cx + 10, preMid, 'git push', mn(st.chipO.o, st.gh.o) * st.ln.pre * W('obvious', .46, .52) * (1 - W('dies', 0, .06)) * (IN('race', .42, .64) ? 0 : 1), { mono: true, cls: 'm cream', bg: C.blue, anchor: 'start', size: 13 });
+      tag('push2', st.dmB.cx + 10, dmMid(st.dmB), 'git push', t < at('split') ? mn(st.dmB.o, st.gh.o) * st.ln.dmGh : 0, { mono: true, cls: 'm cream', bg: C.blue, anchor: 'start', size: 13 });
+
+      // --- Each chapter's beat ---
+      const qFrom = r => [r.x + r.w / 2, r.y + 44];
+      // obvious: the commit goes straight up from the session's MCP server.
+      if (IN('obvious', .46, .72)) {
+        const c = st.chipO, e = W('obvious', .46, .72), p = along([qFrom(rO), [c.cx, c.cy], [c.cx, ghBot], slot('shared', 0)], ss(e));
+        spot(p.x, p.y, 8, C.butter, Math.min(1, e * 10));
+      }
+      // race: two pushes to one ref; one bounces.
+      if (IN('race', .28, .78)) {
+        const o = st.chipO, fc = st.chipF;
+        const pO = [qFrom(rO), [o.cx, o.cy], [o.cx, ghBot], slot('shared', 1)], pF = [[fc.cx, rF.y + 44], [fc.cx, fc.cy], [fc.cx, ghBot], slot('shared', 2)];
+        const e = W('race', .28, .44), bounce = W('race', .44, .56), retry = W('race', .6, .76);
+        if (e < 1) { const a = along(pO, ss(e)); spot(a.x, a.y, 8); }
+        if (bounce <= 0) { const b = along(pF, ss(e) * .8); spot(b.x, b.y, 8); }
+        else if (retry <= 0) { const q = along(pF, .8 - .22 * ss(bounce)); spot(q.x, q.y, 9, C.red, 1, C.cream); }
+        else if (retry < 1) { const q = along(pF, .58 + .42 * ss(retry)); spot(q.x, q.y, 8); }
+      }
+      tag('rej', cx, st.chipO.cy - 50, 'rejected (fetch first)', IN('race', .44, .62) ? 1 : 0, { mono: true, cls: 'b red', size: 13 });
+      // dies: a reply comes back, and stops at a server whose agent isn't calling a tool.
+      if (IN('dies', .04, .48)) {
+        const c = st.chipO, e = ss(W('dies', .04, .2));
+        spot(c.cx, lerp(G.rows.shared.line, c.cy - 24, e), 8, C.butter, Math.min(1, W('dies', .04, .08) * 2) * (1 - W('dies', .44, .48)));
+      }
+      tag('cant', st.chipO.cx, st.chipO.cy - 50, 'can\'t start a turn', W('dies', .2, .26) * (1 - W('dies', .44, .48)), { cls: 'b red' });
+      tag('restarts', cx, st.chipO.cy - 50, `restarts: ${Math.min(8, Math.ceil(W('dies', .46, .98) * 8))}, in about 2 days`, t >= at('dies', .48) && t < at('daemon') ? 1 : 0, { mono: true, cls: 'b red', size: 13 });
+      // daemon: one stream to GitHub, whatever its MCP servers do.
+      if (IN('daemon', .24, 1)) {
+        const d = st.dmB, o = W('daemon', .24, .34);
+        for (let k = 0; k < 3; k++) { const g = ((t * 4) + k / 3) % 1; spot(d.cx, lerp(dmTop(d), ghBot, g), 5, C.cream, o * Math.min(1, g * 8, (1 - g) * 8)); }
+      }
+      // commit: the message rises to the daemon, becomes a commit, opens, and goes up.
+      const dBp = st.dmB, c0 = st.chipO, py = dBp.cy + 10, rise = [qFrom(rO), [c0.cx, c0.cy], [c0.cx, dmBot(dBp) + 8], [dBp.cx, py]];
+      if (IN('commit', 0, .16)) { const e = W('commit', 0, .16), p = along(rise, ss(e)); pillAt(p.x, p.y, { msg: 1, size: clamp(e / .3) }); }
+      else if (IN('commit', .16, .84)) pillAt(dBp.cx, py, { msg: 1 - W('commit', .2, .34) });
+      else if (IN('commit', .84, .97)) {
+        const e = W('commit', .84, .97), p = along([[dBp.cx, py], [dBp.cx, ghBot], slot('shared', 0)], oc(e));
+        pillAt(p.x, p.y, { msg: 0, size: 1 - ss(clamp(e * 1.6)) });
+      }
+      const sh = ss(W('commit', .36, .46)) * (1 - ss(W('commit', .74, .82)));
+      if (t >= at('commit') && t < at('secret')) {
+        const k = drawCard(commitC, cx, dB.y + dB.h / 2, sh, Ar.w, { sc: sh, ox: dBp.cx, oy: py });
+        if (k) {
+          const tw = 12 * k.fs * charR;
+          BOX(commitC.hl, k.x + 9, k.y + 9 + k.lh * .02, (tw + 10) * ss(W('commit', .5, .58)), k.lh);
+          XY(treeNote, k.x + 14 + tw + 16, k.y + 9 + k.lh * .76); O(treeNote, W('commit', .52, .58));
+        }
+      } else O(commitC.g, 0);
+      // secret: blocked at the daemon, and sent back.
+      if (t >= at('secret') && t < at('split')) {
+        const up = W('secret', .06, .3), back = W('secret', .62, .9), down = rise.slice(1).reverse();
+        if (up > 0 && up < 1) { const p = along(rise, ss(up)); pillAt(p.x, p.y, { msg: 1, size: clamp(up / .3) }); }
+        else if (up >= 1 && back <= 0) pillAt(dBp.cx, py, { msg: 1, red: W('secret', .34, .4) });
+        else if (back > 0 && back < 1) { const p = along(down, ss(back)); pillAt(p.x, p.y, { msg: 1, red: 1, size: 1 - clamp((back - .75) / .25) }); }
+        drawCard(errC, cx, dB.y + dB.h / 2, W('secret', .38, .46) * (1 - W('secret', .94, 1)), Ar.w);
+      } else O(errC.g, 0);
+      // split: Alice's push to the shared ref bounces; then each daemon has its own.
+      if (IN('split', .22, .46)) {
+        const b = st.dmB, a = st.dmA, e = W('split', .22, .36);
+        if (e < 1) { const p = along([[b.cx, dmTop(b)], [b.cx, ghBot], slot('shared', 1)], ss(e)); spot(p.x, p.y, 8); }
+        const b0 = W('split', .22, .34), bounce = W('split', .36, .46), q = along([[a.cx, dmTop(a)], [a.cx, G.rows.shared.line]], Math.min(ss(b0) * .9 - .4 * ss(bounce), .9));
+        spot(q.x, q.y, b0 >= 1 ? 9 : 8, b0 >= 1 ? C.red : C.butter, 1, b0 >= 1 ? C.cream : null);
+      }
+      tag('rejA', cx, (ghBot + dmTop(st.dmA)) / 2, 'rejected (fetch first)', IN('split', .34, .48) ? 1 : 0, { mono: true, cls: 'b red', size: 13 });
+      if (IN('split', .62, .84)) {
+        const e = ss(W('split', .62, .84)), b = st.dmB, a = st.dmA;
+        const p = along([[b.cx, dmTop(b)], [b.cx, ghBot], slot('b', 2)], e), q = along([[a.cx, dmTop(a)], [a.cx, ghBot], slot('a', 0)], e);
+        spot(p.x, p.y, 8); spot(q.x, q.y, 8);
+      }
+      tag('landed', cx, (ghBot + dmTop(st.dmA)) / 2, 'both landed', W('split', .84, .9) * (1 - W('split', .98, 1)), { cls: 'b' });
+      // ask: it asks, over and over; a new commit; it fetches.
+      if (t >= at('ask') && t < at('rate')) {
+        const d = st.dmA;
+        if (IN('ask', .1, .54)) for (let k = 0; k < 3; k++) { const g = ((t * 6.5) + k / 3) % 1; spot(d.cx, lerp(dmTop(d), ghBot, g), 5.5, C.cream, W('ask', .1, .16) * Math.min(1, g * 8, (1 - g) * 8)); }
+        if (IN('ask', .6, .9)) { const p = along([slot('b', cnt.b - 1), [d.cx, G.rows.b.line], [d.cx, ghBot], [d.cx, dmTop(d)]], ss(W('ask', .6, .88))); spot(p.x, p.y, 8); }
+        tag('lsr', d.cx, ghBot + 30, 'git ls-remote origin \'refs/murmur/*\'', W('ask', .1, .18) * (1 - W('ask', .54, .6)), { mono: true, size: 13 });
+        tag('fetch', d.cx, ghBot + 30, 'git fetch', W('ask', .58, .64) * (1 - W('ask', .96, 1)), { mono: true, cls: 'b', size: 13 });
+      }
+      // rate: the poll rate, as a number, with a dot for each ls-remote.
+      if (st.big.o > .004 && t >= at('rate') - .2 && t < at('deliver', BL)) {
+        const sim = simAt(clamp(t - T.rate)), v = rateAt(sim), d = st.dmA, b = st.big;
+        const y1 = dmTop(d), len = y1 - ghBot;
+        let seen = 0;
+        for (let k = TICKS.length - 1; k >= 0 && seen < 6; k--) {
+          if (TICKS[k] > sim) continue;
+          const dd = (sim - TICKS[k]) * len / 5;
+          if (dd > len) break;
+          spot(d.cx, y1 - dd, 5.5, C.cream, b.o * Math.min(1, (len - dd) / 12));
+          seen++;
+        }
+        const ny = b.y + 80;
+        setT(bigN, `every ${v} s`); A(bigN, 'font-size', 46); A(bigN, 'class', 'b butter'); XY(bigN, b.cx + 12, ny); O(bigN, b.o);
+        const nw = iw(bigN);
+        A(bigDot, 'cx', fmt(b.cx + 12 - nw / 2 - 20)); A(bigDot, 'cy', fmt(ny - 16)); A(bigDot, 'r', fmt(6 + 4 * pulseA)); O(bigDot, b.o * (.45 + .55 * pulseA));
+        setT(bigL, v === 3 ? '1,200 an hour, around a conversation' : v === 15 ? '240 an hour, a session live and quiet' : v === 30 ? '120 an hour, nobody here' : 'doubling, while nothing is said');
+        XY(bigL, b.cx, ny + 28); O(bigL, b.o);
+        let ev = EVENTS[0][1];
+        for (const [s0, str] of EVENTS) if (sim >= s0) ev = str;
+        tag('ev', b.cx, b.y + 12, ev, b.o, { cls: 'b' });
+      }
+      // deliver: T3 starts a turn, past a stopped MCP server.
+      if (t >= at('deliver') && t < at('presence')) {
+        const d = st.dmA, c = st.chipH, l = st.lapA, x3 = st.t3x, y0 = dmBot(d);
+        tag('stopT3', c.cx, c.cy - 37, 'stopped by T3', W('deliver', .08, .12) * (1 - W('deliver', .2, .24)));
+        if (IN('deliver', .1, .44)) spot(c.cx, lerp(y0, c.cy - 24, ss(W('deliver', .1, .24))), 8, C.butter, 1 - W('deliver', .4, .44));
+        tag('cantA', c.cx, c.cy - 37, 'can\'t start a turn', W('deliver', .24, .28) * (1 - W('deliver', .4, .44)), { cls: 'b red' });
+        line('t3', vl(x3, y0, l.y + 4), mn(d.o, l.o), 'fill', ss(W('deliver', .34, .46)));
+        tag('t3', x3 + 10, (y0 + l.y) / 2, 't3 thread send', W('deliver', .4, .46) * mn(d.o, l.o), { mono: true, cls: 'b', size: 13, anchor: 'start' });
+        const path = [[x3, y0], [x3, l.y], [rH.x + rH.w / 2, rH.y + 50]];
+        if (IN('deliver', .46, .68)) { const e = W('deliver', .46, .66), p = along(path, ss(e)); pillAt(p.x, p.y, { msg: 1, size: clamp(e / .2), o: 1 - W('deliver', .66, .68) }); }
+        if (IN('busy', .1, .32)) { const e = W('busy', .1, .3), p = along([[x3, y0], [x3, l.y], [rH.x + rH.w / 2, rH.y + rH.h * .72]], ss(e)); pillAt(p.x, p.y, { msg: 1, size: clamp(e / .2), o: 1 - W('busy', .3, .32) }); }
+        tag('hop', l.cx, l.y + lapH(l.w) + 16, 'about 6 to 8 s after send', W('deliver', .74, .8) * (1 - W('busy', .04, .1)) * l.o);
+      }
+      // presence: a clock since Sam's last heartbeat.
+      if (t >= at('presence') && t < at('names', BL)) {
+        const b = st.big, show = b.o * W('presence', .2, .28);
+        setT(bigN, mmss(since)); A(bigN, 'font-size', 52); A(bigN, 'class', since >= 6 ? 'b red' : 'b butter'); XY(bigN, b.cx, b.y + 50); O(bigN, show);
+        setT(bigL, 'since Sam\'s presence changed'); XY(bigL, b.cx, b.y + 74); O(bigL, show);
+      }
+      // names: two daemons claim one name; the second push is refused and tries another.
+      if (IN('names', 0, 1)) {
+        const yR = G.rows.names.y + G.rows.names.h / 2, a = st.dmA, sd = st.dmS;
+        const pS = [[sd.cx, dmTop(sd)], [sd.cx, yR]], pA = [[a.cx, dmTop(a)], [a.cx, yR]];
+        const gs = W('names', .14, .36), ga = W('names', .14, .4), back = W('names', .4, .56), again = W('names', .62, .86);
+        if (gs > 0 && gs < 1) { const p = along(pS, ss(gs)); nameAt(nS, p.x, p.y, 'creamy-duiker', Math.min(1, gs * 10)); }
+        if (ga > 0 && ga < 1) { const p = along(pA, ss(ga) * .92); nameAt(nA, p.x, p.y, 'creamy-duiker', Math.min(1, ga * 10)); }
+        else if (ga >= 1 && again <= 0) { const p = along(pA, .92 - .5 * ss(back)); nameAt(nA, p.x, p.y, 'creamy-duiker', 1, true); }
+        else if (again > 0 && again < 1) { const p = along(pA, .42 + .58 * ss(again)); nameAt(nA, p.x, p.y, 'paramount-village'); }
+        tag('lease', cx, dmBot(a) + 26, '--force-with-lease', W('names', .1, .18) * (1 - W('names', .94, 1)), { mono: true, cls: 'b', size: 13 });
+        tag('leaseNo', a.cx, dmBot(a) + 62, 'rejected (stale info)', IN('names', .4, .6) ? 1 : 0, { mono: true, cls: 'b red', size: 13 });
+      }
+      // pool: names ready; a new session takes one, without the network.
+      if (st.tray.o > .004) {
+        const p = st.tray, fillN = Math.round(W('pool', .02, .22) * 10), taken = t >= at('pool', .3), refill = t >= at('pool', .72), shift = taken ? ss(W('pool', .46, .56)) : 0;
+        tray.cs.forEach((c, k) => {
+          const idx = k - shift, a = chipAt(p, Math.max(0, Math.floor(idx))), b = chipAt(p, Math.max(0, Math.ceil(idx))), fr = idx - Math.floor(idx);
+          XY(c, lerp(a.x, b.x, fr), lerp(a.y, b.y, fr));
+          A(c, 'display', (k < fillN && !(k === 0 && taken)) || (k === 10 && refill) ? 'inline' : 'none');
+        });
+        O(tray.g, p.o);
+        tag('ready', p.cx, p.y + 12, `ready: ${Math.min(10, fillN - (taken ? 1 : 0) + (refill ? 1 : 0))}`, p.o, { mono: true, cls: 'b', size: 13 });
+        const fly = W('pool', .28, .46);
+        if (fly > 0 && fly < 1) { const a = chipAt(p, 0), e = ss(fly); nameAt(nT, lerp(a.x + 17, rP.x + 21 + mw('polar-walnut', 13) / 2, e), lerp(a.y + 11, rP.y + 11, e), 'polar-walnut'); }
+        tag('nonet', p.cx, p.y - 22, 'no network', W('pool', .3, .36) * (1 - W('pool', .62, .68)) * p.o, { cls: 'b' });
+      } else O(tray.g, 0);
+      // grace: a server restarts inside 60 s and the session carries on; the second time it doesn't.
+      if (t >= at('grace') && t < at('exit')) {
+        const c = st.chipP;
+        const gr = IN('grace', .05, .42) ? W('grace', .05, .42) * (40 / 60) : IN('grace', .55, .9) ? W('grace', .55, .86) : -1;
+        if (gr >= 0) {
+          O(ring, c.o); A(ring, 'cx', fmt(c.cx)); A(ring, 'cy', fmt(c.cy)); A(ring, 'r', 46);
+          A(ring, 'stroke-dasharray', `${(1 - gr).toFixed(3)} 1`); A(ring, 'transform', `rotate(-90 ${fmt(c.cx)} ${fmt(c.cy)})`);
+          tag('gsec', c.cx - 56, c.cy, `${Math.ceil(60 * (1 - gr))} s`, c.o, { mono: true, cls: 'b', anchor: 'end' });
+        }
+        tag('recon', c.cx - 56, c.cy, 'reconnected', IN('grace', .42, .55) ? 1 : 0, { cls: 'b', anchor: 'end' });
+        tag('nobus', cx, (dmBot(st.dmS) + c.cy - 15) / 2, 'nothing written to the bus', IN('grace', .42, .55) ? 1 : 0);
+        tag('stopped', cx, (dmBot(st.dmS) + c.cy - 15) / 2, 'session stopped', W('grace', .86, .9));
+      }
+      // exit: ten idle minutes, then the daemon goes and takes its heartbeat with it.
+      if (t >= at('exit') && t < at('limits', BL)) {
+        const b = st.big;
+        setT(bigN, mmss(10 * (1 - W('exit', .1, .46)))); A(bigN, 'font-size', 48); A(bigN, 'class', 'b butter'); XY(bigN, b.cx, b.y + 46); O(bigN, b.o);
+        setT(bigL, 'no sessions, no open page'); XY(bigL, b.cx, b.y + 70); O(bigL, b.o);
+        tag('hbdel', cx, (ghBot + dmTop(st.dmS)) / 2, 'heartbeat deleted', W('exit', .52, .58) * st.gh.o * (t < at('limits') ? 1 : 0), { cls: 'b' });
+      }
+      // limits: anyone who can read the repo can read this.
+      drawCard(logC, st.card.cx, st.card.y, st.card.o * (t >= at('limits') ? W('limits', .1, .2) : 1), Ar.w);
+      // finale: the question out and the answer back, the whole way, in 15 s.
+      if (t >= at('finale') - .2) {
+        const lB = st.lapB, lA = st.lapA, b = st.big, bB = lB.y + lB.w * LAPR + 32, bA = lA.y + lA.w * LAPR + 32;
+        const rb = G.rows.b.line, ra = G.rows.a.line, wB = qFrom(rO), wA = [rH.x + rH.w / 2, rH.y + 44];
+        const out = [wB, [lB.cx, bB], [lB.cx, rb], slot('b', 6)], over = [slot('b', 6), [lA.cx, rb], [lA.cx, bA], wA];
+        const ret = [wA, [lA.cx, bA], [lA.cx, ra], slot('a', 1)], home = [slot('a', 1), [lB.cx, ra], [lB.cx, bB], wB];
+        const go = (pts, a0, a1, grow) => { const e = W('finale', a0, a1), p = along(pts, ss(e)); const k = grow ? clamp((e - .55) / .35) : 1 - clamp((e - .45) / .35); pillAt(p.x, p.y, { msg: 1, size: k }); };
+        if (IN('finale', .12, .24)) go(out, .12, .24, false);
+        else if (IN('finale', .26, .4)) go(over, .26, .4, true);
+        else if (IN('finale', .6, .72)) go(ret, .6, .72, false);
+        else if (IN('finale', .72, .8)) go(home, .72, .8, true);
+        if (t >= at('finale')) {
+          const secs = Math.min(15, Math.floor(lerp(0, 15.99, W('finale', .12, .8))));
+          setT(bigN, `${secs} s`); A(bigN, 'font-size', 56); A(bigN, 'class', t >= at('finale', .8) ? 'b butter' : 'b cream'); XY(bigN, b.cx, b.y + 50); O(bigN, b.o);
+        }
+      }
+
+      for (const k in linePool) if (!lineUsed.has(k)) A(linePool[k], 'display', 'none');
+      for (const k in tagPool) if (!tagUsed.has(k)) A(tagPool[k].g, 'display', 'none');
+      for (let k = spotN; k < spots.length; k++) A(spots[k], 'display', 'none');
+    }
+
+    return { paint };
+  }
+
   // ---------- Page wiring ----------
   const root = document.documentElement;
   const stacked = matchMedia('(max-aspect-ratio: 1/1), (max-width: 999px)');
-  const layout = () => (stacked.matches ? TALL : WIDE);
+  // Desktop gets the one drawing under a camera; stacked screens get the phone's own drawing.
+  const kind = () => (stacked.matches ? 'phone' : 'wide');
+  const make = (el, o) => (stacked.matches ? makePhone(el, o) : makeScene(el, WIDE, o));
 
   if (root.classList.contains('static')) {
     // Reduced motion: every section gets its own copy of the drawing, stopped at its finished state.
@@ -1799,7 +2618,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       else if (own) figs.forEach((f, i) => notes[i].before(f));
       else ch.prepend(...figs);
     });
-    const draw = () => figures.forEach(f => { makeScene(f.fig, layout(), { fit: true }).paint(f.t); });
+    const draw = () => figures.forEach(f => { make(f.fig, { fit: true }).paint(f.t); });
     draw();
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(draw);
     let drawnW = innerWidth;
@@ -1878,10 +2697,10 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
   };
   let built = null, builtW = 0;
   function setup() {
-    if (layout() !== built || innerWidth !== builtW) {
-      built = layout();
+    if (kind() !== built || innerWidth !== builtW) {
+      built = kind();
       builtW = innerWidth;
-      scene = makeScene(svg, built);
+      scene = make(svg);
     }
     measurePage();
     target = shown = tFromScroll();
