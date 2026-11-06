@@ -24,7 +24,6 @@
     --mono: ui-monospace, Menlo, Consolas, monospace;
     --note-w: clamp(280px, 24vw, 340px);
     --pin: 13vh;
-    --split: 54svh;
     --ease: cubic-bezier(.22, .8, .24, 1);
   }
   * { box-sizing: border-box; margin: 0; }
@@ -162,25 +161,21 @@
   svg .blue { fill: var(--blue); }
   svg .bink { fill: var(--badge-ink); }
 
-  /* Stacked, as the home page's film stacks: the drawing above, the notes beneath it. */
+  /* Stacked (phones, portrait tablets): the desktop's order in a column. The words keep a band across the top, the
+     drawing sits below them with a margin, and the closing line and links take a band along the foot. */
   @media (max-aspect-ratio: 1/1), (max-width: 999px) {
-    .stage { z-index: 3; clip-path: inset(0 0 calc(100% - var(--split)) 0); }
-    .notes { z-index: 2; }
     .ch { padding: 0 10px; }
-    .note { top: calc(var(--split) + 14px); width: auto; max-width: 560px; margin: 0 auto; padding: 0 6px; }
-    html.js:not(.static) .note:not(.hero) { top: calc(var(--split) + 14px); left: 0; right: 0; max-width: none; padding: 0 16px; }
+    .note { top: 20px; width: auto; max-width: 560px; margin: 0 auto; padding: 0 6px; }
+    html.js:not(.static) .note:not(.hero) { top: 22px; left: 0; right: 0; max-width: none; padding: 0 22px; }
     .note p { font-size: 18px; line-height: 1.42; }
     .note pre { margin-top: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.36; }
-    .note.hero { top: calc(var(--split) + 8px); width: auto; max-width: 560px; padding: 0 6px; }
-    /* Held in place like the passages, since its section is shorter than the title is low. */
-    html.js:not(.static) .note.hero { position: fixed; left: 0; right: 0; max-width: none; padding: 0 16px; }
-    /* The hint sits at the foot of the drawing, clear of the title below it. */
-    html.js:not(.static) .scroll-hint { bottom: auto; top: calc(var(--split) - 46px); }
-    .back { margin-bottom: 14px; }
+    .note.hero { top: 20px; width: auto; max-width: 560px; padding: 0 6px; }
+    html.js:not(.static) .note.hero { position: fixed; top: 22px; left: 0; right: 0; max-width: none; padding: 0 22px; }
+    .back { margin-bottom: 18px; }
     h1 { font-size: clamp(32px, 9.6vw, 48px); }
-    .end { display: none; }
-    .after p { font-size: 20px; font-weight: 600; line-height: 1.35; text-align: center; max-width: 18em; text-wrap: balance; margin-bottom: 8px; }
-    .after { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 34px 20px 60px; }
+    html.js:not(.static) .end { position: fixed; top: auto; left: 0; right: 0; bottom: 0; height: auto; margin: 0; flex-direction: column; gap: 14px; padding: 34px 20px max(24px, env(safe-area-inset-bottom)); text-align: center; background: linear-gradient(rgba(34, 91, 255, 0), var(--blue) 26px); }
+    .end p { font-size: 18px; max-width: 22em; }
+    .end .links { flex-wrap: wrap; justify-content: center; gap: 12px 22px; }
   }
 
   /* Reduced motion, and no JS: the page is a column, and in reduced motion each section has its finished figure. */
@@ -359,8 +354,6 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
   const ORDER = ['open', 'obvious', 'race', 'dies', 'daemon', 'commit', 'secret', 'split', 'side', 'ask', 'rate', 'deliver', 'busy', 'presence', 'names', 'pool', 'grace', 'exit', 'limits', 'finale'];
   const T = Object.fromEntries(ORDER.map((id, i) => [id, i]));
   const N = ORDER.length;
-  // Stacked (phones): the drawing's height in px, above the band the notes sit in. Set by fitSplit().
-  let splitH = 0;
   const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
   const lerp = (a, b, f) => a + (b - a) * f;
   const ss = f => f * f * (3 - 2 * f);
@@ -412,55 +405,55 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       sheet: [150, -80, 1240, 340], err: [110, 60, 1060, 400], all: [-30, -30, 1910, 950], aIn: [1060, 80, 1910, 950], splitTop: [150, -40, 1730, 760], transit: [150, -40, 1730, 760], panel: [620, -96, 1262, 300], panelRows: [620, 40, 1262, 300],
       ask: [1100, 30, 1760, 330], rate: [620, -352, 1730, 300], rateNear: [1150, -352, 1730, 300], rateTape: [620, -190, 1730, 310], aLap: [1270, 90, 1900, 950], aLid: [1280, 320, 1900, 950],
       bFinch: [-30, 110, 620, 950], presence: [580, -20, 1910, 990], sam: [600, 240, 1280, 990], stale: [700, -40, 1730, 990], names: [540, -6, 1730, 640], pool: [720, 440, 1280, 990],
-      limits: [600, -210, 1270, 340], finale: [-30, -160, 1910, 992],
+      limits: [600, -210, 1270, 340], finale: [-30, -160, 1910, 992], finTop: [-30, -160, 1910, 992], finBot: [-30, -160, 1910, 992],
     },
     log: { daemon: [440, 296], rate: [650, -206], pool: [640, 1000], reconn: [640, 1000], exit: [620, 1000], limits: [640, -190], stale: [1150, 470] },
   };
 
   const TALL = {
     tall: true, fs: { label: 20, mono: 19, small: 19, name: 22, row: 19 }, ln: 5,
-    lap: { W: 580, lidW: 536, lidH: 224, deckH: 56, bar: 30, full: 30, half: 20 },
-    uB: { x: 10, top: 118 }, uA: { x: 10, top: 1014 },
-    chip: { w: 96, h: 40, single: 300, o: 98, f: 502, a: 98, yB: 28, yA: 928, cyB: 48, cyA: 948, stemTop: null },
+    lap: { W: 580, lidW: 536, lidH: 336, deckH: 118, bar: 30, full: 30, half: 20 },
+    uB: { x: 10, top: 118 }, uA: { x: 10, top: 1188 },
+    chip: { w: 96, h: 40, single: 300, o: 98, f: 502, a: 98, yB: 28, yA: 1102, cyB: 48, cyA: 1122, stemTop: null },
     dB: { x: 180, y: 0, w: 240, h: 96, cx: 300, out: 48, inn: 74, label: 28, sub: null },
-    dA: { x: 180, y: 900, w: 240, h: 96, cx: 300, inn: 948, out: 974, label: 928, sub: null },
-    dS: { x: 770, y: 516, w: 240, h: 96, cx: 890, out: 564, label: 544, sub: null },
-    p: { x: 30, y: 430, w: 540, head: 36, heads: 54, stages: [636, 680, 766, 804] },
-    graph: { d: 'M46 496H554M90 496C120 496 112 522 142 522H530M230 496C260 496 252 509 282 509H548', dots: [[90, 496], [230, 496], [380, 496], [530, 496], [320, 509], [430, 509], [548, 509], [190, 522], [340, 522], [500, 522]], main: 496 },
-    rows: { shared: { y: 530, h: 94 }, b: { y: 530, h: 47, line: 566 }, a: { y: 577, h: 47, line: 613 }, s: { y: 624, h: 47, line: 660 }, pres: [{ y: 678, h: 27 }, { y: 705, h: 27 }, { y: 732, h: 27 }], names: { y: 762, h: 32 } },
+    dA: { x: 180, y: 1074, w: 240, h: 96, cx: 300, inn: 1122, out: 1148, label: 1102, sub: null },
+    dS: { x: 770, y: 690, w: 240, h: 96, cx: 890, out: 738, label: 718, sub: null },
+    p: { x: 30, y: 604, w: 540, head: 36, heads: 54, stages: [810, 854, 940, 978] },
+    graph: { d: 'M46 670H554M90 670C120 670 112 696 142 696H530M230 670C260 670 252 683 282 683H548', dots: [[90, 670], [230, 670], [380, 670], [530, 670], [320, 683], [430, 683], [548, 683], [190, 696], [340, 696], [500, 696]], main: 670 },
+    rows: { shared: { y: 704, h: 94 }, b: { y: 704, h: 47, line: 740 }, a: { y: 751, h: 47, line: 787 }, s: { y: 798, h: 47, line: 834 }, pres: [{ y: 852, h: 27 }, { y: 879, h: 27 }, { y: 906, h: 27 }], names: { y: 936, h: 32 } },
     dotX: { b: [280, 335, 390, 445, 500, 545], a: [540, 490, 440, 390], s: [290] },
-    preO: x => `M${x - 48} 48H-6V566H30`,
-    preF: x => `M${x + 48} 48H606V613H570`,
-    outB: 'M300 48H392V-14H-6V566H30', inB: 'M30 613H-20V-28H408V74H300', inA: 'M570 566H606V948H300', outA: 'M300 974H620V613H570',
-    outS: 'M890 564H570',
-    branch: 'M30 496H46',
+    preO: x => `M${x - 48} 48H-6V740H30`,
+    preF: x => `M${x + 48} 48H606V787H570`,
+    outB: 'M300 48H392V-14H-6V740H30', inB: 'M30 787H-20V-28H408V74H300', inA: 'M570 740H606V1122H300', outA: 'M300 1148H620V787H570',
+    outS: 'M890 738H570',
+    branch: 'M30 670H46',
     upB: (x, y) => `M${x} ${y}V48H300`,
-    upA: y => `M98 ${y}V974H300`,
-    byA: y => `M300 948V${y - 12}Q300 ${y} 300 ${y}`,
-    byLineA: 'M300 996V1014',
+    upA: y => `M98 ${y}V1148H300`,
+    byA: y => `M300 1122V${y - 12}Q300 ${y} 300 ${y}`,
+    byLineA: 'M300 1170V1188',
     byB: y => `M300 74V${y}H173`,
     byLineB: 'M300 96V118',
-    toChipA: 'M300 948H146', toChipF: 'M300 74H502V68', toChipO: 'M300 74H98V68',
-    lane: { a: 'M180 974H4V778H30', s: 'M890 612V778H570' },
-    tape: { x0: 26, head: 574, y: 826, h: 38, scale: 548 / 300, tick: 1.4, reg: 888, mark: 818, drop: 'M574 864V900', pingV: 26 },
-    read: { x: 34, y: 668, big: 62, sub: 21, log: 770 },
+    toChipA: 'M300 1122H146', toChipF: 'M300 74H502V68', toChipO: 'M300 74H98V68',
+    lane: { a: 'M180 1148H4V952H30', s: 'M890 786V952H570' },
+    tape: { x0: 26, head: 574, y: 1000, h: 38, scale: 548 / 300, tick: 1.4, reg: 1062, mark: 992, drop: 'M574 1038V1074', pingV: 26 },
+    read: { x: 34, y: 842, big: 62, sub: 21, log: 944 },
     clock: { x: 300, y: -52, size: 54, label: 22, ly: -52, anchor: 'inline' },
-    stale: { x: 300, y: 862, size: 44, ly: 890 },
-    sam: { x: 710, y: 684, w: 360, h: 190, stand: [860, 874, 60, 26], base: [810, 900, 160, 12], seat: [890, 940], chipY: 632, chipH: 34, chipW: 96, one: 890, cw: 800, cp: 980 },
-    tray: { x: 1022, y: 520, w: 26, h: 18, gap: 5 },
-    side: { y: 372, h: 50, xs: [30, 212, 394], w: 176 },
+    stale: { x: 300, y: 1036, size: 44, ly: 1064 },
+    sam: { x: 710, y: 858, w: 360, h: 190, stand: [860, 1048, 60, 26], base: [810, 1074, 160, 12], seat: [890, 1114], chipY: 806, chipH: 34, chipW: 96, one: 890, cw: 800, cp: 980 },
+    tray: { x: 1022, y: 694, w: 26, h: 18, gap: 5 },
+    side: { y: 484, h: 50, xs: [30, 212, 394], w: 176 },
     sheet: { x: 80, y: 104, w: 440, fs: 14.4, lh: 19.6 },
     err: { x: 40, y: 112 },
     seats: true,
     frames: {
-      lap: [-14, 104, 614, 440], lapChip: [-14, 10, 614, 440], obvious: [-30, 10, 636, 690], race: [-30, 10, 636, 690],
-      chipZoom: [-14, 10, 614, 340], daemonWide: [-30, -40, 636, 460], daemonTight: [176, -30, 424, 120], pillRise: [40, -30, 560, 340],
-      sheet: [76, 96, 524, 430], err: [30, -30, 570, 300], all: [-34, -92, 640, 1340], aIn: [-34, 410, 640, 1010], splitTop: [-34, 410, 640, 1010], transit: [-34, 410, 640, 1010], panel: [10, 350, 590, 690], panelRows: [10, 470, 590, 690],
-      ask: [130, 540, 640, 1010], rate: [6, 596, 620, 1000], rateNear: [6, 596, 620, 1000], rateTape: [6, 780, 620, 1000], aLap: [-14, 880, 614, 1320], aLid: [-14, 980, 614, 1320],
-      bFinch: [-14, -40, 614, 400], presence: [560, 424, 1120, 960], sam: [660, 424, 1120, 960], stale: [0, 610, 630, 1010], names: [-14, 620, 620, 1010], pool: [690, 424, 1110, 960],
-      limits: [10, 300, 590, 690], finale: [-34, -92, 640, 1320],
+      lap: [-14, 104, 614, 614], lapChip: [-14, 10, 614, 614], obvious: [-30, 10, 636, 864], race: [-30, 10, 636, 864],
+      chipZoom: [-14, 10, 614, 340], daemonWide: [-30, -40, 636, 634], daemonTight: [176, -30, 424, 120], pillRise: [40, -30, 560, 340],
+      sheet: [76, 96, 524, 604], err: [30, -30, 570, 300], all: [-34, 560, 640, 1700], aIn: [-34, 584, 640, 1184], splitTop: [-34, 584, 640, 1184], transit: [-34, 584, 640, 1184], panel: [10, 462, 590, 864], panelRows: [10, 644, 590, 864],
+      ask: [130, 714, 640, 1184], rate: [6, 770, 620, 1174], rateNear: [6, 770, 620, 1174], rateTape: [6, 954, 620, 1174], aLap: [-14, 1054, 614, 1668], aLid: [-14, 1154, 614, 1668],
+      bFinch: [-14, -40, 614, 574], presence: [560, 598, 1120, 1134], sam: [660, 598, 1120, 1134], stale: [0, 784, 630, 1184], names: [-14, 794, 620, 1184], pool: [690, 598, 1110, 1134],
+      limits: [10, 300, 590, 864], finale: [-34, -92, 640, 1668], finTop: [-34, -92, 640, 1000], finBot: [-34, 560, 640, 1700],
     },
-    log: { daemon: [36, 300], rate: [34, 708], pool: [640, 960], reconn: [640, 960], exit: [640, 960], limits: [20, 284], stale: [30, 1090] },
+    log: { daemon: [36, 300], rate: [34, 882], pool: [640, 1134], reconn: [640, 1134], exit: [640, 1134], limits: [20, 284], stale: [30, 1264] },
   };
 
   // ---------- The script: when each part is born, who has the light, where the camera is ----------
@@ -531,7 +524,9 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
     ['grace', 1, 'pool'],
     ['exit', 1, 'sam'],
     ['limits', .14, 'limits'], ['limits', .9, 'limits'],
-    ['finale', .04, 'all'], ['finale', .2, 'finale'], ['finale', 1, 'finale'],
+    // On desktop all of these frame the whole drawing. On a phone it is too tall to read at once, so the end
+    // follows the reply: Alice answering at the foot, then up through GitHub to Bob's laptop at 15 s.
+    ['finale', .04, 'all'], ['finale', .2, 'finBot'], ['finale', .42, 'finBot'], ['finale', .64, 'finTop'], ['finale', 1, 'finTop'],
   ].map(([id, f, frame]) => ({ t: at(id, f), frame }));
 
   // What a reduced-motion figure shows for each section: its finished state.
@@ -839,8 +834,8 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
     const rOutB = route(lRouteB, L.outB), rInB = route(lRouteB, L.inB);
     const rInA = route(lRouteA, L.inA), rOutA = route(lRouteA, L.outA);
     const rOutS = route(lRouteS, L.outS);
-    const pushLabel = text(lRouteB, L.tall ? 8 : 525, L.tall ? 420 : 180, 'git push', { size: fs.mono, cls: 'mono cream', anchor: L.tall ? 'start' : 'middle', keep: !L.tall });
-    const fetchLabel = text(lRouteA, L.tall ? 598 : 1355, L.tall ? 918 : 180, 'git fetch', { size: fs.mono, cls: 'mono cream', anchor: L.tall ? 'end' : 'middle', keep: !L.tall });
+    const pushLabel = text(lRouteB, L.tall ? 8 : 525, L.tall ? 594 : 180, 'git push', { size: fs.mono, cls: 'mono cream', anchor: L.tall ? 'start' : 'middle', keep: !L.tall });
+    const fetchLabel = text(lRouteA, L.tall ? 598 : 1355, L.tall ? 1092 : 180, 'git fetch', { size: fs.mono, cls: 'mono cream', anchor: L.tall ? 'end' : 'middle', keep: !L.tall });
     const branchLine = S('path', { d: L.branch, fill: 'none', stroke: C.cream, 'stroke-width': 3, 'stroke-dasharray': '5 6', display: 'none' }, lBranchLine);
     const laneA = S('path', { d: L.lane.a, fill: 'none', stroke: C.cream, 'stroke-width': 2.5, 'stroke-dasharray': '4 7' }, lLanes);
     const laneS = S('path', { d: L.lane.s, fill: 'none', stroke: C.cream, 'stroke-width': 2.5, 'stroke-dasharray': '4 7' }, lLanes);
@@ -862,7 +857,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       toChipA: flightPath(L.toChipA), toChipF: flightPath(L.toChipF), toChipO: flightPath(L.toChipO),
       outS: flightPath(L.outS),
       laneA: flightPath(L.lane.a), laneS: flightPath(L.lane.s),
-      pingA: flightPath(L.tall ? 'M300 948H606V566H570' : 'M1470 190H1240'),
+      pingA: flightPath(L.tall ? 'M300 1122H606V740H570' : 'M1470 190H1240'),
     };
     const chipPath = S('path', { fill: 'none' }, hidden);
 
@@ -988,30 +983,30 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
     // --- Tags and cards: above everything ---
     const lTop = S('g', {}, world);
     const tg = {
-      refused: tag(lTop, L.tall ? 62 : 430, L.tall ? 690 : 292, 'rejected (fetch first)', { mono: true, cls: 'b red' }),
+      refused: tag(lTop, L.tall ? 62 : 430, L.tall ? 864 : 292, 'rejected (fetch first)', { mono: true, cls: 'b red' }),
       cantStart: tag(lTop, L.tall ? 120 : 280, L.tall ? 100 : 372, 'can\'t start a turn', { cls: 'b red' }),
       restarts: tag(lTop, L.tall ? 120 : 280, L.tall ? 100 : 372, 'restarts: 0', { cls: 'b red', mono: true }),
       loop: tag(lTop, L.tall ? 412 : 442, L.tall ? 92 : 392, '127.0.0.1:49732', { mono: true, size: fs.small }),
-      refusedA: tag(lTop, L.tall ? 330 : 1262, L.tall ? 700 : 298, 'rejected (fetch first)', { mono: true, cls: 'b red' }),
-      landed: tag(lTop, L.tall ? 300 : 940, L.tall ? 412 : -24, 'both landed', { cls: 'b', anchor: 'middle' }),
-      lsr: tag(lTop, L.tall ? 136 : 1132, L.tall ? 856 : 98, 'git ls-remote origin \'refs/murmur/*\'', { mono: true, size: fs.small }),
-      fetch: tag(lTop, L.tall ? 136 : 1270, L.tall ? 856 : 98, 'git fetch', { mono: true, cls: 'b' }),
-      stopped: tag(lTop, L.tall ? 160 : 1650, L.tall ? 912 : 372, 'stopped by T3', { size: fs.small }),
-      cantStartA: tag(lTop, L.tall ? 160 : 1650, L.tall ? 912 : 372, 'can\'t start a turn', { cls: 'b red' }),
-      t3send: tag(lTop, L.tall ? 30 : 1330, L.tall ? 1008 : 416, 't3 thread send <thread> -', { mono: true, size: fs.small, cls: 'b' }),
-      nobody: tag(lTop, L.tall ? 300 : 1590, L.tall ? 1274 : 856, 'nobody typing', { size: fs.small, anchor: 'middle', cls: 'b' }),
-      hop: tag(lTop, L.tall ? 300 : 1590, L.tall ? 1214 : 716, 'about 6 to 8 s after send', { size: fs.small, anchor: 'middle' }),
+      refusedA: tag(lTop, L.tall ? 330 : 1262, L.tall ? 874 : 298, 'rejected (fetch first)', { mono: true, cls: 'b red' }),
+      landed: tag(lTop, L.tall ? 300 : 940, L.tall ? 586 : -24, 'both landed', { cls: 'b', anchor: 'middle' }),
+      lsr: tag(lTop, L.tall ? 136 : 1132, L.tall ? 1030 : 98, 'git ls-remote origin \'refs/murmur/*\'', { mono: true, size: fs.small }),
+      fetch: tag(lTop, L.tall ? 136 : 1270, L.tall ? 1030 : 98, 'git fetch', { mono: true, cls: 'b' }),
+      stopped: tag(lTop, L.tall ? 160 : 1650, L.tall ? 1086 : 372, 'stopped by T3', { size: fs.small }),
+      cantStartA: tag(lTop, L.tall ? 160 : 1650, L.tall ? 1086 : 372, 'can\'t start a turn', { cls: 'b red' }),
+      t3send: tag(lTop, L.tall ? 30 : 1330, L.tall ? 1182 : 416, 't3 thread send <thread> -', { mono: true, size: fs.small, cls: 'b' }),
+      nobody: tag(lTop, L.tall ? 300 : 1590, L.tall ? 1560 : 856, 'nobody typing', { size: fs.small, anchor: 'middle', cls: 'b' }),
+      hop: tag(lTop, L.tall ? 300 : 1590, L.tall ? 1500 : 716, 'about 6 to 8 s after send', { size: fs.small, anchor: 'middle' }),
       inboxF: tag(lTop, L.tall ? 330 : 440, L.tall ? 90 : 372, 'inbox: 1', { mono: true, cls: 'b', size: fs.small }),
-      codex: tag(lTop, L.tall ? 322 : 316, L.tall ? 300 : 620, 'Codex, outside T3', { size: fs.small }),
-      lease: tag(lTop, L.tall ? 200 : 1070, L.tall ? 818 : 494, '--force-with-lease', { mono: true, cls: 'b', size: fs.small }),
-      leaseNo: tag(lTop, L.tall ? 60 : 1310, L.tall ? 848 : 494, 'rejected (stale info)', { mono: true, cls: 'b red', size: fs.small }),
-      stale: tag(lTop, L.tall ? 40 : 1250, L.tall ? 750 : 405, 'stale', { cls: 'b red' }),
-      kept: tag(lTop, L.tall ? 700 : 1096, L.tall ? 672 : 637, 'inbox kept 24 hours', { size: fs.small, cls: 'b' }),
-      grace: tag(lTop, L.tall ? 840 : 1030, L.tall ? 650 : 650, '60 s', { mono: true, cls: 'b' }),
-      noBus: tag(lTop, L.tall ? 712 : 1080, L.tall ? 492 : 450, 'nothing written to the bus', { size: fs.small }),
-      noNet: tag(lTop, L.tall ? 712 : 1068, L.tall ? 500 : 584, 'no network', { size: fs.small, cls: 'b' }),
-      night: tag(lTop, L.tall ? 712 : 1068, L.tall ? 500 : 584, 'overnight', { size: fs.small, cls: 'b' }),
-      morning: tag(lTop, L.tall ? 712 : 1068, L.tall ? 500 : 584, 'next morning', { size: fs.small, cls: 'b' }),
+      codex: tag(lTop, L.tall ? 322 : 316, L.tall ? 412 : 620, 'Codex, outside T3', { size: fs.small }),
+      lease: tag(lTop, L.tall ? 200 : 1070, L.tall ? 992 : 494, '--force-with-lease', { mono: true, cls: 'b', size: fs.small }),
+      leaseNo: tag(lTop, L.tall ? 60 : 1310, L.tall ? 1022 : 494, 'rejected (stale info)', { mono: true, cls: 'b red', size: fs.small }),
+      stale: tag(lTop, L.tall ? 40 : 1250, L.tall ? 924 : 405, 'stale', { cls: 'b red' }),
+      kept: tag(lTop, L.tall ? 700 : 1096, L.tall ? 846 : 637, 'inbox kept 24 hours', { size: fs.small, cls: 'b' }),
+      grace: tag(lTop, L.tall ? 840 : 1030, L.tall ? 824 : 650, '60 s', { mono: true, cls: 'b' }),
+      noBus: tag(lTop, L.tall ? 712 : 1080, L.tall ? 666 : 450, 'nothing written to the bus', { size: fs.small }),
+      noNet: tag(lTop, L.tall ? 712 : 1068, L.tall ? 674 : 584, 'no network', { size: fs.small, cls: 'b' }),
+      night: tag(lTop, L.tall ? 712 : 1068, L.tall ? 674 : 584, 'overnight', { size: fs.small, cls: 'b' }),
+      morning: tag(lTop, L.tall ? 712 : 1068, L.tall ? 674 : 584, 'next morning', { size: fs.small, cls: 'b' }),
     };
 
     // Ink cards: real output.
@@ -1113,8 +1108,12 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       const W = svg.clientWidth || svg.getBoundingClientRect().width, H = svg.clientHeight || svg.getBoundingClientRect().height;
       if (opts.fit) { const all = { x: 6, y: 6, w: W - 12, h: H - 12 }; return { W, H, h: all, a: all, b: all }; }
       if (L.tall) {
-        const split = splitH || H * .54, a ={ x: 6, y: 8, w: W - 12, h: split - 14 };
-        return { W, H, h: a, a, b: { x: 6, y: 8, w: W - 12, h: H - 16 } };
+        // As on desktop, but in a column: the title, then the words, keep a band across the top, the drawing has
+        // the rest with a margin round it, and at the end the closing line and links take a band along the foot.
+        const hero = document.querySelector('.note.hero'), endEl = document.getElementById('end');
+        const top = hero ? hero.getBoundingClientRect().bottom : 0, band = bandHeight(), foot = endEl ? endEl.offsetHeight : 0;
+        const m = Math.min(28, W * .06);
+        return { W, H, h: { x: m, y: top + 24, w: W - 2 * m, h: H - top - 24 - 40 }, a: { x: m, y: band + 22, w: W - 2 * m, h: H - band - 22 - 28 }, b: { x: m * .5, y: 18, w: W - m, h: H - 18 - foot - 6 } };
       }
       // The title sits on the left, so the opening frame is to its right. After it the words run across the
       // top, one sentence a line, as wide as they need, and the drawing has the full width below them.
@@ -1134,7 +1133,9 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       let i = CAMERA.findIndex(k => k.t > t);
       if (i < 0) i = CAMERA.length;
       const a = CAMERA[Math.max(0, i - 1)], b = CAMERA[Math.min(CAMERA.length - 1, i)];
-      const ca = fit(a.frame, s), cb = fit(b.frame, s);
+      // A still of the end (reduced motion) shows the whole drawing, not where the phone's walk down it stops.
+      const still = f => (opts.fit && t >= at('finale', .2) ? 'finale' : f);
+      const ca = fit(still(a.frame), s), cb = fit(still(b.frame), s);
       const f = a === b ? 0 : io(clamp((t - a.t) / (b.t - a.t)));
       const z = Math.exp(lerp(Math.log(ca.z), Math.log(cb.z), f));
       const cx = lerp(ca.cx, cb.cx, f), cy = lerp(ca.cy, cb.cy, f);
@@ -1623,9 +1624,9 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
         const left = 10 * (1 - exitT), mm = Math.floor(left), secs = Math.floor((left - mm) * 60);
         setStr(bigNum, `${mm}:${String(secs).padStart(2, '0')}`);
         A(bigNum.e, 'class', 'b butter');
-        A(bigNum.e, 'x', L.tall ? 890 : 1170); A(bigNum.e, 'y', L.tall ? 505 : 590);
+        A(bigNum.e, 'x', L.tall ? 890 : 1170); A(bigNum.e, 'y', L.tall ? 679 : 590);
         setStr(bigLab, 'no sessions, no open page');
-        A(bigLab.e, 'x', L.tall ? 890 : 1170); A(bigLab.e, 'y', L.tall ? 458 : 616);
+        A(bigLab.e, 'x', L.tall ? 890 : 1170); A(bigLab.e, 'y', L.tall ? 632 : 616);
       }
       O(bigNum.e, Math.max(showClock, showExit ? 1 : 0));
       O(bigLab.e, Math.max(showClock, showExit ? 1 : 0));
@@ -1837,11 +1838,9 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
   // only display smoothing: where it settles is exactly what scroll position says.
   let shown = 0, target = 0, last = 0, running = false;
   const clip = t => {
-    const open = ss(clamp((t - T.finale - .04) / .16));
-    stage.style.clipPath = stacked.matches ? `inset(0 0 ${((1 - open) * (stage.clientHeight - splitH)).toFixed(1)}px 0)` : '';
     const cta = clamp((t - T.finale - .86) / .07);
-    end.style.opacity = stacked.matches ? clamp(1 - (t - T.finale) / .06) : cta;
-    end.style.visibility = (stacked.matches ? t - T.finale > .06 : cta <= 0) ? 'hidden' : 'visible';
+    end.style.opacity = cta;
+    end.style.visibility = cta <= 0 ? 'hidden' : 'visible';
     progress.style.transform = `scaleX(${(t / N).toFixed(4)})`;
   };
   // One passage at a time: each fades in as its first chapter starts and out as its last one ends. The
@@ -1871,22 +1870,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
     if (!running) { running = true; last = performance.now(); requestAnimationFrame(tick); }
   };
   let built = null, builtW = 0;
-  // On a phone the finished drawing takes the whole screen, so its sentence waits below it, with the buttons.
-  const endLine = end.querySelector('p'), after = document.querySelector('.after');
-  const placeEnd = () => { if (stacked.matches) after.prepend(endLine); else end.prepend(endLine); };
-  // Stacked, the notes take a band at the foot of the screen as tall as the longest of them, and the
-  // drawing has everything above it. A fixed split left a third of a phone's screen empty blue.
-  const fitSplit = () => {
-    if (!stacked.matches) { splitH = 0; root.style.removeProperty('--split'); return; }
-    const H = stage.clientHeight || innerHeight;
-    const band = Math.max(...[...document.querySelectorAll('.note')].map(n => n.offsetHeight));
-    // Never more than 80% for the drawing; never so much that a note runs off the foot (short landscape screens).
-    splitH = Math.round(Math.max(H * .25, Math.min(H * .8, H - band - 14 - 30)));
-    root.style.setProperty('--split', splitH + 'px');
-  };
   function setup() {
-    placeEnd();
-    fitSplit();
     if (layout() !== built || innerWidth !== builtW) {
       built = layout();
       builtW = innerWidth;
