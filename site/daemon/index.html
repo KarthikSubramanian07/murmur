@@ -164,6 +164,8 @@
   /* Stacked (phones, portrait tablets): the desktop's order in a column. The words keep a band across the top, the
      drawing sits below them with a margin, and the closing line and links take a band along the foot. */
   @media (max-aspect-ratio: 1/1), (max-width: 999px) {
+    /* As tall as the screen gets once a phone's browser bars shrink, so no edge shows below the drawing. */
+    .stage { height: 100lvh; }
     .ch { padding: 0 10px; }
     .note { top: 20px; width: auto; max-width: 560px; margin: 0 auto; padding: 0 6px; }
     html.js:not(.static) .note:not(.hero) { top: 22px; left: 0; right: 0; max-width: none; padding: 0 22px; }
@@ -1112,8 +1114,10 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
         // the rest with a margin round it, and at the end the closing line and links take a band along the foot.
         const hero = document.querySelector('.note.hero'), endEl = document.getElementById('end');
         const top = hero ? hero.getBoundingClientRect().bottom : 0, band = bandHeight(), foot = endEl ? endEl.offsetHeight : 0;
+        // The stage is as tall as the screen with the browser's bars shrunk; frame within what is visible now.
+        const vH = Math.min(H, innerHeight);
         const m = Math.min(28, W * .06);
-        return { W, H, h: { x: m, y: top + 24, w: W - 2 * m, h: H - top - 24 - 40 }, a: { x: m, y: band + 22, w: W - 2 * m, h: H - band - 22 - 28 }, b: { x: m * .5, y: 18, w: W - m, h: H - 18 - foot - 6 } };
+        return { W, H, h: { x: m, y: top + 24, w: W - 2 * m, h: vH - top - 24 - 40 }, a: { x: m, y: band + 22, w: W - 2 * m, h: vH - band - 22 - 28 }, b: { x: m * .5, y: 18, w: W - m, h: vH - 18 - foot - 6 } };
       }
       // The title sits on the left, so the opening frame is to its right. After it the words run across the
       // top, one sentence a line, as wide as they need, and the drawing has the full width below them.
@@ -1139,7 +1143,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       const f = a === b ? 0 : io(clamp((t - a.t) / (b.t - a.t)));
       const z = Math.exp(lerp(Math.log(ca.z), Math.log(cb.z), f));
       const cx = lerp(ca.cx, cb.cx, f), cy = lerp(ca.cy, cb.cy, f);
-      return { z, x: cx - (s.x + s.w / 2) / z, y: cy - (s.y + s.h / 2) / z, w: sb.W / z, h: sb.H / z };
+      return { z, x: cx - (s.x + s.w / 2) / z, y: cy - (s.y + s.h / 2) / z, w: sb.W / z, h: sb.H / z, top: s.y };
     };
 
     const levelOf = (name, t) => {
@@ -1201,6 +1205,9 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       const sb = safeBase();
       if (!(sb.W > 40 && sb.H > 40)) return;
       const cam = camAt(t, sb);
+      // Stacked, the words have the whole width of the top to themselves: nothing of the drawing shows above
+      // its own area, beside the words or behind them.
+      if (!opts.fit) svg.parentNode.style.clipPath = L.tall ? `inset(${Math.max(0, cam.top - 12).toFixed(1)}px 0 0 0)` : '';
       zNow = cam.z;
       A(svg, 'viewBox', `${cam.x.toFixed(2)} ${cam.y.toFixed(2)} ${cam.w.toFixed(2)} ${cam.h.toFixed(2)}`);
       const z = cam.z;
