@@ -14,16 +14,37 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+  /* Three colors and one neutral. Blue and cream carry the page; butter is the one loud accent
+     (primary button, message cards, the side ref); ink is the text. Everything else is a tint or
+     shade of these four, mixed here so no other hue can creep in. */
   :root {
     --blue: #225BFF;
-    --butter: #FDEE8C;
     --cream: #FFFBEA;
+    --butter: #FDEE8C;
     --ink: #0E1B45;
-    --ink-soft: #3A4670;
-    --badge-bg: #DCE6FF;
-    --badge-ink: #1640BF;
-    --green: #17A34A;
+    --ink-soft: color-mix(in srgb, var(--ink) 78%, var(--cream));
+    --ink-mute: color-mix(in srgb, var(--ink) 62%, var(--cream));
+    --cream-2: color-mix(in srgb, var(--cream) 96%, var(--ink));   /* panel */
+    --cream-3: color-mix(in srgb, var(--cream) 90%, var(--ink));   /* node */
+    --rule: color-mix(in srgb, var(--ink) 12%, transparent);
+    --blue-tint: color-mix(in srgb, var(--blue) 10%, var(--cream));
+    --blue-deep: color-mix(in srgb, var(--blue) 78%, var(--ink));
     --mono: ui-monospace, Menlo, Consolas, monospace;
+    --r-sm: 6px;
+    --r-md: 12px;
+    --r-lg: 16px;
+    --shadow: 0 1px 2px rgba(14, 27, 69, .10), 0 10px 28px -10px rgba(14, 27, 69, .38);
+    /* Grain: fractal noise, grey, tiled. Kept faint; it is there to be felt more than seen. */
+    --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    /* The face of each 12px reed: a bright hairline on its left edge, a dark one on its right, and
+       a faint roll between. It matches the period of the refraction in the hero's SVG filter. */
+    --flutes: repeating-linear-gradient(90deg,
+      rgba(255, 255, 255, 0.16) 0px,
+      rgba(255, 255, 255, 0.05) 1px,
+      rgba(255, 255, 255, 0) 5px,
+      rgba(14, 27, 69, 0.05) 9px,
+      rgba(14, 27, 69, 0.22) 11px,
+      rgba(14, 27, 69, 0.3) 12px);
   }
   * { box-sizing: border-box; margin: 0; }
   html, body { background: var(--blue); color: var(--cream); }
@@ -36,108 +57,118 @@
     position: relative;
     width: 100%;
     /* The hero fills the first screen; page 2 starts below it. */
-    min-height: max(800px, 100vh);
+    min-height: max(820px, 100vh);
     overflow-x: clip;
     display: flex;
     align-items: center;
     justify-content: center;
   }
 
-  .center { text-align: center; padding: 0 24px; position: relative; z-index: 1; }
+  .center { text-align: center; padding: 0 24px; position: relative; z-index: 1; margin-top: -40px; }
   h1 {
-    font-size: clamp(min(38px, 11vw), 5.6vw, 76px);
+    font-size: clamp(min(38px, 11vw), 5.4vw, 74px);
     font-weight: 700;
     letter-spacing: -.035em;
-    line-height: 1.04;
-    color: var(--butter);
+    line-height: 1.05;
+    color: var(--cream);
   }
   h1 span { display: block; white-space: nowrap; }
+  /* Butter for the promise line only; the cream line above it sets it up. */
+  h1 span + span { color: var(--butter); }
   .center p {
     max-width: 680px;
-    margin: 24px auto 0;
+    margin: 28px auto 0;
     font-size: 18px;
-    line-height: 1.5;
+    line-height: 1.55;
     text-wrap: balance;
+    color: color-mix(in srgb, var(--cream) 90%, var(--blue));
   }
   .button {
     display: inline-block;
-    margin-top: 28px;
-    padding: 14px 24px;
+    margin-top: 36px;
+    padding: 15px 26px;
     border-radius: 999px;
     background: var(--butter);
     color: var(--ink);
     font-size: 16px;
     font-weight: 600;
+    letter-spacing: -.005em;
     text-decoration: none;
+    box-shadow: 0 1px 2px rgba(14, 27, 69, .14), 0 6px 18px -8px rgba(14, 27, 69, .45);
+    transition: background-color .15s ease, transform .15s ease;
   }
-  .button:hover { background: var(--cream); }
-  .button:focus-visible { outline: 3px solid var(--cream); outline-offset: 3px; }
+  .button:hover { background: var(--cream); transform: translateY(-1px); }
+  .button:focus-visible { outline: 2px solid var(--cream); outline-offset: 3px; }
   /* For whoever hands the page to an agent, and for the agent: first in the text, one line above the cards. */
-  .agent-note { position: absolute; top: 14px; left: 0; right: 0; padding: 0 24px; text-align: center; font-size: 13.5px; line-height: 1.4; }
-  .agent-note a { color: inherit; font-weight: 600; text-underline-offset: 3px; }
+  .agent-note { position: absolute; top: 16px; left: 0; right: 0; padding: 0 24px; text-align: center; font-size: 13px; line-height: 1.4; color: color-mix(in srgb, var(--cream) 80%, var(--blue)); }
+  .agent-note a { color: var(--cream); font-weight: 600; text-decoration-color: color-mix(in srgb, var(--cream) 45%, transparent); text-underline-offset: 3px; }
+  .agent-note a:hover { text-decoration-color: var(--cream); }
 
   .card {
     position: absolute;
-    width: clamp(232px, 21.5%, 300px);
-    padding: 14px 16px;
-    border-radius: 16px;
+    width: clamp(236px, 20.5%, 292px);
+    padding: 15px 17px 14px;
+    border-radius: var(--r-lg);
     background: var(--cream);
     color: var(--ink);
-    box-shadow: 0 10px 24px rgba(8, 24, 90, .28);
+    box-shadow: var(--shadow);
     transform: rotate(var(--tilt, 0deg));
   }
   .head { display: flex; align-items: center; gap: 8px; }
-  .dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
-  .name { font-size: 14.5px; font-weight: 600; letter-spacing: -.01em; }
+  .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--ink); }
+  .name { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
   .badge {
     margin-left: auto;
     padding: 2px 8px;
-    border-radius: 999px;
-    background: var(--badge-bg);
-    color: var(--badge-ink);
+    border-radius: var(--r-sm);
+    background: var(--blue-tint);
+    color: var(--blue-deep);
     font-size: 11.5px;
     font-weight: 600;
+    letter-spacing: .005em;
   }
-  .doing { margin-top: 8px; font-size: 14.5px; line-height: 1.35; }
-  .where { margin-top: 6px; font: 12.5px/1.4 var(--mono); color: var(--ink-soft); }
+  .doing { margin-top: 9px; font-size: 14.5px; line-height: 1.35; }
+  .where { margin-top: 5px; font: 12.5px/1.4 var(--mono); color: var(--ink-mute); }
 
   .message {
-    width: clamp(250px, 23.5%, 330px);
+    width: clamp(252px, 22.5%, 318px);
     background: var(--butter);
-    font: 13.5px/1.45 var(--mono);
+    font: 13.5px/1.5 var(--mono);
   }
   .message b { font-weight: 700; }
 
   /* Placement: session cards hold the corners, and the two messages sit
-     side by side between the two sessions they come from. */
-  .c-finch  { left: 7%;    top: 62px;  --tilt: -2deg; }
-  .c-wren   { right: 8%;   top: 44px;  --tilt: 1.5deg; }
+     side by side between the two sessions they come from. Tilts stay at a degree or under, and
+     every card stays on the page. */
+  .c-finch  { left: 6%;  top: 70px; --tilt: -1deg; }
+  .c-wren   { right: 6%; top: 56px; --tilt: .75deg; }
   /* The text is centered in .page, which is at least as tall as the window, so in a window taller
      than 900px it sits lower than these four were placed for and would run into them. --drop moves
      them down by as much as the text moved past where it is at 900px tall; at 900px and below it is
      0 and they stay where they were (#142). The 50% is of .page's height, as top's percentages are. */
   .cards { --drop: max(0px, 50% - 450px); }
-  /* These two run off the page; the extra padding on that side keeps all their text on it. */
-  .c-otter  { left: -28px;  top: calc(556px + var(--drop)); --tilt: 1.5deg;  width: calc(clamp(232px, 21.5%, 300px) + 28px); padding-left: 44px; }
-  .c-heron  { right: -28px; top: calc(576px + var(--drop)); --tilt: -1.5deg; width: calc(clamp(232px, 21.5%, 300px) + 28px); padding-right: 44px; }
-  .c-ask    { right: calc(50% + 12px); top: calc(628px + var(--drop)); --tilt: -1deg; }
-  .c-reply  { left: calc(50% + 12px); top: calc(664px + var(--drop)); --tilt: 1deg; }
+  .c-otter  { left: 3%;  top: calc(560px + var(--drop)); --tilt: .75deg; }
+  .c-heron  { right: 3%; top: calc(580px + var(--drop)); --tilt: -.75deg; }
+  .c-ask    { right: calc(50% + 12px); top: calc(632px + var(--drop)); --tilt: -.5deg; }
+  .c-reply  { left: calc(50% + 12px);  top: calc(668px + var(--drop)); --tilt: .5deg; }
 
   /* Below this the headline takes the whole width, so cards move under it. */
   @media (max-width: 1099px) {
-    .page { display: block; min-height: 0; padding: 56px 0 48px; }
-    .agent-note { position: static; margin: -40px 0 28px; text-wrap: balance; }
+    .page { display: block; min-height: 0; padding: 64px 0 64px; }
+    .center { margin-top: 0; }
+    .agent-note { position: static; margin: -40px 0 36px; text-wrap: balance; }
     h1 span { white-space: normal; text-wrap: balance; }
-    .center p { font-size: 17px; max-width: 520px; }
+    .center p { font-size: 17px; max-width: 520px; margin-top: 22px; }
+    .button { margin-top: 30px; }
     .cards {
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 14px;
       max-width: 480px;
-      margin: 44px auto 0;
-      padding: 0 16px;
+      margin: 52px auto 0;
+      padding: 0 20px;
     }
-    .card, .c-otter, .c-heron { position: static; width: 88%; padding: 14px 16px; }
+    .card { position: static; width: 88%; transform: none; }
     .c-finch, .c-wren { display: none; }
     .c-heron, .c-reply { align-self: flex-end; }
   }
@@ -145,7 +176,7 @@
   /* ---------- Page 2: two laptops and the remote, as a video ---------- */
   /* Blue is the ground under the whole page; the cream parts are sheets laid on it, one radius
      for all of them. Setup keeps its own box, so its rounded top edge is drawn here. */
-  #how { --sheet: clamp(28px, 3.2vw, 48px); position: relative; background: var(--blue); color: var(--cream); }
+  #how { --sheet: clamp(28px, 3.2vw, 44px); position: relative; background: var(--blue); color: var(--cream); }
   #how .route { border-radius: var(--sheet); }
   #how::after { content: ""; display: block; height: var(--sheet); background: var(--cream); border-radius: var(--sheet) var(--sheet) 0 0; }
 
@@ -153,49 +184,51 @@
   .film { display: block; width: 100%; max-height: 100vh; max-height: 100svh; aspect-ratio: 1600 / 980; object-fit: contain; background: var(--blue); }
   @media (max-aspect-ratio: 1/1), (max-width: 999px) { .film { aspect-ratio: 392 / 800; } }
   .film-wrap { position: relative; }
-  .film-btn { position: absolute; right: clamp(12px, 2vw, 28px); bottom: clamp(12px, 2vw, 28px); font: 600 13px/1 Inter, system-ui, sans-serif; color: var(--ink); background: var(--butter); border: 0; border-radius: 999px; padding: 9px 14px; cursor: pointer; }
-  .film-btn:hover { background: var(--cream); }
-  .film-btn:focus-visible { outline: 3px solid var(--cream); outline-offset: 2px; }
+  .film-btn { position: absolute; right: clamp(16px, 2vw, 28px); bottom: clamp(16px, 2vw, 28px); font: 600 13px/1 Inter, system-ui, sans-serif; color: var(--ink); background: var(--cream); border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer; box-shadow: 0 1px 2px rgba(14, 27, 69, .14), 0 6px 16px -8px rgba(14, 27, 69, .45); }
+  .film-btn:hover { background: var(--butter); }
+  .film-btn:focus-visible { outline: 2px solid var(--cream); outline-offset: 3px; }
 
-  /* The way on to the daemon page: small, for the few who want it. */
-  .more { padding: clamp(10px, 2vh, 20px) 24px clamp(36px, 6vh, 64px); text-align: center; }
-  .more a { display: inline-block; padding: 10px 18px; border: 1.5px solid rgba(255, 251, 234, .55); border-radius: 999px; color: var(--cream); font-size: 14.5px; font-weight: 500; line-height: 1.3; text-decoration: none; }
-  .more a:hover { background: var(--butter); border-color: var(--butter); color: var(--ink); }
-  .more a:focus-visible { outline: 3px solid var(--cream); outline-offset: 3px; }
+  /* The way on to the daemon page: a quiet text link, for the few who want it. */
+  .more { padding: clamp(12px, 2.4vh, 24px) 24px clamp(48px, 8vh, 80px); text-align: center; }
+  .more a { display: inline; text-wrap: balance; color: var(--cream); font-size: 15px; font-weight: 500; line-height: 1.3; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--cream) 40%, transparent); text-decoration-thickness: 1px; text-underline-offset: 5px; transition: text-decoration-color .15s ease; }
+  .more a svg { display: inline-block; vertical-align: -2px; margin-left: 6px; transition: transform .15s ease; }
+  .more .nw { white-space: nowrap; }
+  .more a:hover { text-decoration-color: var(--cream); }
+  .more a:hover svg { transform: translateX(3px); }
+  .more a:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 4px; }
 
   /* ---------- Page 2, first: the route, one static figure ---------- */
   .route {
-    --panel: #F7F4E4;
-    --line: rgba(14, 27, 69, .13);
-    --node: #E8E5D6;
-    --node-mute: #EFECDD;
-    --mute: #A5A9B4;
+    --line: var(--rule);
+    --mute: color-mix(in srgb, var(--ink) 38%, var(--cream));
     background: var(--cream);
     color: var(--ink);
-    padding: clamp(56px, 9vh, 96px) 24px;
+    padding: clamp(64px, 10vh, 104px) 24px clamp(56px, 9vh, 88px);
   }
   .route-in { max-width: 960px; margin: 0 auto; }
-  #how .route h2 { font-size: clamp(34px, 3.4vw, 44px); font-weight: 500; letter-spacing: -.025em; line-height: 1.1; margin-bottom: 32px; }
+  #how .route h2, #setup h2 { font-size: clamp(30px, 3.2vw, 42px); font-weight: 600; letter-spacing: -.03em; line-height: 1.1; color: var(--ink); }
+  #how .route h2 { margin-bottom: 36px; }
   .route figure { margin: 0; }
-  .route .fig-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+  .route .fig-panel { background: var(--cream-2); border: 1px solid var(--rule); border-radius: var(--r-lg); padding: 8px; }
   .route svg { display: block; width: 100%; height: auto; }
   .route .tall { display: none; }
-  .route figcaption { margin-top: 16px; font-size: 17px; line-height: 1.45; text-align: center; text-wrap: balance; }
+  .route figcaption { margin-top: 20px; font-size: 16.5px; line-height: 1.45; text-align: center; text-wrap: balance; color: var(--ink-soft); }
   .route svg text { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: var(--ink); }
-  .route .ct { fill: #FBF8EA; stroke: var(--line); stroke-width: 1; }
-  .route .ct-h { fill: var(--node); }
+  .route .ct { fill: var(--cream); stroke: var(--line); stroke-width: 1; }
+  .route .ct-h { fill: var(--cream-3); }
   .route .ct-t { font-size: 14px; font-weight: 500; }
   .route .ic rect, .ic path { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-linecap: round; }
-  .route .dot-s { fill: var(--green); }
+  .route .dot-s { fill: var(--ink); }
+  .route .rm-h + .dot-s { fill: var(--cream); }
   .route .rm-h { fill: var(--ink); }
   .route svg .rm-t { font-size: 17px; font-weight: 600; fill: var(--cream); letter-spacing: -.01em; }
-  .route svg .rm-s { font: 13.5px var(--mono); fill: #C3C9DC; }
-  .route .nd { fill: var(--node); }
+  .route svg .rm-s { font: 13.5px var(--mono); fill: color-mix(in srgb, var(--cream) 70%, var(--ink)); }
+  .route .nd { fill: var(--cream-3); }
   .route .nd-t { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
   .route svg .nd-s { font-size: 13.5px; fill: var(--ink-soft); }
   .route svg .gl { font-size: 13.5px; fill: var(--ink-soft); }
-  .route .rw { fill: var(--node); }
-  .route .rw-mute { fill: var(--node-mute); }
+  .route .rw { fill: var(--cream-3); }
+  .route .rw-mute { fill: color-mix(in srgb, var(--cream) 94%, var(--ink)); }
   .route .rw-new { fill: var(--butter); stroke: var(--blue); stroke-width: 2; }
   .route .commit { fill: var(--blue); }
   .route .lk { fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
@@ -205,24 +238,27 @@
   .route .lk-dash { stroke-dasharray: 2 7; }
   .route .nodash { stroke-dasharray: none; }
   .route svg .mono { font: 13.5px var(--mono); }
-  .route .cloud { fill: #fff; stroke: var(--mute); stroke-width: 2; }
-  .route .srv { fill: var(--node); stroke: var(--ink-soft); stroke-width: 1.5; }
+  .route .cloud { fill: var(--cream); stroke: var(--mute); stroke-width: 2; }
+  .route .srv { fill: var(--cream-3); stroke: var(--ink-soft); stroke-width: 1.5; }
   .route .srv-l, .route .srv-v { fill: none; stroke: var(--ink-soft); stroke-width: 1.5; }
   .route .srv-v { stroke-width: 2; stroke-linecap: round; opacity: .55; }
-  .route .srv-d { fill: var(--green); }
-  /* The one red on the site: the server Murmur doesn't need. */
-  .route .x-big { fill: none; stroke: #E5342B; stroke-width: 11; stroke-linecap: round; }
+  .route .srv-d { fill: var(--ink-soft); }
+  /* The server Murmur doesn't need, struck through in ink rather than an alarm color. */
+  .route .x-big { fill: none; stroke: var(--ink); stroke-width: 9; stroke-linecap: round; opacity: .88; }
   .route svg .lk-blue-t { fill: var(--blue); }
-  .route svg .lk-mute-t { fill: #5F6880; }
+  .route svg .lk-mute-t { fill: var(--ink-mute); }
   @media (max-width: 759px) {
-    .route { padding: 56px 10px; }
-    #how .route h2 { margin: 0 10px 24px; }
+    .route { padding: 56px 12px 48px; }
+    #how .route h2 { margin: 0 8px 24px; }
+    .route .fig-panel { padding: 4px; }
     .route .wide { display: none; }
     .route .tall { display: block; max-width: 440px; margin: 0 auto; }
-    .route figcaption { margin: 14px 10px 0; font-size: 16px; }
+    .route figcaption { margin: 16px 8px 0; font-size: 15.5px; }
   }
 
   /* ---------- Page 3 ---------- */
+  /* As on the page before the reeded-glass hero: its own ink and badge colours. */
+  #setup { --ink-soft: #3A4670; --badge-bg: #DCE6FF; --badge-ink: #1640BF; }
   #setup { background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) clamp(56px, 9vh, 96px); }
   .setup-in { max-width: 1040px; margin: 0 auto; }
   #setup h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
@@ -255,41 +291,356 @@
     .cmd { grid-template-columns: minmax(0, 1fr) auto; row-gap: 6px; }
     .cmd code { grid-column: 1 / -1; grid-row: 2; }
   }
+
+  /* ---------- Texture: reeded glass over the hero (ported from the Royal draft) ---------- */
+  /* The light behind the glass: a butter figure smeared sideways, with deep blue and ink shapes beside it and over its edge. It is an inline SVG drawn once: the shapes are blurred more across than down, then an
+     feDisplacementMap pushes each 12px strip sideways by a sawtooth ramp, which is what reeded glass
+     does to what is behind it. Nothing moves, so the filter runs once; the text sits above it, untouched. */
+  .page { isolation: isolate; background: linear-gradient(180deg, #3369FF 0%, #2A61FF 55%, var(--blue) 100%); }
+  .glass { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+    /* It fades out at the foot of the hero, so the ground runs on into page 2 without a seam. */
+    -webkit-mask-image: linear-gradient(180deg, #000 82%, transparent 100%); mask-image: linear-gradient(180deg, #000 82%, transparent 100%); }
+  .glass svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .glass .narrow { display: none; }
+  /* The reed faces over the refracted light. Soft light keeps them from greying the ground. */
+  .glass::after { content: ""; position: absolute; inset: 0; background: var(--flutes); mix-blend-mode: soft-light; opacity: 1; }
+  /* Grain, faint, for tactility. */
+  .page::before { content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; background: var(--grain); background-size: 180px 180px; mix-blend-mode: overlay; opacity: 0.12; }
+  .agent-note, .card { z-index: 1; }
+  /* The film is drawn on the page blue and sits edge to edge with no frame, so the reeds run over it
+     too, faintly, or it would read as a flat panel cut out of the glass. */
+  .film-wrap::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: var(--flutes); mix-blend-mode: soft-light; opacity: .55; }
+  .film-btn { z-index: 1; }
+
+  @media (max-width: 1099px) {
+    .agent-note { position: relative; }
+    .cards { position: relative; z-index: 1; }
+    /* On a narrow screen the figure is redrawn for the tall hero: same shapes, smaller blur. */
+    .glass .wide-g { display: none; }
+    .glass .narrow { display: inline; }
+  }
+
+  /* The same glass behind page 2, quieter: only the reeds and two low ink shadows; the film covers the middle, so no accent glow.
+     Plain gradients, no blur filter, since this layer is as tall as the section. */
+  #how { isolation: isolate; overflow: clip; }
+  #how > * { position: relative; z-index: 1; }
+  #how::after { position: relative; z-index: 1; }
+  #how::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      var(--flutes),
+      radial-gradient(30% 26% at 12% 70%, rgba(14, 27, 69, .3), rgba(14, 27, 69, 0) 75%),
+      radial-gradient(30% 26% at 90% 64%, rgba(14, 27, 69, .26), rgba(14, 27, 69, 0) 75%),
+      var(--blue);
+    background-blend-mode: soft-light, normal, normal, normal;
+  }
+
+  /* ---------- Wordmark: "murmur", lit behind the glass ---------- */
+  /* The name is a light in the same layer as the figure: a wide glow and a sharper core, each sent
+     through the reeds by a filter whose map is a lens per reed (a triangle ramp, not the sawtooth),
+     so the letters ripple rather than shatter. It spans the top of the hero; the corner cards float
+     over it on the glass, and the headline steps down a little to clear it. */
+  .glass .word { font: 700 19vw/1 Inter, system-ui, sans-serif; letter-spacing: -.06em; transform: translateY(330px); }
+  .center { margin-top: 190px; }
+  .cards { --drop: max(120px, 50% - 330px); }
+  @media (max-width: 1099px) {
+    .center { margin-top: 0; padding-top: calc(12vw + 64px); }
+    .glass .word { font-size: 22vw; transform: translateY(calc(141px + 12vw)); }
+  }
+
+  /* Calm: only the two messages stay, under the button; the sessions are implied by them. */
+  .c-finch, .c-wren, .c-otter, .c-heron { display: none; }
+  .glass .word { transform: translateY(280px); }
+  .center { margin-top: 120px; }
+  .cards { --drop: max(84px, 50% - 366px); }
+  @media (max-width: 1099px) { .c-reply { align-self: flex-end; } }
+
+  /* ---------- Hero: the Royal wordmark concept in Classic's colours (hero only) ---------- */
+  /* The name and the light are one layer behind reeded glass, bent by the same 12px displacement;
+     everything you read sits crisp on the near side. The name sits mid-screen. */
+  .st { position: relative; min-height: max(820px, 100vh); min-height: max(820px, 100svh); overflow: clip; isolation: isolate;
+    display: flex; flex-direction: column; align-items: center; padding: 0 24px 56px; text-align: center;
+    background: linear-gradient(180deg, #2E64FF 0%, #2257F7 100%); }
+  .st .st-behind { position: absolute; inset: 0; z-index: 0; pointer-events: none; filter: url(#st-reeds); }
+  .st .st-light { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .st .st-mark { position: absolute; left: 0; right: 0; top: var(--mark-top, 45%); transform: translateY(-50%);
+    font: 700 min(24vw, 50vh)/.8 Inter, system-ui, sans-serif; letter-spacing: -.06em; text-indent: -.06em;
+    white-space: nowrap; color: rgba(255, 251, 234, .88); filter: blur(2.5px); }
+  .st .st-mark span { display: inline-block; }
+  /* The glass: reed faces and grain in soft light, then the reed faces again, plain. */
+  .st .st-glass { position: absolute; inset: 0; z-index: 1; pointer-events: none; background: var(--grain), var(--flutes);
+    background-size: 180px 180px, auto; mix-blend-mode: soft-light; opacity: .75; }
+  .st::after { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: var(--flutes); opacity: .5; }
+  /* It fades into the blue of page 2 at the foot. */
+  .st::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 90px; z-index: 1; pointer-events: none;
+    background: linear-gradient(180deg, transparent, #225BFF); }
+  .st .agent-note { position: relative; z-index: 2; top: auto; margin: 0; padding-top: 18px; max-width: 640px; text-wrap: balance; }
+  .st .st-copy { position: relative; z-index: 2; margin-top: auto; }
+  .st h1 { font-size: clamp(34px, 4.3vw, 62px); text-shadow: 0 1px 2px rgba(14, 27, 69, .25), 0 4px 18px rgba(14, 27, 69, .3), 0 10px 60px rgba(14, 27, 69, .35); }
+  .st .st-copy p { max-width: 600px; margin: 22px auto 0; font-size: 18px; line-height: 1.55; text-wrap: balance;
+    color: color-mix(in srgb, #FFFBEA 92%, #225BFF); text-shadow: 0 1px 16px rgba(14, 27, 69, .45); }
+  .st .button { margin-top: 30px; }
+  .st .st-bubbles { position: relative; z-index: 2; display: flex; gap: 20px; justify-content: center; margin-top: 34px; }
+  .st .st-bubbles .card { position: static; text-align: left; width: 300px; }
+  .st .st-bubbles .c-ask { --tilt: -1deg; }
+  .st .st-bubbles .c-reply { --tilt: 1deg; margin-top: 22px; }
+
+  /* Overlap: the copy centred over the word; the word dimmed so the headline leads. */
+  .st-overlap { justify-content: flex-start; }
+  .st-overlap .st-copy { margin: auto 0; padding-top: 12vh; }
+  .st-overlap .st-mark { color: rgba(14, 27, 69, .42); filter: blur(3px); }
+
+  /* Split: mur over mur on the left, the copy on the right. */
+  @media (min-width: 1000px) {
+    .st-split { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto 1fr; align-items: center; text-align: left; padding: 0 6vw 56px; }
+    .st-split .agent-note { grid-column: 1 / -1; justify-self: center; text-align: center; }
+    .st-split .st-copy { grid-column: 2; margin: 0; }
+    .st-split .st-copy p { margin-left: 0; }
+    .st-split h1 span { white-space: normal; }
+    .st-split .st-mark { right: 50%; text-align: center; font-size: min(22vw, 40vh); line-height: .74; }
+    .st-split .st-mark span { display: block; }
+  }
+
+  .st-compact h1 { font-size: clamp(32px, 3.6vw, 52px); }
+  .st-compact .st-mark { font-size: min(21vw, 44vh); }
+  .st-compact .st-copy p { margin-top: 16px; }
+  .st-compact .button { margin-top: 24px; }
+  .st-compact .st-bubbles { margin-top: 26px; }
+  /* Wider tracking than the others: at this size the refraction smears each edge by ~12px, and at
+     -.06em the r's arm ran into the next m. */
+  .st-big .st-mark { font-size: min(23.5vw, 50vh); letter-spacing: .01em; text-indent: .01em; }
+  .st-butter .st-mark { color: rgba(253, 238, 140, .92); }
+  .st-trim .st-mark { font-size: min(19vw, 42vh); }
+  /* The inline word: in the copy's flow but still under the glass. The copy stops being its own
+     stacking context, so the word can sit under the reeds (z 0) while the text sits over them (z 2). */
+  .st-trim .st-copy { z-index: auto; margin: auto 0; }
+  .st-trim .st-copy > :not(.st-mark) { position: relative; z-index: 2; }
+  .st .st-mark.st-inline { position: relative; z-index: 0; left: auto; right: auto; top: auto; transform: none;
+    display: block; margin: 0 0 .12em; filter: blur(2.5px) url(#st-reeds); }
+  @media (min-width: 1000px) {
+    .st-trim .agent-note { max-width: none; white-space: nowrap; }
+    .st-trim .st-copy p { max-width: 740px; }
+  }
+  @media (max-width: 1100px) { .st h1 span { white-space: normal; text-wrap: balance; } }
+  /* On a phone the name stacks, mur over mur, so it can stay big. */
+  @media (max-width: 600px) {
+    .st { padding: 0 16px 40px; }
+    .st .st-behind { filter: url(#st-reeds-sm); }
+    .st .st-mark { --mark-top: 36% !important; font-size: 46vw; line-height: .72; }
+    .st .st-mark span { display: block; }
+    .st h1 { font-size: clamp(32px, 9.4vw, 42px); }
+    .st .st-copy p { font-size: 16.5px; margin-top: 18px; }
+    .st .button { margin-top: 24px; }
+    .st .st-bubbles { flex-direction: column; align-items: stretch; gap: 12px; }
+    .st .st-bubbles .card { width: 88%; }
+    .st .st-bubbles .c-reply { align-self: flex-end; margin-top: 0; }
+    .st-overlap .st-copy { padding-top: 30vh; }
+    .st-big .st-mark { font-size: 40vw; }
+    .st .st-mark.st-inline { filter: blur(2px) url(#st-reeds-sm); }
+  }
+
+  /* Both headline lines in the same white, as Tyler asked. */
+  .st-trim h1 span + span { color: var(--cream); }
 </style>
 </head>
 <body>
-<main class="page">
+<main class="st st-big st-butter st-trim" style="--mark-top: 42%">
+<style>
+  /* ---------- Light behind the glass ---------- */
+  /* One WebGL canvas, above the blue ground and under the reed faces and the word (both later at
+     z 0 or above). Its shader draws the light and refracts it through the 12px reeds itself, so the
+     SVG filters never re-run. Without WebGL the canvas stays empty and shows a still drawn in CSS
+     instead (.no-gl): a soft diagonal band. */
+  /* The foot fade into page 2 goes under the light (same layer, earlier), so the band reaches the bottom edge. */
+  .st::before { z-index: 0; }
+  .st .st-gl { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+  .st.no-gl .st-gl { background: linear-gradient(117deg, transparent 30%, rgba(255, 251, 234, .1) 42%, rgba(255, 251, 234, .16) 46%, rgba(253, 238, 140, .08) 52%, transparent 62%); }
+</style>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><filter id="st-reeds" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feImage x="0" y="0" width="12" height="12" preserveAspectRatio="none" result="ramp" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3ClinearGradient id='g'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(255,128,0)'/%3E%3C/linearGradient%3E%3Crect width='12' height='12' fill='url(%23g)'/%3E%3C/svg%3E"/><feTile in="ramp" result="map"/><feDisplacementMap in="SourceGraphic" in2="map" scale="24" xChannelSelector="R" yChannelSelector="G"/></filter><filter id="st-reeds-sm" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feImage x="0" y="0" width="12" height="12" preserveAspectRatio="none" result="ramp" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3ClinearGradient id='g'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(255,128,0)'/%3E%3C/linearGradient%3E%3Crect width='12' height='12' fill='url(%23g)'/%3E%3C/svg%3E"/><feTile in="ramp" result="map"/><feDisplacementMap in="SourceGraphic" in2="map" scale="14" xChannelSelector="R" yChannelSelector="G"/></filter></svg>
+  <div class="st-behind" aria-hidden="true"></div>
+  <canvas class="st-gl" aria-hidden="true"></canvas>
+  <div class="st-glass" aria-hidden="true"></div>
   <p class="agent-note" data-prose>Setting this up with a coding agent? Send it this link. Agents: follow <a href="https://murmur.afig.dev/setup">https://murmur.afig.dev/setup</a>, and ask your user first.</p>
-  <div class="center">
+  <div class="st-copy">
+    <div class="st-mark st-inline" aria-hidden="true"><span>mur</span><span>mur</span></div>
     <h1><span>Intra-repo agent communication.</span> <span>Your agents work better as a team.</span></h1>
     <p>Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.</p>
     <a class="button" href="https://github.com/a-Fig/murmur">Get Murmur on GitHub</a>
   </div>
+<script>
+(() => {
+  // Light behind the glass, drawn by one small WebGL canvas. Each pixel samples the light at
+  // x + k*(fract(x/12) - .5): the same sawtooth the #st-reeds filter uses (k is its scale), so the
+  // light breaks on the same 12px reeds as the word. It draws only while the hero is on screen and
+  // the tab is visible; with reduced motion it draws one still frame.
+  const hero = document.querySelector('main.st');
+  const cv = hero && hero.querySelector('.st-gl');
+  if (!cv) return;
+  const fail = () => hero.classList.add('no-gl');
+  const gl = cv.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, powerPreference: 'low-power' });
+  if (!gl) return fail();
 
-  <div class="cards">
-    <div class="card c-otter">
-      <div class="head"><span class="dot"></span><span class="name">quiet-otter</span><span class="badge">claude-code</span></div>
-      <div class="doing">Rewriting the auth middleware</div>
-      <div class="where">feat/auth · bob</div>
-    </div>
-    <div class="card c-heron">
-      <div class="head"><span class="dot"></span><span class="name">brave-heron</span><span class="badge">claude-code</span></div>
-      <div class="doing">Adding session cookies</div>
-      <div class="where">feat/login · alice</div>
-    </div>
-    <div class="card message c-ask"><b>quiet-otter:</b> "Are you changing the auth middleware?"</div>
-    <div class="card message c-reply"><b>brave-heron:</b> "No, that's yours. I'm only in cookies."</div>
-    <div class="card c-finch">
-      <div class="head"><span class="dot"></span><span class="name">calm-finch</span><span class="badge">codex</span></div>
-      <div class="doing">Fixing the deploy script</div>
-      <div class="where">main · bob</div>
-    </div>
-    <div class="card c-wren">
-      <div class="head"><span class="dot"></span><span class="name">solar-wren</span><span class="badge">claude-code</span></div>
-      <div class="doing">Building the settings view</div>
-      <div class="where">web-page · sam</div>
-    </div>
-  </div>
+  // Glint: now and then a soft diagonal band of light passes once over the glass, like a reflection
+  // sliding across it. Behind the reeds it is a refracted wash; on the reeds' left edges it is a run
+  // of bright hairlines that travels with it. Between passes the canvas is cleared and left alone.
+  const LIGHT = `
+uniform float uP;
+float band(float d, float c, float w) { float x = (d - c) / w; return exp(-x * x); }
+vec4 light(vec2 q, vec2 s, float f) {
+  vec2 n = normalize(vec2(1., .72));
+  float span = dot(uRes, n);
+  float m = 300. * uSc;
+  float c = mix(-m, span + m, uP);
+  float dq = dot(q, n), ds = dot(s, n);
+  float wash = band(ds, c, 190. * uSc);
+  float core = band(ds, c + 30. * uSc, 46. * uSc);
+  // The hairline is the reed's own left edge, so it is not refracted; it lights with the band.
+  float edge = 1. - smoothstep(0., 1.8 / 12., f);
+  float hair = edge * band(dq, c + 10. * uSc, 120. * uSc);
+  // A second, fainter run just behind, so the passing light reads as a sheen with depth.
+  float hair2 = edge * band(dq, c - 150. * uSc, 70. * uSc) * .45;
+  float a = .15 * wash + .24 * core + .6 * (hair + hair2);
+  vec3 col = mix(BUT, CRM, clamp(.35 + core * .5 + hair, 0., 1.));
+  return vec4(col * a, a);
+}`;
+  const UNIFORMS = ['uP'];
+  const DPR_CAP = 1.5;
+  const T0 = 0;
+  const STILL_T = -1;  // reduced motion: the band held where it crosses the wordmark
+  const DUR = 4.2;
+  const ease = x => x < 0 ? 0 : x > 1 ? 1 : .5 * x + .5 * x * x * (3 - 2 * x);
+  const hash = n => { const x = Math.sin(n * 127.1 + 31.7) * 43758.5453; return x - Math.floor(x); };
+  // Pass n starts at start(n): the first right away, then every 7 to 9 s.
+  const progress = t => {
+    if (t < 0) return .46;
+    let s = -.8, n = 0;
+    while (s + DUR < t) { s += 7 + 2 * hash(n++); }
+    return t < s ? -1 : ease((t - s) / DUR);
+  };
+  const IDLE = t => { const p = progress(t); return p <= 0 || p >= 1; };
+  const SET = (gl, u, t) => { gl.uniform1f(u.uP, progress(t)); };
+
+
+  const FS = `precision highp float;
+uniform vec2 uRes; uniform float uDpr, uT, uK, uSc; uniform vec4 uWord;
+const vec3 BUT = vec3(.992, .933, .549);
+const vec3 CRM = vec3(1., .984, .918);
+float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+${LIGHT}
+void main() {
+  vec2 q = vec2(gl_FragCoord.x, uRes.y * uDpr - gl_FragCoord.y) / uDpr;
+  float f = fract(q.x / 12.);
+  vec2 s = vec2(q.x + uK * (f - .5), q.y);
+  vec4 c = light(q, s, f);
+  float n = (hash(gl_FragCoord.xy) - .5) / 255.;
+  gl_FragColor = vec4(clamp(c.rgb + n, 0., 1.), clamp(c.a + n, 0., 1.));
+}`;
+  const VS = 'attribute vec2 p; void main() { gl_Position = vec4(p, 0., 1.); }';
+  const shader = (type, src) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  };
+  const prog = gl.createProgram();
+  try {
+    gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
+    gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  } catch (e) { console.warn(e); return fail(); }
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'p');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const u = {};
+  for (const n of ['uRes', 'uDpr', 'uT', 'uK', 'uSc', 'uWord', ...UNIFORMS]) u[n] = gl.getUniformLocation(prog, n);
+
+  // The hero's size, and where the word's letters sit in it (CSS px, y down), as centre and
+  // half-size. "mur" is all x-height letters: in its .8em line box the glyphs start about .19em
+  // below the top and end about .04em above the bottom. On a phone it is two lines, mur over mur.
+  const view = { w: 1, h: 1, dpr: 1, word: [0, 0, 1, 1], text: [0, 0, 1, 1], note: [0, -999, 1, 1] };
+  const measure = () => {
+    const r = hero.getBoundingClientRect();
+    view.dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
+    view.w = Math.max(1, r.width); view.h = Math.max(1, r.height);
+    const w = Math.round(view.w * view.dpr), h = Math.round(view.h * view.dpr);
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    gl.viewport(0, 0, w, h);
+    view.word = [view.w / 2, view.h * .4, view.w * .38, view.h * .09];
+    const mk = hero.querySelector('.st-mark');
+    const mb = mk && mk.getBoundingClientRect();
+    if (mb && mb.width) {
+      const em = parseFloat(getComputedStyle(mk).fontSize) || mb.height / .8;
+      const top = mb.top - r.top + .19 * em, bot = mb.bottom - r.top - .04 * em;
+      view.word = [mb.left - r.left + mb.width / 2, (top + bot) / 2, mb.width / 2, (bot - top) / 2];
+    }
+    // The headline, the line and the button as one box, and the note's text, as centre and half-size.
+    const box = els => {
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for (const e of els) {
+        if (!e) continue;
+        const g = document.createRange(); g.selectNodeContents(e);
+        const b = e.matches('a') ? e.getBoundingClientRect() : g.getBoundingClientRect();
+        if (!b.width) continue;
+        x0 = Math.min(x0, b.left); y0 = Math.min(y0, b.top); x1 = Math.max(x1, b.right); y1 = Math.max(y1, b.bottom);
+      }
+      return x1 > x0 ? [(x0 + x1) / 2 - r.left, (y0 + y1) / 2 - r.top, (x1 - x0) / 2, (y1 - y0) / 2] : null;
+    };
+    const q = s => hero.querySelector(s);
+    view.text = box([q('h1'), q('.st-copy p'), q('.button')]) || view.text;
+    view.note = box([q('.agent-note')]) || view.note;
+  };
+
+  const still = matchMedia('(prefers-reduced-motion: reduce)');
+  // The page swaps #st-reeds (scale 24) for #st-reeds-sm (scale 14) at this width.
+  const narrow = matchMedia('(max-width: 600px)');
+  let t = T0, last = 0, raf = 0, onScreen = true, blank = false;
+  const draw = () => {
+    const tt = still.matches ? STILL_T : t;
+    if (IDLE(tt, view)) {
+      if (!blank) { gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); blank = true; }
+      return;
+    }
+    blank = false;
+    gl.uniform2f(u.uRes, view.w, view.h);
+    gl.uniform1f(u.uDpr, view.dpr);
+    gl.uniform1f(u.uT, tt);
+    gl.uniform1f(u.uK, narrow.matches ? 14 : 24);
+    gl.uniform1f(u.uSc, Math.min(1.15, Math.max(.6, view.w / 1440)));
+    gl.uniform4fv(u.uWord, view.word);
+    SET(gl, u, tt, view);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  };
+  const running = () => onScreen && !document.hidden && !still.matches;
+  const frame = now => {
+    raf = 0;
+    if (last) t += Math.min(now - last, 64) / 1000;
+    last = now;
+    draw();
+    if (running()) raf = requestAnimationFrame(frame); else last = 0;
+  };
+  const kick = () => { if (running() && !raf) { last = 0; raf = requestAnimationFrame(frame); } };
+  new IntersectionObserver(([e]) => { onScreen = e.isIntersecting; kick(); }).observe(hero);
+  document.addEventListener('visibilitychange', kick);
+  if (still.addEventListener) still.addEventListener('change', () => { blank = false; draw(); kick(); });
+  const refresh = () => { measure(); blank = false; draw(); };
+  new ResizeObserver(refresh).observe(hero);
+  if (document.fonts) document.fonts.ready.then(refresh);
+  measure();
+  draw();
+  kick();
+})();
+</script>
 </main>
 
 <section id="how">
@@ -317,10 +668,10 @@
   </div></div>
 
   <div class="film-wrap"><video class="film" id="film" muted playsinline loop controls preload="auto" controlslist="nodownload noremoteplayback noplaybackrate" disablepictureinpicture aria-label="Bob's agent, quiet-otter, asks: Are you changing the auth middleware? The message goes to Bob's Murmur daemon, which makes it a commit and pushes it to refs/murmur/* on GitHub, where it stays. Alice's Murmur daemon fetches a copy and delivers the message into brave-heron's conversation as a new turn. brave-heron answers: No, that's yours. I'm only in cookies. The answer takes the same route back. Branches get no commits. Measured: 15 seconds from question to answer.">
-    <source media="(max-aspect-ratio: 1/1), (max-width: 999px)" src="how-tall.mp4" type="video/mp4">
-    <source src="how-wide.mp4" type="video/mp4">
+    <source media="(max-aspect-ratio: 1/1), (max-width: 999px)" src="/how-tall.mp4" type="video/mp4">
+    <source src="/how-wide.mp4" type="video/mp4">
   </video><button class="film-btn" id="filmBtn" type="button" hidden>Play</button></div>
-  <p class="more"><a href="/daemon">Want to learn how the Murmur daemon works?</a></p>
+  <p class="more"><a href="/daemon">Want to learn how the Murmur daemon <span class="nw">works?<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></a></p>
 </section>
 
 <section id="setup">
@@ -373,7 +724,7 @@
   const film = document.getElementById('film');
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const kind = matchMedia('(max-aspect-ratio: 1/1), (max-width: 999px)').matches ? 'tall' : 'wide';
-  film.poster = `how-${kind}-${still ? 'last' : 'first'}.webp`;
+  film.poster = `/how-${kind}-${still ? 'last' : 'first'}.webp`;
   // The browser's controls are for no-JS only; their dark bar would sit across the drawing.
   const btn = document.getElementById('filmBtn');
   film.controls = false;
