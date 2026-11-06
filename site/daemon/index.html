@@ -1880,7 +1880,8 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
     if (!stacked.matches) { splitH = 0; root.style.removeProperty('--split'); return; }
     const H = stage.clientHeight || innerHeight;
     const band = Math.max(...[...document.querySelectorAll('.note')].map(n => n.offsetHeight));
-    splitH = Math.round(clamp(H - band - 14 - 30, H * .54, H * .8));
+    // Never more than 80% for the drawing; never so much that a note runs off the foot (short landscape screens).
+    splitH = Math.round(Math.max(H * .25, Math.min(H * .8, H - band - 14 - 30)));
     root.style.setProperty('--split', splitH + 'px');
   };
   function setup() {
