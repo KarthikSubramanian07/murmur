@@ -285,6 +285,11 @@
   #setup .button { margin-top: 0; background: var(--blue); color: var(--cream); }
   #setup .button:hover { background: var(--ink); }
   #setup .button:focus-visible { outline: 3px solid var(--blue); }
+  /* The hero's shared .button and h2 rules gained a shadow, tracking, padding and line height;
+     Setup keeps the values it had before. */
+  #setup h2 { line-height: normal; }
+  #setup .button { padding: 14px 24px; letter-spacing: normal; box-shadow: none; }
+  #setup .button:hover { transform: none; }
   @media (max-width: 720px) {
     .steps > li { grid-template-columns: 1.6em minmax(0, 1fr); }
     .do { grid-column: 2; margin-top: 6px; }
@@ -602,8 +607,9 @@ void main() {
   const still = matchMedia('(prefers-reduced-motion: reduce)');
   // The page swaps #st-reeds (scale 24) for #st-reeds-sm (scale 14) at this width.
   const narrow = matchMedia('(max-width: 600px)');
-  let t = T0, last = 0, raf = 0, onScreen = true, blank = false;
+  let t = T0, last = 0, raf = 0, onScreen = true, blank = false, lost = false;
   const draw = () => {
+    if (lost) return;
     const tt = still.matches ? STILL_T : t;
     if (IDLE(tt, view)) {
       if (!blank) { gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); blank = true; }
@@ -621,7 +627,9 @@ void main() {
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   };
-  const running = () => onScreen && !document.hidden && !still.matches;
+  const running = () => !lost && onScreen && !document.hidden && !still.matches;
+  // If the GPU drops the context, stop drawing and show the CSS still instead of an empty canvas.
+  cv.addEventListener('webglcontextlost', () => { lost = true; if (raf) cancelAnimationFrame(raf); raf = 0; fail(); });
   const frame = now => {
     raf = 0;
     if (last) t += Math.min(now - last, 64) / 1000;
