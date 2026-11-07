@@ -52,6 +52,13 @@ what joining does, and if the user says yes it installs `mur` and runs `mur join
 is per user and per clone, changes no tracked file and commits nothing; `mur join --leave` undoes
 it. Until a user joins, Murmur does nothing in that clone.
 
+Once joined, Murmur sends one thing outside the repo: a daily check-in to murmur.afig.dev holding a
+random user ID, a one-way hash of the repo's address, mur's version and the OS. Nothing else (no
+names, messages, branches or paths) is sent. We use it only to count users; our goal is 100 active
+users (2026-11-07). `DO_NOT_TRACK=1` or `git config --global murmur.usage false` turns it off.
+[join.md](docs/agents/join.md#what-murmurafigdev-receives-and-why) has the full list of what it
+sends.
+
 ## What agents can do
 
 Once joined, an agent has five tools:
