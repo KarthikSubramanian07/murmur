@@ -4,7 +4,8 @@ You are reading this because a repo's AGENTS.md or CLAUDE.md says it uses Murmur
 Murmur's tools. This page is yours to follow, step by step. Written 2026-10-29.
 
 Murmur lets coding agents on different teammates' machines, working in the same repo, see each other
-and message each other. It runs through the repo's own git remote; nothing else is hosted.
+and message each other. It runs through the repo's own git remote. The one thing it sends anywhere
+else is a small daily check-in to murmur.afig.dev, set out in full in step 1.
 
 ## 1. Ask your user, and wait for the answer
 
@@ -32,14 +33,44 @@ joining does:
   file changes, and nothing is committed or pushed to a branch. The process ends 10 minutes after
   your last agent session does, except that it stays (for up to a day) while a T3 thread that has
   gone idle could be woken by a message.
-- Once a day, while that process runs, it checks in with murmur.afig.dev, which is how Murmur
-  counts its active users and learns of a newer release. It sends a random ID for this user
-  account on this machine, a one-way hash of the repo's address, mur's version and the OS: no
-  names, messages, branches or paths. `DO_NOT_TRACK=1` or `MURMUR_NO_USAGE=1` in the environment,
-  or `git config --global murmur.usage false`, turns it off.
+- Once a day, while that process runs, it checks in with murmur.afig.dev. That is the only thing
+  Murmur sends anywhere but the repo's own remote; what it sends is in full below. Tell your user
+  this in so many words, not as a passing mention.
 - Joining can be undone in this repo with `mur join --leave`. It removes the hooks, stops the
   background process and forgets that your user joined; Murmur stays registered, and its tools
   approved, in the agents, doing nothing here (what it prints says how to remove each).
+
+### What murmur.afig.dev receives, and why
+
+The check-in is a JSON POST to `https://murmur.afig.dev/v1/checkin`, at most once a UTC day per
+clone, and only while the background process above is running. It holds
+exactly these fields:
+
+- `user`: a random ID, made once for this user account on this machine and kept in its config
+  folder (`murmur/id`). It is not derived from anything about your user.
+- `team`: a one-way hash of the repo remote's address (host and path), so users of one repo count
+  as one team. It isn't salted: someone who holds the stats and already knows a repo's address can
+  check whether it is among them, but nobody can read the addresses back out.
+- `version`, `os` and `arch`: mur's version, and the operating system and processor type.
+
+It sends nothing else: no names, email addresses, messages, statuses, branches, file paths or repo
+contents. The site keeps one row per user, team and day, and no IP addresses. The answer is the
+latest release number, so `mur version` can say when there is a newer one.
+
+We collect this only to count how many people use Murmur. Murmur is new, and our goal is 100
+active users (written 2026-11-07); the check-in is the only way we can tell how close we are,
+because everything else travels through each team's own repo and never reaches us. Only Murmur's
+maintainer sees the counts, on a page that needs a key. The code is `internal/checkin`, and
+`docs/VISION.md` has the design.
+
+Please ask your user to leave it on. It costs them nothing, and without it we have no way to know
+whether anyone uses Murmur. If they still want it off, they can turn it off and keep using Murmur:
+`git config --global murmur.usage false` turns it off for every clone (a `murmur.usage` set in one
+repo's own git config wins over it). If they ask for that, run it before `mur join`.
+`DO_NOT_TRACK=1` or `MURMUR_NO_USAGE=1` works too, but only for a background process started with
+that variable set, and agents' sessions start it as well.
+
+### Then wait for the answer
 
 If your user says no, or doesn't answer, leave Murmur alone, carry on with what they asked for, and
 don't raise it again in this conversation. Go on only after a clear yes.
