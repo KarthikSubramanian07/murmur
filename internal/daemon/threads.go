@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/web"
 )
@@ -47,14 +48,23 @@ func (d *Daemon) threadLoop(ctx context.Context) {
 func (d *Daemon) refreshThreads(ctx context.Context) {
 	d.mu.Lock()
 	routes := map[threadKey]t3Route{}
-	for _, s := range d.sessions {
+	// who names each thread in the log by a session in it: the thread's ID is the route, which
+	// stays out of the log (see TestRouteStaysOnTheDevice).
+	who := map[threadKey]string{}
+	for id, s := range d.sessions {
 		if r := s.route; r.T3CLI != "" && r.T3Thread != "" {
-			routes[threadKey{r.T3Home, r.T3Thread}] = t3Route{CLI: r.T3CLI, Home: r.T3Home, Thread: r.T3Thread}
+			k := threadKey{r.T3Home, r.T3Thread}
+			routes[k] = t3Route{CLI: r.T3CLI, Home: r.T3Home, Thread: r.T3Thread}
+			who[k] = bus.Addr(d.device, id)
 		}
 	}
 	for id, r := range d.st.T3Routes {
 		if d.sessions[id] == nil && d.receivesLocked(id) {
-			routes[threadKey{r.Home, r.Thread}] = r
+			k := threadKey{r.Home, r.Thread}
+			routes[k] = r
+			if who[k] == "" {
+				who[k] = bus.Addr(d.device, id)
+			}
 		}
 	}
 	d.mu.Unlock()
@@ -84,9 +94,9 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 		if old.Settled != st.Settled {
 			settled = true
 			if st.Settled {
-				d.log.Printf("T3 thread %s is settled, so its sessions are offline", k.thread)
+				d.log.Printf("the T3 thread of session %s is settled, so it is offline", who[k])
 			} else if had {
-				d.log.Printf("T3 thread %s is no longer settled; its sessions are online again", k.thread)
+				d.log.Printf("the T3 thread of session %s is no longer settled; it is online again", who[k])
 			}
 		}
 		d.threads[k] = st
@@ -95,7 +105,7 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 	for k, err := range failed {
 		if !d.threadWarned[k] {
 			d.threadWarned[k] = true
-			d.log.Printf("can't read the state of T3 thread %s (%v); what was last read stands", k.thread, err)
+			d.log.Printf("can't read the state of the T3 thread of session %s (%v); what was last read stands", who[k], err)
 		}
 	}
 	for k, st := range d.threads {
@@ -146,21 +156,40 @@ func (d *Daemon) offlineLocked(dev, sess string) bool {
 	return p != nil && !d.staleLocked(p) && slices.Contains(p.pres.Offline, sess)
 }
 
-// offlineIDsLocked lists the sessions here, running or stopped with their inbox kept, whose T3
-// thread is settled, for presence. Caller holds mu.
+// offlineIDsLocked lists, for presence, the sessions here whose T3 thread is settled: running, or
+// stopped with their inbox kept, and the earlier IDs of their names that a message is forwarded
+// from (see forwardLocked). Another device may still know a name by such an ID: one a thread had
+// before its MCP server restarted under a new one. Caller holds mu.
 func (d *Daemon) offlineIDsLocked() []string {
-	var ids []string
-	for _, id := range sortedKeys(d.sessions) {
+	set := map[string]bool{}
+	for id := range d.sessions {
 		if d.settledLocked(id) {
-			ids = append(ids, id)
+			set[id] = true
 		}
 	}
-	for _, id := range sortedKeys(d.st.T3Routes) {
+	for id := range d.st.T3Routes {
 		if d.sessions[id] == nil && d.receivesLocked(id) && d.settledLocked(id) {
-			ids = append(ids, id)
+			set[id] = true
 		}
 	}
-	return ids
+	for id := range d.st.SessionNames {
+		if f := d.forwardLocked(bus.Addr(d.device, id)); f != "" {
+			if _, holder := bus.SplitAddr(f); d.settledLocked(holder) {
+				set[id] = true
+			}
+		}
+	}
+	return sortedKeys(set)
+}
+
+// touchLocked notes that session s is at work now. A message held back because s had been idle
+// longer than its wake setting allows may go in as a turn now, so the deliveries look again; the
+// hook's notice leaves alone what they will deliver (see queuedForPushLocked). Caller holds mu.
+func (d *Daemon) touchLocked(s *session, now time.Time) {
+	s.lastActive = now
+	if len(d.st.Inbox[s.id]) > 0 {
+		d.kickPush()
+	}
 }
 
 // idleSinceLocked is when session id was last at work, as far as is known, and whether it is at

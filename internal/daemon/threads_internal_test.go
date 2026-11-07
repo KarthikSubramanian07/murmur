@@ -221,3 +221,71 @@ func TestOfflineOnAnotherDevice(t *testing.T) {
 		t.Errorf("offlineLocked on a peer")
 	}
 }
+
+// A name's earlier ID, which another device may still send to, is offline with the settled
+// session that holds the name now.
+func TestOfflineListsForwardedIDs(t *testing.T) {
+	d := threadsDaemon()
+	inT3(d, "aaaaaa", 0)
+	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{Settled: true}
+	d.st.SessionNames["oldold"] = "name-aaaaaa"
+	d.st.SessionNames["aaaaaa"] = "name-aaaaaa"
+	d.st.NameHolders = map[string]string{"name-aaaaaa": "aaaaaa"}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if got := d.offlineIDsLocked(); len(got) != 2 || got[0] != "aaaaaa" || got[1] != "oldold" {
+		t.Errorf("offline: %q", got)
+	}
+	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{}
+	if got := d.offlineIDsLocked(); len(got) != 0 {
+		t.Errorf("unsettled, offline: %q", got)
+	}
+}
+
+// What a restarted daemon holds for sessions reconnecting isn't given to a settled one.
+func TestCatchUpSkipsASettledSession(t *testing.T) {
+	d := threadsDaemon()
+	d.started = time.Now()
+	d.caughtUp = map[string]bool{}
+	d.st.Inbox = map[string][]*inMsg{}
+	inT3(d, "aaaaaa", 0)
+	inT3(d, "bbbbbb", 0)
+	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{Settled: true}
+	d.pending = []bus.Event{{ID: "m", Type: bus.Message, From: "other/xxxxxx", To: "*", At: time.Now()}}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.catchUpLocked("aaaaaa")
+	d.catchUpLocked("bbbbbb")
+	if len(d.st.Inbox["aaaaaa"]) != 0 || len(d.st.Inbox["bbbbbb"]) != 1 {
+		t.Errorf("inboxes after catch-up: %v", d.st.Inbox)
+	}
+}
+
+// A session at work again lets the deliveries look at what was held back while it was idle.
+func TestActivityLetsHeldMessagesGo(t *testing.T) {
+	d := threadsDaemon()
+	d.sessions["aaaaaa"] = &session{id: "aaaaaa", started: time.Now().Add(-time.Hour)}
+	d.st.Inbox = map[string][]*inMsg{}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.touchLocked(d.sessions["aaaaaa"], time.Now())
+	select {
+	case <-d.pushKick:
+		t.Errorf("kicked with nothing unread")
+	default:
+	}
+	d.sessions["aaaaaa"].lastActive = time.Now().Add(-time.Hour)
+	d.st.Inbox["aaaaaa"] = []*inMsg{{Event: bus.Event{ID: "m"}, Arrived: time.Now()}}
+	if d.wakesLocked("aaaaaa", wakeWithin(0)) {
+		t.Fatalf("idle an hour: woken")
+	}
+	d.touchLocked(d.sessions["aaaaaa"], time.Now())
+	select {
+	case <-d.pushKick:
+	default:
+		t.Errorf("not kicked")
+	}
+	if !d.wakesLocked("aaaaaa", wakeWithin(0)) {
+		t.Errorf("at work again: not woken")
+	}
+}

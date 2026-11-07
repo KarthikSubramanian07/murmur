@@ -269,7 +269,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	// Whatever a session's MCP server asks is the session at work (#21). The CLI's calls are a
 	// human's, and hooks, which reach here as the CLI, mark the sessions they speak for themselves.
 	if s := d.sessions[sess]; registered && s != nil {
-		s.lastActive = now
+		d.touchLocked(s, now)
 	}
 	d.mu.Unlock()
 	if !registered && req.Op != proto.OpNotices && req.Op != proto.OpPing {

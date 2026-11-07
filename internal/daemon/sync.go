@@ -647,7 +647,7 @@ func (d *Daemon) catchUpLocked(id string) {
 	}
 	d.caughtUp[id] = true
 	for _, e := range d.pending {
-		if d.addressedLocked(e, id) {
+		if d.addressedLocked(e, id) && !d.settledLocked(id) {
 			d.addInboxLocked(id, e)
 		}
 	}

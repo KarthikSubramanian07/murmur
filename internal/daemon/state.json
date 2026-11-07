@@ -1,0 +1,21 @@
+{
+  "initialized": false,
+  "processed": null,
+  "inbox": {
+    "bbbbbb": [
+      {
+        "event": {
+          "v": 0,
+          "id": "m",
+          "type": "message",
+          "from": "other/xxxxxx",
+          "at": "2026-11-07T15:07:26.5861905-08:00",
+          "to": "*"
+        },
+        "arrived": "2026-11-07T15:07:26.5872873-08:00",
+        "noticed": false
+      }
+    ]
+  },
+  "lastSync": "0001-01-01T00:00:00Z"
+}

@@ -93,7 +93,7 @@ func (d *Daemon) touchHookLocked(req proto.Request) []*session {
 	sessions := d.hookSessionsLocked(req.ClaudeSession, req.ClientPID)
 	now := time.Now()
 	for _, s := range sessions {
-		s.lastActive = now
+		d.touchLocked(s, now)
 	}
 	return sessions
 }
