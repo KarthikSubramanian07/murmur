@@ -92,6 +92,8 @@ type Options struct {
 	// CheckIn, if set, runs in the background for as long as the daemon serves: the daily
 	// check-in that counts active users (internal/checkin). Tests leave it unset.
 	CheckIn func(context.Context)
+	// Update installs releases independently of check-ins, then requests a safe restart.
+	Update func(context.Context, func())
 }
 
 func (o *Options) defaults() {
@@ -153,6 +155,9 @@ func (o *Options) defaults() {
 		o.Log = log.New(os.Stderr, "", log.LstdFlags)
 	}
 }
+
+// ErrUpdated means a verified binary is installed and Run released the clone lock; the caller can restart it.
+var ErrUpdated = errors.New("daemon binary updated")
 
 // ErrRunning means another daemon already holds this clone's lock.
 var ErrRunning = errors.New("a daemon is already running for this clone")
@@ -262,6 +267,7 @@ type Daemon struct {
 	// pushing is the sessions a delivery goroutine is working for, and pushWarned those whose last
 	// delivery failed or that have no way to be delivered to, so that is logged once, not for every
 	// message (see deliver.go).
+	updating   bool // under mu: no new deliveries after the safe restart point
 	pushing    map[string]bool
 	pushWarned map[string]bool
 
@@ -563,6 +569,10 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.CheckIn != nil {
 		go opt.CheckIn(ctx)
 	}
+	if opt.Update != nil {
+		d.bg.Add(1)
+		go func() { defer d.bg.Done(); opt.Update(ctx, func() { d.restartWhenIdle(ctx) }) }()
+	}
 	select {
 	case <-ctx.Done():
 	case <-d.quit:
@@ -577,6 +587,12 @@ func Run(ctx context.Context, opt Options) error {
 		d.log.Printf("background work still running at exit")
 	}
 	d.goodbye()
+	d.mu.Lock()
+	updated := d.updating
+	d.mu.Unlock()
+	if updated {
+		return ErrUpdated
+	}
 	return nil
 }
 
@@ -895,4 +911,30 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// restartWhenIdle waits without cancelling delivery; the same mutex keeps pushLoop
+// from starting another delivery between the empty check and stopping the daemon.
+func (d *Daemon) restartWhenIdle(ctx context.Context) {
+	t := time.NewTicker(100 * time.Millisecond)
+	defer t.Stop()
+	for {
+		d.mu.Lock()
+		if ctx.Err() != nil {
+			d.mu.Unlock()
+			return
+		}
+		if len(d.pushing) == 0 {
+			d.updating = true
+			d.mu.Unlock()
+			d.stop()
+			return
+		}
+		d.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }

@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/mcpserver"
 	"github.com/a-Fig/murmur/internal/setup"
+	"github.com/a-Fig/murmur/internal/update"
 )
 
 var version = "0.1.0-dev"
@@ -139,11 +141,24 @@ func runDaemon(ctx context.Context, args []string) error {
 	if off, why := checkin.Off(ctx, os.Getenv, *gitDir); off {
 		logger.Printf("no daily check-in: %s", why)
 	}
+	exe, exeErr := os.Executable()
+	if exeErr == nil {
+		exe, exeErr = filepath.EvalSymlinks(exe)
+	}
 	err := daemon.Run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
+		Update: func(ctx context.Context, restart func()) {
+			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger}, restart)
+		},
 		CheckIn: func(ctx context.Context) {
 			checkin.Run(ctx, checkin.Options{Version: version, GitDir: *gitDir, Log: logger})
 		}})
+	if errors.Is(err, daemon.ErrUpdated) {
+		if exeErr != nil {
+			return exeErr
+		}
+		return client.StartDaemon(exe, *gitDir)
+	}
 	if errors.Is(err, daemon.ErrRunning) {
 		return nil // another client started one first; that one serves
 	}
@@ -158,7 +173,7 @@ func noteNewer(ctx context.Context, w io.Writer) {
 		return
 	}
 	if latest := checkin.Newer(gitDir, version); latest != "" {
-		fmt.Fprintf(w, "%s %s is out. To update, run the install again:\n  %s\n", brand.Product, latest, installLine())
+		fmt.Fprintf(w, "%s %s is out. Murmur updates automatically while its daemon runs, unless disabled.\nTo update by hand, run the install again:\n  %s\n", brand.Product, latest, installLine())
 	}
 }
 

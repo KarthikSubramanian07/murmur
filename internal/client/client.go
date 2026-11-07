@@ -203,7 +203,15 @@ func (c *Client) start() error {
 	if err != nil {
 		return err
 	}
-	dir := StateDir(c.GitDir)
+	// A running MCP server can outlive an update. Start the installed path rather
+	// than the renamed Windows backup (or Linux's deleted executable name).
+	exe = installedExecutable(exe)
+	return StartDaemon(exe, c.GitDir)
+}
+
+// StartDaemon starts the installed executable after a self-update has released the clone lock.
+func StartDaemon(exe, gitDir string) error {
+	dir := StateDir(gitDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -218,11 +226,11 @@ func (c *Client) start() error {
 	defer logf.Close()
 	// Run in the clone's top directory, where git resolves a relative remote URL from. The
 	// daemon still never uses it as a working tree: every command it runs gets --git-dir.
-	cwd := c.GitDir
+	cwd := gitDir
 	if filepath.Base(cwd) == ".git" {
 		cwd = filepath.Dir(cwd)
 	}
-	p, err := proc.StartDetached(exe, []string{"daemon", "--git-dir", c.GitDir}, cwd, logf)
+	p, err := proc.StartDetached(exe, []string{"daemon", "--git-dir", gitDir}, cwd, logf)
 	if err != nil {
 		return err
 	}
@@ -388,4 +396,13 @@ func writeLine(conn net.Conn, v any) error {
 	}
 	_, err = conn.Write(append(b, '\n'))
 	return err
+}
+
+func installedExecutable(exe string) string {
+	exe = strings.TrimSuffix(exe, " (deleted)")
+	base := filepath.Base(exe)
+	if i := strings.LastIndex(base, ".old-.mur-update-"); i >= 0 {
+		exe = filepath.Join(filepath.Dir(exe), base[:i])
+	}
+	return exe
 }

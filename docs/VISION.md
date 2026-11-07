@@ -47,8 +47,8 @@ don't want it. This is not part of scope." Daemons still running V1 keep writing
 ### Git is the transport, GitHub the hub
 
 Every teammate already has credentials and push access to the repo, so the repo carries the
-messages. No server, no accounts, no extra auth: whoever can push is in. (One thing does leave the
-repo: a daily check-in that counts active users; see Counting active users.)
+messages. No server, no accounts, no extra auth: whoever can push is in. (Outside the repo it checks GitHub for updates and sends a daily check-in that counts active
+users; see Updating and Counting active users.)
 
 - Each device appends events to **its own ref**, `refs/murmur/mesh/<deviceId>`: one empty commit per
   event, the payload in the commit message (a readable subject, a JSON body). One writer per ref
@@ -173,7 +173,7 @@ Sessions reach the daemon over loopback TCP, on a random port written with a ran
 T3 thread to wake for 10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
 next sync rather than when it goes stale.
 
-An upgrade replaces the binary and not the daemon already started from it, which would go on
+A manual upgrade replaces the binary and not the daemon already started from it, which would go on
 answering ping and refuse whatever came after the version it was built from (the route request
 and delivering a turn, #57, were the first). So the daemon reports a protocol number
 (`proto.Protocol`, 1 as of 2026-10-30; a daemon from before the number reports none, read as 0) in
@@ -885,6 +885,42 @@ A body past the limit is cut, as in `inbox`.
     teammates and don't predict a reply, and other devices' messages for sessions elsewhere.
   - A failed poll keeps the back-off above, from whatever the rate was.
   - All four numbers are options, so a test can shrink them.
+
+### Updating
+
+Murmur updates itself by default (#192, Tyler, 2026-11-07), so fixes reach an installed daemon
+without a person reinstalling it. `internal/update` checks GitHub's `a-Fig/murmur` releases/latest
+at daemon startup and hourly, independently of the daily usage check-in. No check-in IDs or repo
+information go in these GET requests. Network failures are quiet and wait for the next hour.
+A development build (`-dev`) never updates itself. Versions before this updater need one manual
+install to acquire it.
+
+The daemon downloads the `mur-<os>-<arch>[.exe]` asset and that release's `SHA256SUMS`, verifies
+SHA-256, and stages a closed, synced executable beside the running binary's resolved symlink
+target. Unix renames it atomically over the old file. Windows renames the running exe to a unique
+backup, installs the staged file, and restores the backup if installation fails. Backups still
+held by processes are cleaned on a later daemon start. A lock beside the executable serializes
+clones sharing an install; a daemon whose executable has already been replaced restarts onto it.
+An unwritable install (for example, a package manager's) is logged once and left alone until
+restart. Successful updates log the old and new versions in the daemon log.
+
+After installation, the daemon waits until no message delivery is in flight, blocks new deliveries,
+and shuts down normally, saving state and releasing the clone lock. It then starts the installed
+binary with the same detached process helper clients use. Sessions reconnect through the existing
+grace and inbox restoration. Running MCP servers keep their loaded binary until their sessions
+restart; if they need to launch a daemon they use the installed path. The protocol number above
+still handles incompatible clients and daemons; release versions do not become a second protocol.
+
+`git config --global murmur.update false` opts out; a repo's own git config overrides the global
+value. `MURMUR_NO_UPDATE=1` opts out for a daemon started with that environment. The config is read
+on each check. `DO_NOT_TRACK`, `MURMUR_NO_USAGE` and `murmur.usage false` affect only usage check-ins.
+Agents explain updates and this separate opt-out before joining (`docs/agents/join.md`). A binary
+shared across clones is shared across their update settings too: to prevent every clone from
+updating it, use the global setting without local overrides.
+
+The checksum catches corruption or a download inconsistent with the release. It does not prove
+who published it or protect against a compromised GitHub account or release with a replaced
+checksum file. Release signing is separate work (#193).
 
 ### Counting active users
 
