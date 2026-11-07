@@ -875,6 +875,17 @@ A body past the limit is cut, as in `inbox`.
   someone types in the thread, it is back with the next read. T3 settles many threads by itself,
   often the moment a turn ends (their `settledAt` is the run's end; 671 of 854 threads on the
   laptop were settled, 2026-11-07), so this takes most finished T3 threads off the mesh.
+- **Delegates go through their parent** (Tyler, 2026-11-07, #188). A thread another thread
+  started, a T3 `delegate_task` child or a provider's subagent thread, has its own MCP server and
+  registered as a session of its own, with a name and an inbox (reproduced 2026-11-07). T3 marks
+  such a thread with `lineage.parentThreadId` (and `relationshipToParent: "subagent"`; 624 such
+  threads on the laptop that day, none a user started), so the same read that finds a settled
+  thread finds it, and it is off the mesh the same way: out of presence, listed in `offline`,
+  messages to it dropped and refused, the refusal naming the parent's session on its own device.
+  It can't `send` or set a status; the refusal tells it to ask the thread that started it. Its
+  commits are credited to the session of its parent thread, if that is on the mesh here. It may
+  have taken a name in the seconds before its thread was read; nobody sees the name. A Claude Code
+  subagent inside one session never registered (see Crediting commits, Subagents).
 - **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
   decision, 2026-10-29). A message to a busy thread is queued as its next turn, not injected into
   the one running, and the AGENTS.md wording asks for coordination, not chatting; beyond that

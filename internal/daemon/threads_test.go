@@ -116,3 +116,32 @@ func TestSettledThreadIsOfflineAndRefusesMessages(t *testing.T) {
 	}
 	eventually(t, "delivery once unsettled", func() bool { return len(calls()) == 1 })
 }
+
+// A delegate is off the mesh (#188): another device stops listing it once its thread is read, a
+// message to it is refused with its parent named, and its own sends are refused.
+func TestDelegateIsReachedThroughItsParent(t *testing.T) {
+	remote := newRemote(t)
+	exe, _ := useFakeT3(t)
+	threads := &fakeThreads{st: map[string]t3db.State{"thread-boss": {LastRun: time.Now()}}}
+	a, b := newDevice(t, remote), newT3Device(t, remote, threads)
+	alice, _ := a.session("aaaaaa", "")
+	boss, _ := b.sessionRoute("bbbbbb", "claude-boss", proto.Route{T3CLI: exe, T3Thread: "thread-boss"})
+	helper, _ := b.sessionRoute("cccccc", "claude-helper", proto.Route{T3CLI: exe, T3Thread: "thread-helper"})
+	bossName, helperName := b.named(boss), b.named(helper)
+	eventually(t, "presence", func() bool { return a.seesSession(boss) && b.seesSession(alice) })
+
+	threads.set("thread-helper", t3db.State{Parent: "thread-boss", LastRun: time.Now()})
+	eventually(t, "the delegate to leave a's who", func() bool { return a.seesSession(boss) && !a.seesSession(helper) })
+	if resp := a.trySend("aaaaaa", helperName, "for the helper"); resp.OK || !strings.Contains(resp.Error, "delegate") {
+		t.Errorf("a send to the delegate from another device: ok %v, error %q", resp.OK, resp.Error)
+	}
+	if resp := b.trySend("bbbbbb", helperName, "local"); resp.OK || !strings.Contains(resp.Error, "Message "+bossName+" instead") {
+		t.Errorf("a send to the delegate on its device: ok %v, error %q", resp.OK, resp.Error)
+	}
+	if resp := b.trySend("cccccc", alice, "from the helper"); resp.OK || !strings.Contains(resp.Error, bossName) {
+		t.Errorf("the delegate's own send: ok %v, error %q", resp.OK, resp.Error)
+	}
+	if resp := b.trySend("bbbbbb", alice, "from the boss"); !resp.OK {
+		t.Errorf("the parent's send: %q", resp.Error)
+	}
+}

@@ -108,8 +108,11 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 			det.Name = d.st.SessionNames[sess]
 			det.StoppedAt = d.st.Stopped[sess]
 		}
-		if d.settledLocked(sess) {
-			det.Settled, det.Reachable = true, false
+		if d.offMeshLocked(sess) {
+			det.Offline, det.Reachable = true, false
+			if parent, child := d.parentOfLocked(sess); child {
+				det.DelegateOf = d.parentNameLocked(parent)
+			}
 		}
 		recs := d.st.Commits[sess]
 		det.CommitCount = len(recs)
@@ -127,7 +130,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 			det.Committed, det.LastActive = s.Committed, peerActive(p, s)
 			det.Running, det.Reachable = true, !det.Stale
 		}
-		det.Settled = d.offlineLocked(dev, sess)
+		det.Offline = d.offlineLocked(dev, sess)
 	}
 	if det.Name == "" {
 		det.Name = byAddr[addr]

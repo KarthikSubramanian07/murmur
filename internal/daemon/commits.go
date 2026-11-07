@@ -297,9 +297,9 @@ func (d *Daemon) snapshotFailed(what string, err error) {
 // one that ended first can be judged last. It says whether any session's list of branches changed,
 // which presence then shows. Caller holds mu.
 func (d *Daemon) creditLocked(sessions []*session, commits []attrib.Commit, at time.Time) (branchesChanged bool) {
-	for _, s := range sessions {
-		before := d.committedLocked(s.id)
-		recs := d.st.Commits[s.id]
+	for _, id := range d.creditedLocked(sessions) {
+		before := d.committedLocked(id)
+		recs := d.st.Commits[id]
 		for _, c := range commits {
 			if !slices.ContainsFunc(recs, func(r commitRec) bool { return r.SHA == c.SHA }) {
 				i := len(recs)
@@ -312,12 +312,29 @@ func (d *Daemon) creditLocked(sessions []*session, commits []attrib.Commit, at t
 		if len(recs) > maxCommits {
 			recs = slices.Clone(recs[len(recs)-maxCommits:])
 		}
-		d.st.Commits[s.id] = recs
-		if !slices.Equal(before, d.committedLocked(s.id)) {
+		d.st.Commits[id] = recs
+		if !slices.Equal(before, d.committedLocked(id)) {
 			branchesChanged = true
 		}
 	}
 	return branchesChanged
+}
+
+// creditedLocked is who the commits of sessions go to, each once: the session itself, or, for a
+// delegate (#188), the session of the thread that started it, if that thread is on the mesh here;
+// a delegate whose parent isn't keeps its own, which nobody sees. Caller holds mu.
+func (d *Daemon) creditedLocked(sessions []*session) []string {
+	var ids []string
+	for _, s := range sessions {
+		id := s.id
+		if parent, child := d.parentOfLocked(s.id); child && parent != "" {
+			id = parent
+		}
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // committedLocked lists the branches session id has committed to, most recent commit first, at

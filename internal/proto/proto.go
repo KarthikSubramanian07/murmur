@@ -225,9 +225,12 @@ type SessionDetail struct {
 	DeviceSeen time.Time `json:"deviceSeen,omitzero"`
 	LastActive time.Time `json:"lastActive,omitzero"`
 	StoppedAt  time.Time `json:"stoppedAt,omitzero"` // a session of this device that has stopped
-	// Settled says the session's T3 thread is settled, archived or deleted (#189): it is offline,
-	// and a message to it is refused.
-	Settled bool `json:"settled,omitempty"`
+	// Offline says the session is off the mesh, and a message to it is refused: its T3 thread is
+	// settled, archived or deleted (#189), or another thread started it (#188). DelegateOf, for a
+	// session of this device that another thread started, names the session to message instead,
+	// or says that thread isn't on the mesh here.
+	Offline    bool   `json:"offline,omitempty"`
+	DelegateOf string `json:"delegateOf,omitempty"`
 
 	// Local says the session is on the daemon's own device, which is what gives it the rest.
 	Local         bool         `json:"local,omitempty"`

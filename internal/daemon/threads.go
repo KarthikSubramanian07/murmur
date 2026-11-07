@@ -3,9 +3,11 @@ package daemon
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"slices"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/web"
@@ -20,6 +22,11 @@ import (
 //     presence, so `who` and the page no longer show it, a message for it is dropped, and `send`
 //     refuses one, here and, through presence's Offline list, on other devices. A thread unsettled
 //     again (someone typed in it) is back with the next read.
+//   - delegates (#188): a thread another thread started (a T3 delegate_task child, a provider's
+//     subagent thread) is off the mesh in the same ways, and goes through its parent (Tyler,
+//     2026-11-07): it can't send or set a status, and what it commits is credited to the session
+//     of its parent thread here, if there is one. A session that wants it messages the parent. It
+//     may have taken a name before its thread was read; nobody sees the name.
 //
 // The database is read every TitleEvery, outside every lock, one query per thread, for the threads
 // of the sessions here and of those stopped whose route is kept. What was last read stands while a
@@ -99,8 +106,17 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 				d.log.Printf("the T3 thread of session %s is no longer settled; it is online again", who[k])
 			}
 		}
+		if (old.Parent != "") != (st.Parent != "") {
+			settled = true
+			if st.Parent != "" {
+				d.log.Printf("session %s is in a thread another thread started, so it is off the mesh", who[k])
+			}
+		}
 		d.threads[k] = st
 		delete(d.threadWarned, k)
+		if st.Parent != "" && old.Parent == "" {
+			d.dropChildInboxesLocked(k)
+		}
 	}
 	for k, err := range failed {
 		if !d.threadWarned[k] {
@@ -112,8 +128,9 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 		if _, ok := routes[k]; !ok {
 			delete(d.threads, k)
 			delete(d.threadWarned, k)
-			changed = changed || st.Settled
-			settled = settled || st.Settled
+			off := st.Settled || st.Parent != ""
+			changed = changed || off
+			settled = settled || off
 		}
 	}
 	d.mu.Unlock()
@@ -136,45 +153,130 @@ func (d *Daemon) threadStateLocked(id string) (t3db.State, bool) {
 	return st, ok
 }
 
-// settledLocked says session id is in a T3 thread that is settled, archived or deleted: it is
-// offline, and takes no messages. Caller holds mu.
-func (d *Daemon) settledLocked(id string) bool {
+// offMeshLocked says session id is in a T3 thread that is settled, archived or deleted, or that
+// another thread started: it is offline, and takes no messages. Caller holds mu.
+func (d *Daemon) offMeshLocked(id string) bool {
 	st, ok := d.threadStateLocked(id)
-	return ok && st.Settled
+	return ok && (st.Settled || st.Parent != "")
 }
 
-// offlineLocked says the session at dev/sess is offline because its T3 thread is settled: one here
-// by T3's database, one on another device by that device's presence. Caller holds mu.
+// parentOfLocked says session id is in a thread another thread started, and which session here is
+// in that thread: "" if none is, as when the parent isn't on the mesh here. Caller holds mu.
+func (d *Daemon) parentOfLocked(id string) (parent string, child bool) {
+	st, ok := d.threadStateLocked(id)
+	if !ok || st.Parent == "" {
+		return "", false
+	}
+	home := d.routeOfLocked(id).T3Home
+	var dropped string
+	for _, s := range d.sortedSessionsLocked() {
+		if s.route.T3Thread == st.Parent && s.route.T3Home == home {
+			if s.dropped.IsZero() {
+				return s.id, true
+			}
+			dropped = s.id
+		}
+	}
+	if dropped != "" {
+		return dropped, true
+	}
+	for _, sid := range sortedKeys(d.st.T3Routes) {
+		r := d.st.T3Routes[sid]
+		if r.Thread == st.Parent && r.Home == home && d.sessions[sid] == nil && d.receivesLocked(sid) {
+			return sid, true
+		}
+	}
+	return "", true
+}
+
+// parentNameLocked is how a child session's parent is named to an agent: its name, else its
+// address, else as the thread that started it. Caller holds mu.
+func (d *Daemon) parentNameLocked(parent string) string {
+	if parent == "" {
+		return "the thread that started it"
+	}
+	return nameOr(d.sessionNameLocked(parent), bus.Addr(d.device, parent))
+}
+
+// dropChildInboxesLocked empties the inboxes of the sessions in thread k, found to be a child: what
+// reached them before the thread was read (a message for everyone, in the first seconds) is not
+// theirs. An inbox with a message on its way in is left; finishPush takes that message out.
+// Caller holds mu.
+func (d *Daemon) dropChildInboxesLocked(k threadKey) {
+	for _, id := range sortedKeys(d.st.Inbox) {
+		r := d.routeOfLocked(id)
+		if r.T3Thread != k.thread || r.T3Home != k.home {
+			continue
+		}
+		if slices.ContainsFunc(d.st.Inbox[id], func(m *inMsg) bool { return m.Pushing }) {
+			continue
+		}
+		delete(d.st.Inbox, id)
+		d.saveLocked()
+	}
+}
+
+// offlineWhyLocked says why the session at dev/sess, called shown, takes no messages, for a sender
+// whose message is refused. Caller holds mu.
+func (d *Daemon) offlineWhyLocked(dev, sess, shown string) string {
+	if dev == d.device {
+		if parent, child := d.parentOfLocked(sess); child {
+			return fmt.Sprintf("%s is a delegate that another thread started, and a delegate is reached through the "+
+				"thread that started it. Message %s instead.", shown, d.parentNameLocked(parent))
+		}
+		return fmt.Sprintf("%s is a T3 thread that is settled, so it is offline and takes no messages. "+
+			"It is back once someone opens the thread again.", shown)
+	}
+	return fmt.Sprintf("%s is offline and takes no messages: its T3 thread is settled, or it is a delegate "+
+		"another thread started, which is reached through that thread.", shown)
+}
+
+// childRefusal is why session id may not send or set a status, "" if it may: a delegate goes
+// through the thread that started it (#188).
+func (d *Daemon) childRefusal(id string) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	parent, child := d.parentOfLocked(id)
+	if !child {
+		return ""
+	}
+	return fmt.Sprintf("you are a delegate that another thread started, and only that thread is on %s: "+
+		"tell it what you would send or what you are doing, and it decides what goes out. It is %s.",
+		brand.Product, d.parentNameLocked(parent))
+}
+
+// offlineLocked says the session at dev/sess is off the mesh: here by T3's database (settled, or a
+// child), on another device by that device's presence. Caller holds mu.
 func (d *Daemon) offlineLocked(dev, sess string) bool {
 	if sess == "" {
 		return false
 	}
 	if dev == d.device {
-		return d.settledLocked(sess)
+		return d.offMeshLocked(sess)
 	}
 	p := d.peers[dev]
 	return p != nil && !d.staleLocked(p) && slices.Contains(p.pres.Offline, sess)
 }
 
-// offlineIDsLocked lists, for presence, the sessions here whose T3 thread is settled: running, or
+// offlineIDsLocked lists, for presence, the sessions here that are off the mesh: running, or
 // stopped with their inbox kept, and the earlier IDs of their names that a message is forwarded
 // from (see forwardLocked). Another device may still know a name by such an ID: one a thread had
 // before its MCP server restarted under a new one. Caller holds mu.
 func (d *Daemon) offlineIDsLocked() []string {
 	set := map[string]bool{}
 	for id := range d.sessions {
-		if d.settledLocked(id) {
+		if d.offMeshLocked(id) {
 			set[id] = true
 		}
 	}
 	for id := range d.st.T3Routes {
-		if d.sessions[id] == nil && d.receivesLocked(id) && d.settledLocked(id) {
+		if d.sessions[id] == nil && d.receivesLocked(id) && d.offMeshLocked(id) {
 			set[id] = true
 		}
 	}
 	for id := range d.st.SessionNames {
 		if f := d.forwardLocked(bus.Addr(d.device, id)); f != "" {
-			if _, holder := bus.SplitAddr(f); d.settledLocked(holder) {
+			if _, holder := bus.SplitAddr(f); d.offMeshLocked(holder) {
 				set[id] = true
 			}
 		}
@@ -234,13 +336,13 @@ func (p pageSettings) choice(name string) web.Wake {
 	return p.Wake
 }
 
-// wakesLocked says whether a message may go into session id as a turn now. Not if its T3 thread is
-// settled, nor if the page says never. Always: yes. Within N minutes (the default, and what an
+// wakesLocked says whether a message may go into session id as a turn now. Not if it is off the
+// mesh, nor if the page says never. Always: yes. Within N minutes (the default, and what an
 // unset choice means): if the session is busy, which needs no waking, or was last at work no
 // more than N minutes ago, 0 standing for defaultWakeMinutes. A session nothing is known of yet
 // waits; the read of its thread lets the deliveries look again. Caller holds mu.
 func (d *Daemon) wakesLocked(id string, wake pageSettings) bool {
-	if d.settledLocked(id) {
+	if d.offMeshLocked(id) {
 		return false
 	}
 	w := wake.choice(d.sessionNameLocked(id))

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,8 +161,8 @@ func TestSettledThreadsGoOffline(t *testing.T) {
 		t.Helper()
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		if !d.settledLocked("aaaaaa") || d.settledLocked("bbbbbb") || d.settledLocked("cccccc") {
-			t.Errorf("%s: settled a, b, c = %v %v %v", when, d.settledLocked("aaaaaa"), d.settledLocked("bbbbbb"), d.settledLocked("cccccc"))
+		if !d.offMeshLocked("aaaaaa") || d.offMeshLocked("bbbbbb") || d.offMeshLocked("cccccc") {
+			t.Errorf("%s: settled a, b, c = %v %v %v", when, d.offMeshLocked("aaaaaa"), d.offMeshLocked("bbbbbb"), d.offMeshLocked("cccccc"))
 		}
 		if got := d.offlineIDsLocked(); len(got) != 1 || got[0] != "aaaaaa" {
 			t.Errorf("%s: offline %q", when, got)
@@ -196,7 +197,7 @@ func TestSettledThreadsGoOffline(t *testing.T) {
 	}
 	d.refreshThreads(context.Background())
 	d.mu.Lock()
-	if d.settledLocked("aaaaaa") || len(d.offlineIDsLocked()) != 0 {
+	if d.offMeshLocked("aaaaaa") || len(d.offlineIDsLocked()) != 0 {
 		t.Errorf("unsettled, still offline")
 	}
 	d.mu.Unlock()
@@ -320,7 +321,66 @@ func TestLookupKnowsAnOfflinePeerSession(t *testing.T) {
 	if !d.sessionKnownLocked("peer", "zzzzzz") {
 		t.Errorf("an offline session on a peer is unknown")
 	}
-	if !d.detailLocked("peer/zzzzzz", "", 0).Settled {
+	if !d.detailLocked("peer/zzzzzz", "", 0).Offline {
 		t.Errorf("lookup doesn't say it is settled")
+	}
+}
+
+// A delegate (#188) is off the mesh, goes through its parent, and its commits are credited there.
+func TestDelegateGoesThroughItsParent(t *testing.T) {
+	d := threadsDaemon(t)
+	inT3(d, "parent", 0)
+	inT3(d, "child1", 0)
+	inT3(d, "child2", 0)
+	d.st.Inbox = map[string][]*inMsg{
+		"child1": {{Event: bus.Event{ID: "early", To: "*"}, Arrived: time.Now()}},
+		"parent": {{Event: bus.Event{ID: "early", To: "*"}, Arrived: time.Now()}},
+	}
+	d.st.Commits = map[string][]commitRec{}
+	d.opt.ThreadState = func(_ context.Context, _, _, thread string) (t3db.State, error) {
+		switch thread {
+		case "thread-child1":
+			return t3db.State{Parent: "thread-parent"}, nil
+		case "thread-child2":
+			return t3db.State{Parent: "thread-not-here"}, nil
+		}
+		return t3db.State{}, nil
+	}
+	d.refreshThreads(context.Background())
+
+	if why := d.childRefusal("child1"); !strings.Contains(why, "name-parent") {
+		t.Errorf("the delegate's own send: %q", why)
+	}
+	if why := d.childRefusal("child2"); !strings.Contains(why, "the thread that started it") {
+		t.Errorf("a delegate whose parent isn't here: %q", why)
+	}
+	if why := d.childRefusal("parent"); why != "" {
+		t.Errorf("the parent may not send: %q", why)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.offMeshLocked("child1") || d.offMeshLocked("parent") {
+		t.Errorf("off the mesh: child %v, parent %v", d.offMeshLocked("child1"), d.offMeshLocked("parent"))
+	}
+	if got := d.offlineIDsLocked(); len(got) != 2 || got[0] != "child1" || got[1] != "child2" {
+		t.Errorf("offline: %q", got)
+	}
+	if why := d.offlineWhyLocked("dev", "child1", "name-child1"); !strings.Contains(why, "Message name-parent instead") {
+		t.Errorf("a send to the delegate: %q", why)
+	}
+	if len(d.st.Inbox["child1"]) != 0 || len(d.st.Inbox["parent"]) != 1 {
+		t.Errorf("inboxes once the delegate was found: %v", d.st.Inbox)
+	}
+	for _, s := range d.whoLocked("parent")[0].Sessions {
+		if strings.HasPrefix(s.Name, "name-child") {
+			t.Errorf("who lists %s", s.Name)
+		}
+	}
+	got := d.creditedLocked([]*session{d.sessions["child1"], d.sessions["parent"], d.sessions["child2"]})
+	if len(got) != 2 || got[0] != "parent" || got[1] != "child2" {
+		t.Errorf("credited: %q", got)
+	}
+	if det := d.detailLocked("dev/child1", "", 0); !det.Offline || det.DelegateOf != "name-parent" {
+		t.Errorf("lookup: offline %v, delegate of %q", det.Offline, det.DelegateOf)
 	}
 }

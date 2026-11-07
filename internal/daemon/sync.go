@@ -521,7 +521,7 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) (delivered bool) {
 		if !d.addressedLocked(e, id) {
 			continue
 		}
-		if d.settledLocked(id) {
+		if d.offMeshLocked(id) {
 			// Offline (#189): nothing is kept for it, and it is told nothing.
 			if mode == modeNormal && !held && e.To == bus.Addr(d.device, id) {
 				d.log.Printf("message %s is for %s, whose T3 thread is settled; dropped", e.ID, e.To)
@@ -647,7 +647,7 @@ func (d *Daemon) catchUpLocked(id string) {
 	}
 	d.caughtUp[id] = true
 	for _, e := range d.pending {
-		if d.addressedLocked(e, id) && !d.settledLocked(id) {
+		if d.addressedLocked(e, id) && !d.offMeshLocked(id) {
 			d.addInboxLocked(id, e)
 		}
 	}
@@ -944,7 +944,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	live := d.liveNamesLocked()
 	pres.Offline = d.offlineIDsLocked()
 	for _, s := range d.sortedSessionsLocked() {
-		if d.settledLocked(s.id) {
+		if d.offMeshLocked(s.id) {
 			continue // offline: listed in Offline instead
 		}
 		name := s.name

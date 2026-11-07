@@ -406,7 +406,8 @@ func TestStateOfReadsSettledAndTheLatestRun(t *testing.T) {
 			('archived', 't', '2026-11-07T20:00:00.000Z', NULL, '{}'),
 			('deleted', 't', NULL, '2026-11-07T20:00:00.000Z', '{}'),
 			('busy', 't', NULL, NULL, '{}'),
-			('new', 't', NULL, NULL, 'not json')`,
+			('new', 't', NULL, NULL, 'not json'),
+			('child', 't', NULL, NULL, '{"lineage":{"parentThreadId":"idle","relationshipToParent":"subagent","rootThreadId":"idle"}}')`,
 		`INSERT INTO orchestration_v2_projection_runs VALUES
 			('r1', 'idle', 'completed', '2026-11-07T22:00:00.000Z', '2026-11-07T22:05:00.000Z'),
 			('r2', 'idle', 'interrupted', '2026-11-07T22:28:36.290Z', '2026-11-07T22:29:10.318Z'),
@@ -432,6 +433,7 @@ func TestStateOfReadsSettledAndTheLatestRun(t *testing.T) {
 		"deleted":  {Settled: true},
 		"busy":     {Busy: true, LastRun: at("2026-11-07T22:30:00.000Z")},
 		"new":      {},
+		"child":    {Parent: "idle"},
 	}
 	ctx := context.Background()
 	for thread, w := range want {
