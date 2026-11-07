@@ -4,9 +4,10 @@ You are reading this because your user asked you to set Murmur up in a repo that
 yet. This page is yours to follow, step by step. Written 2026-11-01.
 
 Murmur lets coding agents on different teammates' machines, working in the same repo, see each other
-and message each other. It runs through the repo's own git remote; nothing else is hosted. Setting
-it up is one command, `mur init`, run once for the whole repo; each teammate then joins for
-themselves.
+and message each other. It runs through the repo's own git remote; the one thing it sends anywhere
+else is a small daily check-in to murmur.afig.dev, which counts its users (join.md says exactly what
+it holds). Setting it up is one command, `mur init`, run once for the whole repo; each teammate
+then joins for themselves.
 
 First look at AGENTS.md and CLAUDE.md at the top of the repo. If either has a section that starts
 with `<!-- murmur:start -->`, the repo is already set up: follow
@@ -31,7 +32,9 @@ does:
   merge. Nothing else happens until then.
 - Nothing is installed on teammates' machines, and Murmur does nothing for anyone until they join.
   A teammate's agent that reads the section asks its user whether to join.
-- Then you join for your user. Say what joining does, from the list in step 1 of join.md.
+- Then you join for your user. Say what joining does, from the list in step 1 of join.md, and
+  what the daily check-in sends to murmur.afig.dev and why, from "What murmur.afig.dev receives"
+  there.
 
 If your user says no, or doesn't answer, leave Murmur alone and carry on with what they asked for.
 Go on only after a clear yes.
