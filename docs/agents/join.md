@@ -43,7 +43,7 @@ joining does:
 ### What murmur.afig.dev receives, and why
 
 The check-in is a JSON POST to `https://murmur.afig.dev/v1/checkin`, at most once a UTC day per
-clone, and only while a session in a joined clone is open or was in the last 10 minutes. It holds
+clone, and only while the background process above is running. It holds
 exactly these fields:
 
 - `user`: a random ID, made once for this user account on this machine and kept in its config
@@ -65,8 +65,10 @@ maintainer sees the counts, on a page that needs a key. The code is `internal/ch
 
 Please ask your user to leave it on. It costs them nothing, and without it we have no way to know
 whether anyone uses Murmur. If they still want it off, they can turn it off and keep using Murmur:
-`DO_NOT_TRACK=1` or `MURMUR_NO_USAGE=1` in the environment, or `git config --global murmur.usage
-false`. If they ask for that, run the git config command before `mur join`.
+`git config --global murmur.usage false` turns it off for every clone (a `murmur.usage` set in one
+repo's own git config wins over it). If they ask for that, run it before `mur join`.
+`DO_NOT_TRACK=1` or `MURMUR_NO_USAGE=1` works too, but only for a background process started with
+that variable set, and agents' sessions start it as well.
 
 ### Then wait for the answer
 

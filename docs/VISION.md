@@ -901,8 +901,9 @@ hasn't checked in this UTC day, it posts to `https://murmur.afig.dev/v1/checkin`
 - `version`, `os`, `arch`.
 
 The answer is the latest release, kept in the state dir's `checkin.json`; `mur version` says so on
-stderr when it is newer. A daemon runs only while a joined clone has a session open, or for 10
-minutes after, so a check-in means someone used Murmur that day. "Active" is a check-in in the last
+stderr when it is newer. A daemon runs only while a joined clone has a session or an open page,
+for 10 minutes after, or while a T3 thread it could wake is idle (up to a day), so a check-in
+means someone used Murmur that day or the day before. "Active" is a check-in in the last
 7 days. The site keeps one row per user, team and day in D1 (`site/migrations`), no IP addresses,
 and shows the counts on a page at `/stats` that only a key opens (`site/src/usage.js`): Tyler's, or one
 he gives an agent, which reads them as markdown at `/stats/report.md` or JSON at `/stats/data` (#150).

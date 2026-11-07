@@ -180,8 +180,9 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 
 	// Consent comes before the daemon: the daemon refuses to run in a clone that hasn't joined.
-	if news, err := p.RecordConsent(); err != nil {
-		problem("recording that you joined", err)
+	news, consentErr := p.RecordConsent()
+	if consentErr != nil {
+		problem("recording that you joined", consentErr)
 	} else if news {
 		r.Did = append(r.Did, "Recorded that you joined "+brand.Product+" in this clone ("+p.consentPath()+")")
 	}
@@ -204,8 +205,9 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 
 	r.Tell = e.advice(claudeFresh, codexFresh, len(r.Problems) > 0)
-	if len(r.Problems) == 0 {
-		// Before the last paragraph, which is about the page and leaving.
+	if consentErr == nil {
+		// Even when something else failed: with consent recorded, a daemon may check in. Before
+		// the last paragraph, which is about the page and leaving, or about the problems.
 		off, why := checkin.Off(ctx, e.getenv, p.GitDir)
 		last := len(r.Tell) - 1
 		r.Tell = append(r.Tell[:last], usageAdvice(off, why), r.Tell[last])
@@ -283,13 +285,19 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 // outside the repo (#148), which joining has just started. join.md asks the agent to describe it
 // before the user agrees; this says it again for anyone who ran join without reading join.md (#180).
 // The plea to leave it on is Tyler's (2026-11-07): it is the only way the project can count its users.
+// An environment variable is seen only by a daemon started with it, and a daemon is often started by
+// an agent's session rather than by join, so the git setting is the one offered (Sol's review, #181).
 func usageAdvice(off bool, why string) string {
-	what := "a random ID for this user, a one-way hash of this repo's address, " + brand.Command + "'s version and the OS, " +
+	what := "a random ID for this user, a one-way hash of this repo's address, " + brand.Command + "'s version, the OS and the processor type, " +
 		"and nothing else: no names, messages, branches or paths"
 	if off {
-		return "The daily check-in to murmur.afig.dev is off (" + why + "), so " + brand.Product + " sends nothing outside this repo. " +
-			"It would send " + what + ". It is the only way we can count " + brand.Product + "'s users, and we are trying to reach 100: " +
-			"if your user is willing, please ask them to turn it back on by undoing that."
+		s := "The daily check-in to murmur.afig.dev is off (" + why + "). "
+		if !strings.HasPrefix(why, "git config") {
+			s = "The daily check-in to murmur.afig.dev is off for this command (" + why + "), but a daemon started without that variable, " +
+				"as an agent's session may start one, still checks in; `git config --global " + brand.ConfigUsage + " false` turns it off for every daemon. "
+		}
+		return s + "It sends " + what + ". It is the only way we can count " + brand.Product + "'s users, and we are trying to reach 100: " +
+			"if your user is willing, please ask them to turn it back on."
 	}
 	return "Once a day, " + brand.Product + " checks in with murmur.afig.dev, sending " + what + ". " +
 		"We use it only to count " + brand.Product + "'s users: " + brand.Product + " is new, we are trying to reach 100, " +
