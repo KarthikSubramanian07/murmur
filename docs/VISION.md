@@ -853,9 +853,28 @@ A body past the limit is cut, as in `inbox`.
   than 15 minutes (T3 closed, the session away) is not sprung on the agent as a turn: it stays a
   notice. The 15 minutes count from when the daemon puts the message in the inbox, so one read
   after a long outage (2026-10-30, #30) is young and wakes its thread.
-  The page's wake setting (#22) set to "never", for the device or for one session, keeps
-  the notice too; otherwise delivery is at once. A daemon that starts looks at the messages its
-  inboxes kept, and delivers those that are still young enough.
+  The page's wake setting (#22, #25), for the device or for one session, decides the rest.
+  "Never" keeps the notice. "Always" delivers at once. "Within N minutes", the default with N = 3,
+  delivers only to a session that is busy or was last at work no more than N minutes ago; one idle
+  longer gets the notice, and the message goes in as a turn after all if the session is at work
+  again while it is still young enough. The reason for the limit: a session idle that briefly
+  still has its prompt cache, and a turn started after the cache has gone reads the whole
+  conversation again at full price. Until 2026-11-07 "within" delivered as "always" did, which
+  Tyler found out from the page; the minutes were saved and nothing read them. For a session in
+  T3, "at work" comes from T3's database: busy while a run of its thread is queued or running,
+  else idle since its latest run ended (`orchestration_v2_projection_runs`). Any other session, or
+  one whose thread hasn't been read yet, goes by its start, its last request or tool call, and,
+  stopped, when it stopped; a message just delivered as a turn counts too. The database is read
+  every 5 s, so a decision can be that old. A daemon that starts looks at the messages its
+  inboxes kept, and delivers those that are still young enough and may be.
+- **Settled T3 threads are offline** (Tyler, 2026-11-07, #189). A thread T3 shows as settled
+  (`settledOverride` in the thread's payload), archived or deleted leaves presence, so `who`,
+  `lookup` and the page show it gone; its device lists it in presence's `offline`, and a daemon
+  that reads that refuses a `send` to it, as its own device does. A message that reaches the
+  device anyway (from a daemon older than the field) is dropped. Unsettled, which T3 does when
+  someone types in the thread, it is back with the next read. T3 settles many threads by itself,
+  often the moment a turn ends (their `settledAt` is the run's end; 671 of 854 threads on the
+  laptop were settled, 2026-11-07), so this takes most finished T3 threads off the mesh.
 - **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
   decision, 2026-10-29). A message to a busy thread is queued as its next turn, not injected into
   the one running, and the AGENTS.md wording asks for coordination, not chatting; beyond that

@@ -1,0 +1,223 @@
+package daemon
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log"
+	"testing"
+	"time"
+
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3db"
+	"github.com/a-Fig/murmur/internal/web"
+)
+
+// The wake setting's "within N minutes" (#25) and settled T3 threads (#189), as the daemon decides
+// them from what T3's database said.
+
+func threadsDaemon() *Daemon {
+	d := idleDaemon(nil)
+	d.device = "dev"
+	d.log = log.New(io.Discard, "", 0)
+	d.pushedAt = map[string]time.Time{}
+	d.threads = map[threadKey]t3db.State{}
+	d.threadWarned = map[threadKey]bool{}
+	d.peers = map[string]*peer{}
+	d.kick, d.pushKick = make(chan struct{}, 1), make(chan struct{}, 1)
+	return d
+}
+
+// inT3 registers session id as running in T3 thread "thread-<id>", last at work ago.
+func inT3(d *Daemon, id string, ago time.Duration) {
+	at := time.Now().Add(-ago)
+	d.sessions[id] = &session{id: id, name: "name-" + id, started: at, lastActive: at,
+		route: proto.Route{T3CLI: "/t3", T3Thread: "thread-" + id}}
+}
+
+func wakeWithin(minutes int) pageSettings {
+	return pageSettings{Wake: web.Wake{When: web.WakeWithin, Minutes: minutes}}
+}
+
+func TestWithinGoesByT3sRunsWhereKnown(t *testing.T) {
+	ago := func(d time.Duration) time.Time { return time.Now().Add(-d) }
+	for _, tc := range []struct {
+		name  string
+		state *t3db.State // nil: nothing read yet
+		ran   time.Duration
+		wake  pageSettings
+		want  bool
+	}{
+		{"idle a minute, within the default 3", &t3db.State{LastRun: ago(time.Minute)}, 0, wakeWithin(0), true},
+		{"idle 5 minutes, past the default 3", &t3db.State{LastRun: ago(5 * time.Minute)}, 0, wakeWithin(0), false},
+		{"idle 5 minutes, within 10", &t3db.State{LastRun: ago(5 * time.Minute)}, 0, wakeWithin(10), true},
+		{"busy, however long since the last run", &t3db.State{Busy: true, LastRun: ago(time.Hour)}, 0, wakeWithin(0), true},
+		// The session's own times say nothing once T3 has spoken: its MCP server may have started
+		// lately for a thread long idle.
+		{"T3 says idle though the session started lately", &t3db.State{LastRun: ago(time.Hour)}, 0, wakeWithin(0), false},
+		{"not read yet: the session's own times", nil, time.Minute, wakeWithin(0), true},
+		{"not read yet, and the session long idle", nil, time.Hour, wakeWithin(0), false},
+		{"always, idle an hour", &t3db.State{LastRun: ago(time.Hour)}, 0, pageSettings{Wake: web.Wake{When: web.WakeAlways}}, true},
+		{"never, idle a minute", &t3db.State{LastRun: ago(time.Minute)}, 0, pageSettings{Wake: web.Wake{When: web.WakeNever}}, false},
+		{"an unset choice is within", &t3db.State{LastRun: ago(5 * time.Minute)}, 0, pageSettings{}, false},
+		{"settled, under always", &t3db.State{Settled: true, LastRun: ago(time.Second)}, 0, pageSettings{Wake: web.Wake{When: web.WakeAlways}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := threadsDaemon()
+			inT3(d, "aaaaaa", tc.ran)
+			if tc.state != nil {
+				d.threads[threadKey{"", "thread-aaaaaa"}] = *tc.state
+			}
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			if got := d.wakesLocked("aaaaaa", tc.wake); got != tc.want {
+				t.Errorf("wakesLocked = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A session's own setting overrides the device's, by name.
+func TestWithinTakesTheSessionsOwnSetting(t *testing.T) {
+	d := threadsDaemon()
+	inT3(d, "aaaaaa", 0)
+	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{LastRun: time.Now().Add(-20 * time.Minute)}
+	wake := wakeWithin(0)
+	wake.SessionWake = map[string]web.Wake{"name-aaaaaa": {When: web.WakeWithin, Minutes: 30}}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.wakesLocked("aaaaaa", wake) {
+		t.Errorf("idle 20 minutes, with its own 30: not woken")
+	}
+	wake.SessionWake = nil
+	if d.wakesLocked("aaaaaa", wake) {
+		t.Errorf("idle 20 minutes, with the device's 3: woken")
+	}
+}
+
+// A message just delivered as a turn counts as work: a second one right behind it goes in too,
+// before T3's database shows the run the first one started.
+func TestADeliveredTurnCountsAsWork(t *testing.T) {
+	d := threadsDaemon()
+	inT3(d, "aaaaaa", 0)
+	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{LastRun: time.Now().Add(-2*time.Minute - 59*time.Second)}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.pushedAt["aaaaaa"] = time.Now()
+	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{LastRun: time.Now().Add(-10 * time.Minute)}
+	if !d.wakesLocked("aaaaaa", wakeWithin(0)) {
+		t.Errorf("just delivered to: not woken")
+	}
+}
+
+// A stopped session in T3 whose thread hasn't been read goes by when it stopped.
+func TestWithinForAStoppedThreadNotReadYet(t *testing.T) {
+	d := idleDaemon(map[string]time.Duration{"aaaaaa": time.Minute, "bbbbbb": 10 * time.Minute})
+	d.pushedAt = map[string]time.Time{}
+	d.threads = map[threadKey]t3db.State{}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.wakesLocked("aaaaaa", wakeWithin(0)) {
+		t.Errorf("stopped a minute ago: not woken")
+	}
+	if d.wakesLocked("bbbbbb", wakeWithin(0)) {
+		t.Errorf("stopped 10 minutes ago: woken")
+	}
+	if !d.holdsRouteLocked(wakeWithin(0)) {
+		t.Errorf("a thread it can still wake doesn't keep the daemon up")
+	}
+	delete(d.st.Stopped, "aaaaaa")
+	if d.holdsRouteLocked(wakeWithin(0)) {
+		t.Errorf("a thread idle past the setting keeps the daemon up")
+	}
+}
+
+// refreshThreads reads each thread once, keeps what it read last while a read fails, and forgets
+// a thread no session is in any more. Settled sessions leave presence, are listed as offline, and
+// get nothing.
+func TestSettledThreadsGoOffline(t *testing.T) {
+	d := threadsDaemon()
+	inT3(d, "aaaaaa", 0)
+	inT3(d, "bbbbbb", 0)
+	d.sessions["cccccc"] = &session{id: "cccccc", name: "name-cccccc", started: time.Now()} // not in T3
+	d.st.Inbox = map[string][]*inMsg{}
+	reads := map[string]int{}
+	fail := false
+	d.opt.ThreadState = func(_ context.Context, cli, home, thread string) (t3db.State, error) {
+		reads[thread]++
+		if fail {
+			return t3db.State{}, errors.New("locked")
+		}
+		return t3db.State{Settled: thread == "thread-aaaaaa", LastRun: time.Now()}, nil
+	}
+	d.refreshThreads(context.Background())
+	if reads["thread-aaaaaa"] != 1 || reads["thread-bbbbbb"] != 1 || len(reads) != 2 {
+		t.Fatalf("reads: %v", reads)
+	}
+	check := func(when string) {
+		t.Helper()
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if !d.settledLocked("aaaaaa") || d.settledLocked("bbbbbb") || d.settledLocked("cccccc") {
+			t.Errorf("%s: settled a, b, c = %v %v %v", when, d.settledLocked("aaaaaa"), d.settledLocked("bbbbbb"), d.settledLocked("cccccc"))
+		}
+		if got := d.offlineIDsLocked(); len(got) != 1 || got[0] != "aaaaaa" {
+			t.Errorf("%s: offline %q", when, got)
+		}
+		if !d.offlineLocked("dev", "aaaaaa") || d.offlineLocked("dev", "bbbbbb") {
+			t.Errorf("%s: offlineLocked", when)
+		}
+		for _, s := range d.whoLocked("cccccc")[0].Sessions {
+			if s.Name == "name-aaaaaa" {
+				t.Errorf("%s: who lists the settled session", when)
+			}
+		}
+		if d.wakesLocked("aaaaaa", pageSettings{Wake: web.Wake{When: web.WakeAlways}}) {
+			t.Errorf("%s: a settled thread may be woken", when)
+		}
+		// A message for everyone reaches the others, not the settled one.
+		d.st.Inbox = map[string][]*inMsg{}
+		d.deliverLocked(bus.Event{ID: "m", Type: bus.Message, From: "other/xxxxxx", To: "*", At: time.Now()}, modeNormal)
+		if len(d.st.Inbox["aaaaaa"]) != 0 || len(d.st.Inbox["bbbbbb"]) != 1 {
+			t.Errorf("%s: inboxes after a broadcast: %v", when, d.st.Inbox)
+		}
+	}
+	check("after the read")
+	fail = true
+	d.refreshThreads(context.Background())
+	check("after a read that failed")
+
+	// Unsettled, it is back.
+	fail = false
+	d.opt.ThreadState = func(context.Context, string, string, string) (t3db.State, error) {
+		return t3db.State{LastRun: time.Now()}, nil
+	}
+	d.refreshThreads(context.Background())
+	d.mu.Lock()
+	if d.settledLocked("aaaaaa") || len(d.offlineIDsLocked()) != 0 {
+		t.Errorf("unsettled, still offline")
+	}
+	d.mu.Unlock()
+
+	// A thread no session is in any more is forgotten.
+	d.mu.Lock()
+	delete(d.sessions, "aaaaaa")
+	d.mu.Unlock()
+	d.refreshThreads(context.Background())
+	if _, ok := d.threads[threadKey{"", "thread-aaaaaa"}]; ok {
+		t.Errorf("the thread of a session gone is still held")
+	}
+}
+
+// Another device's presence says which of its sessions are offline; only while it is current.
+func TestOfflineOnAnotherDevice(t *testing.T) {
+	d := threadsDaemon()
+	d.opt.StaleAfter = time.Hour
+	d.peers["peer"] = &peer{pres: bus.Presence{Device: "peer", Offline: []string{"zzzzzz"}}, lastChange: time.Now()}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.offlineLocked("peer", "zzzzzz") || d.offlineLocked("peer", "yyyyyy") || d.offlineLocked("nobody", "zzzzzz") {
+		t.Errorf("offlineLocked on a peer")
+	}
+}

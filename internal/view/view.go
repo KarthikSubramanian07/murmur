@@ -353,6 +353,8 @@ func Lookup(r proto.Response) string {
 	}
 
 	switch {
+	case d.Settled:
+		b.WriteString("  OFFLINE: its T3 thread is settled, so it takes no messages until someone opens it again\n")
 	case !d.Running && !d.StoppedAt.IsZero():
 		fmt.Fprintf(&b, "  NOT RUNNING: it stopped %s; a message to it waits in its inbox until it returns\n", Ago(d.StoppedAt))
 	case !d.Running:

@@ -96,8 +96,65 @@ func TitleOf(ctx context.Context, cli, home, thread string) (string, error) {
 	return title.String, nil
 }
 
+// stateQuery reads what decides whether a message may go into a thread as a turn: T3's settled
+// mark (payload settledOverride, "settled" while the thread is settled and null once it isn't;
+// T3 0.1.x, 2026-11-07), whether it is archived or deleted, how many of its runs are queued or
+// running, and when its latest run finished, or was asked for if it hasn't.
+const stateQuery = `
+SELECT
+  COALESCE(CASE WHEN json_valid(t.payload_json) THEN json_extract(t.payload_json, '$.settledOverride') END, ''),
+  t.archived_at IS NOT NULL OR t.deleted_at IS NOT NULL,
+  (SELECT COUNT(*) FROM orchestration_v2_projection_runs r
+    WHERE r.thread_id = t.thread_id AND r.status IN ('queued', 'running')),
+  (SELECT MAX(COALESCE(r.completed_at, r.requested_at)) FROM orchestration_v2_projection_runs r
+    WHERE r.thread_id = t.thread_id)
+FROM orchestration_v2_projection_threads t
+WHERE t.thread_id = ?`
+
+// State is a T3 thread as its database shows it.
+type State struct {
+	// Settled says the thread is settled, archived or deleted: done with, as far as T3's user is
+	// concerned.
+	Settled bool
+	// Busy says a run of the thread is queued or running.
+	Busy bool
+	// LastRun is when the thread's latest run finished, or was asked for if it hasn't; zero if it
+	// has had none.
+	LastRun time.Time
+}
+
+// StateOf reads T3 thread's State, as ThreadOf reads its row: read-only, with a short wait on a
+// lock, any trouble an error. A time T3 wrote in a form that doesn't parse is an error too.
+func StateOf(ctx context.Context, cli, home, thread string) (State, error) {
+	if thread == "" {
+		return State{}, errors.New("no thread to look up")
+	}
+	var (
+		override  string
+		gone      bool
+		running   int
+		lastRunAt sql.NullString
+	)
+	err := queryOne(ctx, cli, home, stateQuery, thread, &override, &gone, &running, &lastRunAt)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return State{}, ErrNotFound
+	case err != nil:
+		return State{}, err
+	}
+	st := State{Settled: override == "settled" || gone, Busy: running > 0}
+	if lastRunAt.Valid && lastRunAt.String != "" {
+		at, err := time.Parse(time.RFC3339Nano, lastRunAt.String)
+		if err != nil {
+			return State{}, fmt.Errorf("reading T3's database: a run's time %q: %w", lastRunAt.String, err)
+		}
+		st.LastRun = at
+	}
+	return st, nil
+}
+
 // queryOne runs a query with one argument against T3's state database and scans its first row.
-func queryOne(ctx context.Context, cli, home, query, arg string, dest any) error {
+func queryOne(ctx context.Context, cli, home, query, arg string, dest ...any) error {
 	var path string
 	for _, h := range t3.Homes(cli, home) {
 		p := t3.StateDB(h)
@@ -116,7 +173,7 @@ func queryOne(ctx context.Context, cli, home, query, arg string, dest any) error
 		return err
 	}
 	defer db.Close()
-	err = db.QueryRowContext(ctx, query, arg).Scan(dest)
+	err = db.QueryRowContext(ctx, query, arg).Scan(dest...)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("reading T3's database: %w", err)
 	}

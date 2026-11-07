@@ -99,6 +99,9 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 		if !ss.dropped.IsZero() && live[ss.name] {
 			continue // its name went to the session that took over, which stands for the conversation
 		}
+		if d.settledLocked(ss.id) {
+			continue // offline: its T3 thread is settled (#189)
+		}
 		addr := bus.Addr(d.device, ss.id)
 		self.Sessions = append(self.Sessions, web.Session{
 			Name: nameOr(ss.name, addr), Addr: addr, Agent: ss.agent, Branch: ss.branch,
