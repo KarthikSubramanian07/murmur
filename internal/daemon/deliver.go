@@ -40,6 +40,10 @@ const (
 	pushMaxAge = 15 * time.Minute
 )
 
+// errNotNow is what a delivery ends with when, by the time of the handoff, the session may no
+// longer be woken (see wakesLocked).
+var errNotNow = errors.New("the session may not be woken now")
+
 // How a message goes into a session.
 const (
 	viaT3     = "T3"
@@ -291,6 +295,15 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 	if !d.consented() {
 		return ErrNoConsent
 	}
+	// A job can wait for a slot (pushSem) or for its retry, and in that time the thread can be
+	// settled, or its session idle past its wake setting: asked again before each handoff.
+	wake := d.wakeSnapshot()
+	d.mu.Lock()
+	ok := d.wakesLocked(j.id, wake)
+	d.mu.Unlock()
+	if !ok {
+		return errNotNow
+	}
 	switch j.via {
 	case viaT3:
 		return d.attempt(j.msg, func() error {
@@ -347,8 +360,10 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	j.msg.Pushing = false
-	if errors.Is(err, ErrNoConsent) {
-		return // the user left on its way: it waits in the inbox, undelivered and not a failure
+	if errors.Is(err, ErrNoConsent) || errors.Is(err, errNotNow) {
+		// The user left, or the session may no longer be woken, on its way: it waits in the inbox,
+		// undelivered and not a failure.
+		return
 	}
 	d.kickPush() // what waited behind this message, in an inbox that took it over, may go now
 	if err != nil {

@@ -3,6 +3,7 @@ package daemon
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/bus"
@@ -78,6 +79,9 @@ func (d *Daemon) sessionKnownLocked(dev, sess string) bool {
 			if s.ID == sess {
 				return true
 			}
+		}
+		if slices.Contains(p.pres.Offline, sess) {
+			return true // a settled T3 thread's (#189)
 		}
 	}
 	for _, a := range d.st.Used {

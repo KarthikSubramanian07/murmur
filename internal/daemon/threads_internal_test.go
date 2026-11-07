@@ -17,8 +17,9 @@ import (
 // The wake setting's "within N minutes" (#25) and settled T3 threads (#189), as the daemon decides
 // them from what T3's database said.
 
-func threadsDaemon() *Daemon {
+func threadsDaemon(t *testing.T) *Daemon {
 	d := idleDaemon(nil)
+	d.dir = t.TempDir() // state.json, where a test saves
 	d.device = "dev"
 	d.log = log.New(io.Discard, "", 0)
 	d.pushedAt = map[string]time.Time{}
@@ -64,7 +65,7 @@ func TestWithinGoesByT3sRunsWhereKnown(t *testing.T) {
 		{"settled, under always", &t3db.State{Settled: true, LastRun: ago(time.Second)}, 0, pageSettings{Wake: web.Wake{When: web.WakeAlways}}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d := threadsDaemon()
+			d := threadsDaemon(t)
 			inT3(d, "aaaaaa", tc.ran)
 			if tc.state != nil {
 				d.threads[threadKey{"", "thread-aaaaaa"}] = *tc.state
@@ -80,7 +81,7 @@ func TestWithinGoesByT3sRunsWhereKnown(t *testing.T) {
 
 // A session's own setting overrides the device's, by name.
 func TestWithinTakesTheSessionsOwnSetting(t *testing.T) {
-	d := threadsDaemon()
+	d := threadsDaemon(t)
 	inT3(d, "aaaaaa", 0)
 	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{LastRun: time.Now().Add(-20 * time.Minute)}
 	wake := wakeWithin(0)
@@ -99,7 +100,7 @@ func TestWithinTakesTheSessionsOwnSetting(t *testing.T) {
 // A message just delivered as a turn counts as work: a second one right behind it goes in too,
 // before T3's database shows the run the first one started.
 func TestADeliveredTurnCountsAsWork(t *testing.T) {
-	d := threadsDaemon()
+	d := threadsDaemon(t)
 	inT3(d, "aaaaaa", 0)
 	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{LastRun: time.Now().Add(-2*time.Minute - 59*time.Second)}
 	d.mu.Lock()
@@ -137,7 +138,7 @@ func TestWithinForAStoppedThreadNotReadYet(t *testing.T) {
 // a thread no session is in any more. Settled sessions leave presence, are listed as offline, and
 // get nothing.
 func TestSettledThreadsGoOffline(t *testing.T) {
-	d := threadsDaemon()
+	d := threadsDaemon(t)
 	inT3(d, "aaaaaa", 0)
 	inT3(d, "bbbbbb", 0)
 	d.sessions["cccccc"] = &session{id: "cccccc", name: "name-cccccc", started: time.Now()} // not in T3
@@ -212,7 +213,7 @@ func TestSettledThreadsGoOffline(t *testing.T) {
 
 // Another device's presence says which of its sessions are offline; only while it is current.
 func TestOfflineOnAnotherDevice(t *testing.T) {
-	d := threadsDaemon()
+	d := threadsDaemon(t)
 	d.opt.StaleAfter = time.Hour
 	d.peers["peer"] = &peer{pres: bus.Presence{Device: "peer", Offline: []string{"zzzzzz"}}, lastChange: time.Now()}
 	d.mu.Lock()
@@ -225,7 +226,7 @@ func TestOfflineOnAnotherDevice(t *testing.T) {
 // A name's earlier ID, which another device may still send to, is offline with the settled
 // session that holds the name now.
 func TestOfflineListsForwardedIDs(t *testing.T) {
-	d := threadsDaemon()
+	d := threadsDaemon(t)
 	inT3(d, "aaaaaa", 0)
 	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{Settled: true}
 	d.st.SessionNames["oldold"] = "name-aaaaaa"
@@ -244,7 +245,7 @@ func TestOfflineListsForwardedIDs(t *testing.T) {
 
 // What a restarted daemon holds for sessions reconnecting isn't given to a settled one.
 func TestCatchUpSkipsASettledSession(t *testing.T) {
-	d := threadsDaemon()
+	d := threadsDaemon(t)
 	d.started = time.Now()
 	d.caughtUp = map[string]bool{}
 	d.st.Inbox = map[string][]*inMsg{}
@@ -263,7 +264,7 @@ func TestCatchUpSkipsASettledSession(t *testing.T) {
 
 // A session at work again lets the deliveries look at what was held back while it was idle.
 func TestActivityLetsHeldMessagesGo(t *testing.T) {
-	d := threadsDaemon()
+	d := threadsDaemon(t)
 	d.sessions["aaaaaa"] = &session{id: "aaaaaa", started: time.Now().Add(-time.Hour)}
 	d.st.Inbox = map[string][]*inMsg{}
 	d.mu.Lock()
@@ -287,5 +288,39 @@ func TestActivityLetsHeldMessagesGo(t *testing.T) {
 	}
 	if !d.wakesLocked("aaaaaa", wakeWithin(0)) {
 		t.Errorf("at work again: not woken")
+	}
+}
+
+// A job picked before its thread settled is not handed over: the check is made again at the
+// handoff, and the message stays in the inbox, neither failed nor marked as handed over.
+func TestHandoffChecksAgain(t *testing.T) {
+	d := threadsDaemon(t)
+	inT3(d, "aaaaaa", 0)
+	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{Settled: true}
+	m := &inMsg{Event: bus.Event{ID: "m"}, Arrived: time.Now(), Pushing: true}
+	d.st.Inbox = map[string][]*inMsg{"aaaaaa": {m}}
+	j := &pushJob{id: "aaaaaa", addr: "dev/aaaaaa", msg: m, via: viaT3,
+		route: proto.Route{T3CLI: "/no/such/t3", T3Thread: "thread-aaaaaa"}}
+	err := d.sendTurn(context.Background(), j)
+	if !errors.Is(err, errNotNow) {
+		t.Fatalf("sendTurn = %v, want errNotNow", err)
+	}
+	d.finishPush(j, err)
+	if m.Pushing || m.PushFailed || m.Attempted || len(d.st.Inbox["aaaaaa"]) != 1 {
+		t.Errorf("the message after: %+v, inbox %d", m, len(d.st.Inbox["aaaaaa"]))
+	}
+}
+
+// lookup knows a session another device lists as offline.
+func TestLookupKnowsAnOfflinePeerSession(t *testing.T) {
+	d := threadsDaemon(t)
+	d.peers["peer"] = &peer{pres: bus.Presence{Device: "peer", Offline: []string{"zzzzzz"}}, lastChange: time.Now()}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.sessionKnownLocked("peer", "zzzzzz") {
+		t.Errorf("an offline session on a peer is unknown")
+	}
+	if !d.detailLocked("peer/zzzzzz", "", 0).Settled {
+		t.Errorf("lookup doesn't say it is settled")
 	}
 }
