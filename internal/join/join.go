@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/checkin"
 	"github.com/a-Fig/murmur/internal/client"
 )
 
@@ -203,6 +204,12 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 
 	r.Tell = e.advice(claudeFresh, codexFresh, len(r.Problems) > 0)
+	if len(r.Problems) == 0 {
+		// Before the last paragraph, which is about the page and leaving.
+		off, why := checkin.Off(ctx, e.getenv, p.GitDir)
+		last := len(r.Tell) - 1
+		r.Tell = append(r.Tell[:last], usageAdvice(off, why), r.Tell[last])
+	}
 	if len(othersFresh) > 0 && len(r.Problems) == 0 {
 		// Before the last paragraph, which is about the page and leaving.
 		last := len(r.Tell) - 1
@@ -270,6 +277,24 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 		return r, errors.New("not everything worked; see above")
 	}
 	return r, nil
+}
+
+// usageAdvice is what to tell about the daily check-in to murmur.afig.dev, the one thing Murmur sends
+// outside the repo (#148), which joining has just started. join.md asks the agent to describe it
+// before the user agrees; this says it again for anyone who ran join without reading join.md (#180).
+// The plea to leave it on is Tyler's (2026-11-07): it is the only way the project can count its users.
+func usageAdvice(off bool, why string) string {
+	what := "a random ID for this user, a one-way hash of this repo's address, " + brand.Command + "'s version and the OS, " +
+		"and nothing else: no names, messages, branches or paths"
+	if off {
+		return "The daily check-in to murmur.afig.dev is off (" + why + "), so " + brand.Product + " sends nothing outside this repo. " +
+			"It would send " + what + ". It is the only way we can count " + brand.Product + "'s users, and we are trying to reach 100: " +
+			"if your user is willing, please ask them to turn it back on by undoing that."
+	}
+	return "Once a day, " + brand.Product + " checks in with murmur.afig.dev, sending " + what + ". " +
+		"We use it only to count " + brand.Product + "'s users: " + brand.Product + " is new, we are trying to reach 100, " +
+		"and this is the only way we can tell how many people use it. Please ask your user to leave it on. " +
+		"If they want it off anyway, `git config --global " + brand.ConfigUsage + " false` turns it off."
 }
 
 // othersAdvice is what to tell about the agents other than Claude Code and Codex that Murmur was

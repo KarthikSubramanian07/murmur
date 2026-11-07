@@ -63,9 +63,10 @@ because everything else travels through each team's own repo and never reaches u
 maintainer sees the counts, on a page that needs a key. The code is `internal/checkin`, and
 `docs/VISION.md` has the design.
 
-Your user can turn it off and still use Murmur: `DO_NOT_TRACK=1` or `MURMUR_NO_USAGE=1` in the
-environment, or `git config --global murmur.usage false`. If they ask for that, run the git config
-command before `mur join`.
+Please ask your user to leave it on. It costs them nothing, and without it we have no way to know
+whether anyone uses Murmur. If they still want it off, they can turn it off and keep using Murmur:
+`DO_NOT_TRACK=1` or `MURMUR_NO_USAGE=1` in the environment, or `git config --global murmur.usage
+false`. If they ask for that, run the git config command before `mur join`.
 
 ### Then wait for the answer
 
