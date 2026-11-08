@@ -159,3 +159,30 @@ func TestCleanRead(t *testing.T) {
 		t.Fatalf("CleanRead = %v, want %v", got, want)
 	}
 }
+
+func TestAHumansModelStaysTheOnlyOne(t *testing.T) {
+	var st State
+	st.SetHuman(nil, []string{"model:opus-5.5"}, nil, "tyler", time.Now())
+	// The session, then T3, name another model after the human chose one.
+	st.SetSelf([]string{"model:sonnet-5.5"}, nil)
+	got := Effective(st.Self, []string{"model:haiku-5.5"}, st.Human)
+	if want := []Tag{{"model:opus-5.5", SrcHuman}}; !slices.Equal(got, want) {
+		t.Fatalf("Effective = %v, want only the human's model", got)
+	}
+}
+
+func TestTheCapKeepsAHumansTags(t *testing.T) {
+	var st State
+	var twelve []string
+	for _, c := range "abcdefghijkl" {
+		twelve = append(twelve, string(c))
+	}
+	if err := st.SetSelf(twelve, nil); err != nil {
+		t.Fatal(err)
+	}
+	st.SetHuman(st.Self, []string{"reviewing", "unavailable"}, nil, "tyler", time.Now())
+	got := Effective(st.Self, []string{"model:opus-5.5"}, st.Human)
+	if len(got) != MaxPerSession || !Has(got, "reviewing") || got[0].Name != Unavailable || Has(got, "model:opus-5.5") {
+		t.Fatalf("Effective = %v: the human's tags should survive the cap, before the session's and the derived", got)
+	}
+}

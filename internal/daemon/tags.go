@@ -127,23 +127,44 @@ func (d *Daemon) putTagStateLocked(key string, st *tags.State) {
 	d.saveLocked()
 }
 
+// tagKeyLocked is the key session id's tags are kept by: a running session's own, else the key
+// whose name the session last took. A session that isn't registered at the moment, as while its
+// daemon restarts and reads what was sent meanwhile before the session is back, still has its
+// tags changed, and gets them when it is. "" for a session this device knows nothing of. Caller
+// holds mu.
+func (d *Daemon) tagKeyLocked(id string) string {
+	if s := d.sessions[id]; s != nil {
+		return s.key
+	}
+	name := d.st.SessionNames[id]
+	if name == "" {
+		return ""
+	}
+	for key, n := range d.st.NameKeys {
+		if n == name {
+			return key
+		}
+	}
+	return ""
+}
+
 // humanTagsLocked applies a human's change to the tags of session id on this device. by is the
 // person, or their device. Caller holds mu.
 func (d *Daemon) humanTagsLocked(id string, add, remove []string, by string, at time.Time) error {
-	s := d.sessions[id]
-	if s == nil {
-		return fmt.Errorf("session %s isn't running here", bus.Addr(d.device, id))
+	key := d.tagKeyLocked(id)
+	if key == "" {
+		return fmt.Errorf("session %s isn't known here", bus.Addr(d.device, id))
 	}
 	var self []string
 	var human map[string]tags.Mark
-	if st := d.st.Tags[s.key]; st != nil {
+	if st := d.st.Tags[key]; st != nil {
 		self, human = st.Self, st.Human
 	}
 	next := tags.State{Self: self, Human: cloneMarks(human)}
 	if err := next.SetHuman(tags.Base(self, d.derivedTagsLocked(id)), add, remove, by, at); err != nil {
 		return err
 	}
-	d.putTagStateLocked(s.key, &next)
+	d.putTagStateLocked(key, &next)
 	d.kickPresence()
 	d.log.Printf("%s changed the tags of session %s: %s", by, bus.Addr(d.device, id), tagChange(add, remove))
 	return nil
@@ -172,7 +193,7 @@ func tagChange(add, remove []string) string {
 // session here. Caller holds mu.
 func (d *Daemon) applyTagsEventLocked(e bus.Event) {
 	dev, sess := bus.SplitAddr(e.To)
-	if dev != d.device || d.sessions[sess] == nil {
+	if dev != d.device {
 		return
 	}
 	from, _ := bus.SplitAddr(e.From)

@@ -183,7 +183,10 @@ func (st *State) SetSelf(add, remove []string) error {
 // SetHuman applies a human's change, given the tags the session has without the human's marks
 // (base: its own and the derived ones). Adding marks a tag on, and marks off the rest of its
 // family in base. Removing marks a tag off if base has it, and otherwise takes away the human's
-// mark on it, so a tag only a human gave goes with no mark left behind.
+// mark on it, so a tag only a human gave goes with no mark left behind. A removal of a tag the
+// session doesn't have (a page that was behind) leaves no mark either: the human turned off nothing,
+// and a mark there would stop the session from ever setting the tag, unavailable above all, until
+// a human cleared a mark the page can't show.
 func (st *State) SetHuman(base []string, add, remove []string, by string, at time.Time) error {
 	add, availAdd, err := Clean(add)
 	if err != nil {
@@ -255,8 +258,17 @@ func Effective(self, derived []string, human map[string]Mark) []Tag {
 	}
 	for t, m := range human {
 		if m.On {
+			// The human's tag is the family's one, whatever the session or the daemon set after.
+			for o := range src {
+				if o != t && family(o) == family(t) {
+					delete(src, o)
+				}
+			}
 			src[t] = SrcHuman
-		} else {
+		}
+	}
+	for t, m := range human {
+		if !m.On {
 			delete(src, t)
 		}
 	}
@@ -264,10 +276,18 @@ func Effective(self, derived []string, human map[string]Mark) []Tag {
 	for t, s := range src {
 		out = append(out, Tag{Name: t, Src: s})
 	}
-	Sort(out)
 	if len(out) > MaxPerSession {
+		// A human's tags are kept first, then the session's, then the derived ones.
+		rank := map[string]int{SrcHuman: 0, SrcSession: 1, SrcDerived: 2}
+		slices.SortFunc(out, func(a, b Tag) int {
+			if r := rank[a.Src] - rank[b.Src]; r != 0 {
+				return r
+			}
+			return strings.Compare(a.Name, b.Name)
+		})
 		out = out[:MaxPerSession]
 	}
+	Sort(out)
 	return out
 }
 

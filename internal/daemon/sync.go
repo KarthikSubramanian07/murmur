@@ -653,6 +653,9 @@ func (d *Daemon) catchUpLocked(id string) {
 	}
 	d.caughtUp[id] = true
 	for _, e := range d.pending {
+		if e.To != bus.Addr(d.device, id) && d.unavailableLocked(d.device, id) {
+			continue // unavailable (#198), as in deliverLocked
+		}
 		if d.addressedLocked(e, id) && !d.offMeshLocked(id) {
 			d.addInboxLocked(id, e)
 		}

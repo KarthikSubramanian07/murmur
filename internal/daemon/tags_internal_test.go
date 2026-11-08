@@ -161,3 +161,37 @@ func TestTagsEventValid(t *testing.T) {
 		}
 	}
 }
+
+func TestAChangeForASessionThatIsntRegisteredWaitsForIt(t *testing.T) {
+	d := tagsDaemon(t)
+	d.st.NameKeys = map[string]string{"t3:thread-aaaaaa": "name-aaaaaa"}
+	d.st.SessionNames["aaaaaa"] = "name-aaaaaa"
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.sessions, "aaaaaa") // its daemon has restarted, and it hasn't registered again yet
+	d.applyTagsEventLocked(bus.Event{V: bus.Version, ID: "abcdef12", Type: bus.Tags, From: "far/cli",
+		To: "dev/aaaaaa", At: time.Now(), Add: []string{"unavailable"}})
+	inT3(d, "aaaaaa", 0)
+	d.sessions["aaaaaa"].key = "t3:thread-aaaaaa"
+	if !d.unavailableLocked("dev", "aaaaaa") {
+		t.Fatal("the change made while the session was away was lost")
+	}
+}
+
+func TestCatchUpSkipsAnUnavailableSession(t *testing.T) {
+	d := tagsDaemon(t)
+	d.setOwnTags("aaaaaa", proto.Request{Add: []string{"unavailable"}})
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.started = time.Now()
+	d.caughtUp = map[string]bool{}
+	now := time.Now()
+	d.pending = []bus.Event{
+		{ID: "m1", Type: bus.Message, From: "other/xxxxxx", To: "*", At: now},
+		{ID: "m2", Type: bus.Message, From: "other/xxxxxx", To: "dev/aaaaaa", At: now},
+	}
+	d.catchUpLocked("aaaaaa")
+	if got := d.st.Inbox["aaaaaa"]; len(got) != 1 || got[0].Event.ID != "m2" {
+		t.Fatalf("caught up %d messages; want only the one sent to it", len(got))
+	}
+}
