@@ -99,9 +99,9 @@ func TestWithinTakesTheSessionsOwnSetting(t *testing.T) {
 	}
 }
 
-// A message just delivered as a turn counts as work: a second one right behind it goes in too,
+// A message just handed over as a turn counts as work: a second one right behind it goes in too,
 // before T3's database shows the run the first one started.
-func TestADeliveredTurnCountsAsWork(t *testing.T) {
+func TestATurnHandedOverCountsAsWork(t *testing.T) {
 	d := threadsDaemon(t)
 	inT3(d, "aaaaaa", 0)
 	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{LastRun: time.Now().Add(-2*time.Minute - 59*time.Second)}
@@ -265,7 +265,7 @@ func TestCatchUpSkipsASettledSession(t *testing.T) {
 	}
 }
 
-// A session at work again lets the deliveries look at what was held back while it was idle.
+// A session at work again lets the handoffs look at what was held back while it was idle.
 func TestActivityLetsHeldMessagesGo(t *testing.T) {
 	d := threadsDaemon(t)
 	d.sessions["aaaaaa"] = &session{id: "aaaaaa", started: time.Now().Add(-time.Hour)}
@@ -419,11 +419,11 @@ func TestDelegateLeftoversAreCleared(t *testing.T) {
 	}
 	d.mu.Unlock()
 
-	// The delivery ends refused, at the handoff: the message goes.
+	// The handoff ends refused, at the handoff: the message goes.
 	j := &pushJob{id: "child1", msg: onItsWay}
 	d.finishPush(j, errNotNow)
 	if len(d.st.Inbox["child1"]) != 0 {
-		t.Errorf("after the refused delivery: %d messages", len(d.st.Inbox["child1"]))
+		t.Errorf("after the refused handoff: %d messages", len(d.st.Inbox["child1"]))
 	}
 
 	// A new MCP server in the delegate's thread, which got a message before it found the thread.
@@ -438,10 +438,10 @@ func TestDelegateLeftoversAreCleared(t *testing.T) {
 	}
 }
 
-// A delivery refused at the handoff, in an inbox another session took over while it was queued: the
+// A handoff refused at the handoff, in an inbox another session took over while it was queued: the
 // kick from the takeover found the message on its way, so the new owner needs another (Sol's review
 // of #196). Neither a notice nor the next message would otherwise come for it soon.
-func TestRefusedDeliveryLetsTheNewOwnerGo(t *testing.T) {
+func TestRefusedHandoffLetsTheNewOwnerGo(t *testing.T) {
 	d := threadsDaemon(t)
 	inT3(d, "newnew", 0)
 	m := &inMsg{Event: bus.Event{ID: "taken-over"}, Arrived: time.Now(), Pushing: true}
