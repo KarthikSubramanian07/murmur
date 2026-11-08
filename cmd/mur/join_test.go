@@ -94,6 +94,15 @@ func TestInitJoinAndLeave(t *testing.T) {
 		t.Errorf("Codex's config:\n%s", toml)
 	}
 
+	// The skills, for each agent that reads them, beside its config.
+	for _, dir := range []string{filepath.Dir(b.claudeSettings()), filepath.Dir(b.codexConfig())} {
+		for _, name := range []string{"murmur", "murmur-pro"} {
+			if !strings.Contains(readFile(t, filepath.Join(dir, "skills", name, "SKILL.md")), "name: "+name) {
+				t.Errorf("no %s skill in %s", name, dir)
+			}
+		}
+	}
+
 	// The hook is for this user in this repo, and not committed.
 	hook := readFile(t, filepath.Join(b.clone, ".claude", "settings.local.json"))
 	missing := false
@@ -136,6 +145,9 @@ func TestInitJoinAndLeave(t *testing.T) {
 	}
 	if exists(filepath.Join(b.clone, ".claude", "settings.local.json")) || exists(filepath.Join(b.clone, ".claude")) {
 		t.Error("the hook survived --leave")
+	}
+	if !strings.Contains(out, filepath.Join(filepath.Dir(b.claudeSettings()), "skills", "murmur-pro")) {
+		t.Errorf("leave should say how to delete the skills:\n%s", out)
 	}
 	if jsonAt(t, b.claudeJSON(), "mcpServers", "murmur") == nil || !strings.Contains(readFile(t, b.codexConfig()), "[mcp_servers.murmur]") {
 		t.Error("--leave unregistered the server for every repo")

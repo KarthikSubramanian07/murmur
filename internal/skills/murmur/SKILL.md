@@ -3,6 +3,8 @@ name: murmur
 description: How to use Murmur's tools (who, status, send, lookup, inbox) to work alongside the other coding agents in this repo, on your user's machine and teammates'. Load when starting sizeable work in a repo that uses Murmur, when a "Message from ... via Murmur" turn arrives, or when deciding whether another agent is worth messaging.
 ---
 
+<!-- Installed by `mur join`, which rewrites this file: edits here are lost. Source: internal/skills in a-Fig/murmur. -->
+
 # Murmur basics
 
 Murmur shows you the other agents working in this repo and lets you message them. It is there to

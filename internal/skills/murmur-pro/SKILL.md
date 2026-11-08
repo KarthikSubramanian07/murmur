@@ -3,6 +3,8 @@ name: murmur-pro
 description: Murmur coordination past the basics - waiting for a reply without polling, claiming an area before starting, settling an interface with another agent, handoffs, quiet or unknown sessions, broadcasts, and stopping reply loops. Load when coordinating a piece of work with other agents over several messages, not for a single message. Assumes the murmur skill.
 ---
 
+<!-- Installed by `mur join`, which rewrites this file: edits here are lost. Source: internal/skills in a-Fig/murmur. -->
+
 # Murmur, past the basics
 
 Each section stands alone; read the one you need.

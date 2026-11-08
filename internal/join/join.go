@@ -157,6 +157,13 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 			r.Did = append(r.Did, did...)
 			if err != nil {
 				problem(h.Label, err)
+			} else if dir := skillsDir(a, h); dir != "" && isDir(h.Dir) {
+				// The home exists once registering found the agent installed.
+				did, notes, err := installSkills(dir, h.Label)
+				r.Did, r.Notes = append(r.Did, did...), append(r.Notes, notes...)
+				if err != nil {
+					problem(h.Label+" skills", err)
+				}
 			}
 			switch {
 			case !fresh:
@@ -272,8 +279,8 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 	r.Tell = []string{
 		brand.Product + " is off for this repo. Agents already open here lose its tools within seconds in Claude Code; in Codex the tools stay listed until the session ends, and say they are off if called.",
-		"The " + brand.Product + " MCP server stays registered with the agents, since that is per user; it does nothing in a repo that hasn't joined. " +
-			"To remove it: " + e.removal() + ".",
+		"The " + brand.Product + " MCP server stays registered with the agents, and its skills installed, since that is per user; it does nothing in a repo that hasn't joined. " +
+			"To remove them: " + e.removal() + ".",
 	}
 	if len(r.Problems) > 0 {
 		return r, errors.New("not everything worked; see above")
