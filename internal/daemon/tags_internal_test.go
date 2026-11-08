@@ -68,38 +68,19 @@ func TestOwnTagsAndTheDerivedModel(t *testing.T) {
 	}
 }
 
-func TestUnavailableIsSkippedByBroadcastsButStillReads(t *testing.T) {
+func TestTagsChangeNothingAboutDelivery(t *testing.T) {
+	// No tag carries behaviour: one called unavailable is a label like any other.
 	d := tagsDaemon(t)
 	if resp := d.setOwnTags("aaaaaa", proto.Request{Add: []string{"unavailable"}}); resp.Error != "" {
 		t.Fatal(resp.Error)
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.unavailableLocked("dev", "aaaaaa") || d.unavailableLocked("dev", "bbbbbb") {
-		t.Fatal("unavailableLocked is wrong")
-	}
 	now := time.Now()
 	d.deliverLocked(bus.Event{ID: "m1", Type: bus.Message, From: "other/xxxxxx", To: "*", At: now}, modeNormal)
-	d.deliverLocked(bus.Event{ID: "m2", Type: bus.Message, From: "other/xxxxxx", To: "dev", At: now}, modeNormal)
-	if len(d.st.Inbox["aaaaaa"]) != 0 || len(d.st.Inbox["bbbbbb"]) != 2 {
-		t.Fatalf("after two broadcasts: unavailable has %d, available %d", len(d.st.Inbox["aaaaaa"]), len(d.st.Inbox["bbbbbb"]))
-	}
-	// A message sent to it all the same (by a daemon from before tags) is still delivered.
-	d.deliverLocked(bus.Event{ID: "m3", Type: bus.Message, From: "other/xxxxxx", To: "dev/aaaaaa", At: now}, modeNormal)
-	if len(d.st.Inbox["aaaaaa"]) != 1 {
-		t.Fatal("a direct message to an unavailable session was dropped")
-	}
-
-	// Another device's session, by its presence; not when that presence has gone stale.
-	d.peers["far"] = &peer{lastChange: time.Now(), pres: bus.Presence{Sessions: []bus.SessionInfo{
-		{ID: "cccccc", Tags: []tags.Tag{{Name: tags.Unavailable, Src: tags.SrcHuman}}}}}}
-	d.lastPollOK = time.Now()
-	if !d.unavailableLocked("far", "cccccc") {
-		t.Error("a peer's unavailable session isn't seen as such")
-	}
-	d.peers["far"].lastChange = time.Now().Add(-time.Hour)
-	if d.unavailableLocked("far", "cccccc") {
-		t.Error("a stale peer's session is taken for unavailable")
+	d.deliverLocked(bus.Event{ID: "m2", Type: bus.Message, From: "other/xxxxxx", To: "dev/aaaaaa", At: now}, modeNormal)
+	if len(d.st.Inbox["aaaaaa"]) != 2 || len(d.st.Inbox["bbbbbb"]) != 1 {
+		t.Fatalf("inboxes: tagged %d, untagged %d", len(d.st.Inbox["aaaaaa"]), len(d.st.Inbox["bbbbbb"]))
 	}
 }
 
@@ -108,9 +89,9 @@ func TestAHumansTagsStandOverTheSessions(t *testing.T) {
 	d.setOwnTags("aaaaaa", proto.Request{Add: []string{"reviewing"}})
 	d.mu.Lock()
 	d.peers["far"] = &peer{pres: bus.Presence{Owner: "Maya"}}
-	// From another device's page: unavailable on, reviewing off.
+	// From another device's page: release on, reviewing off.
 	e := bus.Event{V: bus.Version, ID: "abcdef12", Type: bus.Tags, From: "far/cli", To: "dev/aaaaaa", At: time.Now(),
-		Add: []string{"unavailable"}, Remove: []string{"reviewing"}}
+		Add: []string{"release"}, Remove: []string{"reviewing"}}
 	if !e.Valid() {
 		t.Fatal("the tags event isn't valid")
 	}
@@ -119,16 +100,16 @@ func TestAHumansTagsStandOverTheSessions(t *testing.T) {
 	d.applyTagsEventLocked(bus.Event{Type: bus.Tags, From: "far/cli", To: "other/aaaaaa", Add: []string{"x"}})
 	got := d.tagsOfLocked(d.sessions["aaaaaa"])
 	d.mu.Unlock()
-	if want := []tags.Tag{{Name: "unavailable", Src: tags.SrcHuman}}; !slices.Equal(got, want) {
+	if want := []tags.Tag{{Name: "release", Src: tags.SrcHuman}}; !slices.Equal(got, want) {
 		t.Fatalf("tags = %+v, want %+v", got, want)
 	}
-	if m := d.st.Tags["name-aaaaaa"].Human["unavailable"]; m.By != "Maya on far" {
+	if m := d.st.Tags["name-aaaaaa"].Human["release"]; m.By != "Maya on far" {
 		t.Errorf("the mark is by %q", m.By)
 	}
 
 	// The session can't undo the human's choice, and is told so.
-	resp := d.setOwnTags("aaaaaa", proto.Request{Add: []string{"reviewing"}, Remove: []string{"unavailable"}})
-	if !strings.Contains(resp.Note, "a human") || tagNames(resp.Tags) != "unavailable" {
+	resp := d.setOwnTags("aaaaaa", proto.Request{Add: []string{"reviewing"}, Remove: []string{"release"}})
+	if !strings.Contains(resp.Note, "a human") || tagNames(resp.Tags) != "release" {
 		t.Errorf("after the session's change: %q, %q", resp.Note, tagNames(resp.Tags))
 	}
 
@@ -139,7 +120,7 @@ func TestAHumansTagsStandOverTheSessions(t *testing.T) {
 	inT3(d, "dddddd", 0)
 	d.sessions["dddddd"].name = "name-aaaaaa"
 	d.sessions["dddddd"].key = "claude:other"
-	if !tags.Has(d.tagsOfLocked(d.sessions["dddddd"]), tags.Unavailable) {
+	if !tags.Has(d.tagsOfLocked(d.sessions["dddddd"]), "release") {
 		t.Error("the conversation's tags didn't follow it to its new session ID and key")
 	}
 }
@@ -173,29 +154,11 @@ func TestAChangeForASessionThatIsntRegisteredWaitsForIt(t *testing.T) {
 	defer d.mu.Unlock()
 	delete(d.sessions, "aaaaaa") // its daemon has restarted, and it hasn't registered again yet
 	d.applyTagsEventLocked(bus.Event{V: bus.Version, ID: "abcdef12", Type: bus.Tags, From: "far/cli",
-		To: "dev/aaaaaa", At: time.Now(), Add: []string{"unavailable"}})
+		To: "dev/aaaaaa", At: time.Now(), Add: []string{"release"}})
 	inT3(d, "aaaaaa", 0)
 	d.sessions["aaaaaa"].key = "t3:thread-aaaaaa"
-	if !d.unavailableLocked("dev", "aaaaaa") {
+	if !tags.Has(d.tagsOfLocked(d.sessions["aaaaaa"]), "release") {
 		t.Fatal("the change made while the session was away was lost")
-	}
-}
-
-func TestCatchUpSkipsAnUnavailableSession(t *testing.T) {
-	d := tagsDaemon(t)
-	d.setOwnTags("aaaaaa", proto.Request{Add: []string{"unavailable"}})
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.started = time.Now()
-	d.caughtUp = map[string]bool{}
-	now := time.Now()
-	d.pending = []bus.Event{
-		{ID: "m1", Type: bus.Message, From: "other/xxxxxx", To: "*", At: now},
-		{ID: "m2", Type: bus.Message, From: "other/xxxxxx", To: "dev/aaaaaa", At: now},
-	}
-	d.catchUpLocked("aaaaaa")
-	if got := d.st.Inbox["aaaaaa"]; len(got) != 1 || got[0].Event.ID != "m2" {
-		t.Fatalf("caught up %d messages; want only the one sent to it", len(got))
 	}
 }
 

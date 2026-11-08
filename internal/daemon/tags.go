@@ -86,28 +86,6 @@ func peerTagsLocked(p *peer, sess string) []tags.Tag {
 	return nil
 }
 
-// unavailableLocked says the session at dev/sess isn't taking work: send refuses a message to it,
-// and a message to its device or to everyone skips it. A session on a device whose presence has
-// gone stale is not taken for unavailable: nothing current says so. Caller holds mu.
-func (d *Daemon) unavailableLocked(dev, sess string) bool {
-	if sess == "" || sess == proto.CLISession {
-		return false
-	}
-	if dev == d.device {
-		s := d.sessions[sess]
-		return s != nil && tags.Has(d.tagsOfLocked(s), tags.Unavailable)
-	}
-	p := d.peers[dev]
-	return p != nil && !d.staleLocked(p) && tags.Has(peerTagsLocked(p, sess), tags.Unavailable)
-}
-
-// unavailableWhy is what a sender is told when send refuses a message to an unavailable session,
-// called shown.
-func unavailableWhy(shown string) string {
-	return fmt.Sprintf("%s is unavailable: it isn't taking work right now, though it still reads what is "+
-		"going on. Use who to find another session (who with tags: [\"available\"] lists only those taking work).", shown)
-}
-
 // setOwnTags is OpTags: session id adds and removes its own tags. A human's mark on a tag stands
 // over the session's change, and the reply says so.
 func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
@@ -127,8 +105,8 @@ func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 		return fail(err.Error())
 	}
 	var held []string
-	added, _, _ := tags.Clean(req.Add)
-	removed, _, _ := tags.Clean(req.Remove)
+	added, _ := tags.Clean(req.Add)
+	removed, _ := tags.Clean(req.Remove)
 	for _, t := range append(added, removed...) {
 		if m, ok := next.Human[t]; ok {
 			held = append(held, fmt.Sprintf("%s (a human set it %s)", t, map[bool]string{true: "on", false: "off"}[m.On]))
@@ -228,19 +206,13 @@ func (d *Daemon) applyTagsEventLocked(e bus.Event) {
 func (s pageSource) SetTags(ctx context.Context, addr string, add, remove []string) error {
 	d := s.d
 	d.pageCalled(ctx)
-	add, availAdd, err := tags.Clean(add)
+	add, err := tags.Clean(add)
 	if err != nil {
 		return err
 	}
-	remove, availRemove, err := tags.Clean(remove)
+	remove, err = tags.Clean(remove)
 	if err != nil {
 		return err
-	}
-	if availAdd {
-		add = append(add, tags.Available)
-	}
-	if availRemove {
-		remove = append(remove, tags.Available)
 	}
 	if len(add)+len(remove) == 0 {
 		return errors.New("no tag to add or remove")

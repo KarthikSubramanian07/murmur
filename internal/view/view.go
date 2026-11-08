@@ -408,8 +408,6 @@ func Lookup(r proto.Response) string {
 		fmt.Fprintf(&b, "  NOT RUNNING: it stopped %s; a message to it waits in its inbox until it returns\n", Ago(d.StoppedAt))
 	case !d.Running:
 		b.WriteString("  NOT RUNNING: it is no longer in its device's presence, so it has stopped or its device has\n")
-	case tags.Has(d.Tags, tags.Unavailable) && !d.Stale:
-		b.WriteString("  UNAVAILABLE: it isn't taking work right now, so send refuses messages to it; it still reads\n")
 	case d.Dropped:
 		b.WriteString("  not reachable: its MCP server is disconnected, and it is waiting for it to come back\n")
 	case d.Stale:

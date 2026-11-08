@@ -171,13 +171,13 @@ func ValidDevice(s string) bool {
 	return true
 }
 
-// validTags accepts the tags of a tags event: tags, or available, at most a session's worth.
+// validTags accepts the tags of a tags event: tags, at most a session's worth.
 func validTags(ts []string) bool {
 	if len(ts) > tags.MaxPerSession {
 		return false
 	}
 	for _, t := range ts {
-		if !tags.Valid(t) && t != tags.Available {
+		if !tags.Valid(t) {
 			return false
 		}
 	}

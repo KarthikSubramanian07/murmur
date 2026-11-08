@@ -449,7 +449,7 @@ function tagsLine(s) {
       h(
         "span",
         {
-          class: "badge tag " + (t.name === "unavailable" ? "badge-warning" : "badge-outline"),
+          class: "badge tag badge-outline",
           title: TAG_SOURCES[t.src] || "Set by the session",
         },
         t.name,

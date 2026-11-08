@@ -524,9 +524,6 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) (delivered bool) {
 		if !d.addressedLocked(e, id) {
 			continue
 		}
-		if e.To != bus.Addr(d.device, id) && d.unavailableLocked(d.device, id) {
-			continue // unavailable (#198): a message to the device or to everyone skips it
-		}
 		if d.offMeshLocked(id) {
 			// Offline (#189): nothing is kept for it, and it is told nothing.
 			if mode == modeNormal && !held && e.To == bus.Addr(d.device, id) {
@@ -653,9 +650,6 @@ func (d *Daemon) catchUpLocked(id string) {
 	}
 	d.caughtUp[id] = true
 	for _, e := range d.pending {
-		if e.To != bus.Addr(d.device, id) && d.unavailableLocked(d.device, id) {
-			continue // unavailable (#198), as in deliverLocked
-		}
 		if d.addressedLocked(e, id) && !d.offMeshLocked(id) {
 			d.addInboxLocked(id, e)
 		}

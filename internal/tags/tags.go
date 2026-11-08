@@ -4,9 +4,8 @@
 // already has (the model, where T3 records it). The session's own device decides the tags of its
 // sessions and publishes them in presence; docs/VISION.md, "Session tags", has the reasons.
 //
-// Two tags carry behaviour. unavailable says the session isn't taking work: send refuses a message
-// to it and a broadcast skips it, but it still reads everything. A tag under model: names the model
-// the session runs, and a session has at most one.
+// Tags carry no behaviour of their own. A tag under model: names the model the session runs, and a
+// session has at most one.
 package tags
 
 import (
@@ -19,11 +18,6 @@ import (
 )
 
 const (
-	// Unavailable is the availability state: present, the session isn't taking work.
-	Unavailable = "unavailable"
-	// Available is no tag. As a filter term it matches a session without Unavailable, and it can't
-	// be set: setting it removes Unavailable.
-	Available = "available"
 	// ModelPrefix starts the tag naming the session's model. A session has at most one.
 	ModelPrefix = "model:"
 	// MaxLen caps a tag's length, and MaxPerSession how many a session has.
@@ -50,9 +44,9 @@ var shape = regexp.MustCompile(`^[a-z0-9][a-z0-9._:/-]*$`)
 func Normalize(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 
 // Valid says whether name is a tag: lowercase letters, digits and . _ : / -, starting with a letter or
-// a digit, at most MaxLen long. Available is not one: it is the absence of Unavailable.
+// a digit, at most MaxLen long.
 func Valid(name string) bool {
-	return len(name) <= MaxLen && name != Available && shape.MatchString(name) && name != ModelPrefix
+	return len(name) <= MaxLen && shape.MatchString(name) && name != ModelPrefix
 }
 
 // family is the group of tags a session has at most one of: every model: tag is one family; any
@@ -126,45 +120,34 @@ type State struct {
 // Empty says there is nothing to keep.
 func (st *State) Empty() bool { return st == nil || len(st.Self) == 0 && len(st.Human) == 0 }
 
-// Clean reads a list of tags as typed: each normalized, and Available read as removing
-// Unavailable. It fails on the first that isn't a tag.
-func Clean(in []string) (names []string, avail bool, err error) {
+// Clean reads a list of tags as typed, each normalized. It fails on the first that isn't a tag.
+func Clean(in []string) (names []string, err error) {
 	for _, raw := range in {
 		t := Normalize(raw)
 		if t == "" {
 			continue
 		}
-		if t == Available {
-			avail = true
-			continue
-		}
 		if !Valid(t) {
-			return nil, false, fmt.Errorf("%q isn't a tag: a tag is up to %d lowercase letters, digits and . _ : / -, starting with a letter or a digit", raw, MaxLen)
+			return nil, fmt.Errorf("%q isn't a tag: a tag is up to %d lowercase letters, digits and . _ : / -, starting with a letter or a digit", raw, MaxLen)
 		}
 		if !slices.Contains(names, t) {
 			names = append(names, t)
 		}
 	}
-	return names, avail, nil
+	return names, nil
 }
 
 // SetSelf applies the session's own change: add, then remove. A tag added replaces any other of
 // its family (a second model: tag replaces the first). It fails, and changes nothing, if the
 // session would have more than MaxPerSession.
 func (st *State) SetSelf(add, remove []string) error {
-	add, availAdd, err := Clean(add)
+	add, err := Clean(add)
 	if err != nil {
 		return err
 	}
-	remove, availRemove, err := Clean(remove)
+	remove, err = Clean(remove)
 	if err != nil {
 		return err
-	}
-	if availAdd {
-		remove = append(remove, Unavailable)
-	}
-	if availRemove {
-		add = append(add, Unavailable)
 	}
 	next := slices.Clone(st.Self)
 	for _, t := range add {
@@ -185,22 +168,16 @@ func (st *State) SetSelf(add, remove []string) error {
 // family in base. Removing marks a tag off if base has it, and otherwise takes away the human's
 // mark on it, so a tag only a human gave goes with no mark left behind. A removal of a tag the
 // session doesn't have (a page that was behind) leaves no mark either: the human turned off nothing,
-// and a mark there would stop the session from ever setting the tag, unavailable above all, until
-// a human cleared a mark the page can't show.
+// and a mark there would stop the session from ever setting the tag, until a human cleared a mark
+// the page can't show.
 func (st *State) SetHuman(base []string, add, remove []string, by string, at time.Time) error {
-	add, availAdd, err := Clean(add)
+	add, err := Clean(add)
 	if err != nil {
 		return err
 	}
-	remove, availRemove, err := Clean(remove)
+	remove, err = Clean(remove)
 	if err != nil {
 		return err
-	}
-	if availAdd {
-		remove = append(remove, Unavailable)
-	}
-	if availRemove {
-		add = append(add, Unavailable)
 	}
 	if len(add)+len(remove) == 0 {
 		return errors.New("no tag to add or remove")
@@ -244,8 +221,7 @@ func Base(self, derived []string) []string {
 }
 
 // Effective is the tags a session has, each with where it came from: its own and the derived ones
-// (see Base), then a human's marks over both. Unavailable comes first, the rest in order, at most
-// MaxPerSession.
+// (see Base), then a human's marks over both, in order of name, at most MaxPerSession.
 func Effective(self, derived []string, human map[string]Mark) []Tag {
 	src := map[string]string{}
 	for _, t := range self {
@@ -277,17 +253,10 @@ func Effective(self, derived []string, human map[string]Mark) []Tag {
 		out = append(out, Tag{Name: t, Src: s})
 	}
 	if len(out) > MaxPerSession {
-		// Unavailable is kept whoever set it, since it changes what reaches the session; then a
-		// human's tags, the session's, and the derived ones.
-		rank := map[string]int{SrcHuman: 1, SrcSession: 2, SrcDerived: 3}
-		at := func(t Tag) int {
-			if t.Name == Unavailable {
-				return 0
-			}
-			return rank[t.Src]
-		}
+		// A human's tags are kept first, then the session's, then the derived ones.
+		rank := map[string]int{SrcHuman: 0, SrcSession: 1, SrcDerived: 2}
 		slices.SortFunc(out, func(a, b Tag) int {
-			if r := at(a) - at(b); r != 0 {
+			if r := rank[a.Src] - rank[b.Src]; r != 0 {
 				return r
 			}
 			return strings.Compare(a.Name, b.Name)
@@ -298,19 +267,9 @@ func Effective(self, derived []string, human map[string]Mark) []Tag {
 	return out
 }
 
-// Sort puts Unavailable first and the rest in order of name.
+// Sort puts tags in order of name.
 func Sort(ts []Tag) {
-	slices.SortFunc(ts, func(a, b Tag) int {
-		switch {
-		case a.Name == b.Name:
-			return 0
-		case a.Name == Unavailable:
-			return -1
-		case b.Name == Unavailable:
-			return 1
-		}
-		return strings.Compare(a.Name, b.Name)
-	})
+	slices.SortFunc(ts, func(a, b Tag) int { return strings.Compare(a.Name, b.Name) })
 }
 
 // CleanRead holds tags read from the bus to what Murmur writes: valid names from a known source,
@@ -333,8 +292,7 @@ func CleanRead(in []Tag) []Tag {
 
 // Filter is a search by tags: a session matches when it has every tag asked for and none of those
 // asked against. A term is a tag (reviewing), a tag after a dash (-reviewing, without it), or either
-// ending in * for any tag that starts so (model:opus*). available and -available go by
-// Unavailable.
+// ending in * for any tag that starts so (model:opus*).
 type Filter struct {
 	terms []term
 }
@@ -362,14 +320,10 @@ func ParseFilter(in []string) (Filter, error) {
 			if rest, ok := strings.CutSuffix(t, "*"); ok {
 				tm.prefix, t = true, rest
 			}
-			if t == Available && !tm.prefix {
-				tm.name, tm.not = Unavailable, !tm.not
-			} else {
-				if t == "" || len(t) > MaxLen || !shape.MatchString(t) {
-					return Filter{}, fmt.Errorf("%q isn't a tag to search by: use a tag, -tag for sessions without it, or end it in * for tags that start so", strings.TrimSpace(part))
-				}
-				tm.name = t
+			if t == "" || len(t) > MaxLen || !shape.MatchString(t) {
+				return Filter{}, fmt.Errorf("%q isn't a tag to search by: use a tag, -tag for sessions without it, or end it in * for tags that start so", strings.TrimSpace(part))
 			}
+			tm.name = t
 			f.terms = append(f.terms, tm)
 		}
 	}
@@ -400,14 +354,6 @@ func (f Filter) String() string {
 	var parts []string
 	for _, tm := range f.terms {
 		s := tm.name
-		if tm.name == Unavailable && !tm.prefix {
-			if tm.not {
-				parts = append(parts, Available)
-			} else {
-				parts = append(parts, Unavailable)
-			}
-			continue
-		}
 		if tm.prefix {
 			s += "*"
 		}

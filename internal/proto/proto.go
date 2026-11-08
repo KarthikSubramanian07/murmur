@@ -214,7 +214,7 @@ type SessionView struct {
 	// session's device doesn't say.
 	LastActive time.Time `json:"lastActive,omitzero"`
 	You        bool      `json:"you,omitempty"`
-	// Tags is the session's tags, unavailable first (#198).
+	// Tags is the session's tags, in order of name (#198).
 	Tags []tags.Tag `json:"tags,omitempty"`
 }
 
@@ -234,7 +234,7 @@ type SessionDetail struct {
 	Committed []string   `json:"committed,omitempty"` // branches it has committed to, most recent first
 	Doing     string     `json:"doing,omitempty"`
 	Started   time.Time  `json:"started,omitzero"`
-	Tags      []tags.Tag `json:"tags,omitempty"` // unavailable first (#198)
+	Tags      []tags.Tag `json:"tags,omitempty"` // in order of name (#198)
 
 	// Running says the session is in a device's presence (or registered here), or in its grace.
 	// Reachable says a message sent now will be delivered: it is connected, and its device's

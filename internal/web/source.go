@@ -23,8 +23,7 @@ type Source interface {
 	// Unmute undoes the mute by session by of session muted, both names.
 	Unmute(ctx context.Context, by, muted string) error
 	// SetTags is a human's change to the tags of the session at addr, its device/session: add, then
-	// remove. available in add takes unavailable away, and in remove puts it on. On another device,
-	// the change takes effect when that device reads it.
+	// remove. On another device, the change takes effect when that device reads it.
 	SetTags(ctx context.Context, addr string, add, remove []string) error
 }
 
@@ -63,7 +62,7 @@ type Session struct {
 	Worktree   string    `json:"worktree,omitempty"`
 	Started    time.Time `json:"started"`
 	LastActive time.Time `json:"lastActive,omitzero"` // its last tool call or request; zero if unknown
-	// Tags is the session's tags, unavailable first, each with where it came from: the session,
+	// Tags is the session's tags, in order of name, each with where it came from: the session,
 	// derived by its daemon, or a human (#198).
 	Tags []tags.Tag `json:"tags,omitempty"`
 }

@@ -493,7 +493,6 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		known := d.addressKnownLocked(dev, sess)
 		_, stopped := d.st.Stopped[sess]
 		offline := d.offlineLocked(dev, sess)
-		unavailable := !offline && d.unavailableLocked(dev, sess)
 		why := ""
 		if offline {
 			why = d.offlineWhyLocked(dev, sess, nameOr(toName, at))
@@ -502,8 +501,6 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		switch {
 		case offline:
 			return fail("not sent: " + why)
-		case unavailable:
-			return fail("not sent: " + unavailableWhy(nameOr(toName, at)))
 		case known:
 		case dev == d.device && stopped:
 			note = at + " has stopped. The message waits for it, in case it comes back."

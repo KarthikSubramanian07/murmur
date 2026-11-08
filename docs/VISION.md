@@ -540,17 +540,14 @@ agents that mattered.
 
 ### Session tags
 
-#198, first part built 2026-11-08: tags set by hand, the availability state (#186), the model, and
-search by tags. Groups, rules in a tag file, subscriptions and the lifecycle state come later, in the
-issue's order.
+#198, first part built 2026-11-08: tags set by hand, the model, and search by tags. Groups, rules in
+a tag file, subscriptions and the lifecycle state come later, in the issue's order. The first
+version also had an availability state (#186): `unavailable` made `send` refuse a session and
+broadcasts skip it. Tyler had it taken out before merging (2026-11-08), so no tag carries behaviour:
+`unavailable` is a label like any other.
 
 - **What a tag is.** Up to 40 lowercase letters, digits and `. _ : / -`, at most 12 on a session
-  (`internal/tags`). Two carry behaviour. `unavailable` says the session isn't taking work: `send`
-  refuses a message to it, saying why, and a message to its device or to everyone skips it; it can
-  still send, and `who`, `lookup`, `inbox` and the page work as before. A message addressed to it
-  all the same, by a daemon from before tags, is still delivered. `available` is no tag: setting it
-  takes `unavailable` away. A tag under `model:` names the session's model, and a session has one at
-  most.
+  (`internal/tags`). A tag under `model:` names the session's model, and a session has one at most.
 - **Where a tag comes from**, highest first: a human on the page, the session itself (the `tags`
   tool), or the daemon. The daemon derives the model of a session in T3 from the thread's
   `modelSelection.model` in T3's database (`claude-opus-5-5`, shown as `model:opus-5.5`); a session
@@ -568,10 +565,8 @@ issue's order.
 - **Kept by the session's name**, in `state.json`: a tag lasts across MCP restarts, resumes, daemon
   restarts and the session finding its T3 thread (its key changes then, its name doesn't), until the
   session or a human takes it off. A change from another device for a session that hasn't
-  registered again yet, after its daemon restarted, is kept for it the same way. At the cap of 12,
-  `unavailable` is kept first, then a human's tags, the session's, and derived ones. Nothing expires
-  yet, so a session marked unavailable and forgotten stays so; the page shows it in amber, and
-  anyone can take the tag off there.
+  registered again yet, after its daemon restarted, is kept for it the same way. At the cap of 12, a
+  human's tags are kept first, then the session's, then derived ones. Nothing expires.
 - **Search.** `who` takes tags and lists only the sessions with all of them; `-tag` leaves out those
   with it, and a `*` at the end matches any tag that starts so (`model:opus*`). The CLI has no `who`,
   so this is the MCP tool's.

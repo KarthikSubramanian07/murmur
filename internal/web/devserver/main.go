@@ -99,7 +99,7 @@ func newFixtures(now time.Time) *fixtures {
 					Tags: []tags.Tag{{Name: "model:opus-5.5", Src: tags.SrcDerived}, {Name: "ui"}}},
 				{Name: "brave-heron", Agent: "codex", Branch: "remove-claims", Worktree: "remove-claims",
 					Doing: "Deleting claims from the daemon and the MCP tools", Started: ago(2*time.Hour + 4*time.Minute), LastActive: ago(3 * time.Minute),
-					Tags: []tags.Tag{{Name: "unavailable", Src: tags.SrcHuman}, {Name: "model:gpt-5.1-codex"}}},
+					Tags: []tags.Tag{{Name: "model:gpt-5.1-codex"}, {Name: "release", Src: tags.SrcHuman}}},
 				{Name: "amber-finch", Agent: "claude-code", Branch: "main", Worktree: "murmur",
 					Started: ago(5 * time.Hour), LastActive: ago(26 * time.Minute)},
 			},

@@ -23,12 +23,12 @@ func TestModelTag(t *testing.T) {
 }
 
 func TestValid(t *testing.T) {
-	for _, ok := range []string{"reviewing", "model:opus-5.5", "watch:branch/main", "unavailable", "a"} {
+	for _, ok := range []string{"reviewing", "model:opus-5.5", "watch:branch/main", "unavailable", "available", "a"} {
 		if !Valid(ok) {
 			t.Errorf("Valid(%q) = false", ok)
 		}
 	}
-	for _, bad := range []string{"", "Reviewing", "-x", ":x", "a b", "available", "model:", "ünicode",
+	for _, bad := range []string{"", "Reviewing", "-x", ":x", "a b", "model:", "ünicode",
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} {
 		if Valid(bad) {
 			t.Errorf("Valid(%q) = true", bad)
@@ -41,14 +41,14 @@ func TestSetSelf(t *testing.T) {
 	if err := st.SetSelf([]string{"Reviewing", "model:opus-5.5"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	// A second model replaces the first; available takes unavailable away.
-	if err := st.SetSelf([]string{"model:sonnet-5.5", "unavailable"}, nil); err != nil {
+	// A second model replaces the first.
+	if err := st.SetSelf([]string{"model:sonnet-5.5", "ui"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"model:sonnet-5.5", "reviewing", "unavailable"}; !slices.Equal(st.Self, want) {
+	if want := []string{"model:sonnet-5.5", "reviewing", "ui"}; !slices.Equal(st.Self, want) {
 		t.Fatalf("Self = %v, want %v", st.Self, want)
 	}
-	if err := st.SetSelf([]string{"available"}, []string{"reviewing"}); err != nil {
+	if err := st.SetSelf(nil, []string{"reviewing", "ui"}); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"model:sonnet-5.5"}; !slices.Equal(st.Self, want) {
@@ -88,13 +88,13 @@ func TestEffectivePrecedence(t *testing.T) {
 		t.Fatalf("Effective = %v: the session's model should replace the derived one", got)
 	}
 
-	// A human beats both: unavailable on, reviewing off, and the model replaced.
+	// A human beats both: release on, reviewing off, and the model replaced.
 	base := Base(st.Self, derived)
-	if err := st.SetHuman(base, []string{"unavailable", "model:haiku-5.5"}, []string{"reviewing"}, "tyler", at); err != nil {
+	if err := st.SetHuman(base, []string{"release", "model:haiku-5.5"}, []string{"reviewing"}, "tyler", at); err != nil {
 		t.Fatal(err)
 	}
 	got = Effective(st.Self, derived, st.Human)
-	want = []Tag{{"unavailable", SrcHuman}, {"model:haiku-5.5", SrcHuman}}
+	want = []Tag{{"model:haiku-5.5", SrcHuman}, {"release", SrcHuman}}
 	if !slices.Equal(got, want) {
 		t.Fatalf("Effective = %v, want %v", got, want)
 	}
@@ -105,13 +105,13 @@ func TestEffectivePrecedence(t *testing.T) {
 		t.Fatal("the session overrode a human")
 	}
 
-	// A human removing a tag only a human gave leaves no mark; available clears unavailable.
+	// A human removing a tag only a human gave leaves no mark.
 	base = Base(st.Self, derived)
-	if err := st.SetHuman(base, []string{"available"}, nil, "tyler", at); err != nil {
+	if err := st.SetHuman(base, nil, []string{"release"}, "tyler", at); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := st.Human[Unavailable]; ok {
-		t.Fatalf("Human = %v: unavailable, which only a human set, left a mark", st.Human)
+	if _, ok := st.Human["release"]; ok {
+		t.Fatalf("Human = %v: release, which only a human set, left a mark", st.Human)
 	}
 }
 
@@ -126,9 +126,8 @@ func TestFilter(t *testing.T) {
 		{[]string{"reviewing", "model:opus*"}, true},
 		{[]string{"reviewing,model:sonnet*"}, false},
 		{[]string{"-reviewing"}, false},
-		{[]string{"available"}, true},
 		{[]string{"unavailable"}, false},
-		{[]string{"-available"}, false},
+		{[]string{"-unavailable"}, true},
 		{[]string{"model:*", "-ui"}, true},
 	} {
 		f, err := ParseFilter(c.terms)
@@ -139,15 +138,11 @@ func TestFilter(t *testing.T) {
 			t.Errorf("filter %v matched %v, want %v", c.terms, got, c.want)
 		}
 	}
-	unavail := append(ts, Tag{Name: Unavailable, Src: SrcHuman})
-	f, _ := ParseFilter([]string{"available"})
-	if f.Match(unavail) {
-		t.Error("available matched an unavailable session")
-	}
 	if _, err := ParseFilter([]string{"a b"}); err == nil {
 		t.Error("a term with a space was taken")
 	}
-	if got := f.String(); got != "available" {
+	f, _ := ParseFilter([]string{"Model:Opus*", "-ui"})
+	if got := f.String(); got != "model:opus*, -ui" {
 		t.Errorf("String() = %q", got)
 	}
 }
@@ -180,24 +175,9 @@ func TestTheCapKeepsAHumansTags(t *testing.T) {
 	if err := st.SetSelf(twelve, nil); err != nil {
 		t.Fatal(err)
 	}
-	st.SetHuman(st.Self, []string{"reviewing", "unavailable"}, nil, "tyler", time.Now())
+	st.SetHuman(st.Self, []string{"reviewing", "zz"}, nil, "tyler", time.Now())
 	got := Effective(st.Self, []string{"model:opus-5.5"}, st.Human)
-	if len(got) != MaxPerSession || !Has(got, "reviewing") || got[0].Name != Unavailable || Has(got, "model:opus-5.5") {
+	if len(got) != MaxPerSession || !Has(got, "reviewing") || !Has(got, "zz") || Has(got, "model:opus-5.5") {
 		t.Fatalf("Effective = %v: the human's tags should survive the cap, before the session's and the derived", got)
-	}
-}
-
-func TestTheCapKeepsUnavailableWhoeverSetIt(t *testing.T) {
-	var st State
-	st.SetSelf([]string{"unavailable"}, nil)
-	var twelve []string
-	for _, c := range "abcdefghijkl" {
-		twelve = append(twelve, string(c))
-	}
-	if err := st.SetHuman(st.Self, twelve, nil, "tyler", time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if got := Effective(st.Self, nil, st.Human); len(got) != MaxPerSession || got[0].Name != Unavailable {
-		t.Fatalf("Effective = %v: a human's tags pushed unavailable out", got)
 	}
 }
