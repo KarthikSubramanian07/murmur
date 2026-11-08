@@ -297,3 +297,62 @@ func TestUnwritableInstallLogsOnceAndStops(t *testing.T) {
 		t.Fatalf("log: %s", &logs)
 	}
 }
+
+func TestManualReinstallDuringDownload(t *testing.T) {
+	for _, goos := range []string{"linux", "windows"} {
+		t.Run(goos, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "mur")
+			if err := os.WriteFile(path, []byte("original"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			original, err := identity(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data := []byte("release 1.2.4")
+			manual := []byte("manual install 1.2.5")
+			name := assetName(goos, "amd64")
+			var url string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/latest":
+					json.NewEncoder(w).Encode(map[string]any{"tag_name": "v1.2.4", "assets": []map[string]string{
+						{"name": name, "browser_download_url": url + "/binary"}, {"name": "SHA256SUMS", "browser_download_url": url + "/sums"},
+					}})
+				case "/sums":
+					fmt.Fprintf(w, "%x  %s\n", sha256.Sum256(data), name)
+				case "/binary":
+					// Complete a manual reinstall while the updater is waiting for the asset.
+					// Neither install script takes the updater's lock.
+					for _, err := range []error{os.WriteFile(path+".manual", manual, 0755), os.Rename(path, path+".old"), os.Rename(path+".manual", path)} {
+						if err != nil {
+							t.Error(err)
+							http.Error(w, "manual reinstall failed", 500)
+							return
+						}
+					}
+					w.Write(data)
+				default:
+					t.Errorf("unexpected request %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			url = srv.URL
+			var logs bytes.Buffer
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			done, err := attempt(ctx, Options{Version: "1.2.3", Executable: path, URL: url + "/latest", OS: goos, Arch: "amd64", Client: srv.Client(), Log: log.New(&logs, "", 0)}, original)
+			if err != nil || !done {
+				t.Fatalf("should restart onto manual install: done=%v err=%v", done, err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(got, manual) {
+				t.Fatalf("manual install overwritten: %q (%v)", got, err)
+			}
+			if logs.Len() != 0 {
+				t.Fatalf("claimed an update it did not install: %s", &logs)
+			}
+		})
+	}
+}

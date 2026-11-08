@@ -901,13 +901,15 @@ target. Unix renames it atomically over the old file. Windows renames the runnin
 backup, installs the staged file, and restores the backup if installation fails. Backups still
 held by processes are cleaned on a later daemon start. A lock beside the executable serializes
 clones sharing an install; a daemon whose executable has already been replaced restarts onto it.
+Identity is checked again after downloading so a manual reinstall during the download is left alone.
 An unwritable install (for example, a package manager's) is logged once and left alone until
 restart. Successful updates log the old and new versions in the daemon log.
 
-After installation, the daemon waits until no message delivery is in flight, blocks new deliveries,
-and shuts down normally, saving state and releasing the clone lock. It then starts the installed
-binary with the same detached process helper clients use. Sessions reconnect through the existing
-grace and inbox restoration. Running MCP servers keep their loaded binary until their sessions
+After installation, the daemon waits until no message delivery is in flight and no page counts as
+open, so an open tab keeps its port and token. It then blocks new deliveries and shuts down normally,
+saving state and releasing the clone lock. It starts the installed binary with the same detached
+process helper clients use, forwarding its own flags (including poll and idle settings). Sessions
+reconnect through the existing grace and inbox restoration. Running MCP servers keep their loaded binary until their sessions
 restart; if they need to launch a daemon they use the installed path. The protocol number above
 still handles incompatible clients and daemons; release versions do not become a second protocol.
 

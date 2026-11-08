@@ -197,6 +197,15 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (bool, error)
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
+	// Manual installers do not take our lock. Do not overwrite a reinstall that
+	// completed while the release was downloading; restart onto it instead.
+	current, err = identity(o.Executable)
+	if err != nil {
+		return false, err
+	}
+	if !os.SameFile(original, current) {
+		return true, nil
+	}
 	if err = replace(o.Executable, data, o.OS, os.Rename); err != nil {
 		return false, err
 	}

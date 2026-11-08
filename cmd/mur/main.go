@@ -115,12 +115,31 @@ func runMCP(ctx context.Context, args []string) error {
 }
 
 func runDaemon(ctx context.Context, args []string) error {
+	return runDaemonWith(ctx, args, daemon.Run, client.StartDaemon)
+}
+
+func runDaemonWith(ctx context.Context, args []string, run func(context.Context, daemon.Options) error, start func(string, string, ...string) error) error {
 	fs, dir := flags("daemon")
 	gitDir := fs.String("git-dir", "", "the clone's git common dir (default: found from -C)")
 	poll := fs.Duration("poll", 0, "how often to check the remote (default 10s)")
 	idle := fs.Duration("idle", 0, "exit after this long with no sessions (default 10m; negative, e.g. -1s: never)")
 	logPath := fs.String("log", "", "append output to this file, not stderr (for starters that can't pass a handle)")
 	fs.Parse(args)
+	// A replacement starts in the clone root, which may differ from this cwd.
+	// Resolve path flags before recording them for the next daemon.
+	for _, path := range []*string{dir, gitDir, logPath} {
+		if *path != "" {
+			resolved, err := filepath.Abs(*path)
+			if err != nil {
+				return err
+			}
+			*path = resolved
+		}
+	}
+	var restartFlags []string
+	fs.Visit(func(f *flag.Flag) {
+		restartFlags = append(restartFlags, "--"+f.Name+"="+f.Value.String())
+	})
 	if *logPath != "" {
 		if err := redirectOutput(*logPath); err != nil {
 			return err
@@ -145,7 +164,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	if exeErr == nil {
 		exe, exeErr = filepath.EvalSymlinks(exe)
 	}
-	err := daemon.Run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
+	err := run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
 			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger}, restart)
@@ -157,7 +176,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		if exeErr != nil {
 			return exeErr
 		}
-		return client.StartDaemon(exe, *gitDir)
+		return start(exe, *gitDir, restartFlags...)
 	}
 	if errors.Is(err, daemon.ErrRunning) {
 		return nil // another client started one first; that one serves

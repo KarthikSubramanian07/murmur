@@ -210,12 +210,20 @@ func (c *Client) start() error {
 }
 
 // StartDaemon starts the installed executable after a self-update has released the clone lock.
-func StartDaemon(exe, gitDir string) error {
+// Forwarded flags use --name=value, as recorded from the daemon's parsed FlagSet.
+func StartDaemon(exe, gitDir string, flags ...string) error {
 	dir := StateDir(gitDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	logPath := filepath.Join(dir, "daemon.log")
+	// WMI cannot inherit logf and adds its path as --log. Open the forwarded
+	// log destination so that fallback preserves a custom --log too.
+	for _, f := range flags {
+		if path, ok := strings.CutPrefix(f, "--log="); ok && path != "" {
+			logPath = path
+		}
+	}
 	if fi, err := os.Stat(logPath); err == nil && fi.Size() > 4<<20 {
 		os.Rename(logPath, logPath+".old")
 	}
@@ -230,7 +238,11 @@ func StartDaemon(exe, gitDir string) error {
 	if filepath.Base(cwd) == ".git" {
 		cwd = filepath.Dir(cwd)
 	}
-	p, err := proc.StartDetached(exe, []string{"daemon", "--git-dir", gitDir}, cwd, logf)
+	args := append([]string{"daemon"}, flags...)
+	// The launcher's cwd may differ from the original daemon's. The resolved
+	// clone directory wins over a forwarded relative --git-dir.
+	args = append(args, "--git-dir", gitDir)
+	p, err := proc.StartDetached(exe, args, cwd, logf)
 	if err != nil {
 		return err
 	}

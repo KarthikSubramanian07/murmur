@@ -913,8 +913,8 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-// restartWhenIdle waits without cancelling delivery; the same mutex keeps pushLoop
-// from starting another delivery between the empty check and stopping the daemon.
+// restartWhenIdle waits without cancelling delivery or stranding an open page. The
+// same mutex keeps pushLoop from starting a delivery after the safe restart point.
 func (d *Daemon) restartWhenIdle(ctx context.Context) {
 	t := time.NewTicker(100 * time.Millisecond)
 	defer t.Stop()
@@ -924,7 +924,7 @@ func (d *Daemon) restartWhenIdle(ctx context.Context) {
 			d.mu.Unlock()
 			return
 		}
-		if len(d.pushing) == 0 {
+		if len(d.pushing) == 0 && !d.pageOpenLocked(time.Now()) {
 			d.updating = true
 			d.mu.Unlock()
 			d.stop()
