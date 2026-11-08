@@ -559,7 +559,7 @@ func TestPageMessageCursorAcrossTheRingWrapping(t *testing.T) {
 func TestPageSettingsPersist(t *testing.T) {
 	d := newDevice(t, newRemote(t))
 	pg := d.page()
-	def := web.Settings{Wake: web.Wake{When: web.WakeWithin}, DefaultMinutes: 3}
+	def := web.Settings{Wake: web.Wake{When: web.WakeWithin}, Busy: web.BusySubject, DefaultMinutes: 3}
 	if got := pg.settings(); !reflect.DeepEqual(got, def) {
 		t.Fatalf("defaults: %+v, want %+v", got, def)
 	}
@@ -567,6 +567,8 @@ func TestPageSettingsPersist(t *testing.T) {
 	want := web.Settings{
 		Wake:           web.Wake{When: web.WakeWithin, Minutes: 12},
 		SessionWake:    map[string]web.Wake{"quiet-otter": {When: web.WakeNever}, "brave-heron": {When: web.WakeAlways}},
+		Busy:           web.BusyWhole,
+		SessionBusy:    map[string]string{"quiet-otter": web.BusySubject},
 		DefaultMinutes: 3,
 	}
 	body, _ := json.Marshal(want)
@@ -592,6 +594,10 @@ func TestPageSettingsPersist(t *testing.T) {
 		`{"wake":{"when":"never"},"sessionWake":{"quiet-otter":{"when":"later"}}}`,
 		`{"wake":{"when":"never"},"sessionWake":{"":{"when":"never"}}}`,
 		`{"wake":{"when":"never"},"extra":1}`,
+		`{"wake":{"when":"never"},"busy":"body"}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"quiet-otter":""}}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"quiet-otter":"all"}}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"":"whole"}}`,
 		`not json`,
 	} {
 		if code, out := pg.call("PUT", "/api/settings", pg.token, bad); code != http.StatusBadRequest {
@@ -630,8 +636,20 @@ func TestPageSettingsPersist(t *testing.T) {
 		t.Fatalf("PUT over a bad file: %d %s", code, out)
 	}
 	d.restart()
-	if got := d.page().settings(); got.Wake.When != web.WakeNever {
+	if got := d.page().settings(); got.Wake.When != web.WakeNever || got.Busy != web.BusySubject {
 		t.Fatalf("after saving over a bad file: %+v", got)
+	}
+
+	// A file from before the busy setting (#204) keeps its wake setting, and the busy one is the
+	// default.
+	d.stop()
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"wake":{"when":"always"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d.start()
+	old := web.Settings{Wake: web.Wake{When: web.WakeAlways}, Busy: web.BusySubject, DefaultMinutes: 3}
+	if got := d.page().settings(); !reflect.DeepEqual(got, old) {
+		t.Fatalf("with a file from before the busy setting: %+v, want %+v", got, old)
 	}
 }
 
