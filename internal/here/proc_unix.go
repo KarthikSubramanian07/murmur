@@ -39,3 +39,12 @@ func alive(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
+
+// Started is when the process started, as ps prints it, only compared for equality; "" if unknown.
+func Started(pid int) string {
+	b, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}

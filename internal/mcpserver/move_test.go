@@ -103,6 +103,17 @@ func TestAMoveLeavesTheRepoItWasIn(t *testing.T) {
 	}
 }
 
+// OpenCode's one server serves every session in its directory: it publishes no record, so join
+// can't move them all for one.
+func TestASharedServerPublishesNoRecord(t *testing.T) {
+	hdir := t.TempDir()
+	openWith(t, Options{Agent: "opencode", Version: "test", Dir: t.TempDir(), Poll: 25 * time.Millisecond, HereDir: hdir})
+	settle()
+	if rec, ok := mine(t, hdir); ok {
+		t.Errorf("a shared server published %+v", rec)
+	}
+}
+
 // A move into a repo the user hasn't joined does nothing there: consent is per clone, and moving
 // doesn't stand in for it.
 func TestAMoveIntoARepoNotJoinedStaysOff(t *testing.T) {

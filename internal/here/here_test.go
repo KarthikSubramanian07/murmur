@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// A command finds its session's server by the agent's process: CLAUDE_PID first, then its nearest
-// ancestor that is some server's parent.
+// A command finds its session's server by the agent's process: its nearest ancestor that is some
+// server's parent, and CLAUDE_PID only when the ancestors couldn't be read.
 func TestCallerIsTheNearestAgent(t *testing.T) {
 	a := Session{ServerPID: 10, ClientPID: 100}
 	b := Session{ServerPID: 20, ClientPID: 200}
@@ -18,8 +18,13 @@ func TestCallerIsTheNearestAgent(t *testing.T) {
 	if got := Caller(all, []int{7, 200, 100}, 0, ""); !slices.Equal(got, []Session{b}) {
 		t.Errorf("by ancestors: %+v, want the nearest, %+v", got, b)
 	}
-	if got := Caller(all, []int{7, 200}, 100, ""); !slices.Equal(got, []Session{a}) {
-		t.Errorf("CLAUDE_PID: %+v, want %+v", got, a)
+	// An agent that Claude Code (100) started inherits CLAUDE_PID: its own session (200), the
+	// nearer ancestor, is the one its commands move.
+	if got := Caller(all, []int{7, 200, 100}, 100, ""); !slices.Equal(got, []Session{b}) {
+		t.Errorf("nested under Claude Code: %+v, want the nearer %+v", got, b)
+	}
+	if got := Caller(all, nil, 100, ""); !slices.Equal(got, []Session{a}) {
+		t.Errorf("CLAUDE_PID without ancestors: %+v, want %+v", got, a)
 	}
 	if got := Caller(all, []int{7, 8}, 0, ""); got != nil {
 		t.Errorf("no agent among the ancestors: %+v", got)
@@ -38,24 +43,57 @@ func TestCallerOfASharedProcess(t *testing.T) {
 	}
 }
 
-// A move reaches the server of that agent process, and only with the same Claude session: a new
-// process that took a dead one's ID has another.
+// A move reaches the server of that agent process, and only with the same start time and Claude
+// session: a new process that took a dead one's PID has others.
 func TestAskedMatchesTheSession(t *testing.T) {
 	dir := t.TempDir()
-	s := Session{ServerPID: 10, ClientPID: 100, ClaudeSession: "aaa"}
+	s := Session{ServerPID: 10, ClientPID: 100, ClientStarted: "t1", ClaudeSession: "aaa"}
 	at := time.Now()
 	if err := Ask(dir, s, "/work/repo", at); err != nil {
 		t.Fatal(err)
 	}
-	m, ok := Asked(dir, 100, "aaa")
+	m, ok := Asked(dir, Session{ServerPID: 11, ClientPID: 100, ClientStarted: "t1", ClaudeSession: "aaa"})
 	if !ok || m.Dir != "/work/repo" || !m.At.Equal(at) {
-		t.Errorf("Asked = %+v, %v", m, ok)
+		t.Errorf("Asked by a restarted server of the same session = %+v, %v", m, ok)
 	}
-	if _, ok := Asked(dir, 100, "zzz"); ok {
-		t.Error("a move for another Claude session was taken")
+	for name, other := range map[string]Session{
+		"another Claude session":                  {ClientPID: 100, ClientStarted: "t1", ClaudeSession: "zzz"},
+		"another process":                         {ClientPID: 101, ClientStarted: "t1", ClaudeSession: "aaa"},
+		"a later process with the PID, no Claude": {ClientPID: 100, ClientStarted: "t2"},
+	} {
+		if _, ok := Asked(dir, other); ok {
+			t.Errorf("a move was taken by %s", name)
+		}
 	}
-	if _, ok := Asked(dir, 101, "aaa"); ok {
-		t.Error("a move for another process was taken")
+}
+
+// A file still being written is neither a session nor removed: two records of one server would
+// look like two sessions, and removing it would lose the write.
+func TestSessionsSkipsFilesBeingWritten(t *testing.T) {
+	dir := t.TempDir()
+	live := Session{ServerPID: os.Getpid(), ClientPID: os.Getppid()}
+	if err := Publish(dir, live); err != nil {
+		t.Fatal(err)
+	}
+	tmp := sessionPath(dir, live.ServerPID) + ".99.tmp"
+	if err := os.WriteFile(tmp, []byte(`{"serverPid":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := Sessions(dir)
+	if !slices.Equal(got, []Session{live}) {
+		t.Errorf("Sessions = %+v, want only %+v", got, live)
+	}
+	if _, err := os.Stat(tmp); err != nil {
+		t.Errorf("the file being written was removed: %v", err)
+	}
+}
+
+func TestStartedTellsProcessesApart(t *testing.T) {
+	if Started(os.Getpid()) == "" || Started(os.Getpid()) != Started(os.Getpid()) {
+		t.Errorf("Started(self) = %q, not stable", Started(os.Getpid()))
+	}
+	if Started(exitedPID(t)) != "" {
+		t.Error("an exited process has a start time")
 	}
 }
 

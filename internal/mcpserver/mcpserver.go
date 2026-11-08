@@ -109,7 +109,9 @@ func (s *server) initHere() {
 			dir = "-"
 		}
 	}
-	if dir == "-" {
+	// One OpenCode server serves every session in its directory, so moving it would move them all;
+	// it publishes no record, and join finds no session to move.
+	if dir == "-" || sharedAgent(s.opt.Agent) {
 		return
 	}
 	var claude string
@@ -117,7 +119,8 @@ func (s *server) initHere() {
 		claude = os.Getenv("CLAUDE_CODE_SESSION_ID")
 	}
 	s.hereDir = dir
-	s.self = here.Session{ServerPID: os.Getpid(), ClientPID: os.Getppid(), ClaudeSession: claude, Agent: agentName(s.opt.Agent)}
+	s.self = here.Session{ServerPID: os.Getpid(), ClientPID: os.Getppid(), ClientStarted: here.Started(os.Getppid()),
+		ClaudeSession: claude, Agent: agentName(s.opt.Agent)}
 }
 
 func (s *server) withdraw() {
@@ -131,7 +134,7 @@ func (s *server) follow(ctx context.Context) {
 	if s.hereDir == "" {
 		return
 	}
-	m, ok := here.Asked(s.hereDir, s.self.ClientPID, s.self.ClaudeSession)
+	m, ok := here.Asked(s.hereDir, s.self)
 	if !ok || !m.At.After(s.followed) {
 		return
 	}
@@ -449,6 +452,20 @@ func (s *server) callOn(ctx context.Context, c *client.Client, l *link, req prot
 	if l.allowed != nil && !l.allowed() { // the repo the link was made in, which a move doesn't change
 		return proto.Response{}, errPassive
 	}
+	// A move or a leave ends the link's life, and with it a call still on its way to that repo's
+	// daemon: the server is no longer there.
+	l.mu.Lock()
+	life := l.life
+	l.mu.Unlock()
+	if life != nil {
+		if life.Err() != nil {
+			return proto.Response{}, errPassive
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		defer context.AfterFunc(life, cancel)()
+	}
 	req.Session = id
 	resp, err := c.Do(ctx, req)
 	if err != nil {
@@ -575,6 +592,9 @@ type link struct {
 	// writes the line; nil writes it to standard error.
 	routeWarned bool
 	logf        func(format string, args ...any)
+	// life is the context run was given, which ends when the server turns off or moves to another
+	// repo; a call made through the link ends with it.
+	life context.Context
 }
 
 func (l *link) set(up bool, err error) {
@@ -808,6 +828,9 @@ func (l *link) wait(ctx context.Context, timeout time.Duration) (string, error) 
 }
 
 func (l *link) run(ctx context.Context) {
+	l.mu.Lock()
+	l.life = ctx
+	l.mu.Unlock()
 	backoff := time.Second
 	inUse := 0
 	// Inside T3, the session is registered with its thread if it can be found at once, so its name

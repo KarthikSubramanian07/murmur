@@ -30,6 +30,7 @@ import (
 type Session struct {
 	ServerPID     int    `json:"serverPid"`
 	ClientPID     int    `json:"clientPid"`               // its parent: the agent's process
+	ClientStarted string `json:"clientStarted,omitempty"` // when that process started, to tell it from a later one with its PID
 	ClaudeSession string `json:"claudeSession,omitempty"` // Claude Code's session ID, as the server started with it
 	Agent         string `json:"agent,omitempty"`
 	GitDir        string `json:"gitDir,omitempty"` // the clone it is placed in, "" if none
@@ -39,8 +40,9 @@ type Session struct {
 // Move asks the server of the agent process ClientPID to work in Dir.
 type Move struct {
 	ClientPID int `json:"clientPid"`
-	// ClaudeSession is the session's, as its server published it; a server with another one, which
-	// would be a new process that took a dead one's ID, ignores the move.
+	// ClientStarted and ClaudeSession are the session's, as its server published them; a server
+	// with others, which would be of a new process that took a dead one's PID, ignores the move.
+	ClientStarted string    `json:"clientStarted,omitempty"`
 	ClaudeSession string    `json:"claudeSession,omitempty"`
 	Dir           string    `json:"dir"`
 	At            time.Time `json:"at"`
@@ -89,6 +91,9 @@ func Sessions(dir string) ([]Session, error) {
 	for _, e := range entries {
 		name := e.Name()
 		path := filepath.Join(dir, name)
+		if !strings.HasSuffix(name, ".json") {
+			continue // a record or move still being written (writeJSON's temporary file)
+		}
 		switch {
 		case strings.HasPrefix(name, "server-"):
 			var s Session
@@ -108,14 +113,16 @@ func Sessions(dir string) ([]Session, error) {
 }
 
 // Caller picks, from the running servers, the one of the session a command runs in: the one whose
-// agent is claudePID (Claude Code's CLAUDE_PID, in the environment of the commands it runs), or
-// else whose agent is the nearest of the command's ancestors. Where one agent process runs several
+// agent is the nearest of the command's ancestors. claudePID (Claude Code's CLAUDE_PID, in the
+// environment of the commands it runs) counts only where the ancestors couldn't be read: another
+// agent that Claude Code started inherits it, and its commands would move Claude's session instead
+// of its own. Where one agent process runs several
 // sessions (Codex's app server in T3), claudeSession tells them apart if it is known; otherwise
 // they all come back, and the caller can't say which is its own.
 func Caller(sessions []Session, ancestors []int, claudePID int, claudeSession string) []Session {
 	pids := ancestors
-	if claudePID != 0 {
-		pids = append([]int{claudePID}, ancestors...)
+	if len(pids) == 0 && claudePID != 0 {
+		pids = []int{claudePID}
 	}
 	for _, pid := range pids {
 		var found []Session
@@ -136,16 +143,17 @@ func Caller(sessions []Session, ancestors []int, claudePID int, claudeSession st
 
 // Ask leaves the move for the session's server to find.
 func Ask(dir string, s Session, workDir string, now time.Time) error {
-	return writeJSON(movePath(dir, s.ClientPID), Move{ClientPID: s.ClientPID, ClaudeSession: s.ClaudeSession, Dir: workDir, At: now})
+	return writeJSON(movePath(dir, s.ClientPID), Move{ClientPID: s.ClientPID, ClientStarted: s.ClientStarted,
+		ClaudeSession: s.ClaudeSession, Dir: workDir, At: now})
 }
 
-// Asked is the move left for the server of agent process clientPID, if there is one for it.
-func Asked(dir string, clientPID int, claudeSession string) (Move, bool) {
+// Asked is the move left for the server whose record is self, if there is one for it.
+func Asked(dir string, self Session) (Move, bool) {
 	var m Move
-	if readJSON(movePath(dir, clientPID), &m) != nil || m.ClientPID != clientPID || m.Dir == "" {
+	if readJSON(movePath(dir, self.ClientPID), &m) != nil || m.ClientPID != self.ClientPID || m.Dir == "" {
 		return Move{}, false
 	}
-	if m.ClaudeSession != claudeSession {
+	if m.ClientStarted != self.ClientStarted || m.ClaudeSession != self.ClaudeSession {
 		return Move{}, false
 	}
 	return m, true

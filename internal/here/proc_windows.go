@@ -1,6 +1,7 @@
 package here
 
 import (
+	"strconv"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -38,4 +39,18 @@ func alive(pid int) bool {
 		return true
 	}
 	return code == 259 // STILL_ACTIVE
+}
+
+// Started is when the process started, as a string only compared for equality; "" if unknown.
+func Started(pid int) string {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return ""
+	}
+	defer windows.CloseHandle(h)
+	var created, exited, kernel, user windows.Filetime
+	if windows.GetProcessTimes(h, &created, &exited, &kernel, &user) != nil {
+		return ""
+	}
+	return strconv.FormatInt(created.Nanoseconds(), 10)
 }
