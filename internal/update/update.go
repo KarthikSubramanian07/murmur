@@ -1,0 +1,290 @@
+// Package update installs checksum-verified GitHub releases independently of usage check-ins.
+package update
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/proc"
+)
+
+type Options struct {
+	Version, GitDir string
+	URL             string // releases/latest; overridden only by tests
+	Executable      string // resolved running executable; tests use a disposable file
+	OS, Arch        string
+	Client          *http.Client
+	Getenv          func(string) string
+	Log             *log.Logger
+	Every           time.Duration
+}
+
+func Off(ctx context.Context, getenv func(string) string, gitDir string) bool {
+	v := strings.TrimSpace(getenv("MURMUR_NO_UPDATE"))
+	if v != "" && v != "0" && !strings.EqualFold(v, "false") {
+		return true
+	}
+	out, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", "config", "--type=bool", "--get", "murmur.update")
+	return err == nil && strings.TrimSpace(out) == "false"
+}
+
+// Run checks immediately and hourly. Network failures wait quietly until the next check.
+// A successful install calls restart once; its caller waits for deliveries before stopping.
+func Run(ctx context.Context, o Options, restart func()) {
+	if strings.HasSuffix(o.Version, "-dev") {
+		return
+	}
+	if o.Getenv == nil {
+		o.Getenv = os.Getenv
+	}
+	if o.Log == nil {
+		o.Log = log.New(io.Discard, "", 0)
+	}
+	if o.URL == "" {
+		o.URL = "https://api.github.com/repos/a-Fig/murmur/releases/latest"
+	}
+	if o.Client == nil {
+		o.Client = &http.Client{Timeout: 2 * time.Minute}
+	}
+	if o.OS == "" {
+		o.OS, o.Arch = runtime.GOOS, runtime.GOARCH
+	}
+	if o.Every == 0 {
+		o.Every = time.Hour
+	}
+	var err error
+	if o.Executable == "" {
+		o.Executable, err = os.Executable()
+		if err != nil {
+			return
+		}
+	}
+	o.Executable, err = filepath.EvalSymlinks(o.Executable)
+	if err != nil {
+		return
+	}
+	original, err := identity(o.Executable)
+	if err != nil {
+		return
+	}
+	if o.OS == "windows" {
+		cleanup(o.Executable)
+	}
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		if !Off(ctx, o.Getenv, o.GitDir) {
+			done, err := attempt(ctx, o, original)
+			if done {
+				restart()
+				return
+			}
+			if errors.Is(err, os.ErrPermission) {
+				o.Log.Printf("self-update disabled until restart: binary directory is not writable: %v", err)
+				return
+			}
+		}
+		timer.Reset(o.Every)
+	}
+}
+
+func assetName(goos, arch string) string {
+	if (goos != "linux" && goos != "darwin" && goos != "windows") || (arch != "amd64" && arch != "arm64") {
+		return ""
+	}
+	name := "mur-" + goos + "-" + arch
+	if goos == "windows" {
+		name += ".exe"
+	}
+	return name
+}
+
+func get(ctx context.Context, o Options, url string, limit int64) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "mur/"+o.Version)
+	res, err := o.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download: %s", res.Status)
+	}
+	b, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
+	if int64(len(b)) > limit {
+		return nil, errors.New("download too large")
+	}
+	return b, err
+}
+
+func attempt(ctx context.Context, o Options, original os.FileInfo) (bool, error) {
+	// Serialize daemons from different clones sharing this install. Never replace a binary
+	// another updater has already installed with a release selected by this older process.
+	lock, err := proc.Lock(o.Executable + ".update.lock")
+	if err != nil {
+		return false, err
+	}
+	defer lock.Close()
+	current, err := identity(o.Executable)
+	if err != nil {
+		return false, err
+	}
+	if !os.SameFile(original, current) {
+		return true, nil
+	}
+	b, err := get(ctx, o, o.URL, 1<<20)
+	if err != nil {
+		return false, err
+	}
+	var release struct {
+		Tag        string `json:"tag_name"`
+		Draft      bool   `json:"draft"`
+		Prerelease bool   `json:"prerelease"`
+		Assets     []struct {
+			Name string `json:"name"`
+			URL  string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err = json.Unmarshal(b, &release); err != nil {
+		return false, err
+	}
+	if release.Draft || release.Prerelease || !newer(release.Tag, o.Version) {
+		return false, nil
+	}
+	name := assetName(o.OS, o.Arch)
+	if name == "" {
+		return false, nil
+	}
+	urls := map[string]string{}
+	for _, a := range release.Assets {
+		urls[a.Name] = a.URL
+	}
+	if urls[name] == "" || urls["SHA256SUMS"] == "" {
+		return false, errors.New("missing release assets")
+	}
+	sums, err := get(ctx, o, urls["SHA256SUMS"], 1<<20)
+	if err != nil {
+		return false, err
+	}
+	data, err := get(ctx, o, urls[name], 128<<20)
+	if err != nil {
+		return false, err
+	}
+	if err = verify(data, sums, name); err != nil {
+		return false, err
+	}
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	// Manual installers do not take our lock. Do not overwrite a reinstall that
+	// completed while the release was downloading; restart onto it instead.
+	current, err = identity(o.Executable)
+	if err != nil {
+		return false, err
+	}
+	if !os.SameFile(original, current) {
+		return true, nil
+	}
+	if err = replace(o.Executable, data, o.OS, os.Rename); err != nil {
+		return false, err
+	}
+	o.Log.Printf("self-update: %s -> %s", o.Version, strings.TrimPrefix(release.Tag, "v"))
+	return true, nil
+}
+
+func verify(data, sums []byte, name string) error {
+	sum := sha256.Sum256(data)
+	for _, line := range strings.Split(string(sums), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && strings.TrimPrefix(fields[1], "*") == name {
+			if strings.EqualFold(fields[0], hex.EncodeToString(sum[:])) {
+				return nil
+			}
+			return errors.New("release checksum mismatch")
+		}
+	}
+	return errors.New("release checksum entry missing")
+}
+
+// replace stages beside the destination, closes and syncs before renaming. The Windows
+// backup is unique: a still-running old MCP server may hold an earlier backup open.
+func replace(path string, data []byte, goos string, rename func(string, string) error) error {
+	st, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".mur-update-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if _, err = f.Write(data); err == nil {
+		err = f.Chmod(st.Mode().Perm())
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if e := f.Close(); err == nil {
+		err = e
+	}
+	if err != nil {
+		return err
+	}
+	if goos != "windows" {
+		return rename(tmp, path)
+	}
+	old := path + ".old-" + filepath.Base(tmp)
+	if err = rename(path, old); err != nil {
+		return err
+	}
+	if err = rename(tmp, path); err != nil {
+		if rollback := rename(old, path); rollback != nil {
+			return fmt.Errorf("install failed: %v; restoring %s failed: %w", err, old, rollback)
+		}
+		return err
+	}
+	os.Remove(old) // fails harmlessly while the old exe is running
+	return nil
+}
+
+func cleanup(path string) {
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasPrefix(e.Name(), filepath.Base(path)+".old-.mur-update-") {
+			os.Remove(filepath.Join(filepath.Dir(path), e.Name()))
+		}
+	}
+}
+
+// File.Stat captures Windows file IDs now; os.Stat can defer loading the ID
+// until SameFile, by which time the path may already name the replacement.
+func identity(path string) (os.FileInfo, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return f.Stat()
+}

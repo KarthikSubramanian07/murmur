@@ -74,7 +74,7 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 		wake := d.wakeSnapshot()
 		d.mu.Lock()
 		for _, id := range sortedKeys(d.st.Inbox) {
-			if d.pushing[id] || ctx.Err() != nil {
+			if d.updating || d.pushing[id] || ctx.Err() != nil {
 				continue
 			}
 			if m, _, _ := d.candidateLocked(id, wake); m == nil {
