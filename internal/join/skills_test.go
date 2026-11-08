@@ -13,7 +13,7 @@ import (
 func TestInstallSkills(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "skills")
 	did, notes, err := installSkills(dir, "Claude Code")
-	if err != nil || len(did) != len(skills.All()) || len(notes) != 0 {
+	if err != nil || len(did) != 1 || len(notes) != 0 {
 		t.Fatalf("first: did=%q notes=%q err=%v", did, notes, err)
 	}
 	if did, notes, err := installSkills(dir, "Claude Code"); err != nil || len(did) != 0 || len(notes) != 0 {
@@ -25,7 +25,7 @@ func TestInstallSkills(t *testing.T) {
 	mine := filepath.Join(dir, "murmur-pro", "SKILL.md")
 	write(t, mine, "---\nname: murmur-pro\n---\nmy own\n")
 	did, notes, err = installSkills(dir, "Claude Code")
-	if err != nil || len(did) != 1 || !strings.Contains(did[0], "updated the murmur skill") || len(notes) != 1 || !strings.Contains(notes[0], mine) {
+	if err != nil || len(did) != 1 || !strings.Contains(did[0], "updated the murmur skills") || len(notes) != 1 || !strings.Contains(notes[0], mine) {
 		t.Errorf("did=%q notes=%q err=%v", did, notes, err)
 	}
 	if read(t, mine) != "---\nname: murmur-pro\n---\nmy own\n" {

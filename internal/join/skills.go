@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/skills"
 )
 
@@ -29,15 +30,21 @@ func skillsDir(a agent, h agentHome) string {
 // older mur wrote. A SKILL.md of the same name without skills.Marker is a user's own, and is left
 // alone with a note. Only called for an agent that is installed, whose home exists.
 func installSkills(dir, label string) (did, notes []string, err error) {
+	var wrote []string
+	verb := "installed"
+	defer func() {
+		if len(wrote) > 0 {
+			did = append(did, label+": "+verb+" the "+strings.Join(wrote, " and ")+" skills ("+dir+")")
+		}
+	}()
 	for _, s := range skills.All() {
 		path := filepath.Join(dir, s.Name, "SKILL.md")
 		old, rerr := os.ReadFile(path)
-		verb := "installed"
 		switch {
 		case rerr == nil && bytes.Equal(old, s.Text):
 			continue
 		case rerr == nil && !bytes.Contains(old, []byte(skills.Marker)):
-			notes = append(notes, label+": left "+path+" alone: a skill of that name is there that isn't Murmur's")
+			notes = append(notes, label+": left "+path+" alone: a skill of that name is there that isn't "+brand.Product+"'s")
 			continue
 		case rerr == nil:
 			verb = "updated"
@@ -47,7 +54,7 @@ func installSkills(dir, label string) (did, notes []string, err error) {
 		if err := writeAtomic(path, s.Text, 0o644); err != nil {
 			return did, notes, fmt.Errorf("%s: %w", path, err)
 		}
-		did = append(did, label+": "+verb+" the "+s.Name+" skill ("+path+")")
+		wrote = append(wrote, s.Name)
 	}
 	return did, notes, nil
 }

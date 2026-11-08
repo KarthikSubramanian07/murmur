@@ -103,6 +103,13 @@ func TestInitJoinAndLeave(t *testing.T) {
 		}
 	}
 
+	// Not for agents this machine doesn't have.
+	for _, dir := range []string{filepath.Join(b.home, ".config", "opencode"), filepath.Join(b.home, ".pi")} {
+		if exists(dir) {
+			t.Errorf("join made %s for an agent that isn't installed", dir)
+		}
+	}
+
 	// The hook is for this user in this repo, and not committed.
 	hook := readFile(t, filepath.Join(b.clone, ".claude", "settings.local.json"))
 	missing := false

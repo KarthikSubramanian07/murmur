@@ -254,8 +254,11 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   The skills carry the judgment the tool descriptions don't: when Murmur is worth a turn, and how
   to coordinate over several messages (#206). A SKILL.md of the same name without the skills'
   marker comment is the user's own, and is left alone; one with it is rewritten to this binary's.
-  A leave leaves them, like the server, and says how to delete them. The folders are from each
-  agent's documentation, not tried in a session (2026-11-08).
+  A leave leaves them, like the server, and says how to delete them. Unlike the server, they cost
+  every session of those agents their descriptions' worth of context in any repo, so each
+  description starts by saying it applies only where the repo has the Murmur section. The folders
+  are from each agent's documentation, not tried in a session (2026-11-08). OpenCode also reads
+  `~/.claude/skills`, so with Claude Code beside it it sees each skill twice, the same text.
 
   A client that isn't installed is skipped. Each file is edited, never replaced: other servers,
   settings and comments stay, and a form it can't edit safely (a dotted `mcp_servers.murmur.command`
