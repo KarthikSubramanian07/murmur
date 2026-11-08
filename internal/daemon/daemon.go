@@ -25,6 +25,7 @@ import (
 	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3db"
 )
 
 // Options configure a daemon. Zero values take the defaults in docs/VISION.md.
@@ -82,6 +83,10 @@ type Options struct {
 	// TitleEvery is how often the titles of the sessions' conversations are read from their
 	// clients' state, and the least time between two reads of one: 5 s (#66).
 	TitleEvery time.Duration
+	// ThreadState reads a T3 thread's state from T3's database, for whether it is settled and how
+	// long it has been idle (see threads.go): t3db.StateOf. Tests put a stand-in here. It is read
+	// every TitleEvery.
+	ThreadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
 	// Consent says whether the user has joined Murmur in this clone (nil: always). A daemon exists
 	// only for a user who did: it won't start without it, refuses requests once it is gone, and
 	// stops within ConsentPoll of it going, so a leave that races a daemon still starting ends that
@@ -92,6 +97,8 @@ type Options struct {
 	// CheckIn, if set, runs in the background for as long as the daemon serves: the daily
 	// check-in that counts active users (internal/checkin). Tests leave it unset.
 	CheckIn func(context.Context)
+	// Update installs releases independently of check-ins, then requests a safe restart.
+	Update func(context.Context, func())
 }
 
 func (o *Options) defaults() {
@@ -146,6 +153,9 @@ func (o *Options) defaults() {
 	if o.TitleEvery == 0 {
 		o.TitleEvery = 5 * time.Second
 	}
+	if o.ThreadState == nil {
+		o.ThreadState = t3db.StateOf
+	}
 	if o.ConsentPoll == 0 {
 		o.ConsentPoll = time.Second
 	}
@@ -153,6 +163,9 @@ func (o *Options) defaults() {
 		o.Log = log.New(os.Stderr, "", log.LstdFlags)
 	}
 }
+
+// ErrUpdated means a verified binary is installed and Run released the clone lock; the caller can restart it.
+var ErrUpdated = errors.New("daemon binary updated")
 
 // ErrRunning means another daemon already holds this clone's lock.
 var ErrRunning = errors.New("a daemon is already running for this clone")
@@ -262,8 +275,16 @@ type Daemon struct {
 	// pushing is the sessions a delivery goroutine is working for, and pushWarned those whose last
 	// delivery failed or that have no way to be delivered to, so that is logged once, not for every
 	// message (see deliver.go).
+	updating   bool // under mu: no new deliveries after the safe restart point
 	pushing    map[string]bool
 	pushWarned map[string]bool
+	// pushedAt is when a message last went into each session as a turn: the session is at work from
+	// then, as far as the wake setting goes, before anything else says so (see idleSinceLocked).
+	pushedAt map[string]time.Time
+	// threads is what T3's database last said about each T3 thread a session here is in, and
+	// threadWarned the threads whose state couldn't be read, logged once (see threads.go).
+	threads      map[threadKey]t3db.State
+	threadWarned map[threadKey]bool
 
 	polls atomic.Int64 // the remote listings tried, so a test can see the rate
 
@@ -554,6 +575,11 @@ func Run(ctx context.Context, opt Options) error {
 		defer d.bg.Done()
 		d.titleLoop(ctx)
 	}()
+	d.bg.Add(1)
+	go func() {
+		defer d.bg.Done()
+		d.threadLoop(ctx)
+	}()
 	if opt.Idle > 0 {
 		go d.idleLoop(ctx)
 	}
@@ -562,6 +588,10 @@ func Run(ctx context.Context, opt Options) error {
 	}
 	if opt.CheckIn != nil {
 		go opt.CheckIn(ctx)
+	}
+	if opt.Update != nil {
+		d.bg.Add(1)
+		go func() { defer d.bg.Done(); opt.Update(ctx, func() { d.restartWhenIdle(ctx) }) }()
 	}
 	select {
 	case <-ctx.Done():
@@ -577,6 +607,12 @@ func Run(ctx context.Context, opt Options) error {
 		d.log.Printf("background work still running at exit")
 	}
 	d.goodbye()
+	d.mu.Lock()
+	updated := d.updating
+	d.mu.Unlock()
+	if updated {
+		return ErrUpdated
+	}
 	return nil
 }
 
@@ -588,7 +624,8 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
 		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
-		pushing: map[string]bool{}, pushWarned: map[string]bool{},
+		pushing: map[string]bool{}, pushWarned: map[string]bool{}, pushedAt: map[string]time.Time{},
+		threads: map[threadKey]t3db.State{}, threadWarned: map[threadKey]bool{},
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
 	}
 	device, err := loadDevice(dir)
@@ -746,11 +783,13 @@ func (d *Daemon) idleLoop(ctx context.Context) {
 // still reaches the thread though its MCP server is gone. T3 stops an idle thread's MCP server
 // after about 30 minutes, and the thread is the one most worth waking (#87). The daemon stays up
 // for it, as no other daemon reads the bus for this clone, and it ends when the route's inbox is
-// no longer kept. A thread the page's wake setting says not to wake has nothing to stay up for.
+// no longer kept. A thread the page's wake setting says not to wake now has nothing to stay up for:
+// one set to never, one idle longer than its setting allows (it can only be busy again if someone
+// types in it, which starts its MCP server, and with it a daemon), and one that is settled.
 // Caller holds mu.
 func (d *Daemon) holdsRouteLocked(wake pageSettings) bool {
 	for id := range d.st.T3Routes {
-		if d.sessions[id] == nil && d.receivesLocked(id) && wake.wakes(d.sessionNameLocked(id)) {
+		if d.sessions[id] == nil && d.receivesLocked(id) && d.wakesLocked(id, wake) {
 			return true
 		}
 	}
@@ -895,4 +934,30 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// restartWhenIdle waits without cancelling delivery or stranding an open page. The
+// same mutex keeps pushLoop from starting a delivery after the safe restart point.
+func (d *Daemon) restartWhenIdle(ctx context.Context) {
+	t := time.NewTicker(100 * time.Millisecond)
+	defer t.Stop()
+	for {
+		d.mu.Lock()
+		if ctx.Err() != nil {
+			d.mu.Unlock()
+			return
+		}
+		if len(d.pushing) == 0 && !d.pageOpenLocked(time.Now()) {
+			d.updating = true
+			d.mu.Unlock()
+			d.stop()
+			return
+		}
+		d.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }

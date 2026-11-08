@@ -47,8 +47,8 @@ don't want it. This is not part of scope." Daemons still running V1 keep writing
 ### Git is the transport, GitHub the hub
 
 Every teammate already has credentials and push access to the repo, so the repo carries the
-messages. No server, no accounts, no extra auth: whoever can push is in. (One thing does leave the
-repo: a daily check-in that counts active users; see Counting active users.)
+messages. No server, no accounts, no extra auth: whoever can push is in. (Outside the repo it checks GitHub for updates and sends a daily check-in that counts active
+users; see Updating and Counting active users.)
 
 - Each device appends events to **its own ref**, `refs/murmur/mesh/<deviceId>`: one empty commit per
   event, the payload in the commit message (a readable subject, a JSON body). One writer per ref
@@ -173,7 +173,7 @@ Sessions reach the daemon over loopback TCP, on a random port written with a ran
 T3 thread to wake for 10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
 next sync rather than when it goes stale.
 
-An upgrade replaces the binary and not the daemon already started from it, which would go on
+A manual upgrade replaces the binary and not the daemon already started from it, which would go on
 answering ping and refuse whatever came after the version it was built from (the route request
 and delivering a turn, #57, were the first). So the daemon reports a protocol number
 (`proto.Protocol`, 1 as of 2026-10-30; a daemon from before the number reports none, read as 0) in
@@ -853,9 +853,39 @@ A body past the limit is cut, as in `inbox`.
   than 15 minutes (T3 closed, the session away) is not sprung on the agent as a turn: it stays a
   notice. The 15 minutes count from when the daemon puts the message in the inbox, so one read
   after a long outage (2026-10-30, #30) is young and wakes its thread.
-  The page's wake setting (#22) set to "never", for the device or for one session, keeps
-  the notice too; otherwise delivery is at once. A daemon that starts looks at the messages its
-  inboxes kept, and delivers those that are still young enough.
+  The page's wake setting (#22, #25), for the device or for one session, decides the rest.
+  "Never" keeps the notice. "Always" delivers at once. "Within N minutes", the default with N = 3,
+  delivers only to a session that is busy or was last at work no more than N minutes ago; one idle
+  longer gets the notice, and the message goes in as a turn after all if the session is at work
+  again while it is still young enough. The reason for the limit: a session idle that briefly
+  still has its prompt cache, and a turn started after the cache has gone reads the whole
+  conversation again at full price. Until 2026-11-07 "within" delivered as "always" did, which
+  Tyler found out from the page; the minutes were saved and nothing read them. For a session in
+  T3, "at work" comes from T3's database: busy while a run of its thread is queued or running,
+  else idle since its latest run ended (`orchestration_v2_projection_runs`). Any other session, or
+  one whose thread hasn't been read yet, goes by its start, its last request or tool call, and,
+  stopped, when it stopped; a message just delivered as a turn counts too. The database is read
+  every 5 s, so a decision can be that old. A daemon that starts looks at the messages its
+  inboxes kept, and delivers those that are still young enough and may be.
+- **Settled T3 threads are offline** (Tyler, 2026-11-07, #189). A thread T3 shows as settled
+  (`settledOverride` in the thread's payload), archived or deleted leaves presence, so `who`,
+  `lookup` and the page show it gone; its device lists it in presence's `offline`, and a daemon
+  that reads that refuses a `send` to it, as its own device does. A message that reaches the
+  device anyway (from a daemon older than the field) is dropped. Unsettled, which T3 does when
+  someone types in the thread, it is back with the next read. T3 settles many threads by itself,
+  often the moment a turn ends (their `settledAt` is the run's end; 671 of 854 threads on the
+  laptop were settled, 2026-11-07), so this takes most finished T3 threads off the mesh.
+- **Delegates go through their parent** (Tyler, 2026-11-07, #188). A thread another thread
+  started, a T3 `delegate_task` child or a provider's subagent thread, has its own MCP server and
+  registered as a session of its own, with a name and an inbox (reproduced 2026-11-07). T3 marks
+  such a thread with `lineage.parentThreadId` (and `relationshipToParent: "subagent"`; 624 such
+  threads on the laptop that day, none a user started), so the same read that finds a settled
+  thread finds it, and it is off the mesh the same way: out of presence, listed in `offline`,
+  messages to it dropped and refused, the refusal naming the parent's session on its own device.
+  It can't `send` or set a status; the refusal tells it to ask the thread that started it. Its
+  commits are credited to the session of its parent thread, if that is on the mesh here. It may
+  have taken a name in the seconds before its thread was read; nobody sees the name. A Claude Code
+  subagent inside one session never registered (see Crediting commits, Subagents).
 - **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
   decision, 2026-10-29). A message to a busy thread is queued as its next turn, not injected into
   the one running, and the AGENTS.md wording asks for coordination, not chatting; beyond that
@@ -885,6 +915,44 @@ A body past the limit is cut, as in `inbox`.
     teammates and don't predict a reply, and other devices' messages for sessions elsewhere.
   - A failed poll keeps the back-off above, from whatever the rate was.
   - All four numbers are options, so a test can shrink them.
+
+### Updating
+
+Murmur updates itself by default (#192, Tyler, 2026-11-07), so fixes reach an installed daemon
+without a person reinstalling it. `internal/update` checks GitHub's `a-Fig/murmur` releases/latest
+at daemon startup and hourly, independently of the daily usage check-in. No check-in IDs or repo
+information go in these GET requests. Network failures are quiet and wait for the next hour.
+A development build (`-dev`) never updates itself. Versions before this updater need one manual
+install to acquire it.
+
+The daemon downloads the `mur-<os>-<arch>[.exe]` asset and that release's `SHA256SUMS`, verifies
+SHA-256, and stages a closed, synced executable beside the running binary's resolved symlink
+target. Unix renames it atomically over the old file. Windows renames the running exe to a unique
+backup, installs the staged file, and restores the backup if installation fails. Backups still
+held by processes are cleaned on a later daemon start. A lock beside the executable serializes
+clones sharing an install; a daemon whose executable has already been replaced restarts onto it.
+Identity is checked again after downloading so a manual reinstall during the download is left alone.
+An unwritable install (for example, a package manager's) is logged once and left alone until
+restart. Successful updates log the old and new versions in the daemon log.
+
+After installation, the daemon waits until no message delivery is in flight and no page counts as
+open, so an open tab keeps its port and token. It then blocks new deliveries and shuts down normally,
+saving state and releasing the clone lock. It starts the installed binary with the same detached
+process helper clients use, forwarding its own flags (including poll and idle settings). Sessions
+reconnect through the existing grace and inbox restoration. Running MCP servers keep their loaded binary until their sessions
+restart; if they need to launch a daemon they use the installed path. The protocol number above
+still handles incompatible clients and daemons; release versions do not become a second protocol.
+
+`git config --global murmur.update false` opts out; a repo's own git config overrides the global
+value. `MURMUR_NO_UPDATE=1` opts out for a daemon started with that environment. The config is read
+on each check. `DO_NOT_TRACK`, `MURMUR_NO_USAGE` and `murmur.usage false` affect only usage check-ins.
+Agents explain updates and this separate opt-out before joining (`docs/agents/join.md`). A binary
+shared across clones is shared across their update settings too: to prevent every clone from
+updating it, use the global setting without local overrides.
+
+The checksum catches corruption or a download inconsistent with the release. It does not prove
+who published it or protect against a compromised GitHub account or release with a replaced
+checksum file. Release signing is separate work (#193).
 
 ### Counting active users
 

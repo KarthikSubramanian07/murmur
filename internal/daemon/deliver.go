@@ -13,7 +13,6 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3"
 	"github.com/a-Fig/murmur/internal/view"
-	"github.com/a-Fig/murmur/internal/web"
 )
 
 // Delivering a message as a turn (#57). A message that arrives for a session is put into the
@@ -40,6 +39,10 @@ const (
 	// agent as a turn.
 	pushMaxAge = 15 * time.Minute
 )
+
+// errNotNow is what a delivery ends with when, by the time of the handoff, the session may no
+// longer be woken (see wakesLocked).
+var errNotNow = errors.New("the session may not be woken now")
 
 // How a message goes into a session.
 const (
@@ -71,7 +74,7 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 		wake := d.wakeSnapshot()
 		d.mu.Lock()
 		for _, id := range sortedKeys(d.st.Inbox) {
-			if d.pushing[id] || ctx.Err() != nil {
+			if d.updating || d.pushing[id] || ctx.Err() != nil {
 				continue
 			}
 			if m, _, _ := d.candidateLocked(id, wake); m == nil {
@@ -130,17 +133,6 @@ func (d *Daemon) wakeSnapshot() pageSettings {
 	return pageSettings{Wake: d.settings.Wake, SessionWake: maps.Clone(d.settings.SessionWake)}
 }
 
-// wakes says whether messages for the session called name may be delivered as turns: unless the
-// page says never, for the device or for this session. "Within N minutes" delivers as "always"
-// does: a message is delivered at once, as Tyler decided on 2026-10-29.
-func (p pageSettings) wakes(name string) bool {
-	w := p.Wake
-	if o, ok := p.SessionWake[name]; ok && name != "" {
-		w = o
-	}
-	return w.When != web.WakeNever
-}
-
 // routeOfLocked is how a message gets into session id: what its MCP server told the daemon if it
 // is registered, else, for a session of T3 that has stopped, where its thread is. Caller holds mu.
 func (d *Daemon) routeOfLocked(id string) proto.Route {
@@ -169,8 +161,8 @@ func viaOf(r proto.Route, live bool) string {
 
 // candidateLocked finds the next message to deliver into session id, with how and where, or nil.
 // A message that is being delivered, that the hook has told the session about, whose delivery
-// failed, or that is too old, is passed over, and so is every message of a session the page says
-// not to wake. A session with a message and no way in is logged, once. Caller holds mu.
+// failed, or that is too old, is passed over, and so is every message of a session that may not be
+// woken now (see wakesLocked). A session with a message and no way in is logged, once. Caller holds mu.
 func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, proto.Route) {
 	var next *inMsg
 	for _, m := range d.st.Inbox[id] {
@@ -187,8 +179,7 @@ func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, 
 	if next == nil {
 		return nil, "", proto.Route{}
 	}
-	name := d.sessionNameLocked(id)
-	if !wake.wakes(name) {
+	if !d.wakesLocked(id, wake) {
 		return nil, "", proto.Route{}
 	}
 	s := d.sessions[id]
@@ -219,7 +210,7 @@ func (d *Daemon) queuedForPushLocked(id string, m *inMsg, wake pageSettings) boo
 	if m.Pushing {
 		return true
 	}
-	if !pushable(m) || !wake.wakes(d.sessionNameLocked(id)) {
+	if !pushable(m) || !d.wakesLocked(id, wake) {
 		return false
 	}
 	s := d.sessions[id]
@@ -304,6 +295,15 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 	if !d.consented() {
 		return ErrNoConsent
 	}
+	// A job can wait for a slot (pushSem) or for its retry, and in that time the thread can be
+	// settled, or its session idle past its wake setting: asked again before each handoff.
+	wake := d.wakeSnapshot()
+	d.mu.Lock()
+	ok := d.wakesLocked(j.id, wake)
+	d.mu.Unlock()
+	if !ok {
+		return errNotNow
+	}
 	switch j.via {
 	case viaT3:
 		return d.attempt(j.msg, func() error {
@@ -360,8 +360,18 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	j.msg.Pushing = false
-	if errors.Is(err, ErrNoConsent) {
-		return // the user left on its way: it waits in the inbox, undelivered and not a failure
+	if errors.Is(err, ErrNoConsent) || errors.Is(err, errNotNow) {
+		// The user left, or the session may no longer be woken, on its way: it waits in the inbox,
+		// undelivered and not a failure. Unless the session turned out to be a delegate, whose
+		// inbox stays empty (#188).
+		d.clearChildInboxLocked(j.id)
+		if errors.Is(err, errNotNow) {
+			// A session that took this inbox over may still be woken, and its kick came while this
+			// message was on its way. The refused session itself gets no new job: the scan asks it
+			// the same question.
+			d.kickPush()
+		}
+		return
 	}
 	d.kickPush() // what waited behind this message, in an inbox that took it over, may go now
 	if err != nil {
@@ -387,6 +397,7 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	}
 	d.saveLocked()
 	delete(d.pushWarned, j.id)
+	d.pushedAt[j.id] = time.Now()
 	d.noteConversationLocked() // the agent now has the message; its answer may soon follow
 	e := j.msg.Event
 	d.noteLocked(time.Now(), fmt.Sprintf("delivered %q from %s to %s as a turn, through %s", e.Subject, e.From, j.addr, j.via))
