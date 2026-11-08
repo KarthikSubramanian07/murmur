@@ -85,9 +85,22 @@ func Serve(ctx context.Context, opt Options, t mcp.Transport) error {
 		sopts.Instructions = Instructions // fixed at initialize; the repo's own section says the rest
 	}
 	s.srv = mcp.NewServer(&mcp.Implementation{Name: brand.MCPServer, Version: opt.Version}, sopts)
+	// The work below can be starting a daemon (on Windows through WMI, which takes seconds) with the
+	// clone's daemon.log open. Serve doesn't return while it runs, so a caller that removes the
+	// clone once Serve has returned, as a test does with its temporary one, finds nothing using it.
+	ctx, cancel := context.WithCancel(ctx)
+	defer func() {
+		s.mu.Lock()
+		s.closed = true
+		s.mu.Unlock()
+		cancel()
+		s.bg.Wait()
+	}()
 	if located {
 		s.sync(ctx)
-		go s.watch(ctx)
+		s.mu.Lock()
+		s.goBG(func() { s.watch(ctx) })
+		s.mu.Unlock()
 	}
 	return s.srv.Run(ctx, t)
 }
@@ -216,6 +229,23 @@ type server struct {
 	// the session; link is nil then. lctx is the context they run in.
 	links map[string]*sessionLink
 	lctx  context.Context
+	// bg counts the goroutines that watch the repo and keep links registered; Serve waits for them
+	// before it returns. closed, set as Serve stops, keeps any more from starting.
+	bg     sync.WaitGroup
+	closed bool
+}
+
+// goBG runs f as background work Serve waits for. s.mu must be held, so it never starts once
+// Serve has begun to wait.
+func (s *server) goBG(f func()) {
+	if s.closed {
+		return
+	}
+	s.bg.Add(1)
+	go func() {
+		defer s.bg.Done()
+		f()
+	}()
 }
 
 // sessionLink is one session's link in a server that serves many.
@@ -243,7 +273,7 @@ var sharedIdle = 30 * time.Minute
 func (s *server) activate(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.on {
+	if s.on || s.closed {
 		return
 	}
 	c := &client.Client{GitDir: s.place.GitDir, Spawn: true, MaySpawn: s.place.Active}
@@ -259,7 +289,7 @@ func (s *server) activate(ctx context.Context) {
 	l := s.newLink(c, helloFor(s.opt.Agent, s.cwd))
 	s.link = l
 	s.tools(s.srv)
-	go l.run(lctx)
+	s.goBG(func() { l.run(lctx) })
 }
 
 // newLink makes the link for a registration.
@@ -280,7 +310,7 @@ func (s *server) sessionLinkFor(req *mcp.CallToolRequest) *link {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.links == nil {
+	if s.links == nil || s.closed {
 		return nil
 	}
 	now := time.Now()
@@ -301,7 +331,7 @@ func (s *server) sessionLinkFor(req *mcp.CallToolRequest) *link {
 	l := s.newLink(s.c, h)
 	ctx, cancel := context.WithCancel(s.lctx)
 	s.links[native] = &sessionLink{l: l, cancel: cancel, last: now}
-	go l.run(ctx)
+	s.goBG(func() { l.run(ctx) })
 	return l
 }
 
