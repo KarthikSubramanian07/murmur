@@ -107,6 +107,9 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 				d.log.Printf("the T3 thread of session %s is no longer settled; it is online again", who[k])
 			}
 		}
+		if old.Model != st.Model {
+			settled = true // the derived model: tag goes out in presence (#198)
+		}
 		if (old.Parent != "") != (st.Parent != "") {
 			settled = true
 			if st.Parent != "" {

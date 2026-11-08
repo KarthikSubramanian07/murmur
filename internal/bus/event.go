@@ -15,6 +15,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/names"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // Version is the format version every event and presence record carries. A reader skips
@@ -26,6 +27,10 @@ const (
 	SessionStarted = "session.started"
 	SessionStopped = "session.stopped"
 	Message        = "message"
+	// Tags is a human's change to the tags of a session on another device (#198), made on the
+	// page of the device whose log carries it. The session's device applies it; a daemon from before
+	// tags doesn't know the type and passes over it.
+	Tags = "tags"
 )
 
 // Event is one entry in a device's log. Fields beyond the first five depend on Type.
@@ -42,6 +47,10 @@ type Event struct {
 	To      string `json:"to,omitempty"` // message: device/session, device, or "*"
 	Subject string `json:"subject,omitempty"`
 	Body    string `json:"body,omitempty"`
+
+	// tags: the tags the human added and removed. To is the session.
+	Add    []string `json:"add,omitempty"`
+	Remove []string `json:"remove,omitempty"`
 }
 
 // Line is the event as one readable line, used as the commit subject so that `git log` on a
@@ -54,6 +63,15 @@ func (e Event) Line() string {
 		return e.From + " stopped"
 	case Message:
 		return fmt.Sprintf("%s -> %s: %s", e.From, e.To, e.Subject)
+	case Tags:
+		var ch []string
+		for _, t := range e.Add {
+			ch = append(ch, "+"+t)
+		}
+		for _, t := range e.Remove {
+			ch = append(ch, "-"+t)
+		}
+		return fmt.Sprintf("%s tags %s: %s", e.From, e.To, strings.Join(ch, " "))
 	}
 	return e.From + " " + e.Type
 }
@@ -73,6 +91,9 @@ func (e Event) Valid() bool {
 		return true
 	case Message:
 		return ValidTo(e.To) && e.Subject != ""
+	case Tags:
+		return strings.Contains(e.To, "/") && validAddr(e.To) && len(e.Add)+len(e.Remove) > 0 &&
+			validTags(e.Add) && validTags(e.Remove)
 	}
 	return false
 }
@@ -101,6 +122,7 @@ func (p *Presence) Clean() {
 			s.Branch = OneLine(s.Branch, 100)
 			s.Doing = OneLine(s.Doing, 120)
 			s.Committed = cleanBranches(s.Committed)
+			s.Tags = tags.CleanRead(s.Tags)
 			keep = append(keep, s)
 		}
 	}
@@ -145,6 +167,19 @@ func ValidDevice(s string) bool {
 	}
 	if len(s) == 4 && (strings.HasPrefix(s, "com") || strings.HasPrefix(s, "lpt")) && s[3] >= '0' && s[3] <= '9' {
 		return false
+	}
+	return true
+}
+
+// validTags accepts the tags of a tags event: tags, or available, at most a session's worth.
+func validTags(ts []string) bool {
+	if len(ts) > tags.MaxPerSession {
+		return false
+	}
+	for _, t := range ts {
+		if !tags.Valid(t) && t != tags.Available {
+			return false
+		}
 	}
 	return true
 }
@@ -208,6 +243,9 @@ type SessionInfo struct {
 	// Committed is the branches the session has committed to, most recent first, at most
 	// MaxCommitted. The commits, their SHAs and the worktree stay on the session's device.
 	Committed []string `json:"committed,omitempty"`
+	// Tags is the session's tags as its device decided them, each with where it came from (#198).
+	// A daemon from before tags ignores them.
+	Tags []tags.Tag `json:"tags,omitempty"`
 }
 
 // MaxCommitted caps SessionInfo.Committed.

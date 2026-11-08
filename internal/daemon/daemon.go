@@ -26,6 +26,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // Options configure a daemon. Zero values take the defaults in docs/VISION.md.
@@ -465,6 +466,10 @@ type state struct {
 	// been idle for 30 minutes, and a message is still delivered to the thread, which wakes it.
 	// Local only, like NameKeys. It is kept as long as the session's inbox is.
 	T3Routes map[string]t3Route `json:"t3Routes,omitempty"`
+
+	// Tags is what is kept about the tags of this device's sessions, by the session's key, as names
+	// are: the tags each set for itself and a human's marks (#198). Derived tags aren't kept.
+	Tags map[string]*tags.State `json:"tags,omitempty"`
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if
@@ -839,7 +844,8 @@ func (d *Daemon) loadState() error {
 	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},
 		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
-		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{}}
+		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
+		Tags: map[string]*tags.State{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -886,6 +892,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Reserved == nil {
 		d.st.Reserved = map[string]string{}
+	}
+	if d.st.Tags == nil {
+		d.st.Tags = map[string]*tags.State{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

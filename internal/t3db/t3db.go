@@ -102,7 +102,9 @@ func TitleOf(ctx context.Context, cli, home, thread string) (string, error) {
 // running, when its latest run finished, or was asked for if it hasn't, and the thread that started
 // it, if another did: payload lineage.parentThreadId, set on a T3 delegate_task child and on a
 // provider's subagent thread, with relationshipToParent "subagent", and on no thread a user started
-// (T3 0.1.x, 2026-11-07: 624 children, 287 user threads, no exceptions).
+// (T3 0.1.x, 2026-11-07: 624 children, 287 user threads, no exceptions). Last, the model the thread
+// runs: payload modelSelection.model, the client's own ID for it (claude-opus-5-5; T3 0.1.x,
+// 2026-11-08).
 const stateQuery = `
 SELECT
   COALESCE(CASE WHEN json_valid(t.payload_json) THEN json_extract(t.payload_json, '$.settledOverride') END, ''),
@@ -111,7 +113,8 @@ SELECT
   (SELECT COUNT(*) FROM orchestration_v2_projection_runs r
     WHERE r.thread_id = t.thread_id AND r.status IN ('queued', 'running')),
   (SELECT MAX(COALESCE(r.completed_at, r.requested_at)) FROM orchestration_v2_projection_runs r
-    WHERE r.thread_id = t.thread_id)
+    WHERE r.thread_id = t.thread_id),
+  COALESCE(CASE WHEN json_valid(t.payload_json) THEN json_extract(t.payload_json, '$.modelSelection.model') END, '')
 FROM orchestration_v2_projection_threads t
 WHERE t.thread_id = ?`
 
@@ -128,6 +131,9 @@ type State struct {
 	// Parent is the thread that started this one (a delegate or a subagent), "" for a thread a
 	// user started.
 	Parent string
+	// Model is the model the thread runs, as the client names it (claude-opus-5-5); "" if T3
+	// doesn't say.
+	Model string
 }
 
 // StateOf reads T3 thread's State, as ThreadOf reads its row: read-only, with a short wait on a
@@ -142,15 +148,16 @@ func StateOf(ctx context.Context, cli, home, thread string) (State, error) {
 		gone      bool
 		running   int
 		lastRunAt sql.NullString
+		model     string
 	)
-	err := queryOne(ctx, cli, home, stateQuery, thread, &override, &parent, &gone, &running, &lastRunAt)
+	err := queryOne(ctx, cli, home, stateQuery, thread, &override, &parent, &gone, &running, &lastRunAt, &model)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return State{}, ErrNotFound
 	case err != nil:
 		return State{}, err
 	}
-	st := State{Settled: override == "settled" || gone, Busy: running > 0, Parent: parent}
+	st := State{Settled: override == "settled" || gone, Busy: running > 0, Parent: parent, Model: model}
 	if lastRunAt.Valid && lastRunAt.String != "" {
 		at, err := time.Parse(time.RFC3339Nano, lastRunAt.String)
 		if err != nil {

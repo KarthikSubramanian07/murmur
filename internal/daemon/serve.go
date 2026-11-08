@@ -15,6 +15,7 @@ import (
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/scrub"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 const maxBody = bus.MaxBody
@@ -276,7 +277,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		return fail("this session isn't registered with the daemon (it may have just restarted); try again in a few seconds")
 	}
 	from := bus.Addr(d.device, sess)
-	if req.Op == proto.OpStatus || req.Op == proto.OpSend {
+	if req.Op == proto.OpStatus || req.Op == proto.OpSend || req.Op == proto.OpTags {
 		if why := d.childRefusal(sess); why != "" {
 			return fail(why)
 		}
@@ -287,9 +288,13 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		return proto.Response{OK: true, Self: from, Protocol: proto.Protocol}
 
 	case proto.OpWho:
+		filter, err := tags.ParseFilter(req.Tags)
+		if err != nil {
+			return fail(err.Error())
+		}
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		resp := proto.Response{OK: true, Self: from, Devices: d.whoLocked(sess)}
+		resp := proto.Response{OK: true, Self: from, Devices: d.whoLocked(sess, filter), Filter: filter.String()}
 		if s := d.sessions[sess]; s != nil {
 			resp.Name, resp.NamePending = s.name, s.name == ""
 		}
@@ -314,6 +319,9 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 
 	case proto.OpSend:
 		return d.send(ctx, from, req)
+
+	case proto.OpTags:
+		return d.setOwnTags(sess, req)
 
 	case proto.OpInbox:
 		d.mu.Lock()
@@ -485,6 +493,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		known := d.addressKnownLocked(dev, sess)
 		_, stopped := d.st.Stopped[sess]
 		offline := d.offlineLocked(dev, sess)
+		unavailable := !offline && d.unavailableLocked(dev, sess)
 		why := ""
 		if offline {
 			why = d.offlineWhyLocked(dev, sess, nameOr(toName, at))
@@ -493,6 +502,8 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		switch {
 		case offline:
 			return fail("not sent: " + why)
+		case unavailable:
+			return fail("not sent: " + unavailableWhy(nameOr(toName, at)))
 		case known:
 		case dev == d.device && stopped:
 			note = at + " has stopped. The message waits for it, in case it comes back."
@@ -584,18 +595,23 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 	return views
 }
 
-// whoLocked lists every device and session. The CLI shows only when it is the one asking.
-func (d *Daemon) whoLocked(you string) []proto.Device {
+// whoLocked lists every device and session, or with a filter the sessions whose tags match it and
+// the devices they are on. The CLI shows only when it is the one asking.
+func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Self: true, LastSeen: time.Now()}
 	for _, s := range d.sortedSessionsLocked() {
 		if d.offMeshLocked(s.id) && s.id != you {
 			continue // offline (#189)
 		}
+		ts := d.tagsOfLocked(s)
+		if !filter.Match(ts) {
+			continue
+		}
 		self.Sessions = append(self.Sessions, proto.SessionView{Addr: bus.Addr(d.device, s.id), Name: s.name,
 			Pending: s.name == "", Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(), Started: s.started, LastActive: s.lastActive,
-			You: s.id == you})
+			You: s.id == you, Tags: ts})
 	}
-	if you == proto.CLISession {
+	if you == proto.CLISession && filter.Empty() {
 		self.Sessions = append(self.Sessions, proto.SessionView{Addr: bus.Addr(d.device, proto.CLISession),
 			Agent: "cli", Started: d.started, LastActive: time.Now(), You: true})
 	}
@@ -608,8 +624,15 @@ func (d *Daemon) whoLocked(you string) []proto.Device {
 			if s.ID == proto.CLISession {
 				continue // V1 daemons list their CLI, which only claims needed
 			}
+			if !filter.Match(s.Tags) {
+				continue
+			}
 			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: bus.Addr(id, s.ID), Name: s.Name,
-				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: s.Started, LastActive: peerActive(p, s)})
+				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: s.Started, LastActive: peerActive(p, s),
+				Tags: s.Tags})
+		}
+		if !filter.Empty() && len(dv.Sessions) == 0 {
+			continue // nothing on it matches
 		}
 		devices = append(devices, dv)
 	}

@@ -405,7 +405,7 @@ func TestStateOfReadsSettledAndTheLatestRun(t *testing.T) {
 			('settled', 't', NULL, NULL, '{"settledOverride":"settled","settledAt":"2026-11-07T22:29:15.455Z"}'),
 			('archived', 't', '2026-11-07T20:00:00.000Z', NULL, '{}'),
 			('deleted', 't', NULL, '2026-11-07T20:00:00.000Z', '{}'),
-			('busy', 't', NULL, NULL, '{}'),
+			('busy', 't', NULL, NULL, '{"modelSelection":{"instanceId":"claude_personal","model":"claude-opus-5-5"}}'),
 			('new', 't', NULL, NULL, 'not json'),
 			('child', 't', NULL, NULL, '{"lineage":{"parentThreadId":"idle","relationshipToParent":"subagent","rootThreadId":"idle"}}')`,
 		`INSERT INTO orchestration_v2_projection_runs VALUES
@@ -431,7 +431,7 @@ func TestStateOfReadsSettledAndTheLatestRun(t *testing.T) {
 		"settled":  {Settled: true},
 		"archived": {Settled: true},
 		"deleted":  {Settled: true},
-		"busy":     {Busy: true, LastRun: at("2026-11-07T22:30:00.000Z")},
+		"busy":     {Busy: true, LastRun: at("2026-11-07T22:30:00.000Z"), Model: "claude-opus-5-5"},
 		"new":      {},
 		"child":    {Parent: "idle"},
 	}

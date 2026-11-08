@@ -538,6 +538,41 @@ agents that mattered.
   with a status is not read. A changed title causes a presence write, as a changed status does, so it
   shows on other devices within seconds; a title that hasn't changed writes nothing.
 
+### Session tags
+
+#198, first part built 2026-11-08: tags set by hand, the availability state (#186), the model, and
+search by tags. Groups, rules in a tag file, subscriptions and the lifecycle state come later, in the
+issue's order.
+
+- **What a tag is.** Up to 40 lowercase letters, digits and `. _ : / -`, at most 12 on a session
+  (`internal/tags`). Two carry behaviour. `unavailable` says the session isn't taking work: `send`
+  refuses a message to it, saying why, and a message to its device or to everyone skips it; it can
+  still send, and `who`, `lookup`, `inbox` and the page work as before. A message addressed to it
+  all the same, by a daemon from before tags, is still delivered. `available` is no tag: setting it
+  takes `unavailable` away. A tag under `model:` names the session's model, and a session has one at
+  most.
+- **Where a tag comes from**, highest first: a human on the page, the session itself (the `tags`
+  tool), or the daemon. The daemon derives the model of a session in T3 from the thread's
+  `modelSelection.model` in T3's database (`claude-opus-5-5`, shown as `model:opus-5.5`); a session
+  outside T3 sets its own, as the MCP instructions ask. A human adding a tag pins it on and removing
+  one pins it off, and the session can't undo either; it is told so. `who` shows the names,
+  `lookup` and the page where each came from.
+- **The session's own device decides its tags** and publishes them in presence, each with its
+  source. #198 first had tags set by a session or a human on one shared ref with a lease, as names
+  are; Tyler chose this instead (2026-11-08). One device is the only writer of its sessions' tags,
+  so nothing needs ordering across devices, and a human's choice beats the session's whichever
+  arrives first. A human tagging a session on another device sends that device a `tags` event on
+  their own log, and that device applies it when it reads it, as it would a message. The cost: a
+  change for a device that is down waits until it is back, when its sessions can't be reached anyway.
+  A daemon from before tags passes over the event and ignores the field in presence.
+- **Kept by the session's key**, the one its name follows, in `state.json`: a tag lasts across MCP
+  restarts, resumes and daemon restarts, until the session or a human takes it off. Nothing expires
+  yet, so a session marked unavailable and forgotten stays so; the page shows it in amber, and
+  anyone can mark it available again there.
+- **Search.** `who` takes tags and lists only the sessions with all of them; `-tag` leaves out those
+  with it, and a `*` at the end matches any tag that starts so (`model:opus*`). The CLI has no `who`,
+  so this is the MCP tool's.
+
 ### When a session stays the same session
 
 A session's name (#20) lasts as long as its client treats it as the same conversation, so it

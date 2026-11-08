@@ -4,7 +4,11 @@
 // its closing is how the daemon learns the session stopped, even after a crash.
 package proto
 
-import "time"
+import (
+	"time"
+
+	"github.com/a-Fig/murmur/internal/tags"
+)
 
 // Ops.
 const (
@@ -19,6 +23,8 @@ const (
 	OpLog     = "log"
 	OpStop    = "stop"
 	OpLookup  = "lookup"
+	// OpTags adds and removes the calling session's own tags (#198).
+	OpTags = "tags"
 	// OpToolStart and OpToolEnd bracket one tool call, for the hook: the daemon snapshots the
 	// worktree at the start and credits the commits that appeared by the end (#21).
 	OpToolStart = "toolstart"
@@ -34,7 +40,8 @@ const (
 //	1: OpRoute, and delivering a message as a turn (#56, #57)
 //	2: the conversation's title as the default status line, which needs the transcript the hook
 //	   reports and the Codex thread ID in the route (#66)
-const Protocol = 2
+//	3: session tags: OpTags, and who's search by tags (#198)
+const Protocol = 3
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -84,6 +91,13 @@ type Request struct {
 	// Transcript is the path of the Claude Code session's transcript, the hook's transcript_path,
 	// which holds the session's title. OpNotices carries it.
 	Transcript string `json:"transcript,omitempty"`
+
+	// Add and Remove are the tags OpTags adds to the caller and takes from it. Tags is what OpWho
+	// searches by: a session is listed when it has every tag named, and none named after a dash
+	// (see tags.ParseFilter).
+	Add    []string `json:"add,omitempty"`
+	Remove []string `json:"remove,omitempty"`
+	Tags   []string `json:"tags,omitempty"`
 
 	// Name is the session OpLookup describes: a name, or device/session. Limit caps the messages.
 	Name string `json:"name,omitempty"`
@@ -166,6 +180,11 @@ type Response struct {
 	Events   []EventView   `json:"events,omitempty"`
 
 	Lookup *SessionDetail `json:"lookup,omitempty"`
+
+	// Filter is the search OpWho made, as it read it; empty when it listed everyone. Tags is the
+	// caller's tags after an OpTags.
+	Filter string     `json:"filter,omitempty"`
+	Tags   []tags.Tag `json:"tags,omitempty"`
 }
 
 // Device is one device as `who` shows it.
@@ -195,6 +214,8 @@ type SessionView struct {
 	// session's device doesn't say.
 	LastActive time.Time `json:"lastActive,omitzero"`
 	You        bool      `json:"you,omitempty"`
+	// Tags is the session's tags, unavailable first (#198).
+	Tags []tags.Tag `json:"tags,omitempty"`
 }
 
 // SessionDetail is everything the daemon knows about one session, as `lookup` shows it. Where a
@@ -209,10 +230,11 @@ type SessionDetail struct {
 	Agent  string `json:"agent,omitempty"`
 	You    bool   `json:"you,omitempty"`
 
-	Branch    string    `json:"branch,omitempty"`
-	Committed []string  `json:"committed,omitempty"` // branches it has committed to, most recent first
-	Doing     string    `json:"doing,omitempty"`
-	Started   time.Time `json:"started,omitzero"`
+	Branch    string     `json:"branch,omitempty"`
+	Committed []string   `json:"committed,omitempty"` // branches it has committed to, most recent first
+	Doing     string     `json:"doing,omitempty"`
+	Started   time.Time  `json:"started,omitzero"`
+	Tags      []tags.Tag `json:"tags,omitempty"` // unavailable first (#198)
 
 	// Running says the session is in a device's presence (or registered here), or in its grace.
 	// Reachable says a message sent now will be delivered: it is connected, and its device's

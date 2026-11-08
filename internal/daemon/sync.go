@@ -483,6 +483,9 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		if mode != modeSkip {
 			d.noteLocked(e.At, e.Line())
 		}
+		if e.Type == bus.Tags {
+			d.applyTagsEventLocked(e)
+		}
 		if e.Type == bus.Message {
 			// A skip passes over history, but a ref read in one only after sessions registered
 			// (the first sync failed) also holds what was sent since this daemon started, which
@@ -520,6 +523,9 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) (delivered bool) {
 	for _, id := range d.recipientsLocked() {
 		if !d.addressedLocked(e, id) {
 			continue
+		}
+		if e.To != bus.Addr(d.device, id) && d.unavailableLocked(d.device, id) {
+			continue // unavailable (#198): a message to the device or to everyone skips it
 		}
 		if d.offMeshLocked(id) {
 			// Offline (#189): nothing is kept for it, and it is told nothing.
@@ -952,7 +958,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			name = ""
 		}
 		info := bus.SessionInfo{ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(),
-			Started: s.started.UTC(), Committed: d.committedLocked(s.id)}
+			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s)}
 		if !s.lastActive.IsZero() {
 			info.LastActive = s.lastActive.UTC()
 		}
