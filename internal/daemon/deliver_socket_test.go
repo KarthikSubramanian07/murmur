@@ -170,7 +170,7 @@ func TestMessagingSocketNeedsTheSessionToBeRunning(t *testing.T) {
 
 // Where the socket can't be written, the message is the hook's notice after one more try, and the
 // log says so once, without the socket's address, its token or the message.
-func TestFailedSocketDeliveryFallsBackToTheNotice(t *testing.T) {
+func TestFailedSocketHandoffFallsBackToTheNotice(t *testing.T) {
 	remote := newRemote(t)
 	dir, err := os.MkdirTemp("", "murs")
 	if err != nil {

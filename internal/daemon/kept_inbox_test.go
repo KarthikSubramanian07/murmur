@@ -144,7 +144,7 @@ func TestKeptInboxCatchesUpAfterALongOutage(t *testing.T) {
 	}
 }
 
-// A first start has no stopped sessions and hands nothing over from the history on the bus, to a
+// A first start has no stopped sessions and queues nothing from the history on the bus, for a
 // session registering at once or later.
 func TestFirstStartStillSkipsAllHistory(t *testing.T) {
 	remote := newRemote(t)

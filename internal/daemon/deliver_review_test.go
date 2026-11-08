@@ -15,7 +15,7 @@ import (
 // A message that waited in an inbox over a restart is handed over when the daemon is back, though
 // nothing new arrives to start a handoff: both tries failed because there was no `t3` to run. (A
 // handoff that got as far as running `t3` is not repeated after a restart: deliver_repeat_test.go.)
-func TestMessagesKeptOverARestartAreDeliveredWhenTheDaemonIsBack(t *testing.T) {
+func TestMessagesKeptOverARestartAreHandedOverWhenTheDaemonIsBack(t *testing.T) {
 	remote := newRemote(t)
 	exe, install, calls := lateT3(t)
 	var out syncBuf
@@ -37,7 +37,7 @@ func TestMessagesKeptOverARestartAreDeliveredWhenTheDaemonIsBack(t *testing.T) {
 
 // The hook doesn't tell a session of the messages queued behind the one being handed over: they are
 // turns too, and told by a notice they would never be handed over.
-func TestHookLeavesMessagesQueuedForDeliveryAlone(t *testing.T) {
+func TestHookLeavesMessagesWaitingForAHandoffAlone(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	t.Setenv(fakeT3SleepEnv, "1500ms")
@@ -151,7 +151,7 @@ func TestReplacementOfAThreadTakesWhatTheOldSessionHadUnread(t *testing.T) {
 // what came after it waits until it has been handed over, tried again or not, so the turns arrive in
 // the order the messages did. The first message waits for its retry because the first attempt could
 // not start `t3`, which is not there yet.
-func TestReplacementDeliversInOrderWhatWasOnItsWay(t *testing.T) {
+func TestReplacementHandsOverInOrderWhatWasOnItsWay(t *testing.T) {
 	remote := newRemote(t)
 	exe, install, calls := lateT3(t)
 	var out syncBuf

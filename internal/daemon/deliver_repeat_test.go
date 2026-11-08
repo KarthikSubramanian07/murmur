@@ -51,7 +51,7 @@ func lateT3(t *testing.T) (exe string, install func(), calls func() []t3Call) {
 // A `t3` that took the message and then failed, as one does that times out or has its output lost
 // after T3 accepted it, is not run again: the message may be in the thread already, and it would
 // be there twice. It waits for the hook's notice instead, and is never handed over a second time.
-func TestADeliveryThatMayHaveLandedIsNotRepeated(t *testing.T) {
+func TestAHandoffThatMayHaveLandedIsNotRepeated(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	t.Setenv(fakeT3FailEnv, "1") // the stand-in records the call, which is T3 having it, and then fails
@@ -77,7 +77,7 @@ func TestADeliveryThatMayHaveLandedIsNotRepeated(t *testing.T) {
 // was in the daemon alone, so a daemon that started within the 15 minutes a message stays fit to hand over
 // sent the same turn again. The mark is saved before the handoff, so it is there whether the daemon
 // stopped after the call failed or in the middle of it, and the message is left to the notice.
-func TestADeliveryThatMayHaveLandedIsNotRepeatedAfterARestart(t *testing.T) {
+func TestAHandoffThatMayHaveLandedIsNotRepeatedAfterARestart(t *testing.T) {
 	route := func(exe string) proto.Route { return proto.Route{T3CLI: exe, T3Thread: "thread-bob"} }
 	for _, tc := range []struct {
 		name string
@@ -157,7 +157,7 @@ func TestAMessageIsNotHandedOverWhenTheMarkCannotBeSaved(t *testing.T) {
 
 // An attempt that never started anything is the one kind that is tried again, once: no `t3` is
 // there yet when the first attempt is made, and the retry finds it.
-func TestADeliveryThatNeverStartedIsTriedOnceMore(t *testing.T) {
+func TestAHandoffThatNeverStartedIsTriedOnceMore(t *testing.T) {
 	remote := newRemote(t)
 	exe, install, calls := lateT3(t)
 	var out syncBuf
@@ -183,7 +183,7 @@ func TestADeliveryThatNeverStartedIsTriedOnceMore(t *testing.T) {
 }
 
 // A retry that fails to start too leaves the message to the notice, after two attempts and no more.
-func TestADeliveryThatNeverStartsFallsBackToTheNotice(t *testing.T) {
+func TestAHandoffThatNeverStartsFallsBackToTheNotice(t *testing.T) {
 	remote := newRemote(t)
 	exe, _, calls := lateT3(t)
 	var out syncBuf

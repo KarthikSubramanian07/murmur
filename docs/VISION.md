@@ -157,7 +157,7 @@ unread notices, writing nothing to the bus. Only when the grace runs out does th
 restarts, and given back if the session returns. It holds only what its daemon received: a daemon
 exits 10 minutes after its last session or open page, unless a T3 thread it could still wake is
 waiting ("A thread that is idle", below), and one back after longer than that skips what it
-missed, except for the sessions whose inbox is kept (2026-10-30, #30): to a session stopped
+missed, except for the sessions whose inbox is kept (2026-10-30, #30): for a session stopped
 within the 24 hours it queues what was sent after the session stopped (by the sender's clock,
 with a minute's allowance), which includes a message to the whole device or to everyone, as the
 live ones do and as the shorter outage's catch-up does. Before then a laptop shut overnight lost
@@ -166,7 +166,7 @@ it. A message is addressed on the bus to
 `device/session`, which a session's name stands for (see Session names); presence carries enough
 description (name, agent, branch, what it is doing) for an agent to choose a recipient. Nothing sent before a session first started is replayed to it. A
 daemon back after less than 10 minutes down queues what it missed for the sessions that
-reconnect within 30 seconds of its start, and to sessions stopped within the 24 hours.
+reconnect within 30 seconds of its start, and for sessions stopped within the 24 hours.
 
 Sessions reach the daemon over loopback TCP, on a random port written with a random token to
 `.git/murmur/daemon.json`. A daemon with no sessions, no open page (see The page for humans) and no
@@ -746,8 +746,8 @@ order a message meets them:
 |---|---|---|
 | `t3 thread send` | the turn carrying it starts: at once in an idle thread, after the running turn in a busy one (a busy one only where the hook doesn't run, #202) | No. The daemon sees `t3` accept the message, not the turn start; T3's database would show it (`orchestration_v2_projection_messages`), but those tables are T3's own and may change |
 | The messaging socket (Claude Code outside T3) | Claude Code takes it as a turn | No: the socket answers nothing |
-| The hook's notice (Claude Code) | the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt. That delivers the sender and subject, or the whole message where the page's busy setting says so (#204); otherwise the body is delivered by `inbox` | Yes: the hook asks the daemon for the notices (`Noticed`) |
-| `inbox` | the tool's result returns to the agent | Yes: the daemon answers the call |
+| The hook's notice (Claude Code) | the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt. That delivers the sender and subject, or the whole message where the page's busy setting says so (#204); otherwise the body is delivered by `inbox` | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
+| `inbox` | the tool's result returns to the agent | Partly: the daemon sees the messages leave in its answer, not the answer reach the agent through MCP |
 
 Nothing reports a message's state to its sender yet. Whatever does (#26, `who`, `lookup`, the web
 page) shows queued, handed over and delivered as different states, and a handed-over message as
@@ -1080,7 +1080,7 @@ What it can't see: a person with two machines is two users, and one who turned c
   now that a message starts a turn without anyone typing (Tyler's decision, 2026-10-29): two
   agents that keep answering each other are stopped by nothing but the agents.
 - **Prompt injection.** Anyone with push access can now put text in front of your agent. That
-  matches the trust model (a hackathon team), and a message handed over is text in front of the
+  matches the trust model (a hackathon team), and a delivered message is text in front of the
   agent as a turn of its own, passed on as written; messages never get to bypass the receiving
   user's permission mode, and the framing's first line keeps their origin visible.
 - **Leaked secrets.** Everything on the bus stays in repo history, readable by anyone with read

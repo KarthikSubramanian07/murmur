@@ -253,7 +253,7 @@ func TestMessageBeforeReconnectIsCaughtUp(t *testing.T) {
 
 // When a daemon's first sync fails, sessions register before anything is settled. What was then
 // sent after they started still reaches them; the backlog doesn't.
-func TestFirstSyncFailedStillDelivers(t *testing.T) {
+func TestFirstSyncFailedStillQueues(t *testing.T) {
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	pushEvent(t, remote, "refs/murmur/mesh/old-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,

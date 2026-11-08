@@ -89,8 +89,8 @@ func TestPollEveryQuietIsUnchanged(t *testing.T) {
 	}
 }
 
-// The moves that count: a session starting, and a message handed over to a session here, as a turn
-// or into its inbox. Not one for a session on another device, or for the CLI.
+// The moves that count: a session starting, and a message queued in the inbox of a session
+// here, or handed over to it as a turn. Not one for a session on another device, or for the CLI.
 func TestWhatMovesAConversation(t *testing.T) {
 	msg := func(to string) bus.Event {
 		return bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa", To: to,
@@ -122,7 +122,7 @@ func TestWhatMovesAConversation(t *testing.T) {
 }
 
 // A message handed over to a session as a turn moves it; one whose handoff failed does not.
-func TestDeliveryMovesTheConversation(t *testing.T) {
+func TestHandoffMovesTheConversation(t *testing.T) {
 	d, _, _ := rateRig(t, rateOptions(), false)
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa", To: d.device + "/bbbbbb", Subject: "hi"}
 	job := func() *pushJob {

@@ -14,7 +14,7 @@ import (
 
 // A daemon whose only session was a T3 thread that stopped stays up past the idle time, and
 // hands over a message that comes then, through `t3`.
-func TestDaemonWithAThreadToWakeStaysUpAndDelivers(t *testing.T) {
+func TestDaemonWithAThreadToWakeStaysUpAndHandsOver(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a := newDevice(t, remote)

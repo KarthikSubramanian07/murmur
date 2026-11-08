@@ -142,7 +142,7 @@ func (d *device) unread(id, claude string) (inbox, notices []string) {
 
 // A message for a session in T3 runs `t3 thread send <thread> -` with the text on standard input,
 // once, and is no longer unread: not in the inbox, not in the hook's notices.
-func TestMessageForAT3SessionIsDeliveredAsATurn(t *testing.T) {
+func TestMessageForAT3SessionIsHandedOverAsATurn(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	var out syncBuf
@@ -184,7 +184,7 @@ func TestMessageForAT3SessionIsDeliveredAsATurn(t *testing.T) {
 }
 
 // Messages for one session go in one at a time, in the order they came, and each once.
-func TestMessagesForOneSessionAreDeliveredInOrder(t *testing.T) {
+func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -235,7 +235,7 @@ func TestWithNoWayInMessagesStayNotices(t *testing.T) {
 // A failed handoff is left to the hook's notice, which still shows the message, and the log says so
 // once per session however many messages fail. It is not tried again: the failure may have come
 // after T3 took the message (see deliver_repeat_test.go).
-func TestFailedDeliveryFallsBackToTheNotice(t *testing.T) {
+func TestFailedHandoffFallsBackToTheNotice(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	t.Setenv(fakeT3FailEnv, "1")
@@ -333,7 +333,8 @@ func TestMessageForAStoppedT3SessionStillReachesItsThread(t *testing.T) {
 		t.Errorf("t3 was run as %q with %q", c.Args, c.Stdin)
 	}
 	// The stand-in notes its call when it starts; the message leaves the inbox when it has ended. A
-	// restart before that finds the message still there, and hands it over again, as it should.
+	// restart before that would find the message marked Attempted and leave it to the notice, not
+	// hand it over again; this test waits for the handoff to end so as not to test that case.
 	eventually(t, "the first handoff to finish", func() bool { return logHas(b, `handed "while you were away"`) })
 
 	b.restart()
@@ -377,7 +378,7 @@ func TestNameFollowsTheT3Thread(t *testing.T) {
 // A session that finds its thread after it registered (the MCP server reads T3's database in the
 // background) keeps its name, and from then on takes messages as turns, including one that came
 // while the thread was unknown.
-func TestSessionThatFindsItsThreadLaterIsDelivered(t *testing.T) {
+func TestSessionThatFindsItsThreadLaterIsHandedItsMessages(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
