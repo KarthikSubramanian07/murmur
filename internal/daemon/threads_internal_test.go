@@ -182,7 +182,7 @@ func TestSettledThreadsGoOffline(t *testing.T) {
 		}
 		// A message for everyone reaches the others, not the settled one.
 		d.st.Inbox = map[string][]*inMsg{}
-		d.deliverLocked(bus.Event{ID: "m", Type: bus.Message, From: "other/xxxxxx", To: "*", At: time.Now()}, modeNormal)
+		d.queueLocked(bus.Event{ID: "m", Type: bus.Message, From: "other/xxxxxx", To: "*", At: time.Now()}, modeNormal)
 		if len(d.st.Inbox["aaaaaa"]) != 0 || len(d.st.Inbox["bbbbbb"]) != 1 {
 			t.Errorf("%s: inboxes after a broadcast: %v", when, d.st.Inbox)
 		}

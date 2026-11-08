@@ -13,12 +13,12 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
-// `t3 thread send` takes no key that would make a repeat harmless, so a delivery that failed after
+// `t3 thread send` takes no key that would make a repeat harmless, so a handoff that failed after
 // `t3` started may have put the message in the thread, and trying again would make a second turn of
 // it. Only an attempt that cannot have reached T3 is made twice (#63).
 
 // lateT3 is a `t3` that isn't there yet: exe names a command that doesn't exist, until install puts
-// the stand-in in its place. A delivery to it fails before anything starts.
+// the stand-in in its place. A handoff to it fails before anything starts.
 func lateT3(t *testing.T) (exe string, install func(), calls func() []t3Call) {
 	t.Helper()
 	stand, calls := useFakeT3(t)
@@ -50,7 +50,7 @@ func lateT3(t *testing.T) (exe string, install func(), calls func() []t3Call) {
 
 // A `t3` that took the message and then failed, as one does that times out or has its output lost
 // after T3 accepted it, is not run again: the message may be in the thread already, and it would
-// be there twice. It waits for the hook's notice instead, and is never delivered a second time.
+// be there twice. It waits for the hook's notice instead, and is never handed over a second time.
 func TestADeliveryThatMayHaveLandedIsNotRepeated(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
@@ -73,8 +73,8 @@ func TestADeliveryThatMayHaveLandedIsNotRepeated(t *testing.T) {
 	}
 }
 
-// The same holds over a restart of the daemon (#82): the memory of a delivery that may have landed
-// was in the daemon alone, so a daemon that started within the 15 minutes a message stays deliverable
+// The same holds over a restart of the daemon (#82): the memory of a handoff that may have landed
+// was in the daemon alone, so a daemon that started within the 15 minutes a message stays fit to hand over
 // sent the same turn again. The mark is saved before the handoff, so it is there whether the daemon
 // stopped after the call failed or in the middle of it, and the message is left to the notice.
 func TestADeliveryThatMayHaveLandedIsNotRepeatedAfterARestart(t *testing.T) {
@@ -128,7 +128,7 @@ func TestADeliveryThatMayHaveLandedIsNotRepeatedAfterARestart(t *testing.T) {
 
 // A message is not handed over unless the mark that it was has been saved: a mark that couldn't be
 // would leave a restart nothing to find, and the turn would be sent again. It is left to the notice,
-// as after any failed delivery (#82).
+// as after any failed handoff (#82).
 func TestAMessageIsNotHandedOverWhenTheMarkCannotBeSaved(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)

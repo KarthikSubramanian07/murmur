@@ -191,9 +191,9 @@ func (d *Daemon) forwardLocked(to string) string {
 	return bus.Addr(d.device, holder)
 }
 
-// deliveredToLocked is where a message for the address to is delivered: to, or the session it is
+// queuedAtLocked is where a message for the address to is queued: to, or the session it is
 // forwarded to. Caller holds mu.
-func (d *Daemon) deliveredToLocked(to string) string {
+func (d *Daemon) queuedAtLocked(to string) string {
 	if f := d.forwardLocked(to); f != "" {
 		return f
 	}

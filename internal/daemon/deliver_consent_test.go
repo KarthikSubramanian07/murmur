@@ -10,12 +10,12 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
-// Delivery is the one thing the daemon does to the user's other programs, so it stops with the
+// Handoff is the one thing the daemon does to the user's other programs, so it stops with the
 // user's consent (#55): a clone that hasn't joined, or has left, runs no `t3` and writes to no
 // socket. The daemon exits within ConsentPoll of the consent going; these tests make that poll
-// long, to show that delivery doesn't rely on it.
+// long, to show that handoff doesn't rely on it.
 
-// A message that arrives by sync once the user has left waits in the inbox. It isn't delivered, and
+// A message that arrives by sync once the user has left waits in the inbox. It isn't handed over, and
 // isn't counted as a failure either: when the user joins again, it goes in front of what came after.
 func TestNoTurnIsDeliveredForAUserWhoHasLeft(t *testing.T) {
 	remote := newRemote(t)
@@ -41,12 +41,12 @@ func TestNoTurnIsDeliveredForAUserWhoHasLeft(t *testing.T) {
 	eventually(t, "both messages", func() bool { return len(calls()) >= 2 })
 	for i, want := range []string{"while gone", "after joining again"} {
 		if got := calls()[i].Stdin; !strings.Contains(got, "via "+brand.Product+":\n\n"+want+"\n") {
-			t.Errorf("delivery %d was %q, want %q", i, got, want)
+			t.Errorf("handoff %d was %q, want %q", i, got, want)
 		}
 	}
 }
 
-// A delivery that failed before anything started, and waits to try again, doesn't try again for a
+// A handoff that failed before anything started, and waits to try again, doesn't try again for a
 // user who left in between. Without the guard the second attempt would fail to start too, and be
 // logged as a failure; with it, the attempt isn't made.
 func TestRetryOfADeliveryStopsWhenTheUserLeaves(t *testing.T) {

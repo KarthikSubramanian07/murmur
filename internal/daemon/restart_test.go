@@ -86,7 +86,7 @@ func TestInboxSurvivesCleanRestart(t *testing.T) {
 	bob, _ := b.session("bbbbbb", "")
 	eventually(t, "presence", func() bool { return a.seesSession(bob) })
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "unread across a restart"})
-	eventually(t, "delivery", func() bool {
+	eventually(t, "the message to be queued", func() bool {
 		return len(b.do(proto.Request{Op: proto.OpNotices, Session: "bbbbbb"}).Messages) == 1
 	})
 

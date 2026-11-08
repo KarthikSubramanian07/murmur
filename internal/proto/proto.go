@@ -147,9 +147,9 @@ type Hello struct {
 	// Code starts the server itself: the hook's CLAUDE_PID is how the daemon links the two.
 	ClientPID int `json:"clientPid,omitempty"`
 	// Reconnect says the session was registered with a daemon that went away, so it should get
-	// what that daemon would have delivered.
+	// what that daemon would have queued for it.
 	Reconnect bool `json:"reconnect,omitempty"`
-	// Route says how to deliver a message into the session as a turn.
+	// Route says how to hand a message over to the session as a turn.
 	Route
 }
 
@@ -232,7 +232,7 @@ type SessionDetail struct {
 	Started   time.Time `json:"started,omitzero"`
 
 	// Running says the session is in a device's presence (or registered here), or in its grace.
-	// Reachable says a message sent now will be delivered: it is connected, and its device's
+	// Reachable says a message sent now will be queued in the session's inbox: it is connected, and its device's
 	// presence is current. A device that is Stale was last seen at DeviceSeen; a session Dropped is
 	// waiting out its grace for its MCP server to come back.
 	Running    bool      `json:"running"`

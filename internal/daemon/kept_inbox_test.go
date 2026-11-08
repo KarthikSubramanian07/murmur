@@ -144,7 +144,7 @@ func TestKeptInboxCatchesUpAfterALongOutage(t *testing.T) {
 	}
 }
 
-// A first start has no stopped sessions and delivers nothing from the history on the bus, to a
+// A first start has no stopped sessions and hands nothing over from the history on the bus, to a
 // session registering at once or later.
 func TestFirstStartStillSkipsAllHistory(t *testing.T) {
 	remote := newRemote(t)
@@ -175,7 +175,7 @@ func TestKeptMessageWakesAStoppedT3Thread(t *testing.T) {
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "sent overnight", Body: "wake up"})
 	b.start()
 
-	eventually(t, "the delivery into the thread", func() bool { return len(calls()) == 1 })
+	eventually(t, "the handoff into the thread", func() bool { return len(calls()) == 1 })
 	if c := calls()[0]; strings.Join(c.Args, " ") != "thread send thread-bob -" || !strings.Contains(c.Stdin, "wake up") {
 		t.Errorf("t3 was run as %q with %q", c.Args, c.Stdin)
 	}

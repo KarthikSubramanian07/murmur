@@ -263,7 +263,7 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 // moved to another conversation since, and another session here may have taken the name after it.
 // The last holder is the answer if the name is still the last it took and it can receive, running
 // or not; one that has moved to another conversation is not the name's any more (#46). Otherwise
-// the registry's address goes on the bus as it is, as from any device, and delivery forwards it at
+// the registry's address goes on the bus as it is, as from any device, and the receiving daemon forwards it at
 // most once (see forwardLocked): forwarding it here too would make two hops of one.
 // Caller holds mu.
 func (d *Daemon) resolveNameLocked(name string) (addr string, ok bool) {

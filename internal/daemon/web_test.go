@@ -728,7 +728,7 @@ func TestSessionKeepsDaemonUpWithPage(t *testing.T) {
 }
 
 // A daemon whose first sync failed reads the logs it then finds as history, skipping what was sent
-// before it started, but delivers what was sent since to the sessions registered meanwhile. The
+// before it started, but queues what was sent since for the sessions registered meanwhile. The
 // page shows those messages too, and not the history.
 func TestPageMessagesAfterAFailedFirstSync(t *testing.T) {
 	remote := newRemote(t)

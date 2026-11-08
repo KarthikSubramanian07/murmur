@@ -69,7 +69,7 @@ func TestReconnectInGraceKeepsSession(t *testing.T) {
 		return len(b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob"}).Messages) == 1
 	})
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "not yet told about"})
-	eventually(t, "delivery", func() bool { return logHas(b, "not yet told about") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "not yet told about") })
 	tip := meshTip(t, b, remote, b.self())
 
 	conn.Close()
@@ -134,7 +134,7 @@ func TestMessageInGraceIsDeliveredAfterReconnect(t *testing.T) {
 	if r := a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "while you were gone"}); r.Error != "" || r.Note != "" {
 		t.Fatalf("send: %+v", r)
 	}
-	eventually(t, "delivery", func() bool { return logHas(b, "while you were gone") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "while you were gone") })
 	if n := b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob"}).Messages; len(n) != 0 {
 		t.Fatalf("a notice for a session that is not connected: %+v", n)
 	}
@@ -162,14 +162,14 @@ func TestStoppedSessionComesBackToItsInbox(t *testing.T) {
 	bob, conn := b.session("bbbbbb", "")
 	eventually(t, "presence", func() bool { return a.seesSession(bob) })
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "before it stopped"})
-	eventually(t, "delivery", func() bool { return logHas(b, "before it stopped") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "before it stopped") })
 
 	conn.Close()
 	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.seesSession(bob) })
 	if r := a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "while it was stopped"}); r.Error != "" {
 		t.Fatalf("send to a stopped session: %+v", r)
 	}
-	eventually(t, "delivery", func() bool { return logHas(b, "while it was stopped") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "while it was stopped") })
 
 	if _, err := b.restartedMCP("bbbbbb", ""); err != nil {
 		t.Fatal(err)
@@ -193,11 +193,11 @@ func TestStoppedInboxSurvivesDaemonRestart(t *testing.T) {
 	bob, conn := b.session("bbbbbb", "")
 	eventually(t, "presence", func() bool { return a.seesSession(bob) })
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "before it stopped"})
-	eventually(t, "delivery", func() bool { return logHas(b, "before it stopped") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "before it stopped") })
 	conn.Close()
 	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.seesSession(bob) })
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "while it was stopped"})
-	eventually(t, "delivery", func() bool { return logHas(b, "while it was stopped") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "while it was stopped") })
 
 	b.stop()
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "while the daemon was down"})
@@ -243,7 +243,7 @@ func TestStoppedInboxExpires(t *testing.T) {
 	bob, conn := b.session("bbbbbb", "")
 	eventually(t, "presence", func() bool { return a.seesSession(bob) })
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "never read"})
-	eventually(t, "delivery", func() bool { return logHas(b, "never read") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "never read") })
 	conn.Close()
 	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 })
 

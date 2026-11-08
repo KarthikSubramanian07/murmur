@@ -17,7 +17,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
-// Tests of delivering a message into a session as a turn (#57). `t3` is a stand-in: the test
+// Tests of handing a message over to a session as a turn (#57). `t3` is a stand-in: the test
 // binary itself, run again as `t3 thread send <thread> -`, which records what it was asked.
 
 // fakeT3Env names the file the stand-in appends its calls to; fakeT3FailEnv, if set, makes it fail.
@@ -154,7 +154,7 @@ func TestMessageForAT3SessionIsDeliveredAsATurn(t *testing.T) {
 
 	body := "Are you changing it?\nI say \"yes\" — and 100% über-sure.\n\n  indented"
 	a.send("aaaaaa", bob, "auth middleware?", body)
-	eventually(t, "the delivery", func() bool { return len(calls()) > 0 })
+	eventually(t, "the handoff", func() bool { return len(calls()) > 0 })
 
 	c := calls()[0]
 	if strings.Join(c.Args, " ") != "thread send thread-bob -" {
@@ -174,12 +174,12 @@ func TestMessageForAT3SessionIsDeliveredAsATurn(t *testing.T) {
 	}
 
 	eventually(t, "the message to be marked read", func() bool { return strings.Contains(out.String(), "as a turn") })
-	holds(t, "one delivery, and nothing unread", 1500*time.Millisecond, func() bool {
+	holds(t, "one handoff, and nothing unread", 1500*time.Millisecond, func() bool {
 		inbox, notices := b.unread("bbbbbb", "claude-bob")
 		return len(inbox) == 0 && len(notices) == 0 && len(calls()) == 1
 	})
-	if !logHas(b, "delivered \"auth middleware?\"") {
-		t.Errorf("the log doesn't say the message was delivered: %+v", b.do(proto.Request{Op: proto.OpLog, Limit: 50}).Events)
+	if !logHas(b, "handed \"auth middleware?\"") {
+		t.Errorf("the log doesn't say the message was handed over: %+v", b.do(proto.Request{Op: proto.OpLog, Limit: 50}).Events)
 	}
 }
 
@@ -196,11 +196,11 @@ func TestMessagesForOneSessionAreDeliveredInOrder(t *testing.T) {
 	for _, s := range want {
 		a.send("aaaaaa", bob, s, "")
 	}
-	eventually(t, "three deliveries", func() bool { return len(calls()) >= 3 })
-	holds(t, "three deliveries, no more", time.Second, func() bool { return len(calls()) == 3 })
+	eventually(t, "three handoffs", func() bool { return len(calls()) >= 3 })
+	holds(t, "three handoffs, no more", time.Second, func() bool { return len(calls()) == 3 })
 	for i, c := range calls() {
 		if !strings.Contains(c.Stdin, "via "+brand.Product+":\n\n"+want[i]+"\n") {
-			t.Errorf("delivery %d was %q, want %q", i, c.Stdin, want[i])
+			t.Errorf("handoff %d was %q, want %q", i, c.Stdin, want[i])
 		}
 	}
 }
@@ -223,7 +223,7 @@ func TestWithNoWayInMessagesStayNotices(t *testing.T) {
 		notices = append(notices, b.hook("claude-bob", 0)...)
 		return len(notices) >= 2
 	})
-	holds(t, "no delivery", 500*time.Millisecond, func() bool { return len(calls()) == 0 })
+	holds(t, "no handoff", 500*time.Millisecond, func() bool { return len(calls()) == 0 })
 	if got := inboxOf(b, "bbbbbb"); len(got) != 2 {
 		t.Errorf("the inbox keeps what the hook announced: %q", got)
 	}
@@ -232,7 +232,7 @@ func TestWithNoWayInMessagesStayNotices(t *testing.T) {
 	}
 }
 
-// A failed delivery is left to the hook's notice, which still shows the message, and the log says so
+// A failed handoff is left to the hook's notice, which still shows the message, and the log says so
 // once per session however many messages fail. It is not tried again: the failure may have come
 // after T3 took the message (see deliver_repeat_test.go).
 func TestFailedDeliveryFallsBackToTheNotice(t *testing.T) {
@@ -275,7 +275,7 @@ func TestFailedDeliveryFallsBackToTheNotice(t *testing.T) {
 }
 
 // The page's wake setting "never" keeps messages as notices, for the device or for one session; a
-// message that waited is delivered when the setting is lifted.
+// message that waited is handed over when the setting is lifted.
 func TestWakeNeverKeepsTheNotice(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
@@ -295,20 +295,20 @@ func TestWakeNeverKeepsTheNotice(t *testing.T) {
 	put(`{"wake":{"when":"never"}}`)
 	a.send("aaaaaa", bob, "held", "")
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "held") })
-	holds(t, "no delivery under never", time.Second, func() bool { return len(calls()) == 0 })
+	holds(t, "no handoff under never", time.Second, func() bool { return len(calls()) == 0 })
 
 	// One session allowed while the device says never.
 	put(`{"wake":{"when":"never"},"sessionWake":{"` + bobName + `":{"when":"always"}}}`)
-	eventually(t, "delivery for the session that may be woken", func() bool { return len(calls()) == 1 })
+	eventually(t, "handoff for the session that may be woken", func() bool { return len(calls()) == 1 })
 	if !strings.Contains(calls()[0].Stdin, "held") {
-		t.Errorf("the delivered turn: %q", calls()[0].Stdin)
+		t.Errorf("the turn handed over: %q", calls()[0].Stdin)
 	}
 
 	// The device allowed while this session says never.
 	put(`{"wake":{"when":"always"},"sessionWake":{"` + bobName + `":{"when":"never"}}}`)
 	a.send("aaaaaa", bob, "held again", "")
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "held again") })
-	holds(t, "no delivery to a session that says never", time.Second, func() bool { return len(calls()) == 1 })
+	holds(t, "no handoff to a session that says never", time.Second, func() bool { return len(calls()) == 1 })
 	if n := b.hook("claude-bob", 0); len(n) != 1 || n[0] != "held again" {
 		t.Errorf("notices: %q", n)
 	}
@@ -328,17 +328,17 @@ func TestMessageForAStoppedT3SessionStillReachesItsThread(t *testing.T) {
 	conn.Close()
 	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.seesSession(bob) })
 	a.send("aaaaaa", bob, "while you were away", "wake up")
-	eventually(t, "the delivery", func() bool { return len(calls()) == 1 })
+	eventually(t, "the handoff", func() bool { return len(calls()) == 1 })
 	if c := calls()[0]; strings.Join(c.Args, " ") != "thread send thread-bob -" || !strings.Contains(c.Stdin, "wake up") {
 		t.Errorf("t3 was run as %q with %q", c.Args, c.Stdin)
 	}
 	// The stand-in notes its call when it starts; the message leaves the inbox when it has ended. A
-	// restart before that finds the message still there, and delivers it again, as it should.
-	eventually(t, "the first delivery to finish", func() bool { return logHas(b, `delivered "while you were away"`) })
+	// restart before that finds the message still there, and hands it over again, as it should.
+	eventually(t, "the first handoff to finish", func() bool { return logHas(b, `handed "while you were away"`) })
 
 	b.restart()
 	a.send("aaaaaa", bob, "and again", "still there?")
-	eventually(t, "the delivery after a restart", func() bool { return len(calls()) == 2 })
+	eventually(t, "the handoff after a restart", func() bool { return len(calls()) == 2 })
 	if c := calls()[1]; strings.Join(c.Args, " ") != "thread send thread-bob -" || !strings.Contains(c.Stdin, "still there?") {
 		t.Errorf("t3 was run as %q with %q", c.Args, c.Stdin)
 	}
@@ -388,16 +388,16 @@ func TestSessionThatFindsItsThreadLaterIsDelivered(t *testing.T) {
 
 	a.send("aaaaaa", bob, "early", "")
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "early") })
-	holds(t, "no delivery without a thread", 500*time.Millisecond, func() bool { return len(calls()) == 0 })
+	holds(t, "no handoff without a thread", 500*time.Millisecond, func() bool { return len(calls()) == 0 })
 
 	r := b.do(proto.Request{Op: proto.OpRoute, Session: "bbbbbb", Route: &proto.Route{T3CLI: exe, T3Thread: "thread-bob"}})
 	if r.Error != "" {
 		t.Fatalf("route: %s", r.Error)
 	}
-	eventually(t, "the early message to be delivered", func() bool { return len(calls()) == 1 })
+	eventually(t, "the early message to be handed over", func() bool { return len(calls()) == 1 })
 	b.nameIs(bob, name)
 	a.send("aaaaaa", bob, "late", "")
-	eventually(t, "the late message to be delivered", func() bool { return len(calls()) == 2 })
+	eventually(t, "the late message to be handed over", func() bool { return len(calls()) == 2 })
 }
 
 // Where a session can be reached is local: the thread, the T3 path and above all the messaging
@@ -415,7 +415,7 @@ func TestRouteStaysOnTheDevice(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 	a.send("aaaaaa", bob, "hello", "there")
 	b.send("bbbbbb", alice, "reply", "right back")
-	eventually(t, "the delivery", func() bool { return len(calls()) == 1 })
+	eventually(t, "the handoff", func() bool { return len(calls()) == 1 })
 	eventually(t, "the reply", func() bool { return logHas(a, "reply") })
 	time.Sleep(time.Second) // presence and logs go out on the next syncs
 

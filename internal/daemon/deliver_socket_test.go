@@ -15,7 +15,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
-// Tests of delivering a message into a Claude Code session outside T3, through the messaging
+// Tests of handing a message over to a Claude Code session outside T3, through the messaging
 // socket Claude Code offers (#57). The socket is a stand-in, a unix socket that records the lines
 // written to it; the stand-in `t3` of deliver_test.go shows nothing is run for these sessions.
 
@@ -66,7 +66,7 @@ func (f *fakeSocket) lines() []string {
 	return append([]string(nil), f.got...)
 }
 
-// socketTurn reads what a session got on its socket as the daemon's one delivery: the auth line
+// socketTurn reads what a session got on its socket as the daemon's one handoff: the auth line
 // with the token, then the user line, whose content it returns.
 func socketTurn(t *testing.T, lines []string, token string) string {
 	t.Helper()
@@ -106,7 +106,7 @@ func TestMessageForAClaudeCodeSessionGoesThroughItsMessagingSocket(t *testing.T)
 
 	body := "Are you changing it?\nI say \"yes\" — and 100% über-sure."
 	a.send("aaaaaa", bob, "auth middleware?", body)
-	eventually(t, "the delivery", func() bool { return len(sock.lines()) >= 2 })
+	eventually(t, "the handoff", func() bool { return len(sock.lines()) >= 2 })
 
 	turn := socketTurn(t, sock.lines(), "tok-bob-1")
 	for _, want := range []string{
@@ -119,7 +119,7 @@ func TestMessageForAClaudeCodeSessionGoesThroughItsMessagingSocket(t *testing.T)
 		}
 	}
 	eventually(t, "the message to be marked read", func() bool { return strings.Contains(out.String(), "through the messaging socket") })
-	holds(t, "one delivery, and nothing unread", 1500*time.Millisecond, func() bool {
+	holds(t, "one handoff, and nothing unread", 1500*time.Millisecond, func() bool {
 		inbox, notices := b.unread("bbbbbb", "claude-bob")
 		return len(inbox) == 0 && len(notices) == 0 && len(sock.lines()) == 2
 	})
@@ -145,7 +145,7 @@ func TestSessionInT3IsNotWrittenToItsSocket(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	a.send("aaaaaa", bob, "hi", "there")
-	eventually(t, "the delivery", func() bool { return len(calls()) == 1 })
+	eventually(t, "the handoff", func() bool { return len(calls()) == 1 })
 	holds(t, "nothing on the socket", 500*time.Millisecond, func() bool { return len(sock.lines()) == 0 })
 }
 
@@ -160,7 +160,7 @@ func TestMessagingSocketNeedsTheSessionToBeRunning(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	a.send("aaaaaa", bob, "while you are here", "hello")
-	eventually(t, "the delivery", func() bool { return len(sock.lines()) == 2 })
+	eventually(t, "the handoff", func() bool { return len(sock.lines()) == 2 })
 
 	conn.Close()
 	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.seesSession(bob) })

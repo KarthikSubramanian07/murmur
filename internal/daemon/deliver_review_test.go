@@ -9,12 +9,12 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
-// Tests from the review of delivering messages as turns (#57): what a restart, a hook, a thread
-// that came back as a new session, and a client session's ID in T3 did to a delivery.
+// Tests from the review of handing messages over as turns (#57): what a restart, a hook, a thread
+// that came back as a new session, and a client session's ID in T3 did to a handoff.
 
-// A message that waited in an inbox over a restart is delivered when the daemon is back, though
-// nothing new arrives to start a delivery: both tries failed because there was no `t3` to run. (A
-// delivery that got as far as running `t3` is not repeated after a restart: deliver_repeat_test.go.)
+// A message that waited in an inbox over a restart is handed over when the daemon is back, though
+// nothing new arrives to start a handoff: both tries failed because there was no `t3` to run. (A
+// handoff that got as far as running `t3` is not repeated after a restart: deliver_repeat_test.go.)
 func TestMessagesKeptOverARestartAreDeliveredWhenTheDaemonIsBack(t *testing.T) {
 	remote := newRemote(t)
 	exe, install, calls := lateT3(t)
@@ -32,11 +32,11 @@ func TestMessagesKeptOverARestartAreDeliveredWhenTheDaemonIsBack(t *testing.T) {
 
 	install() // T3 is back, and so is the daemon
 	b.restart()
-	eventually(t, "the delivery after the restart", func() bool { return len(calls()) == 1 })
+	eventually(t, "the handoff after the restart", func() bool { return len(calls()) == 1 })
 }
 
-// The hook doesn't tell a session of the messages queued behind the one being delivered: they are
-// turns too, and told by a notice they would never be delivered.
+// The hook doesn't tell a session of the messages queued behind the one being handed over: they are
+// turns too, and told by a notice they would never be handed over.
 func TestHookLeavesMessagesQueuedForDeliveryAlone(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
@@ -48,12 +48,12 @@ func TestHookLeavesMessagesQueuedForDeliveryAlone(t *testing.T) {
 
 	a.send("aaaaaa", bob, "first", "one")
 	a.send("aaaaaa", bob, "second", "two")
-	eventually(t, "the first delivery to start", func() bool { return len(calls()) == 1 })
+	eventually(t, "the first handoff to start", func() bool { return len(calls()) == 1 })
 	eventually(t, "the second message to reach b", func() bool { return logHas(b, "second") })
 	if got := b.hook("claude-bob", 0); len(got) != 0 {
 		t.Errorf("the hook told of %q, which are on their way as turns", got)
 	}
-	eventually(t, "both messages to be delivered", func() bool { return len(calls()) == 2 })
+	eventually(t, "both messages to be handed over", func() bool { return len(calls()) == 2 })
 	holds(t, "nothing unread", time.Second, func() bool {
 		inbox, notices := b.unread("bbbbbb", "claude-bob")
 		return len(inbox) == 0 && len(notices) == 0 && len(calls()) == 2
@@ -77,8 +77,8 @@ func TestMessageForEveryoneReachesAThreadOnce(t *testing.T) {
 		eventually(t, "presence", func() bool { return a.seesSession(bob) })
 
 		a.send("aaaaaa", "*", "to everyone", "hello")
-		eventually(t, "the delivery", func() bool { return len(calls()) >= 1 })
-		holds(t, "one delivery", 1500*time.Millisecond, func() bool { return len(calls()) == 1 })
+		eventually(t, "the handoff", func() bool { return len(calls()) >= 1 })
+		holds(t, "one handoff", 1500*time.Millisecond, func() bool { return len(calls()) == 1 })
 	})
 	t.Run("the old session in its grace", func(t *testing.T) {
 		remote := newRemote(t)
@@ -93,8 +93,8 @@ func TestMessageForEveryoneReachesAThreadOnce(t *testing.T) {
 		eventually(t, "presence", func() bool { return a.seesSession(bob) })
 
 		a.send("aaaaaa", "*", "to everyone", "hello")
-		eventually(t, "the delivery", func() bool { return len(calls()) >= 1 })
-		holds(t, "one delivery", 1500*time.Millisecond, func() bool { return len(calls()) == 1 })
+		eventually(t, "the handoff", func() bool { return len(calls()) >= 1 })
+		holds(t, "one handoff", 1500*time.Millisecond, func() bool { return len(calls()) == 1 })
 	})
 }
 
@@ -120,8 +120,8 @@ func TestClientSessionIDDoesNotBringBackTheNameOfASessionInT3(t *testing.T) {
 }
 
 // What the session that a thread's new session replaces still had unread goes to the new one, and
-// is delivered: with the old route retired, nothing else would. One that is on its way in as the
-// replacement registers is delivered once.
+// is handed over: with the old route retired, nothing else would. One that is on its way in as the
+// replacement registers is handed over once.
 func TestReplacementOfAThreadTakesWhatTheOldSessionHadUnread(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
@@ -133,22 +133,22 @@ func TestReplacementOfAThreadTakesWhatTheOldSessionHadUnread(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(old) && b.seesSession(alice) })
 
 	a.send("aaaaaa", old, "first", "one")
-	eventually(t, "the first delivery to start", func() bool { return len(calls()) == 1 })
+	eventually(t, "the first handoff to start", func() bool { return len(calls()) == 1 })
 	a.send("aaaaaa", old, "second", "two")
 	eventually(t, "the second message to reach b", func() bool { return logHas(b, "second") })
 	conn.Close()                       // dropped, in its grace, with the second unread and the first on its way
 	time.Sleep(500 * time.Millisecond) // the daemon has seen it go, and the grace is long
 	b.sessionRoute("cccccc", "claude-2", route)
 
-	eventually(t, "the second message to be delivered", func() bool { return len(calls()) >= 2 })
-	holds(t, "each delivered once", 2500*time.Millisecond, func() bool { return len(calls()) == 2 })
+	eventually(t, "the second message to be handed over", func() bool { return len(calls()) >= 2 })
+	holds(t, "each handed over once", 2500*time.Millisecond, func() bool { return len(calls()) == 2 })
 	if inbox, _ := b.unread("cccccc", "claude-2"); len(inbox) != 0 {
 		t.Errorf("inbox: %q", inbox)
 	}
 }
 
 // A message that was on its way in when the new session of a thread took over keeps its place:
-// what came after it waits until it has been delivered, tried again or not, so the turns arrive in
+// what came after it waits until it has been handed over, tried again or not, so the turns arrive in
 // the order the messages did. The first message waits for its retry because the first attempt could
 // not start `t3`, which is not there yet.
 func TestReplacementDeliversInOrderWhatWasOnItsWay(t *testing.T) {
@@ -165,7 +165,7 @@ func TestReplacementDeliversInOrderWhatWasOnItsWay(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(old) && b.seesSession(alice) })
 
 	a.send("aaaaaa", old, "first", "one")
-	eventually(t, "the first delivery to fail before it started", func() bool {
+	eventually(t, "the first handoff to fail before it started", func() bool {
 		return strings.Contains(out.String(), "nothing was sent")
 	})
 	install() // the retry, 3 s on, finds it
@@ -175,8 +175,8 @@ func TestReplacementDeliversInOrderWhatWasOnItsWay(t *testing.T) {
 	time.Sleep(500 * time.Millisecond) // the daemon has seen it go
 	b.sessionRoute("cccccc", "claude-2", route)
 
-	eventually(t, "both messages to have been delivered", func() bool { return len(calls()) >= 2 })
-	holds(t, "each delivered once", 2*time.Second, func() bool { return len(calls()) == 2 })
+	eventually(t, "both messages to have been handed over", func() bool { return len(calls()) >= 2 })
+	holds(t, "each handed over once", 2*time.Second, func() bool { return len(calls()) == 2 })
 	for i, want := range []string{"first", "second"} {
 		if got := calls()[i].Stdin; !strings.Contains(got, want) {
 			t.Errorf("call %d carried %q, want the message %q", i, got, want)
@@ -223,7 +223,7 @@ func TestReplacementIsNotHandedItsOwnBroadcast(t *testing.T) {
 		t.Errorf("the new session got its own message back: inbox %q, notices %q", inbox, notices)
 	}
 	if n := len(calls()); n != 0 {
-		t.Errorf("%d turns delivered while the page says never", n)
+		t.Errorf("%d turns handed over while the page says never", n)
 	}
 }
 
