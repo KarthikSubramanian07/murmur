@@ -58,7 +58,7 @@ func TestUpdateRestartForwardsDaemonFlags(t *testing.T) {
 			return daemon.ErrUpdated
 		}, func(exe, gitDir string, flags ...string) error {
 			started = true
-			if exe == "" || gitDir != filepath.Join(clone, ".git") {
+			if exe == "" || !samePath(t, gitDir, filepath.Join(clone, ".git")) {
 				t.Fatalf("replacement target: %q %q", exe, gitDir)
 			}
 			gotFlags = flags
@@ -71,4 +71,19 @@ func TestUpdateRestartForwardsDaemonFlags(t *testing.T) {
 	if !started || !reflect.DeepEqual(gotFlags, want) {
 		t.Fatalf("started=%v flags=%q, want %q", started, gotFlags, want)
 	}
+}
+
+// samePath says a and b name the same directory once symlinks are resolved: git reports a macOS
+// temp directory as /private/var/..., which t.TempDir names /var/....
+func samePath(t *testing.T, a, b string) bool {
+	t.Helper()
+	ra, err := filepath.EvalSymlinks(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rb, err := filepath.EvalSymlinks(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ra == rb
 }
