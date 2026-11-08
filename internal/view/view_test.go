@@ -66,6 +66,29 @@ func TestTurnKeepsTheBodyAsWritten(t *testing.T) {
 	}
 }
 
+// A whole message through the hook is exactly the turn it would otherwise become, even with an
+// empty body. Subject-only messages mixed into the same response keep the notice and unread count.
+func TestNoticesRenderWholeMessagesAsTurns(t *testing.T) {
+	whole := proto.MessageView{From: "d/a", FromName: "quiet-otter", FromAgent: "Codex", To: "x",
+		Subject: "all of it", Body: "the body", Whole: true}
+	if got, want := Notices([]proto.MessageView{whole}, 0), Turn(whole); got != want {
+		t.Fatalf("whole notice:\n got %q\nwant %q", got, want)
+	}
+	empty := whole
+	empty.Body = ""
+	if got, want := Notices([]proto.MessageView{empty}, 0), Turn(empty); got != want {
+		t.Fatalf("whole notice with no body:\n got %q\nwant %q", got, want)
+	}
+
+	subject := proto.MessageView{From: "d/b", FromName: "brave-heron", To: "x", Subject: "just this"}
+	got := Notices([]proto.MessageView{whole, subject}, 1)
+	for _, want := range []string{Turn(whole), `[Murmur] brave-heron (d/b): "just this"`, "1 message unread."} {
+		if !strings.Contains(got, want) {
+			t.Errorf("mixed notices lack %q:\n%s", want, got)
+		}
+	}
+}
+
 // sess makes a session that was last active ago ago.
 func sess(name string, ago time.Duration, doing string) proto.SessionView {
 	return proto.SessionView{Addr: "dev/" + name, Name: name, Agent: "claude-code", Branch: "main", Doing: doing,

@@ -771,7 +771,7 @@ func (d *Daemon) idleLoop(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		wake := d.wakeSnapshot() // before mu: setMu is taken alone
+		wake := d.settingsSnapshot() // before mu: setMu is taken alone
 		d.mu.Lock()
 		// An open page keeps the daemon up as a session does: the idle time counts from the last
 		// session going, or from the page no longer counting as open.

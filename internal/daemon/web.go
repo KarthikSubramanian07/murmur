@@ -224,10 +224,17 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 type pageSettings struct {
 	Wake        web.Wake            `json:"wake"`
 	SessionWake map[string]web.Wake `json:"sessionWake,omitempty"`
+	Busy        web.Busy            `json:"busy"`
+	SessionBusy map[string]web.Busy `json:"sessionBusy,omitempty"`
 }
 
 func (p pageSettings) view() web.Settings {
-	return web.Settings{Wake: p.Wake, SessionWake: maps.Clone(p.SessionWake), DefaultMinutes: defaultWakeMinutes}
+	busy := p.Busy
+	if busy == "" {
+		busy = web.BusySubject
+	}
+	return web.Settings{Wake: p.Wake, SessionWake: maps.Clone(p.SessionWake), Busy: busy,
+		SessionBusy: maps.Clone(p.SessionBusy), DefaultMinutes: defaultWakeMinutes}
 }
 
 func (d *Daemon) settingsPath() string { return filepath.Join(d.dir, "settings.json") }
@@ -235,7 +242,7 @@ func (d *Daemon) settingsPath() string { return filepath.Join(d.dir, "settings.j
 // loadSettings reads settings.json, or takes the defaults if there is none or it holds something
 // the page wouldn't have saved. The file is left alone then: the next save replaces it.
 func (d *Daemon) loadSettings() {
-	d.settings = pageSettings{Wake: web.Wake{When: web.WakeWithin}}
+	d.settings = pageSettings{Wake: web.Wake{When: web.WakeWithin}, Busy: web.BusySubject}
 	b, err := os.ReadFile(d.settingsPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return
@@ -268,9 +275,16 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	if err := web.CheckSettings(set); err != nil {
 		return web.Settings{}, err
 	}
-	next := pageSettings{Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake)}
+	next := pageSettings{Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake), Busy: set.Busy,
+		SessionBusy: maps.Clone(set.SessionBusy)}
+	if next.Busy == "" {
+		next.Busy = web.BusySubject
+	}
 	if len(next.SessionWake) == 0 {
 		next.SessionWake = nil
+	}
+	if len(next.SessionBusy) == 0 {
+		next.SessionBusy = nil
 	}
 	d.setMu.Lock()
 	defer d.setMu.Unlock()

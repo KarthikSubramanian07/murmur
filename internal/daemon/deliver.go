@@ -30,7 +30,9 @@ import (
 // A session Murmur's hook runs in (Claude Code) is not given a turn while it is at work (#202): T3
 // would queue it behind the running turn, and nothing could take it back, so the agent could read
 // it with `inbox` and then get it again as a turn. The hook tells it of the message after its next
-// tool call instead, and what it hasn't read when the turn ends goes in as a turn then.
+// tool call instead, and what it hasn't read when the turn ends goes in as a turn then. The page
+// can instead choose the whole message through the hook, rendered exactly as Turn and delivered
+// into the agent's context then (#204).
 //
 // A delivered message is removed from the inbox, which is how it is marked read: neither the hook
 // nor `inbox` shows it again. docs/VISION.md ("Delivering a message as a turn") has the reasons.
@@ -76,7 +78,7 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 			return
 		case <-d.pushKick:
 		}
-		wake := d.wakeSnapshot()
+		wake := d.settingsSnapshot()
 		d.mu.Lock()
 		for _, id := range sortedKeys(d.st.Inbox) {
 			if d.updating || d.pushing[id] || ctx.Err() != nil {
@@ -111,7 +113,7 @@ func (d *Daemon) pusher(ctx context.Context, id string) {
 			d.mu.Unlock()
 			return
 		}
-		wake := d.wakeSnapshot()
+		wake := d.settingsSnapshot()
 		d.mu.Lock()
 		job := d.nextPushLocked(id, wake)
 		d.mu.Unlock()
@@ -131,11 +133,12 @@ type pushJob struct {
 	text     string
 }
 
-// wakeSnapshot copies the page's wake settings. setMu is taken alone, never with mu held.
-func (d *Daemon) wakeSnapshot() pageSettings {
+// settingsSnapshot copies the page's settings. setMu is taken alone, never with mu held.
+func (d *Daemon) settingsSnapshot() pageSettings {
 	d.setMu.Lock()
 	defer d.setMu.Unlock()
-	return pageSettings{Wake: d.settings.Wake, SessionWake: maps.Clone(d.settings.SessionWake)}
+	return pageSettings{Wake: d.settings.Wake, SessionWake: maps.Clone(d.settings.SessionWake),
+		Busy: d.settings.Busy, SessionBusy: maps.Clone(d.settings.SessionBusy)}
 }
 
 // routeOfLocked is how a message gets into session id: what its MCP server told the daemon if it
@@ -332,7 +335,7 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 	// A job can wait for a slot (pushSem) or for its retry, and in that time the thread can be
 	// settled, its session idle past its wake setting, or at work again: asked again before each
 	// handoff.
-	wake := d.wakeSnapshot()
+	wake := d.settingsSnapshot()
 	d.mu.Lock()
 	ok := d.wakesLocked(j.id, wake) && !d.hookBusyLocked(j.id)
 	d.mu.Unlock()
@@ -418,25 +421,33 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		}
 		return
 	}
-	for id, box := range d.st.Inbox {
-		for i, m := range box {
-			if m == j.msg {
+	d.deliveredLocked(j.id, j.addr, j.msg, fmt.Sprintf("as a turn, through %s", j.via))
+}
+
+// deliveredLocked marks m delivered into id's context through how: a turn handed to its client, or
+// the hook's whole-message output (#204). It leaves the inbox wherever it is by now (a session that
+// takes a name takes the inboxes kept for it), and the log and page's notes say how it arrived.
+// Caller holds mu.
+func (d *Daemon) deliveredLocked(id, addr string, m *inMsg, how string) {
+	for boxID, box := range d.st.Inbox {
+		for i, candidate := range box {
+			if candidate == m {
 				if box = append(box[:i:i], box[i+1:]...); len(box) == 0 {
-					delete(d.st.Inbox, id)
+					delete(d.st.Inbox, boxID)
 				} else {
-					d.st.Inbox[id] = box
+					d.st.Inbox[boxID] = box
 				}
 				break
 			}
 		}
 	}
 	d.saveLocked()
-	delete(d.pushWarned, j.id)
-	d.pushedAt[j.id] = time.Now()
+	delete(d.pushWarned, id)
+	d.pushedAt[id] = time.Now()
 	d.noteConversationLocked() // the agent now has the message; its answer may soon follow
-	e := j.msg.Event
-	d.noteLocked(time.Now(), fmt.Sprintf("delivered %q from %s to %s as a turn, through %s", e.Subject, e.From, j.addr, j.via))
-	d.log.Printf("delivered message %s to session %s as a turn, through %s", e.ID, j.addr, j.via)
+	e := m.Event
+	d.noteLocked(time.Now(), fmt.Sprintf("delivered %q from %s to %s %s", e.Subject, e.From, addr, how))
+	d.log.Printf("delivered message %s to session %s %s", e.ID, addr, how)
 }
 
 // rememberRouteLocked keeps where a session in T3 is, so a message for it still reaches the

@@ -1,9 +1,10 @@
 // Package hook is the Claude Code hook. After each tool call and each prompt it asks the daemon
-// for messages this session hasn't been told about, and adds one line per message (sender and
-// subject, never the body) to the agent's context, with how many are unread. Before and after each
-// tool call that could run a command it also tells the daemon, which finds the commits the call
-// made (#21). Those calls and prompts tell the daemon the session is at work, and the end of a
-// turn (Stop) that it isn't: a message goes in as a turn only then (#202).
+// for messages this session hasn't been told about, and adds them to the agent's context: sender
+// and subject by default, or the whole message as Turn when the page chooses that (#204), with how
+// many are unread. Before and after each tool call that could run a command it also tells the
+// daemon, which finds the commits the call made (#21). Those calls and prompts tell the daemon the
+// session is at work, and the end of a turn (Stop) that it isn't: a message goes in as a turn only
+// then (#202).
 //
 // It never blocks or fails the agent: any problem, including no daemon running, means it
 // prints nothing and exits 0. Before a tool call it never prints anything at all, and the time it

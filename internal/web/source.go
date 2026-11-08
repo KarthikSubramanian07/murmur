@@ -97,6 +97,11 @@ type Settings struct {
 	Wake Wake `json:"wake"`
 	// SessionWake overrides Wake for single sessions on this device, by name.
 	SessionWake map[string]Wake `json:"sessionWake,omitempty"`
+	// Busy is the device-wide default for what the hook gives a session at work. Empty means
+	// BusySubject, so a page or settings file from before #204 keeps the default.
+	Busy Busy `json:"busy"`
+	// SessionBusy overrides Busy for single sessions on this device, by name.
+	SessionBusy map[string]Busy `json:"sessionBusy,omitempty"`
 	// DefaultMinutes is what Wake.Minutes 0 stands for: 3, or the prompt-cache length if known.
 	// The source reports it; SetSettings ignores it.
 	DefaultMinutes int `json:"defaultMinutes"`
@@ -119,6 +124,17 @@ const (
 
 // MaxWakeMinutes bounds Wake.Minutes: a day.
 const MaxWakeMinutes = 24 * 60
+
+// Busy is what the hook gives a session at work when a message arrives (#204).
+type Busy string
+
+// Busy values.
+const (
+	BusySubject Busy = "subject"
+	BusyWhole   Busy = "whole"
+)
+
+func (b Busy) valid() bool { return b == BusySubject || b == BusyWhole }
 
 func (w Wake) valid() bool {
 	switch w.When {

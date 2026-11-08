@@ -39,7 +39,9 @@ const (
 //	   reports and the Codex thread ID in the route (#66)
 //	3: OpTurnEnd, OpNotices's Unread and Subagent: a session the hook runs in gets notices while it
 //	   is at work, and turns only when it isn't (#202)
-const Protocol = 3
+//	4: MessageView's Whole: the hook gives a session at work the whole message, as a turn's text,
+//	   when the page chooses that (#204)
+const Protocol = 4
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -262,7 +264,7 @@ type CommitView struct {
 	At      time.Time `json:"at"`
 }
 
-// MessageView is one received message. Notices carry no Body.
+// MessageView is one received message. Notices carry no Body unless Whole is set.
 type MessageView struct {
 	ID         string `json:"id"`
 	From       string `json:"from"`
@@ -270,12 +272,15 @@ type MessageView struct {
 	FromAgent  string `json:"fromAgent,omitempty"`
 	FromBranch string `json:"fromBranch,omitempty"`
 	// FromOwner is the sender's person: the git user name on its device, where known.
-	FromOwner string    `json:"fromOwner,omitempty"`
-	To        string    `json:"to"` // the address the message was sent to, whatever it was sent by
-	ToName    string    `json:"toName,omitempty"`
-	Subject   string    `json:"subject"`
-	Body      string    `json:"body,omitempty"`
-	At        time.Time `json:"at"`
+	FromOwner string `json:"fromOwner,omitempty"`
+	To        string `json:"to"` // the address the message was sent to, whatever it was sent by
+	ToName    string `json:"toName,omitempty"`
+	Subject   string `json:"subject"`
+	Body      string `json:"body,omitempty"`
+	// Whole says the hook renders this message with Turn rather than as a subject-only notice, and
+	// the daemon has delivered it through the hook (#204).
+	Whole bool      `json:"whole,omitempty"`
+	At    time.Time `json:"at"`
 }
 
 // EventView is one line of `log`.

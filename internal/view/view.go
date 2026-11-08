@@ -250,12 +250,19 @@ func Turn(m proto.MessageView) string {
 	return b.String()
 }
 
-// Notices renders what the hook shows: a line for each new message, sender and subject, never the
-// body, and then how many are unread, if unread is more than 0. With no new messages it is the
-// count alone, which the daemon gives only when it has changed.
+// Notices renders what the hook shows. A subject-only message is a line with its sender and
+// subject, never its body; a Whole one is exactly Turn (#204). Then comes how many are unread, if
+// unread is more than 0. With no new messages it is the count alone, which the daemon gives only
+// when it has changed. Whole messages were delivered by the hook, so they don't add to the count.
 func Notices(msgs []proto.MessageView, unread int) string {
 	var b strings.Builder
+	subjects := 0
 	for _, m := range msgs {
+		if m.Whole {
+			b.WriteString(Turn(m))
+			continue
+		}
+		subjects++
 		who := m.From
 		if m.FromName != "" {
 			who = m.FromName + " (" + m.From
@@ -267,6 +274,9 @@ func Notices(msgs []proto.MessageView, unread int) string {
 			who += " (" + m.FromAgent + ")"
 		}
 		fmt.Fprintf(&b, "[%s] %s: %q\n", brand.Product, who, m.Subject)
+	}
+	if len(msgs) > 0 && subjects == 0 && unread == 0 {
+		return b.String()
 	}
 	if len(msgs) == 0 {
 		b.WriteString("[" + brand.Product + "] ")

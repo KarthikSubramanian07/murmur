@@ -413,9 +413,11 @@ call.
   senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
   it never read what was sent while it was away for more than 10 minutes, except what is kept for a
   stopped session's inbox (above).
-- **Settings** (when a session is woken) are saved in `.git/murmur/settings.json`, replaced whole.
-  Nothing acts on them yet: waking is #25. Mutes (#27) aren't built, so the page shows none and
-  refuses to unmute.
+- **Settings** are saved in `.git/murmur/settings.json`, replaced whole. "Wake-ups" chooses when a
+  message may wake an idle session (#22, #25). "Messages while at work" chooses subject only (the
+  default) or the whole message through the hook (#204). Each has one device default and per-session
+  overrides by name. The at-work choice matters only where Murmur's hook runs, today Claude Code.
+  Mutes (#27) aren't built, so the page shows none and refuses to unmute.
 - **Open page, running daemon.** The page asks for its state every 3 s, 15 s in a hidden tab. A
   call that carries the token, from a page someone can see, counts as an open page for 2 minutes,
   and an open page stops the 10-minute countdown the way a session does: a daemon with no sessions
@@ -734,7 +736,7 @@ The daemon delivers at once, when a message arrives for a session it can reach:
 
 | Where the session runs | Delivered by | Starts a turn in an idle session |
 |---|---|---|
-| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
+| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle. Where Murmur's hook runs, a busy session gets the hook's output instead (#202); another busy thread takes the message as its next turn, interrupting nothing | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
 | Claude Code outside T3 | the session's messaging socket | Unverified: a message Murmur's code wrote to a session's socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle one has not been tried |
 | Codex, OpenCode, Muse, Pi or Grok outside T3, or any delivery that fails | the hook's notice where the hook runs (Claude Code), and `inbox` | No |
 
@@ -755,11 +757,20 @@ The sender's text in between is delivered as written, neither quoted nor wrapped
 agents are trusted in Murmur's model, and a message that reads as a request is meant to be acted on.
 A body past the limit is cut, as in `inbox`.
 
+Where the hook runs, a session at work gets its new messages after its next tool call instead of a
+queued turn (#202). The default is sender, subject and the unread count; the agent reads the body
+with `inbox`, and anything still unread goes in as a turn when the turn ends. The page's "Messages
+while at work" setting can choose the whole message instead, for the device or one session (#204).
+Each new message is then exactly the turn text above, with the same body limit. It is delivered
+through the hook: it leaves the inbox, no longer counts as unread, and the daemon's log and page's
+notes say so. Elsewhere there is no mid-turn hook output, so the setting does nothing.
+
 - **Marked read.** A delivered message leaves the receiving session's inbox, so neither the hook
   nor `inbox` shows it again; the page and the daemon's log keep it as history. A message that
   could not be delivered stays in the inbox and is announced by the hook as before. The hook
-  leaves alone a message that is waiting its turn to be delivered, behind the one being delivered:
-  announced by a notice it would never become a turn.
+  leaves alone a message that is waiting its turn to be handed over, behind the one being handed
+  over. A subject-only message announced while the session is at work stays unread and goes in as a
+  turn when the turn ends; a whole message has already been delivered through the hook.
 - **Finding the thread (#56).** T3 gives an MCP server or a hook no thread ID, so the MCP server
   looks up the provider's own session in T3's database: `statev2.sqlite` in T3's data directory
   (`T3CODE_HOME`, or the directory the CLI's `bin` is in, or `~/.t3`), table

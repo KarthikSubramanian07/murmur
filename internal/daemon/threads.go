@@ -375,13 +375,25 @@ func later(ts ...time.Time) time.Time {
 	return out
 }
 
-// choice is the page's wake setting for the session called name: its own, if it has one, else the
-// device's.
-func (p pageSettings) choice(name string) web.Wake {
+// wakeChoice is the page's wake setting for the session called name: its own, if it has one, else
+// the device's.
+func (p pageSettings) wakeChoice(name string) web.Wake {
 	if o, ok := p.SessionWake[name]; ok && name != "" {
 		return o
 	}
 	return p.Wake
+}
+
+// busyChoice is the page's setting for what the hook gives the session called name at work: its
+// own, if it has one, else the device's. An unset device choice is subject only (#204).
+func (p pageSettings) busyChoice(name string) web.Busy {
+	if o, ok := p.SessionBusy[name]; ok && name != "" {
+		return o
+	}
+	if p.Busy != "" {
+		return p.Busy
+	}
+	return web.BusySubject
 }
 
 // wakesLocked says whether a message may go into session id as a turn now. Not if it is off the
@@ -393,7 +405,7 @@ func (d *Daemon) wakesLocked(id string, wake pageSettings) bool {
 	if d.offMeshLocked(id) {
 		return false
 	}
-	w := wake.choice(d.sessionNameLocked(id))
+	w := wake.wakeChoice(d.sessionNameLocked(id))
 	switch w.When {
 	case web.WakeNever:
 		return false

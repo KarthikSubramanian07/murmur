@@ -15,6 +15,7 @@ import (
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/scrub"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 const maxBody = bus.MaxBody
@@ -386,17 +387,19 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	return fail("unknown op " + req.Op)
 }
 
-// notices returns the messages of a session it hasn't been told about yet, without bodies, and
-// marks them told, with how many it has unread when that is news. The hook calls it after a prompt
-// or a tool call, so the session is at work (see touchHookLocked); the hook knows only Claude
-// Code's session ID, and its process: with them, the sessions of that process follow the hook to
-// the ID it reports (see hookSessionsLocked), and a hook that matches nothing gets nothing.
+// notices returns the messages of a session it hasn't been told about yet, with how many it has
+// unread when that is news. The hook calls it after a prompt or a tool call, so the session is at
+// work (see touchHookLocked); the hook knows only Claude Code's session ID, and its process: with
+// them, the sessions of that process follow the hook to the ID it reports (see hookSessionsLocked),
+// and a hook that matches nothing gets nothing.
 //
-// A message that would have gone in as a turn, but for the session being at work, is Held: it goes
-// in as one when the turn ends if it is still unread (#202). The count is told with each new
-// message and again only when it changes, so it isn't repeated after every tool call.
+// A subject-only message that would have gone in as a turn, but for the session being at work, is
+// Held: it goes in as one when the turn ends if it is still unread (#202). The page can choose the
+// whole message instead (#204): its Body goes to the hook, which renders Turn, and it is delivered
+// then and there, leaving the inbox and the unread count. The count is told with each new message
+// and again only when it changes, so it isn't repeated after every tool call.
 func (d *Daemon) notices(req proto.Request) proto.Response {
-	wake := d.wakeSnapshot() // setMu is taken alone, before mu
+	settings := d.settingsSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var ids []string
@@ -415,8 +418,14 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	} else {
 		ids = []string{req.Session}
 	}
+	type hookDelivery struct {
+		id, addr string
+		msg      *inMsg
+	}
 	var self string
 	var fresh []*inMsg
+	whole := map[*inMsg]bool{}
+	var deliveries []hookDelivery
 	var told []*session
 	unread := 0
 	for _, id := range ids {
@@ -436,14 +445,23 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		if s := d.sessions[id]; s != nil {
 			told = append(told, s)
 		}
+		busy := d.hookBusyLocked(id)
+		wholeBusy := busy && settings.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
 			if m.Pushing {
 				continue
 			}
+			isFresh := !m.Noticed && !d.queuedForPushLocked(id, m, settings)
+			if isFresh && wholeBusy {
+				fresh = append(fresh, m)
+				whole[m] = true
+				deliveries = append(deliveries, hookDelivery{id: id, addr: bus.Addr(d.device, id), msg: m})
+				continue
+			}
 			unread++
-			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
+			if isFresh {
 				m.Noticed = true
-				m.Held = d.hookBusyLocked(id) && d.turnableLocked(id, m, wake)
+				m.Held = busy && d.turnableLocked(id, m, settings)
 				fresh = append(fresh, m)
 			}
 		}
@@ -451,10 +469,19 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	if self == "" {
 		return proto.Response{OK: true}
 	}
-	if len(fresh) > 0 {
+	resp := proto.Response{OK: true, Self: self}
+	for _, m := range fresh {
+		isWhole := whole[m]
+		views := d.messageViewsLocked([]*inMsg{m}, isWhole)
+		views[0].Whole = isWhole
+		resp.Messages = append(resp.Messages, views[0])
+	}
+	if len(fresh) > 0 && len(deliveries) == 0 {
 		d.saveLocked()
 	}
-	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
+	for _, delivery := range deliveries {
+		d.deliveredLocked(delivery.id, delivery.addr, delivery.msg, "through the hook")
+	}
 	changed := false
 	for _, s := range told {
 		changed = changed || s.toldUnread != unread

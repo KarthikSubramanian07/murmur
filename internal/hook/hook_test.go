@@ -16,6 +16,7 @@ import (
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/view"
 )
 
 // fakeDaemon serves the daemon's protocol for the clone at gitDir: answer gives the response line
@@ -187,6 +188,33 @@ func TestNoticesFromADaemonThatDoesntBracket(t *testing.T) {
 	out, _ := run("PostToolUse", repo)
 	if !strings.Contains(out, "the old daemon's notice") {
 		t.Errorf("PostToolUse printed %q, want the notice", out)
+	}
+}
+
+// With the page's whole-message choice, the hook's additional context is exactly the turn the
+// message would otherwise become (#204).
+func TestWholeMessageIsTheTurnText(t *testing.T) {
+	repo := newRepo(t)
+	msg := proto.MessageView{ID: "m1", From: "other-0001/bbbbbb", FromName: "quiet-otter", FromAgent: "test",
+		To: "fake-0001/aaaaaa", Subject: "all of it", Body: "first line\nsecond line", Whole: true}
+	fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpNotices {
+			b, _ := json.Marshal(proto.Response{OK: true, Self: "fake-0001/aaaaaa", Messages: []proto.MessageView{msg}})
+			return string(b)
+		}
+		return `{"ok":true}`
+	})
+	out, _ := run("PostToolUse", repo)
+	var decoded struct {
+		HookSpecificOutput struct {
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatalf("hook output %q: %v", out, err)
+	}
+	if got, want := decoded.HookSpecificOutput.AdditionalContext, view.Turn(msg); got != want {
+		t.Errorf("additional context:\n got %q\nwant %q", got, want)
 	}
 }
 

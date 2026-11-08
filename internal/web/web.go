@@ -246,7 +246,10 @@ func CheckSettings(set Settings) error {
 	if !set.Wake.valid() {
 		return errors.New("wake: when must be always, within or never, and minutes 0 to 1440, given only with within")
 	}
-	if len(set.SessionWake) > maxOverrides {
+	if set.Busy != "" && !set.Busy.valid() {
+		return errors.New("busy: must be subject or whole")
+	}
+	if len(set.SessionWake) > maxOverrides || len(set.SessionBusy) > maxOverrides {
 		return errors.New("too many session overrides")
 	}
 	for name, w := range set.SessionWake {
@@ -255,6 +258,14 @@ func CheckSettings(set Settings) error {
 		}
 		if !w.valid() {
 			return errors.New("sessionWake " + name + ": when must be always, within or never, and minutes 0 to 1440, given only with within")
+		}
+	}
+	for name, b := range set.SessionBusy {
+		if name == "" || len(name) > maxNameLen {
+			return errors.New("sessionBusy: bad session name")
+		}
+		if !b.valid() {
+			return errors.New("sessionBusy " + name + ": must be subject or whole")
 		}
 	}
 	return nil
