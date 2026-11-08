@@ -236,16 +236,21 @@ func (d *Daemon) queuedForPushLocked(id string, m *inMsg, wake pageSettings) boo
 
 // hookBusyLocked says Murmur's hook has session id at work: it ran for a prompt or a tool call,
 // and not yet for the end of the turn. Such a session is told of a message by the hook after its
-// next tool call, not given it as a turn (#202). A turn that ends without the Stop hook, as one the
-// user interrupts does, ends this too in T3, once T3's database shows the thread's run finished
-// after the hook last ran; outside T3 nothing does, until the next prompt and the Stop after it.
-// Caller holds mu.
+// next tool call, not given it as a turn (#202). Only where the end of the turn will be seen: the
+// Stop hook has run for the session before, or T3's database has its thread. A turn that ends
+// without the Stop hook, as one the user interrupts does, ends this too in T3, once T3's database
+// shows the thread's run finished after the hook last ran; outside T3 nothing does, until the next
+// prompt and the Stop after it. Caller holds mu.
 func (d *Daemon) hookBusyLocked(id string) bool {
 	s := d.sessions[id]
 	if s == nil || !s.hooked || s.busyAt.IsZero() || !s.dropped.IsZero() {
 		return false
 	}
-	if st, ok := d.threadStateLocked(id); ok && !st.Busy && st.LastRun.After(s.busyAt) {
+	st, inT3 := d.threadStateLocked(id)
+	switch {
+	case !inT3:
+		return s.stopSeen
+	case !st.Busy && st.LastRun.After(s.busyAt):
 		return false
 	}
 	return true

@@ -442,8 +442,9 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			}
 			unread++
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
-				m.Noticed = true
+				// Asked before it is marked told, which takes it out of pushable.
 				m.Held = d.hookBusyLocked(id) && d.turnableLocked(id, m, wake)
+				m.Noticed = true
 				fresh = append(fresh, m)
 			}
 		}
@@ -476,7 +477,7 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 		return proto.Response{OK: true}
 	}
 	for _, s := range d.touchHookLocked(req) {
-		s.busyAt = time.Time{}
+		s.busyAt, s.stopSeen = time.Time{}, true
 	}
 	d.kickPush()
 	return proto.Response{OK: true}

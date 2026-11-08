@@ -75,7 +75,9 @@ Once joined, an agent has five tools:
 A message reaches a session in T3 Code (Claude Code, Codex, OpenCode or Muse, tried; Pi and Grok
 expected to), or a Claude Code session in a terminal, as a turn of its own, and starts an idle T3
 thread working. Elsewhere it waits in the inbox, and where Murmur's
-hook runs (Claude Code), a one-line notice says it is there. Messages take seconds, not instants,
+hook runs (Claude Code), a one-line notice says it is there. A Claude Code session that is busy
+gets that notice after its next tool call instead of a turn, and what it hasn't read when the turn
+ends arrives as a turn then. Messages take seconds, not instants,
 since they go through the remote.
 
 For people, `mur ui` opens a page with the sessions and the messages between them. The agent that

@@ -208,3 +208,63 @@ func TestNoticesCarryTheTranscriptPath(t *testing.T) {
 	}
 	t.Errorf("the hook sent no notices request: %+v", requests())
 }
+
+// The end of a turn (Stop) tells the daemon the session is idle, and prints nothing (#202).
+func TestStopTellsTheDaemonTheTurnEnded(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpNotices {
+			return `{"ok":true,"self":"fake-0001/aaaaaa","messages":[{"id":"m1","from":"other-0001/bbbbbb","subject":"not for Stop"}],"unread":1}`
+		}
+		return `{"ok":true}`
+	})
+	if out, _ := run("Stop", repo); out != "" {
+		t.Errorf("Stop printed %q", out)
+	}
+	var ended bool
+	for _, r := range requests() {
+		switch r.Op {
+		case proto.OpTurnEnd:
+			ended = r.ClaudeSession == "claude-x"
+		case proto.OpNotices:
+			t.Error("Stop asked for notices")
+		}
+	}
+	if !ended {
+		t.Errorf("the daemon wasn't told the turn of claude-x ended: %+v", requests())
+	}
+}
+
+// A subagent's tool call (agent_id in the payload) asks for notices as a subagent's, so the daemon
+// knows the session is at work but tells it nothing there (#188, #202).
+func TestASubagentsCallIsMarked(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
+	payload, _ := json.Marshal(map[string]string{"session_id": "claude-x", "hook_event_name": "PostToolUse",
+		"cwd": repo, "tool_name": "Read", "tool_use_id": "toolu_2", "agent_id": "agent-1"})
+	hook.Run(bytes.NewReader(payload), &bytes.Buffer{})
+	for _, r := range requests() {
+		if r.Op == proto.OpNotices {
+			if !r.Subagent {
+				t.Error("a subagent's notices request isn't marked as one")
+			}
+			return
+		}
+	}
+	t.Errorf("the hook sent no notices request: %+v", requests())
+}
+
+// A count with no new messages, which the daemon sends when the number changed, is shown alone.
+func TestTheUnreadCountAlone(t *testing.T) {
+	repo := newRepo(t)
+	fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpNotices {
+			return `{"ok":true,"self":"fake-0001/aaaaaa","unread":2}`
+		}
+		return `{"ok":true}`
+	})
+	out, _ := run("PostToolUse", repo)
+	if !strings.Contains(out, "2 messages unread") {
+		t.Errorf("PostToolUse printed %q, want the count", out)
+	}
+}

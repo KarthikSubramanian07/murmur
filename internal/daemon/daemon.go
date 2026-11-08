@@ -349,10 +349,12 @@ type session struct {
 	// hooked says Murmur's hook has run for the session: it can be told of a message after any
 	// tool call, so a message isn't handed to T3 while it is at work (#202). busyAt is when the
 	// hook last saw it at work, a prompt or a tool call, zero once a turn ended (Stop) or before
-	// the hook first ran. toldUnread is the unread count the hook last showed it.
-	hooked     bool
-	busyAt     time.Time
-	toldUnread int
+	// the hook first ran. stopSeen says the hook has reported the end of a turn: a session whose
+	// clone was joined before #202 has no Stop hook until join runs again, and outside T3 nothing
+	// else would ever end its turn. toldUnread is the unread count the hook last showed it.
+	hooked, stopSeen bool
+	busyAt           time.Time
+	toldUnread       int
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its
