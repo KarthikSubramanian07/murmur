@@ -285,8 +285,14 @@ func remoteRefs(t *testing.T, b *box) string {
 // mcpSession starts `mur mcp` in the clone, as an agent's client does, and connects to it.
 func (b *box) mcpSession(t *testing.T) *mcp.ClientSession {
 	t.Helper()
+	return b.mcpSessionIn(t, b.clone)
+}
+
+// mcpSessionIn is mcpSession with the agent started in dir.
+func (b *box) mcpSessionIn(t *testing.T, dir string) *mcp.ClientSession {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.Command(b.mur, "mcp", "-C", b.clone)
+	cmd := exec.Command(b.mur, "mcp", "-C", dir)
 	cmd.Env = append(b.env(), b.extraEnv...)
 	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test-client"}, nil).Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
 	if err != nil {
@@ -389,5 +395,31 @@ func TestTheMCPServerFollowsJoinAndLeave(t *testing.T) {
 	time.Sleep(3 * time.Second)
 	if exists(filepath.Join(b.clone, ".git", "murmur", "daemon.json")) {
 		t.Error("a daemon is running after --leave")
+	}
+}
+
+// An agent whose session started outside the repo, here the folder that holds it, runs join in the
+// repo: its own session moves in, gets the tools and registers, without a restart (#200). The
+// session's server is this test's child, as an agent's is the agent's, and so is the join.
+func TestJoinBringsInASessionStartedOutside(t *testing.T) {
+	b := newBox(t)
+	b.mustRun(b.clone, "init")
+	cs := b.mcpSessionIn(t, b.root)
+	if names := tools(t, cs); len(names) != 0 {
+		t.Fatalf("tools outside the repo: %q", names)
+	}
+	out := b.mustRun(b.clone, "join")
+	if !strings.Contains(out, "Moved this session into Murmur here") || !strings.Contains(out, "It started outside this repo") {
+		t.Errorf("join didn't say it moved the session:\n%s", out)
+	}
+	eventually(t, "the tools to appear", func() bool { return offersTools(tools(t, cs)) })
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "who"})
+	if err != nil || res.IsError {
+		t.Fatalf("who: %v %+v", err, res)
+	}
+
+	// Running join again finds the session already there, and says nothing about moving it.
+	if out := b.mustRun(b.clone, "join"); strings.Contains(out, "Moved this session") {
+		t.Errorf("a second join moved the session again:\n%s", out)
 	}
 }

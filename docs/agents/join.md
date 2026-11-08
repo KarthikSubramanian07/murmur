@@ -98,6 +98,11 @@ In this repo (any folder inside the clone), run:
 
     mur join
 
+If your session started outside the repo (in a folder that holds it, say), run it as
+`mur join -C <the repo's folder>`, or `cd` there first. Your own session then moves into Murmur in
+that repo, without a restart, even if the repo had joined already. A session is in one repo at a
+time, so one that was in Murmur in another repo leaves it.
+
 It is safe to run twice: it only does what is missing. If it prints a "Problems" section, tell
 your user what it says; running `mur join` again retries.
 

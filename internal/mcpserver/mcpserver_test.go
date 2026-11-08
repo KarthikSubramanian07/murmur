@@ -17,6 +17,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/proto"
@@ -40,7 +41,15 @@ func TestMain(m *testing.M) {
 	for _, k := range []string{"T3CODE_CLI_PATH", "T3CODE_HOME", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN"} {
 		os.Unsetenv(k)
 	}
-	os.Exit(m.Run())
+	// Servers publish their records here, not in the real user's config directory.
+	dir, err := os.MkdirTemp("", "murmur-sessions-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv(brand.SessionsDirEnv, dir)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 const spawnNote = "daemon-was-spawned"
@@ -272,12 +281,18 @@ func repo(t *testing.T, marked bool, f *fakeDaemon) join.Place {
 // the number of times the client was told the tool list changed.
 func open(t *testing.T, dir string, poll time.Duration) (*mcp.ClientSession, *atomic.Int32) {
 	t.Helper()
+	return openWith(t, Options{Agent: "claude-code", Version: "test", Dir: dir, Poll: poll})
+}
+
+// openWith is open with the options given.
+func openWith(t *testing.T, opt Options) (*mcp.ClientSession, *atomic.Int32) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	ct, st := mcp.NewInMemoryTransports()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		Serve(ctx, Options{Agent: "claude-code", Version: "test", Dir: dir, Poll: poll}, st)
+		Serve(ctx, opt, st)
 	}()
 	var changed atomic.Int32
 	c := mcp.NewClient(&mcp.Implementation{Name: "test-client"}, &mcp.ClientOptions{

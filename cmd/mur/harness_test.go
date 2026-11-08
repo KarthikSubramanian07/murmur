@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/join/jointest"
 )
 
@@ -151,7 +152,9 @@ func (b *box) env() []string {
 		"CLAUDECODE": true, "CLAUDE_CODE_SESSION_ID": true, "T3CODE_CLI_PATH": true, "CODEX_THREAD_ID": true,
 		"CODEX_SANDBOX": true, "CODEX_CI": true, "XDG_CONFIG_HOME": true, jointest.LogEnv: true,
 		// Where T3 Code and the other agents keep their settings: join reads and writes those too.
-		"T3CODE_HOME": true, "PI_CODING_AGENT_DIR": true, "GROK_HOME": true}
+		"T3CODE_HOME": true, "PI_CODING_AGENT_DIR": true, "GROK_HOME": true,
+		// Which session ran the command, and where sessions are found (internal/here).
+		"CLAUDE_PID": true, brand.SessionsDirEnv: true}
 	var env []string
 	for _, kv := range os.Environ() {
 		if k, _, _ := strings.Cut(kv, "="); !drop[strings.ToUpper(k)] && !drop[k] {
@@ -161,7 +164,7 @@ func (b *box) env() []string {
 	return append(env,
 		"HOME="+b.home, "USERPROFILE="+b.home,
 		"CLAUDE_CONFIG_DIR="+b.claudeDir, "CODEX_HOME="+b.codexHome,
-		jointest.LogEnv+"="+b.log,
+		jointest.LogEnv+"="+b.log, brand.SessionsDirEnv+"="+filepath.Join(b.root, "sessions"),
 		"PATH="+filepath.Dir(b.mur)+string(os.PathListSeparator)+os.Getenv("PATH"),
 		// init commits as the user, and this home has no git config to say who that is.
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",

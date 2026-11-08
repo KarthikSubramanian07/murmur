@@ -313,6 +313,25 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   off is named under "Not done", and without T3 nothing changes. The file holds API keys, so join
   decodes only those fields, takes an environment value only by name and only if T3 doesn't mark it
   sensitive, and never prints the file.
+- **A session that started outside the repo** (2026-11-08, #200). The MCP server picks its repo from
+  the directory the agent started it in, so a session started in a parent folder, the home directory
+  or a workspace holding several repos never got a name in the repo it then worked in. Now each
+  server publishes a record of itself (its PID, its agent's PID, Claude Code's session ID, the
+  clone it is in and whether it is on) in the user's config directory, `murmur/sessions/`, and
+  `mur join` finds the record of the session that ran it: the agent's process is the server's
+  parent and an ancestor of the command (Claude Code also puts it in `CLAUDE_PID`). Join leaves a
+  move there, which the server picks up on its next look for a join or a leave: it turns off where
+  it was and on in the joined clone, with the joined directory as its working directory. A session
+  is in one repo at a time (Tyler accepted either answer; one was chosen because the tools take no
+  repo, and two meshes would need one on every call and every message), so a move takes it out of
+  the repo it was in. A move doesn't stand in for consent: in a clone the user hasn't joined the
+  server stays off. Where one agent process runs several sessions and nothing tells them apart
+  (Codex's app server in T3), join moves none and says so. A move carries the Claude session ID
+  from the record, so a new process that took a dead agent's PID doesn't follow it; records and
+  moves of exited processes are cleared whenever they are read. The instructions an MCP server
+  gives at initialize can't change afterwards, so a session that moves in has the repo's section
+  and the tool descriptions, not them. The hook is per worktree, and runs in the directory the
+  agent started in, so commits aren't credited to a session that moved in (`internal/here`).
 
 #### Other agents
 

@@ -51,4 +51,8 @@ const (
 	CheckInURL  = "https://murmur.afig.dev/v1/checkin"
 	ConfigUsage = Name + ".usage"
 	NoUsageEnv  = "MURMUR_NO_USAGE"
+
+	// SessionsDirEnv, if set, is where MCP servers publish their records and find moves, in place
+	// of the user's config directory (internal/here). Tests set it.
+	SessionsDirEnv = "MURMUR_SESSIONS_DIR"
 )

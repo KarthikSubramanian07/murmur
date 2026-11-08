@@ -20,6 +20,7 @@ import (
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/here"
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
@@ -44,7 +45,10 @@ type Options struct {
 	Agent   string // shown to teammates, e.g. "claude-code"
 	Version string
 	Dir     string        // the session's working directory; default the process's
-	Poll    time.Duration // how often to look for a join or a leave; default 2s
+	Poll    time.Duration // how often to look for a join, a leave or a move; default 2s
+	// HereDir is where the server publishes its record and finds a move to another repo (package
+	// here); default here.DefaultDir. "-" turns both off.
+	HereDir string
 }
 
 // Run serves MCP on stdin and stdout until the client disconnects.
@@ -75,6 +79,8 @@ func Serve(ctx context.Context, opt Options, t mcp.Transport) error {
 	place, err := join.Locate(ctx, cwd)
 	located := err == nil
 	s.place = place
+	s.initHere()
+	defer s.withdraw()
 
 	sopts := &mcp.ServerOptions{
 		// Say tools can change though there are none yet: a client that learned otherwise at
@@ -85,11 +91,90 @@ func Serve(ctx context.Context, opt Options, t mcp.Transport) error {
 		sopts.Instructions = Instructions // fixed at initialize; the repo's own section says the rest
 	}
 	s.srv = mcp.NewServer(&mcp.Implementation{Name: brand.MCPServer, Version: opt.Version}, sopts)
-	if located {
+	// Watched even outside any repo: the session can still be moved into one (#200).
+	if located || s.hereDir != "" {
 		s.sync(ctx)
 		go s.watch(ctx)
 	}
 	return s.srv.Run(ctx, t)
+}
+
+// initHere sets up the server's record in the per-user directory, which lets `mur join` find this
+// session and move it to the repo it joined (package here).
+func (s *server) initHere() {
+	dir := s.opt.HereDir
+	if dir == "" {
+		var err error
+		if dir, err = here.DefaultDir(); err != nil {
+			dir = "-"
+		}
+	}
+	if dir == "-" {
+		return
+	}
+	var claude string
+	if isClaude(s.opt.Agent) {
+		claude = os.Getenv("CLAUDE_CODE_SESSION_ID")
+	}
+	s.hereDir = dir
+	s.self = here.Session{ServerPID: os.Getpid(), ClientPID: os.Getppid(), ClaudeSession: claude, Agent: agentName(s.opt.Agent)}
+}
+
+func (s *server) withdraw() {
+	if s.hereDir != "" {
+		here.Withdraw(s.hereDir, s.self.ServerPID)
+	}
+}
+
+// follow moves the server to the repo `mur join` asked it to, if it asked since the last look.
+func (s *server) follow(ctx context.Context) {
+	if s.hereDir == "" {
+		return
+	}
+	m, ok := here.Asked(s.hereDir, s.self.ClientPID, s.self.ClaudeSession)
+	if !ok || !m.At.After(s.followed) {
+		return
+	}
+	s.followed = m.At
+	p, err := join.Locate(ctx, m.Dir)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	same := p == s.place
+	s.mu.Unlock()
+	if same {
+		return
+	}
+	// Off in the old repo first: its registration goes, and its daemon sees the session end.
+	s.deactivate()
+	s.mu.Lock()
+	s.place, s.cwd = p, m.Dir
+	s.mu.Unlock()
+}
+
+// publish rewrites the server's record when what it says has changed.
+func (s *server) publish() {
+	if s.hereDir == "" {
+		return
+	}
+	s.mu.Lock()
+	rec := s.self
+	rec.GitDir, rec.On = s.place.GitDir, s.on
+	s.mu.Unlock()
+	if s.published != nil && *s.published == rec {
+		return
+	}
+	if here.Publish(s.hereDir, rec) == nil {
+		s.published = &rec
+	}
+}
+
+// placeNow is the repo the server is in, which a move can change.
+func (s *server) placeNow() join.Place {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.place
 }
 
 // watch turns the server on and off as the repo's files change.
@@ -107,11 +192,13 @@ func (s *server) watch(ctx context.Context) {
 }
 
 func (s *server) sync(ctx context.Context) {
-	if s.place.Active() {
+	s.follow(ctx)
+	if s.placeNow().Active() {
 		s.activate(ctx)
 	} else {
 		s.deactivate()
 	}
+	s.publish()
 }
 
 // helloFor is the registration this process makes. The Claude Code session ID in its environment
@@ -201,16 +288,22 @@ func agentName(flag string) string {
 }
 
 type server struct {
-	opt   Options
-	cwd   string
-	place join.Place
-	srv   *mcp.Server
+	opt Options
+	srv *mcp.Server
 
-	mu   sync.Mutex
-	on   bool // the tools are listed and the session is registered
-	c    *client.Client
-	link *link
-	stop context.CancelFunc // ends link, or every link in links
+	// Read only by the goroutine that runs sync.
+	hereDir   string       // "" when moves are off
+	self      here.Session // this server's record, less what changes
+	published *here.Session
+	followed  time.Time // the latest move followed
+
+	mu    sync.Mutex
+	cwd   string     // changed by a move
+	place join.Place // changed by a move
+	on    bool       // the tools are listed and the session is registered
+	c     *client.Client
+	link  *link
+	stop  context.CancelFunc // ends link, or every link in links
 	// For an agent whose one server serves all its sessions in a directory (OpenCode, see
 	// sharedAgent), each session has a link of its own, made at its first tool call, which names
 	// the session; link is nil then. lctx is the context they run in.
@@ -353,7 +446,7 @@ func (s *server) callOn(ctx context.Context, c *client.Client, l *link, req prot
 	}
 	// The poll that turns the server off runs every few seconds; a call in between must not reach a
 	// daemon that is still up, or publish for a user who has left.
-	if !s.place.Active() {
+	if l.allowed != nil && !l.allowed() { // the repo the link was made in, which a move doesn't change
 		return proto.Response{}, errPassive
 	}
 	req.Session = id
