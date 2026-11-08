@@ -362,7 +362,9 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	j.msg.Pushing = false
 	if errors.Is(err, ErrNoConsent) || errors.Is(err, errNotNow) {
 		// The user left, or the session may no longer be woken, on its way: it waits in the inbox,
-		// undelivered and not a failure.
+		// undelivered and not a failure. Unless the session turned out to be a delegate, whose
+		// inbox stays empty (#188).
+		d.clearChildInboxLocked(j.id)
 		return
 	}
 	d.kickPush() // what waited behind this message, in an inbox that took it over, may go now

@@ -318,6 +318,9 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	case proto.OpInbox:
 		d.mu.Lock()
 		defer d.mu.Unlock()
+		if d.clearChildInboxLocked(sess) {
+			return proto.Response{OK: true, Self: from} // a delegate's (#188)
+		}
 		// A message on its way into the session as a turn is left to arrive as one.
 		var read, left []*inMsg
 		for _, m := range d.st.Inbox[sess] {
@@ -413,6 +416,9 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		}
 		if self == "" {
 			self = bus.Addr(d.device, id)
+		}
+		if d.clearChildInboxLocked(id) {
+			continue // a delegate's (#188)
 		}
 		for _, m := range d.st.Inbox[id] {
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {

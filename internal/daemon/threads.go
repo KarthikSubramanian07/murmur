@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sort"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -114,9 +115,14 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 		}
 		d.threads[k] = st
 		delete(d.threadWarned, k)
-		if st.Parent != "" && old.Parent == "" {
-			d.dropChildInboxesLocked(k)
-		}
+	}
+	// A delegate's inbox stays empty however a message got in, and its commits go to its parent,
+	// those made before its thread was read included.
+	for _, id := range sortedKeys(d.st.Inbox) {
+		d.clearChildInboxLocked(id)
+	}
+	if d.moveChildCommitsLocked() {
+		settled = true
 	}
 	for k, err := range failed {
 		if !d.threadWarned[k] {
@@ -198,22 +204,60 @@ func (d *Daemon) parentNameLocked(parent string) string {
 	return nameOr(d.sessionNameLocked(parent), bus.Addr(d.device, parent))
 }
 
-// dropChildInboxesLocked empties the inboxes of the sessions in thread k, found to be a child: what
-// reached them before the thread was read (a message for everyone, in the first seconds) is not
-// theirs. An inbox with a message on its way in is left; finishPush takes that message out.
-// Caller holds mu.
-func (d *Daemon) dropChildInboxesLocked(k threadKey) {
-	for _, id := range sortedKeys(d.st.Inbox) {
-		r := d.routeOfLocked(id)
-		if r.T3Thread != k.thread || r.T3Home != k.home {
-			continue
-		}
-		if slices.ContainsFunc(d.st.Inbox[id], func(m *inMsg) bool { return m.Pushing }) {
-			continue
-		}
-		delete(d.st.Inbox, id)
-		d.saveLocked()
+// clearChildInboxLocked empties session id's inbox if it is a delegate, and says whether it is one.
+// What reached it before its thread was read (a message for everyone in the first seconds, or
+// before a restarted MCP server found its thread) is not its to read. A message on its way in as a
+// turn stays until that delivery ends; it is refused at the handoff (sendTurn), and cleared here or
+// at the next read. Caller holds mu.
+func (d *Daemon) clearChildInboxLocked(id string) bool {
+	if _, child := d.parentOfLocked(id); !child {
+		return false
 	}
+	box := d.st.Inbox[id]
+	var left []*inMsg
+	for _, m := range box {
+		if m.Pushing {
+			left = append(left, m)
+		}
+	}
+	if len(left) == len(box) {
+		return true
+	}
+	if len(left) == 0 {
+		delete(d.st.Inbox, id)
+	} else {
+		d.st.Inbox[id] = left
+	}
+	d.saveLocked()
+	return true
+}
+
+// moveChildCommitsLocked moves the commits credited to delegates whose parent is on the mesh here
+// to the parent: those a delegate made before its thread was read. It says whether any moved.
+// Caller holds mu.
+func (d *Daemon) moveChildCommitsLocked() bool {
+	moved := false
+	for _, id := range sortedKeys(d.st.Commits) {
+		parent, child := d.parentOfLocked(id)
+		if !child || parent == "" {
+			continue
+		}
+		recs := d.st.Commits[parent]
+		for _, r := range d.st.Commits[id] {
+			if !slices.ContainsFunc(recs, func(o commitRec) bool { return o.SHA == r.SHA }) {
+				recs = append(recs, r)
+			}
+		}
+		sort.SliceStable(recs, func(i, j int) bool { return recs[i].At.Before(recs[j].At) })
+		if len(recs) > maxCommits {
+			recs = slices.Clone(recs[len(recs)-maxCommits:])
+		}
+		d.st.Commits[parent] = recs
+		delete(d.st.Commits, id)
+		d.saveLocked()
+		moved = true
+	}
+	return moved
 }
 
 // offlineWhyLocked says why the session at dev/sess, called shown, takes no messages, for a sender

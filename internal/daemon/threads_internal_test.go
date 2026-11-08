@@ -384,3 +384,54 @@ func TestDelegateGoesThroughItsParent(t *testing.T) {
 		t.Errorf("lookup: offline %v, delegate of %q", det.Offline, det.DelegateOf)
 	}
 }
+
+// From Sol's review of #188: a message on its way in when the delegate is found, a session that
+// finds a thread already known to be a child, and commits made before the thread was read.
+func TestDelegateLeftoversAreCleared(t *testing.T) {
+	d := threadsDaemon(t)
+	inT3(d, "parent", 0)
+	inT3(d, "child1", 0)
+	d.st.Commits = map[string][]commitRec{
+		"child1": {{SHA: "c1", Branch: "feature", At: time.Now().Add(-time.Minute)}},
+		"parent": {{SHA: "p1", Branch: "main", At: time.Now().Add(-2 * time.Minute)}},
+	}
+	onItsWay := &inMsg{Event: bus.Event{ID: "pushing"}, Arrived: time.Now(), Pushing: true}
+	d.st.Inbox = map[string][]*inMsg{"child1": {onItsWay, {Event: bus.Event{ID: "waiting"}, Arrived: time.Now()}}}
+	d.opt.ThreadState = func(_ context.Context, _, _, thread string) (t3db.State, error) {
+		if thread == "thread-child1" || thread == "thread-child2" {
+			return t3db.State{Parent: "thread-parent"}, nil
+		}
+		return t3db.State{}, nil
+	}
+	d.refreshThreads(context.Background())
+
+	d.mu.Lock()
+	if box := d.st.Inbox["child1"]; len(box) != 1 || box[0] != onItsWay {
+		t.Errorf("inbox with a message on its way in: %d messages", len(box))
+	}
+	if len(d.st.Commits["child1"]) != 0 || len(d.st.Commits["parent"]) != 2 || d.st.Commits["parent"][1].SHA != "c1" {
+		t.Errorf("commits: %+v", d.st.Commits)
+	}
+	if got := d.committedLocked("parent"); len(got) != 2 || got[0] != "feature" {
+		t.Errorf("the parent's branches: %q", got)
+	}
+	d.mu.Unlock()
+
+	// The delivery ends refused, at the handoff: the message goes.
+	j := &pushJob{id: "child1", msg: onItsWay}
+	d.finishPush(j, errNotNow)
+	if len(d.st.Inbox["child1"]) != 0 {
+		t.Errorf("after the refused delivery: %d messages", len(d.st.Inbox["child1"]))
+	}
+
+	// A new MCP server in the delegate's thread, which got a message before it found the thread.
+	d.mu.Lock()
+	d.sessions["child2"] = &session{id: "child2", started: time.Now()}
+	d.st.Inbox["child2"] = []*inMsg{{Event: bus.Event{ID: "early"}, Arrived: time.Now()}}
+	d.sessions["child2"].route = proto.Route{T3CLI: "/t3", T3Thread: "thread-child1"}
+	d.mu.Unlock()
+	resp := d.handle(context.Background(), proto.Request{Op: proto.OpInbox, Session: "child2"})
+	if !resp.OK || len(resp.Messages) != 0 || len(d.st.Inbox["child2"]) != 0 {
+		t.Errorf("the delegate's inbox: %+v, left %d", resp, len(d.st.Inbox["child2"]))
+	}
+}
