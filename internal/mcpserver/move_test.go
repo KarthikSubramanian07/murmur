@@ -137,3 +137,12 @@ func TestAMoveIntoARepoNotJoinedStaysOff(t *testing.T) {
 	}
 	waitFor(t, "the session to register", func() bool { return f.helloCount() == 1 })
 }
+
+// A record removed from under a running server comes back.
+func TestARemovedRecordIsWrittenAgain(t *testing.T) {
+	hdir := t.TempDir()
+	openWith(t, Options{Agent: "claude-code", Version: "test", Dir: t.TempDir(), Poll: 25 * time.Millisecond, HereDir: hdir})
+	waitFor(t, "the server's record", func() bool { _, ok := mine(t, hdir); return ok })
+	here.Withdraw(hdir, os.Getpid())
+	waitFor(t, "the record to be written again", func() bool { _, ok := mine(t, hdir); return ok })
+}

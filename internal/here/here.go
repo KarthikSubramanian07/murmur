@@ -78,7 +78,9 @@ func Publish(dir string, s Session) error {
 func Withdraw(dir string, serverPID int) { os.Remove(sessionPath(dir, serverPID)) }
 
 // Sessions are the records of servers still running. Records and moves of processes that have
-// exited are removed on the way.
+// exited are removed on the way. A file that can't be read is passed over, not removed: on Windows a
+// read fails while the file is being replaced, and removing a live server's record would hide it
+// until it next changed (seen in CI, 2026-11-08).
 func Sessions(dir string) ([]Session, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -97,14 +99,17 @@ func Sessions(dir string) ([]Session, error) {
 		switch {
 		case strings.HasPrefix(name, "server-"):
 			var s Session
-			if readJSON(path, &s) != nil || !alive(s.ServerPID) {
+			if readJSON(path, &s) != nil {
+				continue
+			}
+			if !alive(s.ServerPID) {
 				os.Remove(path)
 				continue
 			}
 			out = append(out, s)
 		case strings.HasPrefix(name, "move-"):
 			var m Move
-			if readJSON(path, &m) != nil || !alive(m.ClientPID) {
+			if readJSON(path, &m) == nil && !alive(m.ClientPID) {
 				os.Remove(path)
 			}
 		}
@@ -187,11 +192,24 @@ func writeJSON(path string, v any) error {
 	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
+	// Windows refuses to replace a file another process has open, as a reader does for a moment.
+	for try := 0; ; try++ {
+		err := os.Rename(tmp, path)
+		if err == nil {
+			return nil
+		}
+		if try == 20 {
+			os.Remove(tmp)
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	return nil
+}
+
+// Exists reports whether the server's record is in dir.
+func Exists(dir string, serverPID int) bool {
+	_, err := os.Stat(sessionPath(dir, serverPID))
+	return err == nil
 }
 
 func readJSON(path string, v any) error {

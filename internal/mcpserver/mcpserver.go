@@ -165,7 +165,9 @@ func (s *server) publish() {
 	rec := s.self
 	rec.GitDir, rec.On = s.place.GitDir, s.on
 	s.mu.Unlock()
-	if s.published != nil && *s.published == rec {
+	// Written again if it went missing: a command that couldn't tell it from a dead server's may
+	// have removed it.
+	if s.published != nil && *s.published == rec && here.Exists(s.hereDir, rec.ServerPID) {
 		return
 	}
 	if here.Publish(s.hereDir, rec) == nil {

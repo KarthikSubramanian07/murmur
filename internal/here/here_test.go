@@ -143,3 +143,18 @@ func exitedPID(t *testing.T) int {
 	}
 	return cmd.Process.Pid
 }
+
+// A record that can't be read is left for its server, which is still writing it.
+func TestSessionsLeavesAnUnreadableRecord(t *testing.T) {
+	dir := t.TempDir()
+	path := sessionPath(dir, 12345)
+	if err := os.WriteFile(path, []byte(`{"serverPid":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := Sessions(dir); len(got) != 0 {
+		t.Errorf("Sessions = %+v", got)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("an unreadable record was removed: %v", err)
+	}
+}
