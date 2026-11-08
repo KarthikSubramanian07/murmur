@@ -442,8 +442,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			}
 			unread++
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
-				// Asked before it is marked told, which takes it out of pushable.
-				m.Held = d.hookBusyLocked(id) && d.turnableLocked(id, m, wake)
+				m.Held = d.hookBusyLocked(id) && d.holdableLocked(id, m, wake)
 				m.Noticed = true
 				fresh = append(fresh, m)
 			}
@@ -468,16 +467,26 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 }
 
 // turnEnd is the hook at the end of a turn (Claude Code's Stop): the sessions it speaks for are
-// idle, and the messages they were told of while at work and haven't read go in as a turn, as
-// may any that came since (#202).
+// idle, and the messages they were told of while at work and haven't read go in as a turn, and so
+// do those that came during the turn and weren't told, however long it took (#202).
 func (d *Daemon) turnEnd(req proto.Request) proto.Response {
+	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if req.ClaudeSession == "" {
+	if req.ClaudeSession == "" || req.Subagent {
 		return proto.Response{OK: true}
 	}
+	held := false
 	for _, s := range d.touchHookLocked(req) {
-		s.busyAt, s.stopSeen = time.Time{}, true
+		for _, m := range d.st.Inbox[s.id] {
+			if !m.Noticed && !m.Held && !s.turnStart.IsZero() && !m.Arrived.Before(s.turnStart) && d.holdableLocked(s.id, m, wake) {
+				m.Held, held = true, true
+			}
+		}
+		s.busyAt, s.turnStart, s.stopSeen = time.Time{}, time.Time{}, true
+	}
+	if held {
+		d.saveLocked()
 	}
 	d.kickPush()
 	return proto.Response{OK: true}

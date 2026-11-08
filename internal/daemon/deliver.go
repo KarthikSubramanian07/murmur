@@ -216,7 +216,21 @@ func pushable(m *inMsg) bool {
 // at work now: it is pushable, the page's wake setting lets it through, and there is a way in.
 // Caller holds mu.
 func (d *Daemon) turnableLocked(id string, m *inMsg, wake pageSettings) bool {
-	if !pushable(m) || !d.wakesLocked(id, wake) {
+	return pushable(m) && d.wayInLocked(id, wake)
+}
+
+// holdableLocked says message m may be held for the end of session id's turn and go in as a turn
+// then (#202): it wasn't handed over before, the page's wake setting lets it through, and there is
+// a way in. How old it is doesn't count: a turn can take longer than pushMaxAge, and the agent was
+// at work the whole time. Caller holds mu.
+func (d *Daemon) holdableLocked(id string, m *inMsg, wake pageSettings) bool {
+	return !m.Pushing && !m.PushFailed && !m.Attempted && d.wayInLocked(id, wake)
+}
+
+// wayInLocked says a message may go into session id as a turn, as far as the session goes: the
+// page's wake setting lets it through, and there is a way in. Caller holds mu.
+func (d *Daemon) wayInLocked(id string, wake pageSettings) bool {
+	if !d.wakesLocked(id, wake) {
 		return false
 	}
 	s := d.sessions[id]
@@ -237,23 +251,32 @@ func (d *Daemon) queuedForPushLocked(id string, m *inMsg, wake pageSettings) boo
 // hookBusyLocked says Murmur's hook has session id at work: it ran for a prompt or a tool call,
 // and not yet for the end of the turn. Such a session is told of a message by the hook after its
 // next tool call, not given it as a turn (#202). Only where the end of the turn will be seen: the
-// Stop hook has run for the session before, or T3's database has its thread. A turn that ends
-// without the Stop hook, as one the user interrupts does, ends this too in T3, once T3's database
-// shows the thread's run finished after the hook last ran; outside T3 nothing does, until the next
-// prompt and the Stop after it. Caller holds mu.
+// Stop hook has run for the session before, or T3's database has its thread.
+//
+// In T3 the database ends a turn too, as one the user interrupts fires no Stop: a read of it that
+// began after the hook last ran, and finds no run of the thread queued or running, means the turn
+// is over, whatever the order in which a late hook and the run's end came. A session whose
+// connection dropped keeps its state through its grace, and one that reconnected after this
+// daemon restarted, before its hook has run here, is at work while T3 shows its thread's run going.
+// Outside T3 nothing but Stop ends a turn, so an interrupted session waits for its next prompt and
+// the Stop after it. Caller holds mu.
 func (d *Daemon) hookBusyLocked(id string) bool {
 	s := d.sessions[id]
-	if s == nil || !s.hooked || s.busyAt.IsZero() || !s.dropped.IsZero() {
+	if s == nil {
 		return false
 	}
 	st, inT3 := d.threadStateLocked(id)
+	if !s.hooked {
+		return s.reconnect && inT3 && st.Busy
+	}
 	switch {
+	case s.busyAt.IsZero():
+		return false
 	case !inT3:
 		return s.stopSeen
-	case !st.Busy && st.LastRun.After(s.busyAt):
-		return false
 	}
-	return true
+	r := d.routeOfLocked(id)
+	return st.Busy || !d.threadRead[threadKey{r.T3Home, r.T3Thread}].After(s.busyAt)
 }
 
 // noWay says why a route can't be delivered into, without anything of it that is secret.

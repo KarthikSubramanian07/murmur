@@ -139,8 +139,8 @@ func TestAnIdleSessionIsWokenAndAnUntoldMessageWaitsForTheTurnEnd(t *testing.T) 
 	}
 }
 
-// A subagent's tool call keeps the session at work but tells it nothing: the notice would go to
-// the subagent (#188).
+// A subagent's tool call during the session's turn tells it nothing: the notice would go to the
+// subagent (#188).
 func TestASubagentsCallTellsNothing(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
@@ -150,6 +150,7 @@ func TestASubagentsCallTellsNothing(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	b.finishedATurn("claude-bob")
+	b.hookNotices("claude-bob") // the turn the subagent works in
 	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Subagent: true})
 	a.send("aaaaaa", bob, "for the parent", "")
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "for the parent") })
@@ -162,8 +163,9 @@ func TestASubagentsCallTellsNothing(t *testing.T) {
 	}
 }
 
-// In T3, a turn that ends without the Stop hook, as one the user interrupts does, ends when T3's
-// database shows the thread's run finished after the hook last ran: the message isn't held for good.
+// In T3, a turn that ends without the Stop hook, as one the user interrupts does, ends when a
+// read of T3's database that began after the hook last ran finds no run: the message isn't held
+// for good. That holds when a late hook came after the run's recorded end, too.
 func TestAnInterruptedTurnInT3EndsByT3sDatabase(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
@@ -176,11 +178,26 @@ func TestAnInterruptedTurnInT3EndsByT3sDatabase(t *testing.T) {
 	b.hookNotices("claude-bob")
 	a.send("aaaaaa", bob, "after the stop", "")
 	eventually(t, "the notice", func() bool { return len(b.hookNotices("claude-bob").Messages) > 0 })
-	// A database read from before the hook's last call says idle: that is an older run's end.
+	holds(t, "no turn while the run goes on", time.Second, func() bool { return len(calls()) == 0 })
+	// The run ended a minute ago by T3's clock, before the hook's last call: a late hook.
 	threads.set("thread-bob", t3db.State{LastRun: time.Now().Add(-time.Minute)})
-	holds(t, "no turn on an older run's end", 1500*time.Millisecond, func() bool { return len(calls()) == 0 })
-	threads.set("thread-bob", t3db.State{LastRun: time.Now()})
-	eventually(t, "the turn once the run is over", func() bool { return len(calls()) == 1 })
+	eventually(t, "the turn once a read finds no run", func() bool { return len(calls()) == 1 })
+}
+
+// A subagent working in the background after the session's turn ended doesn't hold the session's
+// messages: its tool calls don't mark the session at work.
+func TestABackgroundSubagentDoesntHoldTheSession(t *testing.T) {
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+
+	b.finishedATurn("claude-bob")
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Subagent: true})
+	a.send("aaaaaa", bob, "while the subagent works", "")
+	eventually(t, "the turn", func() bool { return len(calls()) == 1 })
 }
 
 // A clone joined before #202 has no Stop hook until join runs again. Outside T3, until the daemon

@@ -775,22 +775,31 @@ A body past the limit is cut, as in `inbox`.
   - *Busy and idle come from the hook*: a prompt or a tool call means busy, and the `Stop` hook,
     which `mur join` installs since this change, means the turn ended. "No tool call lately" would
     not do, as one long command looks idle. A turn the user interrupts fires no `Stop`; in T3 the
-    busy state also ends when T3's database shows the thread's run finished after the hook last
-    ran. Outside T3 nothing ends it until the next prompt and the `Stop` after it, so a message to
+    busy state also ends when a read of T3's database that began after the hook last ran finds no
+    run of the thread queued or running. Comparing the run's recorded end with the hook's last call
+    was tried first and dropped in review (Sol, 2026-11-08): a hook that comes after the run's end,
+    such as one from a tool call the interrupt cut short, would have left the session busy for
+    good. A session whose MCP connection dropped keeps its state through its grace, and one that
+    reconnects after the daemon restarted (an update, say) counts as busy while T3 shows its
+    thread's run going, until its hook runs again: without that, what was held for the end of its
+    turn would go to T3's queue mid-turn. Outside T3 nothing ends it until the next prompt and the `Stop` after it, so a message to
     an interrupted session waits for the user to come back. An update doesn't run `mur join`
     again, so a clone joined before this change has no `Stop` hook until its user does; outside T3
     a session is held back only once the daemon has seen a `Stop` from it, and until then a
     message goes in as a turn, as before.
   - *The count* is shown with each new message, and again only when it changes, not after every
-    tool call.
+    tool call. A fall to none isn't told: the agent read them itself.
+  - *Held however long.* A message held for the end of a turn goes in then whatever its age: the
+    15 minutes a message may wake a session (below) measure an absence, and a turn can be longer.
   - *Why not hand it to T3 as well*: T3 can't take back a queued message, so the agent could read
     it with `inbox` mid-turn and then get it again as a turn.
   - *Where the hook doesn't run* (Codex, OpenCode, Muse, Pi and Grok in T3, as of 2026-11-08),
     nothing tells the daemon the session is at work, and a message goes to T3 as before: without
     the handoff the session would hear nothing at all. #205 brings those agents in line.
   - *Subagents.* A subagent's tool call carries the parent's `session_id`, with `agent_id` set
-    (Claude Code 2.1.312, 2026-10-29). It keeps the session busy, but the hook tells it nothing:
-    its notice would land in the subagent's context, not the session's (inferred, not seen; #188).
+    (Claude Code 2.1.312, 2026-10-29). The hook tells it nothing, as its notice would land in the
+    subagent's context, not the session's (inferred, not seen; #188), and it doesn't mark the
+    session at work: a background subagent goes on after its parent's turn has ended.
   - *Not covered:* a single tool call that runs a long time gets no notice until it ends. Whether
     a busy Claude thread in T3 shows the hook's notice mid-turn is read from T3's source (its
     Claude adapter leaves the Agent SDK's `settingSources` unset, so project hooks load), not

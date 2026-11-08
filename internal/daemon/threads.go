@@ -78,11 +78,13 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 	d.mu.Unlock()
 
 	read := map[threadKey]t3db.State{}
+	readAt := map[threadKey]time.Time{}
 	failed := map[threadKey]error{}
 	for k, r := range routes {
 		if ctx.Err() != nil {
 			return
 		}
+		readAt[k] = time.Now()
 		st, err := d.opt.ThreadState(ctx, r.CLI, r.Home, r.Thread)
 		if err != nil {
 			failed[k] = err
@@ -94,6 +96,11 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 	d.mu.Lock()
 	changed, settled := false, false
 	for k, st := range read {
+		d.threadRead[k] = readAt[k]
+		if !st.Busy {
+			// A session the hook has at work may have finished its turn without the Stop hook.
+			changed = true
+		}
 		old, had := d.threads[k]
 		if had && old == st {
 			continue
@@ -133,6 +140,7 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 	for k, st := range d.threads {
 		if _, ok := routes[k]; !ok {
 			delete(d.threads, k)
+			delete(d.threadRead, k)
 			delete(d.threadWarned, k)
 			off := st.Settled || st.Parent != ""
 			changed = changed || off

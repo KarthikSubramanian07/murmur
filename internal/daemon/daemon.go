@@ -283,7 +283,10 @@ type Daemon struct {
 	pushedAt map[string]time.Time
 	// threads is what T3's database last said about each T3 thread a session here is in, and
 	// threadWarned the threads whose state couldn't be read, logged once (see threads.go).
+	// threadRead is when the read that gave each thread's state began: a read that began after
+	// the hook last saw a session at work, and finds no run, ends its turn (see hookBusyLocked).
 	threads      map[threadKey]t3db.State
+	threadRead   map[threadKey]time.Time
 	threadWarned map[threadKey]bool
 
 	polls atomic.Int64 // the remote listings tried, so a test can see the rate
@@ -349,12 +352,13 @@ type session struct {
 	// hooked says Murmur's hook has run for the session: it can be told of a message after any
 	// tool call, so a message isn't handed to T3 while it is at work (#202). busyAt is when the
 	// hook last saw it at work, a prompt or a tool call, zero once a turn ended (Stop) or before
-	// the hook first ran. stopSeen says the hook has reported the end of a turn: a session whose
+	// the hook first ran; a subagent's tool call doesn't set it, as a background subagent works on
+	// after its parent's turn ended. turnStart is when the hook first saw the current turn. stopSeen says the hook has reported the end of a turn: a session whose
 	// clone was joined before #202 has no Stop hook until join runs again, and outside T3 nothing
 	// else would ever end its turn. toldUnread is the unread count the hook last showed it.
-	hooked, stopSeen bool
-	busyAt           time.Time
-	toldUnread       int
+	hooked, stopSeen  bool
+	busyAt, turnStart time.Time
+	toldUnread        int
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its
@@ -638,7 +642,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
 		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, pushedAt: map[string]time.Time{},
-		threads: map[threadKey]t3db.State{}, threadWarned: map[threadKey]bool{},
+		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
 	}
 	device, err := loadDevice(dir)

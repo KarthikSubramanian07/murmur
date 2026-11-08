@@ -93,8 +93,15 @@ func (d *Daemon) touchHookLocked(req proto.Request) []*session {
 	sessions := d.hookSessionsLocked(req.ClaudeSession, req.ClientPID)
 	now := time.Now()
 	for _, s := range sessions {
-		// Every hook but Stop's runs while the session is at work: a prompt or a tool call.
-		s.hooked, s.busyAt = true, now
+		// Every hook but Stop's runs while the session is at work: a prompt or a tool call. Not a
+		// subagent's, which may be working in the background after the session's turn ended.
+		s.hooked = true
+		if !req.Subagent {
+			if s.busyAt.IsZero() {
+				s.turnStart = now
+			}
+			s.busyAt = now
+		}
 		d.touchLocked(s, now)
 	}
 	return sessions
