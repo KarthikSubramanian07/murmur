@@ -3,8 +3,10 @@
 // subject) to the agent's context, with how many are unread; or, where the page's setting says to,
 // each message whole, as its turn would read (#204). Before and after each
 // tool call that could run a command it also tells the daemon, which finds the commits the call
-// made (#21). Those calls and prompts tell the daemon the session is at work, and the end of a
-// turn (Stop) that it isn't: a message goes in as a turn only then (#202).
+// made (#21). Those calls and prompts tell the daemon the session is at work. At the end of a turn
+// (Stop) the hook asks for what the session was told of and hasn't read, and anything that came
+// during the turn, and if there is any it keeps the turn going with it, as each message's turn
+// would read; if not, the session is idle (#202).
 //
 // It never blocks or fails the agent: any problem, including no daemon running, means it
 // prints nothing and exits 0. Before a tool call it never prints anything at all, and the time it
@@ -48,6 +50,13 @@ type output struct {
 		HookEventName     string `json:"hookEventName"`
 		AdditionalContext string `json:"additionalContext"`
 	} `json:"hookSpecificOutput"`
+}
+
+// stopOutput is a Stop hook's answer that keeps the turn going: Claude Code doesn't stop, and gives
+// the agent reason as what to do next.
+type stopOutput struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
 }
 
 // Events the hook answers.
@@ -132,14 +141,14 @@ func Run(stdin io.Reader, stdout io.Writer) {
 	if in.SessionID == "" || !events[in.Event] {
 		return
 	}
-	op := bracketOp(in)
 	if in.Event == stop {
-		// The end of a turn only tells the daemon; it prints nothing.
-		op = proto.OpTurnEnd
+		turnEnd(in, stdout)
+		return
 	}
+	op := bracketOp(in)
 	// Neither PreToolUse nor PostToolUseFailure delivers notices: the next PostToolUse or prompt
 	// does, and a PreToolUse prints nothing at all.
-	wantNotices := in.Event != preTool && in.Event != postFailure && in.Event != stop
+	wantNotices := in.Event != preTool && in.Event != postFailure
 	if !wantNotices && op == "" {
 		return
 	}
@@ -188,4 +197,26 @@ func Run(stdin io.Reader, stdout io.Writer) {
 	out.HookSpecificOutput.HookEventName = in.Event
 	out.HookSpecificOutput.AdditionalContext = text
 	json.NewEncoder(stdout).Encode(out)
+}
+
+// turnEnd tells the daemon the turn ended, and keeps it going with the messages the daemon gives
+// back, if any. They are delivered once the daemon answers: a hook that gave up waiting
+// (NoticeTimeout) just before the answer came loses them, the risk #204's whole messages take too.
+func turnEnd(in input, stdout io.Writer) {
+	ctx, cancel := context.WithTimeout(context.Background(), NoticeTimeout)
+	defer cancel()
+	gitDir, err := findClone(ctx, in.Cwd)
+	if err != nil {
+		return
+	}
+	c, err := client.Connect(ctx, gitDir, false)
+	if err != nil {
+		return
+	}
+	resp, err := c.Do(ctx, proto.Request{Op: proto.OpTurnEnd, ClaudeSession: in.SessionID, ClientPID: claudePID(),
+		Subagent: in.AgentID != "", Continues: true})
+	if err != nil || len(resp.Delivered) == 0 {
+		return
+	}
+	json.NewEncoder(stdout).Encode(stopOutput{Decision: "block", Reason: view.Hook(resp.Delivered, nil, 0)})
 }

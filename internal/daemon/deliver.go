@@ -29,7 +29,9 @@ import (
 // A session Murmur's hook runs in (Claude Code) is not given a turn while it is at work (#202): T3
 // would queue it behind the running turn, and nothing could take it back, so the agent could read
 // it with `inbox` and then get it again as a turn. The hook tells it of the message after its next
-// tool call instead, and what it hasn't read when the turn ends is handed over as a turn then.
+// tool call instead, and what it hasn't read when the turn ends keeps the turn going: the Stop
+// hook gives it to the agent (continueTurnLocked). A turn that ends without Stop, one the user
+// interrupted in T3, has it handed over as a turn instead.
 //
 // Handing a message over is not delivering it: it is delivered when it reaches the agent's
 // context, when the turn carrying it starts, which the daemon doesn't see (docs/VISION.md,
@@ -237,12 +239,17 @@ func (d *Daemon) holdableLocked(id string, m *inMsg, wake pageSettings, turnStar
 }
 
 // wayInLocked says a message may go into session id as a turn, as far as the session goes: the
-// page's wake setting lets it through, and there is a way in. Caller holds mu.
+// page's wake setting lets it through, and there is a way in. The Stop hook is one, for a session
+// whose last Stop could keep its turn going, inside T3 or out: what came during a turn is given at
+// its end, even with no socket. Caller holds mu.
 func (d *Daemon) wayInLocked(id string, wake pageSettings) bool {
 	if !d.wakesLocked(id, wake) {
 		return false
 	}
 	s := d.sessions[id]
+	if s != nil && s.stopContinues {
+		return true
+	}
 	return viaOf(d.routeOfLocked(id), s != nil && s.dropped.IsZero()) != ""
 }
 
@@ -323,6 +330,29 @@ func (d *Daemon) endTurnLocked(s *session, wake pageSettings) {
 		d.saveLocked()
 	}
 	d.kickPush()
+}
+
+// continueTurnLocked takes what keeps session s's turn going, at its end (#202, Tyler,
+// 2026-11-08): the messages that would otherwise be handed over as the next turn, those the hook
+// told it of and it hasn't read and those that came during the turn untold, for the Stop hook to
+// give it. The turn goes on with them, so the session is at work again: a message that comes now
+// is held for the turn's next end, not queued behind it in T3. Called after endTurnLocked, so
+// held messages count. The caller takes them out of the inbox and saves. Caller holds mu.
+func (d *Daemon) continueTurnLocked(s *session, wake pageSettings) []*inMsg {
+	if !d.wayInLocked(s.id, wake) {
+		return nil
+	}
+	var out []*inMsg
+	for _, m := range d.st.Inbox[s.id] {
+		if pushable(m) {
+			out = append(out, m)
+		}
+	}
+	if len(out) > 0 {
+		now := time.Now()
+		s.busyAt, s.turnStart = now, now
+	}
+	return out
 }
 
 // noWay says why a message can't be handed over by a route, without anything of it that is secret.

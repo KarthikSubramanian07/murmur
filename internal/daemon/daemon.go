@@ -355,10 +355,12 @@ type session struct {
 	// the hook first ran; a subagent's tool call doesn't set it, as a background subagent works on
 	// after its parent's turn ended. turnStart is when the hook first saw the current turn. stopSeen says the hook has reported the end of a turn: a session whose
 	// clone was joined before #202 has no Stop hook until join runs again, and outside T3 nothing
-	// else would ever end its turn. toldUnread is the unread count the hook last showed it.
-	hooked, stopSeen  bool
-	busyAt, turnStart time.Time
-	toldUnread        int
+	// else would ever end its turn. stopContinues says its last Stop could keep the turn going
+	// with messages (proto.Request.Continues), which is a way in, inside T3 or out. toldUnread is
+	// the unread count the hook last showed it.
+	hooked, stopSeen, stopContinues bool
+	busyAt, turnStart               time.Time
+	toldUnread                      int
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its
