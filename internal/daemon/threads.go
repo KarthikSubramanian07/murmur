@@ -339,11 +339,15 @@ func (d *Daemon) touchLocked(s *session, now time.Time) {
 }
 
 // idleSinceLocked is when session id was last at work, as far as is known, and whether it is at
-// work now. A session in T3 goes by T3's database: busy while a run is queued or running, else
+// work now. A session the hook has at work is (see hookBusyLocked). A session in T3 goes by T3's
+// database: busy while a run is queued or running, else
 // idle since its latest run. Any other session, or one in T3 whose thread hasn't been read, goes
 // by the session: its start, its last request or tool call, or when it stopped. A message
 // delivered as a turn counts too. Zero if nothing says. Caller holds mu.
 func (d *Daemon) idleSinceLocked(id string) (since time.Time, busy bool) {
+	if d.hookBusyLocked(id) {
+		return time.Time{}, true
+	}
 	since = d.pushedAt[id]
 	if st, ok := d.threadStateLocked(id); ok {
 		if st.Busy {

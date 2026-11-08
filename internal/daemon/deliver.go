@@ -27,6 +27,11 @@ import (
 //     waking;
 //   - in Claude Code outside T3, the session's messaging socket (package msgsock).
 //
+// A session Murmur's hook runs in (Claude Code) is not given a turn while it is at work (#202): T3
+// would queue it behind the running turn, and nothing could take it back, so the agent could read
+// it with `inbox` and then get it again as a turn. The hook tells it of the message after its next
+// tool call instead, and what it hasn't read when the turn ends goes in as a turn then.
+//
 // A delivered message is removed from the inbox, which is how it is marked read: neither the hook
 // nor `inbox` shows it again. docs/VISION.md ("Delivering a message as a turn") has the reasons.
 
@@ -179,7 +184,7 @@ func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, 
 	if next == nil {
 		return nil, "", proto.Route{}
 	}
-	if !d.wakesLocked(id, wake) {
+	if !d.wakesLocked(id, wake) || d.hookBusyLocked(id) {
 		return nil, "", proto.Route{}
 	}
 	s := d.sessions[id]
@@ -196,25 +201,54 @@ func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, 
 	return next, via, route
 }
 
-// pushable says a message may still be delivered as a turn: it wasn't told to the session by the
-// hook, isn't on its way in already, hasn't failed, wasn't handed over before (Attempted: not even
-// by a daemon that has since restarted), and isn't too old.
+// pushable says a message may still be delivered as a turn: it isn't on its way in already, hasn't
+// failed, and wasn't handed over before (Attempted: not even by a daemon that has since
+// restarted). One the hook held for the end of a turn may (Held); any other the hook told the
+// session of may not, nor may one too old.
 func pushable(m *inMsg) bool {
-	return !m.Noticed && !m.Pushing && !m.PushFailed && !m.Attempted && time.Since(m.Arrived) <= pushMaxAge
+	if m.Pushing || m.PushFailed || m.Attempted {
+		return false
+	}
+	return m.Held || !m.Noticed && time.Since(m.Arrived) <= pushMaxAge
 }
 
-// queuedForPushLocked says message m of session id is on its way in as a turn, or will be: the
-// hook's notice leaves it alone, as it would be a second telling of what the turn says, and
-// would take the message out of the delivery for good. Caller holds mu.
-func (d *Daemon) queuedForPushLocked(id string, m *inMsg, wake pageSettings) bool {
-	if m.Pushing {
-		return true
-	}
+// turnableLocked says message m may go into session id as a turn, whether or not the session is
+// at work now: it is pushable, the page's wake setting lets it through, and there is a way in.
+// Caller holds mu.
+func (d *Daemon) turnableLocked(id string, m *inMsg, wake pageSettings) bool {
 	if !pushable(m) || !d.wakesLocked(id, wake) {
 		return false
 	}
 	s := d.sessions[id]
 	return viaOf(d.routeOfLocked(id), s != nil && s.dropped.IsZero()) != ""
+}
+
+// queuedForPushLocked says message m of session id is on its way in as a turn, or will be: the
+// hook's notice leaves it alone, as it would be a second telling of what the turn says, and
+// would take the message out of the delivery for good. A session the hook has at work gets the
+// notice instead (#202). Caller holds mu.
+func (d *Daemon) queuedForPushLocked(id string, m *inMsg, wake pageSettings) bool {
+	if m.Pushing {
+		return true
+	}
+	return !d.hookBusyLocked(id) && d.turnableLocked(id, m, wake)
+}
+
+// hookBusyLocked says Murmur's hook has session id at work: it ran for a prompt or a tool call,
+// and not yet for the end of the turn. Such a session is told of a message by the hook after its
+// next tool call, not given it as a turn (#202). A turn that ends without the Stop hook, as one the
+// user interrupts does, ends this too in T3, once T3's database shows the thread's run finished
+// after the hook last ran; outside T3 nothing does, until the next prompt and the Stop after it.
+// Caller holds mu.
+func (d *Daemon) hookBusyLocked(id string) bool {
+	s := d.sessions[id]
+	if s == nil || !s.hooked || s.busyAt.IsZero() || !s.dropped.IsZero() {
+		return false
+	}
+	if st, ok := d.threadStateLocked(id); ok && !st.Busy && st.LastRun.After(s.busyAt) {
+		return false
+	}
+	return true
 }
 
 // noWay says why a route can't be delivered into, without anything of it that is secret.
@@ -296,10 +330,11 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 		return ErrNoConsent
 	}
 	// A job can wait for a slot (pushSem) or for its retry, and in that time the thread can be
-	// settled, or its session idle past its wake setting: asked again before each handoff.
+	// settled, its session idle past its wake setting, or at work again: asked again before each
+	// handoff.
 	wake := d.wakeSnapshot()
 	d.mu.Lock()
-	ok := d.wakesLocked(j.id, wake)
+	ok := d.wakesLocked(j.id, wake) && !d.hookBusyLocked(j.id)
 	d.mu.Unlock()
 	if !ok {
 		return errNotNow

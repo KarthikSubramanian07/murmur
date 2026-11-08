@@ -272,7 +272,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		d.touchLocked(s, now)
 	}
 	d.mu.Unlock()
-	if !registered && req.Op != proto.OpNotices && req.Op != proto.OpPing {
+	if !registered && req.Op != proto.OpNotices && req.Op != proto.OpTurnEnd && req.Op != proto.OpPing {
 		return fail("this session isn't registered with the daemon (it may have just restarted); try again in a few seconds")
 	}
 	from := bus.Addr(d.device, sess)
@@ -353,6 +353,9 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	case proto.OpNotices:
 		return d.notices(req)
 
+	case proto.OpTurnEnd:
+		return d.turnEnd(req)
+
 	case proto.OpToolStart:
 		return d.toolStart(ctx, req)
 
@@ -384,9 +387,14 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 }
 
 // notices returns the messages of a session it hasn't been told about yet, without bodies, and
-// marks them told. The hook calls it; the hook knows only Claude Code's session ID, and its
-// process: with them, the sessions of that process follow the hook to the ID it reports (see
-// hookSessionsLocked), and a hook that matches nothing gets nothing.
+// marks them told, with how many it has unread when that is news. The hook calls it after a prompt
+// or a tool call, so the session is at work (see touchHookLocked); the hook knows only Claude
+// Code's session ID, and its process: with them, the sessions of that process follow the hook to
+// the ID it reports (see hookSessionsLocked), and a hook that matches nothing gets nothing.
+//
+// A message that would have gone in as a turn, but for the session being at work, is Held: it goes
+// in as one when the turn ends if it is still unread (#202). The count is told with each new
+// message and again only when it changes, so it isn't repeated after every tool call.
 func (d *Daemon) notices(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
@@ -395,7 +403,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	if req.ClaudeSession != "" {
 		for _, s := range d.touchHookLocked(req) {
 			ids = append(ids, s.id)
-			if validTranscript(req.Transcript) && s.transcript != req.Transcript {
+			if validTranscript(req.Transcript) && !req.Subagent && s.transcript != req.Transcript {
 				// A /clear or a /resume is a new conversation, with a title of its own.
 				s.transcript = req.Transcript
 				if s.title != "" {
@@ -409,6 +417,8 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	}
 	var self string
 	var fresh []*inMsg
+	var told []*session
+	unread := 0
 	for _, id := range ids {
 		// A session in its grace, or stopped, is told of its notices once it is back.
 		if id == "" || !d.liveLocked(id) {
@@ -420,9 +430,20 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		if d.clearChildInboxLocked(id) {
 			continue // a delegate's (#188)
 		}
+		if req.Subagent {
+			continue // the notice would go to the subagent (#188)
+		}
+		if s := d.sessions[id]; s != nil {
+			told = append(told, s)
+		}
 		for _, m := range d.st.Inbox[id] {
+			if m.Pushing {
+				continue
+			}
+			unread++
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
 				m.Noticed = true
+				m.Held = d.hookBusyLocked(id) && d.turnableLocked(id, m, wake)
 				fresh = append(fresh, m)
 			}
 		}
@@ -433,7 +454,32 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	if len(fresh) > 0 {
 		d.saveLocked()
 	}
-	return proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
+	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
+	changed := false
+	for _, s := range told {
+		changed = changed || s.toldUnread != unread
+		s.toldUnread = unread
+	}
+	if unread > 0 && (len(fresh) > 0 || changed) {
+		resp.Unread = unread
+	}
+	return resp
+}
+
+// turnEnd is the hook at the end of a turn (Claude Code's Stop): the sessions it speaks for are
+// idle, and the messages they were told of while at work and haven't read go in as a turn, as
+// may any that came since (#202).
+func (d *Daemon) turnEnd(req proto.Request) proto.Response {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if req.ClaudeSession == "" {
+		return proto.Response{OK: true}
+	}
+	for _, s := range d.touchHookLocked(req) {
+		s.busyAt = time.Time{}
+	}
+	d.kickPush()
+	return proto.Response{OK: true}
 }
 
 func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto.Response {

@@ -545,7 +545,7 @@ func TestSendByName(t *testing.T) {
 	if n := notices[0]; n.From != alice || n.FromName != an || n.To != bob || n.Subject != "by name" {
 		t.Fatalf("notice: %+v", n)
 	}
-	if text := view.Notices(notices); !strings.Contains(text, "[Murmur] "+an+" ("+alice+", test)") {
+	if text := view.Notices(notices, 0); !strings.Contains(text, "[Murmur] "+an+" ("+alice+", test)") {
 		t.Fatalf("notice text: %q", text)
 	}
 	inbox := b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"})
@@ -663,7 +663,7 @@ func TestV1PeerWithoutNamesStillWorks(t *testing.T) {
 	if m := msgs[0]; m.From != "old-0001/x" || m.FromName != "" || m.FromAgent != "claude-code" {
 		t.Fatalf("notice: %+v", m)
 	}
-	if text := view.Notices(msgs); !strings.Contains(text, `[Murmur] old-0001/x (claude-code): "hello new"`) {
+	if text := view.Notices(msgs, 0); !strings.Contains(text, `[Murmur] old-0001/x (claude-code): "hello new"`) {
 		t.Fatalf("notice text: %q", text)
 	}
 	_ = an

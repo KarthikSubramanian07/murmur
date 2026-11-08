@@ -346,6 +346,13 @@ type session struct {
 	transcript, title string
 	// titleWarned says reading the title has been logged as failing, so that is logged once.
 	titleWarned bool
+	// hooked says Murmur's hook has run for the session: it can be told of a message after any
+	// tool call, so a message isn't handed to T3 while it is at work (#202). busyAt is when the
+	// hook last saw it at work, a prompt or a tool call, zero once a turn ended (Stop) or before
+	// the hook first ran. toldUnread is the unread count the hook last showed it.
+	hooked     bool
+	busyAt     time.Time
+	toldUnread int
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its
@@ -412,6 +419,10 @@ type inMsg struct {
 	// delivery, or after one that failed, finds it, and the message is left to the hook's notice
 	// instead of being delivered a second time.
 	Attempted bool `json:"attempted,omitempty"`
+	// Held says the hook told the session of the message while it was at work, where it would
+	// otherwise have gone in as a turn (#202). It goes in as one when the turn ends, if it is still
+	// unread, however long the turn took: the agent knows it is there, and it mustn't wait for good.
+	Held bool `json:"held,omitempty"`
 }
 
 // state is what survives a restart, in state.json.
