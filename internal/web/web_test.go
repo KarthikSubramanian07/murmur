@@ -274,7 +274,9 @@ func TestSettingsRoundTrip(t *testing.T) {
 	src := newFake()
 	h := start(t, src, noPRs)
 	want := Settings{
-		Wake: Wake{When: WakeWithin, Minutes: 7},
+		BusyMessage:        BusyWhole,
+		SessionBusyMessage: map[string]string{"quiet-otter": BusySubject, "brave-heron": BusyWhole},
+		Wake:               Wake{When: WakeWithin, Minutes: 7},
 		SessionWake: map[string]Wake{
 			"quiet-otter": {When: WakeNever},
 			"brave-heron": {When: WakeAlways},
@@ -295,6 +297,9 @@ func TestSettingsRoundTrip(t *testing.T) {
 	sets, _, _ := src.seen()
 	for _, bad := range []string{
 		`{"wake":{"when":"sometimes"}}`,
+		`{"wake":{"when":"never"},"busyMessage":"maybe"}`,
+		`{"wake":{"when":"never"},"sessionBusyMessage":{"quiet-otter":""}}`,
+		`{"wake":{"when":"never"},"sessionBusyMessage":{"":"whole"}}`,
 		`{"wake":{"when":"always","minutes":5}}`,
 		`{"wake":{"when":"within","minutes":-1}}`,
 		`{"wake":{"when":"within","minutes":1441}}`,

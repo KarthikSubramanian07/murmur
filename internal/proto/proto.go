@@ -39,7 +39,8 @@ const (
 //	   reports and the Codex thread ID in the route (#66)
 //	3: OpTurnEnd, OpNotices's Unread and Subagent: a session the hook runs in gets notices while it
 //	   is at work, and turns only when it isn't (#202)
-const Protocol = 3
+//	4: whole messages in OpNotices replies, delivered through the hook (#204)
+const Protocol = 4
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -171,6 +172,8 @@ type Response struct {
 
 	Devices []Device `json:"devices,omitempty"`
 
+	// Turns are whole messages delivered through the hook, rendered with view.Turn.
+	Turns    []MessageView `json:"turns,omitempty"`
 	Messages []MessageView `json:"messages,omitempty"`
 	Events   []EventView   `json:"events,omitempty"`
 	// Unread is, in an OpNotices reply, how many messages the session has unread, set when there
@@ -262,7 +265,7 @@ type CommitView struct {
 	At      time.Time `json:"at"`
 }
 
-// MessageView is one received message. Notices carry no Body.
+// MessageView is one received message. Subject notices carry no Body; Turns do.
 type MessageView struct {
 	ID         string `json:"id"`
 	From       string `json:"from"`

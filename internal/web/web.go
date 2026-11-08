@@ -243,6 +243,21 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 // CheckSettings says whether settings are ones the page may set. The API makes this check before
 // calling the source; a source that also reads settings from elsewhere, a file say, makes it too.
 func CheckSettings(set Settings) error {
+	if set.BusyMessage != "" && set.BusyMessage != BusySubject && set.BusyMessage != BusyWhole {
+		return errors.New("busyMessage: must be subject or whole")
+	}
+	if len(set.SessionBusyMessage) > maxOverrides {
+		return errors.New("too many session overrides")
+	}
+	for name, value := range set.SessionBusyMessage {
+		if name == "" || len(name) > maxNameLen {
+			return errors.New("sessionBusyMessage: bad session name")
+		}
+		if value != BusySubject && value != BusyWhole {
+			return errors.New("sessionBusyMessage: must be subject or whole")
+		}
+	}
+
 	if !set.Wake.valid() {
 		return errors.New("wake: when must be always, within or never, and minutes 0 to 1440, given only with within")
 	}

@@ -131,11 +131,11 @@ type pushJob struct {
 	text     string
 }
 
-// wakeSnapshot copies the page's wake settings. setMu is taken alone, never with mu held.
+// wakeSnapshot copies the page's delivery settings. setMu is taken alone, never with mu held.
 func (d *Daemon) wakeSnapshot() pageSettings {
 	d.setMu.Lock()
 	defer d.setMu.Unlock()
-	return pageSettings{Wake: d.settings.Wake, SessionWake: maps.Clone(d.settings.SessionWake)}
+	return pageSettings{BusyMessage: d.settings.BusyMessage, SessionBusyMessage: maps.Clone(d.settings.SessionBusyMessage), Wake: d.settings.Wake, SessionWake: maps.Clone(d.settings.SessionWake)}
 }
 
 // routeOfLocked is how a message gets into session id: what its MCP server told the daemon if it
@@ -418,6 +418,12 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		}
 		return
 	}
+	d.deliveredLocked(j)
+}
+
+// deliveredLocked removes a delivered message and records how it reached the session.
+// Caller holds mu.
+func (d *Daemon) deliveredLocked(j *pushJob) {
 	for id, box := range d.st.Inbox {
 		for i, m := range box {
 			if m == j.msg {
@@ -434,9 +440,13 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	delete(d.pushWarned, j.id)
 	d.pushedAt[j.id] = time.Now()
 	d.noteConversationLocked() // the agent now has the message; its answer may soon follow
+	form := "as a turn, through " + j.via
+	if j.via == "hook" {
+		form = "through the hook"
+	}
 	e := j.msg.Event
-	d.noteLocked(time.Now(), fmt.Sprintf("delivered %q from %s to %s as a turn, through %s", e.Subject, e.From, j.addr, j.via))
-	d.log.Printf("delivered message %s to session %s as a turn, through %s", e.ID, j.addr, j.via)
+	d.noteLocked(time.Now(), fmt.Sprintf("delivered %q from %s to %s %s", e.Subject, e.From, j.addr, form))
+	d.log.Printf("delivered message %s to session %s %s", e.ID, j.addr, form)
 }
 
 // rememberRouteLocked keeps where a session in T3 is, so a message for it still reaches the

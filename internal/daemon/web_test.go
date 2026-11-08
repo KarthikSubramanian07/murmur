@@ -565,9 +565,11 @@ func TestPageSettingsPersist(t *testing.T) {
 	}
 
 	want := web.Settings{
-		Wake:           web.Wake{When: web.WakeWithin, Minutes: 12},
-		SessionWake:    map[string]web.Wake{"quiet-otter": {When: web.WakeNever}, "brave-heron": {When: web.WakeAlways}},
-		DefaultMinutes: 3,
+		BusyMessage:        web.BusyWhole,
+		SessionBusyMessage: map[string]string{"quiet-otter": web.BusySubject, "brave-heron": web.BusyWhole},
+		Wake:               web.Wake{When: web.WakeWithin, Minutes: 12},
+		SessionWake:        map[string]web.Wake{"quiet-otter": {When: web.WakeNever}, "brave-heron": {When: web.WakeAlways}},
+		DefaultMinutes:     3,
 	}
 	body, _ := json.Marshal(want)
 	if code, out := pg.call("PUT", "/api/settings", pg.token, string(body)); code != http.StatusOK {
@@ -585,6 +587,9 @@ func TestPageSettingsPersist(t *testing.T) {
 	// Bad settings are refused, and the ones in force stay.
 	for _, bad := range []string{
 		`{"wake":{"when":"sometimes"}}`,
+		`{"wake":{"when":"never"},"busyMessage":"maybe"}`,
+		`{"wake":{"when":"never"},"sessionBusyMessage":{"quiet-otter":""}}`,
+		`{"wake":{"when":"never"},"sessionBusyMessage":{"":"whole"}}`,
 		`{"wake":{"when":"always","minutes":5}}`,
 		`{"wake":{"when":"within","minutes":1441}}`,
 		`{"wake":{"when":"within","minutes":-1}}`,

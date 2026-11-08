@@ -15,6 +15,7 @@ import (
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/scrub"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 const maxBody = bus.MaxBody
@@ -417,6 +418,8 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	}
 	var self string
 	var fresh []*inMsg
+	var whole []*inMsg
+	var delivered []*pushJob
 	var told []*session
 	unread := 0
 	for _, id := range ids {
@@ -436,12 +439,24 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		if s := d.sessions[id]; s != nil {
 			told = append(told, s)
 		}
+		choice := wake.BusyMessage
+		if s := d.sessions[id]; s != nil {
+			if override, ok := wake.SessionBusyMessage[s.name]; ok {
+				choice = override
+			}
+		}
 		for _, m := range d.st.Inbox[id] {
 			if m.Pushing {
 				continue
 			}
 			unread++
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
+				if choice == web.BusyWhole && req.ClaudeSession != "" && d.hookBusyLocked(id) {
+					whole = append(whole, m)
+					delivered = append(delivered, &pushJob{id: id, addr: bus.Addr(d.device, id), msg: m, via: "hook"})
+					unread--
+					continue
+				}
 				m.Noticed = true
 				m.Held = d.hookBusyLocked(id) && d.turnableLocked(id, m, wake)
 				fresh = append(fresh, m)
@@ -454,7 +469,10 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	if len(fresh) > 0 {
 		d.saveLocked()
 	}
-	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
+	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false), Turns: d.messageViewsLocked(whole, true)}
+	for _, j := range delivered {
+		d.deliveredLocked(j)
+	}
 	changed := false
 	for _, s := range told {
 		changed = changed || s.toldUnread != unread

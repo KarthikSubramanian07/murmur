@@ -93,6 +93,11 @@ type Mute struct {
 
 // Settings are the human's choices for this device.
 type Settings struct {
+	// BusyMessage chooses what the hook gives a session at work. Empty means subject.
+	BusyMessage string `json:"busyMessage,omitempty"`
+	// SessionBusyMessage overrides BusyMessage for sessions on this device, by name.
+	SessionBusyMessage map[string]string `json:"sessionBusyMessage,omitempty"`
+
 	// Wake is the device-wide default for whether a message may wake an idle session.
 	Wake Wake `json:"wake"`
 	// SessionWake overrides Wake for single sessions on this device, by name.
@@ -101,6 +106,12 @@ type Settings struct {
 	// The source reports it; SetSettings ignores it.
 	DefaultMinutes int `json:"defaultMinutes"`
 }
+
+// BusyMessage values. An omitted value keeps the default, subject only.
+const (
+	BusySubject = "subject"
+	BusyWhole   = "whole"
+)
 
 // Wake is one choice of whether a message from another session may wake an idle session.
 type Wake struct {

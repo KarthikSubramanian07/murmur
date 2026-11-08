@@ -176,11 +176,16 @@ func Run(stdin io.Reader, stdout io.Writer) {
 		ncancel()
 	}
 	wg.Wait()
-	if !wantNotices || err != nil || len(resp.Messages) == 0 && resp.Unread == 0 {
+	if !wantNotices || err != nil || len(resp.Messages) == 0 && len(resp.Turns) == 0 && resp.Unread == 0 {
 		return
 	}
 	var out output
 	out.HookSpecificOutput.HookEventName = in.Event
-	out.HookSpecificOutput.AdditionalContext = view.Notices(resp.Messages, resp.Unread)
+	for _, m := range resp.Turns {
+		out.HookSpecificOutput.AdditionalContext += view.Turn(m)
+	}
+	if len(resp.Messages) > 0 || resp.Unread > 0 {
+		out.HookSpecificOutput.AdditionalContext += view.Notices(resp.Messages, resp.Unread)
+	}
 	json.NewEncoder(stdout).Encode(out)
 }

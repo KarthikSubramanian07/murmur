@@ -455,3 +455,95 @@ func mustJSON(t *testing.T, v any) string {
 	}
 	return string(b)
 }
+
+func TestBusyWholeMessagesThroughHook(t *testing.T) {
+	for _, tc := range []struct {
+		name, device, override string
+		whole                  bool
+	}{
+		{"default", "", "", false},
+		{"device", "whole", "", true},
+		{"subject override", "whole", "subject", false},
+		{"whole override", "subject", "whole", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			exe, calls := useFakeT3(t)
+			var logs syncBuf
+			d := newDeviceWith(t, newRemote(t), func(d *device) { d.logTo = &logs })
+			d.session("aaaaaa", "")
+			bob, _ := d.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "bob"})
+			name := d.named(bob)
+			pg := d.page()
+			set := pg.settings()
+			set.BusyMessage = tc.device
+			if tc.override != "" {
+				set.SessionBusyMessage = map[string]string{name: tc.override}
+			}
+			body, _ := json.Marshal(set)
+			if code, out := pg.call("PUT", "/api/settings", pg.token, string(body)); code != http.StatusOK {
+				t.Fatalf("settings: %d %s", code, out)
+			}
+			req := proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob"}
+			d.do(req) // busy before the message arrives
+			d.send("aaaaaa", bob, "first", "the first body")
+			d.send("aaaaaa", bob, "second", "the second body")
+			req.Subagent = true
+			if r := d.do(req); len(r.Turns)+len(r.Messages) != 0 {
+				t.Fatalf("subagent got messages: %+v", r)
+			}
+			req.Subagent = false
+			r := d.do(req)
+			if tc.whole {
+				if len(r.Turns) != 2 || len(r.Messages) != 0 || r.Unread != 0 {
+					t.Fatalf("whole response: %+v", r)
+				}
+				if r.Turns[0].Body != "the first body" || r.Turns[1].Body != "the second body" {
+					t.Fatalf("bodies: %+v", r.Turns)
+				}
+				if !strings.Contains(logs.String(), "through the hook") {
+					t.Fatalf("delivery log: %s", logs.String())
+				}
+				found := false
+				for _, e := range d.do(proto.Request{Op: proto.OpLog, Session: "aaaaaa"}).Events {
+					found = found || strings.Contains(e.Line, "through the hook")
+				}
+				if !found {
+					t.Fatal("no hook delivery note")
+				}
+			} else if len(r.Messages) != 2 || len(r.Turns) != 0 || r.Unread != 2 || r.Messages[0].Body != "" {
+				t.Fatalf("subject response: %+v", r)
+			}
+			if r := d.do(req); len(r.Messages)+len(r.Turns) != 0 || r.Unread != 0 {
+				t.Fatalf("repeated notice: %+v", r)
+			}
+			if len(calls()) != 0 {
+				t.Fatal("busy session got a turn")
+			}
+			box := d.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages
+			if tc.whole && len(box) != 0 || !tc.whole && len(box) != 2 {
+				t.Fatalf("inbox: %+v", box)
+			}
+			d.do(proto.Request{Op: proto.OpTurnEnd, ClaudeSession: "claude-bob"})
+			d.restart()
+			if box := d.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages; len(box) != 0 {
+				t.Fatalf("delivered messages returned after restart: %+v", box)
+			}
+		})
+	}
+}
+
+func TestWholeSettingWithoutHookKeepsTurnDelivery(t *testing.T) {
+	exe, calls := useFakeT3(t)
+	d := newDevice(t, newRemote(t))
+	d.session("aaaaaa", "")
+	bob, _ := d.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "bob"})
+	pg := d.page()
+	if code, out := pg.call("PUT", "/api/settings", pg.token, `{"wake":{"when":"always"},"busyMessage":"whole"}`); code != http.StatusOK {
+		t.Fatalf("settings: %d %s", code, out)
+	}
+	d.send("aaaaaa", bob, "without a hook", "still a turn")
+	eventually(t, "turn delivery", func() bool { return len(calls()) == 1 })
+	if !strings.Contains(calls()[0].Stdin, "still a turn") {
+		t.Fatalf("turn: %+v", calls())
+	}
+}

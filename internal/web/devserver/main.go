@@ -272,6 +272,11 @@ func (f *fixtures) SetSettings(ctx context.Context, s web.Settings) (web.Setting
 			return web.Settings{}, fmt.Errorf("%s is not a session on this device", name)
 		}
 	}
+	for name := range s.SessionBusyMessage {
+		if !local[name] {
+			return web.Settings{}, fmt.Errorf("%s is not a session on this device", name)
+		}
+	}
 	s.DefaultMinutes = f.settings.DefaultMinutes
 	f.settings = copySettings(s)
 	return copySettings(f.settings), nil
@@ -279,6 +284,10 @@ func (f *fixtures) SetSettings(ctx context.Context, s web.Settings) (web.Setting
 
 func copySettings(s web.Settings) web.Settings {
 	out := s
+	out.SessionBusyMessage = map[string]string{}
+	for k, v := range s.SessionBusyMessage {
+		out.SessionBusyMessage[k] = v
+	}
 	out.SessionWake = map[string]web.Wake{}
 	for k, v := range s.SessionWake {
 		out.SessionWake[k] = v

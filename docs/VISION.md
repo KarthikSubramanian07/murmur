@@ -413,9 +413,11 @@ call.
   senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
   it never read what was sent while it was away for more than 10 minutes, except what is kept for a
   stopped session's inbox (above).
-- **Settings** (when a session is woken) are saved in `.git/murmur/settings.json`, replaced whole.
-  Nothing acts on them yet: waking is #25. Mutes (#27) aren't built, so the page shows none and
-  refuses to unmute.
+- **Settings** are saved in `.git/murmur/settings.json`, replaced whole. Wake-ups and messages
+  while at work each have a device default and overrides by session name. For a session at work,
+  "Subject only" is the default; "Whole message" delivers the turn's text through the hook after
+  the next tool call (#204). This choice does nothing where Murmur's hook doesn't run, today
+  everywhere but Claude Code. Mutes (#27) aren't built, so the page shows none and refuses to unmute.
 - **Open page, running daemon.** The page asks for its state every 3 s, 15 s in a hidden tab. A
   call that carries the token, from a page someone can see, counts as an open page for 2 minutes,
   and an open page stops the 10-minute countdown the way a session does: a daemon with no sessions
@@ -730,7 +732,17 @@ the agent happens to call a tool. Tyler's decision (2026-10-29, #57), which repl
 delivery: **a message from another agent reaches the receiving session as a turn of its own**, the
 way a message between two T3 threads does. Murmur's core is two agents talking with nobody typing.
 
-The daemon delivers at once, when a message arrives for a session it can reach:
+A session at work that runs Murmur's hook gets a notice after its next tool call: sender,
+subject and the count unread (#202). The count appears again only when it changes. With the
+page's "Whole message" setting, each new message instead gets exactly `view.Turn`'s text,
+including its body limit, through that hook (#204). It then leaves the inbox, and the page's
+notes and daemon's log record delivery through the hook. Subject notices leave messages unread;
+what is still unread at the end of the turn can be delivered as a turn then. A prompt or tool
+call marks the session busy, and Stop marks it idle; a T3 run that ended after the last hook
+also ends the busy state. Subagent calls get no messages. These choices leave sessions without
+a hook on their existing delivery path.
+
+For an idle session, or one without the hook, the daemon delivers through these routes:
 
 | Where the session runs | Delivered by | Starts a turn in an idle session |
 |---|---|---|

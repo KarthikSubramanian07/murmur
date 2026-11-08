@@ -16,6 +16,7 @@ import (
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/view"
 )
 
 // fakeDaemon serves the daemon's protocol for the clone at gitDir: answer gives the response line
@@ -207,4 +208,36 @@ func TestNoticesCarryTheTranscriptPath(t *testing.T) {
 		}
 	}
 	t.Errorf("the hook sent no notices request: %+v", requests())
+}
+
+func TestWholeMessagesUseTurnText(t *testing.T) {
+	repo := newRepo(t)
+	msgs := []proto.MessageView{
+		{From: "other/agent", FromName: "quiet-otter", FromAgent: "claude-code", FromOwner: "Tyler", To: "*", Subject: "long message", Body: strings.Repeat("body ", 10000)},
+		{From: "other/second", Subject: "second", Body: "another body"},
+	}
+	fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		resp := proto.Response{OK: true}
+		if r.Op == proto.OpNotices {
+			resp.Turns = msgs
+		}
+		b, _ := json.Marshal(resp)
+		return string(b)
+	})
+	out, _ := run("PostToolUse", repo)
+	var got struct {
+		HookSpecificOutput struct {
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := view.Turn(msgs[0]) + view.Turn(msgs[1])
+	if got.HookSpecificOutput.AdditionalContext != want {
+		t.Fatal("whole messages differ from turn text")
+	}
+	if strings.Contains(want, msgs[0].Body) {
+		t.Fatal("long body was not cut")
+	}
 }

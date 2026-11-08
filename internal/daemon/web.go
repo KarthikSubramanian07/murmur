@@ -222,12 +222,16 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 
 // pageSettings is what settings.json holds: the human's choices, and nothing the daemon works out.
 type pageSettings struct {
+	// BusyMessage chooses what the hook gives a session at work. Empty means subject.
+	BusyMessage        string            `json:"busyMessage,omitempty"`
+	SessionBusyMessage map[string]string `json:"sessionBusyMessage,omitempty"`
+
 	Wake        web.Wake            `json:"wake"`
 	SessionWake map[string]web.Wake `json:"sessionWake,omitempty"`
 }
 
 func (p pageSettings) view() web.Settings {
-	return web.Settings{Wake: p.Wake, SessionWake: maps.Clone(p.SessionWake), DefaultMinutes: defaultWakeMinutes}
+	return web.Settings{BusyMessage: p.BusyMessage, SessionBusyMessage: maps.Clone(p.SessionBusyMessage), Wake: p.Wake, SessionWake: maps.Clone(p.SessionWake), DefaultMinutes: defaultWakeMinutes}
 }
 
 func (d *Daemon) settingsPath() string { return filepath.Join(d.dir, "settings.json") }
@@ -268,7 +272,10 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	if err := web.CheckSettings(set); err != nil {
 		return web.Settings{}, err
 	}
-	next := pageSettings{Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake)}
+	next := pageSettings{BusyMessage: set.BusyMessage, SessionBusyMessage: maps.Clone(set.SessionBusyMessage), Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake)}
+	if len(next.SessionBusyMessage) == 0 {
+		next.SessionBusyMessage = nil
+	}
 	if len(next.SessionWake) == 0 {
 		next.SessionWake = nil
 	}

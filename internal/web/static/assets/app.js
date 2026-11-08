@@ -852,6 +852,18 @@ function wakeControl(key, wake, onChange, withDefault) {
   return [seg, h("span", { class: "field" }, input), h("span", { class: "field-suffix" }, "min")];
 }
 
+function busyControl(key, value, onChange, withDefault) {
+  const choices = [["subject", "Subject only"], ["whole", "Whole message"]];
+  if (withDefault) choices.unshift(["default", "Default"]);
+  const current = value || (withDefault ? "default" : "subject");
+  return h("div", { class: "segmented", role: "group", "aria-label": "Messages while at work" },
+    choices.map(([v, label]) => h("button", {
+      "aria-pressed": current === v ? "true" : "false",
+      "data-key": key + "-" + v,
+      onclick: () => { if (v !== current) onChange(v === "default" ? null : v); },
+    }, label)));
+}
+
 // Settings go to the daemon one request at a time, in order: each PUT is the whole settings, so
 // one that overtook an older one would be undone by it. Loads queue behind saves too. The page
 // shows the newest choice while it is on its way, and only the answer to the newest request is
@@ -949,6 +961,27 @@ function settingsPage() {
         ui.settingsError && h("p", { class: "row-error section-head" }, ui.settingsError),
       ),
     );
+  }
+
+  if (ui.settings) {
+    const set = ui.settings;
+    const local = (ui.state?.devices || []).find((d) => d.self)?.sessions || [];
+    sections.push(h("section", { class: "section" },
+      h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Messages while at work")),
+      h("div", { class: "group" },
+        settingsRow("busy", "Device default", "After the next tool call. Requires Murmur's hook; today, Claude Code only.",
+          busyControl("busy", set.busyMessage, (value) => saveSettings({ ...ui.settings, busyMessage: value }), false)),
+        ...[...local].sort((a, b) => a.name.localeCompare(b.name)).map((s) =>
+          settingsRow("busy-" + s.name,
+            [s.name, s.agent && h("span", { class: "badge badge-secondary" }, s.agent)], null,
+            busyControl("busy-" + s.name, set.sessionBusyMessage?.[s.name], (value) => {
+              const next = { ...(ui.settings.sessionBusyMessage || {}) };
+              if (value) next[s.name] = value;
+              else delete next[s.name];
+              saveSettings({ ...ui.settings, sessionBusyMessage: next });
+            }, true))),
+      ),
+    ));
   }
 
   const mutes = ui.state?.mutes || [];
