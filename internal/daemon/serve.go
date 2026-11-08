@@ -395,6 +395,10 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 // A message that would have gone in as a turn, but for the session being at work, is Held: it goes
 // in as one when the turn ends if it is still unread (#202). The count is told with each new
 // message and again only when it changes, so it isn't repeated after every tool call.
+//
+// If the page says a session at work gets whole messages, a new message is returned with its body
+// as Whole, for the hook to print as a turn would read, and leaves the inbox: it is delivered
+// (#204), and the count no longer has it.
 func (d *Daemon) notices(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
@@ -417,6 +421,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	}
 	var self string
 	var fresh []*inMsg
+	whole := map[string][]*inMsg{} // by session, the messages to deliver through the hook
 	var told []*session
 	unread := 0
 	for _, id := range ids {
@@ -440,21 +445,31 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			if m.Pushing {
 				continue
 			}
-			unread++
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
+				if d.wholeByHookLocked(id, m, wake) {
+					whole[id] = append(whole[id], m)
+					continue
+				}
 				m.Noticed = true
 				m.Held = d.hookBusyLocked(id) && d.turnableLocked(id, m, wake)
 				fresh = append(fresh, m)
 			}
+			unread++
 		}
+	}
+	var delivered []*inMsg
+	for _, id := range sortedKeys(whole) {
+		d.deliveredByHookLocked(id, whole[id])
+		delivered = append(delivered, whole[id]...)
 	}
 	if self == "" {
 		return proto.Response{OK: true}
 	}
-	if len(fresh) > 0 {
+	if len(fresh) > 0 || len(delivered) > 0 {
 		d.saveLocked()
 	}
-	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
+	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false),
+		Whole: d.messageViewsLocked(delivered, true)}
 	changed := false
 	for _, s := range told {
 		changed = changed || s.toldUnread != unread

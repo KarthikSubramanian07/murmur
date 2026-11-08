@@ -280,6 +280,8 @@ func TestSettingsRoundTrip(t *testing.T) {
 			"brave-heron": {When: WakeAlways},
 			"amber-finch": {When: WakeWithin},
 		},
+		Busy:        BusyWhole,
+		SessionBusy: map[string]string{"quiet-otter": BusySubject, "brave-heron": BusyWhole},
 	}
 	body, _ := json.Marshal(want)
 	saved := decode[Settings](t, h.ok("PUT", "/api/settings", string(body)))
@@ -300,6 +302,11 @@ func TestSettingsRoundTrip(t *testing.T) {
 		`{"wake":{"when":"within","minutes":1441}}`,
 		`{"wake":{"when":"never"},"sessionWake":{"quiet-otter":{"when":"maybe"}}}`,
 		`{"wake":{"when":"never"},"sessionWake":{"":{"when":"never"}}}`,
+		`{"wake":{"when":"never"},"busy":"sometimes"}`,
+		`{"wake":{"when":"never"},"busy":"Whole"}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"quiet-otter":"maybe"}}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"quiet-otter":""}}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"":"whole"}}`,
 		`{"wake":{"when":"never"},"extra":true}`,
 		`{"wake":`,
 		``,
@@ -314,6 +321,20 @@ func TestSettingsRoundTrip(t *testing.T) {
 	}
 	if got := decode[Settings](t, h.ok("GET", "/api/settings", "")); !reflect.DeepEqual(got, want) {
 		t.Errorf("after rejected PUTs, GET returned %+v, want %+v", got, want)
+	}
+}
+
+// Settings saved before the busy choice existed, and a page that sends none, leave it empty, which
+// stands for the subject only: they are valid.
+func TestSettingsWithoutBusy(t *testing.T) {
+	src := newFake()
+	h := start(t, src, noPRs)
+	saved := decode[Settings](t, h.ok("PUT", "/api/settings", `{"wake":{"when":"never"}}`))
+	if saved.Busy != "" || saved.SessionBusy != nil {
+		t.Errorf("PUT without busy returned %+v", saved)
+	}
+	if err := CheckSettings(Settings{Wake: Wake{When: WakeWithin}, Busy: BusySubject}); err != nil {
+		t.Errorf("busy subject: %v", err)
 	}
 }
 

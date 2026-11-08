@@ -413,7 +413,7 @@ call.
   senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
   it never read what was sent while it was away for more than 10 minutes, except what is kept for a
   stopped session's inbox (above).
-- **Settings** (when a session is woken) are saved in `.git/murmur/settings.json`, replaced whole.
+- **Settings** (when a session is woken, and what a session at work gets from the hook, #204) are saved in `.git/murmur/settings.json`, replaced whole.
   Nothing acts on them yet: waking is #25. Mutes (#27) aren't built, so the page shows none and
   refuses to unmute.
 - **Open page, running daemon.** The page asks for its state every 3 s, 15 s in a hidden tab. A
@@ -760,6 +760,24 @@ A body past the limit is cut, as in `inbox`.
   could not be delivered stays in the inbox and is announced by the hook as before. The hook
   leaves alone a message that is waiting its turn to be delivered, behind the one being delivered:
   announced by a notice it would never become a turn.
+- **A session at work: the subject, or the whole message** (Tyler, 2026-11-08, #204, on #202).
+  Where the hook runs (Claude Code), a message for a session at work isn't handed to T3: the hook
+  announces it after the next tool call, and the page's choice says how. *Subject only*, the
+  default, is a line with the sender and the subject and the count unread; the agent reads the
+  body with `inbox` when it chooses, so it decides whether a message is worth stopping for, and
+  one with a vague subject can be missed. *Whole message* has the hook print what a turn would
+  have said (`view.Turn`, a long body cut as a turn's is), so the content is in front of the agent
+  without a tool call, and every message lands mid-task at full length whether or not it matters
+  to the task. Such a message is delivered, as one given as a turn is: it leaves the inbox, the
+  count no longer has it, and the log and the page's notes say it was delivered through the hook.
+  The choice is for the device and, by session name, for single sessions, saved beside the wake
+  setting and working the same way. The wake setting isn't asked: it is about waking an idle
+  session, and nothing is woken here. An idle session still gets a turn, whatever the choice, and
+  a session without the hook is unaffected (nothing runs mid-turn to shape). The daemon takes the
+  message out of the inbox before the hook has printed it, so a hook that is cut off (it gives up
+  on a slow daemon after `NoticeTimeout`) loses the message from the agent's side; the page still
+  shows it. A subagent's calls get nothing, as with the subject (#188). A third choice, whole for
+  an urgent message and the subject for the rest, waits for #197.
 - **Finding the thread (#56).** T3 gives an MCP server or a hook no thread ID, so the MCP server
   looks up the provider's own session in T3's database: `statev2.sqlite` in T3's data directory
   (`T3CODE_HOME`, or the directory the CLI's `bin` is in, or `~/.t3`), table

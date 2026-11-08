@@ -559,7 +559,7 @@ func TestPageMessageCursorAcrossTheRingWrapping(t *testing.T) {
 func TestPageSettingsPersist(t *testing.T) {
 	d := newDevice(t, newRemote(t))
 	pg := d.page()
-	def := web.Settings{Wake: web.Wake{When: web.WakeWithin}, DefaultMinutes: 3}
+	def := web.Settings{Wake: web.Wake{When: web.WakeWithin}, Busy: web.BusySubject, DefaultMinutes: 3}
 	if got := pg.settings(); !reflect.DeepEqual(got, def) {
 		t.Fatalf("defaults: %+v, want %+v", got, def)
 	}
@@ -567,6 +567,8 @@ func TestPageSettingsPersist(t *testing.T) {
 	want := web.Settings{
 		Wake:           web.Wake{When: web.WakeWithin, Minutes: 12},
 		SessionWake:    map[string]web.Wake{"quiet-otter": {When: web.WakeNever}, "brave-heron": {When: web.WakeAlways}},
+		Busy:           web.BusyWhole,
+		SessionBusy:    map[string]string{"quiet-otter": web.BusySubject, "brave-heron": web.BusyWhole},
 		DefaultMinutes: 3,
 	}
 	body, _ := json.Marshal(want)
@@ -591,6 +593,9 @@ func TestPageSettingsPersist(t *testing.T) {
 		`{"wake":{"when":""}}`,
 		`{"wake":{"when":"never"},"sessionWake":{"quiet-otter":{"when":"later"}}}`,
 		`{"wake":{"when":"never"},"sessionWake":{"":{"when":"never"}}}`,
+		`{"wake":{"when":"never"},"busy":"sometimes"}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"quiet-otter":"later"}}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"":"whole"}}`,
 		`{"wake":{"when":"never"},"extra":1}`,
 		`not json`,
 	} {
@@ -632,6 +637,35 @@ func TestPageSettingsPersist(t *testing.T) {
 	d.restart()
 	if got := d.page().settings(); got.Wake.When != web.WakeNever {
 		t.Fatalf("after saving over a bad file: %+v", got)
+	}
+}
+
+// A settings.json from before the busy choice existed keeps its wake settings, and reads as the
+// subject only; saving settings without the choice says the same (#204).
+func TestPageSettingsFromBeforeTheBusyChoice(t *testing.T) {
+	d := newDevice(t, newRemote(t))
+	d.stop()
+	dir := filepath.Join(d.gitDir, brand.StateDir)
+	old := `{"wake":{"when":"within","minutes":9},"sessionWake":{"quiet-otter":{"when":"never"}}}`
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d.start()
+	want := web.Settings{
+		Wake:           web.Wake{When: web.WakeWithin, Minutes: 9},
+		SessionWake:    map[string]web.Wake{"quiet-otter": {When: web.WakeNever}},
+		Busy:           web.BusySubject,
+		DefaultMinutes: 3,
+	}
+	pg := d.page()
+	if got := pg.settings(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("old file: %+v, want %+v", got, want)
+	}
+	if code, out := pg.call("PUT", "/api/settings", pg.token, old); code != http.StatusOK {
+		t.Fatalf("PUT without busy: %d %s", code, out)
+	}
+	if got := pg.settings(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("after a PUT without busy: %+v, want %+v", got, want)
 	}
 }
 

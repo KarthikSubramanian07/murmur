@@ -66,6 +66,23 @@ func TestTurnKeepsTheBodyAsWritten(t *testing.T) {
 	}
 }
 
+// Turns are the messages the daemon delivered through the hook, each as a turn reads, set apart by
+// a blank line; a body past the limit is cut as in a turn (#204).
+func TestTurns(t *testing.T) {
+	if got := Turns(nil); got != "" {
+		t.Errorf("no messages: %q", got)
+	}
+	a := proto.MessageView{From: "d/a", FromName: "quiet-otter", To: "x", Subject: "one", Body: "first"}
+	b := proto.MessageView{From: "d/b", FromName: "brave-heron", To: "x", Subject: "two"}
+	if got, want := Turns([]proto.MessageView{a, b}), Turn(a)+"\n"+Turn(b); got != want {
+		t.Errorf("two messages:\n got %q\nwant %q", got, want)
+	}
+	long := proto.MessageView{From: "d/a", To: "x", Subject: "s", Body: strings.Repeat("x", 1<<20)}
+	if got := Turns([]proto.MessageView{long}); got != Turn(long) || len(got) > 1<<17 {
+		t.Errorf("a megabyte body made %d bytes, or not what Turn makes", len(got))
+	}
+}
+
 // sess makes a session that was last active ago ago.
 func sess(name string, ago time.Duration, doing string) proto.SessionView {
 	return proto.SessionView{Addr: "dev/" + name, Name: name, Agent: "claude-code", Branch: "main", Doing: doing,

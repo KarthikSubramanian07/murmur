@@ -208,3 +208,51 @@ func TestNoticesCarryTheTranscriptPath(t *testing.T) {
 	}
 	t.Errorf("the hook sent no notices request: %+v", requests())
 }
+
+// A message the daemon delivered whole (#204) is printed as the turn it would have been, the body
+// too, and then the notice for any that are only announced, with the count. A reply with nothing
+// to say prints nothing.
+func TestWholeMessagesArePrintedAsTurns(t *testing.T) {
+	repo := newRepo(t)
+	fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op != proto.OpNotices {
+			return `{"ok":true}`
+		}
+		return `{"ok":true,"self":"fake-0001/aaaaaa","unread":1,` +
+			`"whole":[{"id":"m1","from":"other-0001/bbbbbb","fromName":"quiet-otter","to":"fake-0001/aaaaaa","subject":"auth?","body":"Are you changing it?"}],` +
+			`"messages":[{"id":"m2","from":"other-0001/cccccc","fromName":"brave-heron","subject":"only the subject"}]}`
+	})
+	out, _ := run("PostToolUse", repo)
+	var got struct {
+		HookSpecificOutput struct{ AdditionalContext string }
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("the hook printed %q: %v", out, err)
+	}
+	text := got.HookSpecificOutput.AdditionalContext
+	turn := "Message from quiet-otter via Murmur:\n\nauth?\n\nAre you changing it?\n"
+	i, j := strings.Index(text, turn), strings.Index(text, "only the subject")
+	if i != 0 {
+		t.Errorf("the output doesn't start with the message as a turn:\n%s", text)
+	}
+	if j < i+len(turn) || strings.Contains(text[j:], "Are you changing it?") {
+		t.Errorf("the announced message doesn't follow the whole one, or carries its body:\n%s", text)
+	}
+	if !strings.Contains(text, "1 message unread.") {
+		t.Errorf("the count is missing:\n%s", text)
+	}
+}
+
+func TestWholeMessageAloneHasNoNotice(t *testing.T) {
+	repo := newRepo(t)
+	fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op != proto.OpNotices {
+			return `{"ok":true}`
+		}
+		return `{"ok":true,"self":"fake-0001/aaaaaa","whole":[{"id":"m1","from":"other-0001/bbbbbb","fromName":"quiet-otter","subject":"auth?","body":"hi"}]}`
+	})
+	out, _ := run("PostToolUse", repo)
+	if !strings.Contains(out, "hi") || strings.Contains(out, "unread") || strings.Contains(out, "inbox") {
+		t.Errorf("the hook printed %q: want the turn alone", out)
+	}
+}

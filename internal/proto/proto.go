@@ -39,7 +39,9 @@ const (
 //	   reports and the Codex thread ID in the route (#66)
 //	3: OpTurnEnd, OpNotices's Unread and Subagent: a session the hook runs in gets notices while it
 //	   is at work, and turns only when it isn't (#202)
-const Protocol = 3
+//	4: OpNotices's Whole: a page setting can have the hook give a session at work the whole message,
+//	   which leaves its inbox (#204)
+const Protocol = 4
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -176,6 +178,10 @@ type Response struct {
 	// Unread is, in an OpNotices reply, how many messages the session has unread, set when there
 	// are new ones to tell or the number changed since the hook last said it; 0 otherwise.
 	Unread int `json:"unread,omitempty"`
+	// Whole is, in an OpNotices reply, the messages the daemon has delivered to the session through
+	// the hook, with their bodies: the hook prints each as a turn would read, and they are no longer
+	// in the inbox (#204). Messages has the ones that are only announced.
+	Whole []MessageView `json:"whole,omitempty"`
 
 	Lookup *SessionDetail `json:"lookup,omitempty"`
 }

@@ -224,10 +224,29 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 type pageSettings struct {
 	Wake        web.Wake            `json:"wake"`
 	SessionWake map[string]web.Wake `json:"sessionWake,omitempty"`
+	// Busy and SessionBusy are what a session at work gets from the hook (#204). A file from
+	// before they existed has neither, which reads as the subject only.
+	Busy        string            `json:"busy,omitempty"`
+	SessionBusy map[string]string `json:"sessionBusy,omitempty"`
 }
 
 func (p pageSettings) view() web.Settings {
-	return web.Settings{Wake: p.Wake, SessionWake: maps.Clone(p.SessionWake), DefaultMinutes: defaultWakeMinutes}
+	return web.Settings{Wake: p.Wake, SessionWake: maps.Clone(p.SessionWake), Busy: p.Busy, SessionBusy: maps.Clone(p.SessionBusy),
+		DefaultMinutes: defaultWakeMinutes}
+}
+
+// normalized is p with the empty maps dropped and the device default spelled out.
+func (p pageSettings) normalized() pageSettings {
+	if len(p.SessionWake) == 0 {
+		p.SessionWake = nil
+	}
+	if len(p.SessionBusy) == 0 {
+		p.SessionBusy = nil
+	}
+	if p.Busy == "" {
+		p.Busy = web.BusySubject
+	}
+	return p
 }
 
 func (d *Daemon) settingsPath() string { return filepath.Join(d.dir, "settings.json") }
@@ -235,7 +254,7 @@ func (d *Daemon) settingsPath() string { return filepath.Join(d.dir, "settings.j
 // loadSettings reads settings.json, or takes the defaults if there is none or it holds something
 // the page wouldn't have saved. The file is left alone then: the next save replaces it.
 func (d *Daemon) loadSettings() {
-	d.settings = pageSettings{Wake: web.Wake{When: web.WakeWithin}}
+	d.settings = pageSettings{Wake: web.Wake{When: web.WakeWithin}, Busy: web.BusySubject}
 	b, err := os.ReadFile(d.settingsPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return
@@ -250,7 +269,7 @@ func (d *Daemon) loadSettings() {
 		d.log.Printf("settings.json isn't usable, so the defaults stand: %v", err)
 		return
 	}
-	d.settings = read
+	d.settings = read.normalized()
 }
 
 func (s pageSource) Settings(ctx context.Context) (web.Settings, error) {
@@ -268,10 +287,8 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	if err := web.CheckSettings(set); err != nil {
 		return web.Settings{}, err
 	}
-	next := pageSettings{Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake)}
-	if len(next.SessionWake) == 0 {
-		next.SessionWake = nil
-	}
+	next := pageSettings{Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake), Busy: set.Busy,
+		SessionBusy: maps.Clone(set.SessionBusy)}.normalized()
 	d.setMu.Lock()
 	defer d.setMu.Unlock()
 	if err := writeJSON(d.settingsPath(), next); err != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3"
 	"github.com/a-Fig/murmur/internal/view"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // Delivering a message as a turn (#57). A message that arrives for a session is put into the
@@ -131,11 +132,12 @@ type pushJob struct {
 	text     string
 }
 
-// wakeSnapshot copies the page's wake settings. setMu is taken alone, never with mu held.
+// wakeSnapshot copies the page's settings, the wake ones and what a working session gets (#204). setMu is taken alone, never with mu held.
 func (d *Daemon) wakeSnapshot() pageSettings {
 	d.setMu.Lock()
 	defer d.setMu.Unlock()
-	return pageSettings{Wake: d.settings.Wake, SessionWake: maps.Clone(d.settings.SessionWake)}
+	return pageSettings{Wake: d.settings.Wake, SessionWake: maps.Clone(d.settings.SessionWake),
+		Busy: d.settings.Busy, SessionBusy: maps.Clone(d.settings.SessionBusy)}
 }
 
 // routeOfLocked is how a message gets into session id: what its MCP server told the daemon if it
@@ -418,18 +420,7 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		}
 		return
 	}
-	for id, box := range d.st.Inbox {
-		for i, m := range box {
-			if m == j.msg {
-				if box = append(box[:i:i], box[i+1:]...); len(box) == 0 {
-					delete(d.st.Inbox, id)
-				} else {
-					d.st.Inbox[id] = box
-				}
-				break
-			}
-		}
-	}
+	d.removeFromInboxLocked(j.msg)
 	d.saveLocked()
 	delete(d.pushWarned, j.id)
 	d.pushedAt[j.id] = time.Now()
@@ -437,6 +428,48 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	e := j.msg.Event
 	d.noteLocked(time.Now(), fmt.Sprintf("delivered %q from %s to %s as a turn, through %s", e.Subject, e.From, j.addr, j.via))
 	d.log.Printf("delivered message %s to session %s as a turn, through %s", e.ID, j.addr, j.via)
+}
+
+// removeFromInboxLocked takes m out of whichever inbox holds it, which is how a message is marked
+// read. The caller saves. Caller holds mu.
+func (d *Daemon) removeFromInboxLocked(m *inMsg) {
+	for id, box := range d.st.Inbox {
+		for i, o := range box {
+			if o == m {
+				if box = append(box[:i:i], box[i+1:]...); len(box) == 0 {
+					delete(d.st.Inbox, id)
+				} else {
+					d.st.Inbox[id] = box
+				}
+				return
+			}
+		}
+	}
+}
+
+// wholeByHookLocked says message m, not yet told to session id, is to be delivered whole through
+// the hook now (#204): the session is at work with the hook running, the page says it gets whole
+// messages, and the message is one that may still be delivered (see pushable). The wake setting
+// isn't asked: it is about waking an idle session, and nothing wakes one here. A session off the
+// mesh gets nothing. Caller holds mu.
+func (d *Daemon) wholeByHookLocked(id string, m *inMsg, set pageSettings) bool {
+	return pushable(m) && d.hookBusyLocked(id) && !d.offMeshLocked(id) &&
+		set.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
+}
+
+// deliveredByHookLocked records that messages msgs of session id were put in its hook's output as
+// turns: they leave its inbox, as a message delivered as a turn does. The caller saves. Caller
+// holds mu.
+func (d *Daemon) deliveredByHookLocked(id string, msgs []*inMsg) {
+	now := time.Now()
+	for _, m := range msgs {
+		d.removeFromInboxLocked(m)
+		e := m.Event
+		addr := bus.Addr(d.device, id)
+		d.noteLocked(now, fmt.Sprintf("delivered %q from %s to %s through the hook, after a tool call", e.Subject, e.From, addr))
+		d.log.Printf("delivered message %s to session %s through the hook, after a tool call", e.ID, addr)
+	}
+	d.noteConversationLocked() // the agent now has the messages; its answers may soon follow
 }
 
 // rememberRouteLocked keeps where a session in T3 is, so a message for it still reaches the

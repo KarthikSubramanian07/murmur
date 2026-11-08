@@ -852,6 +852,35 @@ function wakeControl(key, wake, onChange, withDefault) {
   return [seg, h("span", { class: "field" }, input), h("span", { class: "field-suffix" }, "min")];
 }
 
+const BUSY_CHOICES = [
+  ["subject", "Subject only"],
+  ["whole", "Whole message"],
+];
+
+// What a working session gets: one of BUSY_CHOICES, or with a default, "default" for no choice of
+// its own (null).
+function busyControl(key, busy, onChange, withDefault) {
+  const choices = withDefault ? [["default", "Default"], ...BUSY_CHOICES] : BUSY_CHOICES;
+  const current = busy || "default";
+  return h(
+    "div",
+    { class: "segmented", role: "group" },
+    choices.map(([v, label]) =>
+      h(
+        "button",
+        {
+          "aria-pressed": current === v ? "true" : "false",
+          "data-key": key + "-" + v,
+          onclick: () => {
+            if (v !== current) onChange(v === "default" ? null : v);
+          },
+        },
+        label,
+      ),
+    ),
+  );
+}
+
 // Settings go to the daemon one request at a time, in order: each PUT is the whole settings, so
 // one that overtook an older one would be undone by it. Loads queue behind saves too. The page
 // shows the newest choice while it is on its way, and only the answer to the newest request is
@@ -940,12 +969,47 @@ function settingsPage() {
           ),
         ),
     ];
+    const busyOverrides = set.sessionBusy || {};
+    const busyRows = [
+      settingsRow(
+        "busy",
+        "Device default",
+        `What a working session gets after its next tool call. Applies to agents with ${NAME}'s hook, such as Claude Code.`,
+        busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b || "subject" }), false),
+      ),
+      ...[...local]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((s) =>
+          settingsRow(
+            "busy-" + s.name,
+            [s.name, s.agent && h("span", { class: "badge badge-secondary" }, s.agent)],
+            null,
+            busyControl(
+              "busy-" + s.name,
+              busyOverrides[s.name] || null,
+              (b) => {
+                const next = { ...(ui.settings.sessionBusy || {}) };
+                if (b) next[s.name] = b;
+                else delete next[s.name];
+                saveSettings({ ...ui.settings, sessionBusy: next });
+              },
+              true,
+            ),
+          ),
+        ),
+    ];
     sections.push(
       h(
         "section",
         { class: "section" },
         h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Wake-ups")),
         h("div", { class: "group" }, rows),
+      ),
+      h(
+        "section",
+        { class: "section" },
+        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Working sessions")),
+        h("div", { class: "group" }, busyRows),
         ui.settingsError && h("p", { class: "row-error section-head" }, ui.settingsError),
       ),
     );

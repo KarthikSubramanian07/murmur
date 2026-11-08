@@ -1,8 +1,9 @@
 // Package hook is the Claude Code hook. After each tool call and each prompt it asks the daemon
 // for messages this session hasn't been told about, and adds one line per message (sender and
-// subject, never the body) to the agent's context, with how many are unread. Before and after each
-// tool call that could run a command it also tells the daemon, which finds the commits the call
-// made (#21). Those calls and prompts tell the daemon the session is at work, and the end of a
+// subject, never the body) to the agent's context, with how many are unread; a session the page
+// says gets whole messages is given each as the turn it would have been (#204). Before and after
+// each tool call that could run a command it also tells the daemon, which finds the commits the
+// call made (#21). Those calls and prompts tell the daemon the session is at work, and the end of a
 // turn (Stop) that it isn't: a message goes in as a turn only then (#202).
 //
 // It never blocks or fails the agent: any problem, including no daemon running, means it
@@ -176,11 +177,17 @@ func Run(stdin io.Reader, stdout io.Writer) {
 		ncancel()
 	}
 	wg.Wait()
-	if !wantNotices || err != nil || len(resp.Messages) == 0 && resp.Unread == 0 {
+	if !wantNotices || err != nil || len(resp.Messages) == 0 && len(resp.Whole) == 0 && resp.Unread == 0 {
 		return
+	}
+	// A message the daemon delivered whole (#204) reads as the turn it would have been, and is
+	// followed by the notice for any that are only announced.
+	text := view.Turns(resp.Whole)
+	if len(resp.Messages) > 0 || resp.Unread > 0 {
+		text += view.Notices(resp.Messages, resp.Unread)
 	}
 	var out output
 	out.HookSpecificOutput.HookEventName = in.Event
-	out.HookSpecificOutput.AdditionalContext = view.Notices(resp.Messages, resp.Unread)
+	out.HookSpecificOutput.AdditionalContext = text
 	json.NewEncoder(stdout).Encode(out)
 }

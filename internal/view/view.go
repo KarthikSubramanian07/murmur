@@ -250,6 +250,19 @@ func Turn(m proto.MessageView) string {
 	return b.String()
 }
 
+// Turns renders messages the daemon delivered through the hook, each as Turn would, one after the
+// other with a blank line between them (#204). "" if there are none.
+func Turns(msgs []proto.MessageView) string {
+	var b strings.Builder
+	for i, m := range msgs {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(Turn(m))
+	}
+	return b.String()
+}
+
 // Notices renders what the hook shows: a line for each new message, sender and subject, never the
 // body, and then how many are unread, if unread is more than 0. With no new messages it is the
 // count alone, which the daemon gives only when it has changed.

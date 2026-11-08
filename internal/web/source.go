@@ -97,6 +97,12 @@ type Settings struct {
 	Wake Wake `json:"wake"`
 	// SessionWake overrides Wake for single sessions on this device, by name.
 	SessionWake map[string]Wake `json:"sessionWake,omitempty"`
+	// Busy is the device-wide default for what a session at work gets from Murmur's hook when a
+	// message comes (#204): BusySubject or BusyWhole. Empty stands for BusySubject, so settings
+	// saved before this existed still read.
+	Busy string `json:"busy,omitempty"`
+	// SessionBusy overrides Busy for single sessions on this device, by name.
+	SessionBusy map[string]string `json:"sessionBusy,omitempty"`
 	// DefaultMinutes is what Wake.Minutes 0 stands for: 3, or the prompt-cache length if known.
 	// The source reports it; SetSettings ignores it.
 	DefaultMinutes int `json:"defaultMinutes"`
@@ -116,6 +122,17 @@ const (
 	WakeWithin = "within"
 	WakeNever  = "never"
 )
+
+// Settings.Busy values. Whole is the message as it would be a turn, after the next tool call; the
+// session's inbox no longer has it.
+const (
+	BusySubject = "subject"
+	BusyWhole   = "whole"
+)
+
+func validBusy(b string) bool {
+	return b == "" || b == BusySubject || b == BusyWhole
+}
 
 // MaxWakeMinutes bounds Wake.Minutes: a day.
 const MaxWakeMinutes = 24 * 60

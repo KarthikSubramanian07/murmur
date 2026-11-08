@@ -384,6 +384,18 @@ func (p pageSettings) choice(name string) web.Wake {
 	return p.Wake
 }
 
+// busyChoice is what the page says a session called name gets from the hook while it is at work
+// (#204), web.BusySubject or web.BusyWhole: its own choice, if it has one, else the device's.
+func (p pageSettings) busyChoice(name string) string {
+	if o, ok := p.SessionBusy[name]; ok && name != "" {
+		return o
+	}
+	if p.Busy == web.BusyWhole {
+		return web.BusyWhole
+	}
+	return web.BusySubject
+}
+
 // wakesLocked says whether a message may go into session id as a turn now. Not if it is off the
 // mesh, nor if the page says never. Always: yes. Within N minutes (the default, and what an
 // unset choice means): if the session is busy, which needs no waking, or was last at work no
