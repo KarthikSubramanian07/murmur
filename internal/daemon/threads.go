@@ -93,6 +93,7 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 		read[k] = st
 	}
 
+	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	changed, settled := false, false
 	for k, st := range read {
@@ -122,6 +123,16 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 		}
 		d.threads[k] = st
 		delete(d.threadWarned, k)
+	}
+	// A turn the hook saw start and no Stop end, as one the user interrupted, is over once a read
+	// that began after the hook last ran finds no run (#202).
+	for _, s := range d.sessions {
+		if r := s.route; s.hooked && !s.busyAt.IsZero() && r.T3Thread != "" {
+			k := threadKey{r.T3Home, r.T3Thread}
+			if st, ok := read[k]; ok && !st.Busy && readAt[k].After(s.busyAt) {
+				d.endTurnLocked(s, wake)
+			}
+		}
 	}
 	// A delegate's inbox stays empty however a message got in, and its commits go to its parent,
 	// those made before its thread was read included.

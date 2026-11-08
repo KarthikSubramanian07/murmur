@@ -95,12 +95,13 @@ func (d *Daemon) touchHookLocked(req proto.Request) []*session {
 	for _, s := range sessions {
 		// Every hook but Stop's runs while the session is at work: a prompt or a tool call. Not a
 		// subagent's, which may be working in the background after the session's turn ended.
-		s.hooked = true
+		// Nor does it count as the session's hook having run: a session that reconnected after a
+		// restart stays at work by T3's database until its own hook runs (see hookBusyLocked).
 		if !req.Subagent {
 			if s.busyAt.IsZero() {
 				s.turnStart = now
 			}
-			s.busyAt = now
+			s.hooked, s.busyAt = true, now
 		}
 		d.touchLocked(s, now)
 	}

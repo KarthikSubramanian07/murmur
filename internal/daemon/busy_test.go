@@ -1,6 +1,7 @@
 package daemon_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -214,4 +215,41 @@ func TestBeforeTheFirstStopABusySessionGetsTheTurn(t *testing.T) {
 	b.hookNotices("claude-bob")
 	a.send("aaaaaa", bob, "no stop hook", "")
 	eventually(t, "the turn", func() bool { return len(calls()) == 1 })
+}
+
+// reconnected registers a session that was registered with a daemon that went away, as a session's
+// MCP server does after the daemon restarts.
+func (d *device) reconnected(id, claude string, r proto.Route) string {
+	d.t.Helper()
+	conn, resp, err := d.c.Hello(context.Background(), proto.Hello{ID: id, Agent: "test", ClaudeSession: claude, Route: r, Reconnect: true})
+	if err != nil {
+		d.t.Fatalf("hello %s: %v", id, err)
+	}
+	d.t.Cleanup(func() { conn.Close() })
+	return resp.Self
+}
+
+// A session that reconnects after a daemon restart, before its hook has run again, is at work while
+// T3 shows its run going, and for its first minute until its thread has been read at all: what was
+// held for the end of its turn mustn't go to T3's queue mid-turn. A subagent's hook doesn't end
+// that; the session's own does.
+func TestAReconnectedSessionIsHeldWhileItsRunGoes(t *testing.T) {
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	threads := &fakeThreads{st: map[string]t3db.State{}} // no thread read yet
+	a, b := newDevice(t, remote), newT3Device(t, remote, threads)
+	alice, _ := a.session("aaaaaa", "")
+	bob := b.reconnected("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+
+	a.send("aaaaaa", bob, "after the restart", "")
+	eventually(t, "the message to reach b", func() bool { return logHas(b, "after the restart") })
+	holds(t, "no turn before the thread is read", time.Second, func() bool { return len(calls()) == 0 })
+
+	threads.set("thread-bob", t3db.State{Busy: true, LastRun: time.Now()})
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Subagent: true})
+	holds(t, "no turn while the run goes, a subagent's hook or not", 1500*time.Millisecond, func() bool { return len(calls()) == 0 })
+
+	threads.set("thread-bob", t3db.State{LastRun: time.Now()})
+	eventually(t, "the turn once the run is over", func() bool { return len(calls()) == 1 })
 }

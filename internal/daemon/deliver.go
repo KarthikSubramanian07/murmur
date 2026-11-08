@@ -219,12 +219,19 @@ func (d *Daemon) turnableLocked(id string, m *inMsg, wake pageSettings) bool {
 	return pushable(m) && d.wayInLocked(id, wake)
 }
 
-// holdableLocked says message m may be held for the end of session id's turn and go in as a turn
-// then (#202): it wasn't handed over before, the page's wake setting lets it through, and there is
-// a way in. How old it is doesn't count: a turn can take longer than pushMaxAge, and the agent was
-// at work the whole time. Caller holds mu.
-func (d *Daemon) holdableLocked(id string, m *inMsg, wake pageSettings) bool {
-	return !m.Pushing && !m.PushFailed && !m.Attempted && d.wayInLocked(id, wake)
+// holdableLocked says message m may be held for the end of session id's turn, which began at
+// turnStart, and go in as a turn then (#202): it wasn't handed over before, the page's wake setting
+// lets it through, and there is a way in. One that came during the turn may be any age, as a turn
+// can take longer than pushMaxAge and the agent was at work the whole time; one from before must
+// still be young enough, as one that aged during an absence stays a notice. Caller holds mu.
+func (d *Daemon) holdableLocked(id string, m *inMsg, wake pageSettings, turnStart time.Time) bool {
+	if m.Pushing || m.PushFailed || m.Attempted {
+		return false
+	}
+	if (turnStart.IsZero() || m.Arrived.Before(turnStart)) && time.Since(m.Arrived) > pushMaxAge {
+		return false
+	}
+	return d.wayInLocked(id, wake)
 }
 
 // wayInLocked says a message may go into session id as a turn, as far as the session goes: the
@@ -267,7 +274,12 @@ func (d *Daemon) hookBusyLocked(id string) bool {
 	}
 	st, inT3 := d.threadStateLocked(id)
 	if !s.hooked {
-		return s.reconnect && inT3 && st.Busy
+		// Reconnected after a restart: at work while T3 shows its run going, and, for its first
+		// minute, until its thread has been read at all.
+		if !s.reconnect || d.routeOfLocked(id).T3Thread == "" {
+			return false
+		}
+		return st.Busy || !inT3 && time.Since(s.started) < reconnectHold
 	}
 	switch {
 	case s.busyAt.IsZero():
@@ -277,6 +289,38 @@ func (d *Daemon) hookBusyLocked(id string) bool {
 	}
 	r := d.routeOfLocked(id)
 	return st.Busy || !d.threadRead[threadKey{r.T3Home, r.T3Thread}].After(s.busyAt)
+}
+
+// turnStartLocked is when the hook first saw session id's current turn, zero if it isn't at work
+// as far as the hook knows. Caller holds mu.
+func (d *Daemon) turnStartLocked(id string) time.Time {
+	if s := d.sessions[id]; s != nil {
+		return s.turnStart
+	}
+	return time.Time{}
+}
+
+// reconnectHold is how long a session that reconnected after a restart, whose hook hasn't run
+// here yet, counts as at work before its T3 thread has been read: a read that keeps failing
+// mustn't hold its messages for good.
+const reconnectHold = time.Minute
+
+// endTurnLocked ends session s's turn (#202): the messages that came during it and that the hook
+// never told it of are held, to go in as a turn with those it was told of, however long the turn
+// took. Stop ends a turn, and so does a read of T3's database that finds the run over. Caller holds
+// mu.
+func (d *Daemon) endTurnLocked(s *session, wake pageSettings) {
+	held := false
+	for _, m := range d.st.Inbox[s.id] {
+		if !m.Noticed && !m.Held && !s.turnStart.IsZero() && !m.Arrived.Before(s.turnStart) && d.holdableLocked(s.id, m, wake, s.turnStart) {
+			m.Held, held = true, true
+		}
+	}
+	s.busyAt, s.turnStart = time.Time{}, time.Time{}
+	if held {
+		d.saveLocked()
+	}
+	d.kickPush()
 }
 
 // noWay says why a route can't be delivered into, without anything of it that is secret.

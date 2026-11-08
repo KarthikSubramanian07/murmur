@@ -779,18 +779,22 @@ A body past the limit is cut, as in `inbox`.
     run of the thread queued or running. Comparing the run's recorded end with the hook's last call
     was tried first and dropped in review (Sol, 2026-11-08): a hook that comes after the run's end,
     such as one from a tool call the interrupt cut short, would have left the session busy for
-    good. A session whose MCP connection dropped keeps its state through its grace, and one that
-    reconnects after the daemon restarted (an update, say) counts as busy while T3 shows its
-    thread's run going, until its hook runs again: without that, what was held for the end of its
-    turn would go to T3's queue mid-turn. Outside T3 nothing ends it until the next prompt and the `Stop` after it, so a message to
+    good. A turn the database ends this way is ended as `Stop` ends one: what came during it and
+    wasn't told is held too. A session whose MCP connection dropped keeps its state through its
+    grace, and one that reconnects after the daemon restarted (an update, say) counts as busy while
+    T3 shows its thread's run going, and for its first minute until its thread has been read at
+    all, until its own hook runs again (a subagent's doesn't count): without that, what was held
+    for the end of its turn would go to T3's queue mid-turn. Outside T3 nothing ends it until the next prompt and the `Stop` after it, so a message to
     an interrupted session waits for the user to come back. An update doesn't run `mur join`
     again, so a clone joined before this change has no `Stop` hook until its user does; outside T3
     a session is held back only once the daemon has seen a `Stop` from it, and until then a
     message goes in as a turn, as before.
   - *The count* is shown with each new message, and again only when it changes, not after every
     tool call. A fall to none isn't told: the agent read them itself.
-  - *Held however long.* A message held for the end of a turn goes in then whatever its age: the
-    15 minutes a message may wake a session (below) measure an absence, and a turn can be longer.
+  - *Held however long.* A message that came during a turn goes in at its end whatever its age:
+    the 15 minutes a message may wake a session (below) measure an absence, and a turn can be
+    longer. One from before the turn, told at its start, is held only if it is still within them;
+    older, it stays a notice, as it would have without the turn.
   - *Why not hand it to T3 as well*: T3 can't take back a queued message, so the agent could read
     it with `inbox` mid-turn and then get it again as a turn.
   - *Where the hook doesn't run* (Codex, OpenCode, Muse, Pi and Grok in T3, as of 2026-11-08),

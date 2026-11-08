@@ -442,7 +442,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			}
 			unread++
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
-				m.Held = d.hookBusyLocked(id) && d.holdableLocked(id, m, wake)
+				m.Held = d.hookBusyLocked(id) && d.holdableLocked(id, m, wake, d.turnStartLocked(id))
 				m.Noticed = true
 				fresh = append(fresh, m)
 			}
@@ -476,17 +476,9 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 	if req.ClaudeSession == "" || req.Subagent {
 		return proto.Response{OK: true}
 	}
-	held := false
 	for _, s := range d.touchHookLocked(req) {
-		for _, m := range d.st.Inbox[s.id] {
-			if !m.Noticed && !m.Held && !s.turnStart.IsZero() && !m.Arrived.Before(s.turnStart) && d.holdableLocked(s.id, m, wake) {
-				m.Held, held = true, true
-			}
-		}
-		s.busyAt, s.turnStart, s.stopSeen = time.Time{}, time.Time{}, true
-	}
-	if held {
-		d.saveLocked()
+		s.stopSeen = true
+		d.endTurnLocked(s, wake)
 	}
 	d.kickPush()
 	return proto.Response{OK: true}
