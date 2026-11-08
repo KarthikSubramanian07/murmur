@@ -26,14 +26,13 @@ func TestUpdateRestartForwardsDaemonFlags(t *testing.T) {
 	}
 	// The daemon can be started outside the clone. A relative log path must
 	// continue to name the same file when its replacement starts in the clone.
-	cwd, err := os.Getwd()
-	if err != nil {
+	// It starts in a directory of its own: on Windows CI the package is on D: and the temporary
+	// directory on C:, and no relative path leads from one drive to the other.
+	t.Chdir(t.TempDir())
+	if err := os.Mkdir("logs", 0o700); err != nil {
 		t.Fatal(err)
 	}
-	logPath, err := filepath.Rel(cwd, filepath.Join(t.TempDir(), "daemon custom.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	logPath := filepath.Join("logs", "daemon custom.log")
 	absoluteLog, err := filepath.Abs(logPath)
 	if err != nil {
 		t.Fatal(err)
