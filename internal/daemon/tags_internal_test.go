@@ -51,7 +51,7 @@ func TestOwnTagsAndTheDerivedModel(t *testing.T) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	// The session's own model stands over T3's.
-	d.st.Tags["t3:thread-aaaaaa"].SetSelf([]string{"model:sonnet-5.5"}, nil)
+	d.st.Tags["name-aaaaaa"].SetSelf([]string{"model:sonnet-5.5"}, nil)
 	if got := tagNames(d.tagsOfLocked(d.sessions["aaaaaa"])); got != "model:sonnet-5.5 reviewing" {
 		t.Errorf("tags = %q, want the session's model in place of T3's", got)
 	}
@@ -122,7 +122,7 @@ func TestAHumansTagsStandOverTheSessions(t *testing.T) {
 	if want := []tags.Tag{{Name: "unavailable", Src: tags.SrcHuman}}; !slices.Equal(got, want) {
 		t.Fatalf("tags = %+v, want %+v", got, want)
 	}
-	if m := d.st.Tags["t3:thread-aaaaaa"].Human["unavailable"]; m.By != "Maya on far" {
+	if m := d.st.Tags["name-aaaaaa"].Human["unavailable"]; m.By != "Maya on far" {
 		t.Errorf("the mark is by %q", m.By)
 	}
 
@@ -132,13 +132,15 @@ func TestAHumansTagsStandOverTheSessions(t *testing.T) {
 		t.Errorf("after the session's change: %q, %q", resp.Note, tagNames(resp.Tags))
 	}
 
-	// The tags are kept by the session's key, so a new ID for the same thread has them.
+	// The tags are kept by the session's name, so a new ID for the same conversation has them,
+	// and so does the session once its key changes (it found its T3 thread).
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	inT3(d, "dddddd", 0)
-	d.sessions["dddddd"].key = "t3:thread-aaaaaa"
+	d.sessions["dddddd"].name = "name-aaaaaa"
+	d.sessions["dddddd"].key = "claude:other"
 	if !tags.Has(d.tagsOfLocked(d.sessions["dddddd"]), tags.Unavailable) {
-		t.Error("the thread's tags didn't follow it to its new session ID")
+		t.Error("the conversation's tags didn't follow it to its new session ID and key")
 	}
 }
 
@@ -164,7 +166,8 @@ func TestTagsEventValid(t *testing.T) {
 
 func TestAChangeForASessionThatIsntRegisteredWaitsForIt(t *testing.T) {
 	d := tagsDaemon(t)
-	d.st.NameKeys = map[string]string{"t3:thread-aaaaaa": "name-aaaaaa"}
+	// Its key was rekeyed once, so two keys have its name (see rekeyLocked); the name is what counts.
+	d.st.NameKeys = map[string]string{"claude:c": "name-aaaaaa", "t3:thread-aaaaaa": "name-aaaaaa"}
 	d.st.SessionNames["aaaaaa"] = "name-aaaaaa"
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -193,5 +196,23 @@ func TestCatchUpSkipsAnUnavailableSession(t *testing.T) {
 	d.catchUpLocked("aaaaaa")
 	if got := d.st.Inbox["aaaaaa"]; len(got) != 1 || got[0].Event.ID != "m2" {
 		t.Fatalf("caught up %d messages; want only the one sent to it", len(got))
+	}
+}
+
+func TestTagsSetWhileTheNameIsPendingFollowItsName(t *testing.T) {
+	d := tagsDaemon(t)
+	d.st.NameHolders = map[string]string{}
+	d.mu.Lock()
+	s := d.sessions["aaaaaa"]
+	s.name = ""
+	d.mu.Unlock()
+	if resp := d.setOwnTags("aaaaaa", proto.Request{Add: []string{"reviewing"}}); resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.setNameLocked(s, "quiet-otter")
+	if !tags.Has(d.tagsOfLocked(s), "reviewing") || d.st.Tags["id:aaaaaa"] != nil {
+		t.Fatalf("after the name landed: tags %v, kept %v", d.tagsOfLocked(s), d.st.Tags)
 	}
 }

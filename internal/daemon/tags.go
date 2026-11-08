@@ -19,12 +19,39 @@ import (
 // shared ref is needed: one device is the only writer of its sessions' tags, and a human beats the
 // session whatever order the two arrive in.
 //
-// The tags are kept by the session's key, the one its name follows (see nameKey), so they outlast
+// The tags are kept by the session's name, which is what stays the same while a conversation does:
+// its key may change under it (a session that finds its T3 thread takes the thread's key and keeps
+// its name), and a stopped session's name is known from its ID (SessionNames). A session whose
+// name is still pending keeps them by its ID until the name lands (see adoptTagsLocked). So they outlast
 // its MCP server restarting, a resume, and the daemon restarting.
+
+// tagKeyOf is what the tags of a session called name, with ID id, are kept by.
+func tagKeyOf(name, id string) string {
+	if name != "" {
+		return name
+	}
+	return "id:" + id
+}
 
 // tagStateLocked is what is kept about the tags of session s, nil if nothing. Caller holds mu.
 func (d *Daemon) tagStateLocked(s *session) *tags.State {
-	return d.st.Tags[s.key]
+	return d.st.Tags[tagKeyOf(s.name, s.id)]
+}
+
+// adoptTagsLocked moves what a session kept by its ID while its name was pending to the name,
+// once the name lands, unless the name has tags already. Caller holds mu.
+func (d *Daemon) adoptTagsLocked(s *session) {
+	if s.name == "" {
+		return
+	}
+	pending := tagKeyOf("", s.id)
+	if st := d.st.Tags[pending]; st != nil {
+		delete(d.st.Tags, pending)
+		if d.st.Tags[s.name] == nil {
+			d.st.Tags[s.name] = st
+		}
+		d.saveLocked()
+	}
 }
 
 // derivedTagsLocked is the tags the daemon works out for session id: its model, where T3 records
@@ -91,7 +118,7 @@ func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 	if s == nil {
 		return proto.Response{OK: true, Self: from, Note: "the CLI has no tags"}
 	}
-	st := d.st.Tags[s.key]
+	st := d.tagStateLocked(s)
 	if st == nil {
 		st = &tags.State{}
 	}
@@ -107,7 +134,7 @@ func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 			held = append(held, fmt.Sprintf("%s (a human set it %s)", t, map[bool]string{true: "on", false: "off"}[m.On]))
 		}
 	}
-	d.putTagStateLocked(s.key, &next)
+	d.putTagStateLocked(tagKeyOf(s.name, s.id), &next)
 	d.kickPresence()
 	note := "tags set"
 	if len(held) > 0 {
@@ -127,25 +154,15 @@ func (d *Daemon) putTagStateLocked(key string, st *tags.State) {
 	d.saveLocked()
 }
 
-// tagKeyLocked is the key session id's tags are kept by: a running session's own, else the key
-// whose name the session last took. A session that isn't registered at the moment, as while its
-// daemon restarts and reads what was sent meanwhile before the session is back, still has its
-// tags changed, and gets them when it is. "" for a session this device knows nothing of. Caller
-// holds mu.
+// tagKeyLocked is what session id's tags are kept by: a running session's own, else the name it
+// took last, so a change for a session that isn't registered at the moment (its daemon restarted,
+// and reads what was sent meanwhile before the session is back) waits for it. "" for a session
+// this device knows nothing of. Caller holds mu.
 func (d *Daemon) tagKeyLocked(id string) string {
 	if s := d.sessions[id]; s != nil {
-		return s.key
+		return tagKeyOf(s.name, s.id)
 	}
-	name := d.st.SessionNames[id]
-	if name == "" {
-		return ""
-	}
-	for key, n := range d.st.NameKeys {
-		if n == name {
-			return key
-		}
-	}
-	return ""
+	return d.st.SessionNames[id]
 }
 
 // humanTagsLocked applies a human's change to the tags of session id on this device. by is the

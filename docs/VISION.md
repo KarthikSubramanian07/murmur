@@ -565,8 +565,11 @@ issue's order.
   their own log, and that device applies it when it reads it, as it would a message. The cost: a
   change for a device that is down waits until it is back, when its sessions can't be reached anyway.
   A daemon from before tags passes over the event and ignores the field in presence.
-- **Kept by the session's key**, the one its name follows, in `state.json`: a tag lasts across MCP
-  restarts, resumes and daemon restarts, until the session or a human takes it off. Nothing expires
+- **Kept by the session's name**, in `state.json`: a tag lasts across MCP restarts, resumes, daemon
+  restarts and the session finding its T3 thread (its key changes then, its name doesn't), until the
+  session or a human takes it off. A change from another device for a session that hasn't
+  registered again yet, after its daemon restarted, is kept for it the same way. At the cap of 12,
+  `unavailable` is kept first, then a human's tags, the session's, and derived ones. Nothing expires
   yet, so a session marked unavailable and forgotten stays so; the page shows it in amber, and
   anyone can mark it available again there.
 - **Search.** `who` takes tags and lists only the sessions with all of them; `-tag` leaves out those

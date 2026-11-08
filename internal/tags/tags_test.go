@@ -186,3 +186,18 @@ func TestTheCapKeepsAHumansTags(t *testing.T) {
 		t.Fatalf("Effective = %v: the human's tags should survive the cap, before the session's and the derived", got)
 	}
 }
+
+func TestTheCapKeepsUnavailableWhoeverSetIt(t *testing.T) {
+	var st State
+	st.SetSelf([]string{"unavailable"}, nil)
+	var twelve []string
+	for _, c := range "abcdefghijkl" {
+		twelve = append(twelve, string(c))
+	}
+	if err := st.SetHuman(st.Self, twelve, nil, "tyler", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := Effective(st.Self, nil, st.Human); len(got) != MaxPerSession || got[0].Name != Unavailable {
+		t.Fatalf("Effective = %v: a human's tags pushed unavailable out", got)
+	}
+}

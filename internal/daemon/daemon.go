@@ -467,8 +467,9 @@ type state struct {
 	// Local only, like NameKeys. It is kept as long as the session's inbox is.
 	T3Routes map[string]t3Route `json:"t3Routes,omitempty"`
 
-	// Tags is what is kept about the tags of this device's sessions, by the session's key, as names
-	// are: the tags each set for itself and a human's marks (#198). Derived tags aren't kept.
+	// Tags is what is kept about the tags of this device's sessions, by the session's name ("id:"
+	// and its ID while the name is pending): the tags each set for itself and a human's marks
+	// (#198). Derived tags aren't kept.
 	Tags map[string]*tags.State `json:"tags,omitempty"`
 }
 

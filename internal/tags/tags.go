@@ -277,10 +277,17 @@ func Effective(self, derived []string, human map[string]Mark) []Tag {
 		out = append(out, Tag{Name: t, Src: s})
 	}
 	if len(out) > MaxPerSession {
-		// A human's tags are kept first, then the session's, then the derived ones.
-		rank := map[string]int{SrcHuman: 0, SrcSession: 1, SrcDerived: 2}
+		// Unavailable is kept whoever set it, since it changes what reaches the session; then a
+		// human's tags, the session's, and the derived ones.
+		rank := map[string]int{SrcHuman: 1, SrcSession: 2, SrcDerived: 3}
+		at := func(t Tag) int {
+			if t.Name == Unavailable {
+				return 0
+			}
+			return rank[t.Src]
+		}
 		slices.SortFunc(out, func(a, b Tag) int {
-			if r := rank[a.Src] - rank[b.Src]; r != 0 {
+			if r := at(a) - at(b); r != 0 {
 				return r
 			}
 			return strings.Compare(a.Name, b.Name)
