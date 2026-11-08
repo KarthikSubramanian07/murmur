@@ -25,6 +25,7 @@ func threadsDaemon(t *testing.T) *Daemon {
 	d.log = log.New(io.Discard, "", 0)
 	d.pushedAt = map[string]time.Time{}
 	d.threads = map[threadKey]t3db.State{}
+	d.threadRead = map[threadKey]time.Time{}
 	d.threadWarned = map[threadKey]bool{}
 	d.peers = map[string]*peer{}
 	d.kick, d.pushKick = make(chan struct{}, 1), make(chan struct{}, 1)
@@ -118,6 +119,7 @@ func TestWithinForAStoppedThreadNotReadYet(t *testing.T) {
 	d := idleDaemon(map[string]time.Duration{"aaaaaa": time.Minute, "bbbbbb": 10 * time.Minute})
 	d.pushedAt = map[string]time.Time{}
 	d.threads = map[threadKey]t3db.State{}
+	d.threadRead = map[threadKey]time.Time{}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if !d.wakesLocked("aaaaaa", wakeWithin(0)) {
