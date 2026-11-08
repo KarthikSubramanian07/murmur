@@ -250,6 +250,20 @@ func Turn(m proto.MessageView) string {
 	return b.String()
 }
 
+// Hook renders what the hook adds to the agent's context: each message the session is given whole
+// while busy (#204), as its turn would read, then the notices of the others (see Notices), if
+// there is anything to tell. "" if there is nothing.
+func Hook(whole, msgs []proto.MessageView, unread int) string {
+	parts := make([]string, 0, len(whole)+1)
+	for _, m := range whole {
+		parts = append(parts, Turn(m))
+	}
+	if len(msgs) > 0 || unread > 0 {
+		parts = append(parts, Notices(msgs, unread))
+	}
+	return strings.Join(parts, "\n")
+}
+
 // Notices renders what the hook shows: a line for each new message, sender and subject, never the
 // body, and then how many are unread, if unread is more than 0. With no new messages it is the
 // count alone, which the daemon gives only when it has changed.

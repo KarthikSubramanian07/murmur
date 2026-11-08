@@ -16,6 +16,7 @@ import (
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/view"
 )
 
 // fakeDaemon serves the daemon's protocol for the clone at gitDir: answer gives the response line
@@ -207,4 +208,31 @@ func TestNoticesCarryTheTranscriptPath(t *testing.T) {
 		}
 	}
 	t.Errorf("the hook sent no notices request: %+v", requests())
+}
+
+// A message the daemon gives whole (#204) is added to the agent's context as its turn would read,
+// before the count of what is left unread.
+func TestDeliveredMessagesAreShownWhole(t *testing.T) {
+	repo := newRepo(t)
+	fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpNotices {
+			return `{"ok":true,"self":"fake-0001/aaaaaa","unread":1,"delivered":[{"id":"m1","from":"other-0001/bbbbbb",` +
+				`"fromName":"brave-heron","subject":"auth middleware?","body":"Are you changing it?"}]}`
+		}
+		return `{"ok":true}`
+	})
+	out, _ := run("PostToolUse", repo)
+	var got struct {
+		HookSpecificOutput struct {
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("PostToolUse printed %q: %v", out, err)
+	}
+	m := proto.MessageView{ID: "m1", From: "other-0001/bbbbbb", FromName: "brave-heron", Subject: "auth middleware?",
+		Body: "Are you changing it?"}
+	if want := view.Hook([]proto.MessageView{m}, nil, 1); got.HookSpecificOutput.AdditionalContext != want {
+		t.Errorf("the hook added %q, want %q", got.HookSpecificOutput.AdditionalContext, want)
+	}
 }

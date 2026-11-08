@@ -413,9 +413,9 @@ call.
   senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
   it never read what was sent while it was away for more than 10 minutes, except what is kept for a
   stopped session's inbox (above).
-- **Settings** (when a session is woken) are saved in `.git/murmur/settings.json`, replaced whole.
-  Nothing acts on them yet: waking is #25. Mutes (#27) aren't built, so the page shows none and
-  refuses to unmute.
+- **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
+  `.git/murmur/settings.json`, replaced whole; "Delivering a message as a turn" says what they do.
+  Mutes (#27) aren't built, so the page shows none and refuses to unmute.
 - **Open page, running daemon.** The page asks for its state every 3 s, 15 s in a hidden tab. A
   call that carries the token, from a page someone can see, counts as an open page for 2 minutes,
   and an open page stops the 10-minute countdown the way a session does: a daemon with no sessions
@@ -760,6 +760,19 @@ A body past the limit is cut, as in `inbox`.
   could not be delivered stays in the inbox and is announced by the hook as before. The hook
   leaves alone a message that is waiting its turn to be delivered, behind the one being delivered:
   announced by a notice it would never become a turn.
+- **A busy session (#202, #204).** Where Murmur's hook runs (Claude Code), a session at work is not
+  given a turn: the hook tells it of each new message after its next tool call, and what it hasn't
+  read when the turn ends goes in as a turn then. What the hook tells it is the page's busy
+  setting, for the device or for one session, beside the wake setting (Tyler, 2026-11-08).
+  "Subject", the default, is a line with the sender and the subject, and the count unread; the
+  agent reads the body with `inbox` when it chooses. "Whole message" is the message as its turn
+  would read, a long body cut the same way, and the message is then delivered: it leaves the inbox
+  and the count, and the page and the daemon's log say it went through the hook. Subject leaves
+  the agent's focus to the agent, at the cost that it may pass over a line it needed; whole puts
+  every message in front of it mid-task, at full length, whether or not it matters to the task.
+  A message given whole counts as delivered once the daemon answers the hook, so a hook that gave
+  up waiting (3 s) just before the answer came loses it. Where the hook doesn't run, the setting
+  does nothing.
 - **Finding the thread (#56).** T3 gives an MCP server or a hook no thread ID, so the MCP server
   looks up the provider's own session in T3's database: `statev2.sqlite` in T3's data directory
   (`T3CODE_HOME`, or the directory the CLI's `bin` is in, or `~/.t3`), table

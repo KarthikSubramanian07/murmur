@@ -15,6 +15,7 @@ import (
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/scrub"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 const maxBody = bus.MaxBody
@@ -395,6 +396,10 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 // A message that would have gone in as a turn, but for the session being at work, is Held: it goes
 // in as one when the turn ends if it is still unread (#202). The count is told with each new
 // message and again only when it changes, so it isn't repeated after every tool call.
+//
+// A session the page sets to be given messages whole while busy (#204) gets each new one with its
+// body instead, which the hook shows as its turn would read: it is delivered then, and leaves the
+// inbox and the count.
 func (d *Daemon) notices(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
@@ -417,6 +422,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	}
 	var self string
 	var fresh []*inMsg
+	var whole []delivery
 	var told []*session
 	unread := 0
 	for _, id := range ids {
@@ -436,31 +442,50 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		if s := d.sessions[id]; s != nil {
 			told = append(told, s)
 		}
+		// Only the hook shows a message whole: a request without its Claude Code session isn't one.
+		givesWhole := req.ClaudeSession != "" && wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
 			if m.Pushing {
 				continue
 			}
-			unread++
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
+				if givesWhole {
+					whole = append(whole, delivery{id, m})
+					continue
+				}
 				m.Noticed = true
 				m.Held = d.hookBusyLocked(id) && d.turnableLocked(id, m, wake)
 				fresh = append(fresh, m)
 			}
+			unread++
 		}
 	}
 	if self == "" {
 		return proto.Response{OK: true}
 	}
-	if len(fresh) > 0 {
+	// A message for everyone is in each inbox the hook speaks for, and is shown once.
+	var wholeMsgs []*inMsg
+	shown := map[string]bool{}
+	for _, w := range whole {
+		if !shown[w.msg.Event.ID] {
+			shown[w.msg.Event.ID] = true
+			wholeMsgs = append(wholeMsgs, w.msg)
+		}
+		d.deliveredLocked(w.id, w.msg, "through the hook")
+	}
+	if len(fresh) > 0 || len(whole) > 0 {
 		d.saveLocked()
 	}
 	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
+	if len(whole) > 0 {
+		resp.Delivered = d.messageViewsLocked(wholeMsgs, true)
+	}
 	changed := false
 	for _, s := range told {
 		changed = changed || s.toldUnread != unread
 		s.toldUnread = unread
 	}
-	if unread > 0 && (len(fresh) > 0 || changed) {
+	if unread > 0 && (len(fresh) > 0 || len(whole) > 0 || changed) {
 		resp.Unread = unread
 	}
 	return resp
