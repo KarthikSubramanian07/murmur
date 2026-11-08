@@ -191,7 +191,7 @@ func TestReleases(t *testing.T) {
 			}
 			restarted := false
 			if mode == "changed" {
-				original, _ := identity(path)
+				original, _ := Identity(path)
 				replacement := path + ".new"
 				os.WriteFile(replacement, data, 0755)
 				os.Rename(path, path+".old")
@@ -305,7 +305,7 @@ func TestManualReinstallDuringDownload(t *testing.T) {
 			if err := os.WriteFile(path, []byte("original"), 0755); err != nil {
 				t.Fatal(err)
 			}
-			original, err := identity(path)
+			original, err := Identity(path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -354,5 +354,40 @@ func TestManualReinstallDuringDownload(t *testing.T) {
 				t.Fatalf("claimed an update it did not install: %s", &logs)
 			}
 		})
+	}
+}
+
+// A reinstall between the process starting and the updater starting (it waits for the daemon's first
+// sync) is not this process's binary to replace, even with a release newer than this process.
+func TestReinstallBeforeTheUpdaterStarted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mur")
+	if err := os.WriteFile(path, []byte("running"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	running, err := Identity(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manual := []byte("manual prerelease")
+	for _, err := range []error{os.WriteFile(path+".manual", manual, 0755), os.Rename(path, path+".old"), os.Rename(path+".manual", path)} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("asked for %s instead of restarting onto the reinstall", r.URL.Path)
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	restarted := false
+	Run(ctx, Options{Version: "1.2.3", GitDir: repo(t), Executable: path, Running: running, URL: srv.URL, Client: srv.Client(),
+		Getenv: func(string) string { return "" }}, func() { restarted = true })
+	if !restarted {
+		t.Error("no restart onto the reinstall")
+	}
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, manual) {
+		t.Errorf("reinstall overwritten: %q (%v)", got, err)
 	}
 }

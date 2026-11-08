@@ -365,6 +365,12 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		// undelivered and not a failure. Unless the session turned out to be a delegate, whose
 		// inbox stays empty (#188).
 		d.clearChildInboxLocked(j.id)
+		if errors.Is(err, errNotNow) {
+			// A session that took this inbox over may still be woken, and its kick came while this
+			// message was on its way. The refused session itself gets no new job: the scan asks it
+			// the same question.
+			d.kickPush()
+		}
 		return
 	}
 	d.kickPush() // what waited behind this message, in an inbox that took it over, may go now

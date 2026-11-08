@@ -119,6 +119,16 @@ func runDaemon(ctx context.Context, args []string) error {
 }
 
 func runDaemonWith(ctx context.Context, args []string, run func(context.Context, daemon.Options) error, start func(string, string, ...string) error) error {
+	// The updater has to know the binary this process came from. It starts only after the daemon's
+	// first sync, and a reinstall in that time must not pass for this binary, so this comes first.
+	exe, exeErr := os.Executable()
+	if exeErr == nil {
+		exe, exeErr = filepath.EvalSymlinks(exe)
+	}
+	var running os.FileInfo
+	if exeErr == nil {
+		running, _ = update.Identity(exe) // on failure, update.Run tries for itself
+	}
 	fs, dir := flags("daemon")
 	gitDir := fs.String("git-dir", "", "the clone's git common dir (default: found from -C)")
 	poll := fs.Duration("poll", 0, "how often to check the remote (default 10s)")
@@ -160,14 +170,10 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 	if off, why := checkin.Off(ctx, os.Getenv, *gitDir); off {
 		logger.Printf("no daily check-in: %s", why)
 	}
-	exe, exeErr := os.Executable()
-	if exeErr == nil {
-		exe, exeErr = filepath.EvalSymlinks(exe)
-	}
 	err := run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
-			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger}, restart)
+			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running}, restart)
 		},
 		CheckIn: func(ctx context.Context) {
 			checkin.Run(ctx, checkin.Options{Version: version, GitDir: *gitDir, Log: logger})

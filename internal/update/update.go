@@ -25,11 +25,15 @@ type Options struct {
 	Version, GitDir string
 	URL             string // releases/latest; overridden only by tests
 	Executable      string // resolved running executable; tests use a disposable file
-	OS, Arch        string
-	Client          *http.Client
-	Getenv          func(string) string
-	Log             *log.Logger
-	Every           time.Duration
+	// Running is what Identity said of the executable when the process started. A different file
+	// at that path by the time Run starts is a newer install, not this process's binary to replace.
+	// Left nil, Run takes the identity itself.
+	Running  os.FileInfo
+	OS, Arch string
+	Client   *http.Client
+	Getenv   func(string) string
+	Log      *log.Logger
+	Every    time.Duration
 }
 
 func Off(ctx context.Context, getenv func(string) string, gitDir string) bool {
@@ -76,9 +80,11 @@ func Run(ctx context.Context, o Options, restart func()) {
 	if err != nil {
 		return
 	}
-	original, err := identity(o.Executable)
-	if err != nil {
-		return
+	original := o.Running
+	if original == nil {
+		if original, err = Identity(o.Executable); err != nil {
+			return
+		}
 	}
 	if o.OS == "windows" {
 		cleanup(o.Executable)
@@ -146,7 +152,7 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (bool, error)
 		return false, err
 	}
 	defer lock.Close()
-	current, err := identity(o.Executable)
+	current, err := Identity(o.Executable)
 	if err != nil {
 		return false, err
 	}
@@ -199,7 +205,7 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (bool, error)
 	}
 	// Manual installers do not take our lock. Do not overwrite a reinstall that
 	// completed while the release was downloading; restart onto it instead.
-	current, err = identity(o.Executable)
+	current, err = Identity(o.Executable)
 	if err != nil {
 		return false, err
 	}
@@ -280,7 +286,7 @@ func cleanup(path string) {
 
 // File.Stat captures Windows file IDs now; os.Stat can defer loading the ID
 // until SameFile, by which time the path may already name the replacement.
-func identity(path string) (os.FileInfo, error) {
+func Identity(path string) (os.FileInfo, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

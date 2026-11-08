@@ -435,3 +435,29 @@ func TestDelegateLeftoversAreCleared(t *testing.T) {
 		t.Errorf("the delegate's inbox: %+v, left %d", resp, len(d.st.Inbox["child2"]))
 	}
 }
+
+// A delivery refused at the handoff, in an inbox another session took over while it was queued: the
+// kick from the takeover found the message on its way, so the new owner needs another (Sol's review
+// of #196). Neither a notice nor the next message would otherwise come for it soon.
+func TestRefusedDeliveryLetsTheNewOwnerGo(t *testing.T) {
+	d := threadsDaemon(t)
+	inT3(d, "newnew", 0)
+	m := &inMsg{Event: bus.Event{ID: "taken-over"}, Arrived: time.Now(), Pushing: true}
+	d.st.Inbox = map[string][]*inMsg{"newnew": {m}}
+	always := pageSettings{Wake: web.Wake{When: web.WakeAlways}}
+	if got, _, _ := d.candidateLocked("newnew", always); got != nil {
+		t.Fatal("a message on its way was picked again")
+	}
+	d.finishPush(&pushJob{id: "oldold", addr: "dev/oldold", msg: m, via: viaT3}, errNotNow)
+	if m.Pushing || m.PushFailed {
+		t.Errorf("the message after the refusal: pushing=%v failed=%v", m.Pushing, m.PushFailed)
+	}
+	select {
+	case <-d.pushKick:
+	default:
+		t.Error("no kick after the refusal")
+	}
+	if got, _, _ := d.candidateLocked("newnew", always); got != m {
+		t.Errorf("the new owner's candidate: %v", got)
+	}
+}
