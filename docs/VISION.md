@@ -571,7 +571,7 @@ issue's order.
   registered again yet, after its daemon restarted, is kept for it the same way. At the cap of 12,
   `unavailable` is kept first, then a human's tags, the session's, and derived ones. Nothing expires
   yet, so a session marked unavailable and forgotten stays so; the page shows it in amber, and
-  anyone can mark it available again there.
+  anyone can take the tag off there.
 - **Search.** `who` takes tags and lists only the sessions with all of them; `-tag` leaves out those
   with it, and a `*` at the end matches any tag that starts so (`model:opus*`). The CLI has no `who`,
   so this is the MCP tool's.

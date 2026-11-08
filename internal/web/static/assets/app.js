@@ -431,8 +431,7 @@ function sessionRow(d, s) {
   );
 }
 
-// Tags (#198). Each chip says where the tag came from; a human can take one off, add one, and mark
-// the session unavailable or available again. The change goes to the session's own device, which
+// Tags (#198). Each chip says where the tag came from; a human can take one off or add one. The change goes to the session's own device, which
 // applies it over what the session set, so on another device it shows once that device has read it.
 const TAG_SOURCES = { human: "Set by a human", derived: "Worked out by its daemon" };
 
@@ -441,7 +440,6 @@ function tagsLine(s) {
   const addr = s.addr || s.name;
   const key = "t-" + addr;
   const busy = ui.tagging.has(key);
-  const unavailable = tags.some((t) => t.name === "unavailable");
   // The row opens the session's messages; nothing in here should.
   const stop = (e) => e.stopPropagation();
   return h(
@@ -486,17 +484,6 @@ function tagsLine(s) {
           },
           "+ Tag",
         ),
-    h(
-      "button",
-      {
-        class: "btn btn-ghost btn-xs",
-        "data-key": key + "-avail",
-        disabled: busy,
-        title: unavailable ? "Let other agents send it work again" : "Other agents can't send it work; it still reads",
-        onclick: () => changeTags(addr, key, [unavailable ? "available" : "unavailable"], []),
-      },
-      unavailable ? "Mark available" : "Mark unavailable",
-    ),
     ui.rowErrors[key] && h("span", { class: "row-error" }, ui.rowErrors[key]),
   );
 }
