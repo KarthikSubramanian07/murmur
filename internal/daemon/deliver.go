@@ -138,10 +138,13 @@ func (d *Daemon) pusher(ctx context.Context, id string) {
 // pushJob is one message on its way into a session.
 type pushJob struct {
 	id, addr string
-	msg      *inMsg
-	via      string
-	route    proto.Route
-	text     string
+	// key is the session's conversation when the job was made (see Daemon.introduced): the turn
+	// goes to that one, even if the session moves to another before the handoff ends.
+	key   string
+	msg   *inMsg
+	via   string
+	route proto.Route
+	text  string
 }
 
 // wakeSnapshot copies the page's settings, the wake setting among them. setMu is taken alone,
@@ -456,7 +459,9 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 	}
 	m.Pushing = true
 	views := d.messageViewsLocked([]*inMsg{m}, true)
-	return &pushJob{id: id, addr: bus.Addr(d.device, id), msg: m, via: via, route: route, text: view.Turn(views[0])}
+	key := d.keyOfLocked(id)
+	views[0].Introduced = key != "" && d.introduced[key][m.Event.From]
+	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, msg: m, via: via, route: route, text: view.Turn(views[0])}
 }
 
 // handOver passes the message to the session's client, once. It is tried a second time, after PushRetry, only
@@ -593,6 +598,7 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		return
 	}
 	d.outOfInboxLocked(j.id, j.msg, "handed", "as a turn, through "+j.via)
+	d.introduceLocked(j.key, j.msg.Event.From)
 	d.saveLocked()
 	delete(d.pushWarned, j.id)
 }
@@ -601,6 +607,46 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 type delivery struct {
 	id  string
 	msg *inMsg
+}
+
+// keyOfLocked is the conversation session id is in now (see Daemon.introduced), "" if it isn't
+// registered. Caller holds mu.
+func (d *Daemon) keyOfLocked(id string) string {
+	if s := d.sessions[id]; s != nil {
+		return s.key
+	}
+	return ""
+}
+
+// introduceLocked records that conversation key has had a turn from sender from. Caller holds mu.
+func (d *Daemon) introduceLocked(key, from string) {
+	if key == "" {
+		return
+	}
+	if d.introduced[key] == nil {
+		d.introduced[key] = map[string]bool{}
+	}
+	d.introduced[key][from] = true
+}
+
+// wholeViewsLocked renders msgs, given whole to the sessions in given, and records the sessions as
+// introduced to their senders. A message is rendered as from a sender already introduced only if
+// every session it was given to had been: the hook speaks for several sessions at once, and shows
+// a message for everyone once. Caller holds mu.
+func (d *Daemon) wholeViewsLocked(msgs []*inMsg, given []delivery) []proto.MessageView {
+	views := d.messageViewsLocked(msgs, true)
+	for i := range views {
+		views[i].Introduced = true
+		for _, g := range given {
+			if key := d.keyOfLocked(g.id); g.msg.Event.ID == views[i].ID && (key == "" || !d.introduced[key][views[i].From]) {
+				views[i].Introduced = false
+			}
+		}
+	}
+	for _, g := range given {
+		d.introduceLocked(d.keyOfLocked(g.id), g.msg.Event.From)
+	}
+	return views
 }
 
 // outOfInboxLocked records that message m has gone to session id: it leaves the inbox, wherever it
