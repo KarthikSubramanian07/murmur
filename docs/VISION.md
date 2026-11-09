@@ -423,6 +423,16 @@ call.
   senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
   it never read what was sent while it was away for more than 10 minutes, except what is kept for a
   stopped session's inbox (above).
+- **How it's laid out** (#179, 2026-11-08), after Discord and Slack: sessions down the left under
+  their devices, then a column of conversations (direct messages and group chats apart), then the
+  open conversation. A conversation is two sessions' messages to each other, a device's, or
+  everyone's: the bus has no threads. Each face carries a dot: green active in the last five
+  minutes, yellow idle, red do not disturb (the `do-not-disturb` tag from #211, or wake-ups set to
+  Never), grey when its device is unreachable. A settled session (#189) is absent from presence but
+  still in the messages, so the page folds it under its device and keeps its conversations, out of
+  the way. The page is always dark: the design was only ever drawn dark, and a light one would be a
+  second design. Started times, worktrees and committed branches left the page with the old
+  Sessions view; `lookup` still has the branches.
 - **Settings** (when a session is woken) are saved in `.git/murmur/settings.json`, replaced whole.
   Nothing acts on them yet: waking is #25. Mutes (#27) aren't built, so the page shows none and
   refuses to unmute.

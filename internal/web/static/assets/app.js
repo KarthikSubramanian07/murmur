@@ -7,13 +7,12 @@ const TOKEN_KEY = NAME + ":token";
 const POLL_MS = 3000;
 const HIDDEN_POLL_MS = 15000;
 const MAX_MESSAGES = 2000;
-const VIEWS = ["sessions", "messages", "settings"];
-const TITLES = { sessions: "Sessions", messages: "Messages", settings: "Settings" };
-const MODE_KEY = NAME + ":messages";
+const VIEWS = ["sessions", "messages", "recent", "settings"];
+const TITLES = { sessions: "Sessions", messages: "Conversations", recent: "Recent", settings: "Settings" };
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
 const ui = {
-  view: "sessions",
+  view: "messages",
   token: null,
   conn: "connecting", // connecting, ok, down, denied
   state: null,
@@ -23,9 +22,7 @@ const ui = {
   settings: null,
   settingsError: "",
   rowErrors: {},
-  expanded: new Set(),
   filter: null, // a session name
-  messageMode: localStorage.getItem(MODE_KEY) === "recent" ? "recent" : "conversations",
   conversation: null, // the open conversation's key
   conversationAnchor: null, // a message in it
   chatListTop: 0,
@@ -51,7 +48,7 @@ function takeToken() {
       value = decodeURIComponent(value);
     } catch {}
     sessionStorage.setItem(TOKEN_KEY, value);
-    const view = parts.find((p) => VIEWS.includes(p)) || "sessions";
+    const view = parts.find((p) => VIEWS.includes(p)) || "messages";
     history.replaceState(null, "", location.pathname + location.search + "#" + view);
   }
   return sessionStorage.getItem(TOKEN_KEY);
@@ -201,7 +198,7 @@ function render() {
   const inner = page(); // before the top bar, which counts what this settles
   content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
   content.replaceChildren(inner);
-  root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, topbar(), content)));
+  root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)));
   content.scrollTop = scroll;
   restoreChatScroll(chat);
   if (keep) root.querySelector(`[data-key="${CSS.escape(keep)}"]`)?.focus({ preventScroll: true });
@@ -229,69 +226,678 @@ function navButton(view, iconName, count) {
   );
 }
 
+// The sidebar is the sessions themselves, under their devices: every session, every conversation
+// and the newest messages at the top, Settings at the foot. It folds to a strip of faces, and
+// remembers that.
+const MINI_KEY = NAME + ":sidebar-mini";
+let mini = false;
+try {
+  mini = localStorage.getItem(MINI_KEY) === "1";
+} catch {}
+function setMini(v) {
+  mini = v;
+  try {
+    localStorage.setItem(MINI_KEY, v ? "1" : "0");
+  } catch {}
+  render();
+}
+
+function miniSidebar() {
+  const pick = (view) => () => {
+    ui.filter = null;
+    if (view === "messages") ui.conversation = null;
+    go(view);
+  };
+  const top = (view, iconName, title, current) =>
+    h("button", { class: "mini-btn" + (current ? " current" : ""), title, "aria-label": title, "data-key": "mini-" + view, onclick: pick(view) }, icon(iconName));
+  return h(
+    "aside",
+    { class: "sidebar mini", "data-app-sidebar": true, "aria-label": NAME },
+    h("button", { class: "mini-btn mini-open", title: "Show the sidebar", "aria-label": "Show the sidebar", "data-key": "mini-open", onclick: () => setMini(false) }, icon("panel")),
+    h(
+      "div",
+      { class: "mini-scroll" },
+      top("sessions", "users", "All sessions", ui.view === "sessions"),
+      top("messages", "message", "All conversations", ui.view === "messages" && !ui.filter),
+      top("recent", "clock", "Recent messages", ui.view === "recent"),
+      devices().map((d) => [
+        h("div", { class: "mini-dev", title: (d.self ? "This device" : d.owner || d.id) + " · " + d.sessions.length }, deviceDot(d)),
+        d.sessions.map((s) => {
+          const key = s.addr || s.name;
+          return h(
+            "button",
+            {
+              class: "mini-face" + (ui.view === "messages" && ui.filter === key ? " current" : ""),
+              title: s.name + (s.doing ? ": " + s.doing : ""),
+              "aria-label": s.name,
+              "data-key": "mini-s-" + s.name,
+              onclick: () => {
+                ui.filter = key;
+                ui.conversation = null;
+                go("messages");
+              },
+            },
+            presence(s.name, d),
+          );
+        }),
+      ]),
+    ),
+    h("button", { class: "mini-btn mini-foot" + (ui.view === "settings" ? " current" : ""), title: "Settings", "aria-label": "Settings", onclick: () => go("settings") }, icon("settings")),
+  );
+}
+
 function sidebar() {
+  if (mini) return miniSidebar();
   const devs = devices();
   return h(
     "aside",
     { class: "sidebar", "data-app-sidebar": true, "aria-label": NAME },
-    h("div", { class: "sidebar-header" }, h("span", { class: "brand" }, NAME)),
+    h(
+      "div",
+      { class: "sidebar-header" },
+      h("span", { class: "brand" }, NAME),
+      h("button", { class: "fold-btn", title: "Hide the sidebar", "aria-label": "Hide the sidebar", "data-key": "fold", onclick: () => setMini(true) }, icon("panel")),
+    ),
     h(
       "div",
       { class: "sidebar-content" },
       h(
         "div",
-        { class: "sidebar-group" },
-        h(
-          "ul",
-          { class: "sidebar-menu" },
-          navButton("sessions", "users", ui.state ? sessionCount() : null),
-          navButton("messages", "message", ui.messages.length || null),
-          navButton("settings", "settings", null),
-        ),
+        { class: "sidebar-group g-top" },
+        topRow("sessions", "users", "All sessions", allSessionsSub()),
+        allButton(),
+        topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")),
       ),
-      devs.length > 0 &&
+      devs.map((d) =>
         h(
           "div",
-          { class: "sidebar-group" },
-          h("div", { class: "sidebar-label" }, "Devices"),
+          { class: "sidebar-group dev-group" },
           h(
-            "ul",
-            { class: "sidebar-menu" },
-            devs.map((d) =>
-              h(
-                "li",
-                null,
-                h(
-                  "button",
-                  {
-                    class: "device-link" + (d.reachable ? "" : " stale"),
-                    title: d.reachable ? d.id : d.id + ", last seen " + ago(when(d.lastSeen) || 0),
-                    "data-key": "dev-" + d.id,
-                    onclick: () => showDevice(d.id),
-                  },
-                  h("span", { class: "dot dot-sm" + (d.reachable ? " ok" : "") }),
-                  h("span", { class: "label" }, d.id),
-                  h("span", { class: "menu-count" }, d.sessions.length),
-                ),
-              ),
+            "div",
+            {
+              class: "device-link" + (d.reachable ? "" : " stale"),
+              title: d.reachable ? d.id : d.id + ", last seen " + ago(when(d.lastSeen) || 0),
+            },
+            icon("laptop"),
+            h("span", { class: "label" }, deviceDot(d), deviceLabel(d), h("span", { class: "dev-host" }, host(d.id))),
+            d.self ? h("span", { class: "dev-you" }, "you") : !d.reachable && h("span", { class: "dev-you" }, "offline"),
+            h("span", { class: "menu-count" }, d.sessions.length),
+          ),
+          d.sessions.length > 0 &&
+            h(
+              "ul",
+              { class: "sidebar-menu side-sessions" },
+              d.sessions.map((s) => {
+                const key = s.addr || s.name;
+                return h(
+                  "li",
+                  null,
+                  h(
+                    "button",
+                    {
+                      class: "side-session",
+                      "aria-current": ui.view === "messages" && ui.filter === key ? "page" : null,
+                      "data-key": "ss-" + s.name,
+                      title: s.doing || s.name,
+                      onclick: () => {
+                        ui.filter = key;
+                        ui.conversation = null;
+                        go("messages");
+                      },
+                    },
+                    ...sideSessionBody(d, s),
+                  ),
+                );
+              }),
             ),
+          settledFold(d.id),
+        ),
+      ),
+    ),
+    h("div", { class: "sidebar-foot" }, h("ul", { class: "sidebar-menu" }, navButton("settings", "settings", null))),
+  );
+}
+
+// Four states, as a colored dot on the face:
+//   on    green   reachable, and active in the last five minutes
+//   idle  yellow  reachable, but quiet for longer
+//   dnd   red     running, but on do not disturb: messages wait in its inbox
+//   off   grey    its device is unreachable
+const STATE_WORDS = { on: "Active", idle: "Idle", dnd: "Do not disturb", off: "Offline" };
+// What each state means, for a dot's tooltip.
+const STATE_TIPS = {
+  on: "Active in the last five minutes",
+  idle: "Running and reachable, but quiet",
+  dnd: "Do not disturb: messages wait in its inbox, with no turn and no notice, until it reads its inbox or the tag comes off",
+  off: "Its device can't be reached",
+};
+
+// A model: tag (#211, derived for T3 sessions), shown beside the agent.
+function modelOf(s) {
+  const t = (s.tags || []).find((x) => x && typeof x.name === "string" && x.name.startsWith("model:"));
+  return t ? t.name.slice(6) : "";
+}
+
+function sessionState(d, s) {
+  if (!d || !d.reachable) return "off";
+  if (s && (onDnd(s) || wakeNever(d, s))) return "dnd";
+  const t = s && when(s.lastActive);
+  return t && Date.now() - t < 5 * 60000 ? "on" : "idle";
+}
+
+// The do-not-disturb tag (#211) rides in every device's presence, so it works for any device's
+// sessions: { tags: [{ name, src }] }, src "" (set by the session), "human" or "derived".
+function onDnd(s) {
+  return (s.tags || []).some((t) => t && t.name === "do-not-disturb");
+}
+
+// This device's settings say which of its sessions have wake-ups switched off.
+function wakeNever(d, s) {
+  if (!d.self || !ui.settings) return false;
+  const own = ui.settings.sessionWake?.[s.name];
+  return (own ? own.when : ui.settings.wake?.when) === "never";
+}
+
+// A face with its presence dot inside it, so it still fits the two-face pair of a DM.
+function dotted(name) {
+  const a = avatar(name);
+  const f = findSession(name);
+  const st = f ? sessionState(f.device, f.session) : "off";
+  a.classList.add("dotted");
+  a.append(h("span", { class: "pres pres-" + st, title: name + ": " + STATE_TIPS[st] }));
+  return a;
+}
+
+// A device: grey when unreachable, green when any of its sessions is active, else yellow.
+function deviceState(d) {
+  if (!d || !d.reachable) return "off";
+  return d.sessions.some((s) => sessionState(d, s) === "on") ? "on" : "idle";
+}
+const DEVICE_WORDS = { on: "Online, a session is active", idle: "Online, all its sessions idle", off: "Unreachable" };
+
+function deviceDot(d, cls = "") {
+  const st = deviceState(d);
+  return h("span", { class: ("dev-dot pres-" + st + " " + cls).trim(), title: DEVICE_WORDS[st] });
+}
+
+function presence(name, d) {
+  const f = findSession(name);
+  const st = sessionState(f ? f.device : d, f ? f.session : null);
+  return h("span", { class: "pres-wrap" }, avatar(name), h("span", { class: "pres pres-" + st, title: STATE_TIPS[st] }));
+}
+
+// The sidebar's top rows: a picture, a title and a count under it.
+function topRow(view, iconName, title, sub) {
+  return h(
+    "button",
+    {
+      class: "all-convs top-" + view,
+      "aria-current": ui.view === view ? "page" : null,
+      "data-key": "top-" + view,
+      onclick: () => {
+        ui.filter = null;
+        go(view);
+      },
+    },
+    h("span", { class: "all-ico" }, icon(iconName)),
+    h("span", { class: "all-text" }, h("span", { class: "all-title" }, title), h("span", { class: "all-sub" }, sub)),
+  );
+}
+
+// Settled sessions: stopped, or settled in T3, so their device leaves them out of presence (#189).
+// The page knows them only from messages, by address, so each is grouped under the device its
+// address names. Hidden by default, never gone.
+function settledFold(id) {
+  const rows = settledOn(id);
+  if (!rows.length) return null;
+  ui.openSettled = ui.openSettled || new Set();
+  const open = ui.openSettled.has(id);
+  return h(
+    "div",
+    { class: "settled" },
+    h(
+      "button",
+      {
+        class: "settled-toggle",
+        "aria-expanded": open ? "true" : "false",
+        "data-key": "fold-" + id,
+        onclick: () => {
+          open ? ui.openSettled.delete(id) : ui.openSettled.add(id);
+          render();
+        },
+      },
+      icon(open ? "chevronDown" : "chevronRight", "settled-caret"),
+      h("span", null, plural(rows.length, "settled session")),
+    ),
+    open && h("div", { class: "settled-list" }, rows.map(settledRow)),
+  );
+}
+
+function settledSessions() {
+  const running = new Set();
+  for (const d of ui.state?.devices || []) for (const s of d.sessions || []) running.add(s.name);
+  const seen = new Map();
+  const note = (name, addr, m) => {
+    if (!name || running.has(name) || name.includes("/")) return;
+    const r = seen.get(name) || { name, device: "", last: 0, lastMsg: null, peers: new Set() };
+    if (addr && addr.includes("/")) {
+      r.device = addr.split("/")[0];
+      r.addr = addr;
+    }
+    const t = when(m.at) || 0;
+    if (t > r.last) {
+      r.last = t;
+      r.lastMsg = m;
+    }
+    seen.set(name, r);
+  };
+  for (const m of ui.messages) {
+    note(fromName(m), m.fromAddr, m);
+    if (m.toKind === "session") note(toName(m), m.toAddr, m);
+    if (m.toKind === "session") {
+      const a = seen.get(fromName(m));
+      if (a) a.peers.add(toName(m));
+      const b = seen.get(toName(m));
+      if (b) b.peers.add(fromName(m));
+    }
+  }
+  return [...seen.values()].sort((a, b) => b.last - a.last);
+}
+
+function settledOn(id) {
+  return settledSessions().filter((r) => r.device === id);
+}
+
+function isSettled(name) {
+  return !findSession(name) && settledSessions().some((r) => r.name === name);
+}
+
+function settledRow(r) {
+  return h(
+    "button",
+    {
+      class: "settled-row" + (ui.view === "messages" && ui.filter && nameOf(ui.filter, ui.filter) === r.name ? " current" : ""),
+      title: r.name + ", last seen " + ago(r.last),
+      "data-key": "settled-" + r.name,
+      onclick: () => {
+        ui.filter = r.addr || r.name;
+        ui.conversation = null;
+        go("messages");
+      },
+    },
+    avatar(r.name),
+    h("span", { class: "settled-name truncate" }, r.name),
+    h("span", { class: "settled-when" }, ago(r.last).replace(" ago", "")),
+  );
+}
+
+// All sessions' count: those running, and those settled if there are any, else the devices.
+function allSessionsSub() {
+  const settled = settledSessions().length;
+  return plural(sessionCount(), "session") + " · " + (settled ? settled + " settled" : plural(devices().length, "device"));
+}
+
+// Who a device belongs to, for its heading; its host name goes beside it.
+function deviceLabel(d) {
+  return d.self ? "This device" : d.owner || d.id;
+}
+
+// A device ID ends in four hex digits that tell two clones on one machine apart.
+function host(id) {
+  return String(id).replace(/-[0-9a-f]{4}$/, "");
+}
+
+// Every conversation, between the sidebar's other two top rows.
+function allButton() {
+  const all = ui.view === "messages" && !ui.filter;
+  const count = allConversations().length;
+  return h(
+    "button",
+    {
+      class: "all-convs",
+      "aria-current": all ? "page" : null,
+      "data-key": "all",
+      onclick: () => {
+        ui.filter = null;
+        ui.conversation = null;
+        go("messages");
+      },
+    },
+    h("span", { class: "all-ico" }, icon("message")),
+    h("span", { class: "all-text" }, h("span", { class: "all-title" }, "All conversations"), h("span", { class: "all-sub" }, plural(count, "conversation"))),
+  );
+}
+
+function allConversations() {
+  const keep = ui.filter;
+  ui.filter = null;
+  const list = conversations();
+  ui.filter = keep;
+  return list;
+}
+
+// A session in the sidebar: its face and state, what it's doing, and its branch and pull request.
+function sideSessionBody(d, s) {
+  const prs = ui.state?.prs || {};
+  const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
+  return [
+    presence(s.name, d),
+    h(
+      "span",
+      { class: "side-session-text" },
+      h("span", { class: "side-session-name truncate" }, s.name),
+      h("span", { class: "side-session-doing truncate" }, s.doing || s.agent || ""),
+      (s.branch || pr) &&
+        h(
+          "span",
+          { class: "g-meta" },
+          s.branch && h("span", { class: "g-branch truncate" }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
+          pr && h("span", { class: "g-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number),
+        ),
+    ),
+  ];
+}
+
+function stateWord(d, s) {
+  const st = sessionState(d, s);
+  const t = when(s.lastActive);
+  if (st === "on") return "Active now";
+  if (st === "idle") return t ? "Idle " + ago(t).replace(" ago", "") : "Idle";
+  return STATE_WORDS[st];
+}
+
+// Every session, as cards under its device; a tab shows the settled ones.
+function sessionsPage() {
+  if (!ui.state) return h("div", { class: "page" });
+  const devs = devices();
+  const total = sessionCount();
+  return h(
+    "div",
+    { class: "g-page" },
+    h(
+      "header",
+      { class: "g-page-head g-page-head-row" },
+      h("div", null, h("h1", null, "All sessions"), h("p", null, plural(total, "session") + " running on " + plural(devs.length, "device"))),
+      h(
+        "div",
+        { class: "g-tabs", role: "tablist" },
+        [
+          ["running", "Running", total],
+          ["settled", "Settled", settledSessions().length],
+        ].map(([id, label, n]) =>
+          h(
+            "button",
+            {
+              role: "tab",
+              "aria-selected": (ui.sessTab || "running") === id ? "true" : "false",
+              "data-key": "tab-" + id,
+              onclick: () => {
+                ui.sessTab = id;
+                render();
+              },
+            },
+            label,
+            h("span", { class: "g-tab-n" }, n),
           ),
         ),
+      ),
+    ),
+    (ui.sessTab || "running") === "settled" ? settledPage(devs) : devs.map((d) =>
+      h(
+        "section",
+        { class: "g-dev" },
+        h(
+          "h2",
+          { class: "g-dev-head" },
+          deviceDot(d),
+          h("span", null, d.self ? "This device" : d.owner || d.id),
+          h("span", { class: "g-dev-host" }, host(d.id)),
+          h("span", { class: "g-dev-n" }, d.reachable ? plural(d.sessions.length, "session") : "Offline · seen " + ago(when(d.lastSeen) || 0)),
+        ),
+        d.sessions.length === 0
+          ? h("p", { class: "g-none" }, "No sessions")
+          : h("div", { class: "g-cards" }, d.sessions.map((s) => sessionCard(d, s))),
+      ),
     ),
   );
 }
+
+function settledPage(devs) {
+  const q = (ui.sq || "").toLowerCase();
+  const all = settledSessions().filter((r) => !q || r.name.includes(q) || (r.lastMsg?.subject || "").toLowerCase().includes(q));
+  const byDev = new Map();
+  for (const r of all) {
+    if (!byDev.has(r.device)) byDev.set(r.device, []);
+    byDev.get(r.device).push(r);
+  }
+  const label = (id) => {
+    const d = devs.find((x) => x.id === id);
+    return d ? (d.self ? "This device" : d.owner || id) : id || "Unknown device";
+  };
+  return [
+    h("p", { class: "g-settled-note" }, "Sessions that have stopped, or that you settled in T3. Their messages are kept; open one to read them."),
+    h(
+      "label",
+      { class: "g-search g-search-wide" },
+      icon("search"),
+      h("input", {
+        type: "search",
+        placeholder: "Search settled sessions",
+        "data-key": "sq",
+        value: ui.sq || null,
+        oninput: (e) => {
+          ui.sq = e.target.value;
+          render();
+        },
+      }),
+    ),
+    [...byDev].map(([id, rows]) =>
+      h(
+        "section",
+        { class: "g-dev" },
+        h("h2", { class: "g-dev-head" }, h("span", null, label(id)), h("span", { class: "g-dev-host" }, host(id)), h("span", { class: "g-dev-n" }, plural(rows.length, "settled session"))),
+        h(
+          "div",
+          { class: "g-settled-list" },
+          rows.map((r) =>
+            h(
+              "button",
+              {
+                class: "g-settled",
+                onclick: () => {
+                  ui.filter = r.addr || r.name;
+                  ui.conversation = null;
+                  go("messages");
+                },
+              },
+              avatar(r.name),
+              h("span", { class: "g-settled-name truncate" }, r.name),
+              h("span", { class: "g-settled-last truncate" }, r.lastMsg ? r.lastMsg.subject : ""),
+              h("span", { class: "g-settled-chats" }, plural(r.peers.size, "chat")),
+              h("span", { class: "g-settled-when" }, ago(r.last)),
+            ),
+          ),
+        ),
+      ),
+    ),
+    all.length === 0 && h("p", { class: "g-none" }, q ? "Nothing matches." : "No settled sessions."),
+  ];
+}
+
+function sessionCard(d, s) {
+  const prs = ui.state.prs || {};
+  const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
+  const keep = ui.filter;
+  ui.filter = s.addr || s.name;
+  const convs = conversations().filter((c) => c.kind === "dm").length;
+  ui.filter = keep;
+  const st = stateWord(d, s);
+  return h(
+    "button",
+    {
+      class: "g-card" + (d.reachable ? "" : " stale"),
+      "data-key": "card-" + s.name,
+      onclick: () => {
+        ui.filter = s.addr || s.name;
+        ui.conversation = null;
+        go("messages");
+      },
+    },
+    h(
+      "span",
+      { class: "g-card-top" },
+      presence(s.name, d),
+      h("span", { class: "g-card-id" }, h("span", { class: "g-card-name truncate" }, s.name), h("span", { class: "g-card-agent truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · "))),
+      st && h("span", { class: "g-state g-state-" + sessionState(d, s) }, st),
+    ),
+    h("span", { class: "g-card-doing" + (s.doing ? "" : " none") }, s.doing || "No status set"),
+    h(
+      "span",
+      { class: "g-card-foot" },
+      s.branch && h("span", { class: "g-branch truncate" }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
+      pr && h("span", { class: "g-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number),
+      h("span", { class: "g-card-chats" }, plural(convs, "chat")),
+    ),
+  );
+}
+
+// Recent: every message, newest first. One opens its conversation.
+function recentPage() {
+  const list = [...ui.messages].sort((a, b) => b.sortAt - a.sortAt).slice(0, 300);
+  const out = [];
+  let day = null;
+  for (const m of list) {
+    const at = when(m.at);
+    const d = at && new Date(at).toDateString();
+    if (d && d !== day) {
+      out.push(h("div", { class: "chat-day" }, h("span", null, dayLabel(at))));
+      day = d;
+    }
+    out.push(recentItem(m, at));
+  }
+  return h(
+    "div",
+    { class: "g-page g-recent" },
+    h("header", { class: "g-page-head" }, h("h1", null, "Recent messages"), h("p", null, plural(ui.messages.length, "message"))),
+    list.length ? h("div", { class: "g-feed" }, out) : h("p", { class: "g-none" }, "No messages yet"),
+  );
+}
+
+function recentItem(m, at) {
+  const from = fromName(m);
+  const c = conversationOf(m);
+  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "device" ? [icon("laptop"), m.to] : [avatar(toName(m)), toName(m)];
+  const open = () => {
+    ui.filter = null;
+    ui.conversation = c.key;
+    ui.conversationAnchor = m.id;
+    go("messages");
+  };
+  return h(
+    "article",
+    { class: "chat-msg chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" ? open() : null) },
+    avatar(from),
+    h(
+      "div",
+      { class: "chat-msg-main" },
+      h(
+        "div",
+        { class: "chat-msg-head" },
+        h("span", { class: "chat-msg-from truncate" }, from),
+        h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who" }, to)),
+        h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
+      ),
+      m.subject && h("div", { class: "chat-msg-subject" }, m.subject),
+      m.body && h("div", { class: "chat-msg-body rich" }, rich(m.body)),
+    ),
+  );
+}
+
+// Everyone reaches every session in the repo; a device's chat reaches every session on it. Anyone
+// who has posted is in it too, running or not.
+function groupMembers(c) {
+  const posted = new Map();
+  for (const m of c.messages) posted.set(fromName(m), (posted.get(fromName(m)) || 0) + 1);
+  const rows = [];
+  for (const d of devices()) {
+    if (c.kind === "device" && d.id !== c.title) continue;
+    for (const s of d.sessions) rows.push({ name: s.name, d, s, posted: posted.get(s.name) || 0 });
+  }
+  for (const [name, n] of posted) if (!rows.some((r) => r.name === name)) rows.push({ name, d: null, s: null, posted: n });
+  return rows;
+}
+
+function membersButton(c) {
+  const rows = groupMembers(c);
+  const pile = rows.slice(0, 5);
+  return h(
+    "div",
+    { class: "g-members-wrap" },
+    h(
+      "button",
+      {
+        class: "g-members",
+        "aria-expanded": ui.membersOpen ? "true" : "false",
+        "data-key": "members",
+        onclick: (e) => {
+          e.stopPropagation();
+          ui.membersOpen = !ui.membersOpen;
+          render();
+        },
+      },
+      h("span", { class: "g-pile" }, pile.map((r) => avatar(r.name))),
+      h("span", null, plural(rows.length, "member")),
+      icon("chevronDown", "g-members-chev"),
+    ),
+    ui.membersOpen && membersPanel(c, rows),
+  );
+}
+
+function membersPanel(c, rows) {
+  const groups = new Map();
+  for (const r of rows) {
+    const key = r.d ? (r.d.self ? "This device" : r.d.owner || r.d.id) : "Not running";
+    if (!groups.has(key)) groups.set(key, { d: r.d, host: r.d ? host(r.d.id) : "", rows: [] });
+    groups.get(key).rows.push(r);
+  }
+  return h(
+    "div",
+    { class: "g-members-panel", role: "dialog", "aria-label": "Members", onclick: (e) => e.stopPropagation() },
+    h("div", { class: "g-mp-head" }, c.kind === "all" ? "Everyone in this repo" : "Every session on " + host(c.title)),
+    [...groups].map(([title, g]) => [
+      h("div", { class: "g-mp-sec" }, g.d && deviceDot(g.d), title, g.host && h("span", null, g.host), h("span", { class: "g-mp-n" }, g.rows.length)),
+      g.rows.map((r) =>
+        h(
+          "button",
+          {
+            class: "g-mp-row" + (r.d && !r.d.reachable ? " stale" : ""),
+            onclick: () => {
+              ui.membersOpen = false;
+              const f = findSession(r.name);
+              ui.filter = f ? f.session.addr || r.name : r.name;
+              ui.conversation = null;
+              go("messages");
+            },
+          },
+          r.d ? presence(r.name, r.d) : avatar(r.name),
+          h("span", { class: "g-mp-text" }, h("span", { class: "g-mp-name truncate" }, r.name), h("span", { class: "g-mp-doing truncate" }, r.s ? r.s.doing || r.s.agent || "" : "Not running")),
+          r.posted > 0 && h("span", { class: "g-mp-posted" }, r.posted === 1 ? "1 post" : r.posted + " posts"),
+        ),
+      ),
+    ]),
+  );
+}
+document.addEventListener("click", () => {
+  if (ui.membersOpen) {
+    ui.membersOpen = false;
+    render();
+  }
+});
 
 function topbar() {
   let meta = "";
   if (ui.conn === "down") {
     meta = h("span", { class: "device-state" }, h("span", { class: "dot warn" }), "Disconnected");
-  } else if (ui.view === "sessions" && ui.state) {
-    meta = plural(sessionCount(), "session") + " · " + plural(ui.state.devices.length, "device");
-  } else if (ui.view === "messages") {
-    meta =
-      ui.messageMode === "conversations"
-        ? plural(conversations().length, "conversation")
-        : plural(visibleMessages().length, "message");
   }
   return h(
     "header",
@@ -314,123 +920,10 @@ function topbar() {
 }
 
 function page() {
-  if (ui.view === "messages") return messagesPage();
+  if (ui.view === "sessions") return sessionsPage();
+  if (ui.view === "recent") return recentPage();
   if (ui.view === "settings") return settingsPage();
-  return sessionsPage();
-}
-
-// Sessions, grouped by device.
-
-function sessionsPage() {
-  if (!ui.state) return h("div", { class: "page" });
-  const devs = devices();
-  if (devs.length === 0) return h("div", { class: "blank" }, "No sessions");
-  return h(
-    "div",
-    { class: "page" },
-    devs.map((d) =>
-      h(
-        "section",
-        { class: "section", id: "device-" + d.id },
-        h(
-          "div",
-          { class: "device-head" },
-          icon("laptop"),
-          h("span", { class: "device-name truncate" }, d.id),
-          d.owner && h("span", { class: "device-id truncate" }, d.owner),
-          d.self && h("span", { class: "badge badge-outline" }, "This device"),
-          !d.reachable &&
-            h(
-              "span",
-              { class: "device-state" },
-              h("span", { class: "dot" }),
-              when(d.lastSeen) ? agoEl("span", "", when(d.lastSeen), "Unreachable · seen ") : "Unreachable",
-            ),
-        ),
-        h(
-          "div",
-          { class: "group" },
-          d.sessions.length === 0
-            ? h("div", { class: "row-empty" }, "No sessions")
-            : d.sessions.map((s) => sessionRow(d, s)),
-        ),
-      ),
-    ),
-  );
-}
-
-function prLink(pr) {
-  const draft = pr.draft;
-  const label = "#" + pr.number;
-  const props = {
-    class: "pr " + (draft ? "pr-draft" : "pr-open"),
-    title: (draft ? "Draft pull request " : "Open pull request ") + label,
-  };
-  const kids = [icon(draft ? "prDraft" : "pr"), draft ? "Draft " + label : label];
-  if (!/^https:\/\//.test(pr.url || "")) return h("span", props, kids);
-  return h("a", { ...props, href: pr.url, target: "_blank", rel: "noopener noreferrer", onclick: (e) => e.stopPropagation() }, kids);
-}
-
-function sessionRow(d, s) {
-  const active = when(s.lastActive);
-  const started = when(s.started);
-  const committed = Array.isArray(s.committed) ? s.committed : [];
-  // Own keys only: a branch named constructor or __proto__ would otherwise find Object's.
-  const prs = ui.state.prs || {};
-  const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
-  const open = () => {
-    ui.filter = s.addr || s.name;
-    ui.conversation = null;
-    ui.chatListTop = 0;
-    go("messages");
-  };
-  return h(
-    "div",
-    {
-      class: "session" + (d.reachable ? "" : " unreachable"),
-      tabindex: 0,
-      role: "button",
-      "data-key": "s-" + s.name,
-      "aria-label": s.name + ", messages",
-      onclick: open,
-      onkeydown: (e) => {
-        // Only keys aimed at the row: Enter on the PR link inside it opens the link.
-        if (e.target !== e.currentTarget) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          open();
-        }
-      },
-    },
-    h(
-      "div",
-      { class: "session-line" },
-      h("span", { class: "dot" + (d.reachable ? " ok" : ""), title: d.reachable ? "Reachable" : "Unreachable" }),
-      h("span", { class: "session-name truncate" }, s.name),
-      s.agent && h("span", { class: "badge badge-secondary" }, s.agent),
-      active && agoEl("span", "session-active", active, "active "),
-    ),
-    s.doing && h("div", { class: "session-doing truncate", title: s.doing }, s.doing),
-    h(
-      "div",
-      { class: "session-meta" },
-      s.branch &&
-        h("span", { class: "meta-item", title: s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
-      pr && h("span", { class: "meta-item" }, prLink(pr)),
-      // Shown only when short: a longer list would crowd the row, and `lookup` has it whole.
-      committed.length > 0 &&
-        committed.length <= 3 &&
-        h("span", { class: "meta-item", title: "Committed to " + committed.join(", ") }, "committed to " + committed.join(", ")),
-      s.worktree &&
-        h("span", { class: "meta-item", title: "Worktree" }, icon("folder"), h("span", { class: "truncate" }, s.worktree)),
-      started && agoEl("span", "meta-item tabular", started, "started "),
-    ),
-  );
-}
-
-function showDevice(id) {
-  if (ui.view !== "sessions") go("sessions");
-  requestAnimationFrame(() => document.getElementById("device-" + id)?.scrollIntoView({ block: "start" }));
+  return conversationsPage();
 }
 
 // Messages.
@@ -452,68 +945,6 @@ function visibleMessages() {
       (m.toKind === "session" && is(m.toAddr, m.to)) ||
       (m.toKind === "device" && m.to === device) ||
       m.toKind === "all",
-  );
-}
-
-function recipient(m) {
-  if (m.toKind === "all") return h("span", { class: "msg-to" }, icon("broadcast"), "Everyone");
-  if (m.toKind === "device") return h("span", { class: "msg-to", title: "Every session on " + m.to }, icon("laptop"), h("span", { class: "truncate" }, m.to));
-  const to = toName(m);
-  return h("span", { class: "msg-to", title: to }, h("span", { class: "truncate" }, to));
-}
-
-function messagesBar() {
-  const shown = ui.filter && nameOf(ui.filter, ui.filter);
-  return h(
-    "div",
-    { class: "filter-bar" },
-    ui.filter &&
-      h(
-        "span",
-        { class: "chip" },
-        shown,
-        h("button", { "aria-label": "Show all messages", "data-key": "unfilter", onclick: () => ((ui.filter = null), render()) }, "×"),
-      ),
-    h(
-      "div",
-      { class: "segmented msg-modes", role: "group", "aria-label": "Message view" },
-      [
-        ["recent", "Recent"],
-        ["conversations", "Conversations"],
-      ].map(([mode, label]) =>
-        h(
-          "button",
-          {
-            "aria-pressed": ui.messageMode === mode ? "true" : "false",
-            "data-key": "mode-" + mode,
-            onclick: () => {
-              ui.messageMode = mode;
-              localStorage.setItem(MODE_KEY, mode);
-              render();
-            },
-          },
-          label,
-        ),
-      ),
-    ),
-  );
-}
-
-function messagesPage() {
-  if (ui.messageMode === "conversations") return conversationsPage();
-  const list = [...visibleMessages()].reverse();
-  if (list.length === 0) {
-    return h("div", { class: "page" }, messagesBar(), h("div", { class: "blank" }, noMessages()));
-  }
-  return h(
-    "div",
-    { class: "page" },
-    messagesBar(),
-    h(
-      "div",
-      { class: "group msg-list" },
-      list.map((m) => messageRow(m)),
-    ),
   );
 }
 
@@ -564,11 +995,42 @@ function avatar(name) {
   return h("span", { class: "avatar avatar-" + (n % 5), "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
 }
 
+// A group chat is named for whose it is, and its face is its members'.
+function groupName(c) {
+  if (c.kind === "all") return "Everyone";
+  const d = (ui.state?.devices || []).find((x) => x.id === c.title);
+  if (!d) return host(c.title);
+  if (d.self) return "This device";
+  const o = d.owner || "";
+  return o ? o[0].toUpperCase() + o.slice(1) + "'s " + (devices().filter((x) => x.owner === d.owner).length > 1 ? host(d.id) : "device") : d.id;
+}
+
+function groupHost(c) {
+  return c.kind === "device" ? host(c.title) : "";
+}
+
+function groupSummary(c) {
+  const rows = groupMembers(c);
+  const on = rows.filter((r) => r.d && sessionState(r.d, r.s) === "on").length;
+  return { rows, on };
+}
+
+// Up to four members' faces in a square, the last showing how many more there are.
+function groupIcon(c) {
+  const { rows } = groupSummary(c);
+  const shown = rows.length > 4 ? rows.slice(0, 3) : rows.slice(0, 4);
+  return h(
+    "span",
+    { class: "g-grid g-grid-" + Math.min(rows.length, 4), "aria-hidden": "true" },
+    shown.map((r) => avatar(r.name)),
+    rows.length > 4 && h("span", { class: "avatar g-more" }, "+" + (rows.length - 3)),
+  );
+}
+
 function conversationIcon(c) {
-  if (c.kind === "all") return h("span", { class: "avatar" }, icon("broadcast"));
-  if (c.kind === "device") return h("span", { class: "avatar" }, icon("laptop"));
-  if (c.pair.length === 1) return avatar(c.pair[0]);
-  return h("span", { class: "avatar-pair" }, c.pair.map(avatar));
+  if (c.kind !== "dm") return groupIcon(c);
+  if (c.pair.length === 1) return dotted(c.pair[0]);
+  return h("span", { class: "avatar-pair" }, c.pair.map(dotted));
 }
 
 let chatMoved = false; // the open conversation has just changed key, and is still the one being read
@@ -589,25 +1051,93 @@ function conversationsPage() {
   return h(
     "div",
     { class: "page chat-page" },
-    messagesBar(),
     list.length === 0
       ? h("div", { class: "blank" }, noMessages())
       : h(
           "div",
           { class: "chat" + (open ? " chat-open" : "") },
-          h(
-            "nav",
-            { class: "chat-list", "aria-label": "Conversations", onscroll: (e) => (ui.chatListTop = e.target.scrollTop) },
-            list.map(conversationRow),
-          ),
+          conversationList(list),
           open && conversationPane(open),
         ),
+  );
+}
+
+// With a session picked, a chat with it is called by the other session's name.
+function otherIn(c) {
+  if (!ui.filter || c.kind !== "dm") return null;
+  const me = nameOf(ui.filter, ui.filter);
+  return c.pair.includes(me) ? c.pair.find((n) => n !== me) || me : null;
+}
+
+// The middle column: whose conversations they are, a search, then direct messages and group chats
+// apart. Direct messages between two settled sessions fold away under Older.
+function conversationList(list) {
+  const name = ui.filter && nameOf(ui.filter, ui.filter);
+  const f = name && findSession(name);
+  const q = (ui.cq || "").toLowerCase();
+  const hit = (c) => !q || (otherIn(c) || c.title).toLowerCase().includes(q) || c.messages.some((m) => (m.subject + " " + (m.body || "")).toLowerCase().includes(q));
+  const old = (c) => c.kind === "dm" && c.pair.every((n) => isSettled(n));
+  const dms = list.filter((c) => c.kind === "dm" && hit(c) && (q || name || !old(c)));
+  const older = q || name ? [] : list.filter((c) => old(c));
+  const groups = list.filter((c) => c.kind !== "dm" && hit(c));
+  const section = (title, rows) =>
+    rows.length > 0 && [h("div", { class: "g-sec" }, h("span", null, title), h("span", { class: "g-sec-n" }, rows.length)), rows.map(conversationRow)];
+  return h(
+    "nav",
+    { class: "chat-list g-list", "aria-label": "Conversations", onscroll: (e) => (ui.chatListTop = e.target.scrollTop) },
+    h(
+      "div",
+      { class: "g-head" },
+      name
+        ? [
+            h("div", { class: "g-head-who" }, f ? presence(name, f.device) : avatar(name), h("h2", { class: "truncate" }, name)),
+            f && f.session.doing && h("p", { class: "g-head-doing" }, f.session.doing),
+            !f && h("p", { class: "g-head-doing" }, "Settled · " + ago(settledSessions().find((r) => r.name === name)?.last || 0)),
+          ]
+        : [h("h2", null, "All conversations"), h("p", { class: "g-head-doing" }, plural(list.length, "conversation"))],
+    ),
+    h(
+      "label",
+      { class: "g-search" },
+      icon("search"),
+      h("input", {
+        type: "search",
+        placeholder: "Search conversations",
+        "data-key": "cq",
+        value: ui.cq || null,
+        oninput: (e) => {
+          ui.cq = e.target.value;
+          render();
+        },
+      }),
+    ),
+    section("Direct messages", dms),
+    older.length > 0 &&
+      h(
+        "button",
+        {
+          class: "g-sec g-sec-toggle",
+          "aria-expanded": ui.showOlder ? "true" : "false",
+          "data-key": "older",
+          onclick: () => {
+            ui.showOlder = !ui.showOlder;
+            render();
+          },
+        },
+        h("span", null, icon(ui.showOlder ? "chevronDown" : "chevronRight", "settled-caret"), "Older, between settled sessions"),
+        h("span", { class: "g-sec-n" }, older.length),
+      ),
+    ui.showOlder && older.map(conversationRow),
+    section("Group chats", groups),
+    !dms.length && !groups.length && h("p", { class: "g-none" }, "Nothing matches."),
   );
 }
 
 function conversationRow(c) {
   const last = c.messages[c.messages.length - 1];
   const at = when(last.at);
+  const o = otherIn(c);
+  const me = ui.filter && nameOf(ui.filter, ui.filter);
   return h(
     "button",
     {
@@ -620,34 +1150,41 @@ function conversationRow(c) {
         render();
       },
     },
-    conversationIcon(c),
+    o ? dotted(o) : conversationIcon(c),
     h(
       "span",
       { class: "chat-row-text" },
       h(
         "span",
         { class: "chat-row-line" },
-        h("span", { class: "chat-row-title truncate", title: c.title }, c.title),
+        c.kind !== "dm"
+          ? [
+              h("span", { class: "chat-row-title truncate", title: c.title }, groupName(c)),
+              h("span", { class: "g-row-count" }, groupSummary(c).rows.length),
+            ]
+          : h("span", { class: "chat-row-title truncate", title: c.title }, o || c.title),
         at && agoEl("span", "chat-row-time", at),
       ),
-      h("span", { class: "chat-row-preview truncate" }, fromName(last) + ": " + last.subject),
+      h("span", { class: "chat-row-preview truncate" }, (o && fromName(last) === o ? "" : o && fromName(last) === me ? "You: " : fromName(last) + ": ") + last.subject),
     ),
   );
 }
 
 function conversationPane(c) {
   const senders = new Set(c.messages.map(fromName));
-  const about = [
-    c.kind === "all" && "Every session",
-    c.kind === "device" && "Every session on " + c.title,
-    plural(c.messages.length, "message"),
-    c.kind !== "dm" && plural(senders.size, "sender"),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const o = otherIn(c);
+  const of = o && findSession(o);
+  const gs = c.kind !== "dm" ? groupSummary(c) : null;
+  const about = gs
+    ? [c.kind === "all" ? "Every session in this repo" : "Every session on " + groupHost(c), plural(gs.rows.length, "member"), gs.on + " active"].join(" · ")
+    : o
+      ? of
+        ? of.session.doing || of.session.agent || ""
+        : "Not running"
+      : "";
   return h(
     "section",
-    { class: "chat-pane", "aria-label": c.title },
+    { class: "chat-pane", "aria-label": o || c.title },
     h(
       "header",
       { class: "chat-head" },
@@ -664,15 +1201,17 @@ function conversationPane(c) {
         },
         icon("arrowLeft"),
       ),
-      conversationIcon(c),
+      o ? dotted(o) : conversationIcon(c),
       h(
         "div",
         { class: "chat-head-text" },
-        h("h2", { class: "chat-title truncate", title: c.title }, c.title),
-        h("div", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
+        h("h2", { class: "chat-title truncate", title: c.title }, gs ? groupName(c) : o || c.title),
+        about && h("div", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
       ),
+      c.kind !== "dm" && membersButton(c),
     ),
     h("div", { class: "chat-thread", "data-conversation": c.key }, chatMessages(c)),
+    h("div", { class: "readonly" }, h("div", { class: "readonly-box" }, icon("message"), h("span", null, "Sessions post here with ", h("code", null, "mur send"), ". You're reading along."))),
   );
 }
 
@@ -708,9 +1247,10 @@ function dayLabel(t) {
 }
 
 function chatMessage(m, from, at, head) {
+  const sender = findSession(from);
   return h(
     "article",
-    { class: "chat-msg" + (head ? " chat-msg-first" : ""), title: head ? null : messageDetail(m) },
+    { class: "chat-msg" + (head ? " chat-msg-first" : ""), "data-id": m.id, title: head ? null : messageDetail(m) },
     head ? avatar(from) : h("span", { class: "avatar-gap" }),
     h(
       "div",
@@ -720,16 +1260,82 @@ function chatMessage(m, from, at, head) {
           "div",
           { class: "chat-msg-head" },
           h("span", { class: "chat-msg-from truncate" }, from),
-          h(
-            "span",
-            { class: "chat-msg-time", title: messageDetail(m) },
-            at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
-          ),
+          sender && h("span", { class: "chat-msg-via truncate" }, [sender.session.agent, sender.device.self ? null : sender.device.id].filter(Boolean).join(" · ")),
+          h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
         ),
-      h("div", { class: "chat-msg-subject" }, m.subject),
-      m.body && h("div", { class: "chat-msg-body" }, m.body),
+      m.subject && h("div", { class: "chat-msg-subject" }, m.subject),
+      m.body && h("div", { class: "chat-msg-body rich" }, rich(m.body)),
+    ),
+    h(
+      "div",
+      { class: "msg-tools" },
+      h(
+        "button",
+        {
+          title: "Copy",
+          "aria-label": "Copy message",
+          onclick: () => navigator.clipboard?.writeText((m.subject ? m.subject + "\n\n" : "") + (m.body || "")),
+        },
+        icon("copy"),
+      ),
     ),
   );
+}
+
+// Message bodies are Markdown-ish text from agents. A small subset becomes structure: paragraphs,
+// lists, fenced code, inline code, bold and https links. All of it reaches the page as text nodes.
+function rich(text) {
+  const out = [];
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      const code = [];
+      i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++]);
+      i++;
+      out.push(h("pre", null, h("code", null, code.join("\n"))));
+      continue;
+    }
+    const bullet = /^\s*[-*•] +/;
+    const num = /^\s*\d+[.)] +/;
+    if (bullet.test(line) || num.test(line)) {
+      const re = bullet.test(line) ? bullet : num;
+      const items = [];
+      while (i < lines.length && lines[i].trim()) {
+        if (re.test(lines[i])) items.push(lines[i].replace(re, ""));
+        else if (items.length) items[items.length - 1] += " " + lines[i].trim();
+        else break;
+        i++;
+      }
+      out.push(h(re === bullet ? "ul" : "ol", null, items.map((t) => h("li", null, inline(t)))));
+      continue;
+    }
+    if (!line.trim()) {
+      i++;
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !/^\s*```/.test(lines[i]) && !bullet.test(lines[i]) && !num.test(lines[i])) para.push(lines[i++]);
+    out.push(h("p", null, para.map((l, k) => [k ? h("br") : null, inline(l)])));
+  }
+  return out;
+}
+
+function inline(t) {
+  const out = [];
+  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(https:\/\/[^\s)<>]+[^\s)<>.,;:!?'"])/g;
+  let last = 0;
+  for (let m; (m = re.exec(t)); ) {
+    if (m.index > last) out.push(t.slice(last, m.index));
+    if (m[1]) out.push(h("code", null, m[1].slice(1, -1)));
+    else if (m[2]) out.push(h("strong", null, m[2].slice(2, -2)));
+    else out.push(h("a", { href: m[3], target: "_blank", rel: "noopener noreferrer" }, m[3]));
+    last = re.lastIndex;
+  }
+  if (last < t.length) out.push(t.slice(last));
+  return out;
 }
 
 // A render builds the panes anew. The list keeps its place. So does a conversation being read
@@ -750,34 +1356,6 @@ function restoreChatScroll(was) {
   const same = chatMoved || thread?.dataset.conversation === was.key;
   chatMoved = false;
   if (thread) thread.scrollTop = same && !was.atEnd ? was.top : thread.scrollHeight;
-}
-
-function messageRow(m) {
-  const open = ui.expanded.has(m.id);
-  const at = when(m.at);
-  const from = fromName(m);
-  const toggle = () => {
-    if (ui.expanded.has(m.id)) ui.expanded.delete(m.id);
-    else ui.expanded.add(m.id);
-    render();
-  };
-  const detail = messageDetail(m);
-  return h(
-    "div",
-    { class: "msg", "aria-expanded": open ? "true" : "false" },
-    h(
-      "button",
-      { class: "msg-head", "data-key": "m-" + m.id, "aria-expanded": open ? "true" : "false", onclick: toggle },
-      icon("chevronRight", "msg-chev"),
-      h("span", { class: "msg-from truncate", title: from }, from),
-      icon("arrowRight", "arrow"),
-      recipient(m),
-      h("span", { class: "msg-subject", title: m.subject }, m.subject),
-      at ? agoEl("span", "msg-time", at) : h("span", { class: "msg-time" }),
-    ),
-    open && detail && h("div", { class: "msg-detail" }, detail),
-    open && m.body && h("div", { class: "msg-body" }, m.body),
-  );
 }
 
 // Settings.
@@ -994,46 +1572,6 @@ function settingsPage() {
     ),
   );
 
-  const theme = window.appearance.get();
-  sections.push(
-    h(
-      "section",
-      { class: "section" },
-      h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Appearance")),
-      h(
-        "div",
-        { class: "group" },
-        settingsRow(
-          "theme",
-          "Theme",
-          null,
-          h(
-            "div",
-            { class: "segmented", role: "group" },
-            [
-              ["system", "System"],
-              ["light", "Light"],
-              ["dark", "Dark"],
-            ].map(([v, label]) =>
-              h(
-                "button",
-                {
-                  "aria-pressed": theme === v ? "true" : "false",
-                  "data-key": "theme-" + v,
-                  onclick: () => {
-                    window.appearance.set(v);
-                    render();
-                  },
-                },
-                label,
-              ),
-            ),
-          ),
-          "keep-inline",
-        ),
-      ),
-    ),
-  );
   return h("div", { class: "page" }, sections);
 }
 
@@ -1060,7 +1598,7 @@ function go(view) {
 }
 
 function setView(view) {
-  ui.view = VIEWS.includes(view) ? view : "sessions";
+  ui.view = VIEWS.includes(view) ? view : "messages";
   if (ui.view === "settings") loadSettings();
   render();
 }
@@ -1169,10 +1707,10 @@ function start() {
     last = "";
     polled = false;
   }
-  ui.view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "sessions";
+  ui.view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "messages";
   render();
   if (!ui.token) return;
-  if (ui.view === "settings") loadSettings();
+  loadSettings(); // the wake-up settings say which of this device's sessions show red
   poll();
 }
 

@@ -1,6 +1,12 @@
 // Icons from Lucide 0.564.0 (ISC; see THIRD_PARTY_NOTICES), the set T3 Code uses, drawn at its
 // 1.75 stroke.
 const shapes = {
+  panel: [["rect", { x: 3, y: 4, width: 18, height: 16, rx: 2 }], ["path", { d: "M9 4v16" }]],
+  clock: [["circle", { cx: 12, cy: 12, r: 9 }], ["path", { d: "M12 7v5l3 2" }]],
+  copy: [["rect", { x: 8, y: 8, width: 14, height: 14, rx: 2 }], ["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" }]],
+  search: [["circle", { cx: 11, cy: 11, r: 8 }], ["path", { d: "m21 21-4.3-4.3" }]],
+  chevronDown: [["path", { d: "m6 9 6 6 6-6" }]],
+  check: [["path", { d: "M20 6 9 17l-5-5" }]],
   branch: [
     ["path", { d: "M15 6a9 9 0 0 0-9 9V3" }],
     ["circle", { cx: 18, cy: 6, r: 3 }],
