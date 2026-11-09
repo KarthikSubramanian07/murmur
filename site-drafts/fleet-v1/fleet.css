@@ -85,7 +85,7 @@
 .fx-table { container-type: inline-size; }
 
 /* Table */
-.fx-tr { display: grid; grid-template-columns: minmax(12rem, 1fr) 8rem minmax(14rem, 2fr) minmax(9rem, 0.9fr) 6rem; align-items: center; gap: 1rem; width: 100%; min-height: 3.25rem; padding: 0.5rem 1rem; text-align: left; }
+.fx-tr { display: grid; grid-template-columns: minmax(14rem, 1.2fr) 8rem minmax(14rem, 2fr) minmax(9rem, 0.9fr) 6rem; align-items: center; gap: 1rem; width: 100%; min-height: 3.25rem; padding: 0.5rem 1rem; text-align: left; }
 .fx-tr .num { justify-self: end; text-align: right; font-variant-numeric: tabular-nums; }
 .fx-th { min-height: 2.5rem; border-bottom: 1px solid var(--fx-border); color: var(--fx-text-2); font-size: 0.75rem; font-weight: 500; }
 .fx-row { border-bottom: 1px solid var(--fx-border); transition: background-color 175ms var(--fx-ease); }
@@ -190,8 +190,9 @@
 .fx-sub-pr { flex: none; margin-left: 0.375rem; }
 /* The table drops columns by its own width. Below 640px (what four columns need) a row is the name and state, with what
    it's working on, and why it needs a look, underneath. */
-/* Five columns need about 865px (their minimums, gaps and padding); under 880px Branch goes. */
-@container (max-width: 880px) {
+/* Five columns need 912px (51rem of minimums, four 1rem gaps, 1rem padding each side); under
+   920px Branch goes. Four need 648px. */
+@container (max-width: 920px) {
   .fx-tr { grid-template-columns: minmax(11rem, 1.2fr) 7rem minmax(12rem, 1.8fr) 5.5rem; }
   .fx-tr > :nth-child(4) { display: none; }
   .fx-sub-branch { display: flex; align-items: baseline; min-width: 0; }
@@ -248,7 +249,7 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-insp-open { margin-top: 0.375rem; font-size: 0.75rem; color: var(--fx-warning-text); }
 /* Grouped by branch, the heading names the branch; only pinned rows, away from their heading,
    keep it under the name. */
-/* The same four columns as a table under 880px (above), so it fits wherever those do; under 640px
+/* The same four columns as a table under 920px (above), so it fits wherever those do; under 640px
    the compact layout takes over. */
 .by-branch .fx-tr { grid-template-columns: minmax(11rem, 1.2fr) 7rem minmax(12rem, 1.8fr) 5.5rem; }
 .by-branch .fx-tr > :nth-child(4) { display: none; }

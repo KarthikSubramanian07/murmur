@@ -234,6 +234,7 @@ function render() {
   const keep = active?.dataset?.key;
   const caret = active && typeof active.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null;
   const scroll = content ? content.scrollTop : 0;
+  const railScroll = root.querySelector(".fx-rail")?.scrollTop || 0;
   const chat = chatScroll();
   if (!content) content = h("div", { class: "content" });
   const inner = page(); // before the top bar, which counts what this settles
@@ -241,6 +242,8 @@ function render() {
   content.replaceChildren(inner);
   root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, VARIANT === "g" && ui.view !== "settings" ? null : topbar(), content)));
   content.scrollTop = scroll;
+  const rail = root.querySelector(".fx-rail");
+  if (rail) rail.scrollTop = railScroll;
   restoreChatScroll(chat);
   const again = keep && root.querySelector(`[data-key="${CSS.escape(keep)}"]`);
   if (again) {
@@ -2392,7 +2395,8 @@ function fleetNeeds(rows) {
     const more = list.length > 1 ? " And " + plural(list.length - 1, "more question") + "." : "";
     // text is a function: a row and the inspector each need their own copy of its nodes. The
     // State column says whether the session is offline or on do not disturb, so this doesn't.
-    // The inspector leaves the question out (quote false): its messages quote each one.
+    // The inspector quotes it only when it is the one question (quote false otherwise): its
+    // messages quote each one.
     const wait = " for " + ago(when(m.at)).replace(" ago", "");
     out.set(to, { at: when(m.at), m, msgs: list, text: (quote = true) => ["No reply to ", h("b", null, fromName(m)), quote ? wait + ": “" + questionIn(m) + "”" + more : wait + (list.length > 1 ? ", and " + plural(list.length - 1, "more question") : "") + "."] });
   }
@@ -2408,8 +2412,11 @@ function fleetPage() {
   const searched = all.filter((r) => !q || [r.s.name, r.s.doing, r.s.branch, r.s.agent, r.d.owner, deviceName(r.d), groupOf(r.s)].join(" ").toLowerCase().includes(q));
   const rows = searched.filter((r) => !F.state || sessionState(r.d, r.s) === F.state);
   const needs = fleetNeeds(rows);
-  if (ui.fleetSel && !rows.some((r) => r.s.name === ui.fleetSel)) ui.fleetSel = null;
+  // Open details stay open when their session falls out of the filter (it went idle while you
+  // read, say); they close only when the session itself is gone.
+  if (ui.fleetSel && !all.some((r) => r.s.name === ui.fleetSel)) ui.fleetSel = null;
   const sel = ui.fleetSel;
+  const selNeed = sel ? needs.get(sel) || fleetNeeds(all).get(sel) : null;
   const set = (k) => (v) => {
     F[k] = v;
     render();
@@ -2423,7 +2430,7 @@ function fleetPage() {
 
   // Where the rail can't sit beside the table and leave it readable (see STACKED), the selected
   // session takes the whole page, with a way back.
-  if (sel && STACKED.matches) return h("div", { class: "fx fx-sheet" }, fleetInspector(sel, needs.get(sel)));
+  if (sel && STACKED.matches) return h("div", { class: "fx fx-sheet" }, fleetInspector(sel, selNeed));
 
   return h(
     "div",
@@ -2451,7 +2458,7 @@ function fleetPage() {
       h("span", { class: "fx-spacer" }),
       h("span", { class: "fx-group-by" }, h("span", { class: "fx-label" }, "Group by"), fxSeg("Group by", [["device", "Device"], ["branch", "Branch"], ["group", "Job"]], F.by, set("by"))),
     ),
-    h("div", { class: "fx-main" + (sel ? "" : " solo") }, fleetTable(rows, needs, sel), sel && h("aside", { class: "fx-rail" }, fleetInspector(sel, needs.get(sel)))),
+    h("div", { class: "fx-main" + (sel ? "" : " solo") }, fleetTable(rows, needs, sel), sel && h("aside", { class: "fx-rail" }, fleetInspector(sel, selNeed))),
   );
 }
 
@@ -2665,7 +2672,7 @@ function fleetInspector(name, need) {
         ? h("button", { class: "fx-back", onclick: close }, "← All sessions")
         : h("button", { class: "fx-icon-btn", title: "Close", "aria-label": "Close", onclick: close }, icon("x")),
     ),
-    need && h("button", { class: "fx-insp-need", onclick: () => swOpenMessage(need.m) }, h("span", null, need.text(false)), h("span", { class: "fx-insp-open" }, "Open the conversation →")),
+    need && h("button", { class: "fx-insp-need", onclick: () => swOpenMessage(need.m) }, h("span", null, need.text(need.msgs.length === 1)), h("span", { class: "fx-insp-open" }, "Open the conversation →")),
     h("dl", { class: "fx-meta" }, meta.map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
     h("h3", { class: "fx-h3" }, "Direct messages", h("span", { class: "fx-badge" }, direct.length)),
     direct.length
