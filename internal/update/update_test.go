@@ -124,15 +124,7 @@ func TestOptOut(t *testing.T) {
 			t.Fatal(v)
 		}
 	}
-	getenv := func(k string) string {
-		if k == "DO_NOT_TRACK" || k == "MURMUR_NO_USAGE" {
-			return "1"
-		}
-		return ""
-	}
-	if Off(ctx, getenv, gitDir) {
-		t.Fatal("usage opt-outs disabled updates")
-	}
+	getenv := func(string) string { return "" }
 	if b, e := exec.Command("git", "--git-dir="+gitDir, "config", "murmur.update", "false").CombinedOutput(); e != nil {
 		t.Fatalf("%s: %v", b, e)
 	}
@@ -403,5 +395,24 @@ func TestReinstallBeforeTheUpdaterStarted(t *testing.T) {
 	}
 	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, manual) {
 		t.Errorf("reinstall overwritten: %q (%v)", got, err)
+	}
+}
+
+// The latest release is kept per clone, so `mur version` can say when a newer one is out; a
+// pre-release, a draft or a malformed tag is not kept.
+func TestNewerFromRecordedLatest(t *testing.T) {
+	gitDir := t.TempDir()
+	if got := Newer(gitDir, "0.2.0"); got != "" {
+		t.Fatalf("nothing recorded: %q", got)
+	}
+	recordLatest(gitDir, "v0.3.0")
+	for v, want := range map[string]string{"0.2.0": "0.3.0", "0.3.0": "", "0.4.0": "", "0.3.0-dev": "0.3.0"} {
+		if got := Newer(gitDir, v); got != want {
+			t.Errorf("Newer(%q) = %q, want %q", v, got, want)
+		}
+	}
+	recordLatest(gitDir, "not-a-version")
+	if got := Newer(gitDir, "0.2.0"); got != "0.3.0" {
+		t.Errorf("a malformed tag replaced the record: %q", got)
 	}
 }

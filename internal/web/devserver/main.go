@@ -93,6 +93,7 @@ type fixtures struct {
 	mutes    []web.Mute
 	settings web.Settings
 	version  web.Version
+	downTill time.Time // a restart in progress: State fails until then
 }
 
 func newFixtures(now time.Time) *fixtures {
@@ -265,6 +266,9 @@ func (f *fixtures) run() {
 func (f *fixtures) State(ctx context.Context) (web.State, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if time.Now().Before(f.downTill) {
+		return web.State{}, errors.New("restarting")
+	}
 	st := web.State{Device: f.self, Mutes: append([]web.Mute(nil), f.mutes...), Version: f.version}
 	for _, d := range f.devices {
 		d.Sessions = append([]web.Session(nil), d.Sessions...)
@@ -342,6 +346,7 @@ func (f *fixtures) Restart(ctx context.Context) error {
 		return web.ErrNoUpdate
 	}
 	f.version = web.Version{Running: f.version.Latest, Install: f.version.Install, Daemon: "2"}
+	f.downTill = time.Now().Add(3 * time.Second)
 	return nil
 }
 

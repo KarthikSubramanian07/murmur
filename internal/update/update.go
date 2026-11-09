@@ -1,4 +1,6 @@
-// Package update installs checksum-verified GitHub releases independently of usage check-ins.
+// Package update installs checksum-verified GitHub releases, and keeps the latest release's version
+// so `mur version` can say when there is a newer one. It talks only to GitHub, and not at all while
+// updates are off.
 package update
 
 import (
@@ -17,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proc"
 )
@@ -54,8 +57,8 @@ type Status struct {
 	Installed bool
 }
 
-// Newer says release version a comes after b. Development builds ("-dev") are never newer.
-func Newer(a, b string) bool { return newer(a, b) }
+// After says release version a comes after b. Development builds ("-dev") never do.
+func After(a, b string) bool { return newer(a, b) }
 
 func Off(ctx context.Context, getenv func(string) string, gitDir string) bool {
 	v := strings.TrimSpace(getenv("MURMUR_NO_UPDATE"))
@@ -213,6 +216,7 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	if release.Draft || release.Prerelease {
 		return false, "", nil
 	}
+	recordLatest(o.GitDir, release.Tag)
 	latest = strings.TrimPrefix(release.Tag, "v")
 	if !newer(release.Tag, o.Version) {
 		return false, latest, nil
@@ -332,4 +336,41 @@ func Identity(path string) (os.FileInfo, error) {
 	}
 	defer f.Close()
 	return f.Stat()
+}
+
+// latest is the latest release last seen, kept in the clone's state dir.
+type latest struct {
+	Latest string `json:"latest"` // its version, without the v
+}
+
+func latestPath(gitDir string) string { return filepath.Join(gitDir, brand.StateDir, "latest.json") }
+
+func recordLatest(gitDir, tag string) {
+	if gitDir == "" {
+		return
+	}
+	if _, _, ok := version(tag); !ok {
+		return
+	}
+	b, _ := json.Marshal(latest{Latest: strings.TrimPrefix(tag, "v")})
+	path := latestPath(gitDir)
+	if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
+		return
+	}
+	tmp := path + ".tmp"
+	if os.WriteFile(tmp, b, 0o600) == nil {
+		os.Rename(tmp, path)
+	}
+}
+
+// Newer returns the latest release the clone's daemon last saw, if it is newer than version, else "".
+func Newer(gitDir, version string) string {
+	var l latest
+	if b, err := os.ReadFile(latestPath(gitDir)); err == nil {
+		json.Unmarshal(b, &l)
+	}
+	if l.Latest != "" && newer(l.Latest, version) {
+		return l.Latest
+	}
+	return ""
 }
