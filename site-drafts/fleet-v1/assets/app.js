@@ -352,7 +352,7 @@ function sidebar() {
       "div",
       { class: "sidebar-content" },
       VARIANT === "g"
-        ? h("div", { class: "sidebar-group g-top" }, swarmRow(), topRow("sessions", "users", "All sessions", plural(sessionCount(), "session") + (settledSessions().length ? " · " + settledSessions().length + " settled" : " · " + plural(devices().length, "device"))), allButton(), topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")))
+        ? h("div", { class: "sidebar-group g-top" }, topRow("sessions", "users", "All sessions", plural(sessionCount(), "session") + (settledSessions().length ? " · " + settledSessions().length + " settled" : " · " + plural(devices().length, "device"))), allButton(), topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")))
         : h(
             "div",
             { class: "sidebar-group" },
@@ -1092,7 +1092,8 @@ function topbar() {
 }
 
 function page() {
-  if (VARIANT === "g" && ui.view === "sessions") return gSessionsPage();
+  // Fleet v1 (#183) replaces the sessions page, at Tyler's suggestion (2026-11-09).
+  if (VARIANT === "g" && ui.view === "sessions") return swarmShell("fleet");
   if (VARIANT === "g" && ui.view === "recent") return gRecentPage();
   if (VARIANT === "g" && SWARM_VIEWS.some(([v]) => v === ui.view)) return swarmShell(ui.view);
   if (VARIANT === "g" && ui.view === "briefing") return briefPage();
@@ -2062,6 +2063,7 @@ function go(view) {
 }
 
 function setView(view) {
+  if (view === "fleet") view = "sessions";
   ui.view = VIEWS.includes(view) ? view : VARIANT === "g" ? "messages" : "sessions";
   if (ui.view === "settings") loadSettings();
   render();
@@ -2171,7 +2173,8 @@ function start() {
     last = "";
     polled = false;
   }
-  ui.view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : VARIANT === "g" ? "messages" : "sessions";
+  const want = location.hash.slice(1) === "fleet" ? "sessions" : location.hash.slice(1);
+  ui.view = VIEWS.includes(want) ? want : VARIANT === "g" ? "messages" : "sessions";
   render();
   if (!ui.token) return;
   if (ui.view === "settings") loadSettings();
@@ -2413,7 +2416,7 @@ function fleetPage() {
   return h(
     "div",
     { class: "fx" },
-    h("header", { class: "fx-head" }, h("div", null, h("h1", null, "Fleet"), h("p", null, sub))),
+    h("header", { class: "fx-head" }, h("div", null, h("h1", null, "All sessions"), h("p", null, sub))),
     h(
       "div",
       { class: "fx-toolbar" },
