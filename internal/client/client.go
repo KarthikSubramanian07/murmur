@@ -91,7 +91,7 @@ func Connect(ctx context.Context, gitDir string, spawn bool) (*Client, error) {
 // by the mur it replaced) is stopped and replaced if the client may start daemons; a client that
 // may not, such as `mur stop`, which has to be able to stop it, takes it as it is.
 func (c *Client) connect(ctx context.Context) error {
-	if c.load() && c.ping(ctx) == nil {
+	if c.found(ctx) {
 		if !c.Outdated() || !c.mayStart() {
 			return nil
 		}
@@ -115,7 +115,7 @@ func (c *Client) connect(ctx context.Context) error {
 			return ctx.Err()
 		case <-time.After(150 * time.Millisecond):
 		}
-		if c.load() && c.ping(ctx) == nil && !c.Outdated() {
+		if c.found(ctx) && !c.Outdated() {
 			return nil
 		}
 	}
@@ -150,7 +150,7 @@ func (c *Client) replace(ctx context.Context) error {
 	cancel()
 	lock := filepath.Join(StateDir(c.GitDir), "daemon.lock")
 	for end := time.Now().Add(replaceWait); ; {
-		if c.load() && c.current().Token != old.Token {
+		if info, ok := c.load(); ok && info.Token != old.Token {
 			return nil
 		}
 		l, err := proc.Lock(lock)
@@ -172,35 +172,81 @@ func (c *Client) replace(ctx context.Context) error {
 	}
 }
 
-func (c *Client) load() bool {
+// found reports whether daemon.json names a running daemon, and if so makes it the one c talks to.
+// Something must answer a ping at its address while the clone's lock is held. A daemon takes the
+// lock before it writes daemon.json and lets it go only after removing the file, so a daemon.json
+// beside a free lock is stale: its daemon died without removing it (a panic, SIGKILL, the OOM
+// killer, a power cut), and whatever answers at its port isn't that daemon. On a machine with other
+// users it can be one of their processes, which would be sent the sessions' hellos and requests,
+// and could answer them with messages of its own. Their processes can't take the lock, which is in
+// the user's own state directory (0700).
+//
+// The lock is tried only after something answered, as holding it for a moment can turn away a
+// daemon starting just then. daemon.json is read again after it: a daemon that starts beside a stale
+// daemon.json removes it once it holds the lock, so a client that read the stale one just before
+// doesn't take it for the new daemon's.
+//
+// When none is found, c forgets the daemon it had. That one is gone, and a long-running client (the
+// MCP server) would otherwise go on sending its requests to the address while a new daemon starts.
+func (c *Client) found(ctx context.Context) bool {
+	info, protocol, ok := c.running(ctx)
+	c.mu.Lock()
+	c.info, c.older = info, ok && protocol < proto.Protocol
+	c.mu.Unlock()
+	return ok
+}
+
+// running is found's check: the daemon daemon.json names, and its protocol number, if it is running.
+func (c *Client) running(ctx context.Context) (proto.Info, int, bool) {
+	info, ok := c.load()
+	if !ok {
+		return proto.Info{}, 0, false
+	}
+	protocol, err := ping(ctx, info)
+	if err != nil {
+		return proto.Info{}, 0, false
+	}
+	dir := StateDir(c.GitDir)
+	l, err := proc.Lock(filepath.Join(dir, "daemon.lock"))
+	if err == nil {
+		os.Remove(filepath.Join(dir, "daemon.json")) // stale, and no daemon can start to write one while this is held
+		l.Close()
+		return proto.Info{}, 0, false
+	}
+	if !errors.Is(err, proc.ErrLocked) {
+		return proto.Info{}, 0, false
+	}
+	if again, ok := c.load(); !ok || again != info {
+		return proto.Info{}, 0, false
+	}
+	return info, protocol, true
+}
+
+// load reads daemon.json.
+func (c *Client) load() (proto.Info, bool) {
 	b, err := os.ReadFile(filepath.Join(StateDir(c.GitDir), "daemon.json"))
 	if err != nil {
-		return false
+		return proto.Info{}, false
 	}
 	var info proto.Info
 	if json.Unmarshal(b, &info) != nil || info.Addr == "" {
-		return false
+		return proto.Info{}, false
 	}
-	c.mu.Lock()
-	c.info = info
-	c.mu.Unlock()
-	return true
+	return info, true
 }
 
-func (c *Client) ping(ctx context.Context) error {
+// ping asks whatever answers at info's address for its protocol number.
+func ping(ctx context.Context, info proto.Info) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	resp, _, err := c.roundTrip(ctx, proto.Request{Op: proto.OpPing})
+	resp, _, err := exchange(ctx, info, proto.Request{Op: proto.OpPing})
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !resp.OK {
-		return errors.New(resp.Error)
+		return 0, errors.New(resp.Error)
 	}
-	c.mu.Lock()
-	c.older = resp.Protocol < proto.Protocol
-	c.mu.Unlock()
-	return nil
+	return resp.Protocol, nil
 }
 
 // start launches a daemon detached from this process. If two clients start one at once, the
@@ -347,7 +393,11 @@ func dial(ctx context.Context, addr string) (net.Conn, error) {
 // roundTrip sends one request and reads the response. sent reports whether the request was
 // written, after which the daemon may have acted on it.
 func (c *Client) roundTrip(ctx context.Context, req proto.Request) (resp proto.Response, sent bool, err error) {
-	info := c.current()
+	return exchange(ctx, c.current(), req)
+}
+
+// exchange is roundTrip with the daemon info names.
+func exchange(ctx context.Context, info proto.Info, req proto.Request) (resp proto.Response, sent bool, err error) {
 	if info.Addr == "" {
 		return proto.Response{}, false, ErrNoDaemon
 	}

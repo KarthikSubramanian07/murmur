@@ -169,7 +169,14 @@ daemon back after less than 10 minutes down queues what it missed for the sessio
 reconnect within 30 seconds of its start, and for sessions stopped within the 24 hours.
 
 Sessions reach the daemon over loopback TCP, on a random port written with a random token to
-`.git/murmur/daemon.json`. A daemon with no sessions, no open page (see The page for humans) and no
+`.git/murmur/daemon.json`. A client trusts that file only while the clone's lock (`daemon.lock`) is
+held (2026-11-09): a daemon takes the lock before it writes the file and lets it go after removing
+it, and a daemon that dies without removing it (a crash, SIGKILL, a power cut) leaves an address
+another user's process could listen on, to be sent the sessions' hellos and requests and answer
+with messages of its own. So a daemon.json beside a free lock is stale and is removed, a starting
+daemon removes one as soon as it holds the lock, and a client that loses its daemon forgets the
+address. A ping that proves the daemon knows the token was set aside: an older daemon couldn't give
+the proof, and a client must still talk to one to replace it. A daemon with no sessions, no open page (see The page for humans) and no
 T3 thread to wake for 10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
 next sync rather than when it goes stale.
 
