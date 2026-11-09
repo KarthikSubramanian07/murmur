@@ -196,7 +196,7 @@
 }
 @container (max-width: 640px) {
   .fx-th { display: none; }
-  .fx-tr { grid-template-columns: minmax(0, 1fr) auto; gap: 0.375rem 0.75rem; padding: 0.625rem 0.75rem; }
+  .fx-tr, .by-branch .fx-tr { grid-template-columns: minmax(0, 1fr) auto; gap: 0.375rem 0.75rem; padding: 0.625rem 0.75rem; }
   .fx-tr > :nth-child(4), .fx-tr > :nth-child(5) { display: none; }
   .fx-doing { grid-column: 1 / -1; padding-left: 2.375rem; }
 }
@@ -244,3 +244,10 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-dm-wait .fx-dm-head { color: var(--fx-warning-text); }
 .fx-insp-need > span { display: block; }
 .fx-insp-open { margin-top: 0.375rem; font-size: 0.75rem; color: var(--fx-warning-text); }
+/* Grouped by branch, the heading names the branch; only pinned rows, away from their heading,
+   keep it under the name. */
+.by-branch .fx-tr { grid-template-columns: minmax(12rem, 1.2fr) 8rem minmax(14rem, 1.8fr) 6rem; }
+.by-branch .fx-tr > :nth-child(4) { display: none; }
+.by-branch .fx-row:not(.need) .fx-sub-branch { display: none; }
+.by-branch .fx-row.need .fx-sub-branch { display: flex; align-items: baseline; min-width: 0; }
+.fx-group .fx-pr { margin-left: 0.25rem; }

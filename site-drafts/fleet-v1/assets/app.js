@@ -2464,13 +2464,17 @@ function fleetTable(rows, needs, sel) {
       const d = list[0].d;
       return [h("span", { class: "fx-group-name" }, d.self ? "This device" : (d.owner ? d.owner + "'s " : "") + deviceName(d)), h("span", { class: "fx-group-sub" }, d.self ? deviceName(d) : d.reachable ? "" : "offline · seen " + ago(when(d.lastSeen) || 0))];
     }
-    if (F.by === "branch") return h("span", { class: "fx-group-name mono" }, k || "No branch");
+    if (F.by === "branch") {
+      const pr = k && Object.hasOwn(ui.state.prs || {}, k) ? ui.state.prs[k] : null;
+      return [h("span", { class: "fx-group-name mono" }, k || "No branch"), pr && h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number)];
+    }
     return h("span", { class: "fx-group-name" }, k || "No job");
   };
   const collapsed = (ui.fxCollapsed ||= new Set());
   return h(
     "section",
-    { class: "fx-panel fx-table", role: "table", "aria-label": "Sessions" },
+    // Grouped by branch, each heading names the branch, so the rows drop their Branch column.
+    { class: "fx-panel fx-table" + (F.by === "branch" ? " by-branch" : ""), role: "table", "aria-label": "Sessions" },
     h("div", { class: "fx-tr fx-th", role: "row" }, ["Session", "State", "Working on", "Branch", "Last active"].map((c, i) => h("span", { role: "columnheader", class: i === 4 ? "num" : "" }, c))),
     rows.length === 0
       ? h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, "No sessions match"))
@@ -2480,6 +2484,8 @@ function fleetTable(rows, needs, sel) {
             pinned.map(({ d, s }) => fleetRow(d, s, needs.get(s.name), sel === s.name)),
           ],
           [...buckets].map(([k, list]) => {
+            const shown = list.filter((r) => !needs.has(r.s.name));
+            if (!shown.length) return null;
             const shut = collapsed.has(F.by + ":" + k);
             return [
               h(
@@ -2494,10 +2500,10 @@ function fleetTable(rows, needs, sel) {
                 },
                 icon(shut ? "chevronRight" : "chevronDown", "fx-chev"),
                 label(k, list),
-                list.some((r) => needs.has(r.s.name)) && h("span", { class: "fx-group-sub" }, list.filter((r) => needs.has(r.s.name)).length + " in Needs a look"),
-                h("span", { class: "fx-badge" }, list.length),
+                list.some((r) => needs.has(r.s.name)) && h("span", { class: "fx-group-sub" }, (list.length - shown.length) + " more in Needs a look"),
+                h("span", { class: "fx-badge" }, shown.length),
               ),
-              !shut && list.filter((r) => !needs.has(r.s.name)).map(({ d, s }) => fleetRow(d, s, null, sel === s.name)),
+              !shut && shown.map(({ d, s }) => fleetRow(d, s, null, sel === s.name)),
             ];
           }),
         ],
@@ -2521,12 +2527,13 @@ function fleetRow(d, s, need, on) {
   const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
   const t = when(s.lastActive);
   const state = sessionState(d, s);
-  const word = state === "idle" && t ? "Idle " + ago(t).replace(" ago", "") : FX_STATE[state];
+  const word = FX_STATE[state];
   // Under a device's heading the device and person are in the heading; anywhere else the row
-  // names the device, and the person too unless the device's name already carries it.
+  // names the device first, so a cut-short line loses the agent, and the person too unless the
+  // device's name already carries it.
   const where = need || F.by !== "device";
   const dev = deviceName(d);
-  const sub = [s.agent, where && d.owner && !dev.toLowerCase().includes(d.owner.toLowerCase()) && d.owner, where && dev].filter(Boolean).join(" · ");
+  const sub = [where && dev, where && d.owner && !dev.toLowerCase().includes(d.owner.toLowerCase()) && d.owner, s.agent].filter(Boolean).join(" · ");
   const prTag = pr ? "#" + pr.number : "";
   return h(
     "button",
@@ -2585,7 +2592,7 @@ function fleetInspector(name, need) {
   const started = when(s.started);
   const seenAt = when(d.lastSeen);
   const meta = [
-    ["State", [fxDot(state), stateWord(d, s)]],
+    ["State", [fxDot(state), FX_STATE[state]]],
     ["Working on", s.doing || h("span", { class: "fx-faint" }, "No status set")],
     d.owner && ["Person", d.owner],
     ["Device", deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? " since " + ago(seenAt) : ""))],
