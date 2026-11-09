@@ -92,9 +92,8 @@
 .fx-row:last-child { border-bottom: 0; }
 .fx-row:hover { background: var(--fx-hover); }
 .fx-row.on { background: var(--fx-pressed); box-shadow: inset 2px 0 0 var(--fx-text); }
-/* An offline session fades, except in "Needs a look": there, its being offline is part of why a
-   person is needed, so only its status line fades. */
-.fx-row.dim:not(.need) > :not(.fx-who), .fx-row.dim.need .fx-status { opacity: 0.55; }
+/* An offline session doesn't fade: what it was doing and where is what you look at it for, and
+   State already says Offline. */
 .fx-row:focus-visible { outline: 2px solid #f1f1f1; outline-offset: -2px; }
 .fx-group { display: flex; align-items: center; gap: 0.5rem; width: 100%; height: 2.5rem; padding: 0 1rem; border-bottom: 1px solid var(--fx-border); background: #ffffff05; text-align: left; }
 .fx-group:hover { background: var(--fx-hover); }

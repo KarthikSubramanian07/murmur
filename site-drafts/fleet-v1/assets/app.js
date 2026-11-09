@@ -2367,7 +2367,6 @@ function deviceName(d) {
 
 function fleetNeeds(rows) {
   const now = Date.now();
-  const live = new Set(fleetRows().map((r) => r.s.name));
   const by = new Map(rows.map((r) => [r.s.name, r]));
   const out = new Map();
   const asks = new Map();
@@ -2376,7 +2375,8 @@ function fleetNeeds(rows) {
     const to = toName(m);
     const from = fromName(m);
     const at = when(m.at);
-    if (!by.has(to) || !live.has(from) || to === from || !at || now - at < NO_ANSWER_MS || now - at > GIVE_UP_MS || answeredSince(m)) continue;
+    // The asker may have ended since; the question still waits on a running session.
+    if (!by.has(to) || to === from || !at || now - at < NO_ANSWER_MS || now - at > GIVE_UP_MS || answeredSince(m)) continue;
     if (!asks.has(to)) asks.set(to, []);
     asks.get(to).push(m);
   }
