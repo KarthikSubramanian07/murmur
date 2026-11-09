@@ -2722,7 +2722,7 @@ function fleetRow(d, s, need, on) {
       h(
         "span",
         { class: "fx-who-text" },
-        h("span", { class: "fx-name truncate" }, s.name),
+        h("span", { class: "fx-name truncate", title: s.name }, s.name),
         h("span", { class: "fx-muted fx-parts", title: sub }, fxParts(subParts)),
         s.branch && h("span", { class: "fx-muted fx-sub-branch", title: s.branch + (prTag ? " " + prTag : "") }, h("span", { class: "mono truncate" }, s.branch), prTag && h("span", { class: "fx-sub-pr" }, prTag)),
       ),

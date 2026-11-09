@@ -333,3 +333,8 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-rail.short .fx-insp-head { position: sticky; top: -1rem; z-index: 1; margin: -1rem -1.125rem 1rem; padding: 1rem 1.125rem 0.75rem; border-bottom: 1px solid var(--fx-border); background: var(--fx-surface); }
 .fx-rail.short .fx-insp-head + .fx-meta { border-top: 0; padding-top: 0; }
 .fx-rail.short.more::after { content: ""; position: sticky; bottom: -1.25rem; flex: none; height: var(--fade, 2.5rem); margin: calc(-1 * var(--fade, 2.5rem)) -1.125rem -1.25rem; background: linear-gradient(transparent, var(--fx-surface)); pointer-events: none; }
+/* Text with a long unbroken token (a test path, a long branch or PR link) breaks inside it rather
+   than running past its cell or the rail. */
+.fx-status, .fx-meta dd { overflow-wrap: anywhere; }
+/* A row's name is a block, so a name too long for its column ends in an ellipsis (title has it). */
+.fx-who-text > .fx-name { display: block; }
