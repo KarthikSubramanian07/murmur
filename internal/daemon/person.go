@@ -149,9 +149,33 @@ func (d *Daemon) loadPersonLog() {
 	for _, e := range events {
 		d.keepMessageLocked(e)
 	}
+	d.recoverUnreadLocked(events)
 	if long {
 		d.rewritePersonLog(events)
 	}
+}
+
+// recoverUnreadLocked gives the person's inbox what the log holds past the last save. The sync that
+// read those messages will read them again, but finds them known by ID and adds nothing, so without
+// this they would stay on the page and never count as unread.
+func (d *Daemon) recoverUnreadLocked(events []bus.Event) {
+	if len(events) == 0 {
+		return
+	}
+	from := 0
+	if d.st.PersonLogged != "" {
+		at := slices.IndexFunc(events, func(e bus.Event) bool { return e.ID == d.st.PersonLogged })
+		if at < 0 {
+			at = len(events) - 1 // cut out of the log, so nothing says which came later
+		}
+		from = at + 1
+	}
+	for _, e := range events[from:] {
+		if e.To == d.personAddr() && e.From != d.personAddr() {
+			d.addInboxLocked(bus.PersonSession, e)
+		}
+	}
+	d.st.PersonLogged = events[len(events)-1].ID
 }
 
 func (d *Daemon) rewritePersonLog(events []bus.Event) {
@@ -185,6 +209,9 @@ func (d *Daemon) logPersonLocked(e bus.Event) {
 		if cerr := f.Close(); err == nil {
 			err = cerr
 		}
+	}
+	if err == nil {
+		d.st.PersonLogged = e.ID
 	}
 	if err != nil {
 		d.log.Printf("keeping a person's message: %v", err)

@@ -2792,11 +2792,40 @@ function accountSection() {
   );
 }
 
+// A direct conversation's key has the person's name in it, so a new name moves what is unsent to the
+// conversation's new key. Left under the old one, it would be out of reach, and would hold up a reload.
+function moveToName(was, name) {
+  if (!was || was === name) return;
+  const rekey = (key) => {
+    if (!key.startsWith("dm:")) return key;
+    const pair = JSON.parse(key.slice(3));
+    return pair.includes(was) ? dmKey(name, pair.find((n) => n !== was) || name) : key;
+  };
+  for (const [key, el] of [...composers]) {
+    const moved = rekey(key);
+    if (moved === key) continue;
+    composers.delete(key);
+    composers.set(moved, el);
+    el.dataset.key = "composer-" + moved;
+    el.dataset.composer = moved;
+  }
+  for (const item of ui.outbox) {
+    const moved = rekey(item.key);
+    if (moved === item.key) continue;
+    const pair = JSON.parse(moved.slice(3));
+    item.key = moved;
+    item.conversation = { ...item.conversation, key: moved, pair, title: pair.join(" & ") };
+  }
+  ui.restored = null;
+}
+
 async function saveAccount(name) {
   delete ui.rowErrors.account;
   try {
     const account = await api("/api/account", { method: "PUT", body: JSON.stringify({ name }) });
+    const was = myName();
     if (ui.state) ui.state.account = { ...ui.state.account, ...account };
+    moveToName(was, account.name);
     ui.accountDraft = null;
     poll();
   } catch (e) {

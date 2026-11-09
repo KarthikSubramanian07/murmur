@@ -512,6 +512,10 @@ type state struct {
 	Person      string            `json:"person,omitempty"`
 	PersonSince time.Time         `json:"personSince,omitzero"`
 	People      map[string]string `json:"people,omitempty"`
+	// PersonLogged is the last message in the person's log when this was saved. Anything after it
+	// in the log was written by a daemon that stopped before it could save, so their inbox doesn't
+	// have it yet.
+	PersonLogged string `json:"personLogged,omitempty"`
 
 	// Used is every session name this daemon has ever seen, in the registry's history or in
 	// another device's presence, with the session's address where known. It only grows.

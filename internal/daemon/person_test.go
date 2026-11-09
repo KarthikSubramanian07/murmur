@@ -418,6 +418,60 @@ func TestAgentsChatterDoesntPushOutAPersonsMessages(t *testing.T) {
 	}
 }
 
+// A daemon that stops between logging a message and saving its state leaves the message known by ID
+// but in nobody's inbox. It counts as unread after the restart, and what was already read stays read.
+func TestAMessageLoggedBeforeACrashIsStillUnread(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	b.session("bbbbbb", "")
+	pa := a.page()
+	pa.choose("ada")
+	eventually(t, "b to know them", func() bool {
+		_, ok := b.whoEntry(a.self() + "/" + bus.PersonSession)
+		return ok
+	})
+	b.send("bbbbbb", "ada", "already read", "")
+	var read web.Message
+	eventually(t, "the first message", func() bool {
+		var ok bool
+		read, ok = pa.messageWith("already read")
+		return ok
+	})
+	ids, _ := json.Marshal(map[string][]string{"ids": {read.ID}})
+	if code, body := pa.call("POST", "/api/read", pa.token, string(ids)); code != http.StatusNoContent {
+		t.Fatalf("marking read: %d %s", code, body)
+	}
+	self := a.self()
+	a.stop()
+
+	lost := bus.Event{
+		V: bus.Version, ID: "00000000000000aa", Type: bus.Message,
+		From: self + "/bbbbbb", To: self + "/" + bus.PersonSession, Subject: "logged, then the crash",
+	}
+	line, err := json.Marshal(lost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(a.gitDir, brand.StateDir, "person-messages.jsonl")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	a.start()
+	got := a.page().state().Account.Unread
+	if !slices.Contains(got, lost.ID) {
+		t.Errorf("the message from before the crash isn't unread: %v", got)
+	}
+	if slices.Contains(got, read.ID) {
+		t.Errorf("a message already read is unread again: %v", got)
+	}
+}
+
 // A log grown to more than twice what is kept is cut back when the daemon starts, and the newest
 // messages are the ones left. On Windows this only works once the reader has closed the file.
 func TestALongPersonLogIsCutBack(t *testing.T) {
