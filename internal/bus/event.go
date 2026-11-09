@@ -187,6 +187,10 @@ type Presence struct {
 	Owner    string        `json:"owner,omitempty"` // git user.name on that clone
 	At       time.Time     `json:"at"`              // the writer's clock
 	Sessions []SessionInfo `json:"sessions"`
+	// Offline lists the IDs of the device's sessions whose T3 thread is settled (#189). They are
+	// not in Sessions, and a daemon that reads this refuses to send them a message; one from
+	// before the field sees them only as gone, and the writer drops what it sends them.
+	Offline []string `json:"offline,omitempty"`
 }
 
 // SessionInfo is one session as its device's presence describes it.

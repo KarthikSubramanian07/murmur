@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/mcpserver"
 	"github.com/a-Fig/murmur/internal/setup"
+	"github.com/a-Fig/murmur/internal/update"
 )
 
 var version = "0.1.0-dev"
@@ -113,12 +115,41 @@ func runMCP(ctx context.Context, args []string) error {
 }
 
 func runDaemon(ctx context.Context, args []string) error {
+	return runDaemonWith(ctx, args, daemon.Run, client.StartDaemon)
+}
+
+func runDaemonWith(ctx context.Context, args []string, run func(context.Context, daemon.Options) error, start func(string, string, ...string) error) error {
+	// The updater has to know the binary this process came from. It starts only after the daemon's
+	// first sync, and a reinstall in that time must not pass for this binary, so this comes first.
+	exe, exeErr := os.Executable()
+	if exeErr == nil {
+		exe, exeErr = filepath.EvalSymlinks(exe)
+	}
+	var running os.FileInfo
+	if exeErr == nil {
+		running, _ = update.Identity(exe) // on failure, update.Run tries for itself
+	}
 	fs, dir := flags("daemon")
 	gitDir := fs.String("git-dir", "", "the clone's git common dir (default: found from -C)")
 	poll := fs.Duration("poll", 0, "how often to check the remote (default 10s)")
 	idle := fs.Duration("idle", 0, "exit after this long with no sessions (default 10m; negative, e.g. -1s: never)")
 	logPath := fs.String("log", "", "append output to this file, not stderr (for starters that can't pass a handle)")
 	fs.Parse(args)
+	// A replacement starts in the clone root, which may differ from this cwd.
+	// Resolve path flags before recording them for the next daemon.
+	for _, path := range []*string{dir, gitDir, logPath} {
+		if *path != "" {
+			resolved, err := filepath.Abs(*path)
+			if err != nil {
+				return err
+			}
+			*path = resolved
+		}
+	}
+	var restartFlags []string
+	fs.Visit(func(f *flag.Flag) {
+		restartFlags = append(restartFlags, "--"+f.Name+"="+f.Value.String())
+	})
 	if *logPath != "" {
 		if err := redirectOutput(*logPath); err != nil {
 			return err
@@ -139,11 +170,20 @@ func runDaemon(ctx context.Context, args []string) error {
 	if off, why := checkin.Off(ctx, os.Getenv, *gitDir); off {
 		logger.Printf("no daily check-in: %s", why)
 	}
-	err := daemon.Run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
+	err := run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
+		Update: func(ctx context.Context, restart func()) {
+			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running}, restart)
+		},
 		CheckIn: func(ctx context.Context) {
 			checkin.Run(ctx, checkin.Options{Version: version, GitDir: *gitDir, Log: logger})
 		}})
+	if errors.Is(err, daemon.ErrUpdated) {
+		if exeErr != nil {
+			return exeErr
+		}
+		return start(exe, *gitDir, restartFlags...)
+	}
 	if errors.Is(err, daemon.ErrRunning) {
 		return nil // another client started one first; that one serves
 	}
@@ -158,7 +198,7 @@ func noteNewer(ctx context.Context, w io.Writer) {
 		return
 	}
 	if latest := checkin.Newer(gitDir, version); latest != "" {
-		fmt.Fprintf(w, "%s %s is out. To update, run the install again:\n  %s\n", brand.Product, latest, installLine())
+		fmt.Fprintf(w, "%s %s is out. Murmur updates automatically while its daemon runs, unless disabled.\nTo update by hand, run the install again:\n  %s\n", brand.Product, latest, installLine())
 	}
 }
 

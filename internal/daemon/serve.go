@@ -269,13 +269,18 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	// Whatever a session's MCP server asks is the session at work (#21). The CLI's calls are a
 	// human's, and hooks, which reach here as the CLI, mark the sessions they speak for themselves.
 	if s := d.sessions[sess]; registered && s != nil {
-		s.lastActive = now
+		d.touchLocked(s, now)
 	}
 	d.mu.Unlock()
 	if !registered && req.Op != proto.OpNotices && req.Op != proto.OpPing {
 		return fail("this session isn't registered with the daemon (it may have just restarted); try again in a few seconds")
 	}
 	from := bus.Addr(d.device, sess)
+	if req.Op == proto.OpStatus || req.Op == proto.OpSend {
+		if why := d.childRefusal(sess); why != "" {
+			return fail(why)
+		}
+	}
 
 	switch req.Op {
 	case proto.OpPing:
@@ -313,6 +318,9 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	case proto.OpInbox:
 		d.mu.Lock()
 		defer d.mu.Unlock()
+		if d.clearChildInboxLocked(sess) {
+			return proto.Response{OK: true, Self: from} // a delegate's (#188)
+		}
 		// A message on its way into the session as a turn is left to arrive as one.
 		var read, left []*inMsg
 		for _, m := range d.st.Inbox[sess] {
@@ -409,6 +417,9 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		if self == "" {
 			self = bus.Addr(d.device, id)
 		}
+		if d.clearChildInboxLocked(id) {
+			continue // a delegate's (#188)
+		}
 		for _, m := range d.st.Inbox[id] {
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
 				m.Noticed = true
@@ -473,8 +484,15 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		dev, sess := bus.SplitAddr(at)
 		known := d.addressKnownLocked(dev, sess)
 		_, stopped := d.st.Stopped[sess]
+		offline := d.offlineLocked(dev, sess)
+		why := ""
+		if offline {
+			why = d.offlineWhyLocked(dev, sess, nameOr(toName, at))
+		}
 		d.mu.Unlock()
 		switch {
+		case offline:
+			return fail("not sent: " + why)
 		case known:
 		case dev == d.device && stopped:
 			note = at + " has stopped. The message waits for it, in case it comes back."
@@ -570,6 +588,9 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 func (d *Daemon) whoLocked(you string) []proto.Device {
 	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Self: true, LastSeen: time.Now()}
 	for _, s := range d.sortedSessionsLocked() {
+		if d.offMeshLocked(s.id) && s.id != you {
+			continue // offline (#189)
+		}
 		self.Sessions = append(self.Sessions, proto.SessionView{Addr: bus.Addr(d.device, s.id), Name: s.name,
 			Pending: s.name == "", Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(), Started: s.started, LastActive: s.lastActive,
 			You: s.id == you})

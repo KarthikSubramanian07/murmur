@@ -1,5 +1,5 @@
-// Package checkin is the daily check-in, the one thing Murmur sends anywhere but the team's own
-// remote (#148). It is how active users are counted: everything else travels through each team's
+// Package checkin is the daily check-in, the usage data Murmur sends outside the team's own
+// remote (#148). Self-updates contact GitHub separately (internal/update). It is how active users are counted: everything else travels through each team's
 // repo, so nothing else reaches the project. While a joined clone's daemon runs, at most once a UTC
 // day, it sends murmur.afig.dev:
 //

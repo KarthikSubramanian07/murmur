@@ -128,14 +128,31 @@ func TestDaemonRefusesRequestsOnceTheUserHasLeft(t *testing.T) {
 // before the watcher stops the daemon (here the watcher never fires). While joined, a presence ref
 // that is deleted from the remote is pushed again within a heartbeat, which shows the test can see a
 // publication; once the user has left it is not.
+//
+// A push already past its consent check when the leave lands still completes (docs/VISION.md,
+// "Joining a repo"), and one nearly always is here: clearing the bus while joined deletes the names
+// registry too, and the daemon pushes it again right behind the presence the test waits for. So the
+// test clears the bus only once a push has been refused for the leave. A device pushes one ref at a
+// time and checks consent after taking its turn, so by then any push that passed its check before
+// the leave has landed, and anything on the remote afterwards was pushed after the leave. Only push
+// asks for consent in this test: no session registers, no message is delivered, and the watcher's
+// poll is an hour.
 func TestDaemonPublishesNothingOnceTheUserHasLeft(t *testing.T) {
 	remote, gitDir, joined := consentClone(t)
 	joined.Store(true)
+	var refused atomic.Bool // a consent check has answered that the user left
+	consent := func() bool {
+		ok := joined.Load()
+		if !ok {
+			refused.Store(true)
+		}
+		return ok
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
 		done <- daemon.Run(ctx, daemon.Options{GitDir: gitDir, Poll: 100 * time.Millisecond, QuietPoll: 100 * time.Millisecond, Heartbeat: 100 * time.Millisecond,
-			Idle: -1, Consent: joined.Load, ConsentPoll: time.Hour, Log: testLog()})
+			Idle: -1, Consent: consent, ConsentPoll: time.Hour, Log: testLog()})
 	}()
 	defer func() { cancel(); <-done }()
 
@@ -156,6 +173,7 @@ func TestDaemonPublishesNothingOnceTheUserHasLeft(t *testing.T) {
 	eventually(t, "the presence to be pushed again while joined", func() bool { return len(busRefs()) > 0 })
 
 	joined.Store(false)
+	eventually(t, "a push to be refused for the leave", refused.Load)
 	clearBus()
 	time.Sleep(2 * time.Second) // twenty heartbeats
 	if refs := busRefs(); len(refs) != 0 {

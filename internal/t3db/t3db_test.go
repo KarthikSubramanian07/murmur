@@ -388,3 +388,82 @@ func TestTitleOfGivesUpOnALockedDatabase(t *testing.T) {
 		t.Errorf("TitleOf = %q, %v after %s", got, err, time.Since(start))
 	}
 }
+
+// The tables StateOf reads, with the columns it reads (T3 0.1.x, 2026-11-07).
+const stateSchema = `CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY, title TEXT,
+	archived_at TEXT, deleted_at TEXT, payload_json TEXT);
+CREATE TABLE orchestration_v2_projection_runs (run_id TEXT PRIMARY KEY, thread_id TEXT, status TEXT,
+	requested_at TEXT, completed_at TEXT)`
+
+func TestStateOfReadsSettledAndTheLatestRun(t *testing.T) {
+	home := t.TempDir()
+	db := open(t, t3.StateDB(home))
+	for _, s := range []string{
+		stateSchema,
+		`INSERT INTO orchestration_v2_projection_threads VALUES
+			('idle', 't', NULL, NULL, '{"settledOverride":null}'),
+			('settled', 't', NULL, NULL, '{"settledOverride":"settled","settledAt":"2026-11-07T22:29:15.455Z"}'),
+			('archived', 't', '2026-11-07T20:00:00.000Z', NULL, '{}'),
+			('deleted', 't', NULL, '2026-11-07T20:00:00.000Z', '{}'),
+			('busy', 't', NULL, NULL, '{}'),
+			('new', 't', NULL, NULL, 'not json'),
+			('child', 't', NULL, NULL, '{"lineage":{"parentThreadId":"idle","relationshipToParent":"subagent","rootThreadId":"idle"}}')`,
+		`INSERT INTO orchestration_v2_projection_runs VALUES
+			('r1', 'idle', 'completed', '2026-11-07T22:00:00.000Z', '2026-11-07T22:05:00.000Z'),
+			('r2', 'idle', 'interrupted', '2026-11-07T22:28:36.290Z', '2026-11-07T22:29:10.318Z'),
+			('r3', 'busy', 'completed', '2026-11-07T21:00:00.000Z', '2026-11-07T21:01:00.000Z'),
+			('r4', 'busy', 'running', '2026-11-07T22:30:00.000Z', NULL)`,
+	} {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	at := func(s string) time.Time {
+		v, err := time.Parse(time.RFC3339Nano, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	want := map[string]State{
+		"idle":     {LastRun: at("2026-11-07T22:29:10.318Z")},
+		"settled":  {Settled: true},
+		"archived": {Settled: true},
+		"deleted":  {Settled: true},
+		"busy":     {Busy: true, LastRun: at("2026-11-07T22:30:00.000Z")},
+		"new":      {},
+		"child":    {Parent: "idle"},
+	}
+	ctx := context.Background()
+	for thread, w := range want {
+		got, err := StateOf(ctx, "", home, thread)
+		if err != nil || got != w {
+			t.Errorf("%s: %+v, %v; want %+v", thread, got, err, w)
+		}
+	}
+	if _, err := StateOf(ctx, "", home, "none"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a thread with no row: %v", err)
+	}
+	if _, err := StateOf(ctx, "", home, ""); err == nil {
+		t.Errorf("no thread gave no error")
+	}
+}
+
+func TestStateOfFailsOnATimeItCannotRead(t *testing.T) {
+	home := t.TempDir()
+	db := open(t, t3.StateDB(home))
+	for _, s := range []string{
+		stateSchema,
+		`INSERT INTO orchestration_v2_projection_threads VALUES ('a', 't', NULL, NULL, '{}')`,
+		`INSERT INTO orchestration_v2_projection_runs VALUES ('r', 'a', 'completed', 'yesterday', 'yesterday')`,
+	} {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	if _, err := StateOf(context.Background(), "", home, "a"); err == nil {
+		t.Errorf("a run time that isn't a time gave no error")
+	}
+}

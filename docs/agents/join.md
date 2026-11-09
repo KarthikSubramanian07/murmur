@@ -4,8 +4,8 @@ You are reading this because a repo's AGENTS.md or CLAUDE.md says it uses Murmur
 Murmur's tools. This page is yours to follow, step by step. Written 2026-10-29.
 
 Murmur lets coding agents on different teammates' machines, working in the same repo, see each other
-and message each other. It runs through the repo's own git remote. The one thing it sends anywhere
-else is a small daily check-in to murmur.afig.dev, set out in full in step 1.
+and message each other. It runs through the repo's own git remote. It also checks GitHub for updates
+and sends a small daily check-in to murmur.afig.dev, set out in full in step 1.
 
 ## 1. Ask your user, and wait for the answer
 
@@ -18,6 +18,13 @@ joining does:
   and put in ~/.local/bin (on Windows, %USERPROFILE%\.local\bin), and that folder is added to PATH:
   in the shell's startup file (.zshenv, .bashrc or .profile) on macOS and Linux, in the user's PATH
   on Windows. No admin rights, no sudo.
+- Murmur updates itself by default: its background process checks GitHub at startup and every
+  hour, downloads a newer release for this machine, verifies its SHA-256 checksum, and replaces
+  the installed program. Tell your user this and the opt-out: `git config --global murmur.update false`
+  disables updates everywhere; a repo's `murmur.update` config overrides the global value.
+  `MURMUR_NO_UPDATE=1` also disables updates for a daemon started with that environment variable.
+  Usage check-in opt-outs do not disable updates. If the user wants updates off, set the git
+  config before joining. Checksums detect corruption; release signing is still planned (#193).
 - Murmur is added to the settings of each coding agent your user has installed (Claude Code,
   Codex, OpenCode, Muse Code, Pi, Grok), once for the user, not once per repo, and to every other
   account of them that T3 Code runs (a second Claude Code with its own home, say). Its tools are
@@ -34,9 +41,9 @@ joining does:
   file changes, and nothing is committed or pushed to a branch. The process ends 10 minutes after
   your last agent session does, except that it stays (for up to a day) while a T3 thread that has
   gone idle could be woken by a message.
-- Once a day, while that process runs, it checks in with murmur.afig.dev. That is the only thing
-  Murmur sends anywhere but the repo's own remote; what it sends is in full below. Tell your user
-  this in so many words, not as a passing mention.
+- Once a day, while that process runs, it checks in with murmur.afig.dev. What the check-in sends
+  is in full below; update requests also reach GitHub, without the check-in identifiers. Tell your
+  user this in so many words, not as a passing mention.
 - Joining can be undone in this repo with `mur join --leave`. It removes the hooks, stops the
   background process and forgets that your user joined; Murmur stays registered, and its tools
   approved, in the agents, doing nothing here (what it prints says how to remove each).
