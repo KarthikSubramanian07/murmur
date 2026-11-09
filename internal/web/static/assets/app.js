@@ -463,6 +463,12 @@ function yourRow() {
   );
 }
 
+// The human tag (#267): a person's account has it, worked out from the address, and nothing else
+// does. It looks like the session tags it sits among, and can't be taken off.
+function humanTag() {
+  return h("span", { class: "badge tag badge-outline tag-human", title: "A person, not an agent. " + NAME + " gives this tag to every person's account, and only to one." }, "human");
+}
+
 function peopleGroup() {
   const others = people().filter((p) => p.name !== myName());
   if (!others.length) return null;
@@ -484,7 +490,7 @@ function peopleGroup() {
             h(
               "span",
               { class: "side-session-text" },
-              h("span", { class: "side-session-name truncate" }, p.name),
+              h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate" }, p.name), humanTag()),
               h("span", { class: "side-session-doing truncate" }, personOnline(p) ? "On " + NAME + " now" : deviceLabel(p.device)),
             ),
           ),
@@ -1336,7 +1342,7 @@ function membersPanel(c, rows) {
             },
           },
           r.d ? presence(r.name, r.d) : avatar(r.name),
-          h("span", { class: "g-mp-text" }, h("span", { class: "g-mp-name truncate" }, r.name), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || r.s.agent || "" : "Not running")),
+          h("span", { class: "g-mp-text" }, h("span", { class: "name-line" }, h("span", { class: "g-mp-name truncate" }, r.name), r.person && humanTag()), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || r.s.agent || "" : "Not running")),
           r.posted > 0 && h("span", { class: "g-mp-posted" }, r.posted === 1 ? "1 post" : r.posted + " posts"),
         ),
       ),
@@ -1841,8 +1847,10 @@ function conversationPane(c) {
     : o
       ? isPerson(o)
         ? op
-          ? "Person · " + (personOnline(op) ? "on " + NAME + " now" : deviceLabel(op.device))
-          : "Person"
+          ? personOnline(op)
+            ? "On " + NAME + " now"
+            : deviceLabel(op.device)
+          : ""
         : of
           ? of.session.doing || of.session.agent || ""
           : "Not running"
@@ -1871,7 +1879,7 @@ function conversationPane(c) {
       h(
         "div",
         { class: "chat-head-text" },
-        h("h2", { class: "chat-title truncate", title: c.title }, gs ? groupName(c) : o || c.title),
+        h("div", { class: "name-line" }, h("h2", { class: "chat-title truncate", title: c.title }, gs ? groupName(c) : o || c.title), o && isPerson(o) && humanTag()),
         about && h("div", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
       ),
       of && h("span", { class: "g-state g-state-" + sessionState(of.device, of.session) }, stateWord(of.device, of.session)),
@@ -1990,7 +1998,7 @@ function chatMessage(m, from, at, head) {
           { class: "chat-msg-head" },
           h("span", { class: "chat-msg-from truncate" + (mine ? " chat-msg-you" : "") }, from),
           mine && h("span", { class: "chat-msg-via" }, "you"),
-          !mine && m.fromPerson && h("span", { class: "chat-msg-via" }, "person"),
+          !mine && m.fromPerson && humanTag(),
           sender && h("span", { class: "chat-msg-via truncate" }, [sender.session.agent, sender.device.self ? null : sender.device.id].filter(Boolean).join(" · ")),
           h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
         ),
@@ -2335,7 +2343,12 @@ function personRow(r, cur, onclick) {
     "button",
     { class: "pick-row" + (cur ? " current" : ""), role: "option", "aria-selected": cur ? "true" : "false", "data-pick": r.name, onclick },
     presence(r.name, r.d),
-    h("span", { class: "pick-text" }, h("span", { class: "pick-name truncate" }, r.name), h("span", { class: "pick-line truncate" }, r.line)),
+    h(
+      "span",
+      { class: "pick-text" },
+      h("span", { class: "name-line" }, h("span", { class: "pick-name truncate" }, r.name), r.person && humanTag()),
+      h("span", { class: "pick-line truncate" }, r.line),
+    ),
     h("span", { class: "pick-where truncate" }, r.person ? "" : r.d.self ? "This device" : r.d.owner || host(r.d.id)),
   );
 }
