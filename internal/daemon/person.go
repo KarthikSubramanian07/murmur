@@ -15,6 +15,7 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/tags"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -88,7 +89,10 @@ func (d *Daemon) personNameOfLocked(addr string) string {
 // personInfoLocked is this device's person as presence carries them. Last active is when a page
 // someone can see last called, so a green dot means they are looking at it. Caller holds mu.
 func (d *Daemon) personInfoLocked() bus.SessionInfo {
-	info := bus.SessionInfo{ID: bus.PersonSession, Name: d.st.Person, Agent: bus.AgentPerson, Started: d.st.PersonSince.UTC()}
+	// The tag goes out for daemons from before #267, which show presence's tags as they are. A daemon
+	// since works it out from the address.
+	info := bus.SessionInfo{ID: bus.PersonSession, Name: d.st.Person, Agent: bus.AgentPerson, Started: d.st.PersonSince.UTC(),
+		Tags: tags.Person()}
 	if !d.lastPage.IsZero() {
 		info.LastActive = d.lastPage.UTC()
 	}
@@ -98,7 +102,7 @@ func (d *Daemon) personInfoLocked() bus.SessionInfo {
 // personViewLocked is this device's person as who shows them. Caller holds mu.
 func (d *Daemon) personViewLocked() proto.SessionView {
 	return proto.SessionView{Addr: d.personAddr(), Name: d.st.Person, Agent: bus.AgentPerson, Started: d.st.PersonSince,
-		LastActive: d.lastPage}
+		LastActive: d.lastPage, Tags: tags.Person()}
 }
 
 // personAsks says m is a person's message to one session, not to a device or to everyone: only that

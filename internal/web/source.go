@@ -83,9 +83,10 @@ type Account struct {
 
 // Person is a person on a device.
 type Person struct {
-	Name       string    `json:"name"`
-	Addr       string    `json:"addr"`
-	LastActive time.Time `json:"lastActive,omitzero"` // when a page someone could see last called its daemon
+	Name       string     `json:"name"`
+	Addr       string     `json:"addr"`
+	LastActive time.Time  `json:"lastActive,omitzero"` // when a page someone could see last called its daemon
+	Tags       []tags.Tag `json:"tags,omitempty"`      // human, always (#267)
 }
 
 // Sent is what became of a message a person sent.

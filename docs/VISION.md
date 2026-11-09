@@ -490,7 +490,8 @@ in its own session.
   which is two accounts for now.
 - **The address is `device/human`.** Presence lists the person as a session whose agent is
   `person`, so a daemon on an older version still shows them in `who`. The only new field on the bus
-  is `Event.Person`, the name on a person's own messages.
+  is `Event.Person`, the name on a person's own messages. Everywhere sessions are listed, and in the
+  header of every message from a person, they carry the `human` tag (see "Session tags").
 - **Names stay out of the names ref.** A person's name can't have the form of a session's (an
   adjective and a noun from the lists), so an address never reads as both, and it needs no
   compare-and-swap. A name someone on the mesh already holds is refused. A daemon's table of people
@@ -683,6 +684,14 @@ tag with behaviour, below.
 - **Search.** `who` takes tags and lists only the sessions with all of them; `-tag` leaves out those
   with it, and a `*` at the end matches any tag that starts so (`model:opus*`). The CLI has no `who`,
   so this is the MCP tool's.
+- **`human`** marks a person's account (#267, Tyler, 2026-11-09), so an agent reading `who`,
+  `lookup` or a message's header, and a person on the page, can tell a human from an agent at a
+  glance. It is the one tag Murmur alone gives. It isn't kept, and isn't read from the bus: every
+  daemon works it out from the address, since only `device/human` is a person and no session can
+  take that address. A session can't set it, a human on the page can't add or remove it, and a
+  daemon drops it from anything else's tags in presence or in `state.json`. A person's presence
+  still carries it, for daemons from before it, which show presence's tags as they are. `who human`
+  lists the people and `who -human` the agents.
 
 ### When a session stays the same session
 

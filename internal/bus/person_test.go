@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // Anyone with push access can write the bus, and a person's name reaches agents' context in the
@@ -41,6 +42,19 @@ func TestPresenceCleanHoldsAPerson(t *testing.T) {
 	}
 	if p.Sessions[1].Name != "" {
 		t.Errorf("a session took a person's name: %+v", p.Sessions[1])
+	}
+
+	// The human tag comes from the address, not from what presence says (#267).
+	p = bus.Presence{Sessions: []bus.SessionInfo{
+		{ID: bus.PersonSession, Name: "ada", Tags: []tags.Tag{{Name: "reviewing"}}},
+		{ID: "abc123", Tags: []tags.Tag{{Name: tags.Human, Src: tags.SrcDerived}, {Name: "reviewing"}}},
+	}}
+	p.Clean()
+	if got := p.Sessions[0].Tags; len(got) != 1 || got[0] != (tags.Tag{Name: tags.Human, Src: tags.SrcDerived}) {
+		t.Errorf("a person's tags: %+v", got)
+	}
+	if got := p.Sessions[1].Tags; tags.Has(got, tags.Human) || !tags.Has(got, "reviewing") {
+		t.Errorf("a session's tags: %+v", got)
 	}
 
 	p = bus.Presence{Sessions: []bus.SessionInfo{{ID: bus.PersonSession, Name: "not a\nname", Agent: bus.AgentPerson}}}

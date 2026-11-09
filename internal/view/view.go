@@ -183,6 +183,9 @@ func from(m proto.MessageView) string {
 	if m.FromName != "" {
 		s = m.FromName + " (" + m.From + ")"
 	}
+	if isPerson(m) {
+		return s + " [" + tags.Human + "]"
+	}
 	if m.FromAgent != "" {
 		s += ", " + m.FromAgent
 		if m.FromBranch != "" {
@@ -261,7 +264,7 @@ func Turn(m proto.MessageView) string {
 		agent = "the command line"
 	}
 	if isPerson(m) {
-		agent = "a person, on " + brand.Product + "'s page"
+		agent = "on " + brand.Product + "'s page"
 	}
 	var about []string
 	if agent != "" && !m.Introduced {
@@ -272,6 +275,9 @@ func Turn(m proto.MessageView) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Message from %s", who)
+	if isPerson(m) {
+		fmt.Fprintf(&b, " [%s]", tags.Human) // on every message, as who shows it, introduced or not (#267)
+	}
 	if len(about) > 0 {
 		fmt.Fprintf(&b, " (%s)", strings.Join(about, ", "))
 	}
@@ -312,13 +318,18 @@ func Notices(msgs []proto.MessageView, unread int) string {
 	var b strings.Builder
 	for _, m := range msgs {
 		who := m.From
-		if m.FromName != "" {
+		switch {
+		case isPerson(m) && m.FromName != "":
+			who = m.FromName + " (" + m.From + ") [" + tags.Human + "]"
+		case isPerson(m):
+			who += " [" + tags.Human + "]"
+		case m.FromName != "":
 			who = m.FromName + " (" + m.From
 			if m.FromAgent != "" {
 				who += ", " + m.FromAgent
 			}
 			who += ")"
-		} else if m.FromAgent != "" {
+		case m.FromAgent != "":
 			who += " (" + m.FromAgent + ")"
 		}
 		fmt.Fprintf(&b, "[%s] %s: %q\n", brand.Product, who, m.Subject)

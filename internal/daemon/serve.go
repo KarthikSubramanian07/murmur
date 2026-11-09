@@ -756,7 +756,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 			Pending: s.name == "", Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(), Started: s.started, LastActive: s.lastActive,
 			You: s.id == you, Tags: ts})
 	}
-	if d.st.Person != "" && filter.Empty() {
+	if d.st.Person != "" && filter.Match(tags.Person()) {
 		self.Sessions = append(self.Sessions, d.personViewLocked())
 	}
 	if you == proto.CLISession && filter.Empty() {

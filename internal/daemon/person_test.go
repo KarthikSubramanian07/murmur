@@ -16,6 +16,7 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
+	"github.com/a-Fig/murmur/internal/tags"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -173,7 +174,7 @@ func TestAPersonsMessageBecomesATurnAndTheAnswerReachesThePage(t *testing.T) {
 	eventually(t, "the handoff", func() bool { return len(calls()) > 0 })
 	turn := calls()[0].Stdin
 	for _, want := range []string{
-		"Message from ada (a person, on " + brand.Product + "'s page",
+		"Message from ada [human] (on " + brand.Product + "'s page",
 		"It only fails on macOS.",
 		"ada sees only what you `send`, not this conversation. Answer with " + brand.Product + "'s `send` to ada.",
 	} {
@@ -512,5 +513,88 @@ func TestALongPersonLogIsCutBack(t *testing.T) {
 	}
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
 		t.Errorf("the temporary file is still there: %v", err)
+	}
+}
+
+// A person's account is tagged human wherever it is listed, on their device and on another, and no
+// session can take the tag or have it read off the bus (#267).
+func TestAPersonIsTaggedHuman(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	a.session("aaaaaa", "")
+	b.session("bbbbbb", "")
+	a.page().choose("ada")
+	addr := a.self() + "/" + bus.PersonSession
+	human := func(ts []tags.Tag) bool { return tags.Has(ts, tags.Human) }
+
+	if e, ok := a.whoEntry(addr); !ok || !human(e.Tags) {
+		t.Errorf("who on their own device: %+v, %v", e, ok)
+	}
+	eventually(t, "the other device to list them as human", func() bool {
+		e, ok := b.whoEntry(addr)
+		return ok && human(e.Tags)
+	})
+	for _, d := range []*device{a, b} {
+		r := d.do(proto.Request{Op: proto.OpLookup, Name: "ada"})
+		if r.Lookup == nil || !human(r.Lookup.Tags) {
+			t.Errorf("lookup: %+v, %q", r.Lookup, r.Error)
+		}
+		var person *web.Person
+		for _, dv := range d.page().state().Devices {
+			if dv.Person != nil {
+				person = dv.Person
+			}
+		}
+		if person == nil || !human(person.Tags) {
+			t.Errorf("the page: %+v", person)
+		}
+	}
+
+	// who human lists the people; who -human the agents.
+	for _, d := range []*device{a, b} {
+		for _, dv := range d.do(proto.Request{Op: proto.OpWho, Tags: []string{"human"}}).Devices {
+			for _, s := range dv.Sessions {
+				if s.Addr != addr {
+					t.Errorf("who human lists %s", s.Addr)
+				}
+			}
+		}
+		for _, dv := range d.do(proto.Request{Op: proto.OpWho, Tags: []string{"-human"}}).Devices {
+			for _, s := range dv.Sessions {
+				if s.Addr == addr {
+					t.Error("who -human lists the person")
+				}
+			}
+		}
+	}
+
+	// A session can't claim it, nor can a human on the page give it or take it.
+	if r := a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"human"}}); r.Error == "" {
+		t.Errorf("a session tagged itself human: %+v", r.Tags)
+	}
+	pa := a.page()
+	for _, body := range []string{
+		`{"addr":"` + a.self() + `/aaaaaa","add":["human"]}`,
+		`{"addr":"` + addr + `","remove":["human"]}`,
+	} {
+		if code, _ := pa.call("POST", "/api/tags", pa.token, body); code == http.StatusOK || code == http.StatusNoContent {
+			t.Errorf("the page changed the human tag: %s", body)
+		}
+	}
+	if e, _ := a.whoEntry(a.self() + "/aaaaaa"); human(e.Tags) {
+		t.Errorf("a session has the human tag: %+v", e.Tags)
+	}
+	if e, _ := a.whoEntry(addr); !human(e.Tags) {
+		t.Errorf("the person lost the human tag: %+v", e.Tags)
+	}
+
+	// Their daemon gone, they are known by name alone, and still tagged.
+	a.stop()
+	eventually(t, "b to forget a's presence", func() bool {
+		r := b.do(proto.Request{Op: proto.OpLookup, Name: "ada"})
+		return r.Lookup != nil && !r.Lookup.Running
+	})
+	if r := b.do(proto.Request{Op: proto.OpLookup, Name: "ada"}); r.Lookup == nil || !human(r.Lookup.Tags) {
+		t.Errorf("lookup of a person whose daemon has gone: %+v, %q", r.Lookup, r.Error)
 	}
 }
