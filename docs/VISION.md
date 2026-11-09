@@ -1156,12 +1156,25 @@ An unwritable install (for example, a package manager's) is logged once and left
 restart. Successful updates log the old and new versions in the daemon log.
 
 After installation, the daemon waits until no message handoff is in flight and no page counts as
-open, so an open tab keeps its port and token. It then blocks new handoffs and shuts down normally,
-saving state and releasing the clone lock. It starts the installed binary with the same detached
+open, or until the page asks for the restart (#240). It then blocks new handoffs and shuts down
+normally, saving state and releasing the clone lock. It starts the installed binary with the same detached
 process helper clients use, forwarding its own flags (including poll and idle settings). Sessions
 reconnect through the existing grace and inbox restoration. Running MCP servers keep their loaded binary until their sessions
 restart; if they need to launch a daemon they use the installed path. The protocol number above
 still handles incompatible clients and daemons; release versions do not become a second protocol.
+
+On restart the daemon leaves the page's address and token in `page.json` in its state directory.
+The new daemon, if it starts within two minutes, serves the page there, so an open tab reconnects
+and reloads onto the new version. If that port is taken, the page moves to a new port with a new
+token, since whatever took the port has been sent the old one, and the tab needs `mur ui` again.
+
+The page shows a newer release above Settings in its sidebar (a dot on Settings on a phone), with
+the version in Settings: "Restart to update" while an installed update waits on the open page,
+"Updating to X" while the daemon will install it, and "X is out" with the install command when
+updates are off or the last check failed. It learns the latest release from the updater's last
+check, else from the `latest.json` a daemon in this clone last recorded, and never asks GitHub
+itself. With updates off nothing checks, so "X is out" shows only a release an earlier check
+recorded. Builds from source (`-dev`) show no notice.
 
 `git config --global murmur.update false` opts out; a repo's own git config overrides the global
 value. `MURMUR_NO_UPDATE=1` opts out for a daemon started with that environment. The config is read
