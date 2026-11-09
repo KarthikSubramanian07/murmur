@@ -186,12 +186,13 @@
 
 .fx-sub-branch { display: none; }
 .fx-sub-branch .mono { font-size: 0.6875rem; }
+.fx-sub-pr { flex: none; margin-left: 0.375rem; }
 /* The table drops columns by its own width. Below 640px (what four columns need) a row is the name and state, with what
    it's working on, and why it needs a look, underneath. */
 @container (max-width: 760px) {
-  .fx-tr { grid-template-columns: minmax(10rem, 1fr) 7rem minmax(12rem, 2fr) 5.5rem; }
+  .fx-tr { grid-template-columns: minmax(11rem, 1.2fr) 7rem minmax(12rem, 1.8fr) 5.5rem; }
   .fx-tr > :nth-child(4) { display: none; }
-  .fx-sub-branch { display: inline; }
+  .fx-sub-branch { display: flex; align-items: baseline; min-width: 0; }
 }
 @container (max-width: 640px) {
   .fx-th { display: none; }
@@ -241,4 +242,5 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-insp-need:hover { background: #ffce2f1a; }
 .fx-dm-wait { box-shadow: inset 2px 0 0 var(--fx-warning); border-radius: 0 var(--fx-radius-inner) var(--fx-radius-inner) 0; }
 .fx-dm-wait .fx-dm-head { color: var(--fx-warning-text); }
-.fx-dm-wait .fx-dm-subj { white-space: normal; }
+.fx-insp-need > span { display: block; }
+.fx-insp-open { margin-top: 0.375rem; font-size: 0.75rem; color: var(--fx-warning-text); }

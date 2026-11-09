@@ -2522,8 +2522,12 @@ function fleetRow(d, s, need, on) {
   const t = when(s.lastActive);
   const state = sessionState(d, s);
   const word = state === "idle" && t ? "Idle " + ago(t).replace(" ago", "") : FX_STATE[state];
-  // Under a device's heading the person is in the heading; anywhere else the row names them.
-  const sub = [s.agent, (need || F.by !== "device") && d.owner].filter(Boolean).join(" · ");
+  // Under a device's heading the device and person are in the heading; anywhere else the row
+  // names the device, and the person too unless the device's name already carries it.
+  const where = need || F.by !== "device";
+  const dev = deviceName(d);
+  const sub = [s.agent, where && d.owner && !dev.toLowerCase().includes(d.owner.toLowerCase()) && d.owner, where && dev].filter(Boolean).join(" · ");
+  const prTag = pr ? "#" + pr.number : "";
   return h(
     "button",
     {
@@ -2547,8 +2551,20 @@ function fleetRow(d, s, need, on) {
         }
       },
     },
-    // Where the table is too narrow for its Branch column, the branch joins the line under the name.
-    h("span", { class: "fx-who" }, avatar(s.name), h("span", { class: "fx-who-text" }, h("span", { class: "fx-name truncate" }, s.name), h("span", { class: "fx-muted truncate" }, sub, s.branch && h("span", { class: "fx-sub-branch" }, " · ", h("span", { class: "mono" }, s.branch), pr ? " #" + pr.number : "")))),
+    // Where the table is too narrow for its Branch column, the branch gets a line of its own under
+    // the name, as in the sidebar, rather than being cut short at the end of another (fleet.css).
+    h(
+      "span",
+      { class: "fx-who" },
+      avatar(s.name),
+      h(
+        "span",
+        { class: "fx-who-text" },
+        h("span", { class: "fx-name truncate" }, s.name),
+        h("span", { class: "fx-muted truncate", title: sub }, sub),
+        s.branch && h("span", { class: "fx-muted fx-sub-branch", title: s.branch + (prTag ? " " + prTag : "") }, h("span", { class: "mono truncate" }, s.branch), prTag && h("span", { class: "fx-sub-pr" }, prTag)),
+      ),
+    ),
     h("span", { class: "fx-state" }, fxDot(state), word),
     h("span", { class: "fx-doing" }, h("span", { class: "fx-status" + (s.doing ? "" : " fx-faint") }, s.doing || "No status set"), need && h("span", { class: "fx-reason" }, need.text())),
     h("span", { class: "fx-branch" }, s.branch && h("span", { class: "mono truncate", title: s.branch }, s.branch), pr && h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number)),
@@ -2580,7 +2596,7 @@ function fleetInspector(name, need) {
     ["Last active", t ? agoEl("span", "", t) : "–"],
   ].filter(Boolean);
   const owed = need?.msgs || [];
-  const direct = ui.messages.filter((m) => m.toKind === "session" && (fromName(m) === name || toName(m) === name)).sort((a, b) => owed.includes(b) - owed.includes(a) || b.sortAt - a.sortAt);
+  const direct = ui.messages.filter((m) => m.toKind === "session" && (fromName(m) === name || toName(m) === name)).sort((a, b) => owed.includes(b) - owed.includes(a) || (owed.includes(a) ? owed.indexOf(a) - owed.indexOf(b) : b.sortAt - a.sortAt));
   const close = () => {
     const back = ui.fleetScroll;
     ui.fleetSel = null;
@@ -2596,7 +2612,7 @@ function fleetInspector(name, need) {
       h("div", { class: "fx-who-text" }, h("h2", null, name), h("span", { class: "fx-muted" }, [d.owner, deviceName(d)].filter(Boolean).join(" · "))),
       h("button", { class: "fx-icon-btn", title: "Close", "aria-label": "Close", onclick: close }, icon("x")),
     ),
-    need && h("button", { class: "fx-insp-need", title: "Open the conversation", onclick: () => swOpenMessage(need.m) }, need.text()),
+    need && h("button", { class: "fx-insp-need", onclick: () => swOpenMessage(need.m) }, h("span", null, need.text()), h("span", { class: "fx-insp-open" }, "Open the conversation →")),
     h("dl", { class: "fx-meta" }, meta.map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
     h("h3", { class: "fx-h3" }, "Direct messages", h("span", { class: "fx-badge" }, direct.length)),
     direct.length
@@ -2613,7 +2629,7 @@ function fleetInspector(name, need) {
                 "button",
                 { class: "fx-dm" + (waits ? " fx-dm-wait" : ""), onclick: () => swOpenMessage(m) },
                 h("span", { class: "fx-dm-head" }, h("span", null, out ? "To " : "From ", h("b", null, out ? toName(m) : fromName(m)), waits ? " · waiting for an answer" : ""), agoEl("span", "fx-dm-time", m.sortAt)),
-                h("span", { class: "fx-dm-subj" }, waits ? "“" + questionIn(m) + "”" : m.subject),
+                h("span", { class: "fx-dm-subj" }, m.subject),
               ),
             );
           }),
