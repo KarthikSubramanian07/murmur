@@ -168,13 +168,21 @@ func assetName(goos, arch string) string {
 	return name
 }
 
+// get fetches url, and never leaves https on the way: not to an asset URL the https API names, and
+// not through a redirect, whatever client it was given. The binary and SHA256SUMS are fetched
+// separately, so anyone on the path of a download that left https could swap both.
 func get(ctx context.Context, o Options, url string, limit int64) ([]byte, error) {
+	if strings.HasPrefix(o.URL, "https://") && !strings.HasPrefix(url, "https://") {
+		return nil, fmt.Errorf("refused %s: not https", url)
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "mur/"+o.Version)
-	res, err := o.Client.Do(req)
+	client := *o.Client
+	client.CheckRedirect = keepHTTPS
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +195,20 @@ func get(ctx context.Context, o Options, url string, limit int64) ([]byte, error
 		return nil, errors.New("download too large")
 	}
 	return b, err
+}
+
+// keepHTTPS follows a redirect unless it goes from https to anything else. It doesn't limit hosts:
+// GitHub has moved where it serves release assets before (objects.githubusercontent.com, now
+// release-assets.githubusercontent.com), and a daemon that refused the next host could never update
+// to a version that allowed it.
+func keepHTTPS(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("refused a redirect from https to %s://%s", req.URL.Scheme, req.URL.Host)
+	}
+	return nil
 }
 
 // attempt installs the latest release if it is newer than this one. latest is that release's

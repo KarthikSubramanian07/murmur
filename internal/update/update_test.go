@@ -547,3 +547,98 @@ func TestNewerFromRecordedLatest(t *testing.T) {
 		t.Errorf("a malformed tag replaced the record: %q", got)
 	}
 }
+
+// A download never leaves https once the check is on https: not through a redirect, and not to an
+// asset URL the API names. The binary and SHA256SUMS are fetched separately, so a plain-http hop
+// would let anyone on the path swap both. Redirects that keep their scheme are followed, which is
+// all GitHub's (github.com to its asset host) and the plain-http tests' do.
+func TestDownloadsStayOnHTTPS(t *testing.T) {
+	for _, c := range []struct {
+		name          string
+		tls           bool   // whether the API (and what it redirects to itself) is https
+		asset, target string // where the API's asset URLs point and where those redirect: "api" or "plain"
+		installs      bool
+	}{
+		{"https to http redirect", true, "api", "plain", false},
+		{"https to https redirect", true, "api", "api", true},
+		{"http to http redirect", false, "api", "api", true},
+		{"https API naming an http asset", true, "plain", "plain", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			data := []byte("release 1.2.4")
+			// The release's real assets, at /real/... and, on the plain server, where the API names them.
+			release := func(w http.ResponseWriter, r *http.Request) bool {
+				switch strings.TrimPrefix(r.URL.Path, "/real") {
+				case "/sums":
+					fmt.Fprintf(w, "%x  mur-linux-amd64\n", sha256.Sum256(data))
+				case "/binary":
+					w.Write(data)
+				default:
+					return false
+				}
+				return true
+			}
+			var plainHits atomic.Int32
+			plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				plainHits.Add(1)
+				if !release(w, r) {
+					http.NotFound(w, r)
+				}
+			}))
+			defer plain.Close()
+			var apiURL string
+			base := func(which string) string {
+				if which == "plain" {
+					return plain.URL
+				}
+				return apiURL
+			}
+			api := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/latest":
+					json.NewEncoder(w).Encode(map[string]any{"tag_name": "v1.2.4", "assets": []map[string]string{
+						{"name": "mur-linux-amd64", "browser_download_url": base(c.asset) + "/binary"},
+						{"name": "SHA256SUMS", "browser_download_url": base(c.asset) + "/sums"},
+					}})
+				case "/binary", "/sums":
+					http.Redirect(w, r, base(c.target)+"/real"+r.URL.Path, http.StatusFound)
+				default:
+					if !release(w, r) {
+						t.Errorf("unexpected request %s", r.URL.Path)
+						http.NotFound(w, r)
+					}
+				}
+			}))
+			if c.tls {
+				api.StartTLS()
+			} else {
+				api.Start()
+			}
+			defer api.Close()
+			apiURL = api.URL
+			path := filepath.Join(t.TempDir(), "mur")
+			os.WriteFile(path, []byte("old"), 0755)
+			original, err := Identity(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			o := Options{Version: "1.2.3", Executable: path, URL: api.URL, OS: "linux", Arch: "amd64", Client: api.Client(), Log: log.New(io.Discard, "", 0)}
+			done, _, err := attempt(ctx, o, original)
+			got, _ := os.ReadFile(path)
+			if c.installs {
+				if !done || err != nil || !bytes.Equal(got, data) {
+					t.Fatalf("not installed: done=%v err=%v binary=%q", done, err, got)
+				}
+				return
+			}
+			if done || err == nil || string(got) != "old" {
+				t.Fatalf("installed over plain http: done=%v err=%v binary=%q", done, err, got)
+			}
+			if n := plainHits.Load(); n != 0 {
+				t.Fatalf("%d requests went over plain http", n)
+			}
+		})
+	}
+}

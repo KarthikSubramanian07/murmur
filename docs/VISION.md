@@ -1220,7 +1220,10 @@ install to acquire it.
 
 The daemon downloads the `mur-<os>-<arch>[.exe]` asset and that release's `SHA256SUMS`, verifies
 SHA-256, and stages a closed, synced executable beside the running binary's resolved symlink
-target. Unix renames it atomically over the old file. Windows renames the running exe to a unique
+target. The downloads never leave https (2026-11-09): a redirect from https to plain http, or an
+asset URL that isn't https, fails the check, since whoever could serve the binary over plain http
+could serve its checksum too. Hosts aren't limited, because GitHub has moved its asset host before
+and a daemon refusing the next one could never update past it. Unix renames it atomically over the old file. Windows renames the running exe to a unique
 backup, installs the staged file, and restores the backup if installation fails. Backups still
 held by processes are cleaned on a later daemon start. A lock beside the executable serializes
 clones sharing an install; a daemon whose executable has already been replaced restarts onto it.
