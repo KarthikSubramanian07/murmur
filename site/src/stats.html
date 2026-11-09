@@ -459,7 +459,7 @@ function render() {
     return row;
   });
   $('users-why').replaceChildren(
-    el('p', {}, 'Estimated from public repos. Each person counts once:'),
+    el('p', {}, 'Estimated from public repos using Murmur. Each device’s git name is matched to a commit author in its repo to find their GitHub account. Without a match, the git name counts instead, or the device if no name was seen. Each person counts once:'),
     ...rows,
     el('p', { class: 'fine' }, 'Private repos aren’t counted.'),
   );
