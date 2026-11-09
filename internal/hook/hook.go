@@ -175,7 +175,7 @@ func Run(stdin io.Reader, stdout io.Writer) {
 			defer wg.Done()
 			defer func() { recover() }()
 			c.Do(ctx, proto.Request{Op: op, ClaudeSession: in.SessionID, ClientPID: claudePID(),
-				ToolUseID: in.ToolUseID, Cwd: in.Cwd, GitDir: gitDir})
+				ToolUseID: in.ToolUseID, Cwd: in.Cwd, GitDir: gitDir, Subagent: in.AgentID != ""})
 		}()
 	}
 	var resp proto.Response
