@@ -204,6 +204,9 @@ func TestNoticesCarryTheTranscriptPath(t *testing.T) {
 			if r.Transcript != "/home/u/.claude/projects/p/claude-x.jsonl" {
 				t.Errorf("the notices request carries transcript %q", r.Transcript)
 			}
+			if !r.Whole {
+				t.Errorf("the notices request doesn't say the hook prints whole messages (#229)")
+			}
 			return
 		}
 	}

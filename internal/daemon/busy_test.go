@@ -18,7 +18,7 @@ import (
 // hookNotices is what the hook asks for after a prompt or a tool call of Claude session claude.
 func (d *device) hookNotices(claude string) proto.Response {
 	d.t.Helper()
-	r := d.do(proto.Request{Op: proto.OpNotices, ClaudeSession: claude})
+	r := d.do(proto.Request{Op: proto.OpNotices, ClaudeSession: claude, Whole: true})
 	if r.Error != "" {
 		d.t.Fatalf("notices: %s", r.Error)
 	}

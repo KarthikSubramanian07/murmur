@@ -113,6 +113,11 @@ type Request struct {
 	// Continues says, on OpTurnEnd, that the hook can keep the turn going with messages (Claude
 	// Code's Stop hook, by blocking the stop): the reply's Delivered is what it should give.
 	Continues bool `json:"continues,omitempty"`
+	// Whole says, on OpNotices, that the hook prints the reply's Delivered. A hook from before it
+	// prints only Messages, so the daemon gives it a message's subject, and keeps the message in the
+	// inbox, even where the page says to give it whole (#229). An older daemon ignores it, and gives
+	// messages whole to a hook that sends it, which prints them: no new Protocol number.
+	Whole bool `json:"whole,omitempty"`
 
 	// Add and Remove are the tags OpTags adds to the caller and takes from it. Tags is what OpWho
 	// searches by: a session is listed when it has every tag named, and none named after a dash

@@ -182,7 +182,7 @@ func Run(stdin io.Reader, stdout io.Writer) {
 	if wantNotices {
 		nctx, ncancel := context.WithTimeout(ctx, NoticeTimeout)
 		resp, err = c.Do(nctx, proto.Request{Op: proto.OpNotices, ClaudeSession: in.SessionID, ClientPID: claudePID(),
-			Transcript: in.TranscriptPath, Subagent: in.AgentID != ""})
+			Transcript: in.TranscriptPath, Subagent: in.AgentID != "", Whole: true})
 		ncancel()
 	}
 	wg.Wait()
