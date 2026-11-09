@@ -2387,7 +2387,9 @@ function fleetNeeds(rows) {
     const more = list.length > 1 ? " And " + plural(list.length - 1, "more question") + "." : "";
     // text is a function: a row and the inspector each need their own copy of its nodes. The
     // State column says whether the session is offline or on do not disturb, so this doesn't.
-    out.set(to, { at: when(m.at), m, msgs: list, text: () => ["No reply to ", h("b", null, fromName(m)), " for " + ago(when(m.at)).replace(" ago", "") + ": “" + questionIn(m) + "”" + more] });
+    // The inspector leaves the question out (quote false): its messages quote each one.
+    const wait = " for " + ago(when(m.at)).replace(" ago", "");
+    out.set(to, { at: when(m.at), m, msgs: list, text: (quote = true) => ["No reply to ", h("b", null, fromName(m)), quote ? wait + ": “" + questionIn(m) + "”" + more : wait + (list.length > 1 ? ", and " + plural(list.length - 1, "more question") : "") + "."] });
   }
   return out;
 }
@@ -2617,9 +2619,11 @@ function fleetInspector(name, need) {
       { class: "fx-insp-head" },
       avatar(name),
       h("div", { class: "fx-who-text" }, h("h2", null, name), h("span", { class: "fx-muted" }, [d.owner, deviceName(d)].filter(Boolean).join(" · "))),
-      h("button", { class: "fx-icon-btn", title: "Close", "aria-label": "Close", onclick: close }, icon("x")),
+      STACKED.matches
+        ? h("button", { class: "fx-back", onclick: close }, "← All sessions")
+        : h("button", { class: "fx-icon-btn", title: "Close", "aria-label": "Close", onclick: close }, icon("x")),
     ),
-    need && h("button", { class: "fx-insp-need", onclick: () => swOpenMessage(need.m) }, h("span", null, need.text()), h("span", { class: "fx-insp-open" }, "Open the conversation →")),
+    need && h("button", { class: "fx-insp-need", onclick: () => swOpenMessage(need.m) }, h("span", null, need.text(false)), h("span", { class: "fx-insp-open" }, "Open the conversation →")),
     h("dl", { class: "fx-meta" }, meta.map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
     h("h3", { class: "fx-h3" }, "Direct messages", h("span", { class: "fx-badge" }, direct.length)),
     direct.length
@@ -2637,6 +2641,7 @@ function fleetInspector(name, need) {
                 { class: "fx-dm" + (waits ? " fx-dm-wait" : ""), onclick: () => swOpenMessage(m) },
                 h("span", { class: "fx-dm-head" }, h("span", null, out ? "To " : "From ", h("b", null, out ? toName(m) : fromName(m)), waits ? " · waiting for an answer" : ""), agoEl("span", "fx-dm-time", m.sortAt)),
                 h("span", { class: "fx-dm-subj" }, m.subject),
+                waits && questionIn(m) !== m.subject && h("span", { class: "fx-dm-q" }, "“" + questionIn(m) + "”"),
               ),
             );
           }),
