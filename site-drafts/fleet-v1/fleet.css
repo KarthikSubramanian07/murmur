@@ -338,3 +338,10 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-status, .fx-meta dd { overflow-wrap: anywhere; }
 /* A row's name is a block, so a name too long for its column ends in an ellipsis (title has it). */
 .fx-who-text > .fx-name { display: block; }
+/* One focus ring across the view: the row's, on every control, not the browser's faint blue. */
+.fx-group:focus-visible, .fx-seg button:focus-visible, .fx-dm:focus-visible, .fx-insp-need:focus-visible, .fx-btn:focus-visible, .fx-back:focus-visible, .fx-icon-btn:focus-visible, .fx-clear:focus-visible { outline: 2px solid #f1f1f1; outline-offset: -2px; }
+/* In the details a part may itself wrap. Each part is a box whose "·" sits in its left padding, so
+   a part that starts a line hides its dot in the clipped 0.9em, and its own wrapped lines start
+   after the padding rather than inside the clip. */
+.fx-meta .fx-part { display: inline-block; position: relative; max-width: 100%; padding-left: 0.9em; white-space: normal; vertical-align: top; }
+.fx-meta .fx-sep { position: absolute; left: 0; top: 0; }
