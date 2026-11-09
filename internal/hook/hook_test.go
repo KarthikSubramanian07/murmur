@@ -281,7 +281,7 @@ func TestTheUnreadCountAlone(t *testing.T) {
 
 // A message the daemon gives whole (#204) is added to the agent's context as its turn would read,
 // before the count of what is left unread.
-func TestDeliveredMessagesAreShownWhole(t *testing.T) {
+func TestReadMessagesAreShownWhole(t *testing.T) {
 	repo := newRepo(t)
 	fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
 		if r.Op == proto.OpNotices {
