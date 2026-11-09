@@ -27,13 +27,14 @@ import (
 // can publish a key. docs/VISION.md, "The bus is encrypted", has the reasons and what it costs.
 
 // keyPin is what this device knows of a device's keys: the signing key it pinned on first sight,
-// the box key that device's latest sealed presence carried, and when this daemon last took a sealed
-// presence from it that it hadn't taken before (SHA), by this machine's clock (see noteSeenLocked).
+// the box key that device's latest sealed presence carried, the latest time a sealed presence of it
+// was signed with (At, a high-water mark: see newPresenceLocked), and when this daemon last took a
+// new one from it, by this machine's clock (Seen, see noteSeenLocked).
 type keyPin struct {
 	Sign string    `json:"sign"`
 	Box  string    `json:"box"`
+	At   time.Time `json:"at,omitzero"`
 	Seen time.Time `json:"seen,omitzero"`
-	SHA  string    `json:"sha,omitempty"`
 }
 
 // keyFile is the device's private keys, in .git/murmur/keys: never committed, never on the bus.
@@ -209,33 +210,100 @@ func (d *Daemon) checkPresenceLocked(dev, ref string, c bus.Commit, pres bus.Pre
 // is taken for no date at all.
 const clockAllowance = time.Minute
 
-// firstVerified is when to take a sealed presence first read in this run as written: by its
-// writer's clock, as firstSight does, unless that clock is ahead of this one by more than
-// clockAllowance. A presence dated in the future would otherwise look current, for as long as its
-// writer chose, to a daemon that starts any time before then, and a device whose user has lost push
-// access could go on reading what is new that way (Sol's review of #156). Such a presence counts
-// as never verified, until the device writes again and this daemon sees it change.
-func firstVerified(written time.Time) time.Time {
-	if written.After(time.Now().Add(clockAllowance)) {
+// firstVerified is when to take a new sealed presence, the first this run has taken from its device,
+// as written: at the time it was signed with, as firstSight does with a commit's, unless that is
+// ahead of this machine's clock by more than clockAllowance. A presence dated in the future would
+// otherwise look current, for as long as its writer chose, to a daemon that starts any time before
+// then, and a device whose user has lost push access could go on reading what is new that way
+// (Sol's review of #156). Such a presence counts as never verified; the next one this daemon sees
+// arrive counts from then (verifiedLocked).
+func firstVerified(signed time.Time) time.Time {
+	if signed.After(time.Now().Add(clockAllowance)) {
 		return time.Time{}
 	}
-	return firstSight(written)
+	return firstSight(signed)
 }
 
-// noteSeenLocked records that this daemon took sha, a sealed presence of dev's, verified when
-// verified says (on this machine's clock), for the 24 hours a message addressed to dev may still be
-// encrypted for it (encryptEventLocked). Reading the same presence again, as after a restart,
-// renews nothing: only a presence this daemon hasn't taken before does. It is saved with the next
-// save, as a presence comes every 2 minutes. Caller holds mu.
-func (d *Daemon) noteSeenLocked(dev, sha string, verified time.Time) {
+// newPresenceLocked says whether a sealed presence of dev's, signed with time at, is one dev wrote
+// after every other this daemon has taken from it, and raises the high-water mark if so. Anyone who
+// can push could put an older presence of a device back on its ref, or wrap the same one in a new
+// commit, and a device whose user has lost push access would then look current for good (Sol's
+// review of #156); neither is new by this. The time is the one inside the seal, so a new commit
+// can't change it, and a device's own presence times never go back (nextPresenceAtLocked). The mark
+// is kept in state.json, as a restart mustn't take an old presence for a new one. Caller holds mu.
+func (d *Daemon) newPresenceLocked(dev string, at time.Time) bool {
 	pin := d.st.Pins[dev]
-	if pin == nil || verified.IsZero() || pin.SHA == sha {
+	if pin == nil || !at.After(pin.At) {
+		return false
+	}
+	pin.At = at.UTC()
+	d.saveLocked()
+	return true
+}
+
+// verifiedLocked is when to count a sealed presence of p's device as taken, on this machine's clock:
+// see peer.verified. One that isn't new (newPresenceLocked) renews nothing. A new one counts from
+// now if this daemon is watching the device's presence change: it has taken a sealed one from it
+// earlier in this run, and a sync has finished, so that one wasn't only the clone's own copy, which
+// may be any age. A writer's clock running ahead doesn't matter then. Otherwise, it counts from when
+// it was signed, as firstVerified says. Caller holds mu.
+func (d *Daemon) verifiedLocked(p *peer, fresh bool, at time.Time) time.Time {
+	switch {
+	case !fresh && p != nil:
+		return p.verified
+	case !fresh:
+		return time.Time{}
+	case p != nil && p.sealed && !d.lastPollOK.IsZero():
+		return time.Now()
+	}
+	return firstVerified(at)
+}
+
+// noteSeenLocked records that this daemon took a new sealed presence of dev's, verified when verified
+// says, for the 24 hours a message addressed to dev may still be encrypted for it
+// (encryptEventLocked). Caller holds mu.
+func (d *Daemon) noteSeenLocked(dev string, verified time.Time) {
+	pin := d.st.Pins[dev]
+	if pin == nil || verified.IsZero() {
 		return
 	}
-	pin.SHA = sha
+	if prev, ok := d.seenAt[dev]; !ok || verified.After(prev) {
+		d.seenAt[dev] = verified
+	}
 	if wall := time.Now().Add(-time.Since(verified)).Round(0).UTC(); wall.After(pin.Seen) {
 		pin.Seen = wall
 	}
+}
+
+// seenWithinLocked says whether this daemon took a new sealed presence of dev's within window. In
+// this run that is timed on the monotonic clock, so a wall clock set back doesn't stretch it; across a
+// restart, by the time kept in state.json, taken as no later than now. Caller holds mu.
+func (d *Daemon) seenWithinLocked(dev string, window time.Duration) bool {
+	if at, ok := d.seenAt[dev]; ok {
+		return time.Since(at) <= window
+	}
+	pin := d.st.Pins[dev]
+	if pin == nil || pin.Seen.IsZero() {
+		return false
+	}
+	seen := pin.Seen
+	if now := time.Now(); seen.After(now) {
+		seen = now
+	}
+	return time.Since(seen) <= window
+}
+
+// nextPresenceAtLocked is the time this device signs its next presence with: now, or just after the
+// last, if the clock has gone back since, so its teammates take every new presence as new
+// (newPresenceLocked). The last is kept in state.json. Caller holds mu.
+func (d *Daemon) nextPresenceAtLocked() time.Time {
+	at := time.Now().UTC().Round(0)
+	if !at.After(d.st.PresenceAt) {
+		at = d.st.PresenceAt.Add(time.Millisecond)
+	}
+	d.st.PresenceAt = at
+	d.saveLocked()
+	return at
 }
 
 func short(sha string) string {
@@ -295,7 +363,7 @@ func (d *Daemon) encryptEventLocked(e bus.Event) (bus.Event, error) {
 		if _, ok := keys[dev]; !ok {
 			pin := d.st.Pins[dev]
 			switch {
-			case pin != nil && pin.Box != "" && time.Since(pin.Seen) <= d.opt.StoppedInbox:
+			case pin != nil && pin.Box != "" && d.seenWithinLocked(dev, d.opt.StoppedInbox):
 				keys[dev] = pin.Box
 			case e.Type != bus.Message:
 				// A human's tags for a session on a device that can't read them: the others still

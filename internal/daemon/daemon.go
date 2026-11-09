@@ -339,6 +339,9 @@ type Daemon struct {
 	presenceFor string
 	refused     map[string]time.Time
 	refusedSHA  map[string]string // the presence last refused for each device, not read again; under mu
+	// seenAt is, for each device, when this run last took a new sealed presence from it, on the
+	// monotonic clock (see seenWithinLocked); under mu.
+	seenAt map[string]time.Time
 
 	polls atomic.Int64 // the remote listings tried, so a test can see the rate
 
@@ -458,8 +461,10 @@ type peer struct {
 	// verified is when this daemon last took a sealed presence from the device, on this machine's
 	// clock: what the device's keys count as current by (see teamKeysLocked). Only a presence that
 	// passed checkPresenceLocked sets it; one that didn't, or couldn't be read, moves lastChange
-	// alone. Zero for a device that has never sealed one.
+	// alone. Zero for a device that has never sealed one. sealed says this run has taken a sealed
+	// presence from it, new or not.
 	verified time.Time
+	sealed   bool
 }
 
 // fetchFail is a ref whose fetch failed: at which listed SHA, and when. It is fetched again on
@@ -563,6 +568,9 @@ type state struct {
 	// Pins is each device's keys as this device first pinned them (keys.go), this device's own
 	// included, by device ID. A pin is never undone.
 	Pins map[string]*keyPin `json:"pins,omitempty"`
+	// PresenceAt is the time this device's last presence was signed with, which the next one's must
+	// pass (see nextPresenceAtLocked).
+	PresenceAt time.Time `json:"presenceAt,omitzero"`
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if
@@ -764,7 +772,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
-		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
+		refused: map[string]time.Time{}, refusedSHA: map[string]string{}, seenAt: map[string]time.Time{},
 	}
 	device, signKey, boxKey, err := loadIdentity(dir, opt.Log, sealedLocally(ctx, gitx.Git{Dir: opt.GitDir}))
 	if err != nil {

@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"io"
+	"log"
 	"testing"
 	"time"
 
@@ -11,7 +13,8 @@ import (
 func keyRig(t *testing.T) (*Daemon, *peer) {
 	t.Helper()
 	d := &Daemon{opt: Options{StaleAfter: time.Minute, StoppedInbox: 24 * time.Hour}, device: "me-0001",
-		boxKey: bus.NewBoxKey(), peers: map[string]*peer{}, st: state{Pins: map[string]*keyPin{}}}
+		dir: t.TempDir(), log: log.New(io.Discard, "", 0),
+		boxKey: bus.NewBoxKey(), peers: map[string]*peer{}, seenAt: map[string]time.Time{}, st: state{Pins: map[string]*keyPin{}}}
 	d.st.Pins["peer-0001"] = &keyPin{Sign: "s", Box: bus.BoxPublic(bus.NewBoxKey())}
 	p := &peer{pres: bus.Presence{V: bus.Version, Device: "peer-0001"}}
 	d.peers["peer-0001"] = p
@@ -74,34 +77,92 @@ func TestFirstVerifiedDistrustsTheFuture(t *testing.T) {
 	}
 }
 
-// The 24 hours a message addressed to a device may still be encrypted for it count from when this
-// daemon took a presence of the device it hadn't taken before: reading the same one again, as after
-// a restart, renews nothing.
-func TestSeenIsRenewedOnlyByANewPresence(t *testing.T) {
+// Only a presence signed later than every other taken from the device is new: one put back on its
+// ref, or the same one wrapped in a new commit, renews nothing, after a restart included (Sol's
+// second review of #156).
+func TestOnlyALaterPresenceIsNew(t *testing.T) {
+	d, p := keyRig(t)
+	t0 := time.Now().Add(-time.Minute).UTC()
+	if !d.newPresenceLocked("peer-0001", t0) {
+		t.Fatal("the first presence isn't new")
+	}
+	if d.newPresenceLocked("peer-0001", t0) || d.newPresenceLocked("peer-0001", t0.Add(-time.Hour)) {
+		t.Fatal("the same presence, or an older one, is new")
+	}
+	if !d.newPresenceLocked("peer-0001", t0.Add(time.Second)) {
+		t.Fatal("a later presence isn't new")
+	}
+	// Not new: nothing is renewed, whether the peer is known in this run or not.
+	p.verified, p.sealed = time.Now().Add(-5*time.Minute), true
+	d.lastPollOK = time.Now()
+	if v := d.verifiedLocked(p, false, time.Now()); !v.Equal(p.verified) {
+		t.Fatal("an old presence renewed the peer")
+	}
+	if v := d.verifiedLocked(nil, false, time.Now()); !v.IsZero() {
+		t.Fatal("an old presence read after a restart counts")
+	}
+}
+
+// A new presence counts from now once this daemon is watching the device's presence change, however
+// far ahead its writer's clock runs; the first one in a run counts from when it was signed, and not
+// at all if that is in the future.
+func TestVerifiedWhenSeenChanging(t *testing.T) {
+	d, p := keyRig(t)
+	ahead := time.Now().Add(5 * time.Minute)
+	if v := d.verifiedLocked(nil, true, ahead); !v.IsZero() {
+		t.Fatal("a first presence dated ahead counts")
+	}
+	p.sealed = true // a sealed presence was taken before, though it counted for nothing
+	if v := d.verifiedLocked(p, true, ahead); !v.IsZero() {
+		t.Fatal("counted from now before any sync had finished")
+	}
+	d.lastPollOK = time.Now()
+	if v := d.verifiedLocked(p, true, ahead); time.Since(v) > time.Second {
+		t.Fatalf("a device whose clock runs ahead never counts: %v", v)
+	}
+}
+
+// The 24 hours a message addressed to a device may still be encrypted for it count on the monotonic
+// clock in a run, and from a time no later than now across a restart, so a clock set back stretches
+// nothing.
+func TestSeenWindow(t *testing.T) {
 	d, _ := keyRig(t)
 	pin := d.st.Pins["peer-0001"]
-	old := time.Now().Add(-23 * time.Hour)
-	d.noteSeenLocked("peer-0001", "aaaa", old)
-	if pin.Seen.Sub(old).Abs() > time.Second || pin.SHA != "aaaa" {
-		t.Fatalf("pin after the first presence: %+v", pin)
+	if d.seenWithinLocked("peer-0001", 24*time.Hour) {
+		t.Fatal("never seen, yet within the window")
 	}
-	d.noteSeenLocked("peer-0001", "aaaa", time.Now())
-	if pin.Seen.Sub(old).Abs() > time.Second {
-		t.Fatal("reading the same presence again renewed it")
+	d.noteSeenLocked("peer-0001", time.Now().Add(-23*time.Hour))
+	if !d.seenWithinLocked("peer-0001", 24*time.Hour) {
+		t.Fatal("seen 23 hours ago, not within 24")
 	}
-	d.noteSeenLocked("peer-0001", "bbbb", time.Time{})
-	if pin.SHA != "aaaa" {
-		t.Fatal("a presence never verified renewed it")
+	d.seenAt["peer-0001"] = time.Now().Add(-25 * time.Hour) // as if the wall clock said otherwise
+	pin.Seen = time.Now().Add(48 * time.Hour)
+	if d.seenWithinLocked("peer-0001", 24*time.Hour) {
+		t.Fatal("the wall clock stretched the window in a run")
 	}
-	d.noteSeenLocked("peer-0001", "bbbb", time.Now())
-	if time.Since(pin.Seen) > time.Second || pin.SHA != "bbbb" {
-		t.Fatalf("a new presence didn't renew it: %+v", pin)
+	delete(d.seenAt, "peer-0001") // a restart, with a time ahead of the clock kept
+	if !d.seenWithinLocked("peer-0001", 24*time.Hour) {
+		t.Fatal("a kept time ahead of now should count as now")
 	}
-	// Past the 24 hours, a message addressed to the device is refused, not sent where it can't be
-	// read or might be read by a device no longer on the team.
 	pin.Seen = time.Now().Add(-25 * time.Hour)
+	if d.seenWithinLocked("peer-0001", 24*time.Hour) {
+		t.Fatal("seen 25 hours ago before the restart, still within 24")
+	}
 	if _, err := d.encryptEventLocked(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "me-0001/aaaaaa",
 		To: "peer-0001/bbbbbb", Subject: "x"}); err == nil {
 		t.Fatal("encrypted for a device last seen 25 hours ago")
+	}
+}
+
+// A device's own presence times never go back, so its teammates take each as new.
+func TestOwnPresenceTimesNeverGoBack(t *testing.T) {
+	d, _ := keyRig(t)
+	d.st.PresenceAt = time.Now().Add(time.Hour).UTC() // the clock was set back an hour since
+	first := d.nextPresenceAtLocked()
+	if !first.After(time.Now().Add(59 * time.Minute)) {
+		t.Fatalf("went back to %v", first)
+	}
+	if next := d.nextPresenceAtLocked(); !next.After(first) {
+		t.Fatalf("%v isn't after %v", next, first)
 	}
 }

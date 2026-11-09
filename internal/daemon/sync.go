@@ -883,22 +883,17 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	if p == nil {
 		changed = firstSight(c.Time) // no change of ours to time it by
 	}
+	d.mu.Lock()
 	var verified time.Time
 	if sealed {
-		// Seen changing, a presence is as new as now. The first this run takes from a device isn't
-		// seen changing, nor is any before the first sync has finished: the one before it came
-		// from the clone's own copy (restore), which may be any age.
-		d.mu.Lock()
-		live := p != nil && !p.verified.IsZero() && !d.lastPollOK.IsZero()
-		d.mu.Unlock()
-		verified = time.Now()
-		if !live {
-			verified = firstVerified(c.Time)
+		fresh := d.newPresenceLocked(dev, pres.At)
+		verified = d.verifiedLocked(p, fresh, pres.At)
+		if fresh {
+			d.noteSeenLocked(dev, verified)
 		}
 	}
-	d.mu.Lock()
-	d.noteSeenLocked(dev, sha, verified)
-	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, verified: verified}
+	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, verified: verified,
+		sealed: sealed || p != nil && p.sealed}
 	// A name in another device's presence is in use, whether or not the registry shows it yet.
 	seen := false
 	for _, s := range pres.Sessions {
@@ -1156,7 +1151,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			s.branch = b
 		}
 	}
-	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, At: time.Now().UTC(),
+	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, At: d.nextPresenceAtLocked(),
 		Sessions: []bus.SessionInfo{}}
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must

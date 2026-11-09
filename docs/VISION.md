@@ -150,9 +150,11 @@ setting someone turned on with `mur encrypt`, and that command was the friction.
   under its ID (see key loss), so a mismatch means a forgery or a copied `.git`. Pinning can't stop
   someone with push access who seals a presence for a device before a new reader has seen the
   device's own. That reader then refuses the real device. The attack takes push access, and the
-  trust model already trusts push access with code. Nor does a seal stop someone with push access
-  pushing one of the device's older presences again (#159 checked for that; this doesn't). That
-  shows stale sessions until the device's next heartbeat, at most 2 minutes, and changes no key.
+  trust model already trusts push access with code. Someone with push access can put one of a
+  device's older presences back on its ref. `who` then shows those older sessions until the
+  device's next heartbeat, at most 2 minutes. Nothing else follows from it: each presence is signed
+  with a time that never goes back on its writer, and only one signed later than every other a
+  reader has taken from that device counts as new (next bullet but one).
   A device whose binary is rolled back to one from before encryption writes unsealed presence,
   which its teammates refuse once they have pinned it, until the updater brings it forward again.
 - **Records.** Each record is encrypted once, with a fresh content key, and that key is wrapped for
@@ -167,12 +169,16 @@ setting someone turned on with `mur encrypt`, and that command was the friction.
   now, not against the last successful sync as `who`'s staleness is, so a daemon that has been
   offline for a while writes for no one else until a sync shows it the team again. A presence that
   couldn't be read, or was refused, counts for nothing here, though `who` takes it as a sign of
-  life. A device's first presence in a daemon's run is dated by its writer's clock, as for `who`,
-  unless that clock is more than a minute ahead of this one; then it counts only once it changes.
-  These three are from Sol's review: each let a device whose user had lost push access go on
-  reading. A message to one session or device also goes to that device while it is out of the team,
-  if this daemon took a presence from it that it hadn't taken before within StoppedInbox (24 h), so
-  a kept inbox there still works (#30). A broadcast isn't addressed to the device, though, so one
+  life. Only a new presence counts: one signed with a later time than every other this daemon has
+  taken from the device, kept as a high-water mark in `state.json`. That stops an older presence
+  put back on the ref, or the same one wrapped in a new commit, from keeping a device on the team,
+  after a restart too. A new presence counts from now once this daemon has watched the device's
+  presence change, whatever the writer's clock says. The first in a run counts from when it was
+  signed, unless that is more than a minute ahead of this machine's clock, and then it doesn't
+  count at all. All of this is from Sol's two reviews: each hole let a device whose user had lost
+  push access go on reading. A message to one session or device also goes to that device while it
+  is out of the team, if this daemon took a new presence from it within StoppedInbox (24 h), timed
+  on the monotonic clock while it runs, so that a kept inbox there still works (#30). A broadcast isn't addressed to the device, though, so one
   whose daemon is down, or asleep past StaleAfter, misses the broadcasts sent meanwhile, which a
   kept inbox used to catch up on. Encrypting broadcasts for devices away up to 24 hours would keep
   them, at the cost of a removed collaborator reading the team's broadcasts for that long.
