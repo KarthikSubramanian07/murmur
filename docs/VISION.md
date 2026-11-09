@@ -1335,6 +1335,11 @@ not from the Worker, because counting needs git, and a fetch of the whole bus is
 the API would need one per commit. Once the bus is encrypted (#257) a record's kind is hidden from a
 public reader, so messages stop being told from other records, and only records are counted.
 
+Each repo is counted on its own, since anyone can list one (#ISSUE). A repo that can't be read (gone
+private, or deleted) keeps the counts it had. One whose counts the site refuses is skipped, and the
+day's run fails after every other repo has been sent, so it shows in Actions without leaving the
+repos after it, alphabetically, uncounted.
+
 `/stats` shows those repos and the counts over time; it needs a key: Tyler's, or one he gives an
 agent, which reads it as markdown at `/stats/report.md` or JSON at `/stats/data` (#150).
 

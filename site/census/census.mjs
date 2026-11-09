@@ -167,20 +167,26 @@ async function call(path, init = {}) {
   return JSON.parse(text);
 }
 
-async function main(args) {
+// Counts each repo and sends its counts, one repo at a time. `read` is census, but for the tests.
+//
+// What goes wrong with one repo is that repo's alone: the census goes on to the next, so a repo the
+// site refuses can't leave every repo after it uncounted. A repo that can't be read, because it
+// has gone private or been deleted, keeps the counts it had, and the job still succeeds. Counts the
+// site refused fail the job once every repo has had its turn, so the run shows in red in Actions.
+export async function main(args, { read = census } = {}) {
   const dry = args.includes('--dry');
   let names = args.filter(a => !a.startsWith('--'));
   if (!dry && !process.env.CENSUS_KEY) throw new Error('CENSUS_KEY is not set');
   if (!names.length) names = (await call('/v1/census')).repos;
-  let failed = 0;
+  let unread = 0;
+  const unsent = [];
   for (const name of names) {
     let c;
     try {
-      c = census(name);
+      c = read(name);
     } catch (err) {
-      // A repo that has gone private or been deleted can't be read, and keeps the counts it had.
       console.error(`${name}: not counted: ${String(err.stderr || err.message).trim()}`);
-      failed++;
+      unread++;
       continue;
     }
     const line = `${name}: ${c.devices.length} devices, ${new Set(c.devices.map(v => v.person ?? v.id)).size} people, ${c.totals.sessions} sessions, ` +
@@ -190,10 +196,17 @@ async function main(args) {
       console.log(JSON.stringify(c.days));
       continue;
     }
-    await call('/v1/census', { method: 'POST', body: JSON.stringify(c) });
+    try {
+      await call('/v1/census', { method: 'POST', body: JSON.stringify(c) });
+    } catch (err) {
+      console.error(`${name}: not sent: ${String(err.message || err).trim()}`);
+      unsent.push(name);
+      continue;
+    }
     console.log(line);
   }
-  if (failed === names.length && names.length) throw new Error('no repo could be counted');
+  if (unsent.length) throw new Error(`${unsent.length} of ${names.length} repos counted but not sent: ${unsent.join(', ')}`);
+  if (unread === names.length && names.length) throw new Error('no repo could be counted');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
