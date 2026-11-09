@@ -26,7 +26,8 @@ type fakeSource struct {
 	sets     int
 	cursor   string
 	unmuted  [][2]string
-	watched  []bool // what Watched said of each State call
+	tagged   []string // each SetTags: addr +added -removed
+	watched  []bool   // what Watched said of each State call
 }
 
 func (f *fakeSource) State(ctx context.Context) (State, error) {
@@ -62,6 +63,13 @@ func (f *fakeSource) Unmute(ctx context.Context, by, muted string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.unmuted = append(f.unmuted, [2]string{by, muted})
+	return nil
+}
+
+func (f *fakeSource) SetTags(ctx context.Context, addr string, add, remove []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tagged = append(f.tagged, addr+" +"+strings.Join(add, ",")+" -"+strings.Join(remove, ","))
 	return nil
 }
 

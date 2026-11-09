@@ -115,6 +115,9 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 				d.log.Printf("the T3 thread of session %s is no longer settled; it is online again", who[k])
 			}
 		}
+		if old.Model != st.Model {
+			settled = true // the derived model: tag goes out in presence (#198)
+		}
 		if (old.Parent != "") != (st.Parent != "") {
 			settled = true
 			if st.Parent != "" {
@@ -416,8 +419,17 @@ func (p pageSettings) busyChoice(name string) string {
 // mesh, nor if the page says never. Always: yes. Within N minutes (the default, and what an
 // unset choice means): if the session is busy, which needs no waking, or was last at work no
 // more than N minutes ago, 0 standing for defaultWakeMinutes. A session nothing is known of yet
-// waits; the read of its thread lets the handoffs look again. Caller holds mu.
+// waits; the read of its thread lets the handoffs look again. Nor while it is on do not disturb
+// (#198). Caller holds mu.
 func (d *Daemon) wakesLocked(id string, wake pageSettings) bool {
+	return !d.dndLocked(id) && d.mayWakeLocked(id, wake)
+}
+
+// mayWakeLocked is wakesLocked without do not disturb: whether the session could be woken once the
+// tag comes off. The daemon stays up for a thread it may wake so (see holdsRouteLocked): it is
+// the one to read the tag's removal from another device's page, and to deliver what waited.
+// Caller holds mu.
+func (d *Daemon) mayWakeLocked(id string, wake pageSettings) bool {
 	if d.offMeshLocked(id) {
 		return false
 	}

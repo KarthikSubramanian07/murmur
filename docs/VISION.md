@@ -548,6 +548,50 @@ agents that mattered.
   with a status is not read. A changed title causes a presence write, as a changed status does, so it
   shows on other devices within seconds; a title that hasn't changed writes nothing.
 
+### Session tags
+
+#198, first part built 2026-11-08: tags set by hand, the model, and search by tags. Groups, rules in
+a tag file, subscriptions and the lifecycle state come later, in the issue's order. The first
+version also had an availability state (#186): `unavailable` made `send` refuse a session and
+broadcasts skip it. Tyler had it taken out before merging (2026-11-08), so no tag carries behaviour:
+`unavailable` is a label like any other. Tyler then asked for `do-not-disturb` (2026-11-08), the one
+tag with behaviour, below.
+
+- **What a tag is.** Up to 40 lowercase letters, digits and `. _ : / -`, at most 12 on a session
+  (`internal/tags`). A tag under `model:` names the session's model, and a session has one at most.
+- **`do-not-disturb`** keeps a session's messages queued in its inbox. None is handed over as a
+  turn (the daemon treats the session as one it may not wake). The hook delivers neither a notice
+  nor the whole message (#204), holds none for the turn's end (#202), and the `Stop` hook doesn't
+  keep the turn going with them (#213), even while the session is at work. `inbox` delivers them as
+  usual. When the tag comes off, each goes out once, by whichever route applies then: handed over
+  as a turn if the session is idle, or, if it is at work, a notice or the whole message from the
+  hook, and given at its turn's end. A message queued through the tag counts as arriving when the
+  tag came off, so one older than a turn's 15-minute limit is still handed over as a turn. `send`
+  isn't refused; the sender is told the message is queued. The session or a human can set it, as
+  any tag. Since tags travel in presence, every device's page can show which sessions are on it.
+- **Where a tag comes from**, highest first: a human on the page, the session itself (the `tags`
+  tool), or the daemon. The daemon derives the model of a session in T3 from the thread's
+  `modelSelection.model` in T3's database (`claude-opus-5-5`, shown as `model:opus-5.5`); a session
+  outside T3 sets its own, as the MCP instructions ask. A human adding a tag pins it on and removing
+  one pins it off, and the session can't undo either; it is told so. `who` shows the names,
+  `lookup` and the page where each came from.
+- **The session's own device decides its tags** and publishes them in presence, each with its
+  source. #198 first had tags set by a session or a human on one shared ref with a lease, as names
+  are; Tyler chose this instead (2026-11-08). One device is the only writer of its sessions' tags,
+  so nothing needs ordering across devices, and a human's choice beats the session's whichever
+  arrives first. A human tagging a session on another device sends that device a `tags` event on
+  their own log, and that device applies it when it reads it, as it would a message. The cost: a
+  change for a device that is down waits until it is back, when its sessions can't be reached anyway.
+  A daemon from before tags passes over the event and ignores the field in presence.
+- **Kept by the session's name**, in `state.json`: a tag lasts across MCP restarts, resumes, daemon
+  restarts and the session finding its T3 thread (its key changes then, its name doesn't), until the
+  session or a human takes it off. A change from another device for a session that hasn't
+  registered again yet, after its daemon restarted, is kept for it the same way. At the cap of 12, a
+  human's tags are kept first, then the session's, then derived ones. Nothing expires.
+- **Search.** `who` takes tags and lists only the sessions with all of them; `-tag` leaves out those
+  with it, and a `*` at the end matches any tag that starts so (`model:opus*`). The CLI has no `who`,
+  so this is the MCP tool's.
+
 ### When a session stays the same session
 
 A session's name (#20) lasts as long as its client treats it as the same conversation, so it
