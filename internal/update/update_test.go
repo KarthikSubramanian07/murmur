@@ -188,15 +188,29 @@ func TestReleases(t *testing.T) {
 				os.WriteFile(replacement, data, 0755)
 				os.Rename(path, path+".old")
 				os.Rename(replacement, path)
-				done, err := attempt(context.Background(), o, original)
+				done, _, err := attempt(context.Background(), o, original)
 				if !done || err != nil || hits.Load() != 0 {
 					t.Fatalf("changed: %v %v", done, err)
 				}
 				return
 			}
+			var reports []Status
+			o.Report = func(s Status) { reports = append(reports, s) }
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			Run(ctx, o, func() { restarted = true })
+			// The page hears what each check found (#240).
+			want := map[string]Status{
+				"good": {Latest: "1.2.4", Installed: true}, "bad": {Latest: "1.2.4", Failed: true},
+				"missing": {Latest: "1.2.4", Failed: true}, "same": {Latest: "1.2.3"}, "older": {Latest: "1.2.2"},
+				"prerelease": {}, "off": {Off: true},
+			}
+			if w, ok := want[mode]; ok && (len(reports) != 1 || reports[0] != w) {
+				t.Errorf("reports %+v, want [%+v]", reports, w)
+			}
+			if mode == "dev" && len(reports) != 0 {
+				t.Errorf("a dev build reported %+v", reports)
+			}
 			b, _ := os.ReadFile(path)
 			if mode == "good" {
 				if !restarted || string(b) != string(data) || !strings.Contains(logs.String(), "1.2.3 -> 1.2.4") {
@@ -334,7 +348,7 @@ func TestManualReinstallDuringDownload(t *testing.T) {
 			var logs bytes.Buffer
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			done, err := attempt(ctx, Options{Version: "1.2.3", Executable: path, URL: url + "/latest", OS: goos, Arch: "amd64", Client: srv.Client(), Log: log.New(&logs, "", 0)}, original)
+			done, _, err := attempt(ctx, Options{Version: "1.2.3", Executable: path, URL: url + "/latest", OS: goos, Arch: "amd64", Client: srv.Client(), Log: log.New(&logs, "", 0)}, original)
 			if err != nil || !done {
 				t.Fatalf("should restart onto manual install: done=%v err=%v", done, err)
 			}

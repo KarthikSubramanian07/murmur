@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/tags"
@@ -25,13 +26,39 @@ type Source interface {
 	// SetTags is a human's change to the tags of the session at addr, its device/session: add, then
 	// remove. On another device, the change takes effect when that device reads it.
 	SetTags(ctx context.Context, addr string, add, remove []string) error
+	// Restart restarts the daemon onto a newer binary that is installed and waiting
+	// (Version.Ready), without waiting for the page to close. It returns ErrNoUpdate if none is.
+	Restart(ctx context.Context) error
 }
+
+// ErrNoUpdate is Restart's answer when no installed update is waiting.
+var ErrNoUpdate = errors.New("no update is waiting to be restarted onto")
 
 // State is what the page's sessions view and mute list show.
 type State struct {
 	Device  string   `json:"device"` // this device's ID
 	Devices []Device `json:"devices"`
 	Mutes   []Mute   `json:"mutes"`
+	Version Version  `json:"version"`
+}
+
+// Version is this daemon's version, and what is known of a newer one (#240).
+type Version struct {
+	Running string `json:"running"`
+	// Latest is the newest release, when it is newer than Running; else "". When Ready, it is the
+	// version installed, which a later release doesn't change: that is what a restart starts.
+	Latest string `json:"latest,omitempty"`
+	// Ready says a newer binary is installed, and the daemon restarts onto it once no page has
+	// been open for a while, or when Restart asks it to.
+	Ready bool `json:"ready,omitempty"`
+	// Auto says Latest is being installed without the user: updates are on and the last check
+	// went through.
+	Auto bool `json:"auto,omitempty"`
+	// Install is the command that installs the latest release by hand, for this OS.
+	Install string `json:"install,omitempty"`
+	// Daemon tells this daemon from the one that replaces it, even at the same version (a
+	// reinstall by hand): the page reloads when it changes.
+	Daemon string `json:"daemon,omitempty"`
 }
 
 // Device is one device: one clone's daemon.

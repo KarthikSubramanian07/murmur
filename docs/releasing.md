@@ -6,7 +6,11 @@ A release is a pushed tag. `.github/workflows/release.yml` builds `mur` for macO
 
 ## Cutting one
 
-From a commit on `main` whose checks passed:
+From a commit on `main` whose checks passed, and which a Codex (Sol) agent has reviewed whole for
+bugs, security holes and anything else that shouldn't ship. That review is Tyler's rule
+(2026-11-08): a release reaches every installed daemon within the hour (self-update), so a PR's
+review isn't enough on its own; it never sees how the merged PRs fit together. Each finding is
+fixed before the tag, filed as an issue if it can wait, or dropped if it isn't worth acting on.
 
 ```sh
 git tag v0.1.0

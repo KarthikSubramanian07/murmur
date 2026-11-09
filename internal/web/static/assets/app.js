@@ -3,6 +3,7 @@
 import { icon } from "./icons.js";
 
 const NAME = document.querySelector('meta[name="app-name"]').content;
+const COMMAND = document.querySelector('meta[name="app-command"]')?.content || "mur";
 const TOKEN_KEY = NAME + ":token";
 const POLL_MS = 3000;
 const HIDDEN_POLL_MS = 15000;
@@ -29,6 +30,7 @@ const ui = {
   muting: new Set(),
   tagging: new Set(), // the sessions whose tags are being changed, by their row key
   tagInput: null, // the row key of the session whose tag field is open
+  restarting: 0, // when the restart onto an installed update was asked for
 };
 
 class AuthError extends Error {
@@ -292,6 +294,7 @@ function miniSidebar() {
         }),
       ]),
     ),
+    miniUpdate(),
     h("button", { class: "mini-btn mini-foot" + (ui.view === "settings" ? " current" : ""), title: "Settings", "aria-label": "Settings", onclick: () => go("settings") }, icon("settings")),
   );
 }
@@ -367,8 +370,112 @@ function sidebar() {
         ),
       ),
     ),
-    h("div", { class: "sidebar-foot" }, h("ul", { class: "sidebar-menu" }, navButton("settings", "settings", null))),
+    h("div", { class: "sidebar-foot" }, h("ul", { class: "sidebar-menu" }, updateItem(), navButton("settings", "settings", null))),
   );
+}
+
+// A newer release (#240). Like T3 Code's sidebar and Discord's top bar, it is small, it stays until
+// it's dealt with, and it acts in one click: a restart onto an installed update, or the way to
+// install one by hand.
+const RESTART_WAIT_MS = 20000; // how long the page waits for the new daemon before giving up
+
+function restartStuck() {
+  return ui.restarting > 0 && ui.conn === "down" && Date.now() - ui.restarting > RESTART_WAIT_MS;
+}
+
+function updateInfo() {
+  const v = ui.state?.version;
+  if (!v) return null;
+  const to = v.latest ? " " + v.latest : "";
+  if (ui.restarting) {
+    return restartStuck()
+      ? { kind: "busy", text: "Run " + COMMAND + " ui again", title: "The restarted daemon serves the page at a new address." }
+      : { kind: "busy", text: "Restarting", title: "Restarting onto" + (to || " the update") + ". The page reconnects on its own." };
+  }
+  if (v.ready) return { kind: "ready", text: "Restart to update", title: NAME + to + " is installed. Restart its daemon onto it now.", act: restartNow };
+  if (!v.latest) return null;
+  if (v.auto) return { kind: "auto", text: "Updating to " + v.latest, title: NAME + " installs it on its own." };
+  return { kind: "manual", text: v.latest + " is out", title: "Updates are off or failing here. Settings has the command that installs it.", act: () => go("settings") };
+}
+
+function updateIcon(info) {
+  return info.kind === "busy" && !restartStuck() ? icon("rotateCw", "spin") : icon("download");
+}
+
+function updateItem() {
+  const info = updateInfo();
+  if (!info) return null;
+  const cls = "menu-button update update-" + info.kind;
+  const kids = [updateIcon(info), h("span", { class: "label" }, info.text)];
+  return h(
+    "li",
+    null,
+    info.act
+      ? h("button", { class: cls, title: info.title, "data-key": "update", onclick: info.act }, kids)
+      : h("div", { class: cls, title: info.title, role: "status" }, kids),
+  );
+}
+
+function miniUpdate() {
+  const info = updateInfo();
+  if (!info) return null;
+  const label = info.text + ". " + info.title;
+  return h(
+    "button",
+    { class: "mini-btn mini-update update-" + info.kind, title: label, "aria-label": label, "data-key": "mini-update", disabled: !info.act, onclick: info.act },
+    updateIcon(info),
+  );
+}
+
+async function restartNow() {
+  if (ui.restarting) return;
+  ui.restarting = Date.now();
+  delete ui.rowErrors.version;
+  render();
+  try {
+    await api("/api/restart", { method: "POST" });
+  } catch (e) {
+    ui.restarting = 0;
+    if (e instanceof AuthError) return deny(e.token);
+    ui.rowErrors.version = "Couldn't restart: " + e.message;
+    render();
+    return;
+  }
+  poll();
+}
+
+// Settings' Version section: this version, and what is known of a newer one.
+function versionSection() {
+  const v = ui.state?.version;
+  if (!v?.running) return null;
+  let description = null;
+  let control = null;
+  if (ui.restarting) {
+    description = restartStuck() ? "Run " + COMMAND + " ui again to reopen the page." : "Restarting onto " + (v.latest || "the update") + ".";
+  } else if (v.ready) {
+    description = (v.latest || "A newer version") + " is installed and starts when the daemon restarts.";
+    control = h("button", { class: "btn btn-outline btn-xs", "data-key": "version-restart", onclick: restartNow }, "Restart now");
+  } else if (v.latest && v.auto) {
+    description = v.latest + " is out, and installing on its own.";
+  } else if (v.latest) {
+    description = v.latest + " is out. Updates are off or failing here; this installs it:";
+  }
+  const row = settingsRow("version", NAME + " " + v.running, description, control);
+  if (v.latest && !v.auto && !v.ready && !ui.restarting && v.install) {
+    row.append(
+      h(
+        "div",
+        { class: "install-line" },
+        h("code", null, v.install),
+        h(
+          "button",
+          { class: "btn btn-ghost btn-xs", title: "Copy", "aria-label": "Copy the command", "data-key": "copy-install", onclick: () => navigator.clipboard?.writeText(v.install) },
+          icon("copy"),
+        ),
+      ),
+    );
+  }
+  return h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Version")), h("div", { class: "group" }, row));
 }
 
 // Four states, as a colored dot on the face:
@@ -1083,10 +1190,13 @@ document.addEventListener("click", () => {
 });
 
 function topbar() {
-  let meta = "";
-  if (ui.conn === "down") {
+  let meta = null;
+  if (ui.conn === "down" && !ui.restarting) {
     meta = h("span", { class: "device-state" }, h("span", { class: "dot warn" }), "Disconnected");
   }
+  // On a phone the sidebar, which carries the update notice, isn't shown: a dot on Settings, whose
+  // Version section has the same action, stands for it.
+  const update = updateInfo();
   return h(
     "header",
     { class: "topbar" },
@@ -1101,6 +1211,7 @@ function topbar() {
           {
             "aria-pressed": ui.view === v ? "true" : "false",
             "data-key": "m-" + v,
+            title: v === "settings" && update ? update.text : null,
             onclick: () => {
               if (v === "messages") {
                 ui.filter = null;
@@ -1110,6 +1221,7 @@ function topbar() {
             },
           },
           TITLES[v],
+          v === "settings" && update && h("span", { class: "nav-dot update-" + update.kind, "aria-label": update.text }),
         ),
       ),
     ),
@@ -1962,6 +2074,7 @@ function settingsPage() {
     ),
   );
 
+  sections.push(versionSection());
   return h("div", { class: "page" }, sections);
 }
 
@@ -2058,6 +2171,14 @@ async function poll() {
   clearTimeout(timer);
   try {
     const [state] = await Promise.all([api("/api/state"), fetchMessages()]);
+    // Another daemon is serving: it restarted onto an update, or a reinstall of the same version,
+    // and serves this page at the same address and token. Its page may differ too, so load that.
+    const was = ui.state?.version;
+    const now = state.version;
+    if (was && now && ((was.daemon && now.daemon && was.daemon !== now.daemon) || (was.running && now.running && was.running !== now.running))) {
+      location.reload();
+      return;
+    }
     for (const d of state.devices || []) for (const s of d.sessions || []) learn(s.addr, s.name);
     ui.state = state;
     ui.conn = "ok";
@@ -2069,7 +2190,7 @@ async function poll() {
   inflight = false;
   // Rebuild only when something changed, and leave alone a minutes field being typed in, text being
   // selected, and a pane being scrolled: a rebuild would drop the selection or stop the scroll.
-  const sig = JSON.stringify([ui.state, ui.cursor, ui.conn]);
+  const sig = JSON.stringify([ui.state, ui.cursor, ui.conn, ui.restarting > 0, restartStuck()]);
   const typing = document.activeElement?.tagName === "INPUT";
   const selecting = document.getSelection()?.isCollapsed === false;
   const scrolling = Date.now() - scrolledAt < 1000;
