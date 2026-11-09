@@ -11,6 +11,7 @@ import (
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // Ago renders how long ago t was, coarsely.
@@ -95,6 +96,14 @@ func Who(r proto.Response) string {
 	default:
 		fmt.Fprintf(&b, "You are %s.\n", r.Self)
 	}
+	if r.Filter != "" {
+		fmt.Fprintf(&b, "Sessions tagged %s:\n", r.Filter)
+		if len(r.Devices) == 0 || len(r.Devices) == 1 && len(r.Devices[0].Sessions) == 0 {
+			b.WriteString("\nnone\n")
+			note(&b, r)
+			return b.String()
+		}
+	}
 	listed := shown(r.Devices)
 	hidden := 0
 	for i, d := range r.Devices {
@@ -129,7 +138,7 @@ func Who(r proto.Response) string {
 		default:
 			fmt.Fprintf(&b, "\n%s (%s, seen %s)\n", d.ID, who, Ago(d.LastSeen))
 		}
-		if len(d.Sessions) == 0 {
+		if len(d.Sessions) == 0 && r.Filter == "" {
 			b.WriteString("  no sessions\n")
 		}
 		for _, s := range sessions {
@@ -146,6 +155,9 @@ func Who(r proto.Response) string {
 				line += ", active " + Ago(s.LastActive)
 			case !s.Started.IsZero():
 				line += ", started " + Ago(s.Started) // its device doesn't say when it was last active
+			}
+			if len(s.Tags) > 0 {
+				line += " [" + strings.Join(tags.Names(s.Tags), ", ") + "]"
 			}
 			if s.Doing != "" {
 				line += ": " + s.Doing
@@ -312,6 +324,36 @@ func Sent(r proto.Response) string {
 	return b.String()
 }
 
+// TagList renders tags with where each came from, where that isn't the session itself.
+func TagList(ts []tags.Tag) string {
+	parts := make([]string, len(ts))
+	for i, t := range ts {
+		switch t.Src {
+		case tags.SrcHuman:
+			parts[i] = t.Name + " (set by a human)"
+		case tags.SrcDerived:
+			parts[i] = t.Name + " (derived)"
+		default:
+			parts[i] = t.Name
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// Tags renders the caller's tags after it changed them.
+func Tags(r proto.Response) string {
+	var b strings.Builder
+	if r.Note != "" {
+		b.WriteString(r.Note + ".\n")
+	}
+	if len(r.Tags) == 0 {
+		b.WriteString("You have no tags.\n")
+	} else {
+		fmt.Fprintf(&b, "Your tags: %s\n", TagList(r.Tags))
+	}
+	return b.String()
+}
+
 // Log renders recent events.
 func Log(r proto.Response) string {
 	if len(r.Events) == 0 {
@@ -376,6 +418,9 @@ func Lookup(r proto.Response) string {
 	if d.Doing != "" {
 		fmt.Fprintf(&b, "  doing: %s\n", d.Doing)
 	}
+	if len(d.Tags) > 0 {
+		fmt.Fprintf(&b, "  tags: %s\n", TagList(d.Tags))
+	}
 
 	switch {
 	case d.DelegateOf != "":
@@ -394,6 +439,9 @@ func Lookup(r proto.Response) string {
 		fmt.Fprintf(&b, "  not reachable: its device was last seen %s, so a message may not arrive\n", Ago(d.DeviceSeen))
 	case d.Reachable:
 		b.WriteString("  reachable: a message sent now reaches its inbox at once (queued, not yet seen by the agent)\n")
+	}
+	if tags.Has(d.Tags, tags.DoNotDisturb) {
+		b.WriteString("  do not disturb: a message to it is queued in its inbox, and delivered when it reads its inbox or turns do not disturb off\n")
 	}
 	var times []string
 	if !d.Started.IsZero() {

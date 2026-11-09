@@ -12,6 +12,7 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
+	"github.com/a-Fig/murmur/internal/tags"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -172,7 +173,7 @@ func TestSettledThreadsGoOffline(t *testing.T) {
 		if !d.offlineLocked("dev", "aaaaaa") || d.offlineLocked("dev", "bbbbbb") {
 			t.Errorf("%s: offlineLocked", when)
 		}
-		for _, s := range d.whoLocked("cccccc")[0].Sessions {
+		for _, s := range d.whoLocked("cccccc", tags.Filter{})[0].Sessions {
 			if s.Name == "name-aaaaaa" {
 				t.Errorf("%s: who lists the settled session", when)
 			}
@@ -373,7 +374,7 @@ func TestDelegateGoesThroughItsParent(t *testing.T) {
 	if len(d.st.Inbox["child1"]) != 0 || len(d.st.Inbox["parent"]) != 1 {
 		t.Errorf("inboxes once the delegate was found: %v", d.st.Inbox)
 	}
-	for _, s := range d.whoLocked("parent")[0].Sessions {
+	for _, s := range d.whoLocked("parent", tags.Filter{})[0].Sessions {
 		if strings.HasPrefix(s.Name, "name-child") {
 			t.Errorf("who lists %s", s.Name)
 		}

@@ -3,6 +3,8 @@ package web
 import (
 	"context"
 	"time"
+
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // Source is everything the page shows and changes. The daemon implements it; the page reaches
@@ -20,6 +22,9 @@ type Source interface {
 	SetSettings(ctx context.Context, s Settings) (Settings, error)
 	// Unmute undoes the mute by session by of session muted, both names.
 	Unmute(ctx context.Context, by, muted string) error
+	// SetTags is a human's change to the tags of the session at addr, its device/session: add, then
+	// remove. On another device, the change takes effect when that device reads it.
+	SetTags(ctx context.Context, addr string, add, remove []string) error
 }
 
 // State is what the page's sessions view and mute list show.
@@ -57,6 +62,9 @@ type Session struct {
 	Worktree   string    `json:"worktree,omitempty"`
 	Started    time.Time `json:"started"`
 	LastActive time.Time `json:"lastActive,omitzero"` // its last tool call or request; zero if unknown
+	// Tags is the session's tags, in order of name, each with where it came from: the session,
+	// derived by its daemon, or a human (#198).
+	Tags []tags.Tag `json:"tags,omitempty"`
 }
 
 // Message is one message between sessions.

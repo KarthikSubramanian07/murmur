@@ -85,6 +85,7 @@ func NewWithPRs(src Source, token string, prs LookupPR) *Server {
 	s.mux.HandleFunc("GET /api/settings", s.getSettings)
 	s.mux.HandleFunc("PUT /api/settings", s.putSettings)
 	s.mux.HandleFunc("POST /api/unmute", s.postUnmute)
+	s.mux.HandleFunc("POST /api/tags", s.postTags)
 	return s
 }
 
@@ -298,6 +299,31 @@ func (s *Server) postUnmute(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	if err := s.src.Unmute(ctx, u.By, u.Muted); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type tagsRequest struct {
+	Addr   string   `json:"addr"`
+	Add    []string `json:"add,omitempty"`
+	Remove []string `json:"remove,omitempty"`
+}
+
+func (s *Server) postTags(w http.ResponseWriter, r *http.Request) {
+	var t tagsRequest
+	if err := readJSON(w, r, &t); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if t.Addr == "" || len(t.Addr) > maxNameLen*2 || len(t.Add)+len(t.Remove) == 0 {
+		writeError(w, http.StatusBadRequest, "addr must be a session's device/session, with tags to add or remove")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), sourceTimeout)
+	defer cancel()
+	if err := s.src.SetTags(ctx, t.Addr, t.Add, t.Remove); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

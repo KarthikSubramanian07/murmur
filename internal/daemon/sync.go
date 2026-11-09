@@ -483,6 +483,9 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		if mode != modeSkip {
 			d.noteLocked(e.At, e.Line())
 		}
+		if e.Type == bus.Tags {
+			d.applyTagsEventLocked(e)
+		}
 		if e.Type == bus.Message {
 			// A skip passes over history, but a ref read in one only after sessions registered
 			// (the first sync failed) also holds what was sent since this daemon started, which
@@ -953,7 +956,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			name = ""
 		}
 		info := bus.SessionInfo{ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(),
-			Started: s.started.UTC(), Committed: d.committedLocked(s.id)}
+			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s)}
 		if !s.lastActive.IsZero() {
 			info.LastActive = s.lastActive.UTC()
 		}
