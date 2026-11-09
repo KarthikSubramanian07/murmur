@@ -1636,8 +1636,10 @@ function validTag(name) {
 
 // A change this page asked for, by address and then tag, until the state it polls agrees: another
 // device's sessions carry it only once that device has read the change, and until then the chip
-// shows as waiting. After two minutes the state wins, so a device that never applies it (one from
-// before tags, or one that is down) doesn't leave a chip that isn't there.
+// shows as waiting. A wish stands until its request is done (done, the time) and a state asked for
+// after that agrees: an older state can't, since it may not hold an earlier change still on its way
+// (#271's review). Two minutes after its request is done the state wins, so a device that never
+// applies it (one from before tags, or one that is down) doesn't leave a chip that isn't there.
 const tagWanted = new Map();
 const TAG_WAIT_MS = 2 * 60000;
 
@@ -1648,7 +1650,7 @@ function tagsOf(s) {
   const w = s.addr && tagWanted.get(s.addr);
   if (w) {
     for (const [name, x] of w) {
-      if (have.has(name) === x.on || Date.now() - x.at > TAG_WAIT_MS) {
+      if (x.done && ((have.has(name) === x.on && stateAskedAt > x.done) || Date.now() - x.done > TAG_WAIT_MS)) {
         w.delete(name);
         continue;
       }
@@ -1908,7 +1910,7 @@ async function tagSessions(targets, name, on) {
   const wishes = new Map();
   for (const s of todo) {
     if (!tagWanted.has(s.addr)) tagWanted.set(s.addr, new Map());
-    const wish = { on, at: Date.now() };
+    const wish = { on, done: 0 };
     tagWanted.get(s.addr).set(name, wish);
     wishes.set(s.addr, wish);
   }
@@ -1922,6 +1924,7 @@ async function tagSessions(targets, name, on) {
         await queueTagChange(s.addr, () =>
           api("/api/tags", { method: "POST", body: JSON.stringify({ addr: s.addr, add: on ? [name] : [], remove: on ? [] : [name] }) }),
         );
+        wishes.get(s.addr).done = Date.now();
       } catch (e) {
         // A later click on the same tag has its own wish; only this one's is dropped.
         const w = tagWanted.get(s.addr);
@@ -3503,6 +3506,7 @@ let timer;
 let inflight = false;
 let polled = false;
 let scrolledAt = 0;
+let stateAskedAt = 0; // when the state in hand was asked for
 
 function hasUnsent() {
   return ui.outbox.length > 0 || [...composers.values()].some((el) => el.value.trim());
@@ -3513,6 +3517,7 @@ async function poll() {
   inflight = true;
   clearTimeout(timer);
   try {
+    const asked = Date.now();
     const [state] = await Promise.all([api("/api/state"), fetchMessages()]);
     // Another daemon is serving: it restarted onto an update, or a reinstall of the same version,
     // and serves this page at the same address and token. Its page may differ too, so load that.
@@ -3538,6 +3543,7 @@ async function poll() {
       }
     }
     ui.state = state;
+    stateAskedAt = asked;
     trimMessages();
     for (const id of ui.readLocal) if (!state.account?.unread?.includes(id)) ui.readLocal.delete(id);
     ui.outbox = ui.outbox.filter((item) => !(item.id && ui.ids.has(item.id)));
