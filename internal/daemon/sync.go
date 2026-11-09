@@ -176,10 +176,18 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		case remote[ref] == "":
 			delete(d.backlog, ref) // gone from the remote; nothing left to read
 		case time.Since(d.backlogAt) > catchUpLimit:
-			// Still unread after this long, it is history nobody is waiting for.
-			d.log.Printf("giving up on reading the backlog of %s; skipping it", ref)
+			// Still unread after this long, its messages are history nobody is waiting for. Its tags
+			// events don't expire, so they are read once the fetch lands (see readGivenUpTags). An
+			// earlier give-up's cursor stands, as it reaches further back.
+			d.log.Printf("giving up on the messages in the backlog of %s; skipping them", ref)
+			_, kept := d.st.TagsFrom[ref]
+			if !kept && d.st.Processed[ref] != remote[ref] && (len(d.sessions) > 0 || d.tagsKnownLocked()) {
+				d.st.TagsFrom[ref], kept = d.st.Processed[ref], true
+			}
 			d.st.Processed[ref] = remote[ref]
-			delete(d.st.Junked, ref)
+			if !kept {
+				delete(d.st.Junked, ref) // otherwise readGivenUpTags still goes by it
+			}
 			delete(d.backlog, ref)
 		}
 	}
@@ -529,6 +537,9 @@ func firstSight(written time.Time) time.Time {
 // advanceMesh processes a device's log up to sha and queues its messages, as the sync mode
 // says. Caller holds advMu.
 func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
+	if !d.readGivenUpTags(ctx, ref, sha) {
+		return
+	}
 	d.mu.Lock()
 	prev := d.st.Processed[ref]
 	mode := modeNormal
@@ -580,9 +591,7 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		// a stopped session (what was sent after it stopped is for it, #30).
 		d.mu.Lock()
 		waiting := len(d.sessions) > 0 || d.keptInboxLocked()
-		// A tags event applies only to a session this device has a name or tags for (see
-		// tagKeyLocked): with neither, as on a new clone, nothing in the log is for it.
-		known := len(d.st.SessionNames) > 0 || len(d.st.Tags) > 0
+		known := d.tagsKnownLocked()
 		d.mu.Unlock()
 		if !waiting && !known {
 			skipTo()
@@ -622,15 +631,9 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, c := range commits {
-		var e bus.Event
-		if bus.Decode(c.Message, &e) != nil {
+		e, ok := logEvent(c, dev)
+		if !ok {
 			continue
-		}
-		if e.Clean(); !e.Valid() {
-			continue
-		}
-		if from, _ := bus.SplitAddr(e.From); from != dev {
-			continue // a device's log carries only its own sessions' events
 		}
 		if junked && e.At.Before(hidden.Add(-time.Minute)) {
 			continue // history the junk hid when this device first looked
@@ -659,6 +662,87 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 	delete(d.backlog, ref)
 	delete(d.st.Junked, ref)
 	d.saveLocked()
+}
+
+// logEvent decodes commit c of dev's log, and says whether it is an event to read: a device's log
+// carries only its own sessions' events.
+func logEvent(c bus.Commit, dev string) (bus.Event, bool) {
+	var e bus.Event
+	if bus.Decode(c.Message, &e) != nil {
+		return e, false
+	}
+	if e.Clean(); !e.Valid() {
+		return e, false
+	}
+	from, _ := bus.SplitAddr(e.From)
+	return e, from == dev
+}
+
+// tagsKnownLocked says whether this device has a name or tags for any session: a tags event applies
+// only to a session it has (see tagKeyLocked), so with neither, as on a new clone, nothing in a
+// log's history is for it. Caller holds mu.
+func (d *Daemon) tagsKnownLocked() bool {
+	return len(d.st.SessionNames) > 0 || len(d.st.Tags) > 0
+}
+
+// readGivenUpTags applies the tags events of the stretch of ref's log that a give-up passed over
+// (see state.TagsFrom), now that sha has been fetched. The stretch ends at Processed, the tip when
+// it was given up on; what came later is read as usual, messages too. It says false if git failed:
+// the log then waits for the next poll, as it does for any failure reading it. Caller holds advMu.
+func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha string) bool {
+	d.mu.Lock()
+	from, given := d.st.TagsFrom[ref]
+	to := d.st.Processed[ref]
+	hidden, junked := d.st.Junked[ref]
+	d.mu.Unlock()
+	if !given {
+		return true
+	}
+	failed := func(err error) bool {
+		d.log.Printf("reading %s: %v", ref, err)
+		return false
+	}
+	ok, err := d.repo.IsCommit(ctx, to)
+	if err != nil {
+		return failed(err)
+	}
+	if !ok {
+		// The tip given up on never came, as the log was rewritten or an older fetch landed, or it
+		// was junk. Read as far as the log goes now; a later part comes through advanceMesh.
+		if ok, err = d.repo.IsCommit(ctx, sha); err != nil {
+			return failed(err)
+		}
+		if !ok {
+			return true // junk again, which advanceMesh passes over; its owner builds over it
+		}
+		to = sha
+	}
+	var commits []bus.Commit
+	if ok = from == ""; !ok {
+		if ok, err = d.repo.IsAncestor(ctx, from, to); err != nil {
+			return failed(err)
+		}
+	}
+	if ok {
+		if commits, err = d.repo.Log(ctx, from, to); err != nil {
+			return failed(err)
+		}
+	} else {
+		d.log.Printf("%s was rewritten; skipping its history rather than replaying its tags", ref)
+	}
+	dev := strings.TrimPrefix(ref, brand.MeshPrefix)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, c := range commits {
+		e, ok := logEvent(c, dev)
+		if ok && e.Type == bus.Tags && !(junked && e.At.Before(hidden.Add(-time.Minute))) {
+			d.applyTagsEventLocked(e)
+		}
+	}
+	delete(d.st.TagsFrom, ref)
+	delete(d.st.Junked, ref)
+	d.saveLocked()
+	return true
 }
 
 // queueLocked puts a message in the inbox of each session here it is addressed to. That queues it;
