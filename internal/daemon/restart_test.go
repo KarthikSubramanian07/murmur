@@ -172,6 +172,9 @@ func TestRestartCatchesUpReconnectingSessions(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) })
 
 	b.stop()
+	// a encrypts for the devices whose presence it last saw, so it must have seen b's go.
+	bdev, _ := bus.SplitAddr(bob)
+	eventually(t, "b gone on a", func() bool { return !a.lists(bdev) })
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "direct, during the restart"})
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast, during the restart"})
 	b.start()

@@ -87,6 +87,8 @@ func TestKeptInboxCatchesUpAfterALongOutage(t *testing.T) {
 
 	b.stop()
 	ageLastSync(t, b, time.Hour)
+	// a encrypts for the devices whose presence it last saw, so it must have seen b's go.
+	eventually(t, "b gone on a", func() bool { return !a.lists(bdev) })
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "direct, while the daemon was down"})
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast, while the daemon was down"})
 	// A log b has never read, so its whole history is the backlog. The last of it is the one that

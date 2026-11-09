@@ -273,16 +273,30 @@ func TestStaleDeviceIsLeftOut(t *testing.T) {
 	a, b, c := newDevice(t, remote), newDevice(t, remote), newDevice(t, remote)
 	cdev := c.self()
 	eventually(t, "all see all", func() bool { return a.seesDevices(3) && b.seesDevices(3) && c.seesDevices(3) })
-	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "while c is here"})
+	if r := a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "while c is here"}); r.Error != "" {
+		t.Fatalf("send: %+v", r)
+	}
 	if e := lastEventOn(t, remote, a.self()); e.Box == nil || e.Box.Keys[cdev] == "" || e.Box.Keys[b.self()] == "" {
 		t.Fatalf("c or b left out while here: %+v", e.Box)
 	}
 
 	c.offline(remote, true)
 	eventually(t, "c stale on a", func() bool { return !a.fresh(cdev) })
-	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "after c went"})
-	if e := lastEventOn(t, remote, a.self()); e.Box == nil || e.Box.Keys[cdev] != "" || e.Box.Keys[b.self()] == "" {
-		t.Fatalf("broadcast after c went: %+v", e.Box)
+	// Who a encrypts for is timed apart from what who shows, on a's own clock (see teamKeysLocked),
+	// so the two can be a poll apart; within one more StaleAfter c must be out.
+	deadline := time.Now().Add(c.stale + time.Second)
+	for {
+		if r := a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "after c went"}); r.Error != "" {
+			t.Fatalf("send: %+v", r)
+		}
+		e := lastEventOn(t, remote, a.self())
+		if e.Box != nil && e.Box.Keys[cdev] == "" && e.Box.Keys[b.self()] != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("broadcast after c went: %+v", e.Box)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 	eventually(t, "a's presence no longer for c", func() bool {
 		p := presenceOn(t, remote, a.self())
@@ -434,4 +448,14 @@ func openedPresence(t *testing.T, remote string, d *device) string {
 	}
 	b, _ := json.Marshal(p)
 	return string(b)
+}
+
+// lists says whether d's who shows device dev at all, stale or not.
+func (d *device) lists(dev string) bool {
+	for _, dv := range d.do(proto.Request{Op: proto.OpWho}).Devices {
+		if dv.ID == dev {
+			return true
+		}
+	}
+	return false
 }
