@@ -1,7 +1,10 @@
 # Testing
 
-`go test ./...` runs everything, including tests that run two devices against a local bare remote.
+`go test ./...` runs every Go test, including those that run two devices against a local bare remote.
 A change is checked with `gofmt -l .` (empty), `go vet ./...` and `go test -race -count=1 ./...`.
+The site has its own tests, of its Worker and of the files machines read on it (sitemap,
+robots.txt, llms.txt, the pages' metadata): `node --test --import ./site/test/register.mjs
+site/test/*.test.mjs`, with Node 20.6 or later and nothing to install. `test-linux` runs them.
 The `daemon` package is most of the time. Under `-race` it took 10–16 minutes on a laptop shared
 with other agents' test runs, and about 12 on the first CI runner (2026-10-29; #39 is about making it
 faster).

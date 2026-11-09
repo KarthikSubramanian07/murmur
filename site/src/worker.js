@@ -1,11 +1,13 @@
 // The Worker in front of the static site (wrangler.jsonc's run_worker_first lists the paths it takes).
-// It does four things the assets can't:
+// It does what the assets can't:
 // - serves the agent pages, docs/agents/*.md, pulled from the repo (#140);
 // - answers `/` with the setup page instead of the HTML when the request prefers markdown;
 // - slices the videos for Range requests;
 // - takes the address of a public repo that uses Murmur, the only thing Murmur sends us, and serves
 //   the page that counts use, with the same numbers as markdown and JSON for an agent (src/usage.js);
-// - takes the daily census of those repos (src/repos.js).
+// - takes the daily census of those repos (src/repos.js);
+// - answers a path no asset has with a markdown 404 when the request prefers markdown
+//   (src/notfound.js). The assets hand such a path to the Worker whatever run_worker_first says.
 
 // Bundled at deploy (the Text rule in wrangler.jsonc), as the copy of last resort when GitHub can't
 // be reached and this data center has no cached copy.
@@ -15,6 +17,7 @@ import useMd from '../../docs/agents/use.md';
 import { checkIn, reportRepo, stats } from './usage.js';
 import { census } from './repos.js';
 import { prefersMarkdown } from './accept.js';
+import { notFound } from './notfound.js';
 
 const RAW = 'https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/';
 const SITE = 'https://murmur.afig.dev';
@@ -43,7 +46,9 @@ export default {
       headers.append('Link', `<${SITE}/setup>; rel="alternate"; type="text/markdown"`);
       return new Response(res.body, { status: res.status, headers });
     }
-    return video(request, env); // the *.mp4 paths
+    if (pathname.endsWith('.mp4')) return video(request, env);
+    const res = await env.ASSETS.fetch(request); // a path no asset has
+    return res.status === 404 ? notFound(request, res) : res;
   },
 };
 
