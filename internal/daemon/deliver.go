@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"sort"
 	"time"
 
@@ -15,8 +14,8 @@ import (
 	"github.com/a-Fig/murmur/internal/view"
 )
 
-// Delivering a message as a turn (#57). A message that arrives for a session is put into the
-// session's own conversation at once, as the next thing it is asked to do, the way a message
+// Delivering a message as a turn (#57). A message that arrives for a session is handed over to the
+// session's client at once, to become the next thing it is asked to do, the way a message
 // between T3 threads is, so an idle agent starts working on it and nobody has to type. Where that
 // can't be done the message waits for the hook's notice and `inbox`, as it did before.
 //
@@ -27,11 +26,20 @@ import (
 //     waking;
 //   - in Claude Code outside T3, the session's messaging socket (package msgsock).
 //
-// A delivered message is removed from the inbox, which is how it is marked read: neither the hook
-// nor `inbox` shows it again. docs/VISION.md ("Delivering a message as a turn") has the reasons.
+// A session Murmur's hook runs in (Claude Code) is not given a turn while it is at work (#202): T3
+// would queue it behind the running turn, and nothing could take it back, so the agent could read
+// it with `inbox` and then get it again as a turn. The hook tells it of the message after its next
+// tool call instead, and what it hasn't read when the turn ends keeps the turn going: the Stop
+// hook gives it to the agent (continueTurnLocked). A turn that ends without Stop, one the user
+// interrupted in T3, has it handed over as a turn instead.
+//
+// Handing a message over is not delivering it: it is delivered when it reaches the agent's
+// context, when the turn carrying it starts, which the daemon doesn't see (docs/VISION.md,
+// `What "delivered" means`, #187). A message handed over is removed from the inbox, as the
+// client holds it now: neither the hook nor `inbox` shows it again. docs/VISION.md ("Delivering a message as a turn") has the reasons.
 
 const (
-	// maxPushes is how many deliveries run at once. Each `t3 thread send` starts a process, and a
+	// maxPushes is how many handoffs run at once. Each `t3 thread send` starts a process, and a
 	// broadcast reaches every session on the device.
 	maxPushes = 4
 	// pushMaxAge is how old a message may be and still wake a session: one that waited longer than
@@ -40,7 +48,7 @@ const (
 	pushMaxAge = 15 * time.Minute
 )
 
-// errNotNow is what a delivery ends with when, by the time of the handoff, the session may no
+// errNotNow is what a handoff ends with when, by the time of the handoff, the session may no
 // longer be woken (see wakesLocked).
 var errNotNow = errors.New("the session may not be woken now")
 
@@ -50,7 +58,7 @@ const (
 	viaSocket = "the messaging socket"
 )
 
-// kickPush wakes pushLoop, which finds messages to deliver. Any lock may be held.
+// kickPush wakes pushLoop, which finds messages to hand over. Any lock may be held.
 func (d *Daemon) kickPush() {
 	select {
 	case d.pushKick <- struct{}{}:
@@ -58,7 +66,7 @@ func (d *Daemon) kickPush() {
 	}
 }
 
-// pushLoop starts a delivery goroutine for each session that has a message to deliver and none
+// pushLoop starts a handoff goroutine for each session that has a message to hand over and none
 // running. A session's messages go one at a time, in the order they arrived; sessions go in
 // parallel.
 func (d *Daemon) pushLoop(ctx context.Context) {
@@ -66,13 +74,23 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 	// them once, before waiting for anything.
 	d.kickPush()
 	for {
+		// A continuation that lapses (see continueTurnLocked) is woken for too: nothing else may
+		// come to end its turn.
+		var lapse <-chan time.Time
+		d.mu.Lock()
+		if at := d.nextLapseLocked(); !at.IsZero() {
+			lapse = time.After(time.Until(at))
+		}
+		d.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return
 		case <-d.pushKick:
+		case <-lapse:
 		}
 		wake := d.wakeSnapshot()
 		d.mu.Lock()
+		d.endLapsedTurnsLocked(wake)
 		for _, id := range sortedKeys(d.st.Inbox) {
 			if d.updating || d.pushing[id] || ctx.Err() != nil {
 				continue
@@ -91,11 +109,11 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 	}
 }
 
-// pusher delivers session id's messages until it has none left to deliver.
+// pusher hands session id's messages over until it has none left to hand over.
 //
-// Nothing is delivered for a user who has left (docs/VISION.md, "Joining a repo"): the daemon exits
+// Nothing is handed over for a user who has left (docs/VISION.md, "Joining a repo"): the daemon exits
 // within ConsentPoll of the consent going, and until then a message that comes in by sync waits in
-// the inbox instead of being put into a thread or a socket. Delivery is the one thing the daemon does
+// the inbox instead of being put into a thread or a socket. The handoff is the one thing the daemon does
 // to the user's other programs, so it asks here, before taking a message, and again in sendTurn,
 // before each attempt.
 func (d *Daemon) pusher(ctx context.Context, id string) {
@@ -113,24 +131,28 @@ func (d *Daemon) pusher(ctx context.Context, id string) {
 		if job == nil || ctx.Err() != nil {
 			return
 		}
-		d.finishPush(job, d.deliver(ctx, job))
+		d.finishPush(job, d.handOver(ctx, job))
 	}
 }
 
 // pushJob is one message on its way into a session.
 type pushJob struct {
 	id, addr string
-	msg      *inMsg
-	via      string
-	route    proto.Route
-	text     string
+	// key is the session's conversation when the job was made (see Daemon.introduced): the turn
+	// goes to that one, even if the session moves to another before the handoff ends.
+	key   string
+	msg   *inMsg
+	via   string
+	route proto.Route
+	text  string
 }
 
-// wakeSnapshot copies the page's wake settings. setMu is taken alone, never with mu held.
+// wakeSnapshot copies the page's settings, the wake setting among them. setMu is taken alone,
+// never with mu held.
 func (d *Daemon) wakeSnapshot() pageSettings {
 	d.setMu.Lock()
 	defer d.setMu.Unlock()
-	return pageSettings{Wake: d.settings.Wake, SessionWake: maps.Clone(d.settings.SessionWake)}
+	return d.settings.clone()
 }
 
 // routeOfLocked is how a message gets into session id: what its MCP server told the daemon if it
@@ -145,7 +167,7 @@ func (d *Daemon) routeOfLocked(id string) proto.Route {
 	return proto.Route{}
 }
 
-// viaOf is the way to deliver into a session with route r, "" if there is none. A session in T3
+// viaOf is the way to hand a message over to a session with route r, "" if there is none. A session in T3
 // is reached through T3 only: its messaging socket is T3's to use, and T3 may not take a turn it
 // didn't start. live says the session's MCP server is connected, which the socket needs, as the
 // token dies with the server's process.
@@ -159,8 +181,8 @@ func viaOf(r proto.Route, live bool) string {
 	return ""
 }
 
-// candidateLocked finds the next message to deliver into session id, with how and where, or nil.
-// A message that is being delivered, that the hook has told the session about, whose delivery
+// candidateLocked finds the next message to hand over to session id, with how and where, or nil.
+// A message that is being handed over, that the hook has told the session about, whose handoff
 // failed, or that is too old, is passed over, and so is every message of a session that may not be
 // woken now (see wakesLocked). A session with a message and no way in is logged, once. Caller holds mu.
 func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, proto.Route) {
@@ -179,7 +201,7 @@ func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, 
 	if next == nil {
 		return nil, "", proto.Route{}
 	}
-	if !d.wakesLocked(id, wake) {
+	if !d.wakesLocked(id, wake) || d.hookBusyLocked(id) {
 		return nil, "", proto.Route{}
 	}
 	s := d.sessions[id]
@@ -196,28 +218,217 @@ func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, 
 	return next, via, route
 }
 
-// pushable says a message may still be delivered as a turn: it wasn't told to the session by the
-// hook, isn't on its way in already, hasn't failed, wasn't handed over before (Attempted: not even
-// by a daemon that has since restarted), and isn't too old.
+// pushable says a message may still be handed over as a turn: it isn't on its way in already, hasn't
+// failed, and wasn't handed over before (Attempted: not even by a daemon that has since
+// restarted). One the hook held for the end of a turn may (Held); any other the hook told the
+// session of may not, nor may one too old.
 func pushable(m *inMsg) bool {
-	return !m.Noticed && !m.Pushing && !m.PushFailed && !m.Attempted && time.Since(m.Arrived) <= pushMaxAge
+	if m.Pushing || m.PushFailed || m.Attempted {
+		return false
+	}
+	return m.Held || !m.Noticed && time.Since(waitedSince(m)) <= pushMaxAge
+}
+
+// waitedSince is when message m counts as having arrived: when it came, or, for one queued
+// through do not disturb, when the tag came off (#198). A message released then is as new as one
+// that came then, for how old it may be to go in as a turn and for whether it came during a turn.
+func waitedSince(m *inMsg) time.Time {
+	if m.Released.After(m.Arrived) {
+		return m.Released
+	}
+	return m.Arrived
+}
+
+// turnableLocked says message m may go into session id as a turn, whether or not the session is
+// at work now: it is pushable, the page's wake setting lets it through, and there is a way in.
+// Caller holds mu.
+func (d *Daemon) turnableLocked(id string, m *inMsg, wake pageSettings) bool {
+	return pushable(m) && d.wayInLocked(id, wake)
+}
+
+// holdableLocked says message m may be held for the end of session id's turn, which began at
+// turnStart, and go in as a turn then (#202): it wasn't handed over before, the page's wake setting
+// lets it through, and there is a way in. One that came during the turn may be any age, as a turn
+// can take longer than pushMaxAge and the agent was at work the whole time; one from before must
+// still be young enough, as one that aged during an absence stays a notice. Caller holds mu.
+func (d *Daemon) holdableLocked(id string, m *inMsg, wake pageSettings, turnStart time.Time) bool {
+	if m.Pushing || m.PushFailed || m.Attempted {
+		return false
+	}
+	if at := waitedSince(m); (turnStart.IsZero() || at.Before(turnStart)) && time.Since(at) > pushMaxAge {
+		return false
+	}
+	return d.wayInLocked(id, wake)
+}
+
+// wayInLocked says a message may go into session id as a turn, as far as the session goes: the
+// page's wake setting lets it through, and there is a way in. The Stop hook is one, for a session
+// whose last Stop could keep its turn going, inside T3 or out: what came during a turn is given at
+// its end, even with no socket. Caller holds mu.
+func (d *Daemon) wayInLocked(id string, wake pageSettings) bool {
+	if !d.wakesLocked(id, wake) {
+		return false
+	}
+	s := d.sessions[id]
+	if s != nil && s.stopContinues {
+		return true
+	}
+	return viaOf(d.routeOfLocked(id), s != nil && s.dropped.IsZero()) != ""
 }
 
 // queuedForPushLocked says message m of session id is on its way in as a turn, or will be: the
 // hook's notice leaves it alone, as it would be a second telling of what the turn says, and
-// would take the message out of the delivery for good. Caller holds mu.
+// would take the message out of the handoff for good. A session the hook has at work gets the
+// notice instead (#202). Caller holds mu.
 func (d *Daemon) queuedForPushLocked(id string, m *inMsg, wake pageSettings) bool {
 	if m.Pushing {
 		return true
 	}
-	if !pushable(m) || !d.wakesLocked(id, wake) {
-		return false
-	}
-	s := d.sessions[id]
-	return viaOf(d.routeOfLocked(id), s != nil && s.dropped.IsZero()) != ""
+	return !d.hookBusyLocked(id) && d.turnableLocked(id, m, wake)
 }
 
-// noWay says why a route can't be delivered into, without anything of it that is secret.
+// hookBusyLocked says Murmur's hook has session id at work: it ran for a prompt or a tool call,
+// and not yet for the end of the turn. Such a session is told of a message by the hook after its
+// next tool call, not given it as a turn (#202). Only where the end of the turn will be seen: the
+// Stop hook has run for the session before, or T3's database has its thread.
+//
+// In T3 the database ends a turn too, as one the user interrupts fires no Stop: a read of it that
+// began after the hook last ran, and finds no run of the thread queued or running, means the turn
+// is over, whatever the order in which a late hook and the run's end came. A session whose
+// connection dropped keeps its state through its grace, and one that reconnected after this
+// daemon restarted, before its hook has run here, is at work while T3 shows its thread's run going.
+// Outside T3 nothing but Stop ends a turn, so an interrupted session waits for its next prompt and
+// the Stop after it. Caller holds mu.
+func (d *Daemon) hookBusyLocked(id string) bool {
+	s := d.sessions[id]
+	if s == nil {
+		return false
+	}
+	st, inT3 := d.threadStateLocked(id)
+	if !s.hooked {
+		// Reconnected after a restart: at work while T3 shows its run going, and, for its first
+		// minute, until its thread has been read at all.
+		if !s.reconnect || d.routeOfLocked(id).T3Thread == "" {
+			return false
+		}
+		return st.Busy || !inT3 && time.Since(s.started) < reconnectHold
+	}
+	switch {
+	case s.busyAt.IsZero():
+		return false
+	case !inT3:
+		return s.stopSeen && !d.continuationLapsedLocked(s)
+	}
+	r := d.routeOfLocked(id)
+	return st.Busy || !d.threadRead[threadKey{r.T3Home, r.T3Thread}].After(s.busyAt)
+}
+
+// turnStartLocked is when the hook first saw session id's current turn, zero if it isn't at work
+// as far as the hook knows. Caller holds mu.
+func (d *Daemon) turnStartLocked(id string) time.Time {
+	if s := d.sessions[id]; s != nil {
+		return s.turnStart
+	}
+	return time.Time{}
+}
+
+// reconnectHold is how long a session that reconnected after a restart, whose hook hasn't run
+// here yet, counts as at work before its T3 thread has been read: a read that keeps failing
+// mustn't hold its messages for good.
+const reconnectHold = time.Minute
+
+// endTurnLocked ends session s's turn (#202): the messages that came during it and that the hook
+// never told it of are held, to go in as a turn with those it was told of, however long the turn
+// took. Stop ends a turn, and so does a read of T3's database that finds the run over. Caller holds
+// mu.
+func (d *Daemon) endTurnLocked(s *session, wake pageSettings) {
+	held := false
+	for _, m := range d.st.Inbox[s.id] {
+		if !m.Noticed && !m.Held && !s.turnStart.IsZero() && !waitedSince(m).Before(s.turnStart) && d.holdableLocked(s.id, m, wake, s.turnStart) {
+			m.Held, held = true, true
+		}
+	}
+	s.busyAt, s.turnStart = time.Time{}, time.Time{}
+	if held {
+		d.saveLocked()
+	}
+	d.kickPush()
+}
+
+// continueTurnLocked takes what keeps session s's turn going, at its end (#202, Tyler,
+// 2026-11-08): the messages that would otherwise be handed over as the next turn, those the hook
+// told it of and it hasn't read and those that came during the turn untold, for the Stop hook to
+// give it. The turn goes on with them, so the session is at work again: a message that comes now
+// is held for the turn's next end, not queued behind it in T3. Called after endTurnLocked, so
+// held messages count. The caller takes them out of the inbox and saves. Caller holds mu.
+//
+// None are taken once Claude Code would refuse the continuation (stopBlockCap): it would end the
+// turn with them gone. They are then handed over as a turn, as after a turn that ends without Stop.
+// None are taken from a session on do not disturb (#198) either: wayInLocked finds no way in for it.
+func (d *Daemon) continueTurnLocked(s *session, wake pageSettings) []*inMsg {
+	if s.continuations >= stopBlockCap || !d.wayInLocked(s.id, wake) {
+		return nil
+	}
+	var out []*inMsg
+	for _, m := range d.st.Inbox[s.id] {
+		if pushable(m) {
+			out = append(out, m)
+		}
+	}
+	if len(out) > 0 {
+		now := time.Now()
+		s.busyAt, s.turnStart, s.continuedAt = now, now, now
+		s.continuations++
+	}
+	return out
+}
+
+// stopBlockCap is how many times in a row Claude Code lets Stop hooks keep a turn going: it
+// overrides the next block and ends the turn, and counts afresh after each tool call (its hooks
+// reference, 2026-11-08). CLAUDE_CODE_STOP_HOOK_BLOCK_CAP raises it, and a user's own Stop hooks
+// that block count too, which this daemon doesn't see: a continuation they used up loses its
+// messages.
+const stopBlockCap = 8
+
+// continuationLapsedLocked says session s's last continuation was never seen to go on, and it no
+// longer counts as at work for it: no other hook of the session came within ContinueHold. The Stop
+// hook's answer can be lost (it gave up waiting just before it came): the agent then stopped, and
+// outside T3 nothing else would end the turn, so its messages would wait for the user's next
+// prompt. In T3 the database ends such a turn. Caller holds mu.
+func (d *Daemon) continuationLapsedLocked(s *session) bool {
+	return !s.continuedAt.IsZero() && time.Since(s.continuedAt) >= d.opt.ContinueHold
+}
+
+// nextLapseLocked is when the first continuation now pending lapses, zero if none is. Caller holds
+// mu.
+func (d *Daemon) nextLapseLocked() time.Time {
+	var next time.Time
+	for _, s := range d.sessions {
+		if at := s.continuedAt.Add(d.opt.ContinueHold); !s.continuedAt.IsZero() && (next.IsZero() || at.Before(next)) {
+			next = at
+		}
+	}
+	return next
+}
+
+// endLapsedTurnsLocked ends the turn of each session whose continuation lapsed outside T3, as Stop
+// would have: what came in the meantime is held, and goes in as a turn by the session's socket.
+// In T3 the database decides, as a continued turn can run longer than ContinueHold without a tool
+// call. A session is in T3 by its route, not by whether its thread has been read: a read that keeps
+// failing mustn't make a live turn end. Caller holds mu.
+func (d *Daemon) endLapsedTurnsLocked(wake pageSettings) {
+	for _, s := range d.sessions {
+		if !d.continuationLapsedLocked(s) {
+			continue
+		}
+		s.continuedAt = time.Time{}
+		if d.routeOfLocked(s.id).T3Thread == "" {
+			d.endTurnLocked(s, wake)
+		}
+	}
+}
+
+// noWay says why a message can't be handed over by a route, without anything of it that is secret.
 func noWay(r proto.Route, live bool) string {
 	switch {
 	case r.T3CLI != "":
@@ -238,8 +449,8 @@ func (d *Daemon) sessionNameLocked(id string) string {
 	return d.st.SessionNames[id]
 }
 
-// nextPushLocked takes the next message for session id and marks it as being delivered, or, if
-// there is none, ends the session's delivery goroutine. Caller holds mu.
+// nextPushLocked takes the next message for session id and marks it as being handed over, or, if
+// there is none, ends the session's handoff goroutine. Caller holds mu.
 func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 	m, via, route := d.candidateLocked(id, wake)
 	if m == nil {
@@ -248,20 +459,22 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 	}
 	m.Pushing = true
 	views := d.messageViewsLocked([]*inMsg{m}, true)
-	return &pushJob{id: id, addr: bus.Addr(d.device, id), msg: m, via: via, route: route, text: view.Turn(views[0])}
+	key := d.keyOfLocked(id)
+	views[0].Introduced = key != "" && d.introduced[key][m.Event.From]
+	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, msg: m, via: via, route: route, text: view.Turn(views[0])}
 }
 
-// deliver puts the message into the session, once. It is tried a second time, after PushRetry, only
+// handOver passes the message to the session's client, once. It is tried a second time, after PushRetry, only
 // if the first attempt never reached the way in (notReached): `t3 thread send` takes no key that
 // would make a repeat harmless, and the socket answers nothing, so a call that failed after it
-// started may have delivered the message, and a second one would make a second turn of it. A message
-// whose delivery failed that way is left to the hook's notice, which the agent still gets, and stays
+// started may have handed the message over, and a second one would make a second turn of it. A message
+// whose handoff failed that way is left to the hook's notice, which the agent still gets, and stays
 // so over a daemon restart (sendTurn marks it Attempted, and saves that, before the handoff).
-func (d *Daemon) deliver(ctx context.Context, j *pushJob) error {
+func (d *Daemon) handOver(ctx context.Context, j *pushJob) error {
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
 		if attempt > 0 {
-			d.log.Printf("session %s: nothing was sent to deliver a message through %s (%v); trying once more in %s",
+			d.log.Printf("session %s: nothing was sent to hand a message over through %s (%v); trying once more in %s",
 				j.addr, j.via, err, d.opt.PushRetry)
 			select {
 			case <-time.After(d.opt.PushRetry):
@@ -296,10 +509,11 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 		return ErrNoConsent
 	}
 	// A job can wait for a slot (pushSem) or for its retry, and in that time the thread can be
-	// settled, or its session idle past its wake setting: asked again before each handoff.
+	// settled, its session idle past its wake setting, or at work again: asked again before each
+	// handoff.
 	wake := d.wakeSnapshot()
 	d.mu.Lock()
-	ok := d.wakesLocked(j.id, wake)
+	ok := d.wakesLocked(j.id, wake) && !d.hookBusyLocked(j.id)
 	d.mu.Unlock()
 	if !ok {
 		return errNotNow
@@ -314,13 +528,13 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 			return msgsock.Send(ctx, j.route.MsgSocket, j.route.MsgToken, j.text)
 		})
 	}
-	return fmt.Errorf("no way to deliver by %s", j.via)
+	return fmt.Errorf("no way to hand a message over by %s", j.via)
 }
 
 // attempt runs send, the handoff of message m, after marking m Attempted and saving the mark: the
 // daemon may stop at any point of the call, and the next one has to know the message may be there.
 // If the mark can't be saved nothing is sent, and the message is left to the hook's notice, as after
-// any failed delivery. The mark comes off again if send never reached the way in (notReached), as
+// any failed handoff. The mark comes off again if send never reached the way in (notReached), as
 // nothing was sent. The save is to the file, which a restart of the process finds; a power cut may
 // lose it.
 func (d *Daemon) attempt(m *inMsg, send func() error) error {
@@ -346,23 +560,23 @@ func (d *Daemon) markAttempted(m *inMsg, v bool) error {
 	case err == nil:
 	case v:
 		m.Attempted = false
-		return fmt.Errorf("not delivering the message, as the mark that it was handed over can't be saved: %w", err)
+		return fmt.Errorf("not handing the message over, as the mark that it was handed over can't be saved: %w", err)
 	default:
 		d.log.Printf("saving state: %v", err)
 	}
 	return nil
 }
 
-// finishPush records how a delivery went. A delivered message leaves the inbox, wherever it is by
-// now (a session that takes a name takes the inboxes kept for it); one that failed is the hook's
-// again, and the first failure for a session is logged.
+// finishPush records how a handoff went. A message handed over leaves the inbox (see
+// outOfInboxLocked); one that failed is the hook's again, and the first failure for a session is
+// logged.
 func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	j.msg.Pushing = false
 	if errors.Is(err, ErrNoConsent) || errors.Is(err, errNotNow) {
 		// The user left, or the session may no longer be woken, on its way: it waits in the inbox,
-		// undelivered and not a failure. Unless the session turned out to be a delegate, whose
+		// not handed over, and not a failure. Unless the session turned out to be a delegate, whose
 		// inbox stays empty (#188).
 		d.clearChildInboxLocked(j.id)
 		if errors.Is(err, errNotNow) {
@@ -378,30 +592,89 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		j.msg.PushFailed = true
 		if !d.pushWarned[j.id] {
 			d.pushWarned[j.id] = true
-			d.log.Printf("session %s: delivering a message as a turn through %s failed (%v); its messages show as notices through the hook instead",
+			d.log.Printf("session %s: handing a message over as a turn through %s failed (%v); its messages show as notices through the hook instead",
 				j.addr, j.via, err)
 		}
 		return
 	}
-	for id, box := range d.st.Inbox {
-		for i, m := range box {
-			if m == j.msg {
+	d.outOfInboxLocked(j.id, j.msg, "handed", "as a turn, through "+j.via)
+	d.introduceLocked(j.key, j.msg.Event.From)
+	d.saveLocked()
+	delete(d.pushWarned, j.id)
+}
+
+// delivery is a message, msg, given to session id.
+type delivery struct {
+	id  string
+	msg *inMsg
+}
+
+// keyOfLocked is the conversation session id is in now (see Daemon.introduced), "" if it isn't
+// registered. Caller holds mu.
+func (d *Daemon) keyOfLocked(id string) string {
+	if s := d.sessions[id]; s != nil {
+		return s.key
+	}
+	return ""
+}
+
+// introduceLocked records that conversation key has had a turn from sender from. Caller holds mu.
+func (d *Daemon) introduceLocked(key, from string) {
+	if key == "" {
+		return
+	}
+	if d.introduced[key] == nil {
+		d.introduced[key] = map[string]bool{}
+	}
+	d.introduced[key][from] = true
+}
+
+// wholeViewsLocked renders msgs, given whole to the sessions in given, and records the sessions as
+// introduced to their senders. A message is rendered as from a sender already introduced only if
+// every session it was given to had been: the hook speaks for several sessions at once, and shows
+// a message for everyone once. Caller holds mu.
+func (d *Daemon) wholeViewsLocked(msgs []*inMsg, given []delivery) []proto.MessageView {
+	views := d.messageViewsLocked(msgs, true)
+	for i := range views {
+		views[i].Introduced = true
+		for _, g := range given {
+			if key := d.keyOfLocked(g.id); g.msg.Event.ID == views[i].ID && (key == "" || !d.introduced[key][views[i].From]) {
+				views[i].Introduced = false
+			}
+		}
+	}
+	for _, g := range given {
+		d.introduceLocked(d.keyOfLocked(g.id), g.msg.Event.From)
+	}
+	return views
+}
+
+// outOfInboxLocked records that message m has gone to session id: it leaves the inbox, wherever it
+// is by now (a session that takes a name takes the inboxes kept for it), and the page's notes and
+// the log say so. verb is "handed" for a handoff to the session's client, which delivers it when
+// the turn carrying it starts, and "delivered" for the hook's whole message, which is in the
+// agent's context (#187); how ends the line. The caller saves the state. Caller holds mu.
+func (d *Daemon) outOfInboxLocked(id string, m *inMsg, verb, how string) {
+	for inbox, box := range d.st.Inbox {
+		for i, o := range box {
+			if o == m {
 				if box = append(box[:i:i], box[i+1:]...); len(box) == 0 {
-					delete(d.st.Inbox, id)
+					delete(d.st.Inbox, inbox)
 				} else {
-					d.st.Inbox[id] = box
+					d.st.Inbox[inbox] = box
 				}
 				break
 			}
 		}
 	}
-	d.saveLocked()
-	delete(d.pushWarned, j.id)
-	d.pushedAt[j.id] = time.Now()
-	d.noteConversationLocked() // the agent now has the message; its answer may soon follow
-	e := j.msg.Event
-	d.noteLocked(time.Now(), fmt.Sprintf("delivered %q from %s to %s as a turn, through %s", e.Subject, e.From, j.addr, j.via))
-	d.log.Printf("delivered message %s to session %s as a turn, through %s", e.ID, j.addr, j.via)
+	d.pushedAt[id] = time.Now()
+	d.noteConversationLocked() // the client has the message for the agent; its answer may soon follow
+	e, addr := m.Event, bus.Addr(d.device, id)
+	d.noteLocked(time.Now(), fmt.Sprintf("%s %q from %s to %s %s", verb, e.Subject, e.From, addr, how))
+	if verb == "handed" {
+		how += "; it is delivered when that turn starts"
+	}
+	d.log.Printf("%s message %s to session %s %s", verb, e.ID, addr, how)
 }
 
 // rememberRouteLocked keeps where a session in T3 is, so a message for it still reaches the
@@ -423,9 +696,9 @@ func (d *Daemon) rememberRouteLocked(s *session) {
 // and isn't running: a thread's MCP server is a new session, with an ID of its own, each time T3
 // restarts it (after 30 idle minutes) or a connection is made again, and the one it replaces, in
 // its grace or stopped, still holds the thread. A message for everyone, or for the device, goes
-// into both inboxes, and would be delivered to the one thread twice, or, from the new session,
+// into both inboxes, and would be handed to the one thread twice, or, from the new session,
 // back to itself. What the old session had unread goes to the new one, which has the thread: with
-// its route gone it could no longer be delivered, and a session in its grace is not one whose
+// its route gone it could no longer be handed over, and a session in its grace is not one whose
 // inbox the name's next holder adopts (see adoptLocked). Caller holds mu.
 func (d *Daemon) retireRoutesLocked(s *session, want t3Route) {
 	for id, r := range d.st.T3Routes {
@@ -445,7 +718,7 @@ func (d *Daemon) retireRoutesLocked(s *session, want t3Route) {
 
 // takeInboxLocked moves the messages session from has unread into s's inbox, in the order they
 // arrived. A message s has a copy of (one for everyone is in both inboxes) stays once, as s's copy,
-// unless from's is on its way in as a turn: then that one stays, so it is delivered once and is
+// unless from's is on its way in as a turn: then that one stays, so it is handed over once and is
 // removed from wherever it is when it has been. A message s never needs from the other session
 // stays behind (see hadCopyLocked). Caller holds mu.
 func (d *Daemon) takeInboxLocked(s *session, from string) {

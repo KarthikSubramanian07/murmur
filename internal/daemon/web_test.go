@@ -287,13 +287,21 @@ func TestPageStateMarksStaleDevice(t *testing.T) {
 	}
 }
 
-// The API gives nothing without the daemon's token, and nothing to a request that names another
-// host.
+// The API gives nothing without the page's token, and nothing to a request that names another
+// host. The daemon's own token, which sessions use, is not the page's (#42): the address reaches
+// the browser's history and extensions, and the daemon's token lets its holder send as this device.
 func TestPageNeedsTheToken(t *testing.T) {
 	d := newDevice(t, newRemote(t))
 	pg := d.page()
-	if info := d.infoFile(t); info.Token != pg.token {
-		t.Fatalf("the page's token is not the daemon's: %q and %q", pg.token, info.Token)
+	info := d.infoFile(t)
+	if info.PageToken == "" || info.PageToken != pg.token {
+		t.Fatalf("the address carries %q, daemon.json says the page's token is %q", pg.token, info.PageToken)
+	}
+	if info.PageToken == info.Token {
+		t.Fatal("the page and the sessions share a token")
+	}
+	if code, body := pg.call("GET", "/api/state", info.Token, ""); code != http.StatusUnauthorized {
+		t.Errorf("the sessions' token opens the page's API: %d %s", code, body)
 	}
 	for _, c := range []struct{ method, path, body string }{
 		{"GET", "/api/state", ""},
@@ -559,7 +567,7 @@ func TestPageMessageCursorAcrossTheRingWrapping(t *testing.T) {
 func TestPageSettingsPersist(t *testing.T) {
 	d := newDevice(t, newRemote(t))
 	pg := d.page()
-	def := web.Settings{Wake: web.Wake{When: web.WakeWithin}, DefaultMinutes: 3}
+	def := web.Settings{Wake: web.Wake{When: web.WakeWithin}, Busy: web.BusySubject, DefaultMinutes: 3}
 	if got := pg.settings(); !reflect.DeepEqual(got, def) {
 		t.Fatalf("defaults: %+v, want %+v", got, def)
 	}
@@ -567,6 +575,8 @@ func TestPageSettingsPersist(t *testing.T) {
 	want := web.Settings{
 		Wake:           web.Wake{When: web.WakeWithin, Minutes: 12},
 		SessionWake:    map[string]web.Wake{"quiet-otter": {When: web.WakeNever}, "brave-heron": {When: web.WakeAlways}},
+		Busy:           web.BusyWhole,
+		SessionBusy:    map[string]string{"quiet-otter": web.BusySubject},
 		DefaultMinutes: 3,
 	}
 	body, _ := json.Marshal(want)
@@ -592,6 +602,10 @@ func TestPageSettingsPersist(t *testing.T) {
 		`{"wake":{"when":"never"},"sessionWake":{"quiet-otter":{"when":"later"}}}`,
 		`{"wake":{"when":"never"},"sessionWake":{"":{"when":"never"}}}`,
 		`{"wake":{"when":"never"},"extra":1}`,
+		`{"wake":{"when":"never"},"busy":"body"}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"quiet-otter":""}}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"quiet-otter":"all"}}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"":"whole"}}`,
 		`not json`,
 	} {
 		if code, out := pg.call("PUT", "/api/settings", pg.token, bad); code != http.StatusBadRequest {
@@ -630,8 +644,20 @@ func TestPageSettingsPersist(t *testing.T) {
 		t.Fatalf("PUT over a bad file: %d %s", code, out)
 	}
 	d.restart()
-	if got := d.page().settings(); got.Wake.When != web.WakeNever {
+	if got := d.page().settings(); got.Wake.When != web.WakeNever || got.Busy != web.BusySubject {
 		t.Fatalf("after saving over a bad file: %+v", got)
+	}
+
+	// A file from before the busy setting (#204) keeps its wake setting, and the busy one is the
+	// default.
+	d.stop()
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"wake":{"when":"always"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d.start()
+	old := web.Settings{Wake: web.Wake{When: web.WakeAlways}, Busy: web.BusySubject, DefaultMinutes: 3}
+	if got := d.page().settings(); !reflect.DeepEqual(got, old) {
+		t.Fatalf("with a file from before the busy setting: %+v, want %+v", got, old)
 	}
 }
 
@@ -710,7 +736,7 @@ func TestSessionKeepsDaemonUpWithPage(t *testing.T) {
 }
 
 // A daemon whose first sync failed reads the logs it then finds as history, skipping what was sent
-// before it started, but delivers what was sent since to the sessions registered meanwhile. The
+// before it started, but queues what was sent since for the sessions registered meanwhile. The
 // page shows those messages too, and not the history.
 func TestPageMessagesAfterAFailedFirstSync(t *testing.T) {
 	remote := newRemote(t)
@@ -745,9 +771,9 @@ func TestPageMessagesAfterAFailedFirstSync(t *testing.T) {
 	}
 }
 
-// The page's token is the daemon's, which also lets a program speak for this device's sessions,
-// so it stays where it was: not in the log, not readable by other users in daemon.json, and not
-// sent on as a Referer by anything the page links to.
+// The page's token lets a program use the page's API, which writes this device's settings and
+// session tags, so it stays private: not in the log, not readable by other users in daemon.json,
+// and not sent on as a Referer by anything the page links to.
 func TestPageTokenStaysPrivate(t *testing.T) {
 	var out syncBuf
 	d := newDeviceWith(t, newRemote(t), func(d *device) { d.logTo = &out })

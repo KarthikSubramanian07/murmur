@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/proc"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 func lockPath(t *testing.T) (gitDir, lock string) {
@@ -63,5 +64,26 @@ func TestWaitGoneTimesOutOnADaemonThatStays(t *testing.T) {
 	defer l.Close()
 	if held, err := WaitGone(context.Background(), gitDir, 200*time.Millisecond); !held || !errors.Is(err, ErrStillRunning) {
 		t.Errorf("held %v, err %v; want ErrStillRunning", held, err)
+	}
+}
+
+// The page's address carries the page's token, not the daemon's (#42). A daemon from before the
+// page had one has only the daemon's, which its page takes.
+func TestPageURLTokens(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		info proto.Info
+		want string
+	}{
+		{"own token", proto.Info{Web: "127.0.0.1:5000", Token: "sessions", PageToken: "page"}, "http://127.0.0.1:5000/#token=page"},
+		{"older daemon", proto.Info{Web: "127.0.0.1:5000", Token: "sessions"}, "http://127.0.0.1:5000/#token=sessions"},
+	} {
+		got, err := (&Client{info: c.info}).PageURL()
+		if err != nil || got != c.want {
+			t.Errorf("%s: %q, %v; want %q", c.name, got, err, c.want)
+		}
+	}
+	if _, err := (&Client{info: proto.Info{Token: "sessions"}}).PageURL(); !errors.Is(err, ErrNoPage) {
+		t.Errorf("no page: %v", err)
 	}
 }

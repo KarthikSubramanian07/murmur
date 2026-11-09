@@ -1,7 +1,7 @@
 # Setting Murmur up in a repo (for coding agents)
 
 You are reading this because your user asked you to set Murmur up in a repo that doesn't use it
-yet. This page is yours to follow, step by step. Written 2026-11-01.
+yet. This page is yours to follow, step by step.
 
 Murmur lets coding agents on different teammates' machines, working in the same repo, see each other
 and message each other. It runs through the repo's own git remote; the one thing it sends anywhere
@@ -54,9 +54,8 @@ this OS:
       irm https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1 | iex
 
 Your shell may not see the new PATH until it is restarted: use the full path the installer printed.
-If the addresses answer "not found", step 2 of join.md says why. Then run `mur version` again (by
-that full path). If it still prints a version older than 0.2.0, stop and tell your user: init from
-that version wouldn't push the section anywhere.
+Then run `mur version` again (by that full path). If it still prints a version older than 0.2.0,
+stop and tell your user: init from that version wouldn't push the section anywhere.
 
 ## 3. Run init
 

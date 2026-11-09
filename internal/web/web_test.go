@@ -26,7 +26,8 @@ type fakeSource struct {
 	sets     int
 	cursor   string
 	unmuted  [][2]string
-	watched  []bool // what Watched said of each State call
+	tagged   []string // each SetTags: addr +added -removed
+	watched  []bool   // what Watched said of each State call
 }
 
 func (f *fakeSource) State(ctx context.Context) (State, error) {
@@ -65,6 +66,13 @@ func (f *fakeSource) Unmute(ctx context.Context, by, muted string) error {
 	return nil
 }
 
+func (f *fakeSource) SetTags(ctx context.Context, addr string, add, remove []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tagged = append(f.tagged, addr+" +"+strings.Join(add, ",")+" -"+strings.Join(remove, ","))
+	return nil
+}
+
 // seen returns what the source has been handed, under its lock: the server wrote it on another
 // goroutine.
 func (f *fakeSource) seen() (sets int, cursor string, unmuted [][2]string) {
@@ -82,7 +90,7 @@ func newFake() *fakeSource {
 				{Name: "brave-heron", Agent: "codex", Branch: "-x"},
 			},
 		}}},
-		settings: Settings{Wake: Wake{When: WakeWithin}, DefaultMinutes: 3},
+		settings: Settings{Wake: Wake{When: WakeWithin}, Busy: BusySubject, DefaultMinutes: 3},
 	}
 }
 
@@ -194,7 +202,7 @@ func TestTokenRequired(t *testing.T) {
 	}
 
 	// The page itself loads without the token, so it can read it from the fragment.
-	for _, path := range []string{"/", "/assets/app.js", "/assets/style.css", "/assets/theme.js",
+	for _, path := range []string{"/", "/assets/app.js", "/assets/style.css",
 		"/assets/icons.js", "/assets/favicon.svg", "/assets/fonts/inter-latin-wght-normal.woff2", "/assets/THIRD_PARTY_NOTICES"} {
 		if resp := h.do("GET", path, host, "", ""); resp.StatusCode != http.StatusOK {
 			t.Errorf("GET %s without token: %d, want 200", path, resp.StatusCode)
@@ -280,6 +288,8 @@ func TestSettingsRoundTrip(t *testing.T) {
 			"brave-heron": {When: WakeAlways},
 			"amber-finch": {When: WakeWithin},
 		},
+		Busy:        BusyWhole,
+		SessionBusy: map[string]string{"quiet-otter": BusySubject, "brave-heron": BusyWhole},
 	}
 	body, _ := json.Marshal(want)
 	saved := decode[Settings](t, h.ok("PUT", "/api/settings", string(body)))
@@ -301,6 +311,11 @@ func TestSettingsRoundTrip(t *testing.T) {
 		`{"wake":{"when":"never"},"sessionWake":{"quiet-otter":{"when":"maybe"}}}`,
 		`{"wake":{"when":"never"},"sessionWake":{"":{"when":"never"}}}`,
 		`{"wake":{"when":"never"},"extra":true}`,
+		`{"wake":{"when":"never"},"busy":"everything"}`,
+		`{"wake":{"when":"never"},"busy":5}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"quiet-otter":""}}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"quiet-otter":"maybe"}}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"":"whole"}}`,
 		`{"wake":`,
 		``,
 	} {

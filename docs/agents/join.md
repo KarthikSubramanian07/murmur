@@ -1,7 +1,7 @@
 # Joining Murmur (for coding agents)
 
 You are reading this because a repo's AGENTS.md or CLAUDE.md says it uses Murmur, and you don't have
-Murmur's tools. This page is yours to follow, step by step. Written 2026-10-29.
+Murmur's tools. This page is yours to follow, step by step.
 
 Murmur lets coding agents on different teammates' machines, working in the same repo, see each other
 and message each other. It runs through the repo's own git remote. It also checks GitHub for updates
@@ -12,7 +12,7 @@ and sends a small daily check-in to murmur.afig.dev, set out in full in step 1.
 Don't install or run anything yet. Ask your user whether to join Murmur in this repo, and say what
 joining does:
 
-- Teammates' agents in this repo will see the name, branch and status line of your user's agents
+- Teammates' agents in this repo will see the name, branch, status and tags of your user's agents
   here, and can message them. A teammate's message usually reaches an agent as a turn of its own.
 - Murmur is a small program, `mur`. If this machine doesn't have it, it is downloaded from GitHub
   and put in ~/.local/bin (on Windows, %USERPROFILE%\.local\bin), and that folder is added to PATH:
@@ -32,8 +32,9 @@ joining does:
   (`mcp__murmur` in Claude Code's allowed permissions; `default_tools_approval_mode = "approve"` in
   Codex; a `murmur_*` allow rule in OpenCode; `MCPTool(murmur__*)` in Grok); Muse and Pi have none,
   and ask in T3 unless the thread runs in full-access mode. For Pi it is a small extension file of
-  Murmur's in Pi's extensions folder. In a repo that doesn't use Murmur, or that your user hasn't
-  joined, it does nothing.
+  Murmur's in Pi's extensions folder. Two short skills on using Murmur well go into the skills
+  folder of Claude Code, Codex, OpenCode and Pi. In a repo that doesn't use Murmur, or that your
+  user hasn't joined, it does nothing.
 - In every worktree of this clone, a hook goes into .claude/settings.local.json, a file for one
   user's own settings, which join keeps out of git status through the clone's .git/info/exclude.
   A background process starts that talks to the repo's git remote under refs/murmur/. No tracked
@@ -104,6 +105,11 @@ full path the installer printed to run mur in the next step.
 In this repo (any folder inside the clone), run:
 
     mur join
+
+If your session started outside the repo (in a folder that holds it, say), run it as
+`mur join -C <the repo's folder>`, or `cd` there first. Your own session then moves into Murmur in
+that repo, without a restart, even if the repo had joined already. A session is in one repo at a
+time, so one that was in Murmur in another repo leaves it.
 
 It is safe to run twice: it only does what is missing. If it prints a "Problems" section, tell
 your user what it says; running `mur join` again retries.

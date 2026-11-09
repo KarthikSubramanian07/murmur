@@ -20,7 +20,7 @@ import (
 
 // ErrNotConnected is what Send's error wraps when it could not connect to the socket, so that
 // nothing was written: the one failure that is safe to try again. A failure after the connection,
-// a write that errors, may have delivered some or all of the lines, and the socket answers nothing
+// a write that errors, may have written some or all of the lines, and the socket answers nothing
 // that would say which.
 var ErrNotConnected = errors.New("couldn't connect")
 

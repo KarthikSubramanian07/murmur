@@ -27,8 +27,8 @@ func TestReturnedSessionKeepsCatchUp(t *testing.T) {
 	defer d.mu.Unlock()
 	d.newSessionLocked(&proto.Hello{ID: "bbbbbb"}, "claude-code", "", "bbbbbb")
 	d.newSessionLocked(&proto.Hello{ID: "cccccc"}, "claude-code", "", "cccccc")
-	d.deliverLocked(msg("bbbbbb"), modeCatchUp)
-	d.deliverLocked(msg("cccccc"), modeCatchUp)
+	d.queueLocked(msg("bbbbbb"), modeCatchUp)
+	d.queueLocked(msg("cccccc"), modeCatchUp)
 	if n := len(d.st.Inbox["bbbbbb"]); n != 1 {
 		t.Errorf("the returned session's inbox has %d messages, want the one sent while it was stopped", n)
 	}
@@ -36,7 +36,7 @@ func TestReturnedSessionKeepsCatchUp(t *testing.T) {
 		t.Errorf("a session new here got %d messages sent before it started", n)
 	}
 	// After a long outage the backlog is skipped, whether or not the session came back first.
-	d.deliverLocked(msg("bbbbbb"), modeSkip)
+	d.queueLocked(msg("bbbbbb"), modeSkip)
 	if n := len(d.st.Inbox["bbbbbb"]); n != 1 {
 		t.Errorf("a skip gave the returned session a message: its inbox has %d, want 1", n)
 	}
@@ -64,15 +64,15 @@ func TestForwardedCatchUpIsJudgedByItsRecipient(t *testing.T) {
 	if h := d.st.NameHolders[nameX]; h != "cccccc" {
 		t.Fatalf("the fresh session didn't take the name: its holder is %q", h)
 	}
-	d.deliverLocked(sent("while the daemon was down", 3*time.Minute), modeCatchUp)
+	d.queueLocked(sent("while the daemon was down", 3*time.Minute), modeCatchUp)
 	if n := len(d.st.Inbox["cccccc"]); n != 1 {
 		t.Fatalf("the holder's inbox has %d messages, want the one the stopped session would have caught up on", n)
 	}
 	if n := len(d.st.Inbox["bbbbbb"]); n != 0 {
 		t.Errorf("the stopped session kept %d messages, which are the holder's", n)
 	}
-	d.deliverLocked(sent("history", 8*time.Minute), modeSkip) // before bbbbbb stopped, 5 minutes ago
-	d.deliverLocked(sent("since the holder started", 0), modeSkip)
+	d.queueLocked(sent("history", 8*time.Minute), modeSkip) // before bbbbbb stopped, 5 minutes ago
+	d.queueLocked(sent("since the holder started", 0), modeSkip)
 	var got []string
 	for _, m := range d.st.Inbox["cccccc"] {
 		got = append(got, m.Event.Subject)
@@ -82,9 +82,9 @@ func TestForwardedCatchUpIsJudgedByItsRecipient(t *testing.T) {
 	}
 }
 
-// #30. A skip, after a daemon was down longer than catchUpLimit, delivers to a stopped session
+// #30. A skip, after a daemon was down longer than catchUpLimit, queues for a stopped session
 // what was sent after it stopped, with the minute's allowance, and before StoppedInbox ran out; to
-// everyone else it delivers nothing, and a session that has registered again is judged by when it
+// everyone else it queues nothing, and a session that has registered again is judged by when it
 // started, as in any skip.
 func TestSkipKeepsInboxesOfStoppedSessions(t *testing.T) {
 	now := time.Now()
@@ -109,7 +109,7 @@ func TestSkipKeepsInboxesOfStoppedSessions(t *testing.T) {
 		sent("here-0001/cccccc", "to nobody kept", now.Add(-20*time.Minute)),
 		sent("here-0001/dddddd", "to a session that is back", now.Add(-20*time.Minute)),
 	} {
-		d.deliverLocked(e, modeSkip)
+		d.queueLocked(e, modeSkip)
 	}
 	subjects := func(id string) string {
 		var got []string

@@ -1,7 +1,12 @@
 // Package hook is the Claude Code hook. After each tool call and each prompt it asks the daemon
 // for messages this session hasn't been told about, and adds one line per message (sender and
-// subject, never the body) to the agent's context. Before and after each tool call that could run
-// a command it also tells the daemon, which finds the commits the call made (#21).
+// subject) to the agent's context, with how many are unread; or, where the page's setting says to,
+// each message whole, as its turn would read (#204). Before and after each
+// tool call that could run a command it also tells the daemon, which finds the commits the call
+// made (#21). Those calls and prompts tell the daemon the session is at work. At the end of a turn
+// (Stop) the hook asks for what the session was told of and hasn't read, and anything that came
+// during the turn, and if there is any it keeps the turn going with it, as each message's turn
+// would read; if not, the session is idle (#202).
 //
 // It never blocks or fails the agent: any problem, including no daemon running, means it
 // prints nothing and exits 0. Before a tool call it never prints anything at all, and the time it
@@ -35,6 +40,9 @@ type input struct {
 	// ToolUseID is on PreToolUse, PostToolUse and PostToolUseFailure alike, and the same for one
 	// call: it is what pairs the two ends (measured on Claude Code 2.1.312, 2026-10-29).
 	ToolUseID string `json:"tool_use_id"`
+	// AgentID is set on the hooks of a subagent's tool calls, which carry the parent's session_id
+	// (Claude Code 2.1.312, 2026-10-29). What the hook prints for one goes to the subagent.
+	AgentID string `json:"agent_id"`
 }
 
 type output struct {
@@ -44,16 +52,24 @@ type output struct {
 	} `json:"hookSpecificOutput"`
 }
 
+// stopOutput is a Stop hook's answer that keeps the turn going: Claude Code doesn't stop, and gives
+// the agent reason as what to do next.
+type stopOutput struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+}
+
 // Events the hook answers.
 const (
 	preTool     = "PreToolUse"
 	postTool    = "PostToolUse"
 	postFailure = "PostToolUseFailure"
+	stop        = "Stop"
 )
 
 // events are those the hook acts on. A failing tool call fires PostToolUseFailure, not
 // PostToolUse, so a `git commit && git push` whose push failed still has its end seen.
-var events = map[string]bool{preTool: true, postTool: true, postFailure: true, "UserPromptSubmit": true, "SessionStart": true}
+var events = map[string]bool{preTool: true, postTool: true, postFailure: true, stop: true, "UserPromptSubmit": true, "SessionStart": true}
 
 // NoticeTimeout bounds the hook when it only fetches notices: it runs after the call, and a daemon
 // that answers slowly is not worth waiting on.
@@ -125,6 +141,10 @@ func Run(stdin io.Reader, stdout io.Writer) {
 	if in.SessionID == "" || !events[in.Event] {
 		return
 	}
+	if in.Event == stop {
+		turnEnd(in, stdout)
+		return
+	}
 	op := bracketOp(in)
 	// Neither PreToolUse nor PostToolUseFailure delivers notices: the next PostToolUse or prompt
 	// does, and a PreToolUse prints nothing at all.
@@ -155,22 +175,48 @@ func Run(stdin io.Reader, stdout io.Writer) {
 			defer wg.Done()
 			defer func() { recover() }()
 			c.Do(ctx, proto.Request{Op: op, ClaudeSession: in.SessionID, ClientPID: claudePID(),
-				ToolUseID: in.ToolUseID, Cwd: in.Cwd, GitDir: gitDir})
+				ToolUseID: in.ToolUseID, Cwd: in.Cwd, GitDir: gitDir, Subagent: in.AgentID != ""})
 		}()
 	}
 	var resp proto.Response
 	if wantNotices {
 		nctx, ncancel := context.WithTimeout(ctx, NoticeTimeout)
 		resp, err = c.Do(nctx, proto.Request{Op: proto.OpNotices, ClaudeSession: in.SessionID, ClientPID: claudePID(),
-			Transcript: in.TranscriptPath})
+			Transcript: in.TranscriptPath, Subagent: in.AgentID != "", Whole: true})
 		ncancel()
 	}
 	wg.Wait()
-	if !wantNotices || err != nil || len(resp.Messages) == 0 {
+	if !wantNotices || err != nil {
+		return
+	}
+	text := view.Hook(resp.Delivered, resp.Messages, resp.Unread)
+	if text == "" {
 		return
 	}
 	var out output
 	out.HookSpecificOutput.HookEventName = in.Event
-	out.HookSpecificOutput.AdditionalContext = view.Notices(resp.Messages)
+	out.HookSpecificOutput.AdditionalContext = text
 	json.NewEncoder(stdout).Encode(out)
+}
+
+// turnEnd tells the daemon the turn ended, and keeps it going with the messages the daemon gives
+// back, if any. They are delivered once the daemon answers: a hook that gave up waiting
+// (NoticeTimeout) just before the answer came loses them, the risk #204's whole messages take too.
+func turnEnd(in input, stdout io.Writer) {
+	ctx, cancel := context.WithTimeout(context.Background(), NoticeTimeout)
+	defer cancel()
+	gitDir, err := findClone(ctx, in.Cwd)
+	if err != nil {
+		return
+	}
+	c, err := client.Connect(ctx, gitDir, false)
+	if err != nil {
+		return
+	}
+	resp, err := c.Do(ctx, proto.Request{Op: proto.OpTurnEnd, ClaudeSession: in.SessionID, ClientPID: claudePID(),
+		Subagent: in.AgentID != "", Continues: true})
+	if err != nil || len(resp.Delivered) == 0 {
+		return
+	}
+	json.NewEncoder(stdout).Encode(stopOutput{Decision: "block", Reason: view.Hook(resp.Delivered, nil, 0)})
 }

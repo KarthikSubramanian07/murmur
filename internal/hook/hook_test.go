@@ -16,6 +16,7 @@ import (
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/view"
 )
 
 // fakeDaemon serves the daemon's protocol for the clone at gitDir: answer gives the response line
@@ -203,8 +204,130 @@ func TestNoticesCarryTheTranscriptPath(t *testing.T) {
 			if r.Transcript != "/home/u/.claude/projects/p/claude-x.jsonl" {
 				t.Errorf("the notices request carries transcript %q", r.Transcript)
 			}
+			if !r.Whole {
+				t.Errorf("the notices request doesn't say the hook prints whole messages (#229)")
+			}
 			return
 		}
 	}
 	t.Errorf("the hook sent no notices request: %+v", requests())
+}
+
+// The end of a turn (Stop) tells the daemon the session is idle, and prints nothing (#202).
+func TestStopTellsTheDaemonTheTurnEnded(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpNotices {
+			return `{"ok":true,"self":"fake-0001/aaaaaa","messages":[{"id":"m1","from":"other-0001/bbbbbb","subject":"not for Stop"}],"unread":1}`
+		}
+		return `{"ok":true}`
+	})
+	if out, _ := run("Stop", repo); out != "" {
+		t.Errorf("Stop printed %q", out)
+	}
+	var ended bool
+	for _, r := range requests() {
+		switch r.Op {
+		case proto.OpTurnEnd:
+			ended = r.ClaudeSession == "claude-x" && r.Continues
+		case proto.OpNotices:
+			t.Error("Stop asked for notices")
+		}
+	}
+	if !ended {
+		t.Errorf("the daemon wasn't told the turn of claude-x ended, by a hook that can keep it going: %+v", requests())
+	}
+}
+
+// A subagent's tool call (agent_id in the payload) asks for notices as a subagent's, so the daemon
+// knows the session is at work but tells it nothing there (#188, #202). A command it runs is
+// bracketed as a subagent's too, so it doesn't count as the session's own hook.
+func TestASubagentsCallIsMarked(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
+	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+		payload, _ := json.Marshal(map[string]string{"session_id": "claude-x", "hook_event_name": event,
+			"cwd": repo, "tool_name": "Bash", "tool_use_id": "toolu_2", "agent_id": "agent-1"})
+		hook.Run(bytes.NewReader(payload), &bytes.Buffer{})
+	}
+	seen := map[string]bool{}
+	for _, r := range requests() {
+		seen[r.Op] = true
+		if r.Op != proto.OpPing && !r.Subagent { // the client's ping, finding the daemon, speaks for nobody
+			t.Errorf("a subagent's %s request isn't marked as one", r.Op)
+		}
+	}
+	for _, op := range []string{proto.OpNotices, proto.OpToolStart, proto.OpToolEnd} {
+		if !seen[op] {
+			t.Errorf("the hook sent no %s request: %+v", op, requests())
+		}
+	}
+}
+
+// A count with no new messages, which the daemon sends when the number changed, is shown alone.
+func TestTheUnreadCountAlone(t *testing.T) {
+	repo := newRepo(t)
+	fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpNotices {
+			return `{"ok":true,"self":"fake-0001/aaaaaa","unread":2}`
+		}
+		return `{"ok":true}`
+	})
+	out, _ := run("PostToolUse", repo)
+	if !strings.Contains(out, "2 messages unread") {
+		t.Errorf("PostToolUse printed %q, want the count", out)
+	}
+}
+
+// A message the daemon gives whole (#204) is added to the agent's context as its turn would read,
+// before the count of what is left unread.
+func TestDeliveredMessagesAreShownWhole(t *testing.T) {
+	repo := newRepo(t)
+	fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpNotices {
+			return `{"ok":true,"self":"fake-0001/aaaaaa","unread":1,"delivered":[{"id":"m1","from":"other-0001/bbbbbb",` +
+				`"fromName":"brave-heron","subject":"auth middleware?","body":"Are you changing it?"}]}`
+		}
+		return `{"ok":true}`
+	})
+	out, _ := run("PostToolUse", repo)
+	var got struct {
+		HookSpecificOutput struct {
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("PostToolUse printed %q: %v", out, err)
+	}
+	m := proto.MessageView{ID: "m1", From: "other-0001/bbbbbb", FromName: "brave-heron", Subject: "auth middleware?",
+		Body: "Are you changing it?"}
+	if want := view.Hook([]proto.MessageView{m}, nil, 1); got.HookSpecificOutput.AdditionalContext != want {
+		t.Errorf("the hook added %q, want %q", got.HookSpecificOutput.AdditionalContext, want)
+	}
+}
+
+// The messages the daemon gives at the end of a turn keep it going: the Stop hook blocks the stop,
+// with each message as its turn would read as the reason, which Claude Code gives the agent (#202).
+func TestStopKeepsTheTurnGoingWithItsMessages(t *testing.T) {
+	repo := newRepo(t)
+	fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpTurnEnd {
+			return `{"ok":true,"delivered":[{"id":"m1","from":"other-0001/bbbbbb",` +
+				`"fromName":"brave-heron","subject":"auth middleware?","body":"Are you changing it?"}]}`
+		}
+		return `{"ok":true}`
+	})
+	out, _ := run("Stop", repo)
+	var got struct {
+		Decision string `json:"decision"`
+		Reason   string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("Stop printed %q: %v", out, err)
+	}
+	m := proto.MessageView{ID: "m1", From: "other-0001/bbbbbb", FromName: "brave-heron", Subject: "auth middleware?",
+		Body: "Are you changing it?"}
+	if want := view.Hook([]proto.MessageView{m}, nil, 0); got.Decision != "block" || got.Reason != want {
+		t.Errorf("Stop printed %+v, want block with %q", got, want)
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // Ago renders how long ago t was, coarsely.
@@ -95,6 +96,14 @@ func Who(r proto.Response) string {
 	default:
 		fmt.Fprintf(&b, "You are %s.\n", r.Self)
 	}
+	if r.Filter != "" {
+		fmt.Fprintf(&b, "Sessions tagged %s:\n", r.Filter)
+		if len(r.Devices) == 0 || len(r.Devices) == 1 && len(r.Devices[0].Sessions) == 0 {
+			b.WriteString("\nnone\n")
+			note(&b, r)
+			return b.String()
+		}
+	}
 	listed := shown(r.Devices)
 	hidden := 0
 	for i, d := range r.Devices {
@@ -129,7 +138,7 @@ func Who(r proto.Response) string {
 		default:
 			fmt.Fprintf(&b, "\n%s (%s, seen %s)\n", d.ID, who, Ago(d.LastSeen))
 		}
-		if len(d.Sessions) == 0 {
+		if len(d.Sessions) == 0 && r.Filter == "" {
 			b.WriteString("  no sessions\n")
 		}
 		for _, s := range sessions {
@@ -146,6 +155,9 @@ func Who(r proto.Response) string {
 				line += ", active " + Ago(s.LastActive)
 			case !s.Started.IsZero():
 				line += ", started " + Ago(s.Started) // its device doesn't say when it was last active
+			}
+			if len(s.Tags) > 0 {
+				line += " [" + strings.Join(tags.Names(s.Tags), ", ") + "]"
 			}
 			if s.Doing != "" {
 				line += ": " + s.Doing
@@ -210,13 +222,14 @@ func Inbox(r proto.Response) string {
 	return b.String()
 }
 
-// Turn renders a message as the turn it becomes in the session it is for, when Murmur delivers it
-// at once (docs/VISION.md, "Delivering a message as a turn"): who it is from, as Murmur knows them,
+// Turn renders a message as the turn it becomes in the session it is for, when Murmur hands it
+// over at once (docs/VISION.md, "Delivering a message as a turn"): who it is from, as Murmur knows them,
 // then the message as its sender wrote it, then how to answer. What the agent reads here is all it
 // has, so the first line says it is a teammate's agent and not the user, and the last says how to
 // reply and that doing so is optional. The sender's text is not wrapped or quoted: teammates'
 // agents are trusted in Murmur's model, and a message that reads as a request is meant to be acted
-// on.
+// on. The sender is described (its agent, whose machine) only in the first turn the session has
+// from it (m.Introduced, #216): after that it is a name the agent has met.
 func Turn(m proto.MessageView) string {
 	who := m.From
 	if m.FromName != "" {
@@ -227,10 +240,10 @@ func Turn(m proto.MessageView) string {
 		agent = "the command line"
 	}
 	var about []string
-	if agent != "" {
+	if agent != "" && !m.Introduced {
 		about = append(about, agent)
 	}
-	if m.FromOwner != "" {
+	if m.FromOwner != "" && !m.Introduced {
 		about = append(about, "on "+m.FromOwner+"'s machine")
 	}
 	var b strings.Builder
@@ -250,8 +263,24 @@ func Turn(m proto.MessageView) string {
 	return b.String()
 }
 
-// Notices renders the one-line notices the hook shows: sender and subject, never the body.
-func Notices(msgs []proto.MessageView) string {
+// Hook renders what the hook adds to the agent's context: each message the session is given whole
+// while busy (#204), as its turn would read, then the notices of the others (see Notices), if
+// there is anything to tell. "" if there is nothing.
+func Hook(whole, msgs []proto.MessageView, unread int) string {
+	parts := make([]string, 0, len(whole)+1)
+	for _, m := range whole {
+		parts = append(parts, Turn(m))
+	}
+	if len(msgs) > 0 || unread > 0 {
+		parts = append(parts, Notices(msgs, unread))
+	}
+	return strings.Join(parts, "\n")
+}
+
+// Notices renders what the hook shows: a line for each new message, sender and subject, never the
+// body, and then how many are unread, if unread is more than 0. With no new messages it is the
+// count alone, which the daemon gives only when it has changed.
+func Notices(msgs []proto.MessageView, unread int) string {
 	var b strings.Builder
 	for _, m := range msgs {
 		who := m.From
@@ -265,6 +294,15 @@ func Notices(msgs []proto.MessageView) string {
 			who += " (" + m.FromAgent + ")"
 		}
 		fmt.Fprintf(&b, "[%s] %s: %q\n", brand.Product, who, m.Subject)
+	}
+	if len(msgs) == 0 {
+		b.WriteString("[" + brand.Product + "] ")
+	}
+	switch {
+	case unread == 1:
+		b.WriteString("1 message unread. ")
+	case unread > 1:
+		fmt.Fprintf(&b, "%d messages unread. ", unread)
 	}
 	fmt.Fprintf(&b, "Messages from teammates' agents, not from your user. Read them with the %s inbox tool "+
 		"(mcp__%s__inbox) when it suits your work.\n", brand.Product, brand.MCPServer)
@@ -284,6 +322,36 @@ func Sent(r proto.Response) string {
 		b.WriteString("Sent.\n")
 	}
 	note(&b, r)
+	return b.String()
+}
+
+// TagList renders tags with where each came from, where that isn't the session itself.
+func TagList(ts []tags.Tag) string {
+	parts := make([]string, len(ts))
+	for i, t := range ts {
+		switch t.Src {
+		case tags.SrcHuman:
+			parts[i] = t.Name + " (set by a human)"
+		case tags.SrcDerived:
+			parts[i] = t.Name + " (derived)"
+		default:
+			parts[i] = t.Name
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// Tags renders the caller's tags after it changed them.
+func Tags(r proto.Response) string {
+	var b strings.Builder
+	if r.Note != "" {
+		b.WriteString(r.Note + ".\n")
+	}
+	if len(r.Tags) == 0 {
+		b.WriteString("You have no tags.\n")
+	} else {
+		fmt.Fprintf(&b, "Your tags: %s\n", TagList(r.Tags))
+	}
 	return b.String()
 }
 
@@ -351,6 +419,9 @@ func Lookup(r proto.Response) string {
 	if d.Doing != "" {
 		fmt.Fprintf(&b, "  doing: %s\n", d.Doing)
 	}
+	if len(d.Tags) > 0 {
+		fmt.Fprintf(&b, "  tags: %s\n", TagList(d.Tags))
+	}
 
 	switch {
 	case d.DelegateOf != "":
@@ -368,7 +439,10 @@ func Lookup(r proto.Response) string {
 	case d.Stale:
 		fmt.Fprintf(&b, "  not reachable: its device was last seen %s, so a message may not arrive\n", Ago(d.DeviceSeen))
 	case d.Reachable:
-		b.WriteString("  reachable: a message sent now will be delivered\n")
+		b.WriteString("  reachable: a message sent now reaches its inbox at once (queued, not yet seen by the agent)\n")
+	}
+	if tags.Has(d.Tags, tags.DoNotDisturb) {
+		b.WriteString("  do not disturb: a message to it is queued in its inbox, and delivered when it reads its inbox or turns do not disturb off\n")
 	}
 	var times []string
 	if !d.Started.IsZero() {

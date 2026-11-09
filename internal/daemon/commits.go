@@ -90,9 +90,24 @@ func (d *Daemon) sameClone(gitDir string) bool {
 // touchHookLocked finds the sessions a hook request speaks for, as notices does, and notes that
 // they are active. Caller holds mu.
 func (d *Daemon) touchHookLocked(req proto.Request) []*session {
-	sessions := d.hookSessionsLocked(req.ClaudeSession, req.ClientPID)
+	sessions := d.hookSessionsLocked(req.ClaudeSession, req.ClientPID, req.Subagent)
 	now := time.Now()
 	for _, s := range sessions {
+		// Every hook but Stop's runs while the session is at work: a prompt or a tool call. Not a
+		// subagent's, which may be working in the background after the session's turn ended.
+		// Nor does it count as the session's hook having run: a session that reconnected after a
+		// restart stays at work by T3's database until its own hook runs (see hookBusyLocked).
+		if !req.Subagent {
+			if s.busyAt.IsZero() || d.continuationLapsedLocked(s) {
+				s.turnStart = now
+			}
+			s.hooked, s.busyAt = true, now
+			if req.Op != proto.OpTurnEnd {
+				// The turn went on: a Stop's continuation is no longer in doubt, and Claude Code
+				// counts its continuations afresh after a tool call (and in a new turn).
+				s.continuedAt, s.continuations = time.Time{}, 0
+			}
+		}
 		d.touchLocked(s, now)
 	}
 	return sessions

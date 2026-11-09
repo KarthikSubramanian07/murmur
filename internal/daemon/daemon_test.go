@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -90,13 +91,17 @@ type device struct {
 	// snapshot is how long the daemon lets a tool call's snapshot take; zero takes a minute, as
 	// the real 4 s is too short for git on a machine busy with other test runs.
 	snapshot time.Duration
-	// pushRetry is PushRetry, the wait between a delivery's two attempts; zero takes 200 ms.
+	// pushRetry is PushRetry, the wait between a handoff's two attempts; zero takes 200 ms.
 	pushRetry time.Duration
+	// continueHold is ContinueHold; zero takes the daemon's default.
+	continueHold time.Duration
 	// quietPoll is QuietPoll, the poll while no session is live; zero takes poll, so that a device with
 	// no session yet looks at the remote as fast as one with.
 	quietPoll time.Duration
 	// titleEvery is TitleEvery, how often titles are read; zero takes 150 ms.
 	titleEvery time.Duration
+	// fetchLimit is FetchLimit; zero takes the daemon's default.
+	fetchLimit time.Duration
 	// consent and consentPoll are the daemon's options of the same names; a nil consent means the
 	// user joined, always.
 	consent     func() bool
@@ -182,8 +187,8 @@ func (d *device) start() {
 	go func() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
-			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll,
-			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry,
+			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll, FetchLimit: d.fetchLimit,
+			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState, Log: logger})
 		if err != nil {
@@ -213,6 +218,9 @@ func (d *device) do(req proto.Request) proto.Response {
 	defer cancel()
 	resp, err := d.c.Do(ctx, req)
 	if err != nil {
+		if ctx.Err() != nil {
+			dumpGoroutines(d.t)
+		}
 		d.t.Fatalf("%s: %v", req.Op, err)
 	}
 	return resp
@@ -248,10 +256,20 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	deadline := time.Now().Add(60 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
+			dumpGoroutines(t)
 			t.Fatalf("timed out waiting for %s", what)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// dumpGoroutines prints every goroutine's stack when a test gives up waiting. The daemons run in
+// the test's process, so a stall shows where they are stuck, which the failure alone can't say: it
+// is how a git whose start never came back was found (#217).
+func dumpGoroutines(t *testing.T) {
+	t.Helper()
+	buf := make([]byte, 8<<20)
+	t.Logf("every goroutine, as the wait gave up:\n%s", buf[:runtime.Stack(buf, true)])
 }
 
 func TestMessagesNoticesInbox(t *testing.T) {
@@ -661,7 +679,7 @@ func inboxOf(d *device, sess string) []string {
 }
 
 // Junk over another device's log when a device first looks hides that log's history, which
-// stays history when the owner writes over the junk: what is new is delivered as from any log,
+// stays history when the owner writes over the junk: what is new is queued as from any log,
 // to the CLI too, and the history isn't.
 func TestHistoryUnderJunkIsNotReplayed(t *testing.T) {
 	remote := newRemote(t)
@@ -695,7 +713,7 @@ func TestHistoryUnderJunkStaysHistoryAcrossRestart(t *testing.T) {
 }
 
 // Junk a restart finds over a log this device had already read hides nothing it hadn't seen: the
-// owner's next message is delivered as usual, to the CLI too.
+// owner's next message is queued as usual, to the CLI too.
 func TestFreshMessageOverJunkAfterRestart(t *testing.T) {
 	remote := newRemote(t)
 	ref := "refs/murmur/mesh/hist-0001"

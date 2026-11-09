@@ -3,6 +3,8 @@ package web
 import (
 	"context"
 	"time"
+
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // Source is everything the page shows and changes. The daemon implements it; the page reaches
@@ -20,6 +22,9 @@ type Source interface {
 	SetSettings(ctx context.Context, s Settings) (Settings, error)
 	// Unmute undoes the mute by session by of session muted, both names.
 	Unmute(ctx context.Context, by, muted string) error
+	// SetTags is a human's change to the tags of the session at addr, its device/session: add, then
+	// remove. On another device, the change takes effect when that device reads it.
+	SetTags(ctx context.Context, addr string, add, remove []string) error
 }
 
 // State is what the page's sessions view and mute list show.
@@ -57,6 +62,9 @@ type Session struct {
 	Worktree   string    `json:"worktree,omitempty"`
 	Started    time.Time `json:"started"`
 	LastActive time.Time `json:"lastActive,omitzero"` // its last tool call or request; zero if unknown
+	// Tags is the session's tags, in order of name, each with where it came from: the session,
+	// derived by its daemon, or a human (#198).
+	Tags []tags.Tag `json:"tags,omitempty"`
 }
 
 // Message is one message between sessions.
@@ -97,6 +105,12 @@ type Settings struct {
 	Wake Wake `json:"wake"`
 	// SessionWake overrides Wake for single sessions on this device, by name.
 	SessionWake map[string]Wake `json:"sessionWake,omitempty"`
+	// Busy is the device-wide default for what a busy session is given by Murmur's hook when a
+	// message arrives (#204): BusySubject or BusyWhole, "" standing for BusySubject. Only a session
+	// the hook runs in, Claude Code's, is affected.
+	Busy string `json:"busy"`
+	// SessionBusy overrides Busy for single sessions on this device, by name.
+	SessionBusy map[string]string `json:"sessionBusy,omitempty"`
 	// DefaultMinutes is what Wake.Minutes 0 stands for: 3, or the prompt-cache length if known.
 	// The source reports it; SetSettings ignores it.
 	DefaultMinutes int `json:"defaultMinutes"`
@@ -116,6 +130,16 @@ const (
 	WakeWithin = "within"
 	WakeNever  = "never"
 )
+
+// Busy values. With BusySubject the hook shows the sender and subject, and the agent reads the
+// body with inbox; with BusyWhole it shows the message as it would go in as a turn, and the
+// message is delivered.
+const (
+	BusySubject = "subject"
+	BusyWhole   = "whole"
+)
+
+func validBusy(b string) bool { return b == BusySubject || b == BusyWhole }
 
 // MaxWakeMinutes bounds Wake.Minutes: a day.
 const MaxWakeMinutes = 24 * 60

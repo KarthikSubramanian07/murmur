@@ -26,6 +26,8 @@ git push origin v0.1.0
   amd64 and arm64, and `SHA256SUMS` listing them. The installers rely on those names.
 - **To undo a release** (a bad build, or a test tag): `gh release delete <tag> --cleanup-tag --yes`.
   Re-running a tag's workflow needs its release deleted first, since the run creates the release.
+  Installed daemons update to the latest stable release hourly and never go back, so deleting stops
+  further updates but doesn't undo the ones taken. Try a build as a prerelease first: updates skip it.
 
 ## Installing from a release
 
@@ -52,4 +54,4 @@ git clone https://github.com/a-Fig/murmur && cd murmur
 go build -o ~/bin/mur ./cmd/mur      # anywhere on PATH; mur.exe on Windows
 ```
 
-Such a build says `0.1.0-dev` in `mur version`; see "The version" above.
+Such a build says `0.1.0-dev` in `mur version`, which is also why it never updates itself.

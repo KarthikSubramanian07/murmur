@@ -227,7 +227,7 @@ func TestSwitchNeverTakesAnotherSession(t *testing.T) {
 
 	a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameP, Subject: "for P"})
 	a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameQ, Subject: "for Q"})
-	eventually(t, "delivery", func() bool { return logHas(b, "for P") && logHas(b, "for Q") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "for P") && logHas(b, "for Q") })
 
 	// A hook with an ID and a process nobody has: nothing changes and nothing is told.
 	if got := b.hook("claude-stranger", 999); len(got) != 0 {
@@ -419,7 +419,7 @@ func TestNameOfAResumedConversationFindsTheSessionThatHoldsIt(t *testing.T) {
 	if r.Error != "" {
 		t.Fatalf("send: %+v", r)
 	}
-	eventually(t, "delivery", func() bool { return logHas(b, "to a resumed conversation") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "to a resumed conversation") })
 
 	// Both come back, to read what they were sent.
 	b.sessionPID("dddddd", "claude-x", procQ)
@@ -489,7 +489,7 @@ func TestTheSessionThatTakesANameTakesWhatWasKeptForIt(t *testing.T) {
 	eventually(t, "presence to empty", func() bool { return !a.seesSession(first) && !a.seesSession(second) })
 
 	a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "while X was gone"})
-	eventually(t, "delivery", func() bool { return logHas(b, "while X was gone") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "while X was gone") })
 
 	// claude --resume X.
 	_, conn1, _ = b.sessionPID("cccccc", "claude-x", procP)
@@ -504,7 +504,7 @@ func TestTheSessionThatTakesANameTakesWhatWasKeptForIt(t *testing.T) {
 	conn1.Close()
 	eventually(t, "the first to stop again", func() bool { return busLines(b, first, "stopped") == 2 })
 	a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "while X was gone again"})
-	eventually(t, "delivery", func() bool { return logHas(b, "while X was gone again") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "while X was gone again") })
 	third, _, _ := b.sessionPID("eeeeee", "claude-throwaway-2", procQ)
 	// The hook that moves it is told at once.
 	if told := b.hook("claude-x", procQ); len(told) != 1 || told[0] != "while X was gone again" {
@@ -638,7 +638,7 @@ func TestSendToANameIsForwardedOnceFromAnyDevice(t *testing.T) {
 	if there.Error != "" || here.Error != "" || here.Messages[0].To != there.Messages[0].To {
 		t.Fatalf("sent from another device: %+v; from this one: %+v", there, here)
 	}
-	eventually(t, "delivery", func() bool { return logHas(b, "from another device") && logHas(b, "from this device") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "from another device") && logHas(b, "from this device") })
 	if got := b.do(proto.Request{Op: proto.OpInbox, Session: "eeeeee"}).Messages; len(got) != 0 {
 		t.Fatalf("the session that holds %s got %+v", nameY, got)
 	}
@@ -661,7 +661,7 @@ func TestTakingANameAgainTakesNothingForAnother(t *testing.T) {
 	b.nameIs(third, nameY)
 
 	b.do(proto.Request{Op: proto.OpSend, To: first, Subject: "for X"})
-	eventually(t, "delivery", func() bool { return logHas(b, "for X") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "for X") })
 	conn3.Close()
 	eventually(t, "the third to drop", func() bool {
 		return b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y"}).Self == ""
@@ -694,7 +694,7 @@ func TestSendToANameSkipsARunningHolderThatMovedOn(t *testing.T) {
 	if here.Error != "" || there.Error != "" || here.Messages[0].To != first || there.Messages[0].To != first {
 		t.Fatalf("sent from this device: %+v; from another: %+v; want both sent to %s", here, there, first)
 	}
-	eventually(t, "delivery", func() bool { return logHas(b, "from another device") && logHas(b, "from this device") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "from another device") && logHas(b, "from this device") })
 	if told := b.hook("claude-y", procQ); len(told) != 0 {
 		t.Fatalf("the session called %s was told %v", nameY, told)
 	}
@@ -716,7 +716,7 @@ func TestSendToANameSkipsAStoppedHolderThatMovedOn(t *testing.T) {
 	if r := b.do(proto.Request{Op: proto.OpSend, To: nameX, Subject: "for X"}); r.Error != "" {
 		t.Fatalf("send: %+v", r)
 	}
-	eventually(t, "delivery", func() bool { return logHas(b, "for X") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "for X") })
 	if told := b.resumedAs("eeeeee", "claude-y", procR); len(told) != 0 {
 		t.Fatalf("the next session to take %s was told %v", nameY, told)
 	}
@@ -759,5 +759,41 @@ func TestHookRunDrivesASwitch(t *testing.T) {
 	})
 	if !strings.Contains(out, "for the new conversation") {
 		t.Fatalf("the hook printed %q", out)
+	}
+}
+
+// A subagent started before a /clear still reports the conversation it started in (#231). Its
+// hooks are the session's, for what it commits, but the session doesn't follow them back: it keeps
+// the new conversation's name, and the do-not-disturb that conversation set.
+func TestASubagentsOldClaudeIDMovesNothing(t *testing.T) {
+	remote := newRemote(t)
+	b := newDevice(t, remote)
+	bob, _, _ := b.sessionPID("bbbbbb", "claude-a", procP)
+	nameA := b.named(bob)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-b", ClientPID: procP})
+	nameB := b.nameHeld(bob, nameA)
+	b.tagSelf("bbbbbb", []string{"do-not-disturb"}, nil)
+
+	for _, op := range []string{proto.OpNotices, proto.OpToolStart, proto.OpToolEnd, proto.OpTurnEnd} {
+		b.do(proto.Request{Op: op, ClaudeSession: "claude-a", ClientPID: procP, Subagent: true, ToolUseID: "t1"})
+	}
+	if got := b.nameOf(bob); got != nameB {
+		t.Fatalf("after a subagent's hooks, the session is called %q, want %q", got, nameB)
+	}
+	var dnd bool
+	for _, dv := range b.do(proto.Request{Op: proto.OpWho}).Devices {
+		for _, s := range dv.Sessions {
+			if s.Addr == bob {
+				for _, tg := range s.Tags {
+					dnd = dnd || tg.Name == "do-not-disturb"
+				}
+			}
+		}
+	}
+	if !dnd {
+		t.Errorf("a subagent's hook lifted the session's do-not-disturb")
+	}
+	if logHas(b, nameB+" -> "+nameA) {
+		t.Errorf("the session followed a subagent's hook back to the conversation it left")
 	}
 }
