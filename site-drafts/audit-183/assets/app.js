@@ -2224,7 +2224,8 @@ function fleetStats(name) {
   return { ev, commits, sent, got, unread };
 }
 
-// Who needs a human, and why. Each alert names the session to open.
+// Who needs a human, and why. Each alert has a short title, a line of detail, a severity
+// (error, warning or neutral) and the session it opens.
 function attention(rows) {
   const H = fleetHistory();
   const out = [];
@@ -2239,17 +2240,24 @@ function attention(rows) {
       const f = findSession(to);
       const read = H.reads[m.id];
       if (!read && now - at > UNREAD_FLAG_MS) {
-        const why = !f.device.reachable ? "its device is offline" : onDnd(f.session) ? "it's on do not disturb" : "it hasn't read it";
-        out.push({ kind: "unread", who: to, at, text: [h("b", null, fromName(m)), " is waiting on ", h("b", null, to), " for “" + m.subject + "”. It hasn't arrived, because " + why + "."] });
+        const why = !f.device.reachable ? "Its device is offline." : onDnd(f.session) ? "It's on do not disturb." : "It hasn't read its inbox.";
+        out.push({ kind: "unread", sev: "error", who: to, at, title: [h("b", null, to), " hasn't received a message"], detail: "From " + fromName(m) + ": “" + m.subject + "”. " + why });
       } else if (read && isQuestion(m) && !answeredSince(m) && now - when(read.at) > NO_REPLY_FLAG_MS) {
-        out.push({ kind: "noreply", who: to, at: when(read.at), text: [h("b", null, to), " read ", h("b", null, fromName(m)), "'s question “" + m.subject + "” and hasn't answered."] });
+        out.push({ kind: "noreply", sev: "error", who: to, at: when(read.at), title: [h("b", null, to), " hasn't answered"], detail: fromName(m) + " asked “" + m.subject + "”. Read " + ago(when(read.at)) + "." });
       }
+    }
+    for (const { d, s } of rows) {
+      if (!d.self) continue;
+      const tools = H.events.filter((e) => e.who === s.name && e.kind === "tool").sort((a, b) => when(b.at) - when(a.at));
+      // The same command, run three times in a row (edits between them don't count), failing each time.
+      const cmd = tools.find((t) => t.tool === "Bash");
+      const runs = cmd ? tools.filter((t) => t.tool === "Bash" && t.detail === cmd.detail).slice(0, 3) : [];
+      if (runs.length === 3 && runs.every((t) => !t.ok)) out.push({ kind: "failing", sev: "error", who: s.name, at: when(runs[0].at), title: [h("b", null, s.name), "'s command keeps failing"], detail: [h("code", null, cmd.detail), " failed three runs in a row."] });
     }
   }
   for (const { d, s } of rows) {
     const t = when(s.lastActive);
-    if (d.reachable && !onDnd(s) && t && now - t > IDLE_FLAG_MS)
-      out.push({ kind: "idle", who: s.name, at: t, text: [h("b", null, s.name), " has been idle for " + ago(t).replace(" ago", "") + (s.doing ? "." : ", with no status set.")] });
+    if (d.reachable && !onDnd(s) && t && now - t > IDLE_FLAG_MS) out.push({ kind: "idle", sev: "warning", who: s.name, at: t, title: [h("b", null, s.name), " is idle"], detail: "Quiet for " + ago(t).replace(" ago", "") + (s.doing ? "." : ", with no status set.") });
   }
   if (H) {
     const byBranch = new Map();
@@ -2258,17 +2266,7 @@ function attention(rows) {
       if (who.size < 2) continue;
       const list = [...who];
       const at = Math.max(...H.events.filter((e) => e.kind === "commit" && e.branch === branch).map((e) => when(e.at)));
-      out.push({ kind: "branch", who: list[0], others: list, at, text: [list.map((n, i) => [i ? (i === list.length - 1 ? " and " : ", ") : "", h("b", null, n)]), " are both committing to ", h("code", null, branch), "."] });
-    }
-  }
-  if (H) {
-    for (const { d, s } of rows) {
-      if (!d.self) continue;
-      const tools = H.events.filter((e) => e.who === s.name && e.kind === "tool").sort((a, b) => when(b.at) - when(a.at));
-      // The same command, run three times in a row (edits between them don't count), failing each time.
-      const cmd = tools.find((t) => t.tool === "Bash");
-      const runs = cmd ? tools.filter((t) => t.tool === "Bash" && t.detail === cmd.detail).slice(0, 3) : [];
-      if (runs.length === 3 && runs.every((t) => !t.ok)) out.push({ kind: "failing", who: s.name, at: when(runs[0].at), text: [h("b", null, s.name), " has run ", h("code", null, cmd.detail), " three times in a row, and it failed each time."] });
+      out.push({ kind: "branch", sev: "warning", who: list[0], others: list, at, title: [plural(list.length, "session") + " on ", h("code", null, branch)], detail: list.join(" and ") + " both commit there." });
     }
   }
   const offDevs = new Set();
@@ -2276,14 +2274,11 @@ function attention(rows) {
     if (d.reachable || offDevs.has(d.id)) continue;
     offDevs.add(d.id);
     const t = when(d.lastSeen);
-    out.push({ kind: "offline", who: d.sessions[0]?.name, others: d.sessions.map((s) => s.name), at: t, text: [h("b", null, (d.owner ? d.owner + "'s " : "") + d.id.replace(/-[0-9a-f]{4}$/, "")), " went offline " + ago(t) + ", with " + plural(d.sessions.length, "session") + " on it."] });
+    out.push({ kind: "offline", sev: "neutral", who: d.sessions[0]?.name, others: d.sessions.map((s) => s.name), at: t, title: [h("b", null, (d.owner ? d.owner + "'s " : "") + d.id.replace(/-[0-9a-f]{4}$/, "")), " is offline"], detail: "Last seen " + ago(t) + ", with " + plural(d.sessions.length, "session") + " on it." });
   }
   const rank = { unread: 0, failing: 1, noreply: 2, offline: 3, branch: 4, idle: 5 };
   return out.sort((a, b) => rank[a.kind] - rank[b.kind] || b.at - a.at);
 }
-
-const ALERT_ICON = { unread: "inbox", failing: "alert", noreply: "reply", idle: "clock", branch: "branch", offline: "laptop" };
-const ALERT_WORD = { unread: "Waiting", failing: "Failing", noreply: "No reply", idle: "Idle", branch: "Same branch", offline: "Offline" };
 
 function fleetFilter() {
   return (ui.fleet ||= { group: "", state: "", by: "device", q: "" });
@@ -2293,6 +2288,27 @@ function fleetSub() {
   if (!ui.state) return "";
   const n = attention(fleetRows()).length;
   return n ? plural(n, "thing") + " need a look" : "Nothing needs a look";
+}
+
+const FX_STATE = { on: "Active", idle: "Idle", dnd: "Do not disturb", off: "Offline" };
+
+function fxDot(st) {
+  return h("span", { class: "fx-dot fx-dot-" + st, "aria-hidden": "true" });
+}
+
+function fxSeg(label, options, value, onPick) {
+  return h(
+    "div",
+    { class: "fx-seg", role: "radiogroup", "aria-label": label },
+    options.map(([v, text, n]) =>
+      h(
+        "button",
+        { role: "radio", "aria-checked": value === v ? "true" : "false", class: value === v ? "on" : "", onclick: () => onPick(v) },
+        text,
+        n != null && h("span", { class: "fx-seg-n" }, n),
+      ),
+    ),
+  );
 }
 
 function fleetPage() {
@@ -2309,114 +2325,101 @@ function fleetPage() {
   const flagged = new Set(alerts.flatMap((a) => a.others || [a.who]));
   const devs = new Set(inGroup.map((r) => r.d.id));
   const sel = ui.fleetSel && findSession(ui.fleetSel) ? ui.fleetSel : null;
-
-  const chip = (on, label, n, onclick) => h("button", { class: "fl-chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", onclick }, label, n != null && h("span", { class: "fl-chip-n" }, n));
-  const set = (k, v) => () => {
+  const set = (k) => (v) => {
     F[k] = v;
     render();
   };
   const count = (st) => inGroup.filter((r) => sessionState(r.d, r.s) === st).length;
+  const day = Date.now() - 24 * 3600000;
+  const commits = H ? H.events.filter((e) => e.kind === "commit" && when(e.at) > day && inGroup.some((r) => r.s.name === e.who)).length : null;
+  const waiting = H ? ui.messages.filter((m) => m.toKind === "session" && inGroup.some((r) => r.s.name === toName(m)) && !H.reads[m.id]).length : null;
+
+  const tile = (label, value, sub, tone = "") => h("div", { class: "fx-tile " + tone }, h("span", { class: "fx-tile-label" }, label), h("span", { class: "fx-tile-value" }, value ?? "–"), h("span", { class: "fx-tile-sub" }, sub));
 
   return h(
     "div",
-    { class: "g-page fl-page" + (sel ? " has-sel" : "") },
+    { class: "fx" + (sel ? " has-sel" : "") },
     h(
       "header",
-      { class: "g-page-head fl-head" },
-      h(
-        "div",
-        null,
-        h("h1", null, "Fleet audit"),
-        h("p", null, plural(inGroup.length, "session") + " running on " + plural(devs.size, "device"), alerts.length > 0 && [" · ", h("span", { class: "fl-head-warn" }, plural(alerts.length, "thing") + " need a look")]),
-      ),
+      { class: "fx-head" },
+      h("div", null, h("h1", null, "Fleet"), h("p", null, plural(inGroup.length, "session") + " running on " + plural(devs.size, "device"))),
       groups.length > 0 &&
-        h(
-          "div",
-          { class: "fl-groups", role: "group", "aria-label": "Job" },
-          chip(!F.group, "Everything", all.length, set("group", "")),
-          groups.map((g) => chip(F.group === g, [icon("tag"), g], all.filter((r) => groupOf(r.s) === g).length, set("group", g))),
-          chip(F.group === "-", "No group", all.filter((r) => !groupOf(r.s)).length, set("group", "-")),
+        fxSeg(
+          "Job",
+          [["", "Everything", all.length], ...groups.map((g) => [g, g, all.filter((r) => groupOf(r.s) === g).length]), ["-", "No job", all.filter((r) => !groupOf(r.s)).length]],
+          F.group,
+          set("group"),
         ),
     ),
-    !H && h("p", { class: "fl-note" }, "This daemon doesn't keep status history, commits or read marks for other sessions yet (#183), so timelines show messages only."),
-    alerts.length > 0 &&
-      h(
-        "section",
-        { class: "fl-alerts" },
-        h("h2", { class: "fl-sec" }, icon("alert"), "Needs a look", h("span", { class: "fl-sec-n" }, alerts.length)),
-        (ui.fleetAllAlerts ? alerts : alerts.slice(0, 4)).map((a) =>
-          h(
-            "button",
-            {
-              class: "fl-alert fl-alert-" + a.kind + (sel && sel === a.who ? " on" : ""),
-              onclick: () => {
-                ui.fleetSel = a.who;
-                render();
-              },
-            },
-            h("span", { class: "fl-alert-ico" }, icon(ALERT_ICON[a.kind])),
-            h("span", { class: "fl-alert-kind" }, ALERT_WORD[a.kind]),
-            h("span", { class: "fl-alert-text" }, a.text),
-            a.at && agoEl("span", "fl-alert-time", a.at),
-          ),
-        ),
-        alerts.length > 4 &&
-          h(
-            "button",
-            {
-              class: "fl-more",
-              onclick: () => {
-                ui.fleetAllAlerts = !ui.fleetAllAlerts;
-                render();
-              },
-            },
-            icon(ui.fleetAllAlerts ? "chevronDown" : "chevronRight"),
-            ui.fleetAllAlerts ? "Show fewer" : alerts.length - 4 + " more",
-          ),
-      ),
+    !H && h("p", { class: "fx-banner" }, "This daemon doesn't keep status history, commits or read marks for other sessions yet (#183), so the inspector shows messages only."),
     h(
       "div",
-      { class: "fl-tools" },
-      h(
-        "div",
-        { class: "fl-states" },
-        chip(!F.state, "All", inGroup.length, set("state", "")),
-        [
-          ["on", "Active"],
-          ["idle", "Idle"],
-          ["dnd", "Do not disturb"],
-          ["off", "Offline"],
-        ].map(([st, label]) => count(st) > 0 && chip(F.state === st, [h("span", { class: "fl-dot pres-" + st }), label], count(st), set("state", st))),
-      ),
+      { class: "fx-tiles" },
+      tile("Active now", count("on"), "of " + inGroup.length + " running"),
+      tile("Needs a look", alerts.length, alerts.length ? alerts.filter((a) => a.sev === "error").length + " urgent" : "All clear", alerts.length ? "warn" : ""),
+      tile("Commits", commits, "in the last 24 hours"),
+      tile("Messages waiting", waiting, waiting ? "not yet read" : "Everything read", waiting ? "error" : ""),
+    ),
+    h(
+      "div",
+      { class: "fx-toolbar" },
       h(
         "label",
-        { class: "fl-search" },
+        { class: "fx-input" },
         icon("search"),
         h("input", {
           type: "search",
-          placeholder: "Find a session, status or branch",
+          placeholder: "Search sessions, statuses, branches",
           value: F.q,
-          "data-key": "fl-q",
+          "data-key": "fx-q",
           oninput: (e) => {
             F.q = e.target.value;
             render();
           },
         }),
       ),
-      h(
-        "div",
-        { class: "fl-by", role: "group", "aria-label": "Group rows by" },
-        h("span", null, "Group by"),
-        [
-          ["device", "Device"],
-          ["branch", "Branch"],
-          ["group", "Job"],
-          ["none", "None"],
-        ].map(([k, l]) => h("button", { class: F.by === k ? "on" : "", "aria-pressed": F.by === k ? "true" : "false", onclick: set("by", k) }, l)),
+      fxSeg(
+        "State",
+        [["", "All", inGroup.length], ...["on", "idle", "dnd", "off"].filter((st) => count(st)).map((st) => [st, [fxDot(st), FX_STATE[st]], count(st)])],
+        F.state,
+        set("state"),
       ),
+      h("span", { class: "fx-spacer" }),
+      h("span", { class: "fx-group-by" }, h("span", { class: "fx-label" }, "Group by"), fxSeg("Group by", [["device", "Device"], ["branch", "Branch"], ["group", "Job"], ["none", "None"]], F.by, set("by"))),
     ),
-    h("div", { class: "fl-body" }, fleetTable(rows, flagged, sel), sel && fleetTimeline(sel)),
+    h("div", { class: "fx-main" }, fleetTable(rows, flagged, sel), h("aside", { class: "fx-rail" }, sel ? fleetInspector(sel) : fleetAlerts(alerts))),
   );
+}
+
+function fleetAlerts(alerts) {
+  return [
+    h("header", { class: "fx-rail-head" }, h("h2", null, "Needs a look"), h("span", { class: "fx-badge" }, alerts.length)),
+    alerts.length
+      ? h(
+          "ul",
+          { class: "fx-alerts" },
+          alerts.map((a) =>
+            h(
+              "li",
+              null,
+              h(
+                "button",
+                {
+                  class: "fx-alert",
+                  onclick: () => {
+                    ui.fleetSel = a.who;
+                    render();
+                  },
+                },
+                h("span", { class: "fx-sev fx-sev-" + a.sev }),
+                h("span", { class: "fx-alert-body" }, h("span", { class: "fx-alert-title" }, a.title), h("span", { class: "fx-alert-detail" }, a.detail)),
+                a.at && agoEl("span", "fx-alert-time", a.at),
+              ),
+            ),
+          ),
+        )
+      : h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, "Nothing needs a look"), h("p", null, "Every message has arrived, and no session is stuck.")),
+  ];
 }
 
 function fleetTable(rows, flagged, sel) {
@@ -2433,17 +2436,39 @@ function fleetTable(rows, flagged, sel) {
   const label = (k, list) => {
     if (F.by === "device") {
       const d = list[0].d;
-      return [deviceDot(d), h("span", null, d.self ? "This device" : d.owner || d.id), h("span", { class: "fl-gh-sub" }, d.id.replace(/-[0-9a-f]{4}$/, "") + (d.reachable ? "" : " · offline, seen " + ago(when(d.lastSeen) || 0))), seeBadge(d)];
+      return [h("span", { class: "fx-group-name" }, d.self ? "This device" : (d.owner ? d.owner + "'s " : "") + d.id.replace(/-[0-9a-f]{4}$/, "")), h("span", { class: "fx-group-sub" }, d.self ? d.id.replace(/-[0-9a-f]{4}$/, "") : d.reachable ? "" : "offline · seen " + ago(when(d.lastSeen) || 0)), seeBadge(d)];
     }
-    if (F.by === "branch") return k ? [icon("branch"), h("span", null, k)] : "No branch";
-    return k ? [icon("tag"), h("span", null, k)] : "No job";
+    if (F.by === "branch") return h("span", { class: "fx-group-name mono" }, k || "No branch");
+    return h("span", { class: "fx-group-name" }, k || "No job");
   };
-  if (!rows.length) return h("div", { class: "fl-table" }, h("p", { class: "g-none" }, "No session matches."));
+  const collapsed = (ui.fxCollapsed ||= new Set());
   return h(
-    "div",
-    { class: "fl-table", role: "table" },
-    h("div", { class: "fl-tr fl-th", role: "row" }, ["Session", "Says it's doing", "Branch", "Commits", "Sent / got", "Last active"].map((c) => h("span", { role: "columnheader" }, c))),
-    [...buckets].map(([k, list]) => [F.by !== "none" && h("div", { class: "fl-gh" }, label(k, list), h("span", { class: "fl-gh-n" }, list.length)), list.map(({ d, s }) => fleetRow(d, s, flagged.has(s.name), sel === s.name))]),
+    "section",
+    { class: "fx-panel fx-table", role: "table", "aria-label": "Sessions" },
+    h("div", { class: "fx-tr fx-th", role: "row" }, ["Session", "State", "Working on", "Branch", "Commits", "Messages", "Last active"].map((c, i) => h("span", { role: "columnheader", class: i >= 4 ? "num" : "" }, c))),
+    rows.length === 0
+      ? h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, "No sessions match"), h("p", null, "Try another search or state."))
+      : [...buckets].map(([k, list]) => {
+          const shut = collapsed.has(F.by + ":" + k);
+          return [
+            F.by !== "none" &&
+              h(
+                "button",
+                {
+                  class: "fx-group",
+                  "aria-expanded": shut ? "false" : "true",
+                  onclick: () => {
+                    shut ? collapsed.delete(F.by + ":" + k) : collapsed.add(F.by + ":" + k);
+                    render();
+                  },
+                },
+                icon(shut ? "chevronRight" : "chevronDown", "fx-chev"),
+                label(k, list),
+                h("span", { class: "fx-badge" }, list.length),
+              ),
+            !shut && list.map(({ d, s }) => fleetRow(d, s, flagged.has(s.name), sel === s.name)),
+          ];
+        }),
   );
 }
 
@@ -2451,13 +2476,15 @@ function fleetRow(d, s, flag, on) {
   const st = fleetStats(s.name);
   const prs = ui.state.prs || {};
   const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
-  const last = st.commits[st.commits.length - 1];
   const t = when(s.lastActive);
+  const state = sessionState(d, s);
+  const word = state === "idle" && t ? "Idle " + ago(t).replace(" ago", "") : FX_STATE[state];
   return h(
     "button",
     {
-      class: "fl-tr" + (on ? " on" : "") + (d.reachable ? "" : " stale"),
+      class: "fx-tr fx-row" + (on ? " on" : "") + (d.reachable ? "" : " dim"),
       role: "row",
+      "aria-selected": on ? "true" : "false",
       "data-key": "fl-" + s.name,
       onclick: () => {
         ui.fleetSel = on ? null : s.name;
@@ -2466,170 +2493,50 @@ function fleetRow(d, s, flag, on) {
     },
     h(
       "span",
-      { class: "fl-who" },
-      presence(s.name, d),
-      h(
-        "span",
-        { class: "fl-who-text" },
-        h("span", { class: "fl-name" }, h("span", { class: "truncate" }, s.name), flag && h("span", { class: "fl-flag", title: "Needs a look" }, icon("alert"))),
-        h("span", { class: "fl-sub truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · ")),
-      ),
+      { class: "fx-who" },
+      avatar(s.name),
+      h("span", { class: "fx-who-text" }, h("span", { class: "fx-name" }, h("span", { class: "truncate" }, s.name), flag && h("span", { class: "fx-flag", title: "Needs a look" })), h("span", { class: "fx-muted truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · "))),
     ),
-    h("span", { class: "fl-doing-cell" }, h("span", { class: "fl-doing" + (s.doing ? "" : " none") }, s.doing || "No status set"), d.self && lastTool(s.name)),
-    h("span", { class: "fl-branch" }, s.branch && h("span", { class: "g-branch truncate" }, icon("branch"), h("span", { class: "truncate" }, s.branch)), pr && h("span", { class: "g-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number)),
-    h("span", { class: "fl-num" }, fleetHistory() ? [h("b", null, st.commits.length), h("span", { class: "fl-num-sub" }, last ? "last " + ago(when(last.at)) : "none")] : "–"),
-    h("span", { class: "fl-num" }, h("b", null, st.sent.length + " / " + st.got.length), h("span", { class: "fl-num-sub" + (st.unread.length ? " warn" : "") }, st.unread.length ? st.unread.length + " not read" : "all read")),
-    h("span", { class: "fl-active" }, h("span", { class: "g-state g-state-" + sessionState(d, s) }, stateWord(d, s)), t && agoEl("span", "fl-num-sub", t)),
+    h("span", { class: "fx-state" }, fxDot(state), word),
+    h("span", { class: "fx-doing" }, h("span", { class: "truncate" + (s.doing ? "" : " fx-faint") }, s.doing || "No status set"), d.self && lastTool(s.name)),
+    h("span", { class: "fx-branch" }, s.branch && h("span", { class: "mono truncate" }, s.branch), pr && h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number)),
+    h("span", { class: "num" }, fleetHistory() ? st.commits.length : "–"),
+    h("span", { class: "num" }, st.sent.length + " / " + st.got.length, st.unread.length > 0 && h("span", { class: "fx-pill error", title: plural(st.unread.length, "message") + " not read" }, st.unread.length)),
+    h("span", { class: "num fx-muted" }, t ? agoEl("span", "", t) : "–"),
   );
 }
 
-// One session's history, newest first: what it said it was doing, what it committed, and every
-// message it sent or got, with whether that was read and answered.
-function fleetTimeline(name) {
+// One session in the rail: what it is, where it runs and what this page can see of it, then
+// its activity, newest first.
+function fleetInspector(name) {
   const f = findSession(name);
+  const d = f.device;
+  const s = f.session;
   const H = fleetHistory();
   const st = fleetStats(name);
-  const items = [];
-  for (const e of st.ev) items.push({ at: when(e.at), e });
-  for (const m of ui.messages) {
-    if (fromName(m) === name) items.push({ at: m.sortAt, m, dir: "out" });
-    else if ((m.toKind === "session" && toName(m) === name) || m.toKind === "all" || (m.toKind === "device" && m.to === f.device.id)) items.push({ at: m.sortAt, m, dir: "in" });
-  }
-  items.sort((a, b) => b.at - a.at);
-  const T = (n) => new Date(n).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  const open = (m) => () => {
-    ui.filter = null;
-    ui.conversation = conversationOf(m).key;
-    ui.conversationAnchor = m.id;
-    go("messages");
-  };
-  const lag = (m, x) => Math.max(1, Math.round((when(x) - when(m.at)) / 60000));
-  const mark = (m) => {
-    if (!H || m.toKind !== "session") return null;
-    const r = H.reads[m.id];
-    const reply = replyTo(m);
-    const bits = [];
-    if (r) bits.push(h("span", { class: "fl-mark ok" }, icon("check"), r.how === "turn" ? "Arrived as a turn " + lag(m, r.at) + "m later" : "Read from its inbox " + lag(m, r.at) + "m later"));
-    else bits.push(h("span", { class: "fl-mark warn" }, icon("inbox"), "Not read · waiting " + ago(when(m.at)).replace(" ago", "")));
-    if (reply) bits.push(h("span", { class: "fl-mark" }, icon("reply"), "Answered " + lag(m, reply.at) + "m later"));
-    else if (r && isQuestion(m) && !answeredSince(m)) bits.push(h("span", { class: "fl-mark warn" }, icon("reply"), "No answer yet"));
-    return h("span", { class: "fl-marks" }, bits);
-  };
-  const row = (it) => {
-    if (it.e) {
-      const e = it.e;
-      const [ic, body, cls] =
-        e.kind === "started"
-          ? ["play", ["Started", f.session.agent && [" in ", h("b", null, f.session.agent)]], ""]
-          : e.kind === "status"
-            ? ["pencil", e.doing ? ["Status: ", h("span", { class: "fl-quote" }, e.doing)] : ["Cleared its status"], ""]
-            : e.kind === "commit"
-              ? ["commit", [h("code", { class: "fl-sha" }, e.sha), e.subject ? h("span", null, e.subject) : h("span", { class: "fl-hidden" }, "not pushed yet, so only its SHA is known"), h("span", { class: "fl-tl-chip" }, icon("branch"), e.branch), f.device.self && !e.pushed && h("span", { class: "fl-tl-chip warn" }, "not pushed")], " commit"]
-              : e.kind === "tag"
-                ? ["tag", ["Tagged itself ", h("code", null, e.tag)], ""]
-                : e.kind === "offline"
-                  ? ["laptop", ["Its device stopped answering"], " warn"]
-                  : ["activity", [e.kind], ""];
-      return h("li", { class: "fl-tl-item" + cls }, h("span", { class: "fl-tl-ico" }, icon(ic)), h("span", { class: "fl-tl-main" }, h("span", { class: "fl-tl-line" }, body)), h("span", { class: "fl-tl-time", title: stamp(it.at) }, T(it.at)));
-    }
-    const m = it.m;
-    const peer = it.dir === "out" ? (m.toKind === "all" ? "Everyone" : m.toKind === "device" ? m.to : toName(m)) : fromName(m);
-    const parent = m.re && ui.messages.find((x) => x.id === m.re);
-    return h(
-      "li",
-      { class: "fl-tl-item msg " + it.dir, role: "button", tabindex: 0, title: "Open the conversation", onclick: open(m), onkeydown: (ev) => (ev.key === "Enter" ? open(m)() : null) },
-      h("span", { class: "fl-tl-ico" }, icon(it.dir === "out" ? "arrowRight" : m.toKind === "session" ? "inbox" : "broadcast")),
-      h(
-        "span",
-        { class: "fl-tl-main" },
-        h(
-          "span",
-          { class: "fl-tl-line" },
-          it.dir === "out" ? "To " : "From ",
-          peer !== "Everyone" && m.toKind !== "device" ? avatar(peer) : it.dir === "in" ? avatar(peer) : null,
-          h("b", null, peer),
-          it.dir === "in" && m.toKind !== "session" ? h("span", { class: "fl-tl-to" }, " to " + (m.toKind === "all" ? "everyone" : "this device")) : null,
-        ),
-        h("span", { class: "fl-tl-subj" }, parent && h("span", { class: "fl-re", title: "Answers “" + parent.subject + "”" }, icon("reply")), m.subject),
-        mark(m),
-      ),
-      h("span", { class: "fl-tl-time", title: stamp(it.at) }, T(it.at)),
-    );
-  };
-  // Tool calls (this device only) come in runs; each run is one row that opens to show them.
-  const merged = [];
-  for (const it of items) {
-    const prev = merged[merged.length - 1];
-    if (it.e?.kind === "tool") {
-      if (prev?.tools) prev.tools.push(it.e);
-      else merged.push({ at: it.at, tools: [it.e] });
-    } else merged.push(it);
-  }
-  const toolRow = (it) => {
-    const key = name + "@" + it.at;
-    const open = ui.fleetTools?.has(key);
-    const failed = it.tools.filter((t) => !t.ok).length;
-    return h(
-      "li",
-      { class: "fl-tl-item tools" + (failed ? " warn" : "") },
-      h("span", { class: "fl-tl-ico" }, icon("activity")),
-      h(
-        "span",
-        { class: "fl-tl-main" },
-        h(
-          "button",
-          {
-            class: "fl-tl-line fl-tools-btn",
-            "aria-expanded": open ? "true" : "false",
-            onclick: () => {
-              ui.fleetTools ||= new Set();
-              open ? ui.fleetTools.delete(key) : ui.fleetTools.add(key);
-              render();
-            },
-          },
-          icon(open ? "chevronDown" : "chevronRight"),
-          plural(it.tools.length, "tool call"),
-          failed > 0 && h("span", { class: "fl-mark warn" }, failed + " failed"),
-        ),
-        open &&
-          h(
-            "ul",
-            { class: "fl-tools-list" },
-            it.tools.map((t) => h("li", { class: t.ok ? "" : "bad" }, h("span", { class: "fl-tool-name" }, t.tool), h("code", { class: "truncate", title: t.detail }, t.detail), h("span", { class: "fl-tool-t" }, T(when(t.at))))),
-          ),
-      ),
-      h("span", { class: "fl-tl-time", title: stamp(it.at) }, T(it.at)),
-    );
-  };
-  const list = [];
-  let day = null;
-  for (const it of merged) {
-    const dd = new Date(it.at).toDateString();
-    if (dd !== day) {
-      list.push(h("li", { class: "fl-tl-day" }, dayLabel(it.at)));
-      day = dd;
-    }
-    list.push(it.tools ? toolRow(it) : row(it));
-  }
-  const s = f.session;
-  return h(
-    "aside",
-    { class: "fl-tl", "aria-label": name + "'s history" },
+  const state = sessionState(d, s);
+  const prs = ui.state.prs || {};
+  const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
+  const meta = [
+    ["State", [fxDot(state), stateWord(d, s)]],
+    ["Working on", s.doing || h("span", { class: "fx-faint" }, "No status set")],
+    ["Device", d.self ? "This device" : (d.owner ? d.owner + "'s " : "") + d.id.replace(/-[0-9a-f]{4}$/, "")],
+    ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number)] : "–"],
+    d.self && s.worktree && ["Worktree", h("span", { class: "mono" }, s.worktree)],
+    groupOf(s) && ["Job", groupOf(s)],
+    ["You can see", [seeBadge(d), h("span", { class: "fx-faint fx-see-why" }, d.self ? "Tool calls and unpushed commits too" : "Tool calls and transcript stay on its device")]],
+  ].filter(Boolean);
+  return [
     h(
       "header",
-      { class: "fl-tl-head" },
-      presence(name, f.device),
-      h(
-        "span",
-        { class: "fl-who-text" },
-        h("span", { class: "fl-name" }, name),
-        h("span", { class: "fl-sub truncate" }, [s.agent, modelOf(s), f.device.self ? "this device" : (f.device.owner ? f.device.owner + "'s " : "") + f.device.id.replace(/-[0-9a-f]{4}$/, "")].filter(Boolean).join(" · ")),
-      ),
+      { class: "fx-insp-head" },
+      avatar(name),
+      h("div", { class: "fx-who-text" }, h("h2", null, name), h("span", { class: "fx-muted" }, [s.agent, modelOf(s)].filter(Boolean).join(" · "))),
       h(
         "button",
         {
-          class: "fl-x",
-          title: "Close",
+          class: "fx-icon-btn",
+          title: "Back to Needs a look",
           "aria-label": "Close",
           onclick: () => {
             ui.fleetSel = null;
@@ -2639,33 +2546,124 @@ function fleetTimeline(name) {
         icon("x"),
       ),
     ),
-    seeNote(f.device, s),
+    h("dl", { class: "fx-meta" }, meta.map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
     h(
       "div",
-      { class: "fl-tl-stats" },
-      [
-        [st.commits.length, "commits"],
-        [st.sent.length, "sent"],
-        [st.got.length, "got"],
-        [st.unread.length, "not read", st.unread.length > 0],
-      ].map(([n, l, warn]) => h("span", { class: "fl-stat" + (warn ? " warn" : "") }, h("b", null, n), l)),
-      h(
-        "button",
-        {
-          class: "fl-open",
-          onclick: () => {
-            ui.filter = s.addr || s.name;
-            ui.conversation = null;
-            go("messages");
-          },
-        },
-        icon("message"),
-        "Its chats",
-      ),
+      { class: "fx-insp-stats" },
+      h("span", null, h("b", null, H ? st.commits.length : "–"), " commits"),
+      h("span", null, h("b", null, st.sent.length), " sent"),
+      h("span", null, h("b", null, st.got.length), " received"),
+      h("span", { class: st.unread.length ? "error" : "" }, h("b", null, st.unread.length), " not read"),
     ),
-    h("ol", { class: "fl-tl-list" }, list),
-    H && h("p", { class: "fl-tl-foot" }, "History since " + new Date(when(H.since)).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", read back from the bus"),
-  );
+    h(
+      "button",
+      {
+        class: "fx-btn",
+        onclick: () => {
+          ui.filter = s.addr || s.name;
+          ui.conversation = null;
+          go("messages");
+        },
+      },
+      icon("message"),
+      "Open its conversations",
+    ),
+    h("h3", { class: "fx-h3" }, "Activity"),
+    fleetActivity(name, f),
+    H && h("p", { class: "fx-foot" }, "Since " + new Date(when(H.since)).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", read back from the bus"),
+  ];
+}
+
+function fleetActivity(name, f) {
+  const H = fleetHistory();
+  const st = fleetStats(name);
+  const items = [];
+  for (const e of st.ev) items.push({ at: when(e.at), e });
+  for (const m of ui.messages) {
+    if (fromName(m) === name) items.push({ at: m.sortAt, m, dir: "out" });
+    else if ((m.toKind === "session" && toName(m) === name) || m.toKind === "all" || (m.toKind === "device" && m.to === f.device.id)) items.push({ at: m.sortAt, m, dir: "in" });
+  }
+  items.sort((a, b) => b.at - a.at);
+  // Tool calls (this device only) come in runs; each run is one item that opens to list them.
+  const merged = [];
+  for (const it of items) {
+    const prev = merged[merged.length - 1];
+    if (it.e?.kind === "tool") {
+      if (prev?.tools) prev.tools.push(it.e);
+      else merged.push({ at: it.at, tools: [it.e] });
+    } else merged.push(it);
+  }
+  const T = (n) => new Date(n).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const lag = (m, x) => Math.max(1, Math.round((when(x) - when(m.at)) / 60000));
+  const open = (m) => () => {
+    ui.filter = null;
+    ui.conversation = conversationOf(m).key;
+    ui.conversationAnchor = m.id;
+    go("messages");
+  };
+  const item = (tone, title, sub, extra, props = {}) => h("li", { class: "fx-act " + tone, ...props }, h("span", { class: "fx-act-dot" }), h("div", { class: "fx-act-body" }, h("div", { class: "fx-act-title" }, title), sub && h("div", { class: "fx-act-sub" }, sub), extra));
+  const out = [];
+  for (const it of merged) {
+    const when_ = T(it.at);
+    if (it.tools) {
+      const key = name + "@" + it.at;
+      const isOpen = ui.fleetTools?.has(key);
+      const failed = it.tools.filter((t) => !t.ok).length;
+      out.push(
+        item(
+          failed ? "error" : "",
+          h(
+            "button",
+            {
+              class: "fx-disclose",
+              "aria-expanded": isOpen ? "true" : "false",
+              onclick: () => {
+                ui.fleetTools ||= new Set();
+                isOpen ? ui.fleetTools.delete(key) : ui.fleetTools.add(key);
+                render();
+              },
+            },
+            icon(isOpen ? "chevronDown" : "chevronRight", "fx-chev"),
+            plural(it.tools.length, "tool call"),
+          ),
+          [when_, failed ? h("span", { class: "error" }, " · " + failed + " failed") : null],
+          isOpen && h("ul", { class: "fx-tools" }, it.tools.map((t) => h("li", { class: t.ok ? "" : "error" }, h("span", { class: "fx-tool" }, t.tool), h("span", { class: "mono truncate", title: t.detail }, t.detail), h("span", { class: "fx-faint" }, T(when(t.at)))))),
+        ),
+      );
+      continue;
+    }
+    if (it.e) {
+      const e = it.e;
+      if (e.kind === "started") out.push(item("", "Started", when_ + (f.session.agent ? " · " + f.session.agent : "")));
+      else if (e.kind === "status") out.push(item("", e.doing ? "Set its status" : "Cleared its status", [when_, e.doing && [" · ", h("span", { class: "fx-quote" }, e.doing)]]));
+      else if (e.kind === "commit")
+        out.push(item("accent", e.subject || h("span", { class: "fx-faint" }, "A commit not pushed yet"), [when_, " · ", h("span", { class: "mono" }, e.sha + " on " + e.branch), f.device.self && !e.pushed && h("span", { class: "warn" }, " · not pushed")]));
+      else if (e.kind === "tag") out.push(item("", ["Tagged itself ", h("span", { class: "mono" }, e.tag)], when_));
+      else if (e.kind === "offline") out.push(item("error", "Its device stopped answering", when_));
+      continue;
+    }
+    const m = it.m;
+    const peer = it.dir === "out" ? (m.toKind === "all" ? "everyone" : m.toKind === "device" ? m.to : toName(m)) : fromName(m);
+    const title = it.dir === "out" ? ["To ", h("b", null, peer)] : ["From ", h("b", null, peer), m.toKind === "all" ? " to everyone" : m.toKind === "device" ? " to this device" : ""];
+    let status = null;
+    if (H && m.toKind === "session") {
+      const r = H.reads[m.id];
+      const reply = replyTo(m);
+      status = r
+        ? [h("span", { class: "ok" }, r.how === "turn" ? "Arrived as a turn" : "Read from its inbox"), " " + lag(m, r.at) + "m later", reply ? " · answered " + lag(m, reply.at) + "m later" : isQuestion(m) && !answeredSince(m) ? h("span", { class: "error" }, " · not answered") : null]
+        : h("span", { class: "error" }, "Not read · waiting " + ago(when(m.at)).replace(" ago", ""));
+    }
+    out.push(
+      item(
+        it.dir === "out" ? "" : "",
+        title,
+        [when_, " · ", h("span", { class: "fx-quote" }, m.subject)],
+        status && h("div", { class: "fx-act-sub" }, status),
+        { class: "fx-act fx-act-link", role: "button", tabindex: 0, title: "Open the conversation", onclick: open(m), onkeydown: (ev) => (ev.key === "Enter" ? open(m)() : null) },
+      ),
+    );
+  }
+  return h("ol", { class: "fx-activity" }, out);
 }
 
 // ---------- #183: what is visible, by where the session runs ----------
@@ -2688,19 +2686,7 @@ const SEE_WORDS = {
 
 function seeBadge(d) {
   const full = d.self;
-  return h("span", { class: "fl-see " + (full ? "full" : "bus"), title: SEE_WORDS[full ? "full" : "bus"] }, icon(full ? "laptop" : "broadcast"), full ? "Full detail" : "Bus only");
-}
-
-function seeNote(d, s) {
-  const who = (d.owner ? d.owner + "'s " : "") + d.id.replace(/-[0-9a-f]{4}$/, "");
-  return h(
-    "div",
-    { class: "fl-see-note " + (d.self ? "full" : "bus") },
-    icon(d.self ? "laptop" : "broadcast"),
-    d.self
-      ? h("span", null, h("b", null, "Full detail."), " It runs on this device, so you also see its tool calls and unpushed commits.", s.worktree && [" Worktree ", h("code", null, s.worktree), "."])
-      : h("span", null, h("b", null, "Bus only."), " It runs on " + who + ". You see what that device publishes; its tool calls and transcript stay there."),
-  );
+  return h("span", { class: "fx-tag " + (full ? "blue" : "gray"), title: SEE_WORDS[full ? "full" : "bus"] }, full ? "Full detail" : "Bus only");
 }
 
 function lastTool(name) {
@@ -2708,5 +2694,5 @@ function lastTool(name) {
   if (!H) return null;
   const t = H.events.filter((e) => e.who === name && e.kind === "tool").sort((a, b) => when(b.at) - when(a.at))[0];
   if (!t) return null;
-  return h("span", { class: "fl-last-tool" + (t.ok ? "" : " bad"), title: t.tool + ": " + t.detail }, h("span", { class: "fl-tool-name" }, t.tool), h("code", { class: "truncate" }, t.detail), h("span", null, (t.ok ? "" : "failed ") + ago(when(t.at))));
+  return h("span", { class: "fx-last-tool" + (t.ok ? "" : " error"), title: t.tool + ": " + t.detail }, h("span", { class: "mono truncate" }, t.tool + " · " + t.detail), h("span", null, (t.ok ? "" : "failed ") + ago(when(t.at))));
 }
