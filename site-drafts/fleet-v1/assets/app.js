@@ -3103,6 +3103,26 @@ function fleetInspector(name, need) {
     return { ...c, latest, waiting, rank: waiting ? rank(waiting) : 2 };
   }).sort((a, b) => a.rank - b.rank || (a.rank < 2 ? a.waiting.sortAt - b.waiting.sortAt : b.latest.sortAt - a.latest.sortAt));
   const close = () => fleetCloseAsked();
+  // As the whole page the table isn't in view, so the flag box steps through the sessions that need
+  // a look, in the table's order (oldest first), wrapping round: "2 of 4 · Previous · Next".
+  const flagged = [...fleetNeeds(fleetRows()).entries()].sort((a, b) => a[1].at - b[1].at).map(([n]) => n);
+  const at = flagged.indexOf(name);
+  const step = (by) => () => {
+    const to = flagged[(at + by + flagged.length) % flagged.length];
+    history.replaceState(history.state, "", fleetHash(to));
+    fleetSetSel(to);
+    root.querySelector(`[data-key="fx-flag-${by > 0 ? "next" : "prev"}"]`)?.focus({ preventScroll: true });
+  };
+  const flagNav =
+    STACKED.matches && need && at >= 0 && flagged.length > 1
+      ? h(
+          "span",
+          { class: "fx-flag-nav" },
+          h("span", { class: "fx-flag-pos" }, at + 1 + " of " + flagged.length),
+          h("button", { "data-key": "fx-flag-prev", onclick: step(-1) }, "Previous"),
+          h("button", { "data-key": "fx-flag-next", onclick: step(1) }, "Next"),
+        )
+      : null;
   // Conversations marked "Not waiting" whose question would still be waiting: each can be undone.
   const convKey = (x) => fromName(x) + " " + topicOf(x).toLowerCase();
   const marked = new Map();
@@ -3167,6 +3187,7 @@ function fleetInspector(name, need) {
             },
             "Not waiting",
           ),
+          flagNav,
         ),
       ),
     h("dl", { class: "fx-meta" }, meta.map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
