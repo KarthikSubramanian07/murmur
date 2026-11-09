@@ -284,10 +284,11 @@ type Daemon struct {
 	updating   bool // under mu: no new handoffs after the safe restart point
 	pushing    map[string]bool
 	pushWarned map[string]bool
-	// introduced is, for each session, the senders it has had a message from as a turn, so later
-	// turns from them can say less (#216). It is kept in memory only, keyed by session ID so a session
-	// that reconnects keeps it: a daemon that restarts introduces each sender once more, which errs
-	// the safe way.
+	// introduced is, for each conversation, the senders it has had a message from as a turn, so
+	// later turns from them can say less (#216). It is keyed by the session's key, not its ID: a
+	// Claude Code session that /clears keeps its ID but starts a conversation that has seen nothing,
+	// and one that /resumes goes back to a conversation that has. It is kept in memory only: a daemon
+	// that restarts introduces each sender once more, which errs the safe way.
 	introduced map[string]map[string]bool
 	// pushedAt is when a message last went into each session as a turn: the session is at work from
 	// then, as far as the wake setting goes, before anything else says so (see idleSinceLocked).
