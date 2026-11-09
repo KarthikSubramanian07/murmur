@@ -206,7 +206,7 @@
 /* Five columns need 912px (51rem of minimums, four 1rem gaps, 1rem padding each side); under
    920px Branch goes. Four need 648px. */
 @container (max-width: 920px) {
-  .fx-tr { grid-template-columns: minmax(11rem, 1.2fr) 7rem minmax(12rem, 1.8fr) 5.5rem; }
+  .fx-tr { grid-template-columns: minmax(12.5rem, 1.2fr) 7rem minmax(10.5rem, 1.8fr) 5.5rem; }
   .fx-tr > :nth-child(4) { display: none; }
   .fx-sub-branch { display: flex; align-items: baseline; min-width: 0; }
   .fx-tr .fx-status { -webkit-line-clamp: 4; } /* beats the 2-line rule below */
@@ -242,7 +242,7 @@
 .fx-clear { color: var(--fx-text); text-decoration: underline; text-underline-offset: 2px; }
 .fx-name { font-weight: 500; }
 .fx-status { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.fx-reason { margin-top: 0.125rem; color: var(--fx-warning-text); font-size: 0.75rem; line-height: 1.5; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.fx-reason { margin-top: 0.125rem; color: var(--fx-warning-text); font-size: 0.75rem; line-height: 1.5; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
 .fx-reason b, .fx-insp-need b { font-weight: 600; }
 .fx-group-need { cursor: default; }
 .fx-group-need:hover { background: #ffffff05; }

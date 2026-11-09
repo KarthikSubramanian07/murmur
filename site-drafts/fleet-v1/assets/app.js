@@ -3124,7 +3124,12 @@ function fleetInspector(name, need) {
   // need a look · Previous · Next". It stays in that one place whether or not a flag is open. The
   // list is the table's, as filtered, taken when the details open and kept until they close, so
   // "Not waiting" on one question doesn't renumber the session in view or skip one.
-  if (!ui.fxFlagOrder) ui.fxFlagOrder = [...(ui.fxFlagScope || fleetNeeds(fleetRows())).entries()].sort((a, b) => a[1].at - b[1].at).map(([n]) => n);
+  if (!ui.fxFlagOrder) {
+    ui.fxFlagOrder = [...(ui.fxFlagScope || fleetNeeds(fleetRows())).entries()].sort((a, b) => a[1].at - b[1].at).map(([n]) => n);
+    // Whether a search or state filter left some flags out: the count then says "shown", in the
+    // subtitle's words, since the filter is out of view here.
+    ui.fxFlagPart = ui.fxFlagOrder.length < fleetNeeds(fleetRows()).size;
+  }
   const flagged = ui.fxFlagOrder.filter((n) => findSession(n));
   const at = flagged.indexOf(name);
   const step = (by) => () => {
@@ -3138,7 +3143,7 @@ function fleetInspector(name, need) {
       ? h(
           "span",
           { class: "fx-flag-nav" },
-          h("span", { class: "fx-flag-pos" }, at + 1 + " of " + flagged.length + (need ? " that need a look" : " that needed a look")),
+          h("span", { class: "fx-flag-pos" }, at + 1 + " of " + flagged.length + (ui.fxFlagPart ? " shown" : "") + (need ? " that need a look" : " that needed a look")),
           h("button", { "data-key": "fx-flag-prev", onclick: step(-1) }, "Previous"),
           h("button", { "data-key": "fx-flag-next", onclick: step(1) }, "Next"),
         )
