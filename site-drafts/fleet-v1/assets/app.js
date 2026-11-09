@@ -2324,7 +2324,7 @@ function replyTo(m) {
 function answeredSince(m) {
   const to = toName(m);
   const from = fromName(m);
-  const topic = (x) => (x.subject || "").replace(/^(re:\s*)+/i, "").trim().toLowerCase();
+  const topic = (x) => topicOf(x).toLowerCase();
   return ui.messages.some((r) => r.sortAt > m.sortAt && fromName(r) === to && r.toKind === "session" && toName(r) === from && (topic(r) === topic(m) || (!isReply(r) && !questionIn(r))));
 }
 
@@ -2454,32 +2454,50 @@ const GIVE_UP_MS = 24 * 3600000;
 // Code blocks and quoted lines ("> ...", usually the question being answered) are left out, since
 // their "?"s aren't this message's questions. Inline code and links are set aside while sentences
 // are found, so their "?" or "." can't end one, and put back plainly: code without its backticks,
-// a link as its text, "#36" for a pull request or issue, or its host. A "?" may sit inside closing
-// marks (**bold?**, (aside?), asked: "quoted?"), and "e.g." or "etc." doesn't end a sentence.
+// a link as its text or as what it points at ("#36", a file name). A "?" may sit inside closing
+// marks (**bold?**, (aside?), asked: "quoted?"), and a period ends a sentence only before a capital.
 function questionIn(m) {
   const subject = (m.subject || "").trim();
   if (/\?\s*$/.test(subject) && !isReply(m)) return cutAtWord(subject, 110);
   return cutAtWord(askedIn(m.body || "") || (isReply(m) ? "" : askedIn(subject)), 110);
 }
 
+function safeDecode(x) {
+  try {
+    return decodeURIComponent(x);
+  } catch {
+    return x;
+  }
+}
+
 function askedIn(raw) {
   const kept = [];
   const keep = (x) => "\uE000" + (kept.push(x) - 1) + "\uE001";
+  // A link says what it points at: "#36" for a pull request or issue, a short SHA for a commit,
+  // the last part of its path for anything else (a file, a page), or its host.
   const link = (url) => {
+    const [host, ...path] = url.replace(/^https?:\/\//, "").split(/[?#]/)[0].split("/").filter(Boolean);
     const n = url.match(/\/(?:pull|issues)\/(\d+)/);
-    return n ? "#" + n[1] : url.replace(/^https?:\/\//, "").split(/[/?#]/)[0];
+    const sha = url.match(/\/commit\/([0-9a-f]{7,40})/i);
+    return n ? "#" + n[1] : sha ? sha[1].slice(0, 7) : path.length ? safeDecode(path[path.length - 1]) : host;
   };
   const text = raw
     .replace(/```[\s\S]*?```/g, " ")
-    .split("\n").filter((line) => !/^\s*>/.test(line)).join("\n")
+    .split("\n").filter((line) => !/^\s*>/.test(line))
+    // A single newline is a wrap inside a sentence. A blank line, a heading, a list item or the
+    // line after a heading starts a new one.
+    .reduce((out, line, i, all) => {
+      const starts = !line.trim() || !all[i - 1]?.trim() || /^\s*(?:#|[-*+]\s|\d+[.)]\s)/.test(line) || /^\s*#/.test(all[i - 1]);
+      return out + (i === 0 ? "" : starts ? "\n" : " ") + line;
+    }, "")
     .replace(/`([^`\n]*)`/g, (_, c) => keep(c))
     .replace(/\[([^\]\n]+)\]\(https?:\/\/[^)\s]*\)/g, (_, t) => keep(t))
+    .replace(/<(https?:\/\/[^>\s]+)>/g, "$1")
     // A link ends before the punctuation after it: "review https://…/pull/36?" still asks.
     .replace(/https?:\/\/[^\s<>]+/g, (u) => {
       const [, url, tail] = u.match(/^(.*?)([.,;:!?)\]'"”’]*)$/);
       return keep(link(url)) + tail;
-    })
-    .replace(/\b(?:e\.g|i\.e|vs|etc)\./gi, (x) => x.replace(/\./g, "\uE002"));
+    });
   const CLOSE = { '"': '"', "”": "“", "’": "‘", ")": "(", "]": "[", "*": "*", _: "_" };
   const clean = (x) => {
     const [, stem0, tail] = x.match(/^([\s\S]*?\?)([*_)\]"”’]*)$/);
@@ -2496,13 +2514,18 @@ function askedIn(raw) {
       }
     }
     return stem
-      .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "")
+      .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, "")
       .replace(/^[*_\s]+/, "")
-      .replace(/\uE002/g, ".")
+      .replace(/\s+/g, " ")
       .replace(/\uE000(\d+)\uE001/g, (_, i) => kept[i])
       .trim();
   };
-  const found = text.split(/(?<=[.!?][*_)\]"”’]*)\s+|\n+/).map((x) => x.trim()).find((x) => /\?[*_)\]"”’]*$/.test(x));
+  // "?" and "!" end a sentence; "." only before a capital, a digit or an opening mark, so "e.g. the
+  // zip", "the U.S. build" and "3 p.m. your time" don't.
+  const found = text
+    .split(/(?<=[!?][*_)\]"”’]*)\s+|(?<=\.[*_)\]"”’]*)\s+(?=[\p{Lu}\d"“‘(\[*_\uE000])|\n+/u)
+    .map((x) => x.trim())
+    .find((x) => /\?[*_)\]"”’]*$/.test(x));
   return found ? clean(found) : "";
 }
 
@@ -2521,6 +2544,12 @@ function fxPr(pr, href) {
 }
 
 // A reply is known by its "Re:" subject; the daemon has no reply field today (#183 proposes one).
+// What a message's thread is about: its subject without "Re:". Conversations are keyed on it
+// case-blind, so "Re: signing mur.exe" belongs with "Signing mur.exe".
+function topicOf(m) {
+  return (m.subject || "").replace(/^(re:\s*)+/i, "").trim();
+}
+
 function isReply(m) {
   return /^re:/i.test(m.subject || "");
 }
@@ -2530,7 +2559,6 @@ function deviceName(d) {
 }
 
 function fleetNeeds(rows) {
-  const topicOf = (x) => (x.subject || "").replace(/^(re:\s*)+/i, "").trim();
   const now = Date.now();
   const by = new Map(rows.map((r) => [r.s.name, r]));
   const out = new Map();
@@ -2955,8 +2983,8 @@ function fleetInspector(name, need) {
   for (const m of ui.messages) {
     if (m.toKind !== "session" || (fromName(m) !== name && toName(m) !== name)) continue;
     const other = fromName(m) === name ? toName(m) : fromName(m);
-    const subj = (m.subject || "").replace(/^(re:\s*)+/i, "");
-    const k = JSON.stringify([other, subj]);
+    const subj = topicOf(m);
+    const k = JSON.stringify([other, subj.toLowerCase()]);
     if (!convMap.has(k)) convMap.set(k, { other, subj, msgs: [] });
     convMap.get(k).msgs.push(m);
   }
