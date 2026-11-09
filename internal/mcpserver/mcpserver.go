@@ -122,9 +122,7 @@ func (s *server) initHere() {
 			dir = "-"
 		}
 	}
-	// One OpenCode server serves every session in its directory, so moving it would move them all;
-	// it publishes no record, and join finds no session to move.
-	if dir == "-" || sharedAgent(s.opt.Agent) {
+	if dir == "-" {
 		return
 	}
 	var claude string
@@ -133,7 +131,7 @@ func (s *server) initHere() {
 	}
 	s.hereDir = dir
 	s.self = here.Session{ServerPID: os.Getpid(), ClientPID: os.Getppid(), ClientStarted: here.Started(os.Getppid()),
-		ClaudeSession: claude, Agent: agentName(s.opt.Agent)}
+		ClaudeSession: claude, Agent: agentName(s.opt.Agent), Fixed: sharedAgent(s.opt.Agent)}
 }
 
 func (s *server) withdraw() {
@@ -144,7 +142,7 @@ func (s *server) withdraw() {
 
 // follow moves the server to the repo `mur join` asked it to, if it asked since the last look.
 func (s *server) follow(ctx context.Context) {
-	if s.hereDir == "" {
+	if s.hereDir == "" || s.self.Fixed {
 		return
 	}
 	m, ok := here.Asked(s.hereDir, s.self)

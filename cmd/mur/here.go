@@ -43,16 +43,13 @@ func bringCaller(ctx context.Context, dir string, r *join.Report) {
 	if os.Getenv("CLAUDECODE") == "1" {
 		claude = os.Getenv("CLAUDE_CODE_SESSION_ID")
 	}
-	mine := here.Caller(sessions, here.Ancestors(), claudePID, claude)
-	switch {
-	case len(mine) == 0:
-		return
-	case len(mine) > 1:
-		r.Notes = append(r.Notes, fmt.Sprintf("Moving this session into %s here: its agent's process runs %d sessions, and nothing says which one ran this command, "+
-			"so none was moved. A session that starts in this repo is in %[1]s from the start.", brand.Product, len(mine)))
+	s, ok, why := pickMove(here.Caller(sessions, here.Ancestors(), claudePID, claude))
+	if why != "" {
+		r.Notes = append(r.Notes, why)
+	}
+	if !ok {
 		return
 	}
-	s := mine[0]
 	if s.GitDir == p.GitDir {
 		return // it started in this clone, and turns on by itself now that the user joined
 	}
@@ -82,6 +79,26 @@ func bringCaller(ctx context.Context, dir string, r *join.Report) {
 	}
 	r.Notes = append(r.Notes, fmt.Sprintf("Moving this session into %s here: it was asked to, and hadn't within %s. "+
 		"It may still; if `who` doesn't work in a minute, start a session in this repo.", brand.Product, moveWait))
+}
+
+// pickMove is the session to move, of the servers Caller found for the command, or why none is
+// moved ("" when there is no session at all, as for a person running join in a terminal).
+func pickMove(mine []here.Session) (here.Session, bool, string) {
+	for _, s := range mine {
+		if s.Fixed {
+			return here.Session{}, false, "Moving this session into " + brand.Product + " here: its agent (" + s.Agent + ") runs one " + brand.Product +
+				" server for all its sessions in a folder, so it can't be moved for one of them. A session that starts in this repo is in " +
+				brand.Product + " from the start."
+		}
+	}
+	switch len(mine) {
+	case 0:
+		return here.Session{}, false, ""
+	case 1:
+		return mine[0], true, ""
+	}
+	return here.Session{}, false, fmt.Sprintf("Moving this session into %s here: its agent's process runs %d sessions, and nothing says which one ran this command, "+
+		"so none was moved. A session that starts in this repo is in %[1]s from the start.", brand.Product, len(mine))
 }
 
 // repoOf is the working tree a git common dir belongs to, for saying which repo.

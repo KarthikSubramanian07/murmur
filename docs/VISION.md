@@ -329,11 +329,14 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   the repo it was in. A move doesn't stand in for consent: in a clone the user hasn't joined the
   server stays off. Where one agent process runs several sessions and nothing tells them apart
   (Codex's app server in T3), join moves none and says so; OpenCode's one server serves every
-  session in its directory, so it publishes no record and can't be moved. A move carries the agent
+  session in its directory, so it can't be moved; it publishes a record marked fixed anyway, which
+  stops the search up the process tree, so a join from an OpenCode that Claude Code started is
+  refused rather than moving Claude's session. A move carries the agent
   process's start time and Claude session ID from the record, so a new process that took a dead
   agent's PID doesn't follow it; records and moves of exited processes are cleared whenever they are
   read. Moving ends the old registration's context, and a call still on its way to the old repo's
-  daemon with it. The instructions an MCP server
+  daemon with it: the client sets a past deadline on the connection when the call's context ends,
+  which stops a write or read already under way, and checks the context just before sending. The instructions an MCP server
   gives at initialize can't change afterwards, so a session that moves in has the repo's section
   and the tool descriptions, not them. The hook is per worktree, and runs in the directory the
   agent started in, so commits aren't credited to a session that moved in (`internal/here`).

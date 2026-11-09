@@ -35,6 +35,10 @@ type Session struct {
 	Agent         string `json:"agent,omitempty"`
 	GitDir        string `json:"gitDir,omitempty"` // the clone it is placed in, "" if none
 	On            bool   `json:"on,omitempty"`     // registered with that clone's daemon, tools listed
+	// Fixed says the server can't be moved: one OpenCode server serves every session in its
+	// directory, so moving it for one would move them all. Its record still stops the search up
+	// the process tree, or join would move an agent further up (a Claude Code that started it).
+	Fixed bool `json:"fixed,omitempty"`
 }
 
 // Move asks the server of the agent process ClientPID to work in Dir.

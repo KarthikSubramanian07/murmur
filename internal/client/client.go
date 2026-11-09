@@ -348,12 +348,26 @@ func (c *Client) roundTrip(ctx context.Context, req proto.Request) (resp proto.R
 	} else {
 		conn.SetDeadline(time.Now().Add(2 * time.Minute))
 	}
+	// Cancelling ctx ends a write or read already under way: a deadline in the past makes both
+	// return at once. The MCP server cancels a call when its session moves to another repo or
+	// leaves, and the call must not reach the old repo's daemon, or wait on it, after that.
+	stop := context.AfterFunc(ctx, func() { conn.SetDeadline(time.Unix(1, 0)) })
+	defer stop()
+	if ctx.Err() != nil {
+		return proto.Response{}, false, ctx.Err()
+	}
 	req.Token = info.Token
 	if err := writeLine(conn, req); err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return proto.Response{}, true, err
 	}
 	line, err := bufio.NewReader(conn).ReadBytes('\n')
 	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return proto.Response{}, true, err
 	}
 	if err := json.Unmarshal(line, &resp); err != nil {

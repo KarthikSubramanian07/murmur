@@ -103,14 +103,26 @@ func TestAMoveLeavesTheRepoItWasIn(t *testing.T) {
 	}
 }
 
-// OpenCode's one server serves every session in its directory: it publishes no record, so join
-// can't move them all for one.
-func TestASharedServerPublishesNoRecord(t *testing.T) {
+// OpenCode's one server serves every session in its directory, so it can't be moved for one of
+// them. It still publishes a record, marked fixed: without one, join would look further up the
+// process tree and move the Claude Code session that started OpenCode. A move left for it anyway
+// is ignored.
+func TestASharedServerPublishesAFixedRecordAndStays(t *testing.T) {
 	hdir := t.TempDir()
+	f := &fakeDaemon{}
+	top, _ := joinedRepo(t, f)
 	openWith(t, Options{Agent: "opencode", Version: "test", Dir: t.TempDir(), Poll: 25 * time.Millisecond, HereDir: hdir})
+	var rec here.Session
+	waitFor(t, "the server's record", func() (ok bool) { rec, ok = mine(t, hdir); return })
+	if !rec.Fixed {
+		t.Fatalf("a shared server's record isn't fixed: %+v", rec)
+	}
+	if err := here.Ask(hdir, rec, top, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	settle()
-	if rec, ok := mine(t, hdir); ok {
-		t.Errorf("a shared server published %+v", rec)
+	if r, _ := mine(t, hdir); r.GitDir != "" || r.On || f.helloCount() != 0 {
+		t.Errorf("a shared server moved: record %+v, hellos %d", r, f.helloCount())
 	}
 }
 
