@@ -64,14 +64,21 @@ func (c *Client) current() proto.Info {
 // ErrNoPage means the daemon is running but isn't serving the page for humans.
 var ErrNoPage = errors.New("the daemon isn't serving the page")
 
-// PageURL is the address that opens the page in a browser. The daemon's token goes in the
+// PageURL is the address that opens the page in a browser. The page's token goes in the
 // fragment, which a browser never sends to a server, and the page keeps it for its own requests.
+// It is not the daemon's token: the address reaches the browser's history and extensions, and
+// the daemon's lets whoever holds it send as this device (#42). A daemon from before the page had
+// a token of its own takes the daemon's.
 func (c *Client) PageURL() (string, error) {
 	info := c.current()
 	if info.Web == "" {
 		return "", ErrNoPage
 	}
-	return "http://" + info.Web + "/#token=" + info.Token, nil
+	token := info.PageToken
+	if token == "" {
+		token = info.Token
+	}
+	return "http://" + info.Web + "/#token=" + token, nil
 }
 
 // Connect finds the daemon for gitDir, starting one if spawn is set and none answers.
