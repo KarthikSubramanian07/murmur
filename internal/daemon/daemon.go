@@ -284,6 +284,11 @@ type Daemon struct {
 	updating   bool // under mu: no new handoffs after the safe restart point
 	pushing    map[string]bool
 	pushWarned map[string]bool
+	// introduced is, for each session, the senders it has had a message from as a turn, so later
+	// turns from them can say less (#216). It is kept in memory only, keyed by session ID so a session
+	// that reconnects keeps it: a daemon that restarts introduces each sender once more, which errs
+	// the safe way.
+	introduced map[string]map[string]bool
 	// pushedAt is when a message last went into each session as a turn: the session is at work from
 	// then, as far as the wake setting goes, before anything else says so (see idleSinceLocked).
 	pushedAt map[string]time.Time
@@ -651,7 +656,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
 		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
-		pushing: map[string]bool{}, pushWarned: map[string]bool{}, pushedAt: map[string]time.Time{},
+		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
 	}

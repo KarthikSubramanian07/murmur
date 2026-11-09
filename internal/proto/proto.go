@@ -288,6 +288,9 @@ type MessageView struct {
 	Subject   string    `json:"subject"`
 	Body      string    `json:"body,omitempty"`
 	At        time.Time `json:"at"`
+	// Introduced says the session this goes to as a turn has had a turn from the same sender before,
+	// so the turn needn't say again what agent the sender is and whose machine it is on (#216).
+	Introduced bool `json:"introduced,omitempty"`
 }
 
 // EventView is one line of `log`.

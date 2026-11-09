@@ -445,6 +445,7 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 	}
 	m.Pushing = true
 	views := d.messageViewsLocked([]*inMsg{m}, true)
+	views[0].Introduced = d.introduced[id][m.Event.From]
 	return &pushJob{id: id, addr: bus.Addr(d.device, id), msg: m, via: via, route: route, text: view.Turn(views[0])}
 }
 
@@ -582,6 +583,7 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		return
 	}
 	d.outOfInboxLocked(j.id, j.msg, "handed", "as a turn, through "+j.via)
+	d.introduceLocked(j.id, j.msg.Event.From)
 	d.saveLocked()
 	delete(d.pushWarned, j.id)
 }
@@ -590,6 +592,34 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 type delivery struct {
 	id  string
 	msg *inMsg
+}
+
+// introduceLocked records that session id has had a turn from sender from. Caller holds mu.
+func (d *Daemon) introduceLocked(id, from string) {
+	if d.introduced[id] == nil {
+		d.introduced[id] = map[string]bool{}
+	}
+	d.introduced[id][from] = true
+}
+
+// wholeViewsLocked renders msgs, given whole to the sessions in given, and records the sessions as
+// introduced to their senders. A message is rendered as from a sender already introduced only if
+// every session it was given to had been: the hook speaks for several sessions at once, and shows
+// a message for everyone once. Caller holds mu.
+func (d *Daemon) wholeViewsLocked(msgs []*inMsg, given []delivery) []proto.MessageView {
+	views := d.messageViewsLocked(msgs, true)
+	for i := range views {
+		views[i].Introduced = true
+		for _, g := range given {
+			if g.msg.Event.ID == views[i].ID && !d.introduced[g.id][views[i].From] {
+				views[i].Introduced = false
+			}
+		}
+	}
+	for _, g := range given {
+		d.introduceLocked(g.id, g.msg.Event.From)
+	}
+	return views
 }
 
 // outOfInboxLocked records that message m has gone to session id: it leaves the inbox, wherever it
