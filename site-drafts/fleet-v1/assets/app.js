@@ -2330,7 +2330,7 @@ function fxSeg(label, options, value, onPick) {
         "button",
         { role: "radio", "aria-checked": value === v ? "true" : "false", class: value === v ? "on" : "", onclick: () => onPick(v) },
         text,
-        n != null && h("span", { class: "fx-seg-n" }, n),
+        n != null && h("span", { class: "fx-seg-n" + (n === 0 ? " zero" : "") }, n),
       ),
     ),
   );
@@ -2353,7 +2353,8 @@ const GIVE_UP_MS = 24 * 3600000;
 function questionIn(m) {
   const text = (m.body || "").replace(/```[\s\S]*?```/g, " ").replace(/`[^`]*`/g, "…").replace(/https?:\/\/\S+/g, " ");
   const asked = text.split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).find((x) => /\?$/.test(x));
-  const q = asked || (/\?\s*$/.test(m.subject || "") && !isReply(m) ? m.subject.trim() : "");
+  // A subject that asks is the question as its sender put it, and how the message is listed.
+  const q = (/\?\s*$/.test(m.subject || "") && !isReply(m) ? m.subject.trim() : "") || asked || "";
   return q.length > 110 ? q.slice(0, 109).trimEnd() + "…" : q;
 }
 
@@ -2442,7 +2443,7 @@ function fleetPage() {
           },
         }),
       ),
-      fxSeg("State", [["", "All", searched.length], ...["on", "idle", "dnd", "off"].filter((st) => count(st)).map((st) => [st, [fxDot(st), FX_STATE[st]], count(st)])], F.state, set("state")),
+      fxSeg("State", [["", "All", searched.length], ...["on", "idle", "dnd", "off"].map((st) => [st, [fxDot(st), FX_STATE[st]], count(st)])], F.state, set("state")),
       h("span", { class: "fx-spacer" }),
       h("span", { class: "fx-group-by" }, h("span", { class: "fx-label" }, "Group by"), fxSeg("Group by", [["device", "Device"], ["branch", "Branch"], ["group", "Job"]], F.by, set("by"))),
     ),
@@ -2478,8 +2479,8 @@ function fleetTable(rows, needs, sel) {
   return h(
     "section",
     // Grouped by branch, each heading names the branch, so the rows drop their Branch column.
-    { class: "fx-panel fx-table" + (F.by === "branch" ? " by-branch" : ""), role: "table", "aria-label": "Sessions" },
-    h("div", { class: "fx-tr fx-th", role: "row" }, ["Session", "State", "Working on", "Branch", "Last active"].map((c, i) => h("span", { role: "columnheader", class: i === 4 ? "num" : "" }, c))),
+    { class: "fx-panel fx-table" + (F.by === "branch" ? " by-branch" : ""), "aria-label": "Sessions" },
+    h("div", { class: "fx-tr fx-th", "aria-hidden": "true" }, ["Session", "State", "Working on", "Branch", "Last active"].map((c, i) => h("span", { class: i === 4 ? "num" : "" }, c))),
     rows.length === 0
       ? h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, "No sessions match"))
       : [
@@ -2525,6 +2526,15 @@ function runningFor(s) {
   return Math.floor(hrs / 24) + "d" + (hrs % 24 ? " " + (hrs % 24) + "h" : "");
 }
 
+// "8:53 PM" today, "Sat 8:53 PM" within the week, "Nov 2, 8:53 PM" before that.
+function sinceWhen(t) {
+  const d = new Date(t);
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === new Date().toDateString()) return time;
+  if (Date.now() - t < 6 * 86400000) return d.toLocaleDateString([], { weekday: "short" }) + " " + time;
+  return d.toLocaleDateString([], { month: "short", day: "numeric" }) + ", " + time;
+}
+
 function fleetRow(d, s, need, on) {
   const F = fleetFilter();
   const prs = ui.state.prs || {};
@@ -2543,8 +2553,7 @@ function fleetRow(d, s, need, on) {
     "button",
     {
       class: "fx-tr fx-row" + (on ? " on" : "") + (need ? " need" : "") + (d.reachable ? "" : " dim"),
-      role: "row",
-      "aria-selected": on ? "true" : "false",
+      "aria-pressed": on ? "true" : "false",
       "data-key": "fl-" + s.name,
       onclick: (e) => {
         // Opened as the whole page, a session starts at its top, and closing it goes back to
@@ -2627,10 +2636,11 @@ function fleetInspector(name, need) {
     ["Agent", [s.agent, modelOf(s)].filter(Boolean).join(" · ") || "–"],
     ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && (pr.url ? h("a", { class: "fx-pr" + (pr.draft ? " draft" : ""), href: pr.url, target: "_blank", rel: "noreferrer" }, "#" + pr.number) : h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number))] : "–"],
     groupOf(s) && ["Job", groupOf(s)],
-    ["Running for", started ? runningFor(s) + ", since " + new Date(started).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "–"],
+    ["Running for", started ? runningFor(s) + ", since " + sinceWhen(started) : "–"],
     ["Last active", t ? agoEl("span", "", t) : "–"],
   ].filter(Boolean);
   const owed = need?.msgs || [];
+  const unanswered = new Set([...fleetNeeds(fleetRows()).values()].flatMap((n) => n.msgs));
   const direct = ui.messages.filter((m) => m.toKind === "session" && (fromName(m) === name || toName(m) === name)).sort((a, b) => owed.includes(b) - owed.includes(a) || (owed.includes(a) ? owed.indexOf(a) - owed.indexOf(b) : b.sortAt - a.sortAt));
   const close = fleetClose;
   return [
@@ -2638,7 +2648,7 @@ function fleetInspector(name, need) {
       "header",
       { class: "fx-insp-head" },
       avatar(name),
-      h("div", { class: "fx-who-text" }, h("h2", null, name), h("span", { class: "fx-muted" }, [d.owner, deviceName(d)].filter(Boolean).join(" · "))),
+      h("div", { class: "fx-who-text" }, h("h2", null, name)),
       STACKED.matches
         ? h("button", { class: "fx-back", onclick: close }, "← All sessions")
         : h("button", { class: "fx-icon-btn", title: "Close", "aria-label": "Close", onclick: close }, icon("x")),
@@ -2659,7 +2669,7 @@ function fleetInspector(name, need) {
               h(
                 "button",
                 { class: "fx-dm" + (waits ? " fx-dm-wait" : ""), onclick: () => swOpenMessage(m) },
-                h("span", { class: "fx-dm-head" }, h("span", null, out ? "To " : "From ", h("b", null, out ? toName(m) : fromName(m)), waits ? " · waiting for an answer" : ""), agoEl("span", "fx-dm-time", m.sortAt)),
+                h("span", { class: "fx-dm-head" }, h("span", null, out ? "To " : "From ", h("b", null, out ? toName(m) : fromName(m)), waits ? " · waiting for an answer" : out && unanswered.has(m) ? " · no answer yet" : ""), agoEl("span", "fx-dm-time", m.sortAt)),
                 h("span", { class: "fx-dm-subj" }, m.subject),
                 waits && questionIn(m) !== m.subject && h("span", { class: "fx-dm-q" }, "“" + questionIn(m) + "”"),
               ),

@@ -262,3 +262,4 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-branch .mono { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.4; }
 /* With the details open beside the table, the page may use the room a wide window has. */
 .fx:has(.fx-main:not(.solo)) { max-width: 100rem; }
+.fx-seg-n.zero { opacity: 0.5; }
