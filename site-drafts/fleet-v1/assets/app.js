@@ -2384,10 +2384,10 @@ function fleetNeeds(rows) {
     list.sort((a, b) => when(a.at) - when(b.at));
     const m = list[0];
     const { d, s } = by.get(to);
-    const why = !d.reachable ? " Its device is offline." : onDnd(s) ? " It's on do not disturb." : "";
     const more = list.length > 1 ? " And " + plural(list.length - 1, "more question") + "." : "";
-    // text is a function: a row and the inspector each need their own copy of its nodes.
-    out.set(to, { at: when(m.at), m, text: () => ["No reply to ", h("b", null, fromName(m)), " for " + ago(when(m.at)).replace(" ago", "") + ": “" + questionIn(m) + "”" + why + more] });
+    // text is a function: a row and the inspector each need their own copy of its nodes. The
+    // State column says whether the session is offline or on do not disturb, so this doesn't.
+    out.set(to, { at: when(m.at), m, msgs: list, text: () => ["No reply to ", h("b", null, fromName(m)), " for " + ago(when(m.at)).replace(" ago", "") + ": “" + questionIn(m) + "”" + more] });
   }
   return out;
 }
@@ -2411,7 +2411,7 @@ function fleetPage() {
   const devs = new Set(all.map((r) => r.d.id));
   const n = fleetNeeds(all).size;
   const sub = q || F.state
-    ? [rows.length + " of " + plural(all.length, "session") + (rows.length === 1 ? " matches " : " match "), h("button", { class: "fx-clear", onclick: () => { F.q = ""; F.state = ""; render(); } }, "Clear")]
+    ? ["Showing " + rows.length + " of " + plural(all.length, "session") + " ", h("button", { class: "fx-clear", onclick: () => { F.q = ""; F.state = ""; render(); } }, "Clear")]
     : plural(all.length, "session") + " on " + plural(devs.size, "device") + " · " + (n ? n + (n === 1 ? " needs" : " need") + " a look" : "nothing needs a look");
 
   // Where the rail can't sit beside the table and leave it readable (see STACKED), the selected
@@ -2452,9 +2452,7 @@ function fleetTable(rows, needs, sel) {
   const F = fleetFilter();
   const key = (r) => (F.by === "device" ? r.d.id : F.by === "branch" ? r.s.branch || "" : groupOf(r.s));
   const pinned = rows.filter((r) => needs.has(r.s.name)).sort((a, b) => needs.get(a.s.name).at - needs.get(b.s.name).at);
-  const rest = rows
-    .filter((r) => !needs.has(r.s.name))
-    .sort((a, b) => (F.by === "device" ? (a.d.self ? 0 : a.d.reachable ? 1 : 2) - (b.d.self ? 0 : b.d.reachable ? 1 : 2) : 0) || (when(b.s.lastActive) || 0) - (when(a.s.lastActive) || 0));
+  const rest = [...rows].sort((a, b) => (F.by === "device" ? (a.d.self ? 0 : a.d.reachable ? 1 : 2) - (b.d.self ? 0 : b.d.reachable ? 1 : 2) : 0) || (when(b.s.lastActive) || 0) - (when(a.s.lastActive) || 0));
   const buckets = new Map();
   for (const r of rest) {
     const k = key(r);
@@ -2473,7 +2471,7 @@ function fleetTable(rows, needs, sel) {
   return h(
     "section",
     { class: "fx-panel fx-table", role: "table", "aria-label": "Sessions" },
-    h("div", { class: "fx-tr fx-th", role: "row" }, ["Session", "State", "Working on", "Branch", "Running for", "Last active"].map((c, i) => h("span", { role: "columnheader", class: i >= 4 ? "num" : "" }, c))),
+    h("div", { class: "fx-tr fx-th", role: "row" }, ["Session", "State", "Working on", "Branch", "Last active"].map((c, i) => h("span", { role: "columnheader", class: i === 4 ? "num" : "" }, c))),
     rows.length === 0
       ? h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, "No sessions match"))
       : [
@@ -2496,9 +2494,10 @@ function fleetTable(rows, needs, sel) {
                 },
                 icon(shut ? "chevronRight" : "chevronDown", "fx-chev"),
                 label(k, list),
+                list.some((r) => needs.has(r.s.name)) && h("span", { class: "fx-group-sub" }, list.filter((r) => needs.has(r.s.name)).length + " in Needs a look"),
                 h("span", { class: "fx-badge" }, list.length),
               ),
-              !shut && list.map(({ d, s }) => fleetRow(d, s, null, sel === s.name)),
+              !shut && list.filter((r) => !needs.has(r.s.name)).map(({ d, s }) => fleetRow(d, s, null, sel === s.name)),
             ];
           }),
         ],
@@ -2548,11 +2547,11 @@ function fleetRow(d, s, need, on) {
         }
       },
     },
-    h("span", { class: "fx-who" }, avatar(s.name), h("span", { class: "fx-who-text" }, h("span", { class: "fx-name truncate" }, s.name), h("span", { class: "fx-muted truncate" }, sub))),
+    // Where the table is too narrow for its Branch column, the branch joins the line under the name.
+    h("span", { class: "fx-who" }, avatar(s.name), h("span", { class: "fx-who-text" }, h("span", { class: "fx-name truncate" }, s.name), h("span", { class: "fx-muted truncate" }, sub, s.branch && h("span", { class: "fx-sub-branch" }, " · ", h("span", { class: "mono" }, s.branch), pr ? " #" + pr.number : "")))),
     h("span", { class: "fx-state" }, fxDot(state), word),
     h("span", { class: "fx-doing" }, h("span", { class: "fx-status" + (s.doing ? "" : " fx-faint") }, s.doing || "No status set"), need && h("span", { class: "fx-reason" }, need.text())),
-    h("span", { class: "fx-branch" }, s.branch && h("span", { class: "mono truncate" }, s.branch), pr && h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number)),
-    h("span", { class: "num fx-muted", title: when(s.started) ? "Started " + stamp(when(s.started)) : null }, runningFor(s)),
+    h("span", { class: "fx-branch" }, s.branch && h("span", { class: "mono truncate", title: s.branch }, s.branch), pr && h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number)),
     h("span", { class: "num fx-muted" }, t ? agoEl("span", "", t) : "–"),
   );
 }
@@ -2577,10 +2576,11 @@ function fleetInspector(name, need) {
     ["Agent", [s.agent, modelOf(s)].filter(Boolean).join(" · ") || "–"],
     ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && (pr.url ? h("a", { class: "fx-pr" + (pr.draft ? " draft" : ""), href: pr.url, target: "_blank", rel: "noreferrer" }, "#" + pr.number) : h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number))] : "–"],
     groupOf(s) && ["Job", groupOf(s)],
-    ["Started", started ? agoEl("span", "", started) : "–"],
+    ["Running for", started ? runningFor(s) + ", since " + new Date(started).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "–"],
     ["Last active", t ? agoEl("span", "", t) : "–"],
   ].filter(Boolean);
-  const direct = ui.messages.filter((m) => m.toKind === "session" && (fromName(m) === name || toName(m) === name)).sort((a, b) => b.sortAt - a.sortAt);
+  const owed = need?.msgs || [];
+  const direct = ui.messages.filter((m) => m.toKind === "session" && (fromName(m) === name || toName(m) === name)).sort((a, b) => owed.includes(b) - owed.includes(a) || b.sortAt - a.sortAt);
   const close = () => {
     const back = ui.fleetScroll;
     ui.fleetSel = null;
@@ -2596,7 +2596,7 @@ function fleetInspector(name, need) {
       h("div", { class: "fx-who-text" }, h("h2", null, name), h("span", { class: "fx-muted" }, [d.owner, deviceName(d)].filter(Boolean).join(" · "))),
       h("button", { class: "fx-icon-btn", title: "Close", "aria-label": "Close", onclick: close }, icon("x")),
     ),
-    need && h("p", { class: "fx-insp-need" }, need.text()),
+    need && h("button", { class: "fx-insp-need", title: "Open the conversation", onclick: () => swOpenMessage(need.m) }, need.text()),
     h("dl", { class: "fx-meta" }, meta.map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
     h("h3", { class: "fx-h3" }, "Direct messages", h("span", { class: "fx-badge" }, direct.length)),
     direct.length
@@ -2605,14 +2605,15 @@ function fleetInspector(name, need) {
           { class: "fx-dms" },
           direct.slice(0, 6).map((m) => {
             const out = fromName(m) === name;
+            const waits = owed.includes(m);
             return h(
               "li",
               null,
               h(
                 "button",
-                { class: "fx-dm", onclick: () => swOpenMessage(m) },
-                h("span", { class: "fx-dm-head" }, h("span", null, out ? "To " : "From ", h("b", null, out ? toName(m) : fromName(m))), agoEl("span", "fx-dm-time", m.sortAt)),
-                h("span", { class: "fx-dm-subj" }, m.subject),
+                { class: "fx-dm" + (waits ? " fx-dm-wait" : ""), onclick: () => swOpenMessage(m) },
+                h("span", { class: "fx-dm-head" }, h("span", null, out ? "To " : "From ", h("b", null, out ? toName(m) : fromName(m)), waits ? " · waiting for an answer" : ""), agoEl("span", "fx-dm-time", m.sortAt)),
+                h("span", { class: "fx-dm-subj" }, waits ? "“" + questionIn(m) + "”" : m.subject),
               ),
             );
           }),
