@@ -139,6 +139,14 @@ type State struct {
 	Picked  map[string]time.Time `json:"picked,omitempty"`
 }
 
+// dropHuman takes away a Human tag kept from before it was Murmur's alone (#267): it isn't shown, and
+// can't be removed by hand, so it would take a place under MaxPerSession for good.
+func (st *State) dropHuman() {
+	st.Self = slices.DeleteFunc(st.Self, func(t string) bool { return t == Human })
+	delete(st.Human, Human)
+	delete(st.Cleared, Human)
+}
+
 // Empty says there is nothing to keep.
 func (st *State) Empty() bool {
 	return st == nil || len(st.Self) == 0 && len(st.Human) == 0 && len(st.Cleared) == 0 && len(st.Picked) == 0
@@ -251,6 +259,7 @@ func Clean(in []string) (names []string, err error) {
 // its family (a second model: tag replaces the first). It fails, and changes nothing, if the
 // session would have more than MaxPerSession.
 func (st *State) SetSelf(add, remove []string) error {
+	st.dropHuman()
 	add, err := Clean(add)
 	if err != nil {
 		return err
@@ -285,6 +294,8 @@ func (st *State) SetSelf(add, remove []string) error {
 // by the human's latest choice about it (#251): a change older than that, by more than clockAllowance,
 // leaves the tag as it is. The session's own changes carry no time, and a human's beat them anyway.
 func (st *State) SetHuman(base []string, add, remove []string, by string, at time.Time) error {
+	st.dropHuman()
+	base = slices.DeleteFunc(slices.Clone(base), func(t string) bool { return t == Human })
 	add, err := Clean(add)
 	if err != nil {
 		return err

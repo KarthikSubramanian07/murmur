@@ -150,8 +150,9 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 	if det.Name == "" {
 		det.Name = cmp.Or(byAddr[addr], d.personNameOfLocked(addr))
 	}
-	if det.Agent == "" && bus.IsPerson(addr) {
-		det.Agent = bus.AgentPerson
+	if bus.IsPerson(addr) {
+		// From the address, so a person whose daemon has gone, known only by name, has it too.
+		det.Agent, det.Tags = cmp.Or(det.Agent, bus.AgentPerson), tags.Person()
 	}
 	det.Messages = d.messagesOfLocked(addr, det.Name, byAddr, limit)
 	return det

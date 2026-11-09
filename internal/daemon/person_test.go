@@ -587,4 +587,14 @@ func TestAPersonIsTaggedHuman(t *testing.T) {
 	if e, _ := a.whoEntry(addr); !human(e.Tags) {
 		t.Errorf("the person lost the human tag: %+v", e.Tags)
 	}
+
+	// Their daemon gone, they are known by name alone, and still tagged.
+	a.stop()
+	eventually(t, "b to forget a's presence", func() bool {
+		r := b.do(proto.Request{Op: proto.OpLookup, Name: "ada"})
+		return r.Lookup != nil && !r.Lookup.Running
+	})
+	if r := b.do(proto.Request{Op: proto.OpLookup, Name: "ada"}); r.Lookup == nil || !human(r.Lookup.Tags) {
+		t.Errorf("lookup of a person whose daemon has gone: %+v, %q", r.Lookup, r.Error)
+	}
 }

@@ -313,3 +313,25 @@ func TestHumanIsMurmursToGive(t *testing.T) {
 		t.Error("who human doesn't find people")
 	}
 }
+
+// A human tag a session set before #267 takes no place: the session can still have twelve it can
+// see, and the old one goes with its next change.
+func TestAnOldHumanTagTakesNoPlace(t *testing.T) {
+	st := State{Self: []string{"human"}}
+	for i := range MaxPerSession - 1 {
+		st.Self = append(st.Self, "t"+string(rune('a'+i)))
+	}
+	if err := st.SetSelf([]string{"twelfth"}, nil); err != nil {
+		t.Fatalf("the twelfth tag: %v", err)
+	}
+	if slices.Contains(st.Self, Human) || len(st.Self) != MaxPerSession {
+		t.Errorf("Self: %v", st.Self)
+	}
+	st = State{Human: map[string]Mark{Human: {On: true}}}
+	if err := st.SetHuman(nil, []string{"reviewing"}, nil, "ada", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.Human[Human]; ok {
+		t.Errorf("a human's old mark is kept: %v", st.Human)
+	}
+}

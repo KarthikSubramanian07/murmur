@@ -1262,6 +1262,7 @@ function recentItem(m, at) {
         "div",
         { class: "chat-msg-head" },
         h("span", { class: "chat-msg-from truncate" }, from),
+        m.fromPerson && humanTag(),
         h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who" }, to)),
         h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
       ),
