@@ -367,7 +367,7 @@ func (s *Server) putAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), sourceTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), sendTimeout) // a name is claimed on the remote, as a message is sent there
 	defer cancel()
 	account, err := s.src.SetAccount(ctx, a.Name)
 	if err != nil {

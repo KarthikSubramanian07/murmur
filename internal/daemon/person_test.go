@@ -514,3 +514,93 @@ func TestALongPersonLogIsCutBack(t *testing.T) {
 		t.Errorf("the temporary file is still there: %v", err)
 	}
 }
+
+// Two people who choose one name at the same moment can't both have it: the names registry takes one
+// claim, and the other is told the name is taken (#268).
+func TestTwoPeopleCantTakeOneName(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	pa, pb := a.page(), b.page()
+	type result struct {
+		code int
+		body string
+	}
+	results := make(chan result, 2)
+	for _, p := range []*page{pa, pb} {
+		go func() {
+			code, body := p.call("PUT", "/api/account", p.token, `{"name":"ada"}`)
+			results <- result{code, body}
+		}()
+	}
+	won, lost := 0, 0
+	for range 2 {
+		r := <-results
+		switch {
+		case r.code == http.StatusOK:
+			won++
+		case r.code == http.StatusBadRequest && strings.Contains(r.body, "taken"):
+			lost++
+		default:
+			t.Errorf("choosing ada: %d %s", r.code, r.body)
+		}
+	}
+	if won != 1 || lost != 1 {
+		t.Fatalf("%d took the name and %d were refused, want 1 and 1", won, lost)
+	}
+	winner, loser := a, b
+	if pb.state().Account.Name == "ada" {
+		winner, loser = b, a
+	}
+	if got := loser.page().state().Account.Name; got != "" {
+		t.Errorf("the one refused has a name: %q", got)
+	}
+	// Both devices send to ada's one owner.
+	want := winner.self() + "/" + bus.PersonSession
+	for _, d := range []*device{a, b} {
+		eventually(t, "ada to resolve to the winner", func() bool {
+			r := d.do(proto.Request{Op: proto.OpLookup, Name: "ada"})
+			return r.Lookup != nil && r.Lookup.Addr == want
+		})
+	}
+}
+
+// Two accounts from before people's names were claimed can share one. The first daemon to claim it
+// keeps it; the other's person is asked for another name, can't send until they choose one, and
+// keeps what was sent to them (#268).
+func TestANameHeldFromBeforeIsClaimedOnce(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	b.session("bbbbbb", "")
+	selfA := a.self()
+	a.stop()
+	b.stop()
+	// As a daemon from #249 left them: a name, and no claim.
+	for _, d := range []*device{a, b} {
+		setState(t, d, "person", "ada")
+		setState(t, d, "personSince", time.Now())
+		setState(t, d, "personClaims", map[string]string{})
+	}
+	a.start()
+	eventually(t, "a to claim ada", func() bool {
+		r := a.do(proto.Request{Op: proto.OpLookup, Name: "ada"})
+		return r.Lookup != nil && r.Lookup.Addr == selfA+"/"+bus.PersonSession && a.page().state().Account.Taken == ""
+	})
+	b.start()
+	b.session("bbbbbb", "")
+	pb := b.page()
+	eventually(t, "b to learn the name is a's", func() bool { return pb.state().Account.Taken == selfA })
+	if code, body := pb.call("POST", "/api/send", pb.token, `{"to":"bbbbbb","text":"hi"}`); code != http.StatusBadRequest || !strings.Contains(body, "choose another") {
+		t.Errorf("sending with a name someone else has: %d %s", code, body)
+	}
+	r := b.do(proto.Request{Op: proto.OpLookup, Name: "ada"})
+	if r.Lookup == nil || r.Lookup.Addr != selfA+"/"+bus.PersonSession {
+		t.Errorf("ada on b's own device: %+v", r.Lookup)
+	}
+	pb.choose("ada-b")
+	if got := pb.state().Account; got.Name != "ada-b" || got.Taken != "" {
+		t.Errorf("after choosing again: %+v", got)
+	}
+	if code, body := pb.call("POST", "/api/send", pb.token, `{"to":"bbbbbb","text":"hi"}`); code != http.StatusOK {
+		t.Errorf("sending once renamed: %d %s", code, body)
+	}
+}
