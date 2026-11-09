@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fakeGH puts a gh first on PATH that notes each run in its own folder and answers that there is
@@ -79,5 +81,35 @@ func TestLookupable(t *testing.T) {
 		if lookupable(b) {
 			t.Errorf("%q accepted", b)
 		}
+	}
+}
+
+// Closing the page's server ends the lookups it started (each runs gh in the clone) before it
+// returns, and a request after that starts none: nothing the page started outlives the daemon.
+func TestCloseEndsLookups(t *testing.T) {
+	started := make(chan string, 4)
+	var ended atomic.Int32
+	s := NewWithPRs(newFake(), testToken, func(ctx context.Context, branch string) (*PR, error) {
+		started <- branch
+		<-ctx.Done() // a gh that hangs until it is stopped
+		ended.Add(1)
+		return nil, ctx.Err()
+	})
+	s.prs.get([]string{"feat-1"})
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no lookup started")
+	}
+	s.Close()
+	if ended.Load() != 1 {
+		t.Errorf("Close returned with %d of 1 lookups ended", ended.Load())
+	}
+	s.prs.get([]string{"feat-2"})
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case b := <-started:
+		t.Errorf("a lookup for %s started after Close", b)
+	default:
 	}
 }
