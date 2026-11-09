@@ -573,17 +573,22 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		d.saveLocked()
 		d.mu.Unlock()
 	}
+	tagsOnly := false
 	if mode == modeSkip {
 		// Nothing is queued from the backlog, unless the first sync failed and sessions have
 		// registered since (what was sent after they started is for them), or an inbox is kept for
 		// a stopped session (what was sent after it stopped is for it, #30).
 		d.mu.Lock()
 		waiting := len(d.sessions) > 0 || d.keptInboxLocked()
+		seen := d.st.Initialized
 		d.mu.Unlock()
-		if !waiting {
-			skipTo()
+		if !waiting && !seen {
+			skipTo() // a new clone: no tags event can be for its sessions
 			return
 		}
+		// Tags don't expire as messages do: a human's change made while this device was away is
+		// applied however long ago it was made (#230), so the log is read for those alone.
+		tagsOnly = !waiting
 	}
 	if prev != "" {
 		ok, err := d.repo.IsAncestor(ctx, prev, sha)
@@ -627,6 +632,9 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		}
 		if junked && e.At.Before(hidden.Add(-time.Minute)) {
 			continue // history the junk hid when this device first looked
+		}
+		if tagsOnly && e.Type != bus.Tags {
+			continue
 		}
 		if mode != modeSkip {
 			d.noteLocked(e.At, e.Line())
