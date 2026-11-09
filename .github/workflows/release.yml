@@ -35,9 +35,12 @@ jobs:
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
+      # go.mod's toolchain line is the Go a release is built with. No cache: one restored from
+      # another workflow's run would go into the binaries unchecked.
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: false
       - name: Check the tag
         run: |
           if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
