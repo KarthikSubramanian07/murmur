@@ -155,9 +155,11 @@ export function contributors(commits) {
 // nothing that names an account, and a bus commit names only its device, so an owner (the git user
 // name its presence shows) is matched to the repo's commit authors of the same name. Of the
 // identities that name has committed as, a GitHub login wins, then the one with the most commits.
-// An email is turned into its login when lookup(sha), a commit's author login or null, can say, so
-// the same person committing from two addresses is one account. An owner with no commit under its
-// name is left out.
+// An email is turned into its login when lookup(sha) can say, so the same person committing from
+// two addresses is one account. lookup answers the commit author's login, null when GitHub links
+// the commit to no account, or undefined when it couldn't ask. An owner with no commit under its
+// name is left out, and so is one whose lookup couldn't be asked: the site keeps the account it
+// was matched to before, and sending the email in its place would replace a login with it.
 export async function accounts(owners, commits, lookup) {
   const byName = new Map(); // name -> identity -> { n, sha }
   for (const c of commits) {
@@ -173,27 +175,29 @@ export async function accounts(owners, commits, lookup) {
     if (!m) continue;
     const [[who, { sha }]] = [...m].sort(([a, x], [b, y]) => isLogin(b) - isLogin(a) || y.n - x.n || a.localeCompare(b));
     const login = isLogin(who) ? null : await lookup(sha);
+    if (login === undefined) continue;
     out.set(owner, login ? 'login:' + login.toLowerCase() : who);
   }
   return out;
 }
 
-// lookup for accounts: a commit's author login from GitHub's API, or null when it can't say. Once
-// rate limited it stops asking. GITHUB_TOKEN, if set, raises the limit.
+// lookup for accounts, from GitHub's API: the commit author's login, null when the API answers that
+// no account is linked, or undefined when it can't be asked (a rate limit, an outage, a timeout).
+// Once rate limited it stops asking. GITHUB_TOKEN, if set, raises the limit.
 function apiLookup(owner, name) {
   let off = false;
   return async sha => {
-    if (off) return null;
+    if (off) return undefined;
     const headers = { 'User-Agent': 'murmur-census', Accept: 'application/vnd.github+json' };
     if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
     try {
       const res = await fetch(`https://api.github.com/repos/${owner}/${name}/commits/${sha}`, { headers, signal: AbortSignal.timeout(10000) });
       if (res.status === 403 || res.status === 429) off = true;
-      if (!res.ok) return null;
+      if (!res.ok) return undefined;
       const login = (await res.json())?.author?.login;
       return typeof login === 'string' && login ? login : null;
     } catch {
-      return null;
+      return undefined;
     }
   };
 }
