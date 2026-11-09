@@ -32,9 +32,14 @@ var index = template.Must(template.ParseFS(static, "static/index.html"))
 const (
 	maxRequest    = 64 << 10
 	sourceTimeout = 10 * time.Second
-	maxNameLen    = 64
-	maxOverrides  = 1000
-	maxCursor     = 256
+	// sendTimeout is longer: a send returns when its push to the remote has landed.
+	sendTimeout = time.Minute
+	// maxSubject is how much of a person's first line the subject takes (bus.OneLine's limit for
+	// a message's).
+	maxSubject   = 120
+	maxNameLen   = 64
+	maxOverrides = 1000
+	maxCursor    = 256
 )
 
 // contentPolicy lets the page load only its own assets and talk only to its own server.
@@ -88,6 +93,9 @@ func NewWithPRs(src Source, token string, prs LookupPR) *Server {
 	s.mux.HandleFunc("POST /api/unmute", s.postUnmute)
 	s.mux.HandleFunc("POST /api/tags", s.postTags)
 	s.mux.HandleFunc("POST /api/restart", s.postRestart)
+	s.mux.HandleFunc("PUT /api/account", s.putAccount)
+	s.mux.HandleFunc("POST /api/send", s.postSend)
+	s.mux.HandleFunc("POST /api/read", s.postRead)
 	return s
 }
 
@@ -347,6 +355,89 @@ func (s *Server) postTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type accountRequest struct {
+	Name string `json:"name"`
+}
+
+func (s *Server) putAccount(w http.ResponseWriter, r *http.Request) {
+	var a accountRequest
+	if err := readJSON(w, r, &a); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), sourceTimeout)
+	defer cancel()
+	account, err := s.src.SetAccount(ctx, a.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, account)
+}
+
+type sendRequest struct {
+	To   string `json:"to"`
+	Text string `json:"text"`
+}
+
+func (s *Server) postSend(w http.ResponseWriter, r *http.Request) {
+	var m sendRequest
+	if err := readJSON(w, r, &m); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if m.To == "" || len(m.To) > maxNameLen*2 || strings.TrimSpace(m.Text) == "" {
+		writeError(w, http.StatusBadRequest, "a message needs a recipient and some text")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), sendTimeout)
+	defer cancel()
+	sent, err := s.src.Send(ctx, m.To, m.Text)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, sent)
+}
+
+type readRequest struct {
+	IDs []string `json:"ids"`
+}
+
+func (s *Server) postRead(w http.ResponseWriter, r *http.Request) {
+	var req readRequest
+	if err := readJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), sourceTimeout)
+	defer cancel()
+	if err := s.src.MarkRead(ctx, req.IDs); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// SplitText makes a person's message into what the bus carries: a subject of one line and a body.
+// A person writes one piece of text, and an agent reads a subject and then a body. A first line
+// that fits is the subject and the rest is the body. A first line that doesn't is cut at a word for
+// the subject, and the body has the whole text, so that nothing is read twice but the opening words
+// and nothing is lost.
+func SplitText(text string) (subject, body string) {
+	text = strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
+	first, rest, _ := strings.Cut(text, "\n")
+	first = strings.TrimSpace(first)
+	if runes := []rune(first); len(runes) > maxSubject {
+		cut := string(runes[:maxSubject-1])
+		if i := strings.LastIndexByte(cut, ' '); i > maxSubject/2 {
+			cut = cut[:i]
+		}
+		return strings.TrimSpace(cut) + "…", text
+	}
+	return first, strings.TrimSpace(rest)
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, v any) error {

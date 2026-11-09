@@ -17,10 +17,14 @@ import (
 	mrand "math/rand/v2"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/tags"
 	"github.com/a-Fig/murmur/internal/web"
 )
@@ -94,12 +98,14 @@ type fixtures struct {
 	settings web.Settings
 	version  web.Version
 	downTill time.Time // a restart in progress: State fails until then
+	account  web.Account
 }
 
 func newFixtures(now time.Time) *fixtures {
 	ago := func(d time.Duration) time.Time { return now.Add(-d) }
 	f := &fixtures{
-		self: "tyler-laptop-3f2a",
+		self:    "tyler-laptop-3f2a",
+		account: web.Account{Suggested: "tyler"},
 		settings: web.Settings{
 			Wake:           web.Wake{When: web.WakeWithin},
 			SessionWake:    map[string]web.Wake{"brave-heron": {When: web.WakeNever}},
@@ -157,6 +163,8 @@ func newFixtures(now time.Time) *fixtures {
 			},
 		},
 	}
+	// Another person has an account already, so the page's list of people has someone in it.
+	f.devices[1].Person = &web.Person{Name: "maya", Addr: "maya-mbp-91c0/human", LastActive: ago(40 * time.Second)}
 	// Every session has an address, device/session, as the daemon's do.
 	for di := range f.devices {
 		for si := range f.devices[di].Sessions {
@@ -269,7 +277,7 @@ func (f *fixtures) State(ctx context.Context) (web.State, error) {
 	if time.Now().Before(f.downTill) {
 		return web.State{}, errors.New("restarting")
 	}
-	st := web.State{Device: f.self, Mutes: append([]web.Mute(nil), f.mutes...), Version: f.version}
+	st := web.State{Device: f.self, Mutes: append([]web.Mute(nil), f.mutes...), Version: f.version, Account: f.account}
 	for _, d := range f.devices {
 		d.Sessions = append([]web.Session(nil), d.Sessions...)
 		st.Devices = append(st.Devices, d)
@@ -290,6 +298,106 @@ func (f *fixtures) Messages(ctx context.Context, cursor string) ([]web.Message, 
 		from = n
 	}
 	return append([]web.Message(nil), f.messages[from:]...), strconv.Itoa(len(f.messages)), nil
+}
+
+// SetAccount takes a name the way the daemon does, refusing the other person's.
+func (f *fixtures) SetAccount(ctx context.Context, name string) (web.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !bus.ValidPerson(name) {
+		return web.Account{}, fmt.Errorf("%q can't be a name. Use 2 to %d lowercase letters and digits, with single dashes between words.", name, names.MaxPerson)
+	}
+	if name == "maya" {
+		return web.Account{}, errors.New("maya is taken, by the person on maya-mbp-91c0.")
+	}
+	f.account.Name, f.account.Addr, f.account.Suggested = name, f.self+"/human", ""
+	for i := range f.devices {
+		if f.devices[i].Self {
+			f.devices[i].Person = &web.Person{Name: name, Addr: f.account.Addr, LastActive: time.Now()}
+		}
+	}
+	return f.account, nil
+}
+
+// Send takes as long as a push does, refuses what scrub would, and has the session answer a few
+// seconds later, as an agent does, going active first so the page can show it working.
+func (f *fixtures) Send(ctx context.Context, to, text string) (web.Sent, error) {
+	select {
+	case <-time.After(700 * time.Millisecond):
+	case <-ctx.Done():
+		return web.Sent{}, ctx.Err()
+	}
+	if strings.Contains(text, "AKIA") {
+		return web.Sent{}, errors.New("not sent: it looks like it holds a secret, and the bus keeps everything forever")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	subject, body := web.SplitText(text)
+	m := web.Message{ID: randomHex(6), From: f.account.Name, FromAddr: f.account.Addr, FromPerson: true,
+		Subject: subject, Body: body, At: time.Now()}
+	switch to {
+	case "*":
+		m.To, m.ToAddr, m.ToKind = "*", "*", web.ToAll
+	default:
+		m.To, m.ToAddr, m.ToKind = to, to, web.ToSession
+		isDevice := false
+		for _, d := range f.devices {
+			if d.ID == to {
+				isDevice = true
+			}
+			if d.Person != nil && d.Person.Name == to {
+				m.ToAddr, m.ToPerson = d.Person.Addr, true
+			}
+			for _, s := range d.Sessions {
+				if s.Name == to || s.Addr == to {
+					m.To, m.ToAddr = s.Name, s.Addr
+				}
+			}
+		}
+		if isDevice {
+			m.ToKind = web.ToDevice
+		}
+	}
+	f.messages = append(f.messages, m)
+	sent := web.Sent{ID: m.ID}
+	if m.ToKind == web.ToSession && !m.ToPerson {
+		go f.answer(m)
+	}
+	return sent, nil
+}
+
+// answer is the session m went to, starting a turn and then answering with `send`.
+func (f *fixtures) answer(m web.Message) {
+	time.Sleep(1500 * time.Millisecond)
+	f.touch(m.To)
+	time.Sleep(time.Duration(3+mrand.IntN(4)) * time.Second)
+	f.touch(m.To)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	reply := web.Message{ID: randomHex(6), From: m.To, FromAddr: m.ToAddr, To: f.account.Name, ToAddr: f.account.Addr,
+		ToKind: web.ToSession, ToPerson: true, Subject: "Re: " + m.Subject,
+		Body: "On it. I'll send you the result when it's done.", At: time.Now()}
+	f.messages = append(f.messages, reply)
+	f.account.Unread = append(f.account.Unread, reply.ID)
+}
+
+func (f *fixtures) touch(name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.devices {
+		for j := range f.devices[i].Sessions {
+			if f.devices[i].Sessions[j].Name == name {
+				f.devices[i].Sessions[j].LastActive = time.Now()
+			}
+		}
+	}
+}
+
+func (f *fixtures) MarkRead(ctx context.Context, ids []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.account.Unread = slices.DeleteFunc(f.account.Unread, func(id string) bool { return slices.Contains(ids, id) })
+	return nil
 }
 
 func (f *fixtures) Settings(ctx context.Context) (web.Settings, error) {
