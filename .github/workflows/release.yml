@@ -31,13 +31,14 @@ jobs:
       group: release-${{ inputs.tag || github.ref_name }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v5
+      # Actions are pinned to a commit, since this job can write releases (#308's review).
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
       # go.mod's toolchain line is the Go a release is built with. No cache: one restored from
       # another workflow's run would go into the binaries unchecked.
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
