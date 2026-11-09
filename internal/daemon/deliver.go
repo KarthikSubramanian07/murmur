@@ -400,14 +400,15 @@ func (d *Daemon) nextLapseLocked() time.Time {
 // endLapsedTurnsLocked ends the turn of each session whose continuation lapsed outside T3, as Stop
 // would have: what came in the meantime is held, and goes in as a turn by the session's socket.
 // In T3 the database decides, as a continued turn can run longer than ContinueHold without a tool
-// call. Caller holds mu.
+// call. A session is in T3 by its route, not by whether its thread has been read: a read that keeps
+// failing mustn't make a live turn end. Caller holds mu.
 func (d *Daemon) endLapsedTurnsLocked(wake pageSettings) {
 	for _, s := range d.sessions {
 		if !d.continuationLapsedLocked(s) {
 			continue
 		}
 		s.continuedAt = time.Time{}
-		if _, inT3 := d.threadStateLocked(s.id); !inT3 {
+		if d.routeOfLocked(s.id).T3Thread == "" {
 			d.endTurnLocked(s, wake)
 		}
 	}
