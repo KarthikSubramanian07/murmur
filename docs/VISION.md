@@ -1336,7 +1336,7 @@ not from the Worker, because counting needs git, and a fetch of the whole bus is
 the API would need one per commit. Once the bus is encrypted (#257) a record's kind is hidden from a
 public reader, so messages stop being told from other records, and only records are counted.
 
-Each repo is counted on its own, since anyone can list one (#ISSUE). A repo that can't be read (gone
+Each repo is counted on its own, since anyone can list one (#298). A repo that can't be read (gone
 private, or deleted) keeps the counts it had. A repo may take 3 minutes of git's time and show
 2,000 refs of devices, so that one with huge objects or 100,000 refs can't hold the job past its
 30 minutes. One over either, or whose counts the site refuses, is skipped, and the day's run fails
