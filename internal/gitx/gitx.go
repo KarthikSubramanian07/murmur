@@ -5,11 +5,14 @@ package gitx
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/a-Fig/murmur/internal/proc"
 )
 
 // Git runs commands against one repository's git directory.
@@ -51,7 +54,24 @@ func RunIn(ctx context.Context, dir string, args ...string) (string, error) {
 	return run(ctx, dir, "", nil, args...)
 }
 
+// startLimit is how long git may take to start (proc.StartWithin). It takes milliseconds: under the
+// race detector, with twelve starting at once, never over 0.7 s (#217).
+const startLimit = 10 * time.Second
+
+// run runs git once more if its start hung (proc.ErrStartHung). That git never ran, or, started
+// late, was killed at once, which a read and the writing of an object (commit-tree) don't mind; a
+// push that may have landed is checked by its caller, as after any failed push.
 func run(ctx context.Context, dir, stdin string, env []string, args ...string) (string, error) {
+	out, err := runOnce(ctx, dir, stdin, env, args...)
+	if errors.Is(err, proc.ErrStartHung) && ctx.Err() == nil {
+		out, err = runOnce(ctx, dir, stdin, env, args...)
+	}
+	return out, err
+}
+
+func runOnce(ctx context.Context, dir, stdin string, env []string, args ...string) (string, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	// A git killed outright can leave a ref's .lock file behind, and every later write to that
 	// ref fails until it is removed. Where the platform allows, interrupt it instead, so git
@@ -71,7 +91,10 @@ func run(ctx context.Context, dir, stdin string, env []string, args ...string) (
 	}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
+	if err := proc.StartWithin(cmd, startLimit, cancel); err != nil {
+		return "", &Error{Args: args, Err: err}
+	}
+	if err := cmd.Wait(); err != nil {
 		return out.String(), &Error{Args: args, Stderr: errb.String(), Err: err}
 	}
 	return out.String(), nil

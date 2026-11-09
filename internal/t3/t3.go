@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/a-Fig/murmur/internal/proc"
 )
 
 // ErrNotStarted is what Send's error wraps when the command never started, so that nothing can have
@@ -28,6 +30,9 @@ var ErrNotStarted = errors.New("couldn't start the command")
 // SendTimeout bounds one `t3 thread send`. It takes about a second where T3 is running; a T3 that
 // isn't running makes it fail sooner than this.
 const SendTimeout = 30 * time.Second
+
+// startLimit is how long `t3` may take to start (proc.StartWithin).
+const startLimit = 30 * time.Second
 
 // Homes lists the directories T3 may keep its data in, most likely first: the one T3CODE_HOME
 // names, the parent of the directory the command line lives in (T3 puts it at ~/.t3/bin/t3), and
@@ -82,7 +87,12 @@ func Send(ctx context.Context, cli, home, thread, text string) error {
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	hideWindow(cmd)
-	if err := cmd.Start(); err != nil {
+	if err := proc.StartWithin(cmd, startLimit, cancel); err != nil {
+		if errors.Is(err, proc.ErrStartHung) {
+			// Not ErrNotStarted: a start that came back after this gave up was killed, but may
+			// have handed the message over first.
+			return fmt.Errorf("t3 thread send: %w", err)
+		}
 		if parent.Err() != nil { // cancelled before it could start: nothing ran, and the caller's cancellation is still the reason
 			return fmt.Errorf("t3 thread send: %w: %w", ErrNotStarted, parent.Err())
 		}
