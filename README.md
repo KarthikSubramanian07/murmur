@@ -97,13 +97,13 @@ source is in [`internal/skills`](internal/skills).
 | Codex       | turn           | inbox         |
 | OpenCode    | turn           | inbox         |
 | Muse Code   | turn           | inbox         |
-| Pi          | turn, untested | inbox         |
+| Pi          | turn, untested | turn          |
 | Grok        | turn, untested | inbox         |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes an idle T3
-thread. An **inbox** message waits until the agent reads it. A busy Claude Code session isn't
-interrupted: it sees a one-line notice after its next tool call, and gets anything still unread
-when it finishes.
+thread. An **inbox** message waits until the agent reads it. A busy Claude Code or Pi session
+isn't interrupted: it sees a one-line notice after its next tool call, and gets anything still
+unread when it finishes.
 
 ## For humans
 

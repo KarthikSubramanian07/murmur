@@ -381,9 +381,10 @@ since it wasn't installed). The details, and where each came from, are in the co
   after 30 minutes without one, as a stopped session is; its T3 route outlives that as any does.
 - **Delivery.** Inside T3 the existing `t3 thread send` handoff needed nothing new: an OpenCode and
   a Muse thread each took a message as a turn and answered it with `send`, nobody typing
-  (2026-11-01). Outside T3 none of the four has a way in that Murmur uses yet (OpenCode has an HTTP
-  API and plugins, Pi extensions can start a turn, Muse's session messaging isn't on Windows), so a
-  message waits in the inbox, with no notice: no hook of Murmur's runs in them.
+  (2026-11-01). Outside T3, OpenCode, Muse and Grok have no way in that Murmur uses yet (OpenCode
+  has an HTTP API and plugins, Muse's session messaging isn't on Windows), so a message waits in the
+  inbox, with no notice: no hook of Murmur's runs in them. Pi has one since 2026-11-09 (#205): see
+  "Pi's extension" under "Delivering a message as a turn".
 - **Titles.** Inside T3 the thread's title is read as for any thread. Outside T3 none is read for
   these agents: their IDs aren't Codex threads.
 - **Tool approval.** OpenCode and Grok have a rule for it, which join writes; Muse and Pi have none.
@@ -917,8 +918,8 @@ order a message meets them:
 | Route | Delivered when | Can Murmur see it |
 |---|---|---|
 | `t3 thread send` | the turn carrying it starts: at once in an idle thread, after the running turn in a busy one (a busy one only where the hook doesn't run, #202) | No. The daemon sees `t3` accept the message, not the turn start; T3's database would show it (`orchestration_v2_projection_messages`), but those tables are T3's own and may change |
-| The messaging socket (Claude Code outside T3) | Claude Code takes it as a turn | No: the socket answers nothing |
-| The hook's notice (Claude Code) | the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt. That delivers the sender and subject, or the whole message where the page's busy setting says so (#204); otherwise the body is delivered by `inbox` | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
+| The messaging socket (Claude Code outside T3; Pi's extension's, outside T3) | the client takes it as a turn | No: the socket answers nothing |
+| The hook's notice (Claude Code, and Pi through its extension) | the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt. That delivers the sender and subject, or the whole message where the page's busy setting says so (#204); otherwise the body is delivered by `inbox` | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
 | `inbox` | the tool's result returns to the agent | Partly: the daemon sees the messages leave in its answer, not the answer reach the agent through MCP |
 
 Nothing reports a message's state to its sender yet. Whatever does (#26, `who`, `lookup`, the web
@@ -930,9 +931,10 @@ hook has the session at work (see "A session at work", below):
 
 | Where the session runs | Handed over by | Starts a turn in an idle session |
 |---|---|---|
-| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing. A busy session the hook runs in (Claude Code) is not handed the message: the hook tells it | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
+| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing. A busy session the hook runs in (Claude Code, and Pi through its extension) is not handed the message: the hook tells it | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
 | Claude Code outside T3 | the session's messaging socket | Unverified: a message Murmur's code wrote to a session's socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle one has not been tried |
-| Codex, OpenCode, Muse, Pi or Grok outside T3, or any handoff that fails | the hook's notice where the hook runs (Claude Code), and `inbox` | No |
+| Pi outside T3 | the socket Murmur's extension opens in the session | Yes (2026-11-09, Pi 1.5.0 in RPC mode with a stand-in model: an idle session took a message as a turn, nobody typing) |
+| Codex, OpenCode, Muse or Grok outside T3, or any handoff that fails | the hook's notice where the hook runs (Claude Code, Pi), and `inbox` | No |
 
 What the agent reads:
 
@@ -1024,7 +1026,7 @@ A body past the limit is cut, as in `inbox`.
     older, it stays a notice, as it would have without the turn.
   - *Why not hand it to T3 as well*: T3 can't take back a queued message, so the agent could read
     it with `inbox` mid-turn and then get it again as a turn.
-  - *Where the hook doesn't run* (Codex, OpenCode, Muse, Pi and Grok in T3, as of 2026-11-08),
+  - *Where the hook doesn't run* (Codex, OpenCode, Muse and Grok in T3, as of 2026-11-09),
     nothing tells the daemon the session is at work, and a message goes to T3 as before: without
     the handoff the session would hear nothing at all. #205 brings those agents in line.
   - *Subagents.* A subagent's tool call carries the parent's `session_id`, with `agent_id` set
@@ -1096,6 +1098,26 @@ A body past the limit is cut, as in `inbox`.
   server is connected. A session inside T3 is never written to this way: the socket there is T3's.
   Claude Code wraps what arrives on the socket in a note of its own that says the message came
   from another Claude session, not the user (seen 2026-10-29), which suits Murmur's framing.
+- **Pi's extension (2026-11-09, #205).** Pi has no hooks of Claude Code's kind, so the extension
+  `mur join` writes (`extensions/murmur.ts`) brings Pi #202's delivery itself, with nothing new in
+  the daemon but a way for the hook to name a Pi session: by its file, `Native` in the hook's
+  request, as the session's MCP server registered with it. It runs `mur hook --agent pi` at Claude
+  Code's moments: as a run starts (`before_agent_start`, a prompt), after each tool call
+  (`tool_result`; the notice goes in as a message `deliverAs: "steer"`, which Pi puts after the tool
+  calls and before the next model request), and as the work ends (`agent_before_settle`, where a
+  `custom_message` entry and `continue: true` keep it going, as blocking Stop does). It opens a
+  socket in the session that takes Claude Code's messaging-socket lines, and gives its address and
+  token to the MCP server in its environment as Claude Code does, so the daemon hands an idle Pi
+  session a turn the way it hands Claude Code one; Pi takes it with `triggerTurn`, and with
+  `deliverAs: "followUp"` a busy one takes it when it finishes, not steered in. What Murmur says is
+  a custom message, shown in the session and read in the user's role, never `sendUserMessage`, which
+  Pi treats as the user's typing. Seen with Pi 1.5.0 in RPC mode against a stand-in model: a notice
+  after a tool call, the message whole at the end of the work, a turn when idle, and a new socket
+  and session after `/new`. Not tried: Pi's terminal UI, Windows' named pipe, Pi inside T3 (where
+  the hook now runs too, and the socket is unused). Not covered: Pi's commits aren't credited, as
+  no call is bracketed; a session without a file (`--no-session`) gets turns and no notices; and an
+  error that ends the work skips the Stop, so the session stays at work until its next prompt, as an
+  interrupted Claude Code session does outside T3.
 - **A thread that is idle (#87).** T3 stops an idle thread's provider process, and with it Murmur's
   MCP server, after about 30 minutes (seen live on 2026-10-30: both threads' sessions stopped at
   03:30, half an hour after their last turn), so the session of a thread that is idle is the normal
