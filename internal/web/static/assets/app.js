@@ -406,7 +406,8 @@ function wakeNever(d, s) {
 
 // Quiet: running, but idle for a day, or hidden by a person with the hidden tag (#211). Agents
 // in Claude Code, Codex and the rest never settle, so a session left open in a forgotten terminal
-// stays in presence for good; this keeps it out of the way. Active again, it comes back.
+// stays in presence for good; this keeps it out of the way. Active, it shows; a hidden one folds
+// away again when it goes idle, since a person's tag stays until a person takes it off.
 const QUIET_MS = 24 * 60 * 60 * 1000;
 const HIDDEN = "hidden";
 
@@ -450,7 +451,7 @@ function hideButton(s) {
     "button",
     {
       class: "side-hide",
-      title: hidden ? "Stop hiding " + s.name : "Hide " + s.name + " until it's active again",
+      title: hidden ? "Stop hiding " + s.name : "Hide " + s.name + ": it shows only while active",
       "aria-label": hidden ? "Stop hiding " + s.name : "Hide " + s.name,
       "data-key": "hide-" + s.name,
       onclick: () => setHidden(s, !hidden),
