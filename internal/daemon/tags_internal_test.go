@@ -242,3 +242,47 @@ func TestDoNotDisturbSetByAHumanForASessionAway(t *testing.T) {
 		t.Fatal("peerDNDLocked is wrong")
 	}
 }
+
+func TestDoNotDisturbOfASessionThatStoppedBeforeItsNameLanded(t *testing.T) {
+	d := tagsDaemon(t)
+	d.mu.Lock()
+	d.sessions["aaaaaa"].name = ""
+	d.mu.Unlock()
+	d.setOwnTags("aaaaaa", proto.Request{Add: []string{"do-not-disturb"}})
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.sessions, "aaaaaa")
+	if !d.dndLocked("aaaaaa") {
+		t.Fatal("a session that stopped with its name pending lost its do not disturb")
+	}
+}
+
+func TestReleaseRetriesAMessageWhosePushFailedUnsent(t *testing.T) {
+	d := tagsDaemon(t)
+	d.setOwnTags("aaaaaa", proto.Request{Add: []string{"do-not-disturb"}})
+	d.mu.Lock()
+	d.deliverLocked(bus.Event{ID: "m1", Type: bus.Message, From: "other/xxxxxx", To: "dev/aaaaaa", At: time.Now()}, modeNormal)
+	d.st.Inbox["aaaaaa"][0].PushFailed = true // an earlier delivery that never reached the session
+	d.mu.Unlock()
+	d.setOwnTags("aaaaaa", proto.Request{Remove: []string{"do-not-disturb"}})
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if m := d.st.Inbox["aaaaaa"][0]; !pushable(m) {
+		t.Fatalf("after the tag came off the message still can't go in: %+v", m)
+	}
+}
+
+func TestTheDaemonStaysUpForAThreadOnDoNotDisturb(t *testing.T) {
+	d := idleDaemon(map[string]time.Duration{"aaaaaa": time.Minute})
+	d.st.Tags = map[string]*tags.State{"name-aaaaaa": {Self: []string{tags.DoNotDisturb}}}
+	d.threads = map[threadKey]t3db.State{}
+	always := pageSettings{Wake: web.Wake{When: web.WakeAlways}}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.wakesLocked("aaaaaa", always) {
+		t.Fatal("a thread on do not disturb may be woken")
+	}
+	if !d.holdsRouteLocked(always) {
+		t.Fatal("the daemon would exit, and never read the tag's removal or deliver what waited")
+	}
+}

@@ -84,7 +84,8 @@ func (d *Daemon) peerDNDLocked(dev, sess string) bool {
 
 // releaseLocked lets what waited in the inbox of the sessions kept by key go in as usual, now that
 // do-not-disturb has come off: each message counts as arriving now, so one that waited longer than
-// a turn's limit (pushMaxAge) still goes in as a turn. Caller holds mu.
+// a turn's limit (pushMaxAge) still goes in as a turn, and one whose delivery failed earlier, but
+// provably never reached the session (not Attempted), is tried again. Caller holds mu.
 func (d *Daemon) releaseLocked(key string) {
 	now := time.Now()
 	for id, box := range d.st.Inbox {
@@ -93,7 +94,7 @@ func (d *Daemon) releaseLocked(key string) {
 		}
 		for _, m := range box {
 			if !m.Noticed && !m.Pushing && !m.Attempted {
-				m.Released = now
+				m.Released, m.PushFailed = now, false
 			}
 		}
 	}
@@ -191,7 +192,14 @@ func (d *Daemon) tagKeyLocked(id string) string {
 	if s := d.sessions[id]; s != nil {
 		return tagKeyOf(s.name, s.id)
 	}
-	return d.st.SessionNames[id]
+	if name := d.st.SessionNames[id]; name != "" {
+		return name
+	}
+	// One that stopped before its name landed keeps what it set by its ID.
+	if pending := tagKeyOf("", id); d.st.Tags[pending] != nil {
+		return pending
+	}
+	return ""
 }
 
 // humanTagsLocked applies a human's change to the tags of session id on this device. by is the

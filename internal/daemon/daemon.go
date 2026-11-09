@@ -794,11 +794,13 @@ func (d *Daemon) idleLoop(ctx context.Context) {
 // for it, as no other daemon reads the bus for this clone, and it ends when the route's inbox is
 // no longer kept. A thread the page's wake setting says not to wake now has nothing to stay up for:
 // one set to never, one idle longer than its setting allows (it can only be busy again if someone
-// types in it, which starts its MCP server, and with it a daemon), and one that is settled.
+// types in it, which starts its MCP server, and with it a daemon), and one that is settled. One on
+// do not disturb still counts: the tag may come off from another device's page, and only this
+// daemon reads that and delivers what waited.
 // Caller holds mu.
 func (d *Daemon) holdsRouteLocked(wake pageSettings) bool {
 	for id := range d.st.T3Routes {
-		if d.sessions[id] == nil && d.receivesLocked(id) && d.wakesLocked(id, wake) {
+		if d.sessions[id] == nil && d.receivesLocked(id) && d.mayWakeLocked(id, wake) {
 			return true
 		}
 	}

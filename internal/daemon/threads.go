@@ -387,9 +387,18 @@ func (p pageSettings) choice(name string) web.Wake {
 // mesh, nor if the page says never. Always: yes. Within N minutes (the default, and what an
 // unset choice means): if the session is busy, which needs no waking, or was last at work no
 // more than N minutes ago, 0 standing for defaultWakeMinutes. A session nothing is known of yet
-// waits; the read of its thread lets the deliveries look again. Caller holds mu.
+// waits; the read of its thread lets the deliveries look again. Nor while it is on do not
+// disturb (#198). Caller holds mu.
 func (d *Daemon) wakesLocked(id string, wake pageSettings) bool {
-	if d.offMeshLocked(id) || d.dndLocked(id) {
+	return !d.dndLocked(id) && d.mayWakeLocked(id, wake)
+}
+
+// mayWakeLocked is wakesLocked without do not disturb: whether the session could be woken once the
+// tag comes off. The daemon stays up for a thread it may wake so (see holdsRouteLocked): it is
+// the one to read the tag's removal from another device's page, and to deliver what waited.
+// Caller holds mu.
+func (d *Daemon) mayWakeLocked(id string, wake pageSettings) bool {
+	if d.offMeshLocked(id) {
 		return false
 	}
 	w := wake.choice(d.sessionNameLocked(id))
