@@ -2646,7 +2646,8 @@ function fleetRow(d, s, need, on) {
   // device's name already carries it.
   const where = need || F.by !== "device";
   const dev = deviceName(d);
-  const sub = [where && dev, where && d.owner && !dev.toLowerCase().includes(d.owner.toLowerCase()) && d.owner, s.agent].filter(Boolean).join(" · ");
+  const subParts = [where && dev, where && d.owner && !dev.toLowerCase().includes(d.owner.toLowerCase()) && d.owner, s.agent].filter(Boolean);
+  const sub = subParts.join(" · ");
   const prTag = pr ? "#" + pr.number : "";
   return h(
     "button",
@@ -2687,7 +2688,8 @@ function fleetRow(d, s, need, on) {
         "span",
         { class: "fx-who-text" },
         h("span", { class: "fx-name truncate" }, s.name),
-        h("span", { class: "fx-muted truncate", title: sub }, sub),
+        // Each part keeps together, so where this line wraps (a narrow table) it breaks at a "·".
+        h("span", { class: "fx-muted truncate", title: sub }, subParts.flatMap((x, i) => [i ? " · " : null, h("span", { class: "fx-nowrap" }, x)])),
         s.branch && h("span", { class: "fx-muted fx-sub-branch", title: s.branch + (prTag ? " " + prTag : "") }, h("span", { class: "mono truncate" }, s.branch), prTag && h("span", { class: "fx-sub-pr" }, prTag)),
       ),
     ),
