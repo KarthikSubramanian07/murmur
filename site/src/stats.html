@@ -77,11 +77,11 @@
   .hero .notes { display: grid; gap: 4px; color: var(--text-secondary); text-align: right; }
   .hero .notes b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
   .up { color: var(--good-text); font-weight: 600; }
-  /* The asterisk on users, and what it means on hover or focus. */
-  .star { position: relative; display: inline-block; vertical-align: top; }
+  /* The asterisk on the users label, a superscript, and what it means on hover or focus. */
+  .star { position: relative; display: inline-block; line-height: 0; }
   .star button {
-    font: inherit; font-size: 30px; font-weight: 600; line-height: 1; color: var(--brand); background: none;
-    border: 0; padding: 0 2px; cursor: help;
+    font: inherit; font-size: 12px; font-weight: 600; line-height: 1; color: var(--brand); background: none;
+    border: 0; padding: 0 2px 0 1px; cursor: help; position: relative; top: -0.5em;
   }
   .star .why {
     display: none; position: absolute; left: 0; top: 100%; z-index: 3; width: 340px; margin-top: 6px;
@@ -169,8 +169,8 @@
     <section class="card hero">
       <div class="top">
         <div>
-          <div class="label">Users</div>
-          <div class="value"><span id="users">–</span><span class="star"><button type="button" aria-describedby="users-why" aria-label="Why approximate">*</button><span class="why" role="tooltip" id="users-why"></span></span></div>
+          <div class="label">Users<span class="star"><button type="button" aria-describedby="users-why" aria-label="Why approximate">*</button><span class="why" role="tooltip" id="users-why"></span></span></div>
+          <div class="value" id="users">–</div>
         </div>
         <div class="notes">
           <div id="users-new"></div>
