@@ -162,15 +162,17 @@ function stamp(t) {
 
 // An element whose text is a relative time, kept current by the ticker. A bare one is a
 // duration ("for 40m") rather than a time ("40m ago").
-function agoEl(tag, cls, t, prefix = "", bare = false) {
-  const text = (t) => (bare ? lasted(t) : ago(t));
-  return h(tag, { class: cls, "data-ago": t, "data-prefix": prefix, "data-bare": bare ? "1" : null, title: stamp(t) }, prefix + text(t));
+// A "just now" one reads "just now" rather than "now" in its first 45 seconds.
+function agoEl(tag, cls, t, prefix = "", bare = false, justNow = false) {
+  const text = (t) => (bare ? lasted(t) : justNow && ago(t) === "now" ? "just now" : ago(t));
+  return h(tag, { class: cls, "data-ago": t, "data-prefix": prefix, "data-bare": bare ? "1" : null, "data-just": justNow ? "1" : null, title: stamp(t) }, prefix + text(t));
 }
 
 function tick() {
   for (const el of document.querySelectorAll("[data-ago]")) {
     const t = Number(el.dataset.ago);
-    el.textContent = el.dataset.prefix + (el.dataset.bare ? lasted(t) : ago(t));
+    const v = el.dataset.bare ? lasted(t) : ago(t);
+    el.textContent = el.dataset.prefix + (el.dataset.just && v === "now" ? "just now" : v);
   }
 }
 
@@ -2180,6 +2182,7 @@ async function poll() {
     for (const d of state.devices || []) for (const s of d.sessions || []) learn(s.addr, s.name);
     ui.state = state;
     ui.conn = "ok";
+    ui.okAt = Date.now();
   } catch (e) {
     inflight = false;
     if (e instanceof AuthError) return deny(e.token);
@@ -2616,7 +2619,8 @@ function deviceName(d) {
   return d.id.replace(/-[0-9a-f]{4}$/, "");
 }
 
-function fleetNeeds(rows) {
+// With all, questions marked "Not waiting" count too (for the details' Undo lines).
+function fleetNeeds(rows, all = false) {
   const now = Date.now();
   const by = new Map(rows.map((r) => [r.s.name, r]));
   const out = new Map();
@@ -2628,7 +2632,7 @@ function fleetNeeds(rows) {
     const from = fromName(m);
     const at = when(m.at);
     // The asker may have ended since; the question still waits on a running session.
-    if (!by.has(to) || to === from || !at || now - at < NO_ANSWER_MS || now - at > GIVE_UP_MS || Object.hasOwn(fleetDismissed(), m.id) || answeredSince(m)) continue;
+    if (!by.has(to) || to === from || !at || now - at < NO_ANSWER_MS || now - at > GIVE_UP_MS || (!all && Object.hasOwn(fleetDismissed(), m.id)) || answeredSince(m)) continue;
     if (!asks.has(to)) asks.set(to, []);
     asks.get(to).push(m);
   }
@@ -2656,8 +2660,15 @@ function fleetNeeds(rows) {
   return out;
 }
 
+// While the daemon doesn't answer, the page says so and how old what it shows is, ahead of
+// anything else, so a stopped page doesn't read as a quiet team.
+function fleetDown() {
+  if (ui.conn !== "down") return null;
+  return h("span", { class: "fx-down" }, "Can't reach the daemon", ui.okAt ? agoEl("span", null, ui.okAt, " · last updated ", false, true) : " · retrying");
+}
+
 function fleetPage() {
-  if (!ui.state) return h("div", { class: "page" });
+  if (!ui.state) return h("div", { class: "fx" }, h("header", { class: "fx-head" }, h("div", null, h("h1", null, "All sessions"), h("p", null, fleetDown() || "Connecting…"))));
   const F = fleetFilter();
   if (!["device", "branch", "group"].includes(F.by)) F.by = "device";
   const all = fleetRows();
@@ -2691,7 +2702,6 @@ function fleetPage() {
     render();
   };
   const count = (st) => searched.filter((r) => sessionState(r.d, r.s) === st).length;
-  const devs = new Set(all.map((r) => r.d.id));
   const n = allNeeds.size;
   // Filtered, the need count says how many of them are shown, so it agrees with the "Needs a
   // look" group under it.
@@ -2699,16 +2709,18 @@ function fleetPage() {
   const needNote = !n ? "" : shownNeeds === n ? " · " + n + (n === 1 ? " needs" : " need") + " a look" : " · " + (shownNeeds ? shownNeeds + " of the " : "none of the ") + n + (n === 1 ? " that needs" : " that need") + " a look";
   const sub = (q || F.state) && all.length
     ? ["Showing " + rows.length + " of " + plural(all.length, "session") + needNote + " ", h("button", { class: "fx-clear", onclick: () => { F.q = ""; F.state = ""; render(); } }, "Clear")]
-    : plural(all.length, "session") + " on " + plural(devs.size, "device") + " · " + (n ? n + (n === 1 ? " needs" : " need") + " a look" : "nothing needs a look");
+    : all.length
+      ? plural(all.length, "session") + " on " + plural(new Set(all.map((r) => r.d.id)).size, "device") + " · " + (n ? n + (n === 1 ? " needs" : " need") + " a look" : "nothing needs a look")
+      : "No sessions running · " + plural(ui.state.devices?.length || 0, "device");
 
   // Where the rail can't sit beside the table and leave it readable (see STACKED), the selected
   // session takes the whole page, with a way back.
-  if (sel && STACKED.matches) return h("div", { class: "fx fx-sheet" }, fleetInspector(sel, selNeed));
+  if (sel && STACKED.matches) return h("div", { class: "fx fx-sheet" }, fleetDown() && h("p", { class: "fx-sheet-down" }, fleetDown()), fleetInspector(sel, selNeed));
 
   return h(
     "div",
     { class: "fx" },
-    h("header", { class: "fx-head" }, h("div", null, h("h1", null, "All sessions"), h("p", null, sub))),
+    h("header", { class: "fx-head" }, h("div", null, h("h1", null, "All sessions"), h("p", null, fleetDown() ? [fleetDown(), " · ", sub] : sub))),
     h(
       "div",
       { class: "fx-toolbar" },
@@ -2909,7 +2921,6 @@ function fleetRow(d, s, need, on) {
 // keyboard back to the row that opened it. Escape does the same.
 function fleetClose() {
   const name = ui.fleetSel;
-  ui.fxUndo = null;
   const back = ui.fleetScroll;
   ui.fleetSel = null;
   ui.fleetScroll = null;
@@ -2957,7 +2968,6 @@ function fleetSetSel(want) {
   const whole = STACKED.matches;
   if (whole && !ui.fleetSel) ui.fleetScroll = content ? content.scrollTop : 0;
   ui.fleetSel = want;
-  ui.fxUndo = null;
   render();
   if (whole && content) {
     content.scrollTop = 0;
@@ -3060,7 +3070,15 @@ function fleetInspector(name, need) {
     return { ...c, latest, waiting, rank: waiting ? rank(waiting) : 2 };
   }).sort((a, b) => a.rank - b.rank || (a.rank < 2 ? a.waiting.sortAt - b.waiting.sortAt : b.latest.sortAt - a.latest.sortAt));
   const close = () => fleetCloseAsked();
-  const undo = ui.fxUndo?.name === name ? ui.fxUndo.msgs : null;
+  // Conversations marked "Not waiting" whose question would still be waiting: each can be undone.
+  const convKey = (x) => fromName(x) + " " + topicOf(x).toLowerCase();
+  const marked = new Map();
+  for (const x of fleetNeeds(fleetRows(), true).get(name)?.msgs || []) {
+    if (!Object.hasOwn(fleetDismissed(), x.id)) continue;
+    if (!marked.has(convKey(x))) marked.set(convKey(x), []);
+    marked.get(convKey(x)).push(x);
+  }
+  const markedIds = new Set([...marked.values()].flat().map((x) => x.id));
   return [
     h(
       "header",
@@ -3071,26 +3089,26 @@ function fleetInspector(name, need) {
         ? h("button", { class: "fx-back", onclick: close }, "← All sessions")
         : h("button", { class: "fx-icon-btn", title: "Close", "aria-label": "Close", onclick: close }, icon("x")),
     ),
-    undo &&
+    [...marked].map(([k, msgs]) =>
       h(
         "div",
         { class: "fx-insp-undo" },
-        h("span", null, "Marked “" + (topicOf(undo[0]) || "no subject") + "” not waiting"),
+        h("span", null, "Marked “" + (topicOf(msgs[0]) || "no subject") + "” from ", h("b", null, fromName(msgs[0])), " not waiting"),
         h(
           "button",
           {
             class: "fx-insp-dismiss",
-            "data-key": "fx-undo",
+            "data-key": "fx-undo-" + k,
             onclick: () => {
-              fleetDismiss(undo, false);
-              ui.fxUndo = null;
+              fleetDismiss(msgs, false);
               render();
-              root.querySelector(".fx-insp-dismiss")?.focus({ preventScroll: true });
+              root.querySelector(".fx-insp-need .fx-insp-dismiss")?.focus({ preventScroll: true });
             },
           },
           "Undo",
         ),
       ),
+    ),
     need &&
       h(
         "div",
@@ -3108,12 +3126,9 @@ function fleetInspector(name, need) {
               title: "Clear this flag in this browser",
               onclick: () => {
                 // Only the conversation the box names: another asker's question stays.
-                const k = (x) => fromName(x) + " " + topicOf(x).toLowerCase();
-                const these = need.msgs.filter((x) => k(x) === k(need.m));
-                fleetDismiss(these);
-                ui.fxUndo = { name, msgs: these };
+                fleetDismiss(need.msgs.filter((x) => convKey(x) === convKey(need.m)));
                 render();
-                root.querySelector('[data-key="fx-undo"]')?.focus({ preventScroll: true });
+                root.querySelector(`[data-key="${CSS.escape("fx-undo-" + convKey(need.m))}"]`)?.focus({ preventScroll: true });
               },
             },
             "Not waiting",
@@ -3133,7 +3148,7 @@ function fleetInspector(name, need) {
             const head =
               c.rank === 0 ? ["From ", h("b", null, c.other), " · waiting for an answer"]
               : c.rank === 1 ? ["To ", h("b", null, c.other), " · no answer yet"]
-              : c.msgs.some((x) => Object.hasOwn(fleetDismissed(), x.id)) ? ["From ", h("b", null, c.other), " · marked not waiting"]
+              : c.msgs.some((x) => markedIds.has(x.id)) ? ["From ", h("b", null, c.other), " · marked not waiting"]
               : one ? [out ? "To " : "From ", h("b", null, c.other)]
               : ["With ", h("b", null, c.other), " · " + c.msgs.length + " messages"];
             return h(
