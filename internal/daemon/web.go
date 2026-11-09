@@ -18,6 +18,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/web"
 )
@@ -80,7 +81,9 @@ func (d *Daemon) inheritedPage(f *os.File, h pageHandoff, handed bool) (net.List
 	if d.opt.PageAddr != defaultPageAddr {
 		return nil, fmt.Errorf("this daemon serves the page on %s", d.opt.PageAddr)
 	}
-	if err := unpoll(f); err != nil {
+	// On Windows the socket is still tied to the completion port of the daemon before, which
+	// served the page from it.
+	if err := proc.Unpoll(f); err != nil {
 		return nil, err
 	}
 	ln, err := net.FileListener(f)

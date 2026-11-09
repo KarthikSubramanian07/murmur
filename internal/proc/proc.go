@@ -33,7 +33,11 @@ type Handover struct {
 }
 
 // Inherited is the file a Handover named env gave this process, or nil. It unsets env first, so
-// the process's own children don't take the number for a file of theirs.
+// the process's own children don't take the number for a file of theirs, and on Unix marks the
+// descriptor close-on-exec, so they don't get the file either.
+//
+// It is for listening sockets, the one kind of file handed over, and on Windows returns nil for a
+// handle it can't take up as one.
 func Inherited(env, name string) *os.File {
 	v, ok := os.LookupEnv(env)
 	if !ok {
@@ -44,7 +48,7 @@ func Inherited(env, name string) *os.File {
 	if err != nil {
 		return nil
 	}
-	return os.NewFile(uintptr(n), name)
+	return adopt(uintptr(n), name)
 }
 
 // withEnv is env with no entry for name, and then name=value unless value is empty.

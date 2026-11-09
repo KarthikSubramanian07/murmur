@@ -213,8 +213,9 @@ func TestPageSocketHeld(t *testing.T) {
 	}
 }
 
-// An inherited socket that doesn't match the handoff, or comes without one, isn't used, and the
-// page gets a new port and keeps the new token.
+// An inherited socket that doesn't match the handoff, or comes without one, isn't used: it is
+// closed, and the page is bound afresh and keeps the new token. The fresh port may be the same
+// number, which the system is free to hand out again once the inherited socket is closed.
 func TestPageSocketNotUsedWithoutItsHandoff(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -242,8 +243,11 @@ func TestPageSocketNotUsedWithoutItsHandoff(t *testing.T) {
 			}
 			defer keep.Close()
 			defer ln.Close()
-			if ln.Addr().String() == addr || d.pageTok != "new" {
-				t.Fatalf("page on %s with token %q; want a new port and the new token", ln.Addr(), d.pageTok)
+			if d.pageTok != "new" {
+				t.Fatalf("the page took token %q with a socket it didn't use", d.pageTok)
+			}
+			if ln.Addr().String() == addr {
+				return // bound afresh on the same number, so the inherited socket was closed
 			}
 			// The inherited socket was closed, not kept.
 			if other, err := net.Listen("tcp", addr); err != nil {

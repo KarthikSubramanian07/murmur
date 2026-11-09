@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf16"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -36,6 +38,58 @@ func Lock(path string) (*Held, error) {
 		return nil, err
 	}
 	return &Held{f}, nil
+}
+
+// adopted keeps the wrappers adopt made from inherited handles. A wrapper's close would be
+// CloseHandle, and a socket must be closed with closesocket, which adopt does itself; kept here,
+// the wrapper is never finalized, so it never closes the handle again after its number is reused.
+var adopted []*os.File
+
+// adopt takes up an inherited socket. The only way to wrap a raw handle in a File is os.NewFile,
+// which closes it with CloseHandle, so adopt makes a listener from it, asks that listener for a
+// File of net's own, which is closed with closesocket, and closes the raw handle with closesocket.
+// Handle inheritance on Windows passes only the handles named to it, so this process's children
+// never get the socket.
+func adopt(fd uintptr, name string) *os.File {
+	raw := os.NewFile(fd, name)
+	adopted = append(adopted, raw)
+	defer windows.Closesocket(windows.Handle(fd))
+	if Unpoll(raw) != nil {
+		return nil
+	}
+	ln, err := net.FileListener(raw)
+	if err != nil {
+		return nil
+	}
+	defer ln.Close()
+	tl, ok := ln.(*net.TCPListener)
+	if !ok {
+		return nil
+	}
+	f, err := tl.File()
+	if err != nil {
+		return nil
+	}
+	return f
+}
+
+// Unpoll detaches a socket from the I/O completion port it is tied to, so that this process's
+// runtime can take it up. A socket is tied to one port for good, and an inherited one was served by
+// the process before. Nothing may be waiting on the socket: that process stopped serving it before
+// it handed it on. A socket tied to no port is refused with STATUS_INVALID_PARAMETER, which is
+// success here; if that meant something else, taking the socket up fails next, and says so.
+func Unpoll(f *os.File) error {
+	var info struct {
+		Port windows.Handle
+		Key  uintptr
+	}
+	var iosb windows.IO_STATUS_BLOCK
+	err := windows.NtSetInformationFile(windows.Handle(f.Fd()), &iosb, (*byte)(unsafe.Pointer(&info)),
+		uint32(unsafe.Sizeof(info)), windows.FileReplaceCompletionInformation)
+	if errors.Is(err, windows.STATUS_INVALID_PARAMETER) {
+		return nil
+	}
+	return err
 }
 
 const (

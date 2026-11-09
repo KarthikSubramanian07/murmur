@@ -2,7 +2,9 @@ package client
 
 import (
 	"encoding/json"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -37,11 +39,17 @@ type started struct {
 func TestMain(m *testing.M) {
 	if path := os.Getenv("MURMUR_TEST_DAEMON_ARGS"); path != "" && len(os.Args) > 1 && os.Args[1] == "daemon" {
 		rec := started{Args: os.Args[1:]}
+		var page net.Listener
 		if f := proc.Inherited(brand.PageListenerEnv, "page"); f != nil {
-			if ln, err := net.FileListener(f); err != nil {
+			var err error
+			if err = proc.Unpoll(f); err == nil {
+				page, err = net.FileListener(f)
+			}
+			f.Close()
+			if err != nil {
 				rec.Page = "error: " + err.Error()
 			} else {
-				rec.Page = ln.Addr().String()
+				rec.Page = page.Addr().String()
 			}
 		}
 		b, err := json.Marshal(rec)
@@ -50,6 +58,19 @@ func TestMain(m *testing.M) {
 		}
 		if err != nil {
 			os.Exit(1)
+		}
+		if page != nil {
+			// Serve one request from the inherited socket, as the new daemon serves the tab's.
+			served := make(chan struct{})
+			go http.Serve(page, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				io.WriteString(w, "child")
+				close(served)
+			}))
+			select {
+			case <-served:
+				time.Sleep(100 * time.Millisecond) // let the answer go out
+			case <-time.After(20 * time.Second):
+			}
 		}
 		os.Exit(0)
 	}
@@ -96,7 +117,9 @@ func TestStartDaemonForwardsFlags(t *testing.T) {
 }
 
 // A daemon restarting onto an update hands the page's socket to the new one (#255): the child
-// inherits it, and is told its descriptor, on each OS.
+// inherits it, is told its descriptor, and serves from it, on each OS. Here the parent serves from
+// the socket first, as the old daemon does, which on Windows ties it to the parent's completion
+// port; a request sent between the two waits for the child.
 func TestStartDaemonHandsOverThePage(t *testing.T) {
 	gitDir := stateOnly(t)
 	captured := filepath.Join(t.TempDir(), "args.json")
@@ -115,9 +138,26 @@ func TestStartDaemonHandsOverThePage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer page.Close()
+	addr := ln.Addr().String()
+	serve, err := net.FileListener(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "parent") })}
+	go srv.Serve(serve)
+	if got := fetch(t, addr); got != "parent" {
+		t.Fatalf("before the handoff: %q", got)
+	}
+	srv.Close()
+
+	// A request in the gap, answered by whoever serves next.
+	gap := make(chan string, 1)
+	go func() { gap <- fetch(t, addr) }()
+
 	if err := StartDaemon(exe, gitDir, page); err != nil {
 		t.Fatal(err)
 	}
+	page.Close() // as the restarting daemon does once the new one is started
 	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
 		b, err := os.ReadFile(captured)
 		var rec started
@@ -127,10 +167,28 @@ func TestStartDaemonHandsOverThePage(t *testing.T) {
 		// A start through WMI (Windows, in a job that forbids breakaway) can't hand anything over,
 		// and then tells the child of nothing.
 		wmi := len(rec.Args) >= 2 && rec.Args[len(rec.Args)-2] == "--log"
-		if rec.Page != ln.Addr().String() && !(wmi && rec.Page == "") {
-			t.Fatalf("the child's page socket: %q, want %s", rec.Page, ln.Addr())
+		if wmi && rec.Page == "" {
+			t.Log("started through WMI, which hands nothing over")
+			return
+		}
+		if rec.Page != addr {
+			t.Fatalf("the child's page socket: %q, want %s", rec.Page, addr)
+		}
+		if got := <-gap; got != "child" {
+			t.Fatalf("the request sent in the gap got %q, want the child's answer", got)
 		}
 		return
 	}
 	t.Fatal("detached child did not record what it was started with")
+}
+
+// fetch GETs the root of addr and returns the body, or the error as text.
+func fetch(t *testing.T, addr string) string {
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Get("http://" + addr + "/")
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return string(b)
 }

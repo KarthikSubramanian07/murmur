@@ -1,6 +1,7 @@
 package daemon_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -150,30 +151,39 @@ func TestPagePortIsNeverFreeAcrossAnUpdate(t *testing.T) {
 		t.Fatalf("%s was free after the daemon stopped for the update", info.Web)
 	}
 
-	// The tab polls in the gap. Its request waits in the socket's queue.
-	type answer struct {
-		code int
-		st   web.State
-		err  error
+	// The tab polls in the gap. The connection is made, and the request sent, before the next
+	// daemon starts: both wait in the socket's queue.
+	conn, err := net.DialTimeout("tcp", info.Web, 10*time.Second)
+	if err != nil {
+		t.Fatalf("connecting in the gap: %v", err)
 	}
-	gap := make(chan answer, 1)
-	go func() {
-		code, st, err := getState(info.Web, info.PageToken)
-		gap <- answer{code, st, err}
-	}()
-	time.Sleep(200 * time.Millisecond)
+	defer conn.Close()
+	req, err := http.NewRequest("GET", "http://"+info.Web+"/api/state", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+info.PageToken)
+	if err := req.Write(conn); err != nil {
+		t.Fatalf("sending in the gap: %v", err)
+	}
 
 	next := runPage(t, gitDir, up.Page, nil)
 	got := next.info()
 	if got.Web != info.Web || got.PageToken != info.PageToken {
 		t.Fatalf("the next daemon's page is %s with token %q, want %s with the same token", got.Web, got.PageToken, info.Web)
 	}
-	a := <-gap
-	if a.err != nil || a.code != http.StatusOK {
-		t.Fatalf("the request sent in the gap: %d %v", a.code, a.err)
+	conn.SetDeadline(time.Now().Add(60 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+	if err != nil {
+		t.Fatalf("the request sent in the gap: %v", err)
 	}
-	if a.st.Version.Daemon == "" || a.st.Version.Daemon == before.Version.Daemon {
-		t.Fatalf("the tab can't tell the new daemon (%q) from the old (%q), so it won't reload", a.st.Version.Daemon, before.Version.Daemon)
+	defer resp.Body.Close()
+	var after web.State
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&after) != nil {
+		t.Fatalf("the request sent in the gap: %s", resp.Status)
+	}
+	if after.Version.Daemon == "" || after.Version.Daemon == before.Version.Daemon {
+		t.Fatalf("the tab can't tell the new daemon (%q) from the old (%q), so it won't reload", after.Version.Daemon, before.Version.Daemon)
 	}
 	if _, err := os.Stat(filepath.Join(gitDir, brand.StateDir, "page.json")); !os.IsNotExist(err) {
 		t.Fatalf("the handoff was left behind: %v", err)
