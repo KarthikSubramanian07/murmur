@@ -64,6 +64,15 @@ jobs:
             *) echo "::error::The built binary says \"$out\", not the version $version."; exit 1 ;;
           esac
           (cd dist && sha256sum mur-* > SHA256SUMS && cat SHA256SUMS)
+      # A known vulnerability the binaries can reach stops the release; raising go.mod's toolchain
+      # line to the Go release that fixes it is the usual cure.
+      - name: Check the binaries for known vulnerabilities
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          for bin in dist/mur-*; do
+            echo "govulncheck $bin"
+            "$(go env GOPATH)/bin/govulncheck" -mode=binary "$bin"
+          done
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -31,8 +31,10 @@ git push origin v0.1.0
 - **The Go it's built with** is `go.mod`'s `toolchain` line, which `setup-go` installs ahead of
   the `go` line (the oldest Go that builds the source). Until that line (2026-11-09), releases
   were built with go1.26.0, and the rc.1 binary could reach 36 standard-library vulnerabilities
-  fixed in go1.26.1 to go1.26.10. The line is raised by hand. A laptop's `govulncheck ./...`
-  judges the standard library by the laptop's Go, not the release's.
+  fixed in go1.26.1 to go1.26.10. The run checks every binary with `govulncheck` before publishing
+  and fails on a finding, so a newly announced vulnerability stops releases and nightlies until the
+  line is raised to the Go that fixes it. The line is raised by hand. A laptop's
+  `govulncheck ./...` judges the standard library by the laptop's Go, not the release's.
 - **To undo a release** (a bad build, or a test tag): `gh release delete <tag> --cleanup-tag --yes`.
   Re-running a tag's workflow needs its release deleted first, since the run creates the release.
   Installed daemons update hourly and never go back, so deleting stops further updates but doesn't
