@@ -2593,7 +2593,12 @@ function fleetTable(rows, needs, sel) {
     }
     return h("span", { class: "fx-group-name" }, k || "No job");
   };
-  const collapsed = (ui.fxCollapsed ||= new Set());
+  // Which groups are shut. While a search or state filter is on, a separate set, empty to start,
+  // so every match shows, a heading still folds and unfolds, and none of it touches what's shut
+  // once the filter clears (that set comes back then).
+  const filtering = !!(F.q.trim() || F.state);
+  if (!filtering) ui.fxCollapsedFiltered = null;
+  const collapsed = filtering ? (ui.fxCollapsedFiltered ||= new Set()) : (ui.fxCollapsed ||= new Set());
   return h(
     "section",
     // Grouped by branch, each heading names the branch, so the rows drop their Branch column.
@@ -2609,9 +2614,7 @@ function fleetTable(rows, needs, sel) {
           [...buckets].map(([k, list]) => {
             const shown = list.filter((r) => !needs.has(r.s.name));
             if (!shown.length) return null;
-            // A search or state filter shows its matches even in a group you'd collapsed; the
-            // group shuts again when the filter clears.
-            const shut = !(F.q.trim() || F.state) && collapsed.has(F.by + ":" + k);
+            const shut = collapsed.has(F.by + ":" + k);
             return [
               h(
                 "button",
