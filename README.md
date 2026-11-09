@@ -80,6 +80,10 @@ gets that notice after its next tool call instead of a turn, and what it hasn't 
 finishes is given to it then, so its turn goes on. Messages take seconds, not instants,
 since they go through the remote.
 
+`mur join` also installs two skills for the agents that read them (Claude Code, Codex, OpenCode,
+Pi): a basic one on when Murmur is worth a turn, and a pro one on coordinating over several
+messages. Source: [`internal/skills`](internal/skills).
+
 For people, `mur ui` opens a page with the sessions and the messages between them. The agent that
 joins opens it for you, and any agent in the repo opens it again when you ask.
 
