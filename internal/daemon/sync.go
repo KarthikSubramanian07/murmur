@@ -230,7 +230,10 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	d.mu.Unlock()
 	d.clearOwnJunk(listed)
 
-	for _, ref := range sortedKeys(remote) {
+	if _, ok := remote[brand.NamesRef]; !ok {
+		d.processNames(ctx, "") // not on the remote
+	}
+	for _, ref := range readOrder(remote) {
 		sha := remote[ref]
 		if failed[ref] != nil {
 			// Not here to read, but the listing shows it moved: for a presence, that is still a
@@ -250,9 +253,6 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		case strings.HasPrefix(ref, brand.PresencePrefix):
 			d.updatePeer(ctx, ref, sha)
 		}
-	}
-	if _, ok := remote[brand.NamesRef]; !ok {
-		d.processNames(ctx, "") // not on the remote
 	}
 	// A sync cut short is no fresh look: staleness is judged up to the last successful sync, and
 	// this one didn't read every presence it listed.
@@ -286,6 +286,27 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 func meshDevice(ref string) (string, bool) {
 	dev := strings.TrimPrefix(ref, brand.MeshPrefix)
 	return dev, bus.ValidDevice(dev)
+}
+
+// readOrder is the order a sync reads the refs it fetched: the names registry, then every
+// presence, then the logs (#71). A message's handoff starts as soon as its log is read, and writes
+// the turn from what this daemon knows of the sender then, so what was fetched with the message
+// about its sender is read first. In the refs' own order, mesh/ before names and presence/, a turn
+// could go out without a name the same sync had brought (docs/VISION.md, "Delivering a message as
+// a turn").
+func readOrder(remote map[string]string) []string {
+	rank := func(ref string) int {
+		switch {
+		case ref == brand.NamesRef:
+			return 0
+		case strings.HasPrefix(ref, brand.PresencePrefix):
+			return 1
+		}
+		return 2
+	}
+	refs := sortedKeys(remote)
+	slices.SortStableFunc(refs, func(a, b string) int { return rank(a) - rank(b) })
+	return refs
 }
 
 // readable keeps the refs Murmur reads: each device's log and presence, and the names registry.
