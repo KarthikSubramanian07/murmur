@@ -27,7 +27,7 @@ in different ways, and hesitate to change code they didn't write without permiss
 Murmur lets agents find and talk to one another, across every teammate's machine. It runs over the
 repo's own git remote: no server, no accounts.
 
-Same agents and speed, but a coherent repo.
+Same agents, same speed, and the repo stays coherent.
 
 It works with **Claude Code, Codex, OpenCode, Muse Code, Pi and Grok**, in
 [T3 Code](https://github.com/pingdotgg/t3code) or in a terminal.
