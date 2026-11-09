@@ -441,6 +441,15 @@ call.
   and prints the address. The page's token is in the address's fragment (`#token=`), which a browser
   keeps from the server; the page reads it and sends it with each request. `mur ui --no-open`
   prints the address and opens nothing.
+- **The browser is handed a file, not the address** (2026-11-09, #220). Other users of the machine
+  can read a program's arguments (on Linux, any of them), and the address carries the token. So
+  `mur ui` writes `open-page.html` into the state directory, which only the user can open, readable
+  by the user alone, and hands its path to `open`, `xdg-open` or `rundll32`; the file sends the
+  browser on to the address. Jupyter does the same. The file is replaced on each `mur ui` and not
+  deleted: its token dies with the page, and `daemon.json` beside it holds the same one meanwhile. A
+  browser that can't read the file has the printed address: a snap browser on Ubuntu can't for a
+  clone outside the home folder or under a hidden folder at its top, which is where Jupyter's file
+  is, and why its users turn the file off.
 - **What it shows.** Every device the daemon knows, this one first, with each session's name,
   agent, branch, what it is doing, when it started and when it was last active (#21), and the
   branches it has committed to when there are three or fewer. Whether a device is reachable, and
