@@ -32,7 +32,7 @@ func TestBusySessionGetsTheWholeMessageThroughTheHook(t *testing.T) {
 		}
 	}
 	hook := func(subagent bool) proto.Response {
-		return b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Subagent: subagent})
+		return b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Subagent: subagent, Whole: true})
 	}
 	// waitFor calls the hook, which keeps bob at work, until it tells of something.
 	waitFor := func(what string) proto.Response {
@@ -147,10 +147,43 @@ func TestAFailedHandoffIsNotGivenWhole(t *testing.T) {
 	eventually(t, "the failed handoff", func() bool { return len(calls()) == 1 })
 	var r proto.Response
 	eventually(t, "the notice", func() bool {
-		r = b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob"})
+		r = b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Whole: true})
 		return len(r.Messages) > 0 || len(r.Delivered) > 0
 	})
 	if len(r.Delivered) != 0 || len(r.Messages) != 1 || r.Messages[0].Body != "" {
 		t.Errorf("after a failed handoff the hook was given %+v; want the subject only", r)
+	}
+}
+
+// A hook from before Whole prints only the subjects in Messages (#229). With whole messages set, it
+// still gets the subject, and the message stays in the inbox, not delivered to a hook that would
+// print nothing of it.
+func TestAnOlderHookGetsTheSubjectOnly(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "claude-bob")
+	bobName := b.named(bob)
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+	pg := b.page()
+	if code, body := pg.call("PUT", "/api/settings", pg.token, `{"wake":{"when":"always"},"sessionBusy":{"`+bobName+`":"whole"}}`); code != http.StatusOK {
+		t.Fatalf("PUT: %d %s", code, body)
+	}
+
+	a.send("aaaaaa", bob, "for an older hook", "the body")
+	var r proto.Response
+	eventually(t, "the notice", func() bool {
+		r = b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob"})
+		return len(r.Messages) > 0 || len(r.Delivered) > 0
+	})
+	if len(r.Delivered) != 0 || len(r.Messages) != 1 || r.Messages[0].Subject != "for an older hook" || r.Messages[0].Body != "" {
+		t.Errorf("a hook that doesn't print whole messages was given %+v; want the subject only", r)
+	}
+	var kept bool
+	for _, m := range b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages {
+		kept = kept || m.Subject == "for an older hook"
+	}
+	if !kept {
+		t.Errorf("the message told to an older hook left the inbox")
 	}
 }

@@ -106,8 +106,13 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 // session is the process's, because the hook has no PID, the session's server gave none, or a
 // wrapper between them made the server's parent another process, the sessions with the hook's
 // Claude ID are the hook's, as they were before PIDs were known. A session in its grace is
-// neither: it is told of its notices once it is back. Caller holds mu.
-func (d *Daemon) hookSessionsLocked(claude string, pid int) []*session {
+// neither: it is told of its notices once it is back.
+//
+// A subagent's hook (subagent) reports the Claude ID the session had when the subagent started,
+// which a /clear since may have left behind: its process's sessions are still its own, for what it
+// commits, but none follows it, as that would take the session back to the conversation it left,
+// with that one's name, tags and holds (#231). Caller holds mu.
+func (d *Daemon) hookSessionsLocked(claude string, pid int, subagent bool) []*session {
 	var ofProcess, ofID []*session
 	for _, s := range d.sortedSessionsLocked() {
 		if !s.dropped.IsZero() {
@@ -124,7 +129,7 @@ func (d *Daemon) hookSessionsLocked(claude string, pid int) []*session {
 		return ofID
 	}
 	for _, s := range ofProcess {
-		if s.claudeSession != claude {
+		if s.claudeSession != claude && !subagent {
 			d.followLocked(s, claude)
 		}
 	}
