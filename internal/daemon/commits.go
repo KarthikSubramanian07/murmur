@@ -90,7 +90,12 @@ func (d *Daemon) sameClone(gitDir string) bool {
 // touchHookLocked finds the sessions a hook request speaks for, as notices does, and notes that
 // they are active. Caller holds mu.
 func (d *Daemon) touchHookLocked(req proto.Request) []*session {
-	sessions := d.hookSessionsLocked(req.ClaudeSession, req.ClientPID, req.Subagent)
+	var sessions []*session
+	if req.ClaudeSession != "" {
+		sessions = d.hookSessionsLocked(req.ClaudeSession, req.ClientPID, req.Subagent)
+	} else {
+		sessions = d.nativeSessionsLocked(req.Native)
+	}
 	now := time.Now()
 	for _, s := range sessions {
 		// Every hook but Stop's runs while the session is at work: a prompt or a tool call. Not a

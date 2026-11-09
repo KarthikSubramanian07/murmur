@@ -136,6 +136,24 @@ func (d *Daemon) hookSessionsLocked(claude string, pid int, subagent bool) []*se
 	return ofProcess
 }
 
+// nativeSessionsLocked finds the live sessions the hook of an agent other than Claude Code speaks
+// for: those whose MCP server registered with native, the client's own ID for its conversation
+// (Pi's session file, which Murmur's extension gives both, #205). Nothing follows: a Pi session
+// that moves to another file (/new, /resume) starts its server again with the new one, a session
+// of its own. Caller holds mu.
+func (d *Daemon) nativeSessionsLocked(native string) []*session {
+	if native == "" {
+		return nil
+	}
+	var out []*session
+	for _, s := range d.sortedSessionsLocked() {
+		if s.dropped.IsZero() && s.claudeSession == "" && s.route.Native == native {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // followLocked moves s to the Claude Code session ID claude, which a hook of its process reported.
 // Its key follows, and with it its name: the name that key has had, if it has had one (a /resume
 // back to an earlier conversation), otherwise a new one, taken as any is. Everyone else is told by

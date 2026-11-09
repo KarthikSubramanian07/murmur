@@ -331,3 +331,53 @@ func TestStopKeepsTheTurnGoingWithItsMessages(t *testing.T) {
 		t.Errorf("Stop printed %+v, want block with %q", got, want)
 	}
 }
+
+// Pi's extension runs the hook with the session's file for its ID (#205): the requests name the
+// session by it, never by a Claude Code ID or process, even where Pi inherited Claude Code's
+// CLAUDE_PID, and bracket no call. What the hook prints is Claude Code's form, which the extension
+// reads.
+func TestPiHookNamesItsSessionByItsFile(t *testing.T) {
+	t.Setenv("CLAUDE_PID", "4242")
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpNotices {
+			return `{"ok":true,"self":"fake-0001/aaaaaa","unread":1,"messages":[{"id":"m1","from":"other-0001/bbbbbb","subject":"hi"}]}`
+		}
+		return `{"ok":true}`
+	})
+	const file = "/home/u/.pi/agent/sessions/a.jsonl"
+	pi := func(event string) string {
+		payload, _ := json.Marshal(map[string]string{"session_id": file, "hook_event_name": event, "cwd": repo,
+			"tool_name": "bash", "tool_use_id": "call_1", "transcript_path": file})
+		var out bytes.Buffer
+		hook.RunFor("pi", bytes.NewReader(payload), &out)
+		return out.String()
+	}
+	out := pi("PostToolUse")
+	var got struct {
+		HookSpecificOutput struct {
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil || !strings.Contains(got.HookSpecificOutput.AdditionalContext, `"hi"`) {
+		t.Fatalf("PostToolUse printed %q: %v", out, err)
+	}
+	pi("Stop")
+	var reqs []proto.Request
+	for _, r := range requests() {
+		if r.Op != proto.OpPing {
+			reqs = append(reqs, r)
+		}
+	}
+	if len(reqs) != 2 || reqs[0].Op != proto.OpNotices || reqs[1].Op != proto.OpTurnEnd {
+		t.Fatalf("requests: %+v", reqs)
+	}
+	for _, r := range reqs {
+		if r.Native != file || r.ClaudeSession != "" || r.ClientPID != 0 || r.Transcript != "" {
+			t.Errorf("%s named its session %q, Claude %q, pid %d, transcript %q", r.Op, r.Native, r.ClaudeSession, r.ClientPID, r.Transcript)
+		}
+	}
+	if !reqs[1].Continues {
+		t.Error("Pi's Stop doesn't say it can keep the work going")
+	}
+}
