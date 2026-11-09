@@ -9,7 +9,7 @@ package update
 // flag cleared, and a release uploaded by someone without the key installs nowhere.
 //
 // The signature is an SSH signature (OpenSSH's PROTOCOL.sshsig, hash sha512), so anyone can check
-// one with `ssh-keygen -Y verify`, which ships with macOS, Linux and Windows (docs/releasing.md).
+// one with `ssh-keygen -Y verify` from OpenSSH 8.1 or later (docs/releasing.md).
 
 import (
 	"bytes"

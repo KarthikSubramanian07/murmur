@@ -88,7 +88,9 @@ As of 2026-11-09 there is no key: the secret isn't set, `keys.go` is empty, and 
 nothing. Once `keys.go` has a key, a run without the secret, or with a key `keys.go` doesn't list,
 fails before anything is published.
 
-- **On the prerelease channel**, a refused release that is the highest version holds the channel
+- **What it doesn't stop:** someone with write access can still hold updates back, by publishing
+  nothing or an unsigned release that daemons refuse; signing only keeps them from shipping their
+  own. On the prerelease channel, a refused release that is the highest version holds the channel
   where it is until that release is deleted, as a daemon takes only the highest.
 - **Forks** build without the secret; a fork that publishes releases replaces `keys.go`'s keys
   with its own, or empties it.
@@ -131,7 +133,9 @@ the release workflow. Neither is set up as of 2026-11-09.
 
 ### Checking a release by hand
 
-`ssh-keygen` comes with OpenSSH, so macOS, most Linux and Windows 10 and later have it:
+`ssh-keygen -Y verify` needs OpenSSH 8.1 or later; `ssh -V` prints the version. Some Windows and
+older Linux installs have an older one; on Windows, Git for Windows brings a current one
+(`C:\Program Files\Git\usr\bin\ssh-keygen.exe`). In a POSIX shell:
 
 ```sh
 tag=v0.3.0
@@ -142,6 +146,21 @@ curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/internal/update/k
 ssh-keygen -Y verify -f allowed_signers -I murmur -n murmur-release -s release.json.sig < release.json
 grep -E '"(tag|channel)"' release.json   # the tag asked for, and its channel
 shasum -a 256 mur-linux-amd64            # the sha256 release.json lists for it
+```
+
+In PowerShell, where `cmd /c` feeds `release.json` to ssh-keygen as raw bytes (a PowerShell pipe
+would re-encode it, and the signature would fail) and `-Encoding ascii` keeps a byte-order mark out
+of `allowed_signers`:
+
+```powershell
+$tag = 'v0.3.0'
+gh release download $tag -R a-Fig/murmur -p release.json -p release.json.sig -p mur-windows-amd64.exe
+(Invoke-RestMethod https://raw.githubusercontent.com/a-Fig/murmur/main/internal/update/keys.go |
+  Select-String -AllMatches 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/=]*').Matches.Value |
+  ForEach-Object { "murmur namespaces=`"murmur-release`" $_" } | Set-Content -Encoding ascii allowed_signers
+cmd /c 'ssh-keygen -Y verify -f allowed_signers -I murmur -n murmur-release -s release.json.sig < release.json'
+Select-String '"(tag|channel)"' release.json
+(Get-FileHash mur-windows-amd64.exe).Hash.ToLower()
 ```
 
 `ssh-keygen` prints `Good "murmur-release" signature` for a release signed by a listed key.

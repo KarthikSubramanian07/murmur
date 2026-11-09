@@ -260,7 +260,8 @@ func TestSignedReleases(t *testing.T) {
 			os.WriteFile(path, []byte("old"), 0755)
 			original, _ := Identity(path)
 			var logs bytes.Buffer
-			o := Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: url, OS: "linux", Arch: "amd64", Client: srv.Client(), Log: log.New(&logs, "", 0)}
+			o := Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: url, OS: "linux", Arch: "amd64", Client: srv.Client(), Log: log.New(&logs, "", 0),
+				refused: map[string]bool{}}
 			if !c.unsigned {
 				o.Keys = []ed25519.PublicKey{public(spare), public(key)}
 			}
@@ -278,6 +279,11 @@ func TestSignedReleases(t *testing.T) {
 				// The page isn't told of a release nobody signed.
 				if c.want == "refused" && (latest != "" || Newer(gitDir, "1.2.3") != "") {
 					t.Fatalf("recorded a refused release: %q, %q", latest, Newer(gitDir, "1.2.3"))
+				}
+				// The next hour's check refuses it again, without another line in the log.
+				before := logs.Len()
+				if _, _, err := attempt(context.Background(), o, original); err == nil || logs.Len() != before {
+					t.Fatalf("second check: err=%v, logged %q", err, logs.String()[before:])
 				}
 			case "":
 				if err != nil || done || string(b) != "old" {

@@ -45,6 +45,8 @@ type Options struct {
 	// Report, if set, hears the outcome of every check, so the page for humans can say whether
 	// this version is out of date and what will happen about it (#240).
 	Report func(Status)
+
+	refused map[string]bool // releases whose refusal is logged; Run makes it, so it's logged once
 }
 
 // Status is what the last check found.
@@ -108,6 +110,7 @@ func Run(ctx context.Context, o Options, restart func()) {
 		o.Every = time.Hour
 	}
 	var err error
+	o.refused = map[string]bool{}
 	if o.Keys == nil {
 		if o.Keys, err = Keys(); err != nil {
 			o.Log.Printf("self-update disabled: %v", err)
@@ -298,7 +301,12 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 // quiet, as other network failures are.
 func signedSum(ctx context.Context, o Options, tag string, urls map[string]string, name string, prerelease bool) (string, error) {
 	refuse := func(err error) (string, error) {
-		o.Log.Printf("self-update: refused release %q: %v", tag, err)
+		if !o.refused[tag] {
+			o.Log.Printf("self-update: refused release %q: %v", tag, err)
+		}
+		if o.refused != nil {
+			o.refused[tag] = true
+		}
 		return "", err
 	}
 	if urls[ManifestName] == "" || urls[SignatureName] == "" {
