@@ -357,10 +357,12 @@ type session struct {
 	// clone was joined before #202 has no Stop hook until join runs again, and outside T3 nothing
 	// else would ever end its turn. stopContinues says its last Stop could keep the turn going
 	// with messages (proto.Request.Continues), which is a way in, inside T3 or out. toldUnread is
-	// the unread count the hook last showed it.
+	// the unread count the hook last showed it. continuedAt is when a Stop last kept its turn going,
+	// zero once another hook of the session showed the turn went on (see continueTurnLocked), and
+	// continuations how many times in a row it did, which Claude Code caps (stopBlockCap).
 	hooked, stopSeen, stopContinues bool
-	busyAt, turnStart               time.Time
-	toldUnread                      int
+	busyAt, turnStart, continuedAt  time.Time
+	toldUnread, continuations       int
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its

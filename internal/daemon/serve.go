@@ -506,8 +506,19 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 		return proto.Response{OK: true}
 	}
 	var given []delivery
+	held := false
 	for _, s := range d.touchHookLocked(req) {
+		first := req.Continues && !s.stopContinues
 		s.stopSeen, s.stopContinues = true, req.Continues
+		if first {
+			// What it was told of before its Stop was known to keep a turn going wasn't held, as
+			// there may have been no way in: it is now.
+			for _, m := range d.st.Inbox[s.id] {
+				if m.Noticed && !m.Held && d.holdableLocked(s.id, m, wake, s.turnStart) {
+					m.Held, held = true, true
+				}
+			}
+		}
 		d.endTurnLocked(s, wake)
 		if !req.Continues || !d.liveLocked(s.id) || d.clearChildInboxLocked(s.id) {
 			continue
@@ -518,6 +529,9 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 	}
 	d.kickPush()
 	if len(given) == 0 {
+		if held {
+			d.saveLocked()
+		}
 		return proto.Response{OK: true}
 	}
 	// A message for everyone is in each inbox the hook speaks for, and is given once.

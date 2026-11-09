@@ -803,12 +803,18 @@ A body past the limit is cut, as in `inbox`.
     good (above). The cost is a longer turn: its user sees it go on after what looked like the
     agent's last word. The messages are delivered once the daemon answers the hook, so a hook that
     gave up waiting (3 s) just before the answer came loses them, as a whole message can (#204).
-    The session is at work again, so a message that comes now waits for the turn's next end. The
-    page's wake setting decides as it does for a turn: under never, they stay in the inbox. A turn
-    that ends without `Stop`, one the user interrupted in T3, has them handed over as a turn
-    instead, and so does a hook that says it can't keep a turn going (`Continues` unset). Not
-    seen in the world: a T3 thread or terminal session kept going by the hook; the `decision:
-    block` answer is Claude Code's documented one.
+    The session is at work again, so a message that comes now waits for the turn's next end.
+    Outside T3 that lasts 2 minutes unless another hook of the session shows the turn went on: an
+    answer that was lost leaves an agent that stopped, and nothing else there would end its turn.
+    The page's wake setting decides as it does for a turn: under never, they stay in the inbox. A
+    turn that ends without `Stop`, one the user interrupted in T3, has them handed over as a turn
+    instead, and so does a hook that says it can't keep a turn going (`Continues` unset). So does
+    a ninth `Stop` in a row with no tool call between: Claude Code ends the turn after eight
+    continuations whatever the hook says (its hooks reference, 2026-11-08), so the daemon counts
+    them. The user's own Stop hooks count toward that cap too, and the daemon doesn't see them.
+    The first `Stop` that can keep a turn going also gives what the session was told of before
+    it, when there may have been no way in. Not seen in the world: a T3 thread or terminal
+    session kept going by the hook; the `decision: block` answer is Claude Code's documented one.
   - *Busy and idle come from the hook*: a prompt or a tool call means busy, and the `Stop` hook,
     which `mur join` installs since this change, means the turn ended. "No tool call lately" would
     not do, as one long command looks idle. A turn the user interrupts fires no `Stop`; in T3 the

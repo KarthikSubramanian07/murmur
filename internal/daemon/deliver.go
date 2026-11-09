@@ -294,7 +294,7 @@ func (d *Daemon) hookBusyLocked(id string) bool {
 	case s.busyAt.IsZero():
 		return false
 	case !inT3:
-		return s.stopSeen
+		return s.stopSeen && !d.continuationLapsedLocked(s)
 	}
 	r := d.routeOfLocked(id)
 	return st.Busy || !d.threadRead[threadKey{r.T3Home, r.T3Thread}].After(s.busyAt)
@@ -338,8 +338,11 @@ func (d *Daemon) endTurnLocked(s *session, wake pageSettings) {
 // give it. The turn goes on with them, so the session is at work again: a message that comes now
 // is held for the turn's next end, not queued behind it in T3. Called after endTurnLocked, so
 // held messages count. The caller takes them out of the inbox and saves. Caller holds mu.
+//
+// None are taken once Claude Code would refuse the continuation (stopBlockCap): it would end the
+// turn with them gone. They are then handed over as a turn, as after a turn that ends without Stop.
 func (d *Daemon) continueTurnLocked(s *session, wake pageSettings) []*inMsg {
-	if !d.wayInLocked(s.id, wake) {
+	if s.continuations >= stopBlockCap || !d.wayInLocked(s.id, wake) {
 		return nil
 	}
 	var out []*inMsg
@@ -350,9 +353,29 @@ func (d *Daemon) continueTurnLocked(s *session, wake pageSettings) []*inMsg {
 	}
 	if len(out) > 0 {
 		now := time.Now()
-		s.busyAt, s.turnStart = now, now
+		s.busyAt, s.turnStart, s.continuedAt = now, now, now
+		s.continuations++
 	}
 	return out
+}
+
+// stopBlockCap is how many times in a row Claude Code lets Stop hooks keep a turn going: it
+// overrides the next block and ends the turn, and counts afresh after each tool call (its hooks
+// reference, 2026-11-08). CLAUDE_CODE_STOP_HOOK_BLOCK_CAP raises it, and a user's own Stop hooks
+// that block count too, which this daemon doesn't see: a continuation they used up loses its
+// messages.
+const stopBlockCap = 8
+
+// continueHold is how long a continuation counts as at work outside T3 before any other hook of
+// the session shows the turn went on. The Stop hook's answer can be lost (it gave up waiting just
+// before it came): the agent then stopped, and with nothing else to end the turn outside T3 its
+// messages would wait for the user's next prompt. In T3 the database ends such a turn.
+const continueHold = 2 * time.Minute
+
+// continuationLapsedLocked says session s's last continuation was never seen to go on, and it no
+// longer counts as at work for it (continueHold). Caller holds mu.
+func (d *Daemon) continuationLapsedLocked(s *session) bool {
+	return !s.continuedAt.IsZero() && time.Since(s.continuedAt) >= continueHold
 }
 
 // noWay says why a message can't be handed over by a route, without anything of it that is secret.
