@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -456,13 +457,21 @@ func (d *Daemon) endSlowFetch(ref, sha string, err error) {
 	}
 }
 
-// clearStaleTemp removes the temporary files git downloads into. Where a cancelled git is killed
-// rather than interrupted, it leaves them behind, as big as what it had downloaded: tmp_pack_* in
-// objects/pack, and tmp_obj_* beside the loose objects for a blob over core.bigFileThreshold. Git
-// itself removes them only in a gc, two weeks on. Other gits may be fetching into this clone, so a
-// file goes only if nothing has written to it for staleTempAge; on Windows, the one platform that
-// leaves them, a delete also fails on a file a live git has open.
+// clearStaleTemp removes what a git killed mid-download left behind, on Windows, the one platform
+// where a cancelled git is killed rather than interrupted (see gitx.run). It leaves files as big as
+// what it had downloaded, tmp_pack_* in objects/pack, one per try, and git itself removes them only
+// in a gc, two weeks on. Elsewhere it does nothing: an interrupted git cleans up after itself, and
+// a file a live git has open can be deleted there, which would fail that git when it finishes.
 func clearStaleTemp(gitDir string, l *log.Logger) {
+	if runtime.GOOS == "windows" {
+		removeStaleTemp(gitDir, l)
+	}
+}
+
+// removeStaleTemp removes git's temporary downloads that nothing has written to for staleTempAge:
+// tmp_* in objects/pack, and beside the loose objects, where a blob over core.bigFileThreshold is
+// written. Other gits may be fetching into this clone; a delete fails on a file one has open.
+func removeStaleTemp(gitDir string, l *log.Logger) {
 	objects := filepath.Join(gitDir, "objects")
 	dirs, err := os.ReadDir(objects)
 	if err != nil {

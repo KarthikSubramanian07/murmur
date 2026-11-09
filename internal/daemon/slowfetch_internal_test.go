@@ -13,7 +13,7 @@ import (
 
 // What a kill can leave goes once nothing has written to it for a while. A file still being written
 // stays, and so does everything of git's that isn't temporary.
-func TestClearStaleTemp(t *testing.T) {
+func TestRemoveStaleTemp(t *testing.T) {
 	gitDir := t.TempDir()
 	write := func(rel string, age time.Duration) string {
 		t.Helper()
@@ -36,7 +36,7 @@ func TestClearStaleTemp(t *testing.T) {
 	kept := []string{write("pack/tmp_pack_live", 0), write("ab/tmp_obj_live", 0), write("pack/pack-1.pack", old),
 		write("ab/cdef", old), write("info/tmp_other", old)}
 
-	clearStaleTemp(gitDir, log.New(io.Discard, "", 0))
+	removeStaleTemp(gitDir, log.New(io.Discard, "", 0))
 
 	for _, path := range gone {
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {

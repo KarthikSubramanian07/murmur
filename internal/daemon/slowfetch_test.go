@@ -19,7 +19,7 @@ func stallFetches(t *testing.T, gitDir string, stall string) {
 	t.Helper()
 	script := filepath.ToSlash(filepath.Join(t.TempDir(), "stall.sh"))
 	body := "#!/bin/sh\ngit upload-pack \"$1\" | {\n" +
-		"\treads=$(dd bs=8192 count=64 2>&1 >&3 | awk -F'[+ ]' 'NR == 1 { print $1 + $2 }')\n" +
+		"\treads=$(dd bs=8192 count=64 2>&1 >&3 | awk -F'[+ ]' '/records in/ { print $1 + $2 }')\n" +
 		"\tif [ \"$reads\" = 64 ]; then sleep " + stall + "; cat; fi\n" +
 		"} 3>&1\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
@@ -55,7 +55,9 @@ func TestLargeRefLeavesTheSyncsWorking(t *testing.T) {
 		d.logTo = &out
 		d.fetchLimit = time.Second
 		d.stale = time.Minute
-		stallFetches(t, d.gitDir, "4")
+		// Longer than a cancelled git's five seconds to exit (see gitx.run), so that a fetch cut off
+		// is over before its stall is, on every platform.
+		stallFetches(t, d.gitDir, "7")
 	})
 	b := newDevice(t, remote, time.Minute)
 	alice, _ := a.session("aaaaaa", "")
