@@ -236,22 +236,28 @@ func TestStopTellsTheDaemonTheTurnEnded(t *testing.T) {
 }
 
 // A subagent's tool call (agent_id in the payload) asks for notices as a subagent's, so the daemon
-// knows the session is at work but tells it nothing there (#188, #202).
+// knows the session is at work but tells it nothing there (#188, #202). A command it runs is
+// bracketed as a subagent's too, so it doesn't count as the session's own hook.
 func TestASubagentsCallIsMarked(t *testing.T) {
 	repo := newRepo(t)
 	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
-	payload, _ := json.Marshal(map[string]string{"session_id": "claude-x", "hook_event_name": "PostToolUse",
-		"cwd": repo, "tool_name": "Read", "tool_use_id": "toolu_2", "agent_id": "agent-1"})
-	hook.Run(bytes.NewReader(payload), &bytes.Buffer{})
+	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+		payload, _ := json.Marshal(map[string]string{"session_id": "claude-x", "hook_event_name": event,
+			"cwd": repo, "tool_name": "Bash", "tool_use_id": "toolu_2", "agent_id": "agent-1"})
+		hook.Run(bytes.NewReader(payload), &bytes.Buffer{})
+	}
+	seen := map[string]bool{}
 	for _, r := range requests() {
-		if r.Op == proto.OpNotices {
-			if !r.Subagent {
-				t.Error("a subagent's notices request isn't marked as one")
-			}
-			return
+		seen[r.Op] = true
+		if r.Op != proto.OpPing && !r.Subagent { // the client's ping, finding the daemon, speaks for nobody
+			t.Errorf("a subagent's %s request isn't marked as one", r.Op)
 		}
 	}
-	t.Errorf("the hook sent no notices request: %+v", requests())
+	for _, op := range []string{proto.OpNotices, proto.OpToolStart, proto.OpToolEnd} {
+		if !seen[op] {
+			t.Errorf("the hook sent no %s request: %+v", op, requests())
+		}
+	}
 }
 
 // A count with no new messages, which the daemon sends when the number changed, is shown alone.

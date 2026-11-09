@@ -245,6 +245,10 @@ func TestAReconnectedSessionIsHeldWhileItsRunGoes(t *testing.T) {
 	a.send("aaaaaa", bob, "after the restart", "")
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "after the restart") })
 	holds(t, "no turn before the thread is read", time.Second, func() bool { return len(calls()) == 0 })
+	// A subagent's command, bracketed like any (#21), is a subagent's hook too.
+	b.do(proto.Request{Op: proto.OpToolStart, ClaudeSession: "claude-bob", Subagent: true, ToolUseID: "toolu_sub"})
+	b.do(proto.Request{Op: proto.OpToolEnd, ClaudeSession: "claude-bob", Subagent: true, ToolUseID: "toolu_sub"})
+	holds(t, "no turn after a subagent's command before the thread is read", time.Second, func() bool { return len(calls()) == 0 })
 
 	threads.set("thread-bob", t3db.State{Busy: true, LastRun: time.Now()})
 	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Subagent: true})
