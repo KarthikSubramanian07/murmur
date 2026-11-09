@@ -2473,7 +2473,7 @@ function fleetTable(rows, needs, sel) {
   return h(
     "section",
     { class: "fx-panel fx-table", role: "table", "aria-label": "Sessions" },
-    h("div", { class: "fx-tr fx-th", role: "row" }, ["Session", "State", "Working on", "Branch", "Last active"].map((c, i) => h("span", { role: "columnheader", class: i === 4 ? "num" : "" }, c))),
+    h("div", { class: "fx-tr fx-th", role: "row" }, ["Session", "State", "Working on", "Branch", "Running for", "Last active"].map((c, i) => h("span", { role: "columnheader", class: i >= 4 ? "num" : "" }, c))),
     rows.length === 0
       ? h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, "No sessions match"))
       : [
@@ -2503,6 +2503,17 @@ function fleetTable(rows, needs, sel) {
           }),
         ],
   );
+}
+
+// How long a session has been running, from its start: "35m", "5h 40m", "2d 3h".
+function runningFor(s) {
+  const t = when(s.started);
+  if (!t) return "–";
+  const m = Math.max(1, Math.round((Date.now() - t) / 60000));
+  if (m < 60) return m + "m";
+  const hrs = Math.floor(m / 60);
+  if (hrs < 24) return hrs + "h" + (m % 60 ? " " + (m % 60) + "m" : "");
+  return Math.floor(hrs / 24) + "d" + (hrs % 24 ? " " + (hrs % 24) + "h" : "");
 }
 
 function fleetRow(d, s, need, on) {
@@ -2541,6 +2552,7 @@ function fleetRow(d, s, need, on) {
     h("span", { class: "fx-state" }, fxDot(state), word),
     h("span", { class: "fx-doing" }, h("span", { class: "fx-status" + (s.doing ? "" : " fx-faint") }, s.doing || "No status set"), need && h("span", { class: "fx-reason" }, need.text())),
     h("span", { class: "fx-branch" }, s.branch && h("span", { class: "mono truncate" }, s.branch), pr && h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number)),
+    h("span", { class: "num fx-muted", title: when(s.started) ? "Started " + stamp(when(s.started)) : null }, runningFor(s)),
     h("span", { class: "num fx-muted" }, t ? agoEl("span", "", t) : "–"),
   );
 }
