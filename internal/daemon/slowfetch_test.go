@@ -45,15 +45,48 @@ func pushLarge(t *testing.T, remote, ref, msg string) {
 	git(t, work, "push", "-q", remote, sha+":"+ref)
 }
 
+// dumpLogOnFailure prints what the daemon logged if the test fails: these tests turn on how long git
+// took, which a timeout's message doesn't say.
+func dumpLogOnFailure(t *testing.T, out *syncBuf) {
+	t.Helper()
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("the daemon's log:\n%s", out.String())
+		}
+	})
+}
+
+// However slow every fetch is, even past the limit each time, and however often a ref moves, what
+// a fetch outside the syncs brought gets read: here, a presence that moves faster than a fetch can
+// be counted on to finish. Asked to fetch the ref again first, a sync would cut that off as well,
+// and on such a link, or such a loaded machine, it would never read anything.
+func TestRefsMovingFasterThanTheirFetchesAreStillRead(t *testing.T) {
+	remote := newRemote(t)
+	var out syncBuf
+	dumpLogOnFailure(t, &out)
+	a := newDeviceWith(t, remote, func(d *device) {
+		d.logTo = &out
+		d.fetchLimit = time.Millisecond // past it every time
+		d.stale = time.Minute
+	})
+	b := newDevice(t, remote, time.Minute)
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "a sees bob", func() bool { return a.seesSession(bob) })
+	if !strings.Contains(out.String(), "took over") {
+		t.Errorf("no fetch ran past the limit, so this tested nothing")
+	}
+}
+
 // A ref too large to fetch within a sync's limit fails neither that sync nor the next, and comes in
 // once its own fetch outside the syncs has finished (#15). This is real git, cut off by the limit
 // mid-download; a sync used to wait out its minute on such a ref and fail, at every poll.
 func TestLargeRefLeavesTheSyncsWorking(t *testing.T) {
 	remote := newRemote(t)
 	var out syncBuf
+	dumpLogOnFailure(t, &out)
 	a := newDeviceWith(t, remote, func(d *device) {
 		d.logTo = &out
-		d.fetchLimit = time.Second
+		d.fetchLimit = 2 * time.Second
 		d.stale = time.Minute
 		// Longer than a cancelled git's five seconds to exit (see gitx.run), so that a fetch cut off
 		// is over before its stall is, on every platform.
@@ -72,7 +105,9 @@ func TestLargeRefLeavesTheSyncsWorking(t *testing.T) {
 		t.Fatal(err)
 	}
 	pushLarge(t, remote, "refs/murmur/mesh/zzz-0000", msg)
-	eventually(t, "the ref set aside", func() bool { return strings.Contains(out.String(), "apart from the syncs") })
+	eventually(t, "the ref set aside", func() bool {
+		return strings.Contains(out.String(), "fetching refs/murmur/mesh/zzz-0000 took over")
+	})
 
 	// The syncs go on without it: this message comes through a later sync than the one that set the
 	// ref aside, while the ref's own fetch is still stalled or just past it.

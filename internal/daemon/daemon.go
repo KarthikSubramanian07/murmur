@@ -428,12 +428,14 @@ type peer struct {
 
 // fetchFail is a ref whose fetch failed: at which listed SHA, and when. It is fetched again on
 // its own a minute after at; a zero at means at the next poll. A slow one ran past FetchLimit, and is
-// fetched outside the syncs instead, not before at, which tries have pushed back.
+// fetched outside the syncs instead, not before at, which tries have pushed back. Once that fetch has
+// landed, the next sync reads what it brought.
 type fetchFail struct {
-	sha   string
-	at    time.Time
-	slow  bool
-	tries int
+	sha    string
+	at     time.Time
+	slow   bool
+	tries  int
+	landed bool
 }
 
 // staleTempAge is how long a temporary download has gone unwritten before it is taken for one a

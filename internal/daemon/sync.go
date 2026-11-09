@@ -317,6 +317,11 @@ func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]str
 	for _, ref := range refs {
 		f, ok := d.unfetched[ref]
 		switch {
+		case f.landed:
+			// Its fetch outside the syncs brought it. pollOnce reads what that was, though the ref
+			// may have moved since: a fetch now could run past the limit in its turn, and a ref
+			// that kept doing so would never be read.
+			delete(d.unfetched, ref)
 		case ref == running && f.sha != listed[ref]:
 			alone = append(alone, ref) // moved during its slow fetch, and may well still be slow
 		case !ok || f.sha != listed[ref]:
@@ -414,7 +419,7 @@ func (d *Daemon) startSlowFetchLocked(listed map[string]string) {
 	now := time.Now()
 	for _, ref := range sortedKeys(d.unfetched) {
 		f := d.unfetched[ref]
-		if !f.slow || f.sha != listed[ref] || now.Before(f.at) {
+		if !f.slow || f.landed || f.sha != listed[ref] || now.Before(f.at) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(d.bgCtx, d.opt.SlowFetchLimit)
@@ -429,8 +434,8 @@ func (d *Daemon) startSlowFetchLocked(listed map[string]string) {
 	}
 }
 
-// endSlowFetch records how a slow fetch of ref at sha ended. Once it has landed, the next sync finds
-// the ref's objects here, so its fetch of the ref is quick, and reads the ref as usual.
+// endSlowFetch records how a slow fetch of ref at sha ended. Once it has landed, the next sync reads
+// what it brought, even if the ref has moved since (see fetch).
 func (d *Daemon) endSlowFetch(ref, sha string, err error) {
 	if err != nil {
 		clearStaleTemp(d.opt.GitDir, d.log)
@@ -440,13 +445,17 @@ func (d *Daemon) endSlowFetch(ref, sha string, err error) {
 	defer d.kickPoll()
 	d.slowRef, d.slowCancel = "", nil
 	f, ok := d.unfetched[ref]
-	if !ok || !f.slow || f.sha != sha {
-		return // it moved meanwhile, and whatever landed makes its next fetch shorter
+	if !ok || !f.slow {
+		return
 	}
 	if err == nil {
 		d.log.Printf("fetched %s, which took longer than a sync allows", ref)
-		delete(d.unfetched, ref)
+		f.landed = true
+		d.unfetched[ref] = f
 		return
+	}
+	if f.sha != sha {
+		return // it moved meanwhile, so this says nothing about the new tip
 	}
 	f.tries++
 	wait := min(time.Minute<<min(f.tries-1, 6), time.Hour)

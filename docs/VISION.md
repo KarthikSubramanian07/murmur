@@ -1066,7 +1066,9 @@ A body past the limit is cut, as in `inbox`.
   failed that sync and the next, for as long as the object stayed. So each fetch in a sync now has
   15 s (`FetchLimit`). A ref that runs past it on its own is fetched outside the syncs, one at a time,
   for up to 10 minutes (`SlowFetchLimit`), waiting 1 minute after a failure and twice as long after
-  each one that follows, to at most an hour. The cost that remains: an object that does finish
+  each one that follows, to at most an hour. The next sync reads what that fetch brought, rather than
+  fetching the ref again, which on a link slow enough to run past the limit every time would mean
+  never reading it (#223's first version did this). The cost that remains: an object that does finish
   downloading stays in the clone until a gc removes it, since git can't cap what a fetch brings. `git
   fetch --filter` would, but one such fetch makes the user's own clone a partial clone
   (`remote.origin.promisor`), for their branches too. On Windows a fetch cut off is killed, which leaves its

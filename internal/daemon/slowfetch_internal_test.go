@@ -50,8 +50,8 @@ func TestRemoveStaleTemp(t *testing.T) {
 	}
 }
 
-// A slow fetch that fails waits longer before each next try, one that lands clears the ref, and one
-// whose ref moved meanwhile leaves the ref's new entry as it is.
+// A slow fetch that fails waits longer before each next try, and one that lands leaves the ref to be
+// read, even if the ref moved meanwhile. A failure of the old tip's fetch says nothing about the new.
 func TestEndSlowFetch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -94,15 +94,20 @@ func TestEndSlowFetch(t *testing.T) {
 	}
 
 	d.unfetched[ref] = fetchFail{sha: "two", slow: true}
-	if f := end("one", nil); f.sha != "two" || !f.slow || f.tries != 0 {
-		t.Errorf("a fetch of the old tip changed the new tip's entry: %+v", f)
+	if f := end("one", failed); f.sha != "two" || f.tries != 0 || f.landed || !f.at.IsZero() {
+		t.Errorf("the old tip's failed fetch changed the new tip's entry: %+v", f)
 	}
-	if _, ok := d.unfetched[ref]; !ok {
-		t.Error("a fetch of the old tip cleared the new tip's entry")
+	if f := end("one", nil); f.sha != "two" || !f.landed {
+		t.Errorf("the old tip's fetch landed, and the ref isn't left to be read: %+v", f)
+	}
+	d.unfetched[ref] = fetchFail{sha: "two", slow: true}
+	if f := end("two", nil); !f.landed {
+		t.Errorf("a fetch that landed doesn't leave the ref to be read: %+v", f)
 	}
 
+	delete(d.unfetched, ref)
 	end("two", nil)
 	if _, ok := d.unfetched[ref]; ok {
-		t.Error("a fetch that landed left its entry")
+		t.Error("a fetch that landed brought back an entry the ref no longer had")
 	}
 }
