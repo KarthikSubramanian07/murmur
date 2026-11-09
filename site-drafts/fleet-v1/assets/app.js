@@ -2953,6 +2953,7 @@ function fleetRow(d, s, need, on) {
 // keyboard back to the row that opened it. Escape does the same.
 function fleetClose() {
   const name = ui.fleetSel;
+  ui.fxFlagOrder = null;
   const back = ui.fleetScroll;
   ui.fleetSel = null;
   ui.fleetScroll = null;
@@ -3104,8 +3105,11 @@ function fleetInspector(name, need) {
   }).sort((a, b) => a.rank - b.rank || (a.rank < 2 ? a.waiting.sortAt - b.waiting.sortAt : b.latest.sortAt - a.latest.sortAt));
   const close = () => fleetCloseAsked();
   // As the whole page the table isn't in view, so the flag box steps through the sessions that need
-  // a look, in the table's order (oldest first), wrapping round: "2 of 4 · Previous · Next".
-  const flagged = [...fleetNeeds(fleetRows()).entries()].sort((a, b) => a[1].at - b[1].at).map(([n]) => n);
+  // a look, in the table's order (oldest first), wrapping round: "2 of 4 · Previous · Next". The
+  // list is taken when the details open and kept until they close, so "Not waiting" on one
+  // question doesn't renumber the session in view or skip one.
+  if (!ui.fxFlagOrder) ui.fxFlagOrder = [...fleetNeeds(fleetRows()).entries()].sort((a, b) => a[1].at - b[1].at).map(([n]) => n);
+  const flagged = ui.fxFlagOrder.filter((n) => findSession(n));
   const at = flagged.indexOf(name);
   const step = (by) => () => {
     const to = flagged[(at + by + flagged.length) % flagged.length];
@@ -3114,7 +3118,7 @@ function fleetInspector(name, need) {
     root.querySelector(`[data-key="fx-flag-${by > 0 ? "next" : "prev"}"]`)?.focus({ preventScroll: true });
   };
   const flagNav =
-    STACKED.matches && need && at >= 0 && flagged.length > 1
+    STACKED.matches && at >= 0 && flagged.length > 1
       ? h(
           "span",
           { class: "fx-flag-nav" },
@@ -3163,6 +3167,7 @@ function fleetInspector(name, need) {
         ),
       ),
     ),
+    !need && flagNav && h("div", { class: "fx-insp-acts fx-flag-solo" }, flagNav),
     need &&
       h(
         "div",

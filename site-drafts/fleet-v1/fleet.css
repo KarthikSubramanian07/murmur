@@ -205,6 +205,8 @@
   .fx-tr > :nth-child(4) { display: none; }
   .fx-sub-branch { display: flex; align-items: baseline; min-width: 0; }
   .fx-tr .fx-status { -webkit-line-clamp: 4; } /* beats the 2-line rule below */
+  /* A flagged row's reason gets the same four lines here, so its question isn't cut short. */
+  .fx-tr .fx-reason { -webkit-line-clamp: 4; }
   /* The lines under a name wrap here rather than cut the device or branch short. */
   .fx-who-text > .fx-parts > .fx-parts-in { white-space: normal; }
   .fx-sub-branch .mono { white-space: normal; overflow-wrap: anywhere; }
@@ -374,3 +376,4 @@ a.fx-pr:focus-visible, .fx-clear:focus-visible, .fx-insp-open:focus-visible, .fx
 .fx-insp-undo + .fx-insp-undo { margin-top: -0.5rem; }
 /* "No status set" can head a flagged row; it stays quiet but readable (6.4:1). */
 .fx-status.fx-faint, .fx-meta dd .fx-faint { color: var(--fx-text-2); }
+.fx-flag-solo { margin: 0 0 1rem; }
