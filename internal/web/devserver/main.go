@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/tags"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -85,6 +86,8 @@ func newFixtures(now time.Time) *fixtures {
 		settings: web.Settings{
 			Wake:           web.Wake{When: web.WakeWithin},
 			SessionWake:    map[string]web.Wake{"brave-heron": {When: web.WakeNever}},
+			Busy:           web.BusySubject,
+			SessionBusy:    map[string]string{"quiet-otter": web.BusyWhole},
 			DefaultMinutes: 3,
 		},
 	}
@@ -94,9 +97,11 @@ func newFixtures(now time.Time) *fixtures {
 			LastSeen: ago(5 * time.Second),
 			Sessions: []web.Session{
 				{Name: "quiet-otter", Agent: "claude-code", Branch: "web-page", Worktree: "agent-a5adaaef",
-					Doing: "Building the settings view of the web page", Started: ago(52 * time.Minute), LastActive: ago(20 * time.Second)},
+					Doing: "Building the settings view of the web page", Started: ago(52 * time.Minute), LastActive: ago(20 * time.Second),
+					Tags: []tags.Tag{{Name: "model:opus-5.5", Src: tags.SrcDerived}, {Name: "ui"}}},
 				{Name: "brave-heron", Agent: "codex", Branch: "remove-claims", Worktree: "remove-claims",
-					Doing: "Deleting claims from the daemon and the MCP tools", Started: ago(2*time.Hour + 4*time.Minute), LastActive: ago(3 * time.Minute)},
+					Doing: "Deleting claims from the daemon and the MCP tools", Started: ago(2*time.Hour + 4*time.Minute), LastActive: ago(3 * time.Minute),
+					Tags: []tags.Tag{{Name: "model:gpt-5.1-codex"}, {Name: "release", Src: tags.SrcHuman}}},
 				{Name: "amber-finch", Agent: "claude-code", Branch: "main", Worktree: "murmur",
 					Started: ago(5 * time.Hour), LastActive: ago(26 * time.Minute)},
 			},
@@ -105,7 +110,8 @@ func newFixtures(now time.Time) *fixtures {
 			ID: "maya-mbp-91c0", Host: "maya-mbp", Owner: "Maya", Reachable: true, LastSeen: ago(40 * time.Second),
 			Sessions: []web.Session{
 				{Name: "lucid-badger", Agent: "claude-code", Branch: "session-names",
-					Doing: "Taking names by compare-and-swap on refs/murmur/names", Started: ago(80 * time.Minute), LastActive: ago(50 * time.Second)},
+					Doing: "Taking names by compare-and-swap on refs/murmur/names", Started: ago(80 * time.Minute), LastActive: ago(50 * time.Second),
+					Tags: []tags.Tag{{Name: "bus"}, {Name: "model:sonnet-5.5"}, {Name: "reviewing"}}},
 				{Name: "velvet-moth", Agent: "t3", Branch: "session-names",
 					Doing: "Writing the word lists", Started: ago(35 * time.Minute), LastActive: ago(9 * time.Minute)},
 				{Name: "solar-wren", Agent: "codex", Branch: "wake-ups",
@@ -272,6 +278,11 @@ func (f *fixtures) SetSettings(ctx context.Context, s web.Settings) (web.Setting
 			return web.Settings{}, fmt.Errorf("%s is not a session on this device", name)
 		}
 	}
+	for name := range s.SessionBusy {
+		if !local[name] {
+			return web.Settings{}, fmt.Errorf("%s is not a session on this device", name)
+		}
+	}
 	s.DefaultMinutes = f.settings.DefaultMinutes
 	f.settings = copySettings(s)
 	return copySettings(f.settings), nil
@@ -283,7 +294,42 @@ func copySettings(s web.Settings) web.Settings {
 	for k, v := range s.SessionWake {
 		out.SessionWake[k] = v
 	}
+	out.SessionBusy = map[string]string{}
+	for k, v := range s.SessionBusy {
+		out.SessionBusy[k] = v
+	}
 	return out
+}
+
+// SetTags applies a human's change as the session's device would, with no derived tags to
+// account for.
+func (f *fixtures) SetTags(ctx context.Context, addr string, add, remove []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.devices {
+		for j := range f.devices[i].Sessions {
+			s := &f.devices[i].Sessions[j]
+			if s.Addr != addr && s.Name != addr {
+				continue
+			}
+			var self []string
+			human := map[string]tags.Mark{}
+			for _, t := range s.Tags {
+				if t.Src == tags.SrcHuman {
+					human[t.Name] = tags.Mark{On: true}
+				} else {
+					self = append(self, t.Name)
+				}
+			}
+			st := tags.State{Self: self, Human: human}
+			if err := st.SetHuman(self, add, remove, "Tyler", time.Now()); err != nil {
+				return err
+			}
+			s.Tags = tags.Effective(st.Self, nil, st.Human)
+			return nil
+		}
+	}
+	return errors.New("no such session")
 }
 
 func (f *fixtures) Unmute(ctx context.Context, by, muted string) error {

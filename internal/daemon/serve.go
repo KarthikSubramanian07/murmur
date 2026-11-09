@@ -15,6 +15,8 @@ import (
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/scrub"
+	"github.com/a-Fig/murmur/internal/tags"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 const maxBody = bus.MaxBody
@@ -184,7 +186,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	if name == "" {
 		d.kickNames()
 	}
-	d.kickPush() // a session back may have messages waiting that its route can now deliver
+	d.kickPush() // a session back may have messages waiting that its route can now hand over
 
 	addr := bus.Addr(d.device, h.ID)
 	reply := proto.Response{OK: true, Self: addr, Name: name, NamePending: name == "", ClaudeSession: live}
@@ -272,11 +274,11 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		d.touchLocked(s, now)
 	}
 	d.mu.Unlock()
-	if !registered && req.Op != proto.OpNotices && req.Op != proto.OpPing {
+	if !registered && req.Op != proto.OpNotices && req.Op != proto.OpTurnEnd && req.Op != proto.OpPing {
 		return fail("this session isn't registered with the daemon (it may have just restarted); try again in a few seconds")
 	}
 	from := bus.Addr(d.device, sess)
-	if req.Op == proto.OpStatus || req.Op == proto.OpSend {
+	if req.Op == proto.OpStatus || req.Op == proto.OpSend || req.Op == proto.OpTags {
 		if why := d.childRefusal(sess); why != "" {
 			return fail(why)
 		}
@@ -287,9 +289,13 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		return proto.Response{OK: true, Self: from, Protocol: proto.Protocol}
 
 	case proto.OpWho:
+		filter, err := tags.ParseFilter(req.Tags)
+		if err != nil {
+			return fail(err.Error())
+		}
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		resp := proto.Response{OK: true, Self: from, Devices: d.whoLocked(sess)}
+		resp := proto.Response{OK: true, Self: from, Devices: d.whoLocked(sess, filter), Filter: filter.String()}
 		if s := d.sessions[sess]; s != nil {
 			resp.Name, resp.NamePending = s.name, s.name == ""
 		}
@@ -314,6 +320,9 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 
 	case proto.OpSend:
 		return d.send(ctx, from, req)
+
+	case proto.OpTags:
+		return d.setOwnTags(sess, req)
 
 	case proto.OpInbox:
 		d.mu.Lock()
@@ -353,6 +362,9 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	case proto.OpNotices:
 		return d.notices(req)
 
+	case proto.OpTurnEnd:
+		return d.turnEnd(req)
+
 	case proto.OpToolStart:
 		return d.toolStart(ctx, req)
 
@@ -384,9 +396,18 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 }
 
 // notices returns the messages of a session it hasn't been told about yet, without bodies, and
-// marks them told. The hook calls it; the hook knows only Claude Code's session ID, and its
-// process: with them, the sessions of that process follow the hook to the ID it reports (see
-// hookSessionsLocked), and a hook that matches nothing gets nothing.
+// marks them told, with how many it has unread when that is news. The hook calls it after a prompt
+// or a tool call, so the session is at work (see touchHookLocked); the hook knows only Claude
+// Code's session ID, and its process: with them, the sessions of that process follow the hook to
+// the ID it reports (see hookSessionsLocked), and a hook that matches nothing gets nothing.
+//
+// A message that would have gone in as a turn, but for the session being at work, is Held: it goes
+// in as one when the turn ends if it is still unread (#202). The count is told with each new
+// message and again only when it changes, so it isn't repeated after every tool call.
+//
+// A session the page sets to be given messages whole while busy (#204) gets each new one with its
+// body instead, which the hook shows as its turn would read: it is delivered then, and leaves the
+// inbox and the count.
 func (d *Daemon) notices(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
@@ -395,7 +416,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	if req.ClaudeSession != "" {
 		for _, s := range d.touchHookLocked(req) {
 			ids = append(ids, s.id)
-			if validTranscript(req.Transcript) && s.transcript != req.Transcript {
+			if validTranscript(req.Transcript) && !req.Subagent && s.transcript != req.Transcript {
 				// A /clear or a /resume is a new conversation, with a title of its own.
 				s.transcript = req.Transcript
 				if s.title != "" {
@@ -409,6 +430,9 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	}
 	var self string
 	var fresh []*inMsg
+	var whole []delivery
+	var told []*session
+	unread := 0
 	for _, id := range ids {
 		// A session in its grace, or stopped, is told of its notices once it is back.
 		if id == "" || !d.liveLocked(id) {
@@ -420,20 +444,121 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		if d.clearChildInboxLocked(id) {
 			continue // a delegate's (#188)
 		}
+		if req.Subagent {
+			continue // the notice would go to the subagent (#188)
+		}
+		if d.dndLocked(id) {
+			// Do not disturb (#198): its messages stay queued in its inbox, with no notice, no
+			// whole message and no hold for the turn's end, and don't count as unread for the hook.
+			continue
+		}
+		if s := d.sessions[id]; s != nil {
+			told = append(told, s)
+		}
+		// Only the hook shows a message whole: a request without its Claude Code session isn't one.
+		givesWhole := req.ClaudeSession != "" && wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
+			if m.Pushing {
+				continue
+			}
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
+				// One handed to T3 or the socket before may be there already: it gets the
+				// subject only, as after any handoff that failed, not a second whole telling.
+				if givesWhole && !m.Attempted && !m.PushFailed {
+					whole = append(whole, delivery{id, m})
+					continue
+				}
+				m.Held = d.hookBusyLocked(id) && d.holdableLocked(id, m, wake, d.turnStartLocked(id))
 				m.Noticed = true
 				fresh = append(fresh, m)
 			}
+			unread++
 		}
 	}
 	if self == "" {
 		return proto.Response{OK: true}
 	}
-	if len(fresh) > 0 {
+	// A message for everyone is in each inbox the hook speaks for, and is shown once.
+	var wholeMsgs []*inMsg
+	shown := map[string]bool{}
+	for _, w := range whole {
+		if !shown[w.msg.Event.ID] {
+			shown[w.msg.Event.ID] = true
+			wholeMsgs = append(wholeMsgs, w.msg)
+		}
+		d.outOfInboxLocked(w.id, w.msg, "delivered", "through the hook")
+	}
+	if len(fresh) > 0 || len(whole) > 0 {
 		d.saveLocked()
 	}
-	return proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
+	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
+	if len(whole) > 0 {
+		resp.Delivered = d.messageViewsLocked(wholeMsgs, true)
+	}
+	changed := false
+	for _, s := range told {
+		changed = changed || s.toldUnread != unread
+		s.toldUnread = unread
+	}
+	if unread > 0 && (len(fresh) > 0 || len(whole) > 0 || changed) {
+		resp.Unread = unread
+	}
+	return resp
+}
+
+// turnEnd is the hook at the end of a turn (Claude Code's Stop). The messages the sessions it
+// speaks for were told of while at work and haven't read, and those that came during the turn and
+// weren't told, however long it took, would go in as a turn now (#202). Where the hook can keep the
+// turn going (req.Continues), they are its reply instead, delivered, and the turn goes on with them
+// (Tyler, 2026-11-08). A session with none is idle.
+func (d *Daemon) turnEnd(req proto.Request) proto.Response {
+	wake := d.wakeSnapshot() // setMu is taken alone, before mu
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if req.ClaudeSession == "" || req.Subagent {
+		return proto.Response{OK: true}
+	}
+	var given []delivery
+	held := false
+	for _, s := range d.touchHookLocked(req) {
+		first := req.Continues && !s.stopContinues
+		s.stopSeen, s.stopContinues = true, req.Continues
+		if first {
+			// What it was told of before its Stop was known to keep a turn going wasn't held, as
+			// there may have been no way in: it is now.
+			for _, m := range d.st.Inbox[s.id] {
+				if m.Noticed && !m.Held && d.holdableLocked(s.id, m, wake, s.turnStart) {
+					m.Held, held = true, true
+				}
+			}
+		}
+		d.endTurnLocked(s, wake)
+		if !req.Continues || !d.liveLocked(s.id) || d.clearChildInboxLocked(s.id) {
+			continue
+		}
+		for _, m := range d.continueTurnLocked(s, wake) {
+			given = append(given, delivery{s.id, m})
+		}
+	}
+	d.kickPush()
+	if len(given) == 0 {
+		if held {
+			d.saveLocked()
+		}
+		return proto.Response{OK: true}
+	}
+	// A message for everyone is in each inbox the hook speaks for, and is given once.
+	var msgs []*inMsg
+	shown := map[string]bool{}
+	for _, g := range given {
+		if !shown[g.msg.Event.ID] {
+			shown[g.msg.Event.ID] = true
+			msgs = append(msgs, g.msg)
+		}
+		d.outOfInboxLocked(g.id, g.msg, "delivered", "through the Stop hook, keeping its turn going")
+	}
+	d.saveLocked()
+	return proto.Response{OK: true, Delivered: d.messageViewsLocked(msgs, true)}
 }
 
 func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto.Response {
@@ -449,7 +574,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		return fail(err.Error())
 	}
 	// A name is an address: it is turned into the session's device/session here, and that is what
-	// goes on the bus, so a daemon that doesn't know names delivers the message all the same.
+	// goes on the bus, so a daemon that doesn't know names queues the message all the same.
 	var toName, renamed string
 	if names.Valid(to) {
 		d.mu.Lock()
@@ -458,7 +583,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		isDevice = isDevice || to == d.device // a device may have an ID shaped like a name
 		var now string
 		if ok {
-			now, _, _ = d.sessionInfoLocked(d.deliveredToLocked(addr))
+			now, _, _ = d.sessionInfoLocked(d.queuedAtLocked(addr))
 		}
 		d.mu.Unlock()
 		switch {
@@ -480,11 +605,12 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	var note string
 	if to != "*" {
 		d.mu.Lock()
-		at := d.deliveredToLocked(to)
+		at := d.queuedAtLocked(to)
 		dev, sess := bus.SplitAddr(at)
 		known := d.addressKnownLocked(dev, sess)
 		_, stopped := d.st.Stopped[sess]
 		offline := d.offlineLocked(dev, sess)
+		dnd := d.peerDNDLocked(dev, sess)
 		why := ""
 		if offline {
 			why = d.offlineWhyLocked(dev, sess, nameOr(toName, at))
@@ -493,6 +619,8 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		switch {
 		case offline:
 			return fail("not sent: " + why)
+		case known && dnd:
+			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox, and is delivered when it reads its inbox or turns do not disturb off."
 		case known:
 		case dev == d.device && stopped:
 			note = at + " has stopped. The message waits for it, in case it comes back."
@@ -518,7 +646,7 @@ func (d *Daemon) addressKnownLocked(dev, sess string) bool {
 	if p == nil || d.staleLocked(p) {
 		return false
 	}
-	// Every daemon delivers to its own CLI, which presence doesn't list.
+	// Every daemon queues for its own CLI, which presence doesn't list.
 	if sess == "" || sess == proto.CLISession {
 		return true
 	}
@@ -584,18 +712,23 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 	return views
 }
 
-// whoLocked lists every device and session. The CLI shows only when it is the one asking.
-func (d *Daemon) whoLocked(you string) []proto.Device {
+// whoLocked lists every device and session, or with a filter the sessions whose tags match it and
+// the devices they are on. The CLI shows only when it is the one asking.
+func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Self: true, LastSeen: time.Now()}
 	for _, s := range d.sortedSessionsLocked() {
 		if d.offMeshLocked(s.id) && s.id != you {
 			continue // offline (#189)
 		}
+		ts := d.tagsOfLocked(s)
+		if !filter.Match(ts) {
+			continue
+		}
 		self.Sessions = append(self.Sessions, proto.SessionView{Addr: bus.Addr(d.device, s.id), Name: s.name,
 			Pending: s.name == "", Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(), Started: s.started, LastActive: s.lastActive,
-			You: s.id == you})
+			You: s.id == you, Tags: ts})
 	}
-	if you == proto.CLISession {
+	if you == proto.CLISession && filter.Empty() {
 		self.Sessions = append(self.Sessions, proto.SessionView{Addr: bus.Addr(d.device, proto.CLISession),
 			Agent: "cli", Started: d.started, LastActive: time.Now(), You: true})
 	}
@@ -608,8 +741,15 @@ func (d *Daemon) whoLocked(you string) []proto.Device {
 			if s.ID == proto.CLISession {
 				continue // V1 daemons list their CLI, which only claims needed
 			}
+			if !filter.Match(s.Tags) {
+				continue
+			}
 			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: bus.Addr(id, s.ID), Name: s.Name,
-				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: s.Started, LastActive: peerActive(p, s)})
+				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: s.Started, LastActive: peerActive(p, s),
+				Tags: s.Tags})
+		}
+		if !filter.Empty() && len(dv.Sessions) == 0 {
+			continue // nothing on it matches
 		}
 		devices = append(devices, dv)
 	}

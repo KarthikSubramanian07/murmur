@@ -30,6 +30,8 @@ const ui = {
   conversationAnchor: null, // a message in it
   chatListTop: 0,
   muting: new Set(),
+  tagging: new Set(), // the sessions whose tags are being changed, by their row key
+  tagInput: null, // the row key of the session whose tag field is open
 };
 
 class AuthError extends Error {
@@ -425,7 +427,111 @@ function sessionRow(d, s) {
         h("span", { class: "meta-item", title: "Worktree" }, icon("folder"), h("span", { class: "truncate" }, s.worktree)),
       started && agoEl("span", "meta-item tabular", started, "started "),
     ),
+    tagsLine(s),
   );
+}
+
+// Tags (#198). Each chip says where the tag came from; a human can take one off or add one. The change goes to the session's own device, which
+// applies it over what the session set, so on another device it shows once that device has read it.
+const TAG_SOURCES = { human: "Set by a human", derived: "Worked out by its daemon" };
+
+function tagsLine(s) {
+  const tags = Array.isArray(s.tags) ? s.tags : [];
+  const addr = s.addr || s.name;
+  const key = "t-" + addr;
+  const busy = ui.tagging.has(key);
+  // The row opens the session's messages; nothing in here should.
+  const stop = (e) => e.stopPropagation();
+  return h(
+    "div",
+    { class: "session-tags", onclick: stop, onkeydown: stop },
+    tags.map((t) =>
+      h(
+        "span",
+        {
+          class: "badge tag badge-outline",
+          title: TAG_SOURCES[t.src] || "Set by the session",
+        },
+        t.name,
+        h(
+          "button",
+          {
+            class: "tag-remove",
+            "aria-label": "Remove " + t.name,
+            title: "Remove " + t.name,
+            "data-key": key + "-rm-" + t.name,
+            disabled: busy,
+            onclick: () => changeTags(addr, key, [], [t.name]),
+          },
+          "×",
+        ),
+      ),
+    ),
+    ui.tagInput === key
+      ? tagField(addr, key)
+      : h(
+          "button",
+          {
+            class: "btn btn-ghost btn-xs",
+            "data-key": key + "-add",
+            disabled: busy,
+            onclick: () => {
+              ui.tagInput = key;
+              delete ui.rowErrors[key];
+              render();
+              root.querySelector(`[data-key="${CSS.escape(key + "-field")}"]`)?.focus();
+            },
+          },
+          "+ Tag",
+        ),
+    ui.rowErrors[key] && h("span", { class: "row-error" }, ui.rowErrors[key]),
+  );
+}
+
+function tagField(addr, key) {
+  const close = () => {
+    ui.tagInput = null;
+    render();
+  };
+  const input = h("input", {
+    type: "text",
+    placeholder: "reviewing, model:opus-5.5",
+    "aria-label": "Tags to add",
+    "data-key": key + "-field",
+    autocomplete: "off",
+    spellcheck: "false",
+    onkeydown: (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        close();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const add = e.target.value.split(/[\s,]+/).filter(Boolean);
+        ui.tagInput = null;
+        if (add.length > 0) changeTags(addr, key, add, []);
+        else render();
+      }
+    },
+    onblur: (e) => {
+      if (ui.tagInput === key && !e.target.value.trim()) close();
+    },
+  });
+  return h("span", { class: "field" }, input);
+}
+
+async function changeTags(addr, key, add, remove) {
+  ui.tagging.add(key);
+  delete ui.rowErrors[key];
+  render();
+  try {
+    await api("/api/tags", { method: "POST", body: JSON.stringify({ addr, add, remove }) });
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    ui.rowErrors[key] = e.message;
+  }
+  ui.tagging.delete(key);
+  render();
+  poll();
 }
 
 function showDevice(id) {
@@ -852,6 +958,33 @@ function wakeControl(key, wake, onChange, withDefault) {
   return [seg, h("span", { class: "field" }, input), h("span", { class: "field-suffix" }, "min")];
 }
 
+const BUSY_CHOICES = [
+  ["subject", "Subject"],
+  ["whole", "Whole message"],
+];
+
+function busyControl(key, busy, onChange, withDefault) {
+  const choices = withDefault ? [["default", "Default"], ...BUSY_CHOICES] : BUSY_CHOICES;
+  const current = busy || "default";
+  return h(
+    "div",
+    { class: "segmented", role: "group" },
+    choices.map(([v, label]) =>
+      h(
+        "button",
+        {
+          "aria-pressed": current === v ? "true" : "false",
+          "data-key": key + "-" + v,
+          onclick: () => {
+            if (v !== current) onChange(v === "default" ? null : v);
+          },
+        },
+        label,
+      ),
+    ),
+  );
+}
+
 // Settings go to the daemon one request at a time, in order: each PUT is the whole settings, so
 // one that overtook an older one would be undone by it. Loads queue behind saves too. The page
 // shows the newest choice while it is on its way, and only the answer to the newest request is
@@ -940,12 +1073,47 @@ function settingsPage() {
           ),
         ),
     ];
+    const busyOverrides = set.sessionBusy || {};
+    const busyRows = [
+      settingsRow(
+        "busy",
+        "Device default",
+        "What a busy Claude Code session sees when a message arrives.",
+        busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }), false),
+      ),
+      ...[...local]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((s) =>
+          settingsRow(
+            "busy-" + s.name,
+            [s.name, s.agent && h("span", { class: "badge badge-secondary" }, s.agent)],
+            null,
+            busyControl(
+              "busy-" + s.name,
+              busyOverrides[s.name] || null,
+              (b) => {
+                const next = { ...(ui.settings.sessionBusy || {}) };
+                if (b) next[s.name] = b;
+                else delete next[s.name];
+                saveSettings({ ...ui.settings, sessionBusy: next });
+              },
+              true,
+            ),
+          ),
+        ),
+    ];
     sections.push(
       h(
         "section",
         { class: "section" },
         h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Wake-ups")),
         h("div", { class: "group" }, rows),
+      ),
+      h(
+        "section",
+        { class: "section" },
+        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Busy sessions")),
+        h("div", { class: "group" }, busyRows),
         ui.settingsError && h("p", { class: "row-error section-head" }, ui.settingsError),
       ),
     );

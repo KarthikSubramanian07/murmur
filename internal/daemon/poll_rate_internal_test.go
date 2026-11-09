@@ -16,7 +16,7 @@ import (
 )
 
 // How often a daemon polls follows the conversation (#93): Poll for FastFor after a message goes
-// out, or one is delivered or received for a session here, or a session starts; slower toward
+// out, or one is handed over or received for a session here, or a session starts; slower toward
 // PollCap while a session sits open and nothing is said; QuietPoll with no session. Presence
 // heartbeats and status changes don't count. A failed poll keeps its back-off.
 
@@ -89,8 +89,8 @@ func TestPollEveryQuietIsUnchanged(t *testing.T) {
 	}
 }
 
-// The moves that count: a session starting, and a message delivered to a session here, as a turn
-// or into its inbox. Not one for a session on another device, or for the CLI.
+// The moves that count: a session starting, and a message queued in the inbox of a session
+// here, or handed over to it as a turn. Not one for a session on another device, or for the CLI.
 func TestWhatMovesAConversation(t *testing.T) {
 	msg := func(to string) bus.Event {
 		return bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa", To: to,
@@ -102,12 +102,12 @@ func TestWhatMovesAConversation(t *testing.T) {
 		return !d.convAt.IsZero()
 	}
 	d := rateDaemon()
-	d.deliverLocked(msg("elsewhere-0001/bbbbbb"), modeNormal)
-	d.deliverLocked(msg("here-0001/"+proto.CLISession), modeNormal)
+	d.queueLocked(msg("elsewhere-0001/bbbbbb"), modeNormal)
+	d.queueLocked(msg("here-0001/"+proto.CLISession), modeNormal)
 	if moved(d) {
 		t.Errorf("a message that is for no session here moved the conversation")
 	}
-	d.deliverLocked(msg("here-0001/bbbbbb"), modeNormal)
+	d.queueLocked(msg("here-0001/bbbbbb"), modeNormal)
 	if !moved(d) {
 		t.Errorf("a message received for a session here did not move the conversation")
 	}
@@ -121,8 +121,8 @@ func TestWhatMovesAConversation(t *testing.T) {
 	}
 }
 
-// A message delivered into a session as a turn moves it; one whose delivery failed does not.
-func TestDeliveryMovesTheConversation(t *testing.T) {
+// A message handed over to a session as a turn moves it; one whose handoff failed does not.
+func TestHandoffMovesTheConversation(t *testing.T) {
 	d, _, _ := rateRig(t, rateOptions(), false)
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa", To: d.device + "/bbbbbb", Subject: "hi"}
 	job := func() *pushJob {
@@ -137,14 +137,14 @@ func TestDeliveryMovesTheConversation(t *testing.T) {
 	failed := !d.convAt.IsZero()
 	d.mu.Unlock()
 	if failed {
-		t.Errorf("a failed delivery moved the conversation")
+		t.Errorf("a failed handoff moved the conversation")
 	}
 	d.finishPush(job(), nil)
 	d.mu.Lock()
 	moved := !d.convAt.IsZero()
 	d.mu.Unlock()
 	if !moved {
-		t.Errorf("a delivered message did not move the conversation")
+		t.Errorf("a queued message did not move the conversation")
 	}
 }
 

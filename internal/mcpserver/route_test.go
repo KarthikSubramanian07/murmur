@@ -13,7 +13,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
-// Tests of how the server finds out how to reach its client, for the daemon to deliver messages as
+// Tests of how the server finds out how to reach its client, for the daemon to hand messages over as
 // turns (#57): the environment, and inside T3 the thread, found in T3's database.
 
 // The hello carries what the environment says about reaching the client, and nothing where it

@@ -158,6 +158,15 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 			if err != nil {
 				problem(h.Label, err)
 			}
+			// The home exists once registering found the agent installed, even where it then
+			// reported a problem (Pi's conflicting mcp.json, say): the skills don't depend on it.
+			if dir := skillsDir(a, h); dir != "" && isDir(h.Dir) {
+				did, notes, err := installSkills(dir, h.Label)
+				r.Did, r.Notes = append(r.Did, did...), append(r.Notes, notes...)
+				if err != nil {
+					problem(h.Label+" skills", err)
+				}
+			}
 			switch {
 			case !fresh:
 			case j == 0 && a.driver == "claudeAgent":
@@ -186,8 +195,8 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	} else if news {
 		r.Did = append(r.Did, "Recorded that you joined "+brand.Product+" in this clone ("+p.consentPath()+")")
 	}
-	// A daemon left running by an older mur answers, but can't do what this one does (deliver a message
-	// as a turn, for one): it is replaced, which Connect does for a client that may start daemons.
+	// A daemon left running by an older mur answers, but can't do what this one does (hand a message
+	// over as a turn, for one): it is replaced, which Connect does for a client that may start daemons.
 	c, err := client.Connect(ctx, p.GitDir, false)
 	switch {
 	case errors.Is(err, client.ErrNoDaemon):
@@ -272,8 +281,9 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 	r.Tell = []string{
 		brand.Product + " is off for this repo. Agents already open here lose its tools within seconds in Claude Code; in Codex the tools stay listed until the session ends, and say they are off if called.",
-		"The " + brand.Product + " MCP server stays registered with the agents, since that is per user; it does nothing in a repo that hasn't joined. " +
-			"To remove it: " + e.removal() + ".",
+		"The " + brand.Product + " MCP server stays registered with the agents, and its skills installed, since that is per user. The server does nothing in a repo that hasn't joined; " +
+			"each skill costs every session of those agents a line of context, in any repo. " +
+			"To remove them: " + e.removal() + ".",
 	}
 	if len(r.Problems) > 0 {
 		return r, errors.New("not everything worked; see above")

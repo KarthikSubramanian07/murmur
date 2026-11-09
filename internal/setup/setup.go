@@ -276,6 +276,8 @@ type HookEvent struct {
 // HookEvents are the events join installs the hook on. The tool events take every tool, with a
 // matcher of "*": the hook itself skips those that can't commit. PreToolUse and PostToolUseFailure
 // are for finding the commits a call made (#21), and a hook missing from them loses those commits.
+// Stop is the end of a turn: without it the daemon takes a session that has been at work to be at
+// work still, and its messages wait for the next prompt (#202).
 // Before #55 `mur init` installed these in the committed settings; join does now, so every event
 // that gains a use belongs here.
 var HookEvents = []HookEvent{
@@ -283,6 +285,7 @@ var HookEvents = []HookEvent{
 	{"PostToolUse", "*"},
 	{"PostToolUseFailure", "*"},
 	{"UserPromptSubmit", ""},
+	{"Stop", ""},
 }
 
 // HookCommand is the notice hook's command line for the binary at exe. Claude Code runs a hook's

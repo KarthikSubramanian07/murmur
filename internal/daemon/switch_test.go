@@ -227,7 +227,7 @@ func TestSwitchNeverTakesAnotherSession(t *testing.T) {
 
 	a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameP, Subject: "for P"})
 	a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameQ, Subject: "for Q"})
-	eventually(t, "delivery", func() bool { return logHas(b, "for P") && logHas(b, "for Q") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "for P") && logHas(b, "for Q") })
 
 	// A hook with an ID and a process nobody has: nothing changes and nothing is told.
 	if got := b.hook("claude-stranger", 999); len(got) != 0 {
@@ -419,7 +419,7 @@ func TestNameOfAResumedConversationFindsTheSessionThatHoldsIt(t *testing.T) {
 	if r.Error != "" {
 		t.Fatalf("send: %+v", r)
 	}
-	eventually(t, "delivery", func() bool { return logHas(b, "to a resumed conversation") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "to a resumed conversation") })
 
 	// Both come back, to read what they were sent.
 	b.sessionPID("dddddd", "claude-x", procQ)
@@ -489,7 +489,7 @@ func TestTheSessionThatTakesANameTakesWhatWasKeptForIt(t *testing.T) {
 	eventually(t, "presence to empty", func() bool { return !a.seesSession(first) && !a.seesSession(second) })
 
 	a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "while X was gone"})
-	eventually(t, "delivery", func() bool { return logHas(b, "while X was gone") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "while X was gone") })
 
 	// claude --resume X.
 	_, conn1, _ = b.sessionPID("cccccc", "claude-x", procP)
@@ -504,7 +504,7 @@ func TestTheSessionThatTakesANameTakesWhatWasKeptForIt(t *testing.T) {
 	conn1.Close()
 	eventually(t, "the first to stop again", func() bool { return busLines(b, first, "stopped") == 2 })
 	a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "while X was gone again"})
-	eventually(t, "delivery", func() bool { return logHas(b, "while X was gone again") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "while X was gone again") })
 	third, _, _ := b.sessionPID("eeeeee", "claude-throwaway-2", procQ)
 	// The hook that moves it is told at once.
 	if told := b.hook("claude-x", procQ); len(told) != 1 || told[0] != "while X was gone again" {
@@ -638,7 +638,7 @@ func TestSendToANameIsForwardedOnceFromAnyDevice(t *testing.T) {
 	if there.Error != "" || here.Error != "" || here.Messages[0].To != there.Messages[0].To {
 		t.Fatalf("sent from another device: %+v; from this one: %+v", there, here)
 	}
-	eventually(t, "delivery", func() bool { return logHas(b, "from another device") && logHas(b, "from this device") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "from another device") && logHas(b, "from this device") })
 	if got := b.do(proto.Request{Op: proto.OpInbox, Session: "eeeeee"}).Messages; len(got) != 0 {
 		t.Fatalf("the session that holds %s got %+v", nameY, got)
 	}
@@ -661,7 +661,7 @@ func TestTakingANameAgainTakesNothingForAnother(t *testing.T) {
 	b.nameIs(third, nameY)
 
 	b.do(proto.Request{Op: proto.OpSend, To: first, Subject: "for X"})
-	eventually(t, "delivery", func() bool { return logHas(b, "for X") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "for X") })
 	conn3.Close()
 	eventually(t, "the third to drop", func() bool {
 		return b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y"}).Self == ""
@@ -694,7 +694,7 @@ func TestSendToANameSkipsARunningHolderThatMovedOn(t *testing.T) {
 	if here.Error != "" || there.Error != "" || here.Messages[0].To != first || there.Messages[0].To != first {
 		t.Fatalf("sent from this device: %+v; from another: %+v; want both sent to %s", here, there, first)
 	}
-	eventually(t, "delivery", func() bool { return logHas(b, "from another device") && logHas(b, "from this device") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "from another device") && logHas(b, "from this device") })
 	if told := b.hook("claude-y", procQ); len(told) != 0 {
 		t.Fatalf("the session called %s was told %v", nameY, told)
 	}
@@ -716,7 +716,7 @@ func TestSendToANameSkipsAStoppedHolderThatMovedOn(t *testing.T) {
 	if r := b.do(proto.Request{Op: proto.OpSend, To: nameX, Subject: "for X"}); r.Error != "" {
 		t.Fatalf("send: %+v", r)
 	}
-	eventually(t, "delivery", func() bool { return logHas(b, "for X") })
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "for X") })
 	if told := b.resumedAs("eeeeee", "claude-y", procR); len(told) != 0 {
 		t.Fatalf("the next session to take %s was told %v", nameY, told)
 	}
