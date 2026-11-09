@@ -194,12 +194,15 @@ function render() {
   const keep = document.activeElement?.dataset?.key;
   const scroll = content ? content.scrollTop : 0;
   const chat = chatScroll();
+  const side = root.querySelector(".sidebar-content, .mini-scroll")?.scrollTop || 0;
   if (!content) content = h("div", { class: "content" });
   const inner = page(); // before the top bar, which counts what this settles
   content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
   content.replaceChildren(inner);
   root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)));
   content.scrollTop = scroll;
+  const sideNow = root.querySelector(".sidebar-content, .mini-scroll");
+  if (sideNow) sideNow.scrollTop = side;
   restoreChatScroll(chat);
   if (keep) root.querySelector(`[data-key="${CSS.escape(keep)}"]`)?.focus({ preventScroll: true });
 }
@@ -435,7 +438,7 @@ async function setHidden(s, on) {
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
     // A daemon from before session tags (#211) has no /api/tags.
-    const old = /^40[45]/.test(e.message);
+    const old = /^40[45] /.test(e.message);
     ui.notice = old ? "This daemon can't hide sessions: it needs session tags (#211)." : "Couldn't " + (on ? "hide " : "show ") + s.name + ": " + e.message;
   }
   render();
@@ -587,12 +590,32 @@ function settledFold(id) {
   );
 }
 
+// Worked out again only when the state or the messages change: a render asks many times.
+let settledMemo = { state: null, n: -1, cursor: null, rows: [], names: new Set() };
+
 function settledSessions() {
+  const memo = settledMemo;
+  if (memo.state === ui.state && memo.n === ui.messages.length && memo.cursor === ui.cursor) return memo.rows;
+  const rows = findSettled();
+  settledMemo = { state: ui.state, n: ui.messages.length, cursor: ui.cursor, rows, names: new Set(rows.map((r) => r.name)) };
+  return rows;
+}
+
+function findSettled() {
+  // Running by name or by address: presence can still carry a session's device/session while the
+  // messages already have the name that landed for it.
   const running = new Set();
-  for (const d of ui.state?.devices || []) for (const s of d.sessions || []) running.add(s.name);
+  const runningAddrs = new Set();
+  for (const d of ui.state?.devices || []) {
+    for (const s of d.sessions || []) {
+      running.add(s.name);
+      running.add(nameOf(s.addr, s.name));
+      if (s.addr) runningAddrs.add(s.addr);
+    }
+  }
   const seen = new Map();
   const note = (name, addr, m) => {
-    if (!name || running.has(name) || name.includes("/")) return;
+    if (!name || running.has(name) || (addr && runningAddrs.has(addr)) || name.includes("/")) return;
     const r = seen.get(name) || { name, device: "", last: 0, lastMsg: null, peers: new Set() };
     if (addr && addr.includes("/")) {
       r.device = addr.split("/")[0];
@@ -623,7 +646,8 @@ function settledOn(id) {
 }
 
 function isSettled(name) {
-  return !findSession(name) && settledSessions().some((r) => r.name === name);
+  settledSessions();
+  return settledMemo.names.has(name) && !findSession(name);
 }
 
 function settledRow(r) {
@@ -898,9 +922,11 @@ function sessionCard(d, s) {
   );
 }
 
-// Recent: every message, newest first. One opens its conversation.
+// Recent: the newest messages first, as many as a render can build quickly. One opens its
+// conversation.
+const RECENT_MAX = 300;
 function recentPage() {
-  const list = [...ui.messages].sort((a, b) => b.sortAt - a.sortAt).slice(0, 300);
+  const list = [...ui.messages].sort((a, b) => b.sortAt - a.sortAt).slice(0, RECENT_MAX);
   const out = [];
   let day = null;
   for (const m of list) {
@@ -915,7 +941,12 @@ function recentPage() {
   return h(
     "div",
     { class: "g-page g-recent" },
-    h("header", { class: "g-page-head" }, h("h1", null, "Recent messages"), h("p", null, plural(ui.messages.length, "message"))),
+    h(
+      "header",
+      { class: "g-page-head" },
+      h("h1", null, "Recent messages"),
+      h("p", null, ui.messages.length > RECENT_MAX ? "Newest " + RECENT_MAX + " of " + ui.messages.length : plural(ui.messages.length, "message")),
+    ),
     list.length ? h("div", { class: "g-feed" }, out) : h("p", { class: "g-none" }, "No messages yet"),
   );
 }
@@ -954,13 +985,17 @@ function recentItem(m, at) {
 // who has posted is in it too, running or not.
 function groupMembers(c) {
   const posted = new Map();
-  for (const m of c.messages) posted.set(fromName(m), (posted.get(fromName(m)) || 0) + 1);
+  const addrs = new Map(); // where each sender posted from, for one that isn't running
+  for (const m of c.messages) {
+    posted.set(fromName(m), (posted.get(fromName(m)) || 0) + 1);
+    if (m.fromAddr) addrs.set(fromName(m), m.fromAddr);
+  }
   const rows = [];
   for (const d of devices()) {
     if (c.kind === "device" && d.id !== c.title) continue;
     for (const s of d.sessions) rows.push({ name: s.name, d, s, posted: posted.get(s.name) || 0 });
   }
-  for (const [name, n] of posted) if (!rows.some((r) => r.name === name)) rows.push({ name, d: null, s: null, posted: n });
+  for (const [name, n] of posted) if (!rows.some((r) => r.name === name)) rows.push({ name, addr: addrs.get(name), d: null, s: null, posted: n });
   return rows;
 }
 
@@ -1011,7 +1046,7 @@ function membersPanel(c, rows) {
             onclick: () => {
               ui.membersOpen = false;
               const f = findSession(r.name);
-              ui.filter = f ? f.session.addr || r.name : r.name;
+              ui.filter = f ? f.session.addr || r.name : r.addr || r.name;
               ui.conversation = null;
               go("messages");
             },
@@ -1047,7 +1082,17 @@ function topbar() {
       VIEWS.map((v) =>
         h(
           "button",
-          { "aria-pressed": ui.view === v ? "true" : "false", "data-key": "m-" + v, onclick: () => go(v) },
+          {
+            "aria-pressed": ui.view === v ? "true" : "false",
+            "data-key": "m-" + v,
+            onclick: () => {
+              if (v === "messages") {
+                ui.filter = null;
+                ui.conversation = null;
+              }
+              go(v);
+            },
+          },
           TITLES[v],
         ),
       ),
@@ -1266,7 +1311,7 @@ function conversationList(list) {
       ),
     ui.showOlder && older.map(conversationRow),
     section("Group chats", groups),
-    !dms.length && !groups.length && h("p", { class: "g-none" }, "Nothing matches."),
+    !dms.length && !groups.length && (q || !older.length) && h("p", { class: "g-none" }, q ? "Nothing matches." : "No conversations"),
   );
 }
 
