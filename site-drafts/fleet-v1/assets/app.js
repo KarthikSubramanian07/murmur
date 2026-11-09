@@ -234,7 +234,8 @@ function render() {
   const keep = active?.dataset?.key;
   const caret = active && typeof active.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null;
   const scroll = content ? content.scrollTop : 0;
-  const railScroll = root.querySelector(".fx-rail")?.scrollTop || 0;
+  // Fleet's rail and the conversation list inside it scroll on their own; both keep their place.
+  const railScroll = [".fx-rail", ".fx-rail .fx-dms"].map((q) => root.querySelector(q)?.scrollTop || 0);
   const chat = chatScroll();
   if (!content) content = h("div", { class: "content" });
   const inner = page(); // before the top bar, which counts what this settles
@@ -242,8 +243,10 @@ function render() {
   content.replaceChildren(inner);
   root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, VARIANT === "g" && ui.view !== "settings" ? null : topbar(), content)));
   content.scrollTop = scroll;
-  const rail = root.querySelector(".fx-rail");
-  if (rail) rail.scrollTop = railScroll;
+  [".fx-rail", ".fx-rail .fx-dms"].forEach((q, i) => {
+    const el = root.querySelector(q);
+    if (el) el.scrollTop = railScroll[i];
+  });
   restoreChatScroll(chat);
   const again = keep && root.querySelector(`[data-key="${CSS.escape(keep)}"]`);
   if (again) {
@@ -2075,7 +2078,7 @@ function setView(view) {
   const next = VIEWS.includes(view) ? view : VARIANT === "g" ? "messages" : "sessions";
   // Leaving All sessions (to a conversation, say) remembers where the list and the details were,
   // so Back to the same session finds them as they were.
-  if (ui.view === "sessions" && next !== "sessions") ui.fleetMemo = { sel: ui.fleetSel || null, pane: content?.scrollTop || 0, rail: root.querySelector(".fx-rail")?.scrollTop || 0 };
+  if (ui.view === "sessions" && next !== "sessions") ui.fleetMemo = { sel: ui.fleetSel || null, pane: content?.scrollTop || 0, rail: [".fx-rail", ".fx-rail .fx-dms"].map((q) => root.querySelector(q)?.scrollTop || 0) };
   ui.view = next;
   if (ui.view === "settings") loadSettings();
   if (ui.view === "sessions") {
@@ -2085,8 +2088,10 @@ function setView(view) {
     fleetSetSel(want);
     if (memo && memo.sel === want && content) {
       content.scrollTop = memo.pane;
-      const rail = root.querySelector(".fx-rail");
-      if (rail) rail.scrollTop = memo.rail;
+      [".fx-rail", ".fx-rail .fx-dms"].forEach((q, i) => {
+        const el = root.querySelector(q);
+        if (el) el.scrollTop = memo.rail[i];
+      });
     }
     fleetFocusBack();
     return;
