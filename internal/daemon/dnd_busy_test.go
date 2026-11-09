@@ -11,7 +11,8 @@ import (
 
 // Do not disturb (#198) on a session the hook runs in (#202, #204): while the tag is on, a message
 // stays queued, with no notice and no whole message from the hook while the session is at work,
-// nothing held for its turn's end, and no turn when it is idle. When the tag comes off, it goes out
+// nothing held for its turn's end, nothing from a Stop that keeps the turn going (#213), and no
+// turn when it is idle. When the tag comes off, it goes out
 // once, by whichever route applies then.
 
 // tagSelf adds and removes session id's own tags.
@@ -80,6 +81,26 @@ func TestDoNotDisturbOnABusySessionHoldsEveryRouteUntilItComesOff(t *testing.T) 
 	}
 	b.turnEnd("claude-bob")
 	holds(t, "no turn for a message the hook delivered", time.Second, func() bool { return len(calls()) == 0 })
+
+	// A Stop that can keep the turn going (#213) gives nothing while the tag is on. Taken off while
+	// at work, with no tool call after, the message is given at the turn's next end, once.
+	b.tagSelf("bbbbbb", []string{"do-not-disturb"}, nil)
+	b.hookNotices("claude-bob")
+	a.send("aaaaaa", bob, "third", "the third body")
+	eventually(t, "third queued for bob", func() bool { return b.queuedFor(bob, "third") })
+	if r := b.stopHook("claude-bob"); len(r.Delivered) != 0 {
+		t.Fatalf("the Stop gave %v while on do not disturb", viewSubjects(r.Delivered))
+	}
+	holds(t, "no turn after that Stop", time.Second, func() bool { return len(calls()) == 0 })
+	b.hookNotices("claude-bob")
+	b.tagSelf("bbbbbb", nil, []string{"do-not-disturb"})
+	if got := viewSubjects(b.stopHook("claude-bob").Delivered); len(got) != 1 || got[0] != "third" {
+		t.Fatalf("the Stop after the tag came off gave %v; want [third]", got)
+	}
+	if r := b.stopHook("claude-bob"); len(r.Delivered) != 0 {
+		t.Errorf("the next Stop gave %v; want nothing", viewSubjects(r.Delivered))
+	}
+	holds(t, "no turn for a message the Stop gave", time.Second, func() bool { return len(calls()) == 0 })
 
 	// Idle and on do not disturb: no turn. The tag comes off: one turn.
 	b.tagSelf("bbbbbb", []string{"do-not-disturb"}, nil)

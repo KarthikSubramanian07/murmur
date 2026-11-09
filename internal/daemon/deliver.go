@@ -29,7 +29,9 @@ import (
 // A session Murmur's hook runs in (Claude Code) is not given a turn while it is at work (#202): T3
 // would queue it behind the running turn, and nothing could take it back, so the agent could read
 // it with `inbox` and then get it again as a turn. The hook tells it of the message after its next
-// tool call instead, and what it hasn't read when the turn ends is handed over as a turn then.
+// tool call instead, and what it hasn't read when the turn ends keeps the turn going: the Stop
+// hook gives it to the agent (continueTurnLocked). A turn that ends without Stop, one the user
+// interrupted in T3, has it handed over as a turn instead.
 //
 // Handing a message over is not delivering it: it is delivered when it reaches the agent's
 // context, when the turn carrying it starts, which the daemon doesn't see (docs/VISION.md,
@@ -72,13 +74,23 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 	// them once, before waiting for anything.
 	d.kickPush()
 	for {
+		// A continuation that lapses (see continueTurnLocked) is woken for too: nothing else may
+		// come to end its turn.
+		var lapse <-chan time.Time
+		d.mu.Lock()
+		if at := d.nextLapseLocked(); !at.IsZero() {
+			lapse = time.After(time.Until(at))
+		}
+		d.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return
 		case <-d.pushKick:
+		case <-lapse:
 		}
 		wake := d.wakeSnapshot()
 		d.mu.Lock()
+		d.endLapsedTurnsLocked(wake)
 		for _, id := range sortedKeys(d.st.Inbox) {
 			if d.updating || d.pushing[id] || ctx.Err() != nil {
 				continue
@@ -247,12 +259,17 @@ func (d *Daemon) holdableLocked(id string, m *inMsg, wake pageSettings, turnStar
 }
 
 // wayInLocked says a message may go into session id as a turn, as far as the session goes: the
-// page's wake setting lets it through, and there is a way in. Caller holds mu.
+// page's wake setting lets it through, and there is a way in. The Stop hook is one, for a session
+// whose last Stop could keep its turn going, inside T3 or out: what came during a turn is given at
+// its end, even with no socket. Caller holds mu.
 func (d *Daemon) wayInLocked(id string, wake pageSettings) bool {
 	if !d.wakesLocked(id, wake) {
 		return false
 	}
 	s := d.sessions[id]
+	if s != nil && s.stopContinues {
+		return true
+	}
 	return viaOf(d.routeOfLocked(id), s != nil && s.dropped.IsZero()) != ""
 }
 
@@ -297,7 +314,7 @@ func (d *Daemon) hookBusyLocked(id string) bool {
 	case s.busyAt.IsZero():
 		return false
 	case !inT3:
-		return s.stopSeen
+		return s.stopSeen && !d.continuationLapsedLocked(s)
 	}
 	r := d.routeOfLocked(id)
 	return st.Busy || !d.threadRead[threadKey{r.T3Home, r.T3Thread}].After(s.busyAt)
@@ -333,6 +350,79 @@ func (d *Daemon) endTurnLocked(s *session, wake pageSettings) {
 		d.saveLocked()
 	}
 	d.kickPush()
+}
+
+// continueTurnLocked takes what keeps session s's turn going, at its end (#202, Tyler,
+// 2026-11-08): the messages that would otherwise be handed over as the next turn, those the hook
+// told it of and it hasn't read and those that came during the turn untold, for the Stop hook to
+// give it. The turn goes on with them, so the session is at work again: a message that comes now
+// is held for the turn's next end, not queued behind it in T3. Called after endTurnLocked, so
+// held messages count. The caller takes them out of the inbox and saves. Caller holds mu.
+//
+// None are taken once Claude Code would refuse the continuation (stopBlockCap): it would end the
+// turn with them gone. They are then handed over as a turn, as after a turn that ends without Stop.
+// None are taken from a session on do not disturb (#198) either: wayInLocked finds no way in for it.
+func (d *Daemon) continueTurnLocked(s *session, wake pageSettings) []*inMsg {
+	if s.continuations >= stopBlockCap || !d.wayInLocked(s.id, wake) {
+		return nil
+	}
+	var out []*inMsg
+	for _, m := range d.st.Inbox[s.id] {
+		if pushable(m) {
+			out = append(out, m)
+		}
+	}
+	if len(out) > 0 {
+		now := time.Now()
+		s.busyAt, s.turnStart, s.continuedAt = now, now, now
+		s.continuations++
+	}
+	return out
+}
+
+// stopBlockCap is how many times in a row Claude Code lets Stop hooks keep a turn going: it
+// overrides the next block and ends the turn, and counts afresh after each tool call (its hooks
+// reference, 2026-11-08). CLAUDE_CODE_STOP_HOOK_BLOCK_CAP raises it, and a user's own Stop hooks
+// that block count too, which this daemon doesn't see: a continuation they used up loses its
+// messages.
+const stopBlockCap = 8
+
+// continuationLapsedLocked says session s's last continuation was never seen to go on, and it no
+// longer counts as at work for it: no other hook of the session came within ContinueHold. The Stop
+// hook's answer can be lost (it gave up waiting just before it came): the agent then stopped, and
+// outside T3 nothing else would end the turn, so its messages would wait for the user's next
+// prompt. In T3 the database ends such a turn. Caller holds mu.
+func (d *Daemon) continuationLapsedLocked(s *session) bool {
+	return !s.continuedAt.IsZero() && time.Since(s.continuedAt) >= d.opt.ContinueHold
+}
+
+// nextLapseLocked is when the first continuation now pending lapses, zero if none is. Caller holds
+// mu.
+func (d *Daemon) nextLapseLocked() time.Time {
+	var next time.Time
+	for _, s := range d.sessions {
+		if at := s.continuedAt.Add(d.opt.ContinueHold); !s.continuedAt.IsZero() && (next.IsZero() || at.Before(next)) {
+			next = at
+		}
+	}
+	return next
+}
+
+// endLapsedTurnsLocked ends the turn of each session whose continuation lapsed outside T3, as Stop
+// would have: what came in the meantime is held, and goes in as a turn by the session's socket.
+// In T3 the database decides, as a continued turn can run longer than ContinueHold without a tool
+// call. A session is in T3 by its route, not by whether its thread has been read: a read that keeps
+// failing mustn't make a live turn end. Caller holds mu.
+func (d *Daemon) endLapsedTurnsLocked(wake pageSettings) {
+	for _, s := range d.sessions {
+		if !d.continuationLapsedLocked(s) {
+			continue
+		}
+		s.continuedAt = time.Time{}
+		if d.routeOfLocked(s.id).T3Thread == "" {
+			d.endTurnLocked(s, wake)
+		}
+	}
 }
 
 // noWay says why a message can't be handed over by a route, without anything of it that is secret.

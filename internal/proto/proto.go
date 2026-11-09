@@ -29,8 +29,9 @@ const (
 	// worktree at the start and credits the commits that appeared by the end (#21).
 	OpToolStart = "toolstart"
 	OpToolEnd   = "toolend"
-	// OpTurnEnd is the hook at the end of a turn (Claude Code's Stop): the session is idle, and
-	// what it was told of and didn't read may go in as a turn (#202).
+	// OpTurnEnd is the hook at the end of a turn (Claude Code's Stop): what the session was told of
+	// and didn't read keeps the turn going, where the hook can do that (Continues), and the session
+	// is idle otherwise (#202).
 	OpTurnEnd = "turnend"
 )
 
@@ -46,8 +47,10 @@ const (
 //	3: OpTurnEnd, OpNotices's Unread and Subagent: a session the hook runs in gets notices while it
 //	   is at work, and turns only when it isn't (#202)
 //	4: OpNotices's Delivered: a busy session may be given its messages whole by the hook (#204)
-//	5: session tags: OpTags, and who's search by tags (#198)
-const Protocol = 5
+//	5: OpTurnEnd's Continues and Delivered: the Stop hook keeps the turn going with the messages
+//	   that would have gone in as a turn after it (#202)
+//	6: session tags: OpTags, and who's search by tags (#198)
+const Protocol = 6
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -101,6 +104,9 @@ type Request struct {
 	// session is at work, but a notice would land in the subagent's context, not the session's,
 	// so OpNotices answers with nothing (#188).
 	Subagent bool `json:"subagent,omitempty"`
+	// Continues says, on OpTurnEnd, that the hook can keep the turn going with messages (Claude
+	// Code's Stop hook, by blocking the stop): the reply's Delivered is what it should give.
+	Continues bool `json:"continues,omitempty"`
 
 	// Add and Remove are the tags OpTags adds to the caller and takes from it. Tags is what OpWho
 	// searches by: a session is listed when it has every tag named, and none named after a dash
@@ -192,8 +198,9 @@ type Response struct {
 	// are new ones to tell or the number changed since the hook last said it; 0 otherwise.
 	Unread int `json:"unread,omitempty"`
 	// Delivered is, in an OpNotices reply, the new messages the page's setting gives the session
-	// whole while it is busy (#204), with their bodies. The hook shows each as its turn would
-	// read; they are delivered, and gone from the inbox.
+	// whole while it is busy (#204), and in an OpTurnEnd reply, the messages that keep its turn
+	// going (#202), with their bodies. The hook shows each as its turn would read; they are
+	// delivered, and gone from the inbox.
 	Delivered []MessageView `json:"delivered,omitempty"`
 
 	Lookup *SessionDetail `json:"lookup,omitempty"`

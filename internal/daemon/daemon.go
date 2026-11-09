@@ -69,6 +69,9 @@ type Options struct {
 	// handed the message over, so it is not repeated, and a second failure of this kind too leaves
 	// the message to the hook's notice.
 	PushRetry time.Duration
+	// ContinueHold is how long a Stop's continuation of a turn counts as at work outside T3 before
+	// another hook of the session shows the turn went on: 2 min (see continueTurnLocked).
+	ContinueHold time.Duration
 	// PageAddr is where the page for humans is served: 127.0.0.1:0, a random port on loopback.
 	// A host other than 127.0.0.1 is refused: off loopback anyone on the network could reach the
 	// page, and on another loopback address the page's Host check would refuse every request.
@@ -141,6 +144,9 @@ func (o *Options) defaults() {
 	}
 	if o.PushRetry == 0 {
 		o.PushRetry = 2 * time.Second
+	}
+	if o.ContinueHold == 0 {
+		o.ContinueHold = 2 * time.Minute
 	}
 	if o.PageAddr == "" {
 		o.PageAddr = "127.0.0.1:0"
@@ -356,10 +362,14 @@ type session struct {
 	// the hook first ran; a subagent's tool call doesn't set it, as a background subagent works on
 	// after its parent's turn ended. turnStart is when the hook first saw the current turn. stopSeen says the hook has reported the end of a turn: a session whose
 	// clone was joined before #202 has no Stop hook until join runs again, and outside T3 nothing
-	// else would ever end its turn. toldUnread is the unread count the hook last showed it.
-	hooked, stopSeen  bool
-	busyAt, turnStart time.Time
-	toldUnread        int
+	// else would ever end its turn. stopContinues says its last Stop could keep the turn going
+	// with messages (proto.Request.Continues), which is a way in, inside T3 or out. toldUnread is
+	// the unread count the hook last showed it. continuedAt is when a Stop last kept its turn going,
+	// zero once another hook of the session showed the turn went on (see continueTurnLocked), and
+	// continuations how many times in a row it did, which Claude Code caps (stopBlockCap).
+	hooked, stopSeen, stopContinues bool
+	busyAt, turnStart, continuedAt  time.Time
+	toldUnread, continuations       int
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its
