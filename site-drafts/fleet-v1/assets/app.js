@@ -151,14 +151,17 @@ function stamp(t) {
   });
 }
 
-// An element whose text is a relative time, kept current by the ticker.
-function agoEl(tag, cls, t, prefix = "") {
-  return h(tag, { class: cls, "data-ago": t, "data-prefix": prefix, title: stamp(t) }, prefix + ago(t));
+// An element whose text is a relative time, kept current by the ticker. A bare one is a
+// duration ("for 40m") rather than a time ("40m ago").
+function agoEl(tag, cls, t, prefix = "", bare = false) {
+  const text = (t) => (bare ? ago(t).replace(" ago", "") : ago(t));
+  return h(tag, { class: cls, "data-ago": t, "data-prefix": prefix, "data-bare": bare ? "1" : null, title: stamp(t) }, prefix + text(t));
 }
 
 function tick() {
   for (const el of document.querySelectorAll("[data-ago]")) {
-    el.textContent = el.dataset.prefix + ago(Number(el.dataset.ago));
+    const v = ago(Number(el.dataset.ago));
+    el.textContent = el.dataset.prefix + (el.dataset.bare ? v.replace(" ago", "") : v);
   }
 }
 
@@ -2306,11 +2309,13 @@ function replyTo(m) {
   return ui.messages.find((r) => r.re === m.id) || null;
 }
 
-// Whether the recipient has written back to the sender since, in this thread or another.
+// Whether the recipient has written back to the sender since: in this conversation, or in
+// another one unless what it sent there is a new question of its own, which answers nothing.
 function answeredSince(m) {
   const to = toName(m);
   const from = fromName(m);
-  return !!replyTo(m) || ui.messages.some((r) => r.sortAt > m.sortAt && fromName(r) === to && r.toKind === "session" && toName(r) === from);
+  const topic = (x) => (x.subject || "").replace(/^(re:\s*)+/i, "").trim().toLowerCase();
+  return !!replyTo(m) || ui.messages.some((r) => r.sortAt > m.sortAt && fromName(r) === to && r.toKind === "session" && toName(r) === from && (topic(r) === topic(m) || isReply(r) || !questionIn(r)));
 }
 
 // What each session did and was sent, from the history and the messages.
@@ -2441,10 +2446,15 @@ function questionIn(m) {
   const asked = text.split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).find((x) => /\?$/.test(x));
   // A subject that asks is the question as its sender put it, and how the message is listed.
   const q = (/\?\s*$/.test(m.subject || "") && !isReply(m) ? m.subject.trim() : "") || asked || "";
-  // Cut at a word, not inside one.
-  if (q.length <= 110) return q;
-  const cut = q.slice(0, 109);
-  return (cut.lastIndexOf(" ") > 60 ? cut.slice(0, cut.lastIndexOf(" ")) : cut).trimEnd() + "…";
+  return cutAtWord(q, 110);
+}
+
+// Text no longer than max, cut at a word rather than inside one.
+function cutAtWord(q, max) {
+  if (q.length <= max) return q;
+  const cut = q.slice(0, max - 1);
+  const sp = cut.lastIndexOf(" ");
+  return (sp > max * 0.55 ? cut.slice(0, sp) : cut).trimEnd() + "…";
 }
 
 function isReply(m) {
@@ -2479,13 +2489,14 @@ function fleetNeeds(rows) {
     // text is a function: a row and the inspector each need their own copy of its nodes. The
     // State column says whether the session is offline or on do not disturb, so this doesn't.
     // The inspector leaves the question out (quote false): its conversations quote each one.
-    const wait = " for " + ago(when(m.at)).replace(" ago", "");
+    // The wait ticks with the page's other times, so the row and its conversation agree.
+    const wait = () => agoEl("span", null, when(m.at), " for ", true);
     // When the question isn't the subject (a body's "Fine?"), the subject says what it's about.
-    const about = (x) => (x.subject && questionIn(x) !== x.subject.trim() ? " on “" + x.subject.trim() + "”" : "");
+    const about = (x) => (x.subject && questionIn(x) !== x.subject.trim() ? " on “" + cutAtWord(x.subject.trim(), 60) + "”" : "");
     // An asker that has ended since still counts (its question waits on a running session), and
     // says so.
     const ended = live.has(fromName(m)) ? "" : " (ended)";
-    out.set(to, { at: when(m.at), m, msgs: list, text: (quote = true) => ["No reply to ", h("b", null, fromName(m)), ended, quote ? wait + about(m) + ": “" + questionIn(m) + "”" + more : wait + (list.length > 1 ? ", and " + plural(list.length - 1, "more question") : "") + "."] });
+    out.set(to, { at: when(m.at), m, msgs: list, text: (quote = true) => ["No reply to ", h("b", null, fromName(m)), ended, wait(), quote ? about(m) + ": “" + questionIn(m) + "”" + more : (list.length > 1 ? ", and " + plural(list.length - 1, "more question") : "") + "."] });
   }
   return out;
 }
