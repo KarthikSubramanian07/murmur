@@ -2696,7 +2696,7 @@ function fleetPage() {
   const text = (r) => {
     const need = allNeeds.get(r.s.name);
     const pr = r.s.branch && Object.hasOwn(prs, r.s.branch) ? prs[r.s.branch] : null;
-    return [r.s.name, FX_STATE[sessionState(r.d, r.s)], r.s.doing, r.s.branch, r.s.agent, r.d.owner, deviceName(r.d), groupOf(r.s), pr && "#" + pr.number, ...(need ? need.msgs.flatMap((m) => [fromName(m), m.subject, questionIn(m)]) : [])].join(" ");
+    return [r.s.name, FX_STATE[sessionState(r.d, r.s)], r.s.doing, r.s.branch, r.s.agent, r.d.owner, deviceName(r.d), groupOf(r.s), pr && "#" + pr.number + (pr.draft ? " draft" : ""), ...(need ? need.msgs.flatMap((m) => [fromName(m), m.subject, questionIn(m)]) : [])].join(" ");
   };
   const searched = all.filter((r) => !q || text(r).toLowerCase().includes(q));
   const rows = searched.filter((r) => !F.state || sessionState(r.d, r.s) === F.state);
@@ -2942,7 +2942,7 @@ function fleetRow(d, s, need, on) {
         { class: "fx-who-text" },
         h("span", { class: "fx-name truncate", title: s.name }, s.name),
         h("span", { class: "fx-muted fx-parts", title: sub }, fxParts(subParts)),
-        s.branch && h("span", { class: "fx-muted fx-sub-branch", title: s.branch + (prTag ? " " + (pr.draft ? "draft " : "") + prTag : "") }, h("span", { class: "mono truncate" }, s.branch), prTag && h("span", { class: "fx-sub-pr" }, prTag + (pr.draft ? " draft" : ""))),
+        s.branch && h("span", { class: "fx-muted fx-sub-branch", title: s.branch + (prTag ? " " + prTag + (pr.draft ? " draft" : "") : "") }, h("span", { class: "mono truncate" }, s.branch), prTag && h("span", { class: "fx-sub-pr" }, prTag + (pr.draft ? " draft" : ""))),
       ),
     ),
     h("span", { class: "fx-state" }, fxDot(state), word),
