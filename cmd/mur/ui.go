@@ -17,9 +17,10 @@ import (
 )
 
 // runUI opens the page for humans: the daemon serves it, and starts if it isn't running. The
-// address carries the page's token in its fragment, so whoever has the address has the page and
-// nothing more: the token is not the one sessions use, so a leak through the browser's history or
-// an extension can't send as this device (#42).
+// address carries the page's token in its fragment, so whoever has the address has the page: what
+// it shows, this device's settings and session tags. It is not the token sessions use, which lets
+// its holder speak for any of this device's sessions, so a leak through the browser's history or
+// an extension doesn't give that (#42).
 func runUI(ctx context.Context, args []string, out io.Writer, open func(url string) error) error {
 	fs, dir := flags("ui")
 	noOpen := fs.Bool("no-open", false, "only print the page's address; don't open a browser")

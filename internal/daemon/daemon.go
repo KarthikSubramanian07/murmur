@@ -237,7 +237,7 @@ type Daemon struct {
 	host    string
 	owner   string
 	token   string // the sessions' secret, in daemon.json
-	pageTok string // the page's secret (#42): the address carries it, so it opens the page and nothing else
+	pageTok string // the page's secret (#42): the address carries it, so it opens the page, not the sessions' port
 	started time.Time
 	log     *log.Logger
 

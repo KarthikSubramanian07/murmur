@@ -771,9 +771,9 @@ func TestPageMessagesAfterAFailedFirstSync(t *testing.T) {
 	}
 }
 
-// The page's token is the daemon's, which also lets a program speak for this device's sessions,
-// so it stays where it was: not in the log, not readable by other users in daemon.json, and not
-// sent on as a Referer by anything the page links to.
+// The page's token lets a program use the page's API, which writes this device's settings and
+// session tags, so it stays private: not in the log, not readable by other users in daemon.json,
+// and not sent on as a Referer by anything the page links to.
 func TestPageTokenStaysPrivate(t *testing.T) {
 	var out syncBuf
 	d := newDeviceWith(t, newRemote(t), func(d *device) { d.logTo = &out })

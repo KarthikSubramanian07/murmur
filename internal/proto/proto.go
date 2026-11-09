@@ -50,7 +50,9 @@ const (
 //	5: OpTurnEnd's Continues and Delivered: the Stop hook keeps the turn going with the messages
 //	   that would have gone in as a turn after it (#202)
 //	6: session tags: OpTags, and who's search by tags (#198)
-const Protocol = 6
+//	7: the page's own token, pageToken in daemon.json, so that an upgraded `mur ui` replaces a
+//	   daemon whose page still takes the sessions' token (#42)
+const Protocol = 7
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until

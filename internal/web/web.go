@@ -50,8 +50,9 @@ type Server struct {
 	page  []byte
 }
 
-// New returns the page's handler. token is the page's own, not the one that opens the daemon to sessions (#42); repoDir is the clone, where gh runs to
-// look up pull requests. The handler must be served on 127.0.0.1.
+// New returns the page's handler. token is the page's own, not the one that opens the daemon to
+// sessions (#42); repoDir is the clone, where gh runs to look up pull requests. The handler must
+// be served on 127.0.0.1.
 func New(src Source, token, repoDir string) *Server {
 	return NewWithPRs(src, token, GH(repoDir))
 }
