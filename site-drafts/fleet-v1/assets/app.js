@@ -2700,6 +2700,8 @@ function fleetPage() {
   const searched = all.filter((r) => !q || text(r).toLowerCase().includes(q));
   const rows = searched.filter((r) => !F.state || sessionState(r.d, r.s) === F.state);
   const needs = fleetNeeds(rows);
+  // The flags the details step through are the ones in the table as filtered (search and state).
+  ui.fxFlagScope = needs;
   // Open details stay open when their session falls out of the filter (it went idle while you
   // read, say); they close only when the session itself is gone.
   if (ui.fleetSel && !all.some((r) => r.s.name === ui.fleetSel)) {
@@ -3120,9 +3122,9 @@ function fleetInspector(name, need) {
   // As the whole page the table isn't in view, so a line under the header steps through the
   // sessions that need a look, in the table's order (oldest first), wrapping round: "2 of 4 that
   // need a look · Previous · Next". It stays in that one place whether or not a flag is open. The
-  // list is taken when the details open and kept until they close, so "Not waiting" on one
-  // question doesn't renumber the session in view or skip one.
-  if (!ui.fxFlagOrder) ui.fxFlagOrder = [...fleetNeeds(fleetRows()).entries()].sort((a, b) => a[1].at - b[1].at).map(([n]) => n);
+  // list is the table's, as filtered, taken when the details open and kept until they close, so
+  // "Not waiting" on one question doesn't renumber the session in view or skip one.
+  if (!ui.fxFlagOrder) ui.fxFlagOrder = [...(ui.fxFlagScope || fleetNeeds(fleetRows())).entries()].sort((a, b) => a[1].at - b[1].at).map(([n]) => n);
   const flagged = ui.fxFlagOrder.filter((n) => findSession(n));
   const at = flagged.indexOf(name);
   const step = (by) => () => {
