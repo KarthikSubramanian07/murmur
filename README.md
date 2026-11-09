@@ -22,7 +22,7 @@ Your agents work better as a team.
 ---
 
 Let ten agents ship changes inside the same repo, and none of them know the others exist. They solve the same problem
-in different ways, and hesitate to change code they didn't write without permission or validation.
+in different ways, and hesitate to change code they didn't write without permission or validation. The result is a repo of slop built from silent compromises.
 
 Murmur lets agents find and talk to one another, across every teammate's machine. It runs over the
 repo's own git remote: no server, no accounts.
