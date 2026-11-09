@@ -1,8 +1,9 @@
 // Command devserver serves the web page with made-up devices, sessions and messages, for working
 // on the page without a daemon or a team: go run ./internal/web/devserver
 //
-// The fixtures change while it runs: a message arrives every 20 seconds and sessions go on
-// being active, so the page's polling has something to show.
+// The fixtures change while it runs: a message arrives every 10 to 40 seconds and sessions go on
+// being active, so the page's polling has something to show. Most messages answer the one before,
+// so a conversation goes back and forth as a real one does.
 package main
 
 import (
@@ -13,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	mrand "math/rand/v2"
 	"net"
 	"net/http"
 	"strconv"
@@ -203,8 +205,9 @@ func (f *fixtures) run() {
 		"Rebased on main", "Is anyone in internal/mcpserver?", "Tests pass on Windows",
 		"Can I take the hook's Stop handling?", "Pushed the fixtures", "Done with #24",
 	}
+	var from, to string
 	for i := 0; ; i++ {
-		time.Sleep(20 * time.Second)
+		time.Sleep(time.Duration(10+mrand.IntN(31)) * time.Second)
 		f.mu.Lock()
 		now := time.Now()
 		var live []string
@@ -221,9 +224,15 @@ func (f *fixtures) run() {
 				}
 			}
 		}
-		from, to := live[i%len(live)], live[(i*3+1)%len(live)]
-		if from == to {
-			to = live[(i*3+2)%len(live)]
+		// Two times in three the last one to be messaged answers; otherwise a new pair starts.
+		if from == "" || mrand.IntN(3) == 0 {
+			from = live[mrand.IntN(len(live))]
+			to = live[mrand.IntN(len(live))]
+			for to == from {
+				to = live[mrand.IntN(len(live))]
+			}
+		} else {
+			from, to = to, from
 		}
 		f.messages = append(f.messages, web.Message{
 			ID: randomHex(6), From: from, To: to, ToKind: web.ToSession,
