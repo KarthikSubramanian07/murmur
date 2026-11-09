@@ -29,6 +29,9 @@ const (
 	// worktree at the start and credits the commits that appeared by the end (#21).
 	OpToolStart = "toolstart"
 	OpToolEnd   = "toolend"
+	// OpTurnEnd is the hook at the end of a turn (Claude Code's Stop): the session is idle, and
+	// what it was told of and didn't read may go in as a turn (#202).
+	OpTurnEnd = "turnend"
 )
 
 // Protocol is the version of this protocol that the daemon speaks, reported in its ping reply. A
@@ -40,8 +43,11 @@ const (
 //	1: OpRoute, and delivering a message as a turn (#56, #57)
 //	2: the conversation's title as the default status line, which needs the transcript the hook
 //	   reports and the Codex thread ID in the route (#66)
-//	3: session tags: OpTags, and who's search by tags (#198)
-const Protocol = 3
+//	3: OpTurnEnd, OpNotices's Unread and Subagent: a session the hook runs in gets notices while it
+//	   is at work, and turns only when it isn't (#202)
+//	4: OpNotices's Delivered: a busy session may be given its messages whole by the hook (#204)
+//	5: session tags: OpTags, and who's search by tags (#198)
+const Protocol = 5
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -91,6 +97,10 @@ type Request struct {
 	// Transcript is the path of the Claude Code session's transcript, the hook's transcript_path,
 	// which holds the session's title. OpNotices carries it.
 	Transcript string `json:"transcript,omitempty"`
+	// Subagent says the hook ran for a subagent's tool call (its payload has an agent_id): the
+	// session is at work, but a notice would land in the subagent's context, not the session's,
+	// so OpNotices answers with nothing (#188).
+	Subagent bool `json:"subagent,omitempty"`
 
 	// Add and Remove are the tags OpTags adds to the caller and takes from it. Tags is what OpWho
 	// searches by: a session is listed when it has every tag named, and none named after a dash
@@ -151,9 +161,9 @@ type Hello struct {
 	// Code starts the server itself: the hook's CLAUDE_PID is how the daemon links the two.
 	ClientPID int `json:"clientPid,omitempty"`
 	// Reconnect says the session was registered with a daemon that went away, so it should get
-	// what that daemon would have delivered.
+	// what that daemon would have queued for it.
 	Reconnect bool `json:"reconnect,omitempty"`
-	// Route says how to deliver a message into the session as a turn.
+	// Route says how to hand a message over to the session as a turn.
 	Route
 }
 
@@ -178,6 +188,13 @@ type Response struct {
 
 	Messages []MessageView `json:"messages,omitempty"`
 	Events   []EventView   `json:"events,omitempty"`
+	// Unread is, in an OpNotices reply, how many messages the session has unread, set when there
+	// are new ones to tell or the number changed since the hook last said it; 0 otherwise.
+	Unread int `json:"unread,omitempty"`
+	// Delivered is, in an OpNotices reply, the new messages the page's setting gives the session
+	// whole while it is busy (#204), with their bodies. The hook shows each as its turn would
+	// read; they are delivered, and gone from the inbox.
+	Delivered []MessageView `json:"delivered,omitempty"`
 
 	Lookup *SessionDetail `json:"lookup,omitempty"`
 
@@ -237,7 +254,7 @@ type SessionDetail struct {
 	Tags      []tags.Tag `json:"tags,omitempty"` // in order of name (#198)
 
 	// Running says the session is in a device's presence (or registered here), or in its grace.
-	// Reachable says a message sent now will be delivered: it is connected, and its device's
+	// Reachable says a message sent now will be queued in the session's inbox: it is connected, and its device's
 	// presence is current. A device that is Stale was last seen at DeviceSeen; a session Dropped is
 	// waiting out its grace for its MCP server to come back.
 	Running    bool      `json:"running"`

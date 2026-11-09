@@ -47,7 +47,7 @@ type pollRate struct {
 //     are a hop apart each time.
 //   - Otherwise a session sits open and nothing happens: double the wait each poll, 3 s, 6, 12, up
 //     to PollCap. Doubling gets to the cap in three polls, so a first message waits at most PollCap
-//     plus the delivery, and hours of an open session cost 240 listings an hour, not 1,200.
+//     plus the handoff, and hours of an open session cost 240 listings an hour, not 1,200.
 func (d *Daemon) pollEvery(calm time.Duration) pollRate {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -378,7 +378,7 @@ func firstSight(written time.Time) time.Time {
 	return now.Add(-max(now.Sub(written), 0)) // from now, to keep a monotonic reading
 }
 
-// advanceMesh processes a device's log up to sha and delivers its messages, as the sync mode
+// advanceMesh processes a device's log up to sha and queues its messages, as the sync mode
 // says. Caller holds advMu.
 func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 	d.mu.Lock()
@@ -426,7 +426,7 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		d.mu.Unlock()
 	}
 	if mode == modeSkip {
-		// Nothing is delivered from the backlog, unless the first sync failed and sessions have
+		// Nothing is queued from the backlog, unless the first sync failed and sessions have
 		// registered since (what was sent after they started is for them), or an inbox is kept for
 		// a stopped session (what was sent after it stopped is for it, #30).
 		d.mu.Lock()
@@ -489,9 +489,9 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		if e.Type == bus.Message {
 			// A skip passes over history, but a ref read in one only after sessions registered
 			// (the first sync failed) also holds what was sent since this daemon started, which
-			// is new to it: by the sender's clock, with the minute deliverLocked allows. What a
+			// is new to it: by the sender's clock, with the minute queueLocked allows. What a
 			// skip gave a kept inbox (#30) was read too, so the page lists it.
-			kept := d.deliverLocked(e, mode)
+			kept := d.queueLocked(e, mode)
 			if mode != modeSkip || kept || !e.At.Before(d.started.Add(-time.Minute)) {
 				d.recordMessageLocked(e)
 			}
@@ -503,8 +503,9 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 	d.saveLocked()
 }
 
-// deliverLocked puts a message in the inbox of each session here it is addressed to. A session
-// gets only what arrives while it runs, or, if it stops, within StoppedInbox of that, in case it
+// queueLocked puts a message in the inbox of each session here it is addressed to. That queues it;
+// it is delivered only once it reaches the agent's context (docs/VISION.md, `What "delivered"
+// means`, #187). A session gets only what arrives while it runs, or, if it stops, within StoppedInbox of that, in case it
 // comes back (see recipientsLocked). What arrived while the daemon was down (modeCatchUp)
 // goes only to sessions that were running before and reconnect, and in modeSkip to nobody, except
 // the sessions whose inbox is kept, for what was sent since they stopped (see inTimeLocked); in
@@ -513,7 +514,7 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 // catchUpLocked). A message forwarded to the session that holds its recipient's name (see
 // forwardLocked) is the holder's if it is new enough for either: a backlog read after the holder
 // started still gives it what the recipient's kept inbox would have caught up on. Caller holds mu.
-func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) (delivered bool) {
+func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
 	held := mode == modeCatchUp || mode == modeNormal && time.Since(d.started) <= catchUpWindow
 	if held {
 		d.pending = append(d.pending, e)
@@ -536,7 +537,7 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) (delivered bool) {
 			continue
 		}
 		d.addInboxLocked(id, e)
-		delivered = true
+		queued = true
 		if id != proto.CLISession {
 			d.noteConversationLocked() // a message arrived for a session here; its answer may soon follow
 		}
@@ -546,10 +547,10 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) (delivered bool) {
 		d.sessions[sess] == nil && !stopped && fwd == "" {
 		d.log.Printf("message %s is for %s, which isn't running here; dropped", e.ID, e.To)
 	}
-	return delivered
+	return queued
 }
 
-// recipientsLocked lists the sessions a message can be delivered to: those registered, which
+// recipientsLocked lists the sessions a message can be queued for: those registered, which
 // includes any in their grace, those stopped within StoppedInbox, and the CLI. Caller holds mu.
 func (d *Daemon) recipientsLocked() []string {
 	ids := sortedKeys(d.sessions)
@@ -761,7 +762,7 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 				d.noteConversationLocked() // a message went out; the answer may come soon
 			}
 			d.mu.Unlock()
-			d.advanceMesh(ctx, ref, sha) // delivers to sessions on this device
+			d.advanceMesh(ctx, ref, sha) // queues for sessions on this device
 			d.advMu.Unlock()
 			return nil
 		}

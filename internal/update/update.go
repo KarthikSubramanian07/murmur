@@ -46,7 +46,7 @@ func Off(ctx context.Context, getenv func(string) string, gitDir string) bool {
 }
 
 // Run checks immediately and hourly. Network failures wait quietly until the next check.
-// A successful install calls restart once; its caller waits for deliveries before stopping.
+// A successful install calls restart once; its caller waits for handoffs before stopping.
 func Run(ctx context.Context, o Options, restart func()) {
 	if strings.HasSuffix(o.Version, "-dev") {
 		return

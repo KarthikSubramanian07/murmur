@@ -90,7 +90,7 @@ type device struct {
 	// snapshot is how long the daemon lets a tool call's snapshot take; zero takes a minute, as
 	// the real 4 s is too short for git on a machine busy with other test runs.
 	snapshot time.Duration
-	// pushRetry is PushRetry, the wait between a delivery's two attempts; zero takes 200 ms.
+	// pushRetry is PushRetry, the wait between a handoff's two attempts; zero takes 200 ms.
 	pushRetry time.Duration
 	// quietPoll is QuietPoll, the poll while no session is live; zero takes poll, so that a device with
 	// no session yet looks at the remote as fast as one with.
@@ -661,7 +661,7 @@ func inboxOf(d *device, sess string) []string {
 }
 
 // Junk over another device's log when a device first looks hides that log's history, which
-// stays history when the owner writes over the junk: what is new is delivered as from any log,
+// stays history when the owner writes over the junk: what is new is queued as from any log,
 // to the CLI too, and the history isn't.
 func TestHistoryUnderJunkIsNotReplayed(t *testing.T) {
 	remote := newRemote(t)
@@ -695,7 +695,7 @@ func TestHistoryUnderJunkStaysHistoryAcrossRestart(t *testing.T) {
 }
 
 // Junk a restart finds over a log this device had already read hides nothing it hadn't seen: the
-// owner's next message is delivered as usual, to the CLI too.
+// owner's next message is queued as usual, to the CLI too.
 func TestFreshMessageOverJunkAfterRestart(t *testing.T) {
 	remote := newRemote(t)
 	ref := "refs/murmur/mesh/hist-0001"

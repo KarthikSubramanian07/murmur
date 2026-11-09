@@ -4,9 +4,9 @@
 // already has (the model, where T3 records it). The session's own device decides the tags of its
 // sessions and publishes them in presence; docs/VISION.md, "Session tags", has the reasons.
 //
-// One tag carries behaviour: do-not-disturb, set by the session or a human, holds the session's
-// messages in its inbox. None goes in as a turn or shows as a hook's notice until the session reads
-// its inbox or the tag comes off. A tag under model: names the model the session runs, and a
+// One tag carries behaviour: do-not-disturb, set by the session or a human, keeps the session's
+// messages queued in its inbox. None is handed over as a turn or delivered by the hook until the
+// session reads its inbox or the tag comes off. A tag under model: names the model the session runs, and a
 // session has at most one.
 package tags
 
@@ -20,9 +20,10 @@ import (
 )
 
 const (
-	// DoNotDisturb holds a session's messages in its inbox: none is delivered as a turn or shown
-	// as a notice while it has the tag. They wait for the session to read its inbox, or for the tag
-	// to come off, when they are delivered as usual.
+	// DoNotDisturb keeps a session's messages queued in its inbox: while it has the tag none is
+	// handed over as a turn, and the hook delivers neither a notice nor the whole message. They are
+	// delivered when the session reads its inbox, or by whichever route applies once the tag comes
+	// off.
 	DoNotDisturb = "do-not-disturb"
 	// ModelPrefix starts the tag naming the session's model. A session has at most one.
 	ModelPrefix = "model:"

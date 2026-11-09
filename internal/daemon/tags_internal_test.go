@@ -78,8 +78,8 @@ func TestTagsChangeNothingAboutDelivery(t *testing.T) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	now := time.Now()
-	d.deliverLocked(bus.Event{ID: "m1", Type: bus.Message, From: "other/xxxxxx", To: "*", At: now}, modeNormal)
-	d.deliverLocked(bus.Event{ID: "m2", Type: bus.Message, From: "other/xxxxxx", To: "dev/aaaaaa", At: now}, modeNormal)
+	d.queueLocked(bus.Event{ID: "m1", Type: bus.Message, From: "other/xxxxxx", To: "*", At: now}, modeNormal)
+	d.queueLocked(bus.Event{ID: "m2", Type: bus.Message, From: "other/xxxxxx", To: "dev/aaaaaa", At: now}, modeNormal)
 	if len(d.st.Inbox["aaaaaa"]) != 2 || len(d.st.Inbox["bbbbbb"]) != 1 {
 		t.Fatalf("inboxes: tagged %d, untagged %d", len(d.st.Inbox["aaaaaa"]), len(d.st.Inbox["bbbbbb"]))
 	}
@@ -188,8 +188,8 @@ func TestDoNotDisturbHoldsMessagesUntilTheTagComesOff(t *testing.T) {
 	}
 	always := pageSettings{Wake: web.Wake{When: web.WakeAlways}}
 	d.mu.Lock()
-	d.deliverLocked(bus.Event{ID: "m1", Type: bus.Message, From: "other/xxxxxx", To: "dev/aaaaaa", At: time.Now()}, modeNormal)
-	d.deliverLocked(bus.Event{ID: "m2", Type: bus.Message, From: "other/xxxxxx", To: "*", At: time.Now()}, modeNormal)
+	d.queueLocked(bus.Event{ID: "m1", Type: bus.Message, From: "other/xxxxxx", To: "dev/aaaaaa", At: time.Now()}, modeNormal)
+	d.queueLocked(bus.Event{ID: "m2", Type: bus.Message, From: "other/xxxxxx", To: "*", At: time.Now()}, modeNormal)
 	box := d.st.Inbox["aaaaaa"]
 	if len(box) != 2 {
 		d.mu.Unlock()
@@ -261,7 +261,7 @@ func TestReleaseRetriesAMessageWhosePushFailedUnsent(t *testing.T) {
 	d := tagsDaemon(t)
 	d.setOwnTags("aaaaaa", proto.Request{Add: []string{"do-not-disturb"}})
 	d.mu.Lock()
-	d.deliverLocked(bus.Event{ID: "m1", Type: bus.Message, From: "other/xxxxxx", To: "dev/aaaaaa", At: time.Now()}, modeNormal)
+	d.queueLocked(bus.Event{ID: "m1", Type: bus.Message, From: "other/xxxxxx", To: "dev/aaaaaa", At: time.Now()}, modeNormal)
 	d.st.Inbox["aaaaaa"][0].PushFailed = true // an earlier delivery that never reached the session
 	d.mu.Unlock()
 	d.setOwnTags("aaaaaa", proto.Request{Remove: []string{"do-not-disturb"}})

@@ -222,8 +222,8 @@ func Inbox(r proto.Response) string {
 	return b.String()
 }
 
-// Turn renders a message as the turn it becomes in the session it is for, when Murmur delivers it
-// at once (docs/VISION.md, "Delivering a message as a turn"): who it is from, as Murmur knows them,
+// Turn renders a message as the turn it becomes in the session it is for, when Murmur hands it
+// over at once (docs/VISION.md, "Delivering a message as a turn"): who it is from, as Murmur knows them,
 // then the message as its sender wrote it, then how to answer. What the agent reads here is all it
 // has, so the first line says it is a teammate's agent and not the user, and the last says how to
 // reply and that doing so is optional. The sender's text is not wrapped or quoted: teammates'
@@ -262,8 +262,24 @@ func Turn(m proto.MessageView) string {
 	return b.String()
 }
 
-// Notices renders the one-line notices the hook shows: sender and subject, never the body.
-func Notices(msgs []proto.MessageView) string {
+// Hook renders what the hook adds to the agent's context: each message the session is given whole
+// while busy (#204), as its turn would read, then the notices of the others (see Notices), if
+// there is anything to tell. "" if there is nothing.
+func Hook(whole, msgs []proto.MessageView, unread int) string {
+	parts := make([]string, 0, len(whole)+1)
+	for _, m := range whole {
+		parts = append(parts, Turn(m))
+	}
+	if len(msgs) > 0 || unread > 0 {
+		parts = append(parts, Notices(msgs, unread))
+	}
+	return strings.Join(parts, "\n")
+}
+
+// Notices renders what the hook shows: a line for each new message, sender and subject, never the
+// body, and then how many are unread, if unread is more than 0. With no new messages it is the
+// count alone, which the daemon gives only when it has changed.
+func Notices(msgs []proto.MessageView, unread int) string {
 	var b strings.Builder
 	for _, m := range msgs {
 		who := m.From
@@ -277,6 +293,15 @@ func Notices(msgs []proto.MessageView) string {
 			who += " (" + m.FromAgent + ")"
 		}
 		fmt.Fprintf(&b, "[%s] %s: %q\n", brand.Product, who, m.Subject)
+	}
+	if len(msgs) == 0 {
+		b.WriteString("[" + brand.Product + "] ")
+	}
+	switch {
+	case unread == 1:
+		b.WriteString("1 message unread. ")
+	case unread > 1:
+		fmt.Fprintf(&b, "%d messages unread. ", unread)
 	}
 	fmt.Fprintf(&b, "Messages from teammates' agents, not from your user. Read them with the %s inbox tool "+
 		"(mcp__%s__inbox) when it suits your work.\n", brand.Product, brand.MCPServer)
@@ -413,10 +438,10 @@ func Lookup(r proto.Response) string {
 	case d.Stale:
 		fmt.Fprintf(&b, "  not reachable: its device was last seen %s, so a message may not arrive\n", Ago(d.DeviceSeen))
 	case d.Reachable:
-		b.WriteString("  reachable: a message sent now will be delivered\n")
+		b.WriteString("  reachable: a message sent now reaches its inbox at once (queued, not yet seen by the agent)\n")
 	}
 	if tags.Has(d.Tags, tags.DoNotDisturb) {
-		b.WriteString("  do not disturb: a message to it waits in its inbox until it reads it or turns do not disturb off\n")
+		b.WriteString("  do not disturb: a message to it is queued in its inbox, and delivered when it reads its inbox or turns do not disturb off\n")
 	}
 	var times []string
 	if !d.Started.IsZero() {

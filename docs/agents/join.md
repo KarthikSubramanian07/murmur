@@ -32,8 +32,9 @@ joining does:
   (`mcp__murmur` in Claude Code's allowed permissions; `default_tools_approval_mode = "approve"` in
   Codex; a `murmur_*` allow rule in OpenCode; `MCPTool(murmur__*)` in Grok); Muse and Pi have none,
   and ask in T3 unless the thread runs in full-access mode. For Pi it is a small extension file of
-  Murmur's in Pi's extensions folder. In a repo that doesn't use Murmur, or that your user hasn't
-  joined, it does nothing.
+  Murmur's in Pi's extensions folder. Two short skills on using Murmur well go into the skills
+  folder of Claude Code, Codex, OpenCode and Pi. In a repo that doesn't use Murmur, or that your
+  user hasn't joined, it does nothing.
 - In every worktree of this clone, a hook goes into .claude/settings.local.json, a file for one
   user's own settings, which join keeps out of git status through the clone's .git/info/exclude.
   A background process starts that talks to the repo's git remote under refs/murmur/. No tracked

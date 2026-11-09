@@ -89,6 +89,11 @@ func NewWithPRs(src Source, token string, prs LookupPR) *Server {
 	return s
 }
 
+// Close stops the pull request lookups the page has started (each runs gh in the clone) and waits
+// for them to end. Call it once the HTTP server has stopped serving: a request after Close gets
+// the PR state known so far, and starts no lookup.
+func (s *Server) Close() { s.prs.close() }
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !hostOK(r) {
 		http.Error(w, "unexpected Host", http.StatusMisdirectedRequest)
@@ -256,6 +261,20 @@ func CheckSettings(set Settings) error {
 		}
 		if !w.valid() {
 			return errors.New("sessionWake " + name + ": when must be always, within or never, and minutes 0 to 1440, given only with within")
+		}
+	}
+	if set.Busy != "" && !validBusy(set.Busy) {
+		return errors.New("busy: must be subject or whole")
+	}
+	if len(set.SessionBusy) > maxOverrides {
+		return errors.New("too many session overrides")
+	}
+	for name, b := range set.SessionBusy {
+		if name == "" || len(name) > maxNameLen {
+			return errors.New("sessionBusy: bad session name")
+		}
+		if !validBusy(b) {
+			return errors.New("sessionBusy " + name + ": must be subject or whole")
 		}
 	}
 	return nil

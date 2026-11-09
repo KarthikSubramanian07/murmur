@@ -54,8 +54,8 @@ func (d *Daemon) adoptTagsLocked(s *session) {
 	}
 }
 
-// dndLocked says session id on this device is on do not disturb: its messages wait in its inbox,
-// and none goes in as a turn or shows as a notice (see wakesLocked and notices). A session that
+// dndLocked says session id on this device is on do not disturb: its messages stay queued in its
+// inbox, none is handed over as a turn, and the hook delivers none (see wakesLocked and notices). A session that
 // isn't registered at the moment goes by the tags kept for its name. Caller holds mu.
 func (d *Daemon) dndLocked(id string) bool {
 	if s := d.sessions[id]; s != nil {
@@ -82,8 +82,10 @@ func (d *Daemon) peerDNDLocked(dev, sess string) bool {
 	return p != nil && tags.Has(peerTagsLocked(p, sess), tags.DoNotDisturb)
 }
 
-// releaseLocked lets what waited in the inbox of the sessions kept by key go in as usual, now that
-// do-not-disturb has come off: each message counts as arriving now, so one that waited longer than
+// releaseLocked lets what stayed queued in the inbox of the sessions kept by key go out by whichever
+// route applies now that do-not-disturb has come off: a turn if the session is idle, the hook's
+// notice or whole message if it is at work (held for its turn's end, #202). Each message counts as
+// arriving now (see waitedSince), so one that waited longer than
 // a turn's limit (pushMaxAge) still goes in as a turn, and one whose delivery failed earlier, but
 // provably never reached the session (not Attempted), is tried again. Caller holds mu.
 func (d *Daemon) releaseLocked(key string) {
