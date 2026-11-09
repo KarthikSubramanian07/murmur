@@ -15,8 +15,17 @@ const TOKEN_KEY = NAME + ":token";
 const POLL_MS = 3000;
 const HIDDEN_POLL_MS = 15000;
 const MAX_MESSAGES = 2000;
-const VIEWS = ["overview", "briefing", "sessions", "messages", "recent", "fleet", "settings"];
-const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", briefing: "Briefing", overview: "Overview", settings: "Settings" };
+const VIEWS = ["overview", "timeline", "board", "graph", "office", "briefing", "sessions", "messages", "recent", "fleet", "settings"];
+// The ways to look at the swarm (#183), as tabs on one page.
+const SWARM_VIEWS = [
+  ["overview", "Overview"],
+  ["timeline", "Timeline"],
+  ["board", "Board"],
+  ["graph", "Who talks to whom"],
+  ["office", "Office"],
+  ["fleet", "Fleet"],
+];
+const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", briefing: "Briefing", overview: "Overview", timeline: "Timeline", board: "Board", graph: "Who talks to whom", office: "Office", settings: "Settings" };
 const MODE_KEY = NAME + ":messages";
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
@@ -288,8 +297,7 @@ function miniSidebar() {
       top("sessions", "users", "All sessions", ui.view === "sessions"),
       top("messages", "message", "All conversations", ui.view === "messages" && !ui.filter),
       top("recent", "clock", "Recent messages", ui.view === "recent"),
-      top("fleet", "activity", "Fleet audit", ui.view === "fleet"),
-      top("overview", "activity", "Overview", ui.view === "overview"),
+      top("overview", "activity", "The swarm", SWARM_VIEWS.some(([v]) => v === ui.view)),
       devices().map((d) => [
         h("div", { class: "mini-dev", title: (d.self ? "This device" : d.owner || d.id) + " · " + d.sessions.length }, deviceDot(d)),
         d.sessions.map((s) => {
@@ -339,7 +347,7 @@ function sidebar() {
       "div",
       { class: "sidebar-content" },
       VARIANT === "g"
-        ? h("div", { class: "sidebar-group g-top" }, topRow("overview", "activity", "Overview", plural(swarm.streams.length, "stream") + " of work"), topRow("sessions", "users", "All sessions", plural(sessionCount(), "session") + (settledSessions().length ? " · " + settledSessions().length + " settled" : " · " + plural(devices().length, "device"))), allButton(), topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")), topRow("fleet", "activity", "Fleet audit", fleetSub()))
+        ? h("div", { class: "sidebar-group g-top" }, swarmRow(), topRow("sessions", "users", "All sessions", plural(sessionCount(), "session") + (settledSessions().length ? " · " + settledSessions().length + " settled" : " · " + plural(devices().length, "device"))), allButton(), topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")))
         : h(
             "div",
             { class: "sidebar-group" },
@@ -1081,9 +1089,8 @@ function topbar() {
 function page() {
   if (VARIANT === "g" && ui.view === "sessions") return gSessionsPage();
   if (VARIANT === "g" && ui.view === "recent") return gRecentPage();
-  if (VARIANT === "g" && ui.view === "fleet") return fleetPage();
+  if (VARIANT === "g" && SWARM_VIEWS.some(([v]) => v === ui.view)) return swarmShell(ui.view);
   if (VARIANT === "g" && ui.view === "briefing") return briefPage();
-  if (VARIANT === "g" && ui.view === "overview") return overviewPage();
   if (ui.view === "recent") return messagesPage();
   if (ui.view === "messages") return messagesPage();
   if (ui.view === "settings") return settingsPage();
@@ -3207,3 +3214,47 @@ function swLight() {
     el.classList.toggle("dim", !!s && !s.who.some((n) => who.includes(n)));
   }
 }
+
+// ---------- #183: the swarm, six ways ----------
+function swarmRow() {
+  const el = topRow("overview", "activity", "The swarm", plural(sessionCount(), "agent") + " · " + SWARM_VIEWS.length + " ways to look");
+  el.setAttribute("aria-current", SWARM_VIEWS.some(([v]) => v === ui.view) ? "page" : "false");
+  return el;
+}
+
+function swarmTabs(view) {
+  return h(
+    "nav",
+    { class: "sv-tabs", "aria-label": "Ways to look at the swarm" },
+    SWARM_VIEWS.map(([v, label]) => h("button", { class: v === view ? "on" : "", "aria-current": v === view ? "page" : null, "data-key": "sv-" + v, onclick: () => go(v) }, label)),
+  );
+}
+
+function swarmShell(view) {
+  let inner;
+  if (view === "overview") inner = overviewPage();
+  else if (view === "fleet") inner = fleetPage();
+  else if (typeof window.MURVIEWS?.[view] === "function") {
+    try {
+      inner = window.MURVIEWS[view](window.MUR);
+    } catch (e) {
+      console.error(e);
+      inner = h("div", { class: "fx" }, h("p", { class: "fx-banner" }, "This view failed: " + e.message));
+    }
+  } else inner = h("div", { class: "fx" }, h("p", { class: "fx-faint" }, "Loading…"));
+  return h("div", { class: "sv-shell" }, swarmTabs(view), inner);
+}
+
+// What a view in its own file (assets/view-*.js) may use. Views register themselves on
+// window.MURVIEWS[name] = (mur) => element, and call mur.render() once loaded.
+window.MURVIEWS ||= {};
+window.MUR = {
+  h, icon, avatar, presence, ago, agoEl, when, stamp, plural, dayLabel,
+  devices, findSession, fromName, toName, conversationOf, sessionState, onDnd, deviceDot,
+  fxDot, fxSeg, briefFaces, swOpenMessage, swStreamOf, go, render,
+  demo, swarm,
+  get ui() { return ui; },
+  get messages() { return ui.messages; },
+  get state() { return ui.state; },
+  history: () => fleetHistory(),
+};

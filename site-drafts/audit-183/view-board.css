@@ -1,0 +1,53 @@
+/* #183 view: Board. */
+.bd { max-width: none; }
+.bd-cols { display: grid; grid-template-columns: repeat(5, minmax(11.5rem, 1fr)); gap: 0.625rem; align-items: start; overflow-x: auto; padding-bottom: 0.5rem; }
+.bd-col { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; padding: 0.625rem; border-radius: var(--fx-radius-box); background: #202020; }
+.bd-col-head { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0.125rem 0.5rem; padding: 0.125rem 0.25rem 0.375rem; }
+.bd-col-head h2 { font-size: 0.875rem; font-weight: 600; }
+.bd-col-head p { grid-column: 1 / -1; font-size: 0.75rem; color: var(--fx-text-3); }
+.bd-cards { display: flex; flex-direction: column; gap: 0.5rem; }
+.bd-empty { padding: 1rem 0.25rem; color: var(--fx-text-3); font-size: 0.8125rem; text-align: center; }
+
+.bd-card { border-radius: var(--fx-radius-el); background: var(--fx-surface); box-shadow: 0 1px 2px #0000004d; transition: box-shadow 175ms cubic-bezier(0.24, 1, 0.4, 1); }
+.bd-card:hover { box-shadow: 0 0 0 1px #ffffff26, 0 1px 2px #0000004d; }
+.bd-card.open { box-shadow: 0 0 0 1px #ffffff40, 0 8px 24px -12px #00000080; }
+.bd-card.trouble { box-shadow: inset 2px 0 0 #ff705d, 0 1px 2px #0000004d; }
+.bd-card.quiet { padding: 0.75rem 0.875rem; background: transparent; box-shadow: inset 0 0 0 1px var(--fx-border); }
+.bd-card-btn { display: flex; flex-direction: column; gap: 0.5rem; width: 100%; padding: 0.75rem 0.875rem; text-align: left; }
+.bd-card-top { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.bd-title { flex: 1; min-width: 0; font-weight: 600; line-height: 1.35; }
+.bd-refs { display: flex; align-items: center; gap: 0.375rem; margin-top: -0.25rem; padding-left: 1rem; }
+.bd-ref { color: var(--fx-text-3); font-size: 0.75rem; }
+.bd-now { color: var(--fx-text-2); font-size: 0.8125rem; line-height: 1.5; }
+.bd-note { margin-top: 0.375rem; color: var(--fx-text-2); font-size: 0.8125rem; line-height: 1.5; }
+.bd-nobody { margin-top: 0.5rem; color: var(--fx-text-3); font-size: 0.75rem; }
+.bd-wait { display: flex; gap: 0.375rem; color: var(--fx-warning-text); font-size: 0.8125rem; line-height: 1.45; }
+.bd-wait .icon { width: 0.8125rem; height: 0.8125rem; flex-shrink: 0; margin-top: 0.1875rem; }
+.bd-wait b { font-weight: 600; }
+.bd-progress { display: flex; gap: 3px; }
+.bd-progress i { flex: 1; height: 4px; border-radius: 2px; background: #ffffff14; }
+.bd-progress i.d { background: #64af4c; }
+.bd-progress i.n { background: repeating-linear-gradient(90deg, #ffce2f 0 4px, #ffce2f80 4px 8px); }
+.bd-meta { display: flex; align-items: center; gap: 0.5rem; min-width: 0; color: var(--fx-text-2); font-size: 0.75rem; }
+.bd-ago { margin-left: auto; flex-shrink: 0; color: var(--fx-text-3); }
+.bd .br-faces .avatar { box-shadow: 0 0 0 2px #262626; }
+.bd-card.quiet .br-faces .avatar { box-shadow: 0 0 0 2px #202020; }
+.bd-card.quiet .bd-meta { margin-top: 0.5rem; }
+
+.bd-more { padding: 0 0.875rem 0.875rem; border-top: 1px solid var(--fx-border); }
+.bd-goal { margin-top: 0.75rem; font-size: 0.8125rem; line-height: 1.5; }
+.bd-more h3 { margin-top: 0.75rem; font-size: 0.75rem; font-weight: 600; color: var(--fx-text-2); }
+.bd-more ul { margin-top: 0.25rem; padding-left: 1rem; font-size: 0.8125rem; line-height: 1.5; color: var(--fx-text-2); }
+.bd-more > p:not(.bd-goal) { margin-top: 0.25rem; font-size: 0.8125rem; line-height: 1.5; color: var(--fx-text-2); }
+.bd-last { display: flex; flex-direction: column; gap: 0.125rem; width: 100%; margin-top: 0.875rem; padding: 0.5rem 0.625rem; border-radius: var(--fx-radius-inner); background: #1b1b1b; text-align: left; font-size: 0.8125rem; color: var(--fx-text-2); }
+.bd-last:hover { color: var(--fx-text); }
+.bd-last b { color: var(--fx-text); font-weight: 600; }
+.bd-last-k { font-size: 0.6875rem; color: var(--fx-text-3); }
+
+.bd-foot { display: flex; align-items: center; gap: 0.375rem; flex-wrap: wrap; margin-top: 1rem; color: var(--fx-text-2); font-size: 0.8125rem; }
+.fx .bd-foot .avatar { width: 1.25rem; height: 1.25rem; font-size: 0.5625rem; }
+.bd-foot b { color: var(--fx-text); font-weight: 600; }
+
+@media (max-width: 767px) {
+  .bd-cols { grid-template-columns: minmax(0, 1fr); overflow-x: visible; }
+}

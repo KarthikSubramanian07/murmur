@@ -13,14 +13,14 @@
 export const swarm = {
   streams: [
     {
-      id: "remove-claims", title: "Remove claims", issue: 24, branch: "remove-claims", who: ["brave-heron"], tone: "error",
+      id: "remove-claims", phase: "working", title: "Remove claims", issue: 24, branch: "remove-claims", who: ["brave-heron"], tone: "error",
       goal: "Delete claims. No agent uses them, and they suggest an ownership Murmur doesn't enforce.",
       done: ["Deleted claims.go", "Dropped the claim and release tools"],
       now: "Taking Claims out of SessionView. The daemon's tests have failed three runs in a row.",
       next: "Fix TestRestart on macOS, which it promised dusty-lynx once this merges.",
     },
     {
-      id: "session-names", title: "Two-word session names", issue: 20, pr: 31, branch: "session-names", who: ["lucid-badger", "velvet-moth"], tone: "warn", big: true,
+      id: "session-names", phase: "review", title: "Two-word session names", issue: 20, pr: 31, branch: "session-names", who: ["lucid-badger", "velvet-moth"], tone: "warn", big: true,
       goal: "Give every session a name people and agents can say, like quiet-otter, instead of device/session.",
       done: ["Names taken by compare-and-swap on refs/murmur/names", "Retry with the next word pair", "Word lists: 412 adjectives, 389 nouns"],
       now: "lucid-badger logs each name switch. velvet-moth is on do not disturb.",
@@ -28,7 +28,7 @@ export const swarm = {
       waiting: { who: "quiet-otter", on: "velvet-moth", what: "whether the word lists are final", since: 20 },
     },
     {
-      id: "web-page", title: "Three-column web page", issue: 179, pr: 36, draft: true, branch: "web-page", who: ["quiet-otter"], tone: "warn",
+      id: "web-page", phase: "working", title: "Three-column web page", issue: 179, pr: 36, draft: true, branch: "web-page", who: ["quiet-otter"], tone: "warn",
       goal: "A page where people can see every session and read their conversations.",
       done: ["Three columns", "Settings sheet", "Sidebar that folds to a strip"],
       now: "Building the settings view, on top of session names.",
@@ -36,21 +36,21 @@ export const swarm = {
       waiting: { who: "quiet-otter", on: "velvet-moth", what: "whether the word lists are final", since: 20 },
     },
     {
-      id: "wake-ups", title: "Wake idle sessions", issue: 25, pr: 33, draft: true, branch: "wake-ups", who: ["solar-wren"], tone: "ok",
+      id: "wake-ups", phase: "working", title: "Wake idle sessions", issue: 25, pr: 33, draft: true, branch: "wake-ups", who: ["solar-wren"], tone: "ok",
       goal: "When a message arrives for a session that's idle, start a turn so it reads it.",
       done: ["The daemon keeps when each session's last turn ended"],
       now: "Testing whether Claude Code's messaging socket starts a turn in an idle session.",
       next: "Hand idle time to read receipts, as agreed with mellow-yak.",
     },
     {
-      id: "receipts", title: "Read receipts", issue: 26, pr: 35, branch: "receipts", who: ["mellow-yak"], tone: "ok",
+      id: "receipts", phase: "review", title: "Read receipts", issue: 26, pr: 35, branch: "receipts", who: ["mellow-yak"], tone: "ok",
       goal: "Tell a sender whether their message was read, and how long the reader had been idle.",
       done: ["Idle time carried on receipts", "Tests for receipts"],
       now: "Quiet for 12 minutes, after agreeing with solar-wren where idle time comes from.",
       next: "Read idle time from the daemon instead of the session.",
     },
     {
-      id: "ls-remote", title: "GitHub rate limits", issue: 15, branch: "fix/ls-remote-rate-limit", who: ["rapid-ibis"], tone: "warn",
+      id: "ls-remote", phase: "waiting", title: "GitHub rate limits", issue: 15, branch: "fix/ls-remote-rate-limit", who: ["rapid-ibis"], tone: "warn",
       goal: "Make sure every device polling GitHub every 10 seconds stays under its limits.",
       done: ["4 devices for 30 minutes: no limits hit"],
       now: "Changed the poll, which touches restart_test.go.",
@@ -58,12 +58,23 @@ export const swarm = {
       waiting: { who: "rapid-ibis", on: "dusty-lynx", what: "a rerun of TestRestart on macOS", since: 31 },
     },
     {
-      id: "macos-ci", title: "Tests on macOS", branch: "macos-ci", who: ["dusty-lynx"], tone: "off",
+      id: "macos-ci", phase: "waiting", title: "Tests on macOS", branch: "macos-ci", who: ["dusty-lynx"], tone: "off",
       goal: "Run the test suite on macOS, where TestRestart fails.",
       done: ["CI on the Mac mini"],
       now: "Its device has been offline for 47 minutes.",
       next: "Rerun TestRestart for rapid-ibis.",
     },
+  ],
+  // For the board: issues nobody has picked up, and work merged in the last day.
+  backlog: [
+    { issue: 27, title: "Mute a session", note: "Asked for by Maya. Nobody has picked it up." },
+    { issue: 138, title: "Keep the page's messages across a daemon restart", note: "Waits on read-back from the bus (#183)." },
+    { issue: 182, title: "Nicknames for sessions", note: "Open design questions; no agent on it." },
+  ],
+  done: [
+    { issue: 21, title: "lookup: what a session has done", who: ["fond-shrike"], at: 190 },
+    { issue: 141, title: "One push at a time per device", who: ["hollow-tern"], at: 260 },
+    { issue: 66, title: "who: a cap, and last active on every line", who: ["tidy-plover"], at: 420 },
   ],
   unknown: [{ who: "amber-finch", note: "On main, no status, idle 26 minutes. Hasn't committed or said what it's for." }],
 
