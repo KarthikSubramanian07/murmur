@@ -216,15 +216,15 @@ func TestRegisterCodexKeepsTheConfig(t *testing.T) {
 	before := "# mine\nmodel = \"gpt\"\n\n[mcp_servers.other]\ncommand = \"o\"\n"
 	write(t, path, before)
 	did, fresh, err := sb.registerCodex()
-	if err != nil || !fresh || len(did) != 1 {
+	if err != nil || !fresh || len(did) != 2 { // the server, and the hook (#225)
 		t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
 	}
 	got := read(t, path)
-	if !strings.HasPrefix(got, before) || !strings.Contains(got, "[mcp_servers.murmur]") {
+	if !strings.HasPrefix(got, before) || !strings.Contains(got, "[mcp_servers.murmur]") || !strings.Contains(got, "[hooks.state.") {
 		t.Errorf("config.toml:\n%s", got)
 	}
-	if _, fresh, err := sb.registerCodex(); err != nil || fresh {
-		t.Errorf("second: fresh=%v err=%v", fresh, err)
+	if did, fresh, err := sb.registerCodex(); err != nil || fresh || len(did) != 0 {
+		t.Errorf("second: did=%q fresh=%v err=%v", did, fresh, err)
 	}
 }
 

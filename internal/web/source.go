@@ -132,6 +132,9 @@ type Session struct {
 	// Tags is the session's tags, in order of name, each with where it came from: the session,
 	// derived by its daemon, or a human (#198).
 	Tags []tags.Tag `json:"tags,omitempty"`
+	// HookOff says Murmur's hook doesn't run for the session, so it isn't told of messages while
+	// it works (#225).
+	HookOff bool `json:"hookOff,omitempty"`
 }
 
 // Message is one message between sessions.

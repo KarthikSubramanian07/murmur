@@ -2,10 +2,13 @@ package daemon
 
 import (
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // Following Claude Code's session ID (#9), and finding the holder of a name (#37).
@@ -106,13 +109,18 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 // session is the process's, because the hook has no PID, the session's server gave none, or a
 // wrapper between them made the server's parent another process, the sessions with the hook's
 // Claude ID are the hook's, as they were before PIDs were known. A session in its grace is
-// neither: it is told of its notices once it is back.
+// neither: it is told of its notices once it is back. Another agent's hook is found by
+// agentHookSessionsLocked.
 //
-// A subagent's hook (subagent) reports the Claude ID the session had when the subagent started,
+// A subagent's hook (req.Subagent) reports the Claude ID the session had when the subagent started,
 // which a /clear since may have left behind: its process's sessions are still its own, for what it
 // commits, but none follows it, as that would take the session back to the conversation it left,
 // with that one's name, tags and holds (#231). Caller holds mu.
-func (d *Daemon) hookSessionsLocked(claude string, pid int, subagent bool) []*session {
+func (d *Daemon) hookSessionsLocked(req proto.Request) []*session {
+	if req.Agent != "" {
+		return d.agentHookSessionsLocked(req)
+	}
+	claude, pid, subagent := req.ClaudeSession, req.ClientPID, req.Subagent
 	var ofProcess, ofID []*session
 	for _, s := range d.sortedSessionsLocked() {
 		if !s.dropped.IsZero() {
@@ -204,4 +212,101 @@ func (d *Daemon) queuedAtLocked(to string) string {
 		return f
 	}
 	return to
+}
+
+// agentHookSessionsLocked finds the live sessions the hook of an agent other than Claude Code
+// speaks for (req.Agent, #225): those whose conversation has the ID the hook reports, as their MCP
+// server learned it (the route's Native: Codex's thread ID from its first tool call, Grok's session
+// ID from its environment) or as an earlier hook of theirs taught the daemon (hookNative).
+//
+// Codex's MCP server learns its thread's ID only from a call to one of Murmur's tools, so a session
+// whose agent hasn't called one is found by its process instead: the agent that ran the hook started
+// the session's MCP server, and is among the hook's ancestors. The one such session of that agent
+// that has no ID yet takes the hook's. Where there are several, nothing tells them apart: the hook
+// speaks for none of them, but each is marked as having its hook run, which is true of every
+// session of that process. Caller holds mu.
+func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
+	var byID, byProcess []*session
+	for _, s := range d.sortedSessionsLocked() {
+		if !s.dropped.IsZero() || !isAgent(s.agent, req.Agent) {
+			continue
+		}
+		switch {
+		case s.route.Native == req.ClaudeSession || s.hookNative == req.ClaudeSession:
+			byID = append(byID, s)
+		case s.clientPID != 0 && slices.Contains(req.Ancestors, s.clientPID):
+			byProcess = append(byProcess, s)
+		}
+	}
+	if len(byID) > 0 {
+		return byID
+	}
+	var unknown []*session
+	for _, s := range byProcess {
+		if s.route.Native == "" && s.hookNative == "" {
+			unknown = append(unknown, s)
+		}
+	}
+	if len(unknown) == 1 {
+		unknown[0].hookNative = req.ClaudeSession
+		return unknown
+	}
+	for _, s := range byProcess {
+		s.hookSeen = true
+	}
+	return nil
+}
+
+// isAgent says a session's agent, as its MCP server named it ("codex", or "codex in T3"), is agent.
+func isAgent(sessionAgent, agent string) bool {
+	return sessionAgent == agent || strings.HasPrefix(sessionAgent, agent+" ")
+}
+
+// toolOps are the requests an MCP server makes only when the agent calls one of Murmur's tools.
+var toolOps = map[string]bool{proto.OpWho: true, proto.OpLookup: true, proto.OpStatus: true, proto.OpTags: true,
+	proto.OpSend: true, proto.OpInbox: true}
+
+// hookedAgents are the agents join installs Murmur's hook in (#202, #225).
+var hookedAgents = []string{"claude-code", "codex", "grok"}
+
+// hookOffLocked says Murmur's hook doesn't run for session s (#225): its agent is one join installs
+// the hook in, it called one of Murmur's tools more than hookGrace ago, and no hook of it has
+// reported since this daemon started. The hook runs after every tool call and at every prompt, so
+// one that never reports isn't running: the agent never approved it, its approval broke (Codex's,
+// which join writes, if Codex changed how it hashes a hook), or it fails. It is told from this side
+// because the trust join writes can break with no error anywhere. Caller holds mu.
+func (d *Daemon) hookOffLocked(s *session) bool {
+	if s.hookSeen || s.toolCalled.IsZero() || time.Since(s.toolCalled) < hookGrace {
+		return false
+	}
+	for _, a := range hookedAgents {
+		if isAgent(s.agent, a) {
+			return true
+		}
+	}
+	return false
+}
+
+// hookGrace is how long after a session's first call to one of Murmur's tools its hook may take to
+// report before the session counts as having none: the hook runs right after the call, but the
+// session's first call may come at the start of a turn whose prompt preceded the hook's install.
+const hookGrace = time.Minute
+
+// peerHookOffLocked is hookOffLocked for the session at dev/sess, on this device or, as its
+// presence says, another, and the session's agent. Caller holds mu.
+func (d *Daemon) peerHookOffLocked(dev, sess string) (off bool, agent string) {
+	if dev == d.device {
+		if s := d.sessions[sess]; s != nil {
+			return d.hookOffLocked(s), s.agent
+		}
+		return false, ""
+	}
+	if p := d.peers[dev]; p != nil {
+		for _, s := range p.pres.Sessions {
+			if s.ID == sess {
+				return s.HookOff, s.Agent
+			}
+		}
+	}
+	return false, ""
 }

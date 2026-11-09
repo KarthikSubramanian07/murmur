@@ -53,7 +53,7 @@ For humans:
 
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
-  mur hook                      Claude Code hook (reads the hook payload on stdin)
+  mur hook [AGENT]              an agent's hook: Claude Code's, or codex or grok (reads the payload on stdin)
   mur daemon [--git-dir DIR]    the daemon, in the foreground
 
 Every command takes -C DIR to act on the repository at DIR.
@@ -71,7 +71,12 @@ func main() {
 	var err error
 	switch cmd {
 	case "hook":
-		hook.Run(os.Stdin, os.Stdout)
+		// `mur hook` is Claude Code's; `mur hook codex` and `mur hook grok` are those agents' (#225).
+		agent := ""
+		if len(args) > 0 {
+			agent = args[0]
+		}
+		hook.RunFor(agent, os.Stdin, os.Stdout)
 	case "mcp":
 		err = runMCP(ctx, args)
 	case "daemon":

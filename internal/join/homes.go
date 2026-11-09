@@ -38,7 +38,7 @@ var agents = []agent{
 	{driver: "claudeAgent", label: "Claude Code", t3Var: "CLAUDE_CONFIG_DIR", register: Env.registerClaudeAt, removal: Env.claudeRemoval},
 	{driver: "codex", label: "Codex", t3Var: "CODEX_HOME",
 		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerCodexAt(h) },
-		removal:  tableRemoval},
+		removal:  codexRemoval},
 	{driver: "opencode", label: "OpenCode", t3Var: "XDG_CONFIG_HOME", sub: "opencode",
 		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerOpenCodeAt(h) },
 		removal:  openCodeRemoval},
@@ -50,7 +50,7 @@ var agents = []agent{
 		removal:  piRemoval},
 	{driver: "grok", label: "Grok", t3Var: "GROK_HOME",
 		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerGrokAt(h) },
-		removal:  tableRemoval},
+		removal:  grokRemoval},
 }
 
 // defaultHome is an agent's configuration as this process's environment says, "" Dir where the
@@ -218,7 +218,37 @@ func (e Env) removal() string {
 	return strings.Join(steps, "; ")
 }
 
-// tableRemoval is the removal for an agent with a config.toml: Codex, Grok.
+// codexRemoval is the removal for Codex: the server, and the hook (codexhook.go).
+func codexRemoval(e Env, h agentHome) string {
+	steps := []string{tableRemoval(e, h)}
+	path := filepath.Join(h.Dir, "hooks.json")
+	if hasMurmurCodexHook(path) {
+		steps = append(steps, "delete the hooks named "+hookName+" (statusMessage) from "+path)
+	}
+	return joinSteps(steps)
+}
+
+// grokRemoval is the removal for Grok: the server, and the hook's file (grokhook.go).
+func grokRemoval(e Env, h agentHome) string {
+	steps := []string{tableRemoval(e, h)}
+	if path := filepath.Join(h.Dir, "hooks", grokHookFile); fileExists(path) {
+		steps = append(steps, "delete "+path)
+	}
+	return joinSteps(steps)
+}
+
+// joinSteps joins the steps that aren't "".
+func joinSteps(steps []string) string {
+	var out []string
+	for _, s := range steps {
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return strings.Join(out, ", and ")
+}
+
+// tableRemoval is the removal of the server for an agent with a config.toml: Codex, Grok.
 func tableRemoval(_ Env, h agentHome) string {
 	path := filepath.Join(h.Dir, "config.toml")
 	if b, err := os.ReadFile(path); err != nil || !strings.Contains(string(b), "[mcp_servers."+brand.MCPServer+"]") {

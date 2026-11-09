@@ -24,6 +24,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
 )
@@ -31,6 +32,14 @@ import (
 // input is the part of Claude Code's hook payload the hook reads.
 type input struct {
 	SessionID string `json:"session_id"`
+	// SessionIDCamel is Grok's spelling of it, read only from Grok's hook (xai-org/grok-build,
+	// docs/user-guide/10-hooks.md, read 2026-11-09). Codex uses session_id, its thread ID.
+	SessionIDCamel string `json:"sessionId"`
+	// Reason is, on Grok's Stop, why: "end_turn" at the end of a turn, and something else for the
+	// Stop it also fires when the session closes, whose answer it ignores.
+	Reason string `json:"reason"`
+	// SubagentType is set where Grok runs the hook inside a subagent.
+	SubagentType string `json:"subagentType"`
 	// TranscriptPath is the file Claude Code keeps the session's conversation in, which also holds
 	// its title.
 	TranscriptPath string `json:"transcript_path"`
@@ -131,21 +140,41 @@ func findClone(ctx context.Context, cwd string) (string, error) {
 	return client.FindGitDir(ctx, cwd)
 }
 
-// Run reads a hook payload from stdin and writes the hook's answer, if any, to stdout.
-func Run(stdin io.Reader, stdout io.Writer) {
+// Run reads a hook payload from stdin and writes the hook's answer, if any, to stdout. It is
+// Claude Code's hook.
+func Run(stdin io.Reader, stdout io.Writer) { RunFor("", stdin, stdout) }
+
+// Agents other than Claude Code that join installs the hook in, by the name their hook's command
+// line gives (`mur hook codex`). Their hooks take Claude Code's payload and answers, Grok's with
+// some fields of its own (#225).
+const (
+	Codex = "codex"
+	Grok  = "grok"
+)
+
+// RunFor is Run for agent, "" for Claude Code. Another agent's hook brackets no tool call, as join
+// installs it on no PreToolUse (#225), and sends no transcript, which is Claude Code's format.
+func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 	defer func() { recover() }()
 	var in input
 	if err := json.NewDecoder(io.LimitReader(stdin, 1<<20)).Decode(&in); err != nil {
 		return
 	}
+	if in.SessionID == "" && agent == Grok {
+		in.SessionID = in.SessionIDCamel
+	}
 	if in.SessionID == "" || !events[in.Event] {
 		return
 	}
+	who := identify(agent, in)
 	if in.Event == stop {
-		turnEnd(in, stdout)
+		turnEnd(in, who, stdout)
 		return
 	}
 	op := bracketOp(in)
+	if agent != "" {
+		op = ""
+	}
 	// Neither PreToolUse nor PostToolUseFailure delivers notices: the next PostToolUse or prompt
 	// does, and a PreToolUse prints nothing at all.
 	wantNotices := in.Event != preTool && in.Event != postFailure
@@ -174,15 +203,20 @@ func Run(stdin io.Reader, stdout io.Writer) {
 		go func() {
 			defer wg.Done()
 			defer func() { recover() }()
-			c.Do(ctx, proto.Request{Op: op, ClaudeSession: in.SessionID, ClientPID: claudePID(),
-				ToolUseID: in.ToolUseID, Cwd: in.Cwd, GitDir: gitDir, Subagent: in.AgentID != ""})
+			r := who
+			r.Op, r.ToolUseID, r.Cwd, r.GitDir = op, in.ToolUseID, in.Cwd, gitDir
+			c.Do(ctx, r)
 		}()
 	}
 	var resp proto.Response
 	if wantNotices {
 		nctx, ncancel := context.WithTimeout(ctx, NoticeTimeout)
-		resp, err = c.Do(nctx, proto.Request{Op: proto.OpNotices, ClaudeSession: in.SessionID, ClientPID: claudePID(),
-			Transcript: in.TranscriptPath, Subagent: in.AgentID != "", Whole: true})
+		r := who
+		r.Op, r.Whole = proto.OpNotices, true
+		if agent == "" {
+			r.Transcript = in.TranscriptPath
+		}
+		resp, err = c.Do(nctx, r)
 		ncancel()
 	}
 	wg.Wait()
@@ -202,7 +236,7 @@ func Run(stdin io.Reader, stdout io.Writer) {
 // turnEnd tells the daemon the turn ended, and keeps it going with the messages the daemon gives
 // back, if any. They are delivered once the daemon answers: a hook that gave up waiting
 // (NoticeTimeout) just before the answer came loses them, the risk #204's whole messages take too.
-func turnEnd(in input, stdout io.Writer) {
+func turnEnd(in input, who proto.Request, stdout io.Writer) {
 	ctx, cancel := context.WithTimeout(context.Background(), NoticeTimeout)
 	defer cancel()
 	gitDir, err := findClone(ctx, in.Cwd)
@@ -213,10 +247,29 @@ func turnEnd(in input, stdout io.Writer) {
 	if err != nil {
 		return
 	}
-	resp, err := c.Do(ctx, proto.Request{Op: proto.OpTurnEnd, ClaudeSession: in.SessionID, ClientPID: claudePID(),
-		Subagent: in.AgentID != "", Continues: true})
-	if err != nil || len(resp.Delivered) == 0 {
+	// Grok's Stop at the session's close can't keep anything going: the messages are left to be
+	// handed over as a turn, as after a turn the user interrupted.
+	who.Op, who.Continues = proto.OpTurnEnd, in.Reason == "" || in.Reason == "end_turn"
+	resp, err := c.Do(ctx, who)
+	if err != nil || len(resp.Delivered) == 0 || !who.Continues {
 		return
 	}
 	json.NewEncoder(stdout).Encode(stopOutput{Decision: "block", Reason: view.Hook(resp.Delivered, nil, 0)})
 }
+
+// identify is what every request of the hook carries to say whose it is: the conversation's ID and,
+// for Claude Code, its process (CLAUDE_PID); for another agent, the agent's name and the hook's
+// ancestors, among which is the agent's process (proc.Ancestors).
+func identify(agent string, in input) proto.Request {
+	r := proto.Request{ClaudeSession: in.SessionID, Subagent: in.AgentID != "" || in.SubagentType != ""}
+	if agent == "" {
+		r.ClientPID = claudePID()
+	} else {
+		r.Agent, r.Ancestors = agent, proc.Ancestors(os.Getppid(), maxAncestors)
+	}
+	return r
+}
+
+// maxAncestors bounds how far up identify looks: the agent is the hook's grandparent where it runs
+// the hook through a shell, and a wrapper or two (a login shell, T3's launcher) may come between.
+const maxAncestors = 6

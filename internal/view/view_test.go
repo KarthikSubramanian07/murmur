@@ -215,3 +215,20 @@ func TestWhoDoesNotHideTheCallersOwnSessionOrDevice(t *testing.T) {
 		t.Errorf("who:\n%s", out)
 	}
 }
+
+// A session whose hook doesn't run (#225) says so in who, and the caller's own is told what to do.
+func TestWhoShowsAHookThatIsntRunning(t *testing.T) {
+	other := sess("brave-finch", time.Minute, "")
+	other.HookOff = true
+	me := sess("quiet-otter", 0, "")
+	me.You = true
+	r := proto.Response{Self: "me/me", Devices: []proto.Device{{ID: "me", Host: "laptop", Self: true, Sessions: []proto.SessionView{me, other}}}}
+	out := Who(r)
+	if !strings.Contains(out, "brave-finch  dev/brave-finch  claude-code on main, active 1m ago, hook not running") || strings.Contains(out, "Your hook") {
+		t.Errorf("who:\n%s", out)
+	}
+	r.Devices[0].Sessions[0].HookOff = true
+	if out := Who(r); !strings.Contains(out, "Your hook isn't running") || !strings.Contains(out, "join` again") {
+		t.Errorf("who, of one whose own hook isn't running:\n%s", out)
+	}
+}
