@@ -2609,7 +2609,9 @@ function fleetTable(rows, needs, sel) {
           [...buckets].map(([k, list]) => {
             const shown = list.filter((r) => !needs.has(r.s.name));
             if (!shown.length) return null;
-            const shut = collapsed.has(F.by + ":" + k);
+            // A search or state filter shows its matches even in a group you'd collapsed; the
+            // group shuts again when the filter clears.
+            const shut = !(F.q.trim() || F.state) && collapsed.has(F.by + ":" + k);
             return [
               h(
                 "button",
@@ -2850,7 +2852,7 @@ function fleetInspector(name, need) {
     ["Working on", s.doing || h("span", { class: "fx-faint" }, "No status set")],
     d.owner && ["Person", d.owner],
     // "last seen 47m ago" keeps together, so a narrow line breaks after "offline,".
-    ["Device", [deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? "," : "")), !d.reachable && seenAt && h("span", { class: "fx-nowrap" }, " last seen " + ago(seenAt))]],
+    ["Device", h("span", null, deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? ", " : "")), !d.reachable && seenAt && h("span", { class: "fx-nowrap" }, "last seen " + ago(seenAt)))],
     // Each part keeps together, so a narrow rail breaks the line at the "·", not inside a model name.
     ["Agent", agentParts.length ? h("span", { class: "fx-parts", title: agentParts.join(" · ") }, fxParts(agentParts)) : "–"],
     ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && (pr.url ? h("a", { class: "fx-pr" + (pr.draft ? " draft" : ""), href: pr.url, target: "_blank", rel: "noreferrer" }, "#" + pr.number) : h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number))] : "–"],
