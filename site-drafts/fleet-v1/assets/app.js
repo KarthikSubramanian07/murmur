@@ -2645,6 +2645,14 @@ function sinceWhen(t) {
   return d.toLocaleDateString([], { month: "short", day: "numeric" }) + ", " + time;
 }
 
+// Parts of a line joined by "·" that wraps between parts, never inside one, and never leaves a "·"
+// at either end of a line: each part carries its own leading "·", and every line is pulled left by
+// that width inside a clipping box (fleet.css .fx-parts), so the dot that starts a line is hidden.
+function fxParts(parts) {
+  const ZWSP = String.fromCharCode(0x200b); // a break opportunity between parts, with no width
+  return h("span", { class: "fx-parts-in" }, parts.flatMap((x, i) => [i ? ZWSP : null, h("span", { class: "fx-part" }, x)]));
+}
+
 function fleetRow(d, s, need, on) {
   const F = fleetFilter();
   const prs = ui.state.prs || {};
@@ -2701,8 +2709,7 @@ function fleetRow(d, s, need, on) {
         "span",
         { class: "fx-who-text" },
         h("span", { class: "fx-name truncate" }, s.name),
-        // Each part keeps together, so where this line wraps (a narrow table) it breaks at a "·".
-        h("span", { class: "fx-muted truncate", title: sub }, subParts.flatMap((x, i) => [i ? " · " : null, h("span", { class: "fx-nowrap" }, x)])),
+        h("span", { class: "fx-muted fx-parts", title: sub }, fxParts(subParts)),
         s.branch && h("span", { class: "fx-muted fx-sub-branch", title: s.branch + (prTag ? " " + prTag : "") }, h("span", { class: "mono truncate" }, s.branch), prTag && h("span", { class: "fx-sub-pr" }, prTag)),
       ),
     ),
@@ -2835,7 +2842,7 @@ function fleetInspector(name, need) {
     d.owner && ["Person", d.owner],
     ["Device", deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? ", last seen " + ago(seenAt) : ""))],
     // Each part keeps together, so a narrow rail breaks the line at the "·", not inside a model name.
-    ["Agent", agentParts.length ? agentParts.flatMap((x, i) => [i ? " · " : null, h("span", { class: "fx-nowrap" }, x)]) : "–"],
+    ["Agent", agentParts.length ? h("span", { class: "fx-parts" }, fxParts(agentParts)) : "–"],
     ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && (pr.url ? h("a", { class: "fx-pr" + (pr.draft ? " draft" : ""), href: pr.url, target: "_blank", rel: "noreferrer" }, "#" + pr.number) : h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number))] : "–"],
     groupOf(s) && ["Job", groupOf(s)],
     ["Running for", started ? runningFor(s) + ", since " + sinceWhen(started) : "–"],

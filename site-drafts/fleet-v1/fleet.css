@@ -204,7 +204,8 @@
   .fx-sub-branch { display: flex; align-items: baseline; min-width: 0; }
   .fx-tr .fx-status { -webkit-line-clamp: 4; } /* beats the 2-line rule below */
   /* The lines under a name wrap here rather than cut the device or branch short. */
-  .fx-who-text > .fx-muted, .fx-sub-branch .mono { white-space: normal; overflow-wrap: anywhere; }
+  .fx-who-text > .fx-parts > .fx-parts-in { white-space: normal; }
+  .fx-sub-branch .mono { white-space: normal; overflow-wrap: anywhere; }
   .fx-sub-branch { flex-wrap: wrap; }
 }
 @container (max-width: 640px) {
@@ -309,4 +310,11 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-rail > .fx-btn { flex: none; }
 /* A pinned row is several lines tall already, so the line under its name, which carries more
    there, wraps (at a "·") rather than cut short. */
-.fx-row.need .fx-who-text > .fx-muted { white-space: normal; }
+.fx-row.need .fx-who-text > .fx-parts > .fx-parts-in { white-space: normal; }
+/* fxParts: "a · b · c" that wraps only between parts and never leaves a dot at a line's end or
+   start. Each part leads with a 0.9em "·", and every line starts 0.9em left, clipped. On one line
+   it's cut short with an ellipsis, as before. */
+.fx-parts { display: block; min-width: 0; overflow: hidden; }
+.fx-parts-in { display: block; margin-left: -0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-part { white-space: nowrap; }
+.fx-part::before { content: "·"; display: inline-block; width: 0.9em; text-align: center; }
