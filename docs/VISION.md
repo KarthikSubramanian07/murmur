@@ -1185,23 +1185,26 @@ a random ID is still data from a private repo).
 
 `internal/publicrepo` does it, from `mur init`, `mur join` and daemon start:
 
-1. If `refs/murmur/reported` is on the bus (a daemon's sync fetches it with the rest), stop: some
-   clone has reported the repo.
+1. If `refs/murmur/reported` is here or on the remote, stop: some clone has reported the repo.
+   A daemon's sync doesn't fetch it (it reads only mesh, presence and names), so the remote is
+   asked with one `ls-remote`, and the ref is fetched once found.
 2. Reduce the bus remote's URL to `github.com/<owner>/<name>`; anything else is not reported.
 3. Ask GitHub `GET api.github.com/repos/<owner>/<name>` with no credentials. A private repo answers
    404 to that, so no token is involved. Private, or not on GitHub: look again the next UTC day
    (`publicrepo.json` in the state dir), so a repo made public later is reported within a day.
 4. POST `{"repo": "github.com/<owner>/<name>"}` to `https://murmur.afig.dev/v1/repo`, spelled as
-   GitHub spells it, with no version in the User-Agent. The site stores it only if GitHub shows
-   the repo as public, one row per repo (address, first day, whether GitHub confirmed it), no IP
-   addresses (`site/src/usage.js`, `site/migrations`).
-5. Once the site has answered 200, push `refs/murmur/reported`, a root commit whose body is
-   `{"v":1,"at":...}`, leased so it is created only if absent. Two clones racing both send; the site
+   GitHub spells it, with no version in the User-Agent. The site stores it only once GitHub
+   confirms the repo public (when GitHub can't say, it answers 503 and the daemon sends it again
+   later): one row per repo, its address and first day, no IP addresses (`site/src/usage.js`,
+   `site/migrations`).
+5. Once the site has answered 200, note in `publicrepo.json` that this address was sent, then push
+   `refs/murmur/reported`, a root commit whose body is `{"v":1,"at":...}`, leased so it is created
+   only if absent. A push that fails is retried at every later look, without sending the address
+   again, and a daemon keeps looking until the ref is there. Two clones racing both send; the site
    keeps one row. Deleting the ref makes the repo report again.
 
 So each public repo reaches us once in its life. A development build (`-dev`) never reports.
-Daemons older than this ignore the new ref: they fetch every bus ref but read only mesh, presence
-and names.
+Daemons older than this ignore the new ref: their sync reads only mesh, presence and names.
 
 Earlier versions (#148) sent a daily check-in to `/v1/checkin` (a random user ID, a hash of the
 remote, the version, OS and architecture). Since 2026-11-08 the site stores none, but still answers

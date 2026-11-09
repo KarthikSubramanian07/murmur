@@ -49,15 +49,18 @@ export async function reportRepo(request, env) {
   }
   const m = typeof r?.repo === 'string' ? REPO.exec(r.repo) : null;
   if (!m || m[2] === '.' || m[2] === '..') return new Response('Not a repo.\n', { status: 400 });
+  // Stored only once GitHub confirms it public. When GitHub can't say, nothing is stored and the
+  // daemon, told to try again, sends it again at its next look.
   const shown = await isPublic(m[1], m[2], env);
   if (shown === false) return new Response('Not a public repo on GitHub.\n', { status: 422 });
+  if (shown === null) return new Response("GitHub couldn't confirm it is public; try again later.\n", { status: 503 });
   const day = new Date().toISOString().slice(0, 10);
   // Stored before the answer, so a report that isn't kept fails and the daemon tries again.
   try {
     await env.DB.prepare(
-      `INSERT INTO repos (repo, name, first, verified) VALUES (?1, ?2, ?3, ?4)
-       ON CONFLICT (repo) DO UPDATE SET name = excluded.name, verified = MAX(verified, excluded.verified)`,
-    ).bind(r.repo.toLowerCase(), r.repo, day, shown ? 1 : 0).run();
+      `INSERT INTO repos (repo, name, first) VALUES (?1, ?2, ?3)
+       ON CONFLICT (repo) DO UPDATE SET name = excluded.name`,
+    ).bind(r.repo.toLowerCase(), r.repo, day).run();
   } catch (err) {
     console.log(`storing a repo: ${err}`);
     return new Response('Not stored; try again later.\n', { status: 503 });
@@ -66,8 +69,8 @@ export async function reportRepo(request, env) {
 }
 
 // Whether GitHub shows owner/name to someone signed out: true, false, or null when GitHub can't say
-// (a rate limit, an outage), and the repo is then kept unverified. GITHUB_TOKEN, if that secret is
-// set, only raises the rate limit: a private repo it can see answers private: true, and is refused.
+// (a rate limit, an outage). GITHUB_TOKEN, if that secret is set, only raises the rate limit: a
+// private repo it can see answers private: true, and is refused.
 async function isPublic(owner, name, env) {
   const headers = { 'User-Agent': 'murmur-site', Accept: 'application/vnd.github+json' };
   if (env.GITHUB_TOKEN) headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
@@ -230,7 +233,7 @@ export async function numbers(db, days) {
        FROM checkins GROUP BY team ORDER BY active DESC, users DESC, last DESC`,
     ).bind(weekFrom),
     db.prepare(`SELECT COUNT(DISTINCT user) AS n FROM checkins WHERE day BETWEEN ?1 AND ?2`).bind(prevFrom, prevTo),
-    db.prepare(`SELECT name, first, verified FROM repos ORDER BY first DESC, repo`),
+    db.prepare(`SELECT name, first FROM repos ORDER BY first DESC, repo`),
   ]);
 
   const firstRows = firsts.results;
@@ -290,7 +293,7 @@ export function report(n, origin) {
     ? table(['Team', 'Active users', 'Users ever', 'First check-in', 'Last check-in'], n.teamList.map(t => [t.team, t.active, t.users, t.first, t.last]))
     : 'None yet.';
   const repos = n.repos.length
-    ? table(['Repo', 'First reported', 'Public when reported'], n.repos.map(r => [`[${r.name}](https://${r.name})`, r.first, r.verified ? 'yes' : "GitHub couldn't say"]))
+    ? table(['Repo', 'First reported'], n.repos.map(r => [`[${r.name}](https://${r.name})`, r.first]))
     : 'None yet.';
   return `# Murmur's active users, ${n.today}
 

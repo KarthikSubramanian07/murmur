@@ -419,7 +419,7 @@ function repoTable(box, repos) {
   if (!repos.length) { box.append(el('div', { class: 'empty' }, 'No repos yet.')); return; }
   const table = document.createElement('table');
   const head = document.createElement('tr');
-  for (const t of ['Repo', 'First reported', 'Public when reported']) {
+  for (const t of ['Repo', 'First reported']) {
     const th = document.createElement('th'); th.textContent = t; head.append(th);
   }
   table.append(head);
@@ -428,9 +428,9 @@ function repoTable(box, repos) {
     const name = document.createElement('td'); const a = document.createElement('a');
     a.href = 'https://' + r.name; a.textContent = r.name.replace(/^github\.com\//, ''); name.append(a);
     tr.append(name);
-    for (const v of [date(r.first, { month: 'short', day: 'numeric', year: 'numeric' }), r.verified ? 'yes' : 'GitHub couldn’t say']) {
-      const td = document.createElement('td'); td.textContent = v; tr.append(td);
-    }
+    const first = document.createElement('td');
+    first.textContent = date(r.first, { month: 'short', day: 'numeric', year: 'numeric' });
+    tr.append(first);
     table.append(tr);
   }
   const wrap = el('div', { class: 'table-wrap' });

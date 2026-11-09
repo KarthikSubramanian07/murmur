@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -226,5 +227,35 @@ func TestStatementMakesThePromise(t *testing.T) {
 		if !strings.Contains(Told, want) {
 			t.Errorf("Told doesn't say %q:\n%s", want, Told)
 		}
+	}
+}
+
+// A report the site stored but whose ref couldn't be pushed isn't sent again: later looks push only
+// the ref, and a daemon's loop keeps going until it is there (Sol's review of #239).
+func TestStoredReportOnlyRetriesTheRef(t *testing.T) {
+	ctx := context.Background()
+	f := newFakes(t)
+	bare := remote(t)
+	// The remote refuses pushes while a file named deny is in it.
+	hook := filepath.Join(bare, "hooks", "pre-receive")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\ntest -f deny && exit 1\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	deny := filepath.Join(bare, "deny")
+	os.WriteFile(deny, nil, 0o644)
+	gitDir := clone(t, bare, "https://github.com/acme/widget.git")
+	res, err := Once(ctx, f.opts(gitDir, day1))
+	if err == nil || res.Done() {
+		t.Fatalf("push refused: %v, %v", res, err)
+	}
+	os.Remove(deny)
+	if res, err := Once(ctx, f.opts(gitDir, day1.Add(time.Hour))); err != nil || res != Reported {
+		t.Fatalf("push allowed: %v, %v", res, err)
+	}
+	if api, site := f.counts(); api != 1 || site != 1 {
+		t.Errorf("GitHub was asked %d times and the site %d; want once each", api, site)
+	}
+	if git(t, "--git-dir", bare, "for-each-ref", "--format=%(refname)", brand.ReportedRef) != brand.ReportedRef {
+		t.Fatalf("no %s on the remote", brand.ReportedRef)
 	}
 }
