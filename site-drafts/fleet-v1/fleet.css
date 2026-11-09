@@ -234,7 +234,7 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-dm-head b { color: var(--fx-text); font-weight: 600; }
 .fx-dm-time { color: var(--fx-text-3); white-space: nowrap; }
 .fx-dm-subj { color: var(--fx-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fx-sheet .fx-insp-head { position: sticky; top: 0; z-index: 5; margin: -2rem -2rem 1rem; padding: 0.75rem 2rem; border-bottom: 1px solid var(--fx-border); background: #1b1b1bf2; }
+.fx-sheet .fx-insp-head { position: sticky; top: 0; z-index: 5; margin: -2rem -2rem 1rem; padding: 0.75rem 2rem; border-bottom: 1px solid var(--fx-border); background: #1b1b1b; }
 @media (max-width: 1000px) {
   .fx-toolbar .fx-seg { flex-wrap: wrap; height: auto; }
   .fx-toolbar .fx-seg button { height: 1.75rem; }
@@ -272,3 +272,6 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
   .fx-toolbar > .fx-spacer { order: 1; }
   .fx-toolbar > .fx-seg { order: 2; }
 }
+/* As the whole page, the details keep a reading width, so a message's time stays near its subject,
+   and the list's left edge, so the page doesn't shift sideways on opening them. */
+.fx.fx-sheet { max-width: 50rem; margin-left: 0; }

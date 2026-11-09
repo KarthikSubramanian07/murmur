@@ -2072,9 +2072,25 @@ function go(view) {
 function setView(view) {
   const [v, open] = view.split("/");
   view = v === "fleet" ? "sessions" : v;
-  ui.view = VIEWS.includes(view) ? view : VARIANT === "g" ? "messages" : "sessions";
+  const next = VIEWS.includes(view) ? view : VARIANT === "g" ? "messages" : "sessions";
+  // Leaving All sessions (to a conversation, say) remembers where the list and the details were,
+  // so Back to the same session finds them as they were.
+  if (ui.view === "sessions" && next !== "sessions") ui.fleetMemo = { sel: ui.fleetSel || null, pane: content?.scrollTop || 0, rail: root.querySelector(".fx-rail")?.scrollTop || 0 };
+  ui.view = next;
   if (ui.view === "settings") loadSettings();
-  if (ui.view === "sessions") return fleetSetSel(fleetFromHash(open));
+  if (ui.view === "sessions") {
+    const want = fleetFromHash(open);
+    const memo = ui.fleetMemo;
+    ui.fleetMemo = null;
+    fleetSetSel(want);
+    if (memo && memo.sel === want && content) {
+      content.scrollTop = memo.pane;
+      const rail = root.querySelector(".fx-rail");
+      if (rail) rail.scrollTop = memo.rail;
+    }
+    fleetFocusBack();
+    return;
+  }
   render();
 }
 
@@ -2165,6 +2181,7 @@ async function poll() {
   if (sig !== last && !typing && !selecting && !scrolling) {
     last = sig;
     render();
+    if (ui.fleetFocusPending) fleetFocusBack();
   }
   // The first state starts the PR lookups; ask again soon, so their answers show without a wait.
   const first = !polled;
@@ -2191,6 +2208,7 @@ function start() {
   ui.view = VIEWS.includes(want) ? want : VARIANT === "g" ? "messages" : "sessions";
   if (ui.view === "sessions") ui.fleetSel = fleetFromHash(open);
   render();
+  fleetFocusBack();
   if (!ui.token) return;
   if (ui.view === "settings") loadSettings();
   poll();
@@ -2442,7 +2460,10 @@ function fleetPage() {
   const needs = fleetNeeds(rows);
   // Open details stay open when their session falls out of the filter (it went idle while you
   // read, say); they close only when the session itself is gone.
-  if (ui.fleetSel && !all.some((r) => r.s.name === ui.fleetSel)) ui.fleetSel = null;
+  if (ui.fleetSel && !all.some((r) => r.s.name === ui.fleetSel)) {
+    ui.fleetSel = null;
+    history.replaceState(null, "", fleetHash(null));
+  }
   const sel = ui.fleetSel;
   const selNeed = sel ? allNeeds.get(sel) : null;
   const set = (k) => (v) => {
@@ -2674,6 +2695,17 @@ function fleetFromHash(part) {
     return null;
   }
 }
+// Whole-page details reached by Back, Forward or a reload put focus on their way back, as a
+// click does, rather than leaving it on the page. After a reload they appear only with the first
+// data, so the poll finishes the job (fleetFocusPending).
+function fleetFocusBack() {
+  ui.fleetFocusPending = false;
+  if (ui.view !== "sessions" || !ui.fleetSel || !STACKED.matches) return;
+  if (document.activeElement && document.activeElement !== document.body) return;
+  const back = root.querySelector(".fx-back");
+  if (back) back.focus({ preventScroll: true });
+  else ui.fleetFocusPending = true;
+}
 function fleetCloseAsked() {
   if (history.state?.fleetPushed) return history.back(); // the hashchange closes them
   history.replaceState(history.state, "", fleetHash(null));
@@ -2694,6 +2726,7 @@ function fleetSetSel(want) {
   }
 }
 document.addEventListener("keydown", (e) => {
+  if (e.target?.dataset?.key === "fx-q" && e.target.value) return; // the box clears itself
   if (e.key === "Escape" && !e.defaultPrevented && ui.view === "sessions" && ui.fleetSel) {
     e.preventDefault();
     fleetCloseAsked();
