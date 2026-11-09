@@ -580,10 +580,12 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		// a stopped session (what was sent after it stopped is for it, #30).
 		d.mu.Lock()
 		waiting := len(d.sessions) > 0 || d.keptInboxLocked()
-		seen := d.st.Initialized
+		// A tags event applies only to a session this device has a name or tags for (see
+		// tagKeyLocked): with neither, as on a new clone, nothing in the log is for it.
+		known := len(d.st.SessionNames) > 0 || len(d.st.Tags) > 0
 		d.mu.Unlock()
-		if !waiting && !seen {
-			skipTo() // a new clone: no tags event can be for its sessions
+		if !waiting && !known {
+			skipTo()
 			return
 		}
 		// Tags don't expire as messages do: a human's change made while this device was away is
