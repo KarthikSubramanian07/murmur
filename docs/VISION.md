@@ -463,7 +463,16 @@ call.
   So a running session idle for a day, or one a person hid (the `hidden` tag, set from the page
   through #211's `/api/tags`), folds under its device as quiet. An idle one comes back once it
   does anything; a hidden one stays hidden until someone shows it again, because a tag a person
-  sets stays until a person takes it off. An open session's tags show under its name, where a person can add one or take one off. The page is always dark: the design was only ever drawn dark, and a light one would be a
+  sets stays until a person takes it off. An open session's tags show under its name, where a person can add one or take one off.
+  Since #270 (2026-11-09) tags also organize the lists: each sidebar row and card shows its session's
+  tags, the sidebar's Tags group filters every list of sessions to one tag, and a tag menu, from a
+  row's tag button or from sessions picked together on All sessions, puts a tag on them or takes it
+  off, and makes new ones. It sends one `/api/tags` change per session, so it is the same human
+  tag as before, travelling the same way; until a session's device has applied it, the chip shows
+  as waiting, for two minutes at most. Tags with a meaning of their own show as that meaning rather
+  than as chips: `model:` beside the agent, `do-not-disturb` as the red dot, `hidden` as the quiet
+  fold, `human` on a person. There is no grouping by tag: a session can carry several, so groups
+  would repeat it, and a filter shows one group at a time. The page is always dark: the design was only ever drawn dark, and a light one would be a
   second design. Started times, worktrees and committed branches left the page with the old
   Sessions view; `lookup` still has the branches.
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
