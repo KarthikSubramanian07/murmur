@@ -191,6 +191,12 @@
     </section>
 
     <section class="card wide">
+      <h2>Public repos using Murmur</h2>
+      <div class="sub" id="repos-sub"></div>
+      <div id="repos"></div>
+    </section>
+
+    <section class="card wide">
       <h2>Teams</h2>
       <div class="sub">a team is one repo, shown by the start of its hash; most active first</div>
       <div id="teams"></div>
@@ -408,7 +414,31 @@ function teamTable(box, teams) {
   box.append(wrap);
 }
 
-let data, days = Number(new URLSearchParams(location.search).get('days')) || 90;
+function repoTable(box, repos) {
+  box.replaceChildren();
+  if (!repos.length) { box.append(el('div', { class: 'empty' }, 'No repos yet.')); return; }
+  const table = document.createElement('table');
+  const head = document.createElement('tr');
+  for (const t of ['Repo', 'First reported', 'Public when reported']) {
+    const th = document.createElement('th'); th.textContent = t; head.append(th);
+  }
+  table.append(head);
+  for (const r of repos) {
+    const tr = document.createElement('tr');
+    const name = document.createElement('td'); const a = document.createElement('a');
+    a.href = 'https://' + r.name; a.textContent = r.name.replace(/^github\.com\//, ''); name.append(a);
+    tr.append(name);
+    for (const v of [date(r.first, { month: 'short', day: 'numeric', year: 'numeric' }), r.verified ? 'yes' : 'GitHub couldn’t say']) {
+      const td = document.createElement('td'); td.textContent = v; tr.append(td);
+    }
+    table.append(tr);
+  }
+  const wrap = el('div', { class: 'table-wrap' });
+  wrap.append(table);
+  box.append(wrap);
+}
+
+let data, days =Number(new URLSearchParams(location.search).get('days')) || 90;
 
 function render() {
   if (!data) return;
@@ -440,8 +470,11 @@ function render() {
   barChart($('versions'), d.versions, 'active users');
   barChart($('systems'), d.systems, 'active users');
   teamTable($('teams'), d.teamList);
-  $('footer').textContent = 'A user is one machine’s user account, by a random ID; a team is one repo, by a hash of its remote. ' +
-    'Daemons check in at most once a UTC day, and only while one of their sessions is open. ' +
+  $('repos-sub').textContent = `${fmt(d.repos.length)} repos, newest first; each reported once, by the first of its clones to see it public`;
+  repoTable($('repos'), d.repos);
+  $('footer').textContent = `Check-ins stopped on ${date(d.checkInsEnded, { month: 'long', day: 'numeric', year: 'numeric' })}: ` +
+    'the user and team numbers are history, from the versions that sent them. A user was one machine’s user account, by a random ID; a team, one repo, by a hash of its remote. ' +
+    'Murmur now sends only a public repo’s address, once per repo. ' +
     'For an agent, the same numbers are at /stats/report.md (markdown) and /stats/data (JSON).';
 }
 

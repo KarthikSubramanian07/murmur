@@ -1,49 +1,85 @@
-// Counting active users (#148): the daily check-in every daemon sends (internal/checkin says what
-// it sends and how a user turns it off), and the private page that shows Tyler the counts, with
-// the same numbers as markdown and JSON for an agent he gives a key to (#150).
-// Check-ins are kept in D1 (migrations/), one row per user, team and UTC day.
+// Counting Murmur's use, and the private page that shows Tyler the counts, with the same numbers as
+// markdown and JSON for an agent he gives a key to (#150).
+//
+// Since 2026-11-08 (#199) the only thing Murmur sends us is a public repo's address, once per repo
+// (internal/publicrepo), kept in D1's repos table (migrations/). The daily check-ins of earlier
+// versions (#148) are no longer stored; the rows they left in the checkins table are kept as
+// history, and the page still shows them.
 
 import statsHtml from './stats.html';
 import { prefersMarkdown } from './accept.js';
 
 const RELEASES = 'https://api.github.com/repos/a-Fig/murmur/releases/latest';
 const LATEST_KEY = 'https://murmur.afig.dev/_cache/latest-release';
-const HEX32 = /^[0-9a-f]{32}$/;
 const VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,4}(-[0-9A-Za-z.]{1,20})?$/;
-const WORD = /^[a-z0-9]{1,16}$/;
 const COOKIE = 'murmur_stats';
 // "Active" is a check-in in the last ACTIVE_DAYS days; the goal is Tyler's.
 const ACTIVE_DAYS = 7;
 const GOAL = 100;
+// The day the site stopped storing check-ins (#199). The user numbers come from them, so they end there.
+const CHECKINS_ENDED = '2026-11-08';
 
-// POST /v1/checkin: store today's check-in and answer with the latest release.
+// POST /v1/checkin: the daily check-in that daemons from before #199 send. None is stored any more
+// (Tyler, 2026-11-08), and the body isn't even read. It still answers with the latest release, which
+// those daemons show in `mur version`, so they hear of the release that stops them sending it.
 export async function checkIn(request, env, ctx) {
   if (request.method !== 'POST') {
     return new Response('Only POST.\n', { status: 405, headers: { Allow: 'POST' } });
   }
-  const text = await readUpTo(request, 1024);
-  if (text === null) return new Response('Too long for a check-in.\n', { status: 413 });
-  let c;
+  return Response.json({ latest: await latestRelease(ctx) }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+// github.com/<owner>/<name>, as GitHub allows them to be spelled.
+const REPO = /^github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9._-]{1,100})$/;
+
+// POST /v1/repo: a public repo that uses Murmur, sent once per repo by internal/publicrepo. Its
+// address is the whole request, and all that is kept, with the day it first came. A repo GitHub
+// doesn't show to someone signed out is refused, so nothing private or made up is stored.
+export async function reportRepo(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('Only POST.\n', { status: 405, headers: { Allow: 'POST' } });
+  }
+  const text = await readUpTo(request, 512);
+  if (text === null) return new Response('Too long.\n', { status: 413 });
+  let r;
   try {
-    c = JSON.parse(text);
+    r = JSON.parse(text);
   } catch {
-    return new Response('Not a check-in.\n', { status: 400 });
+    return new Response('Not a repo.\n', { status: 400 });
   }
-  if (!HEX32.test(c?.user) || !HEX32.test(c?.team) || !VERSION.test(c?.version) || !WORD.test(c?.os) || !WORD.test(c?.arch)) {
-    return new Response('Not a check-in.\n', { status: 400 });
-  }
+  const m = typeof r?.repo === 'string' ? REPO.exec(r.repo) : null;
+  if (!m || m[2] === '.' || m[2] === '..') return new Response('Not a repo.\n', { status: 400 });
+  const shown = await isPublic(m[1], m[2], env);
+  if (shown === false) return new Response('Not a public repo on GitHub.\n', { status: 422 });
   const day = new Date().toISOString().slice(0, 10);
-  // Stored before the answer, so a check-in that isn't kept fails and the daemon tries again.
+  // Stored before the answer, so a report that isn't kept fails and the daemon tries again.
   try {
     await env.DB.prepare(
-      `INSERT INTO checkins (day, user, team, version, os, arch) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-       ON CONFLICT (day, user, team) DO UPDATE SET version = excluded.version, os = excluded.os, arch = excluded.arch`,
-    ).bind(day, c.user, c.team, c.version, c.os, c.arch).run();
+      `INSERT INTO repos (repo, name, first, verified) VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT (repo) DO UPDATE SET name = excluded.name, verified = MAX(verified, excluded.verified)`,
+    ).bind(r.repo.toLowerCase(), r.repo, day, shown ? 1 : 0).run();
   } catch (err) {
-    console.log(`storing a check-in: ${err}`);
+    console.log(`storing a repo: ${err}`);
     return new Response('Not stored; try again later.\n', { status: 503 });
   }
-  return Response.json({ latest: await latestRelease(ctx) }, { headers: { 'Cache-Control': 'no-store' } });
+  return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+// Whether GitHub shows owner/name to someone signed out: true, false, or null when GitHub can't say
+// (a rate limit, an outage), and the repo is then kept unverified. GITHUB_TOKEN, if that secret is
+// set, only raises the rate limit: a private repo it can see answers private: true, and is refused.
+async function isPublic(owner, name, env) {
+  const headers = { 'User-Agent': 'murmur-site', Accept: 'application/vnd.github+json' };
+  if (env.GITHUB_TOKEN) headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
+  try {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${name}`, { headers, signal: AbortSignal.timeout(5000) });
+    if (res.status === 404) return false;
+    if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
+    return (await res.json()).private === false;
+  } catch (err) {
+    console.log(`is ${owner}/${name} public: ${err}`);
+    return null;
+  }
 }
 
 // The body as text, or null if it is longer than max bytes, without reading past max.
@@ -174,7 +210,7 @@ export async function numbers(db, days) {
   const from = addDays(today, -(days - 1));
   const weekFrom = addDays(today, -(ACTIVE_DAYS - 1));
   const prevFrom = addDays(today, -(2 * ACTIVE_DAYS - 1)), prevTo = addDays(today, -ACTIVE_DAYS);
-  const [series, firsts, current, teams, prev] = await db.batch([
+  const [series, firsts, current, teams, prev, repos] = await db.batch([
     // Per day: users that day, and users in the ACTIVE_DAYS ending that day.
     db.prepare(
       `WITH RECURSIVE days(d) AS (SELECT ?1 UNION ALL SELECT date(d, '+1 day') FROM days WHERE d < ?2)
@@ -194,6 +230,7 @@ export async function numbers(db, days) {
        FROM checkins GROUP BY team ORDER BY active DESC, users DESC, last DESC`,
     ).bind(weekFrom),
     db.prepare(`SELECT COUNT(DISTINCT user) AS n FROM checkins WHERE day BETWEEN ?1 AND ?2`).bind(prevFrom, prevTo),
+    db.prepare(`SELECT name, first, verified FROM repos ORDER BY first DESC, repo`),
   ]);
 
   const firstRows = firsts.results;
@@ -230,6 +267,8 @@ export async function numbers(db, days) {
     systems: tally(active, r => `${r.os}/${r.arch}`),
     teamSizes: sizes,
     teamList: teams.results.slice(0, 50).map(t => ({ ...t, team: t.team.slice(0, 8) })),
+    checkInsEnded: CHECKINS_ENDED,
+    repos: repos.results,
   };
 }
 
@@ -250,7 +289,12 @@ export function report(n, origin) {
   const teams = n.teamList.length
     ? table(['Team', 'Active users', 'Users ever', 'First check-in', 'Last check-in'], n.teamList.map(t => [t.team, t.active, t.users, t.first, t.last]))
     : 'None yet.';
+  const repos = n.repos.length
+    ? table(['Repo', 'First reported', 'Public when reported'], n.repos.map(r => [`[${r.name}](https://${r.name})`, r.first, r.verified ? 'yes' : "GitHub couldn't say"]))
+    : 'None yet.';
   return `# Murmur's active users, ${n.today}
+
+> Check-ins stopped on ${n.checkInsEnded}. The user numbers below are history, from the Murmur versions that sent them. Murmur now sends only a public repo's address, once per repo: those repos are listed at the end.
 
 **${n.active} active users**, ${pct}% of the goal of ${n.goal} (${Math.max(0, n.goal - n.active)} to go), ${change} the ${n.activeDays} days before (${n.activeBefore}).
 
@@ -292,12 +336,18 @@ Most active first, at most 50. A team is shown by the first 8 characters of its 
 
 ${teams}
 
+## Public repos using Murmur
+
+${n.repos.length} repos, newest first. Each was reported once, by the first of its clones to see it public.
+
+${repos}
+
 ## What the numbers mean
 
 - A **user** is one user account on one machine, known by a random ID, so one person on two machines counts twice.
 - A **team** is one repo, known by a hash of its remote's address. No names, repos, messages or paths are sent.
 - A daemon checks in at most once a UTC day, and only while one of its sessions is open or for 10 minutes after, so a check-in means someone used Murmur that day. Days are UTC.
-- Check-ins began with Murmur 0.2.3 (2026-11-03); older versions never send one, and a user can turn them off.
+- Check-ins began with Murmur 0.2.3 (2026-11-03), and the site stopped storing them on ${n.checkInsEnded}.
 
 The same numbers as JSON: ${origin}/stats/data?days=N (N from 14 to 730, default 90), with the same key. This page takes \`?days=N\` too.
 `;

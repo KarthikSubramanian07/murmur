@@ -52,13 +52,12 @@ what joining does, and if the user says yes it installs `mur` and runs `mur join
 is per user and per clone, changes no tracked file and commits nothing; `mur join --leave` undoes
 it. Until a user joins, Murmur does nothing in that clone.
 
-Once joined, Murmur sends one thing outside the repo: a daily check-in to murmur.afig.dev holding a
-random user ID, a one-way hash of the repo's address, mur's version, the OS and the processor type. Nothing else (no
-names, messages, branches or paths) is sent. We use it only to count users; our goal is 100 active
-users (2026-11-07), and this is the only way we can count them, so please leave it on.
-`git config --global murmur.usage false` turns it off.
-[join.md](docs/agents/join.md#what-murmurafigdev-receives-and-why) has the full list of what it
-sends.
+**The only data we collect is a public repo's name.** If a repo that uses Murmur is public, Murmur
+sends its address (such as `github.com/a-Fig/murmur`) to murmur.afig.dev, once for the whole repo.
+A private repo sends nothing, and nothing else is ever sent: no IDs, names, messages, branches,
+paths or anything about your machine. We use it only to count how many repos and people use Murmur;
+the address is already public, so there is nothing to turn off.
+[join.md](docs/agents/join.md#what-murmurafigdev-receives-and-why) says exactly how.
 
 ## What agents can do
 
