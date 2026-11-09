@@ -335,3 +335,22 @@ func TestAnOldHumanTagTakesNoPlace(t *testing.T) {
 		t.Errorf("a human's old mark is kept: %v", st.Human)
 	}
 }
+
+// A change that fails leaves the state it was copied from as it was, old human tag and all.
+func TestAFailedChangeLeavesTheKeptStateAlone(t *testing.T) {
+	kept := State{Self: []string{"human", "reviewing"}, Human: map[string]Mark{Human: {On: true}}}
+	next := kept // a shallow copy, sharing the slice and the map
+	if err := next.SetSelf([]string{"Not A Tag!"}, nil); err == nil {
+		t.Fatal("an invalid tag was taken")
+	}
+	if !slices.Equal(kept.Self, []string{"human", "reviewing"}) {
+		t.Errorf("the kept Self changed: %q", kept.Self)
+	}
+	next = kept
+	if err := next.SetHuman(nil, []string{"Not A Tag!"}, nil, "ada", time.Now()); err == nil {
+		t.Fatal("an invalid tag was taken")
+	}
+	if _, ok := kept.Human[Human]; !ok {
+		t.Errorf("the kept marks changed: %v", kept.Human)
+	}
+}

@@ -141,10 +141,21 @@ type State struct {
 
 // dropHuman takes away a Human tag kept from before it was Murmur's alone (#267): it isn't shown, and
 // can't be removed by hand, so it would take a place under MaxPerSession for good.
+//
+// It copies what it changes: a caller's copy of a State shares its slice and maps with the one kept,
+// and a change that then fails mustn't have touched that.
 func (st *State) dropHuman() {
-	st.Self = slices.DeleteFunc(st.Self, func(t string) bool { return t == Human })
-	delete(st.Human, Human)
-	delete(st.Cleared, Human)
+	if slices.Contains(st.Self, Human) {
+		st.Self = slices.DeleteFunc(slices.Clone(st.Self), func(t string) bool { return t == Human })
+	}
+	if _, ok := st.Human[Human]; ok {
+		st.Human = maps.Clone(st.Human)
+		delete(st.Human, Human)
+	}
+	if _, ok := st.Cleared[Human]; ok {
+		st.Cleared = maps.Clone(st.Cleared)
+		delete(st.Cleared, Human)
+	}
 }
 
 // Empty says there is nothing to keep.
