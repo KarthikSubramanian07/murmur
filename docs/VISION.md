@@ -1016,6 +1016,17 @@ A body past the limit is cut, as in `inbox`.
   `ls-remote` requests about 2 s apart drew none, which is a short test, not evidence about
   hours of them from every device of a team. A poll that fails waits twice as long each time, to
   at most a minute (or 20 polls, if Poll is shorter), and goes back to its usual rate when it works.
+- **A ref too slow to fetch (2026-11-08, #15).** Anyone with push access can put a large object on
+  a bus ref, on purpose or with a mistaken push. A sync has a minute, and a fetch that used it up
+  failed that sync and the next, for as long as the object stayed. So each fetch in a sync now has
+  15 s (`FetchLimit`). A ref that runs past it on its own is fetched outside the syncs, one at a time,
+  for up to 10 minutes (`SlowFetchLimit`), waiting 1 minute after a failure and twice as long after
+  each one that follows, to at most an hour. The cost that remains: an object that does finish
+  downloading stays in the clone until a gc removes it, since git can't cap what a fetch brings. `git
+  fetch --filter` would, but one such fetch makes the user's own clone a partial clone
+  (`remote.origin.promisor`), for their branches too. On Windows a fetch cut off is killed, which leaves its
+  `tmp_pack_*` behind, one per try (seen 2026-11-08), so the daemon removes those that have gone
+  unwritten for 10 minutes.
 - **How often it polls (2026-10-30, #93).** Tyler: agents don't need real-time communication, and
   4–7 s a hop is fine. So a daemon polls fast only when a reply is likely, and a session left open
   for hours, which would cost 1,200 `ls-remote` calls an hour at 3 s, costs 240.
