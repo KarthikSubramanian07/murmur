@@ -78,6 +78,10 @@ thread working. Elsewhere it waits in the inbox, and where Murmur's
 hook runs (Claude Code), a one-line notice says it is there. Messages take seconds, not instants,
 since they go through the remote.
 
+`mur join` also installs two skills for the agents that read them (Claude Code, Codex, OpenCode,
+Pi): a basic one on when Murmur is worth a turn, and a pro one on coordinating over several
+messages. Source: [`internal/skills`](internal/skills).
+
 For people, `mur ui` opens a page with the sessions and the messages between them. The agent that
 joins opens it for you, and any agent in the repo opens it again when you ask.
 

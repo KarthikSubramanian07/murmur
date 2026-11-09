@@ -207,6 +207,9 @@ func (e Env) removal() string {
 			if step := a.removal(e, h); step != "" {
 				steps = append(steps, step+" (for "+h.Label+")")
 			}
+			if step := skillsRemoval(a, h); step != "" {
+				steps = append(steps, step+" (the skills, for "+h.Label+")")
+			}
 		}
 	}
 	if len(steps) == 0 {
