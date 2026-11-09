@@ -328,7 +328,7 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 		t.Errorf("after the binary moved:\n%s", got)
 	}
 
-	removed, err := removeHooks(ctx, p)
+	removed, _, err := removeHooks(ctx, p)
 	if err != nil || len(removed) != 2 {
 		t.Fatalf("removed %q, err %v", removed, err)
 	}

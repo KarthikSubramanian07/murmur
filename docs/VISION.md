@@ -271,6 +271,9 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   in the path, 2026-10-29. A config file that is a symbolic link (a dotfiles repository's, say) is
   written through, one that points at a file not yet there included: the file it points to is
   replaced or created and the link stays; a hook file that is a link is emptied, never deleted.
+  A hook file the repo tracks, or a `.claude` it tracks as a link, isn't the user's, and gets no
+  hook (2026-11-09): a committed link points wherever the commit chose, `~/.claude/settings.json`
+  included, and a tracked file would take this machine's path to mur into the next commit.
   Run again, `join` changes nothing and says so; it fills in what is missing and repoints an entry
   whose binary moved. A worktree made after joining has no hook until `mur join` runs in it again.
   `mur join --leave` removes the consent and the hooks and stops the daemon. It leaves the server
