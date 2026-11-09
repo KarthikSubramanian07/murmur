@@ -31,7 +31,9 @@ case $pr in 0*|*[!0-9]*) die "the PR number is digits, got '$pr'" ;; esac
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
 # https://github.com/OWNER/REPO(.git) or git@github.com:OWNER/REPO(.git)
-url=$(git remote get-url "$REMOTE") || die "no remote '$REMOTE'"
+# The configured URL, not `remote get-url`, which applies url.<base>.insteadOf rewrites (a proxy or
+# mirror) that would hide the github.com name.
+url=$(git config --get "remote.$REMOTE.url") || die "no remote '$REMOTE'"
 slug=$(printf '%s' "$url" | sed -E 's#^.*github\.com[:/]##; s#/$##; s#\.git$##')
 case $slug in
   */*/*|*/|/*|'') die "can't read OWNER/REPO from $url" ;;
@@ -76,11 +78,17 @@ else
 fi
 
 # Pathspecs and index paths are relative to the working directory; work from the top.
-cd "$(git rev-parse --show-toplevel)"
-idx="$(git rev-parse --absolute-git-dir)/pr-media.$$.index"
+# Absolute GIT_DIR/GIT_WORK_TREE too, in case the caller set them relative to this directory.
+top=$(git rev-parse --show-toplevel)
+gitdir=$(git rev-parse --absolute-git-dir)
+export GIT_DIR="$gitdir" GIT_WORK_TREE="$top"
+cd "$top"
+idx="$gitdir/pr-media.$$.index"
 trap 'rm -f "$idx"' EXIT
 trap 'exit 1' INT TERM HUP
 export GIT_INDEX_FILE="$idx"
+# A split index would leave a sharedindex.* file behind when the temporary index is removed.
+gi() { git -c core.splitIndex=false "$@"; }
 
 tries=1
 while :; do
@@ -88,16 +96,17 @@ while :; do
   tip=${tip%%[[:space:]]*}
   parent=
   if [ -n "$tip" ]; then
-    git fetch --quiet --no-tags "$REMOTE" "refs/heads/$BRANCH" || die "can't fetch $BRANCH from $REMOTE"
-    parent=$(git rev-parse "FETCH_HEAD^{commit}")
+    # By sha, not by name, so a fetch running in another process can't swap FETCH_HEAD under us.
+    git fetch --quiet --no-tags --no-write-fetch-head "$REMOTE" "$tip" || die "can't fetch $BRANCH from $REMOTE"
+    parent=$(git rev-parse "$tip^{commit}")
   fi
 
   rm -f "$idx"
-  [ -z "$parent" ] || git read-tree "$parent"
+  [ -z "$parent" ] || gi read-tree "$parent"
   if [ "$mode" = add ]; then
     while read -r blob name; do
       [ -n "$name" ] || continue
-      git update-index --add --cacheinfo "100644,$blob,$pr/$name"
+      gi update-index --add --cacheinfo "100644,$blob,$pr/$name"
     done <<EOF
 $entries
 EOF
@@ -106,12 +115,12 @@ EOF
     if [ -n "$names" ]; then
       printf '%s' "$names" | while read -r name; do printf '%s\n' "$pr/$name"; done | tr '\n' '\0'
     else
-      git ls-files -z -- "$pr/"
-    fi | git update-index --force-remove -z --stdin
+      gi ls-files -z -- "$pr/"
+    fi | gi update-index --force-remove -z --stdin
     msg="PR #$pr: remove ${names:-everything}"
     msg=$(printf '%s' "$msg" | tr '\n' ' ')
   fi
-  tree=$(git write-tree)
+  tree=$(gi write-tree)
 
   if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then
     [ "$mode" = add ] || { echo "pr-media: nothing to remove for #$pr" >&2; exit 0; }
