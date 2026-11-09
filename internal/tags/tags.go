@@ -7,7 +7,7 @@
 // One tag carries behaviour: do-not-disturb, set by the session or a human, keeps the session's
 // messages queued in its inbox. None is handed over as a turn or delivered by the hook until the
 // session reads its inbox or the tag comes off. A tag under model: names the model the session runs, and a
-// session has at most one.
+// session has at most one. One is Murmur's alone: human, on a person's account (#267).
 package tags
 
 import (
@@ -18,6 +18,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/a-Fig/murmur/internal/brand"
 )
 
 const (
@@ -26,6 +28,11 @@ const (
 	// delivered when the session reads its inbox, or by whichever route applies once the tag comes
 	// off.
 	DoNotDisturb = "do-not-disturb"
+	// Human marks a person's account on the page (#242), at a device's address device/human, and
+	// nothing else: an agent at a glance can tell who it is talking to (#267). It is worked out from
+	// the address, never kept or read off the bus, so no session can take it and nobody can take it
+	// off. Clean refuses it, CleanRead and Effective drop it, and Person gives it.
+	Human = "human"
 	// ModelPrefix starts the tag naming the session's model. A session has at most one.
 	ModelPrefix = "model:"
 	// MaxLen caps a tag's length, and MaxPerSession how many a session has.
@@ -132,6 +139,25 @@ type State struct {
 	Picked  map[string]time.Time `json:"picked,omitempty"`
 }
 
+// dropHuman takes away a Human tag kept from before it was Murmur's alone (#267): it isn't shown, and
+// can't be removed by hand, so it would take a place under MaxPerSession for good.
+//
+// It copies what it changes: a caller's copy of a State shares its slice and maps with the one kept,
+// and a change that then fails mustn't have touched that.
+func (st *State) dropHuman() {
+	if slices.Contains(st.Self, Human) {
+		st.Self = slices.DeleteFunc(slices.Clone(st.Self), func(t string) bool { return t == Human })
+	}
+	if _, ok := st.Human[Human]; ok {
+		st.Human = maps.Clone(st.Human)
+		delete(st.Human, Human)
+	}
+	if _, ok := st.Cleared[Human]; ok {
+		st.Cleared = maps.Clone(st.Cleared)
+		delete(st.Cleared, Human)
+	}
+}
+
 // Empty says there is nothing to keep.
 func (st *State) Empty() bool {
 	return st == nil || len(st.Self) == 0 && len(st.Human) == 0 && len(st.Cleared) == 0 && len(st.Picked) == 0
@@ -216,7 +242,11 @@ func (st *State) pick(f, t string, at time.Time) {
 	st.Picked[f] = at
 }
 
-// Clean reads a list of tags as typed, each normalized. It fails on the first that isn't a tag.
+// Person is the tags of a person's account: human, worked out from the address.
+func Person() []Tag { return []Tag{{Name: Human, Src: SrcDerived}} }
+
+// Clean reads a list of tags as typed, each normalized. It fails on the first that isn't a tag, or
+// that is Murmur's to give (Human).
 func Clean(in []string) (names []string, err error) {
 	for _, raw := range in {
 		t := Normalize(raw)
@@ -225,6 +255,9 @@ func Clean(in []string) (names []string, err error) {
 		}
 		if !Valid(t) {
 			return nil, fmt.Errorf("%q isn't a tag: a tag is up to %d lowercase letters, digits and . _ : / -, starting with a letter or a digit", raw, MaxLen)
+		}
+		if t == Human {
+			return nil, fmt.Errorf("%s is %s's to give: it marks a person's account, and nobody sets or removes it", Human, brand.Product)
 		}
 		if !slices.Contains(names, t) {
 			names = append(names, t)
@@ -237,6 +270,7 @@ func Clean(in []string) (names []string, err error) {
 // its family (a second model: tag replaces the first). It fails, and changes nothing, if the
 // session would have more than MaxPerSession.
 func (st *State) SetSelf(add, remove []string) error {
+	st.dropHuman()
 	add, err := Clean(add)
 	if err != nil {
 		return err
@@ -271,6 +305,8 @@ func (st *State) SetSelf(add, remove []string) error {
 // by the human's latest choice about it (#251): a change older than that, by more than clockAllowance,
 // leaves the tag as it is. The session's own changes carry no time, and a human's beat them anyway.
 func (st *State) SetHuman(base []string, add, remove []string, by string, at time.Time) error {
+	st.dropHuman()
+	base = slices.DeleteFunc(slices.Clone(base), func(t string) bool { return t == Human })
 	add, err := Clean(add)
 	if err != nil {
 		return err
@@ -372,6 +408,7 @@ func Effective(self, derived []string, human map[string]Mark) []Tag {
 			delete(src, t)
 		}
 	}
+	delete(src, Human) // a session's, or a human's mark, kept from before it was Murmur's (see Human)
 	out := make([]Tag, 0, len(src))
 	for t, s := range src {
 		out = append(out, Tag{Name: t, Src: s})
@@ -397,11 +434,12 @@ func Sort(ts []Tag) {
 }
 
 // CleanRead holds tags read from the bus to what Murmur writes: valid names from a known source,
-// none repeated, at most MaxPerSession. Anyone who can push can write the bus.
+// none repeated, at most MaxPerSession, and never Human, which a reader works out from the address.
+// Anyone who can push can write the bus.
 func CleanRead(in []Tag) []Tag {
 	var out []Tag
 	for _, t := range in {
-		if !Valid(t.Name) || Has(out, t.Name) || len(out) >= MaxPerSession {
+		if !Valid(t.Name) || t.Name == Human || Has(out, t.Name) || len(out) >= MaxPerSession {
 			continue
 		}
 		switch t.Src {

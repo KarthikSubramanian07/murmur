@@ -168,7 +168,8 @@ func newFixtures(now time.Time) *fixtures {
 		},
 	}
 	// Another person has an account already, so the page's list of people has someone in it.
-	f.devices[1].Person = &web.Person{Name: "maya", Addr: "maya-mbp-91c0/human", LastActive: ago(40 * time.Second)}
+	f.devices[1].Person = &web.Person{Name: "maya", Addr: "maya-mbp-91c0/human", LastActive: ago(40 * time.Second),
+		Tags: tags.Person()}
 	// Every session has an address, device/session, as the daemon's do.
 	for di := range f.devices {
 		for si := range f.devices[di].Sessions {
@@ -205,6 +206,13 @@ func newFixtures(now time.Time) *fixtures {
 		"Claims are gone from proto.SessionView on my branch. Don't build on Claims.")
 	msg(4*time.Minute, "mellow-yak", "solar-wren", web.ToSession, "Receipts can say \"idle 12 min\"",
 		"If your wake-up check knows the idle time, receipts (#26) can carry it back to the sender. Want me to read it from the session, or will you hand it over?")
+	// A person's conversation with an agent, as another device's person had it.
+	f.messages = append(f.messages,
+		web.Message{ID: randomHex(6), From: "maya", FromAddr: "maya-mbp-91c0/human", FromPerson: true, To: "solar-wren",
+			ToKind: web.ToSession, Subject: "Can you look at the flaky wake-up test before you go?", At: ago(3 * time.Minute)},
+		web.Message{ID: randomHex(6), From: "solar-wren", To: "maya", ToAddr: "maya-mbp-91c0/human", ToPerson: true,
+			ToKind: web.ToSession, Subject: "Re: Can you look at the flaky wake-up test before you go?",
+			Body: "Yes. It's the 50 ms idle check racing the heartbeat; I'll send you the fix.", At: ago(2 * time.Minute)})
 	msg(90*time.Second, "solar-wren", "mellow-yak", web.ToSession, "Re: Receipts can say \"idle 12 min\"",
 		"I'll hand it over: the daemon will keep lastTurnEnded per session.")
 	f.mutes = []web.Mute{
@@ -317,7 +325,7 @@ func (f *fixtures) SetAccount(ctx context.Context, name string) (web.Account, er
 	f.account.Name, f.account.Addr, f.account.Suggested, f.account.Taken = name, f.self+"/human", "", ""
 	for i := range f.devices {
 		if f.devices[i].Self {
-			f.devices[i].Person = &web.Person{Name: name, Addr: f.account.Addr, LastActive: time.Now()}
+			f.devices[i].Person = &web.Person{Name: name, Addr: f.account.Addr, LastActive: time.Now(), Tags: tags.Person()}
 		}
 	}
 	return f.account, nil

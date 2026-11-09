@@ -155,6 +155,9 @@ func (p *Presence) Clean() {
 			s.Doing = OneLine(s.Doing, 120)
 			s.Committed = cleanBranches(s.Committed)
 			s.Tags = tags.CleanRead(s.Tags)
+			if s.ID == PersonSession {
+				s.Tags = tags.Person() // by the address, whatever the presence says (#267)
+			}
 			keep = append(keep, s)
 		}
 	}
