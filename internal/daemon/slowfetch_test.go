@@ -14,13 +14,15 @@ import (
 
 // stallFetches makes this clone's fetches of anything large stop partway for a few seconds, as on a
 // slow link: its upload-pack passes on the first reads, which hold a listing and a small fetch, then
-// waits. dd because it reads no further than it passes on, unlike head on some systems.
+// waits. dd because it reads no further than it passes on, unlike head on some systems, and a byte
+// at a time because with count, BSD dd holds short reads back until it has a block, so a listing
+// shorter than that would never reach git.
 func stallFetches(t *testing.T, gitDir string, stall string) {
 	t.Helper()
 	script := filepath.ToSlash(filepath.Join(t.TempDir(), "stall.sh"))
 	body := "#!/bin/sh\ngit upload-pack \"$1\" | {\n" +
-		"\treads=$(dd bs=8192 count=64 2>&1 >&3 | awk -F'[+ ]' '/records in/ { print $1 + $2 }')\n" +
-		"\tif [ \"$reads\" = 64 ]; then sleep " + stall + "; cat; fi\n" +
+		"\treads=$(dd bs=1 count=65536 2>&1 >&3 | awk -F'[+ ]' '/records in/ { print $1 + $2 }')\n" +
+		"\tif [ \"$reads\" = 65536 ]; then sleep " + stall + "; cat; fi\n" +
 		"} 3>&1\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
