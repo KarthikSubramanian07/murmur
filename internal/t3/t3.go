@@ -89,8 +89,10 @@ func Send(ctx context.Context, cli, home, thread, text string) error {
 	hideWindow(cmd)
 	if err := proc.StartWithin(cmd, startLimit, cancel); err != nil {
 		if errors.Is(err, proc.ErrStartHung) {
-			// Not ErrNotStarted: a start that came back after this gave up was killed, but may
-			// have handed the message over first.
+			// Not ErrNotStarted, so it isn't tried again: a start that comes back after this gave
+			// up is stopped, but may hand the message over first. The session may then have it
+			// twice, as the hook's notice and as a turn, which is better than every later handoff
+			// to it waiting behind this one for good.
 			return fmt.Errorf("t3 thread send: %w", err)
 		}
 		if parent.Err() != nil { // cancelled before it could start: nothing ran, and the caller's cancellation is still the reason

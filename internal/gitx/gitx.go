@@ -58,9 +58,32 @@ func RunIn(ctx context.Context, dir string, args ...string) (string, error) {
 // race detector, with twelve starting at once, never over 0.7 s (#217).
 const startLimit = 10 * time.Second
 
-// run runs git once more if its start hung (proc.ErrStartHung). That git never ran, or, started
-// late, was killed at once, which a read and the writing of an object (commit-tree) don't mind; a
-// push that may have landed is checked by its caller, as after any failed push.
+// lateSafe are the git commands whose start, if it hangs, is given up on, and the command tried
+// once more (#217). Run late, after the caller has moved on, each is harmless: it reads, writes an
+// object nothing names yet, or (fetch) brings the remote's refs as they are when it runs. Any other
+// command waits for its start, however long, as one run late could undo what came after it: a
+// push or an update-ref carries a value that would overwrite a newer one, and a presence pushed
+// late would bring back a device that had said goodbye.
+var lateSafe = map[string]bool{
+	"cat-file": true, "commit-tree": true, "fetch": true, "for-each-ref": true, "hash-object": true,
+	"log": true, "ls-remote": true, "merge-base": true, "mktree": true, "rev-list": true,
+	"rev-parse": true, "show-ref": true,
+}
+
+// subcommand is the git command args run, after git's own options (--git-dir=..., -c name=value).
+func subcommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "-c" || a == "-C":
+			i++
+		case strings.HasPrefix(a, "-"):
+		default:
+			return a
+		}
+	}
+	return ""
+}
+
 func run(ctx context.Context, dir, stdin string, env []string, args ...string) (string, error) {
 	out, err := runOnce(ctx, dir, stdin, env, args...)
 	if errors.Is(err, proc.ErrStartHung) && ctx.Err() == nil {
@@ -91,7 +114,11 @@ func runOnce(ctx context.Context, dir, stdin string, env []string, args ...strin
 	}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := proc.StartWithin(cmd, startLimit, cancel); err != nil {
+	start := cmd.Start
+	if lateSafe[subcommand(args)] {
+		start = func() error { return proc.StartWithin(cmd, startLimit, cancel) }
+	}
+	if err := start(); err != nil {
 		return "", &Error{Args: args, Err: err}
 	}
 	if err := cmd.Wait(); err != nil {
