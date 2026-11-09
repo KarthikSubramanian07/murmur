@@ -137,7 +137,7 @@ func TestPageAsksForRestart(t *testing.T) {
 }
 
 // A daemon restarting onto an update leaves the page's address and token to the next one, which
-// serves the page there, so the open tab reconnects (#240).
+// serves the page there, so the open tab reconnects (#240), if it has the page's socket (#255).
 func TestPageHandoff(t *testing.T) {
 	dir := t.TempDir()
 	if _, ok := takePageHandoff(dir); ok {
@@ -172,24 +172,85 @@ func TestPageHandoff(t *testing.T) {
 		t.Fatalf("stale handoff left behind: %v", err)
 	}
 
-	d := &Daemon{opt: Options{PageAddr: defaultPageAddr}, pagePrev: addr, log: log.New(io.Discard, "", 0)}
-	ln, err := d.listenPage()
+}
+
+func pageDaemon(tok string) *Daemon {
+	return &Daemon{opt: Options{PageAddr: defaultPageAddr}, pageTok: tok, log: log.New(io.Discard, "", 0)}
+}
+
+// The page's socket outlives its listener while the daemon holds it, so a restart can hand it on
+// with the port never free (#255).
+func TestPageSocketHeld(t *testing.T) {
+	ln, keep, err := pageDaemon("new").listenPage(nil, pageHandoff{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
-	if ln.Addr().String() != addr {
-		t.Fatalf("page on %s, want the old address %s", ln.Addr(), addr)
+	if keep == nil {
+		t.Fatal("no hold on the page's socket")
 	}
-	// With the old address taken, the page goes elsewhere rather than not at all, and with a new
-	// token: whatever took the port has been sent the old one.
-	d.pageTok = "tok"
-	ln2, err := d.listenPage()
+	addr := ln.Addr().String()
+	ln.Close() // as the page's server does when it stops
+	if other, err := net.Listen("tcp", addr); err == nil {
+		other.Close()
+		t.Fatalf("%s was free with the hold still open", addr)
+	}
+
+	// The next daemon, given the hold and the handoff, serves the page there with the old token.
+	d := pageDaemon("new")
+	ln2, keep2, err := d.listenPage(keep, pageHandoff{Web: addr, Token: "old"}, true)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if ln2.Addr().String() != addr || d.pageTok != "old" {
+		t.Fatalf("page on %s with token %q, want %s with the old token", ln2.Addr(), d.pageTok, addr)
 	}
 	ln2.Close()
-	if d.pageTok == "tok" || d.pageTok == "" {
-		t.Fatalf("the page moved and kept token %q", d.pageTok)
+	keep2.Close()
+	if other, err := net.Listen("tcp", addr); err != nil {
+		t.Fatalf("%s still bound with every hold closed: %v", addr, err)
+	} else {
+		other.Close()
+	}
+}
+
+// An inherited socket that doesn't match the handoff, or comes without one, isn't used, and the
+// page gets a new port and keeps the new token.
+func TestPageSocketNotUsedWithoutItsHandoff(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		h      pageHandoff
+		handed bool
+	}{
+		{"no handoff", pageHandoff{}, false},
+		{"another address", pageHandoff{Web: "127.0.0.1:1", Token: "old"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			f, err := raw.(*net.TCPListener).File()
+			raw.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr := raw.Addr().String()
+			d := pageDaemon("new")
+			ln, keep, err := d.listenPage(f, tc.h, tc.handed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer keep.Close()
+			defer ln.Close()
+			if ln.Addr().String() == addr || d.pageTok != "new" {
+				t.Fatalf("page on %s with token %q; want a new port and the new token", ln.Addr(), d.pageTok)
+			}
+			// The inherited socket was closed, not kept.
+			if other, err := net.Listen("tcp", addr); err != nil {
+				t.Fatalf("the unused inherited socket still holds %s: %v", addr, err)
+			} else {
+				other.Close()
+			}
+		})
 	}
 }

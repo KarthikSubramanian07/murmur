@@ -80,6 +80,9 @@ type Options struct {
 	// A host other than 127.0.0.1 is refused: off loopback anyone on the network could reach the
 	// page, and on another loopback address the page's Host check would refuse every request.
 	PageAddr string
+	// PageListener is the page's listening socket, inherited from a daemon that restarted onto an
+	// update (#255). Run takes it, and closes it if it doesn't serve the page on it.
+	PageListener *os.File
 	// PageOpen is how recently a page someone can see must have called its API to count as open,
 	// which keeps the daemon running like a session does: 2 min. A hidden tab's calls don't count.
 	PageOpen time.Duration
@@ -191,6 +194,15 @@ func (o *Options) defaults() {
 // ErrUpdated means a verified binary is installed and Run released the clone lock; the caller can restart it.
 var ErrUpdated = errors.New("daemon binary updated")
 
+// Updated is the ErrUpdated Run returns when it served the page: Page holds the page's listening
+// socket open, for the new daemon to inherit, and the caller closes it once that has started. The
+// port stays bound from one daemon to the next, so nothing else can take it in between and be sent
+// what an open tab sends there (#255).
+type Updated struct{ Page *os.File }
+
+func (*Updated) Error() string { return ErrUpdated.Error() }
+func (*Updated) Unwrap() error { return ErrUpdated }
+
 // ErrRunning means another daemon already holds this clone's lock.
 var ErrRunning = errors.New("a daemon is already running for this clone")
 
@@ -255,11 +267,8 @@ type Daemon struct {
 	owner   string
 	token   string // the sessions' secret, in daemon.json
 	pageTok string // the page's secret (#42): the address carries it, so it opens the page, not the sessions' port
-	// pagePrev is the address the daemon this one replaced served the page on, when it restarted
-	// onto an update: this one serves the page there, with its token, so an open tab carries on.
-	pagePrev string
-	started  time.Time
-	log      *log.Logger
+	started time.Time
+	log     *log.Logger
 
 	mu         sync.Mutex
 	sessions   map[string]*session
@@ -556,6 +565,13 @@ type t3Route struct {
 // Run runs a daemon until ctx is done, it is told to stop, or it has been idle too long.
 func Run(ctx context.Context, opt Options) error {
 	opt.defaults()
+	inherited := opt.PageListener
+	opt.PageListener = nil
+	defer func() {
+		if inherited != nil {
+			inherited.Close()
+		}
+	}()
 	dir := filepath.Join(opt.GitDir, brand.StateDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -594,19 +610,24 @@ func Run(ctx context.Context, opt Options) error {
 		return err
 	}
 	defer ln.Close()
-	// A daemon that restarted onto an update left the page's address and token for this one. Only
-	// a daemon free to choose its page's port takes them.
-	if h, ok := takePageHandoff(dir); ok && d.opt.PageAddr == defaultPageAddr {
-		d.pageTok, d.pagePrev = h.Token, h.Web
-	}
+	// A daemon that restarted onto an update handed this one the page's socket, and left the page's
+	// address and token beside it. The handoff is taken whether or not it is used: one left lying
+	// about would be no good to a later daemon, which has no socket to go with it.
+	h, handed := takePageHandoff(dir)
 	// A page that can't be served costs the page, not the daemon: sessions don't need it.
-	pageLn, err := d.listenPage()
+	pageLn, keep, err := d.listenPage(inherited, h, handed)
+	inherited = nil
 	if err != nil {
 		d.log.Printf("the page for humans isn't served: %v", err)
 	}
 	if pageLn != nil {
 		defer pageLn.Close()
 	}
+	defer func() {
+		if keep != nil {
+			keep.Close()
+		}
+	}()
 	infoPath := filepath.Join(dir, "daemon.json")
 	info := proto.Info{Addr: ln.Addr().String(), Token: d.token, PID: os.Getpid(), Device: d.device}
 	if pageLn != nil {
@@ -695,10 +716,16 @@ func Run(ctx context.Context, opt Options) error {
 	updated := d.updating
 	d.mu.Unlock()
 	if updated {
-		if info.Web != "" {
+		// The page's server has stopped, but keep still holds its socket, which the next daemon
+		// inherits: a tab's requests wait in the socket's queue until that daemon answers them.
+		if keep != nil {
 			if err := writeJSON(filepath.Join(dir, pageHandoffFile), pageHandoff{Web: info.Web, Token: info.PageToken}); err != nil {
 				d.log.Printf("the page won't carry over the restart: %v", err)
+				return ErrUpdated
 			}
+			page := keep
+			keep = nil
+			return &Updated{Page: page}
 		}
 		return ErrUpdated
 	}
@@ -706,7 +733,8 @@ func Run(ctx context.Context, opt Options) error {
 }
 
 // pageHandoffFile is where a daemon restarting onto an update leaves the page's address and token
-// for the daemon that replaces it, so a tab open on the page reconnects to the new one (#240).
+// for the daemon that replaces it, so a tab open on the page reconnects to the new one (#240). The
+// new daemon takes them only with the page's socket, inherited (#255).
 const pageHandoffFile = "page.json"
 
 // pageHandoffAge is how old a handoff may be and still be taken up: a restart takes seconds.

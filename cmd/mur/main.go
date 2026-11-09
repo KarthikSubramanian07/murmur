@@ -25,6 +25,7 @@ import (
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/mcpserver"
+	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/publicrepo"
 	"github.com/a-Fig/murmur/internal/setup"
 	"github.com/a-Fig/murmur/internal/update"
@@ -119,7 +120,16 @@ func runDaemon(ctx context.Context, args []string) error {
 	return runDaemonWith(ctx, args, daemon.Run, client.StartDaemon)
 }
 
-func runDaemonWith(ctx context.Context, args []string, run func(context.Context, daemon.Options) error, start func(string, string, ...string) error) error {
+func runDaemonWith(ctx context.Context, args []string, run func(context.Context, daemon.Options) error, start func(exe, gitDir string, page *os.File, flags ...string) error) error {
+	// A daemon that restarted onto an update may have handed this one the page's socket (#255).
+	// It is taken first, so that it is closed however this returns, and no child of this process
+	// is told of it.
+	page := proc.Inherited(brand.PageListenerEnv, "page")
+	defer func() {
+		if page != nil {
+			page.Close()
+		}
+	}()
 	// The updater has to know the binary this process came from. It starts only after the daemon's
 	// first sync, and a reinstall in that time must not pass for this binary, so this comes first.
 	exe, exeErr := os.Executable()
@@ -169,7 +179,9 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	releases := newReleaseWatch(version, *gitDir)
-	err := run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
+	inherited := page
+	page = nil // Run takes it
+	err := run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle, PageListener: inherited,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
 			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report}, restart)
@@ -179,10 +191,16 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 			publicrepo.Run(ctx, publicrepo.Options{Version: version, GitDir: *gitDir, Log: logger})
 		}})
 	if errors.Is(err, daemon.ErrUpdated) {
+		// The page's socket, held open by Run, is closed here once the new daemon has its own
+		// hold on it, or has failed to start.
+		var up *daemon.Updated
+		if errors.As(err, &up) {
+			page = up.Page
+		}
 		if exeErr != nil {
 			return exeErr
 		}
-		return start(exe, *gitDir, restartFlags...)
+		return start(exe, *gitDir, page, restartFlags...)
 	}
 	if errors.Is(err, daemon.ErrRunning) {
 		return nil // another client started one first; that one serves

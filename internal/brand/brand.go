@@ -54,4 +54,8 @@ const (
 	// SessionsDirEnv, if set, is where MCP servers publish their records and find moves, in place
 	// of the user's config directory (internal/here). Tests set it.
 	SessionsDirEnv = "MURMUR_SESSIONS_DIR"
+
+	// PageListenerEnv names, to a daemon started by one restarting onto an update, the descriptor
+	// (a handle on Windows) of the page's listening socket it inherited (#255).
+	PageListenerEnv = "MURMUR_PAGE_LISTENER"
 )
