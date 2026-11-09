@@ -316,8 +316,24 @@ func TestLostKeysTakeANewDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.start()
-	if second := a.self(); second == first {
+	second := a.self()
+	if second == first {
 		t.Fatalf("still %s with new keys", first)
+	}
+	// With state.json gone too, the clone's copy of its own sealed presence tells the same.
+	eventually(t, "a's copy of its own presence", func() bool {
+		_, sealed := sealedCopy(filepath.Dir(a.gitDir), second)
+		return sealed
+	})
+	a.stop()
+	for _, f := range []string{"keys", "state.json"} {
+		if err := os.Remove(filepath.Join(stateDir, f)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a.start()
+	if third := a.self(); third == second || third == first {
+		t.Fatalf("kept an old ID with new keys: %s", third)
 	}
 	var st struct {
 		Pins map[string]json.RawMessage `json:"pins"`
@@ -337,4 +353,12 @@ func gitOK(dir string, args ...string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// sealedCopy reads the clone's local copy of dev's presence, and says whether it is sealed by dev.
+func sealedCopy(work, dev string) (string, bool) {
+	ref := "refs/murmur/presence/" + dev
+	msg := gitOK(work, "log", "-1", "--format=%B", ref, "--")
+	st, seal := bus.OpenSeal(msg, ref)
+	return msg, st == bus.Sealed && seal.By == dev
 }

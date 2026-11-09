@@ -335,7 +335,8 @@ func TestHistoryIsNotReplayed(t *testing.T) {
 	a := newDevice(t, remote)
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "sent before b existed"})
 	b := newDevice(t, remote)
-	eventually(t, "b's first sync", func() bool { return len(b.do(proto.Request{Op: proto.OpWho}).Devices) == 2 })
+	// a encrypts for the devices it has seen, so it must have seen b's presence too.
+	eventually(t, "each sees the other", func() bool { return b.seesDevices(2) && a.seesDevices(2) })
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "sent after"})
 	var got []proto.MessageView
 	eventually(t, "the new message", func() bool {

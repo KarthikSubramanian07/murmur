@@ -710,7 +710,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
 		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
 	}
-	device, signKey, boxKey, err := loadIdentity(dir, opt.Log)
+	device, signKey, boxKey, err := loadIdentity(dir, opt.Log, sealedLocally(ctx, gitx.Git{Dir: opt.GitDir}))
 	if err != nil {
 		return nil, err
 	}

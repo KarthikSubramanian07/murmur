@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"encoding/hex"
@@ -14,7 +15,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/gitx"
 )
 
 // The bus is encrypted (#156): every record with content goes out encrypted for the team's devices,
@@ -43,10 +46,12 @@ type keyFile struct {
 // only the device file, still finds its ID.
 //
 // A device that has published keys is known to its teammates by them, and they refuse any other
-// under its ID. So a device whose keys are lost, while its state shows it had them, takes a new ID
-// with new keys: to its teammates it is a new device, rather than one whose presence they refuse.
-// A device that never had keys, a daemon from before encryption, keeps its ID.
-func loadIdentity(dir string, lg *log.Logger) (string, ed25519.PrivateKey, *ecdh.PrivateKey, error) {
+// under its ID. So a device whose keys are lost takes a new ID with new keys: to its teammates it is
+// a new device, rather than one whose presence they refuse. It had keys if its state pinned them,
+// or, should state.json be gone too, if the clone's copy of its own presence is sealed (sealed, as
+// git reads it from that copy). A device that never had keys, a daemon from before encryption,
+// keeps its ID.
+func loadIdentity(dir string, lg *log.Logger, sealed func(device string) bool) (string, ed25519.PrivateKey, *ecdh.PrivateKey, error) {
 	device, err := loadDevice(dir)
 	if err != nil {
 		return "", nil, nil, err
@@ -63,7 +68,7 @@ func loadIdentity(dir string, lg *log.Logger) (string, ed25519.PrivateKey, *ecdh
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", nil, nil, err
 	}
-	if hadKeys(filepath.Join(dir, "state.json"), device) {
+	if hadKeys(filepath.Join(dir, "state.json"), device) || sealed != nil && sealed(device) {
 		if err := os.Remove(filepath.Join(dir, "device")); err != nil {
 			return "", nil, nil, err
 		}
@@ -126,6 +131,20 @@ func hadKeys(path, device string) bool {
 		Pins map[string]*keyPin `json:"pins"`
 	}
 	return json.Unmarshal(b, &st) == nil && st.Pins[device] != nil
+}
+
+// sealedLocally says whether the clone's local copy of device's presence ref is sealed by device:
+// it published keys. A ref that isn't there, or can't be read, says no.
+func sealedLocally(ctx context.Context, g gitx.Git) func(string) bool {
+	return func(device string) bool {
+		ref := brand.PresencePrefix + device
+		out, err := g.Run(ctx, "", "log", "-1", "--no-show-signature", "--no-color", "--format=%B", ref, "--")
+		if err != nil {
+			return false
+		}
+		st, seal := bus.OpenSeal(out, ref)
+		return st == bus.Sealed && seal.By == device
+	}
 }
 
 // pinSelfLocked records this device's own keys among the pins, which is what tells a later start

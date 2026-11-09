@@ -150,7 +150,11 @@ setting someone turned on with `mur encrypt`, and that command was the friction.
   under its ID (see key loss), so a mismatch means a forgery or a copied `.git`. Pinning can't stop
   someone with push access who seals a presence for a device before a new reader has seen the
   device's own. That reader then refuses the real device. The attack takes push access, and the
-  trust model already trusts push access with code.
+  trust model already trusts push access with code. Nor does a seal stop someone with push access
+  pushing one of the device's older presences again (#159 checked for that; this doesn't). That
+  shows stale sessions until the device's next heartbeat, at most 2 minutes, and changes no key.
+  A device whose binary is rolled back to one from before encryption writes unsealed presence,
+  which its teammates refuse once they have pinned it, until the updater brings it forward again.
 - **Records.** Each record is encrypted once, with a fresh content key, and that key is wrapped for
   each recipient device the way age does it: an ephemeral X25519 key, HKDF-SHA256, AES-256-GCM, all
   from Go's standard library (`internal/bus/box.go`). An event is written as
@@ -165,7 +169,9 @@ setting someone turned on with `mur encrypt`, and that command was the friction.
   show every message as they did. Teammates could read everything before, and the threat is
   outsiders. When the set of fresh devices with keys changes, the daemon pushes its presence again,
   so a device that appears or comes back can read its teammates' presence within a poll or two.
-  Until then those teammates show with no sessions.
+  Until then those teammates show with no sessions. Likewise, what a device writes before it has
+  read a newcomer's presence isn't for the newcomer. Before encryption, a new device read
+  everything written after its first sync.
 - **Fails closed.** A daemon with this change never writes content in the clear. A message to a
   device with no key is refused, and the sender is told that device runs an older Murmur.
 - **Older daemons.** A daemon from before this passes over `box` events, as it does any type it
@@ -184,7 +190,9 @@ setting someone turned on with `mur encrypt`, and that command was the friction.
 - **Key loss.** A deleted clone comes back as a new device. If only the keys file is gone and
   `state.json` shows the device had keys, the daemon takes a new device ID, because its teammates
   would refuse a new key under the old one. The old ID's presence goes stale, and its names stay
-  taken.
+  taken. With `state.json` gone too, the clone's local copy of its own presence ref still shows a
+  seal, which tells the daemon it had keys. Only a daemon meeting encryption for the first time has
+  neither, and keeps its ID.
 - **The name registry stays in the clear, and unsealed.** It holds random names, device IDs and
   random session IDs. A device that joins later must read all of it, history included, so that a
   name is never given out twice, and it couldn't read records encrypted before it joined.

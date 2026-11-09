@@ -302,7 +302,7 @@ func TestPollFollowsTheConversation(t *testing.T) {
 
 	// This device sends.
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: d.device + "/bbbbbb", At: time.Now().UTC(),
-		To: "peer-0001/aaaaaa", Subject: "reply"}
+		To: "*", Subject: "reply"} // the peer writes in the clear, so it can't be sent to alone
 	if err := d.appendEvent(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +320,7 @@ func TestPollQuietStaysQuiet(t *testing.T) {
 	d.mu.Unlock()
 	time.Sleep(1200 * time.Millisecond) // the poll that was waiting for Poll
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: d.device + "/" + proto.CLISession,
-		At: time.Now().UTC(), To: "peer-0001/aaaaaa", Subject: "from the CLI"}
+		At: time.Now().UTC(), To: "*", Subject: "from the CLI"}
 	if err := d.appendEvent(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
