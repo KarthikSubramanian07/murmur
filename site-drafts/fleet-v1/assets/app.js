@@ -2481,8 +2481,12 @@ function fleetPage() {
   const count = (st) => searched.filter((r) => sessionState(r.d, r.s) === st).length;
   const devs = new Set(all.map((r) => r.d.id));
   const n = allNeeds.size;
+  // Filtered, the need count says how many of them are shown, so it agrees with the "Needs a
+  // look" group under it.
+  const shownNeeds = needs.size;
+  const needNote = !n ? "" : shownNeeds === n ? " · " + n + (n === 1 ? " needs" : " need") + " a look" : " · " + (shownNeeds ? shownNeeds + " of the " : "none of the ") + n + (n === 1 ? " that needs" : " that need") + " a look";
   const sub = (q || F.state) && all.length
-    ? ["Showing " + rows.length + " of " + plural(all.length, "session") + (n ? " · " + n + (n === 1 ? " needs" : " need") + " a look" : "") + " ", h("button", { class: "fx-clear", onclick: () => { F.q = ""; F.state = ""; render(); } }, "Clear")]
+    ? ["Showing " + rows.length + " of " + plural(all.length, "session") + needNote + " ", h("button", { class: "fx-clear", onclick: () => { F.q = ""; F.state = ""; render(); } }, "Clear")]
     : plural(all.length, "session") + " on " + plural(devs.size, "device") + " · " + (n ? n + (n === 1 ? " needs" : " need") + " a look" : "nothing needs a look");
 
   // Where the rail can't sit beside the table and leave it readable (see STACKED), the selected
@@ -2787,12 +2791,14 @@ function fleetInspector(name, need) {
   const t = when(s.lastActive);
   const started = when(s.started);
   const seenAt = when(d.lastSeen);
+  const agentParts = [s.agent, modelOf(s)].filter(Boolean);
   const meta = [
     ["State", [fxDot(state), FX_STATE[state]]],
     ["Working on", s.doing || h("span", { class: "fx-faint" }, "No status set")],
     d.owner && ["Person", d.owner],
     ["Device", deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? ", last seen " + ago(seenAt) : ""))],
-    ["Agent", [s.agent, modelOf(s)].filter(Boolean).join(" · ") || "–"],
+    // Each part keeps together, so a narrow rail breaks the line at the "·", not inside a model name.
+    ["Agent", agentParts.length ? agentParts.flatMap((x, i) => [i ? " · " : null, h("span", { class: "fx-nowrap" }, x)]) : "–"],
     ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && (pr.url ? h("a", { class: "fx-pr" + (pr.draft ? " draft" : ""), href: pr.url, target: "_blank", rel: "noreferrer" }, "#" + pr.number) : h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number))] : "–"],
     groupOf(s) && ["Job", groupOf(s)],
     ["Running for", started ? runningFor(s) + ", since " + sinceWhen(started) : "–"],
