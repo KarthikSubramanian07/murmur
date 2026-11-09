@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +37,17 @@ func TestReleaseWatch(t *testing.T) {
 	w.report(update.Status{Latest: "0.3.1", Installed: true})
 	if v := w.page(); v.Latest != "0.3.1" {
 		t.Errorf("installed 0.3.1, page told of %s", v.Latest)
+	}
+
+	// A prerelease, seen on the prerelease channel, is pinned in the install line; a stable one isn't.
+	pre := newReleaseWatch("0.3.0", t.TempDir())
+	pre.report(update.Status{Latest: "0.3.1-nightly.20261109"})
+	if v := pre.page(); v.Latest != "0.3.1-nightly.20261109" || !strings.Contains(v.Install, "MURMUR_VERSION") || !strings.Contains(v.Install, "v0.3.1-nightly.20261109") {
+		t.Errorf("prerelease: %+v", v)
+	}
+	pre.report(update.Status{Latest: "0.3.1"})
+	if v := pre.page(); strings.Contains(v.Install, "MURMUR_VERSION") {
+		t.Errorf("stable release pinned: %+v", v)
 	}
 
 	// A build from source says nothing of releases.
