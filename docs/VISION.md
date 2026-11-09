@@ -424,8 +424,8 @@ call.
   it never read what was sent while it was away for more than 10 minutes, except what is kept for a
   stopped session's inbox (above).
 - **How it's laid out** (#179, 2026-11-08), after Discord and Slack: sessions down the left under
-  their devices, then a column of conversations (direct messages and group chats apart), then the
-  open conversation. A conversation is two sessions' messages to each other, a device's, or
+  their devices, then a column of conversations (direct messages and group chats in one list, newest
+  first, narrowed to either with a switch), then the open conversation. A conversation is two sessions' messages to each other, a device's, or
   everyone's: the bus has no threads. Each face carries a dot: green active in the last five
   minutes, yellow idle, red do not disturb (the `do-not-disturb` tag from #211, or wake-ups set to
   Never), grey when its device is unreachable. A settled session (#189) is absent from presence but

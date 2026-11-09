@@ -1378,12 +1378,14 @@ function conversationList(list) {
   const f = name && findSession(name);
   const q = (ui.cq || "").toLowerCase();
   const hit = (c) => !q || (otherIn(c) || c.title).toLowerCase().includes(q) || c.messages.some((m) => (m.subject + " " + (m.body || "")).toLowerCase().includes(q));
+  // One list, newest first, so a busy group chat is never below every quiet DM. The switch
+  // narrows it to direct messages or group chats.
+  const kind = ui.convKind || "all";
+  const wanted = (c) => kind === "all" || (kind === "dm") === (c.kind === "dm");
   const old = (c) => c.kind === "dm" && c.pair.some((n) => isSettled(n));
-  const dms = list.filter((c) => c.kind === "dm" && hit(c) && (q || name || !old(c)));
-  const older = q || name ? [] : list.filter((c) => old(c));
-  const groups = list.filter((c) => c.kind !== "dm" && hit(c));
-  const section = (title, rows) =>
-    rows.length > 0 && [h("div", { class: "g-sec" }, h("span", null, title), h("span", { class: "g-sec-n" }, rows.length)), rows.map(conversationRow)];
+  const rows = list.filter((c) => wanted(c) && hit(c) && (q || name || !old(c)));
+  const older = q || name || kind === "group" ? [] : list.filter((c) => old(c));
+  const count = (k) => list.filter((c) => (k === "all" || (k === "dm") === (c.kind === "dm")) && hit(c) && (q || name || !old(c))).length;
   return h(
     "nav",
     { class: "chat-list g-list", "aria-label": "Conversations", onscroll: (e) => (ui.chatListTop = e.target.scrollTop) },
@@ -1414,7 +1416,31 @@ function conversationList(list) {
         },
       }),
     ),
-    section("Direct messages", dms),
+    h(
+      "div",
+      { class: "g-tabs g-kinds", role: "tablist", "aria-label": "Which conversations" },
+      [
+        ["all", "All"],
+        ["dm", "Direct"],
+        ["group", "Group"],
+      ].map(([id, label]) =>
+        h(
+          "button",
+          {
+            role: "tab",
+            "aria-selected": kind === id ? "true" : "false",
+            "data-key": "kind-" + id,
+            onclick: () => {
+              ui.convKind = id;
+              render();
+            },
+          },
+          label,
+          h("span", { class: "g-tab-n" }, count(id)),
+        ),
+      ),
+    ),
+    rows.map(conversationRow),
     older.length > 0 &&
       h(
         "button",
@@ -1431,8 +1457,7 @@ function conversationList(list) {
         h("span", { class: "g-sec-n" }, older.length),
       ),
     ui.showOlder && older.map(conversationRow),
-    section("Group chats", groups),
-    !dms.length && !groups.length && (q || !older.length) && h("p", { class: "g-none" }, q ? "Nothing matches." : "No conversations"),
+    !rows.length && (q || !older.length) && h("p", { class: "g-none" }, q ? "Nothing matches." : kind === "dm" ? "No direct messages" : kind === "group" ? "No group chats" : "No conversations"),
   );
 }
 

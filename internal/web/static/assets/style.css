@@ -3235,3 +3235,13 @@ code {
 .dark .g-head .session-tags .btn-xs:hover {
   color: #f0f1f3;
 }
+
+/* All, Direct or Group, over the one conversation list. */
+.dark .g-kinds {
+  display: flex;
+  margin: 0 0.25rem 0.5rem;
+}
+.dark .g-kinds button {
+  flex: 1;
+  justify-content: center;
+}
