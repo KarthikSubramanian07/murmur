@@ -35,6 +35,12 @@ func Init(ctx context.Context, dir string) ([]string, error) {
 	var changed []string
 	for _, s := range steps {
 		path := filepath.Join(top, filepath.FromSlash(s.name))
+		if err := inTree(top, path, s.name); err != nil {
+			if s.optional {
+				continue // as Push passes over a config file it can't follow
+			}
+			return changed, err
+		}
 		b, err := os.ReadFile(path)
 		exists := err == nil
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -57,6 +63,36 @@ func Init(ctx context.Context, dir string) ([]string, error) {
 		}
 	}
 	return changed, nil
+}
+
+// inTree refuses a path that leads out of the working tree at top through a symbolic link, as Push
+// refuses one in its commit: the link is the repo's, a commit can point it anywhere (a shell's
+// startup file, a JSON file init would rewrite or delete), and init edits only the repo. A link
+// into .git is refused too, and so is a link to nothing, which a write would create wherever it
+// points. Name is the path as the user knows it.
+func inTree(top, path, name string) error {
+	real, err := filepath.EvalSymlinks(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if fi, lerr := os.Lstat(path); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+			target, _ := os.Readlink(path)
+			return fmt.Errorf("%s is a symbolic link to %s, which isn't there, so init leaves it alone", name, target)
+		}
+		return nil // nothing there; init creates only AGENTS.md and CLAUDE.md, at the top
+	}
+	if err != nil {
+		return err
+	}
+	if t, err := filepath.EvalSymlinks(top); err == nil {
+		top = t
+	}
+	rel, err := filepath.Rel(top, real)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("%s leads to %s, outside the repo, through a symbolic link, so init leaves it alone", name, real)
+	}
+	if first, _, _ := strings.Cut(filepath.ToSlash(rel), "/"); first == ".git" {
+		return fmt.Errorf("%s leads to %s, inside .git, through a symbolic link, so init leaves it alone", name, real)
+	}
+	return nil
 }
 
 // writeOut makes a step's change to the file at path. A file it removes takes its directory with it
