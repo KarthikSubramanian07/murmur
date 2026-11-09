@@ -1253,7 +1253,19 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return d.push(ctx, sha, d.presenceRef(), bus.Force, "")
+	ref := d.presenceRef()
+	if err := d.push(ctx, sha, ref, bus.Force, ""); err != nil {
+		return err
+	}
+	// Recorded as the device's other pushes are, so the next poll doesn't fetch it back:
+	// updatePeer skips this device's own presence, so the fetch would read nothing.
+	if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
+		d.log.Printf("updating local %s: %v", ref, err)
+	}
+	d.mu.Lock()
+	d.known[ref] = sha
+	d.mu.Unlock()
+	return nil
 }
 
 // liveNamesLocked is the names of the sessions that are connected, as opposed to waiting out their
