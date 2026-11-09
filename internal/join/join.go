@@ -267,13 +267,18 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	if err != nil {
 		problem("hook", err)
 	}
+	// A daemon asked to stop holds the clone's lock until it has finished its work and said goodbye,
+	// which may take client.StopWait, and so may one still starting, which sees the consent gone
+	// within a second and stops the same way. The lock is waited for that long from when the stop
+	// was asked, so a daemon only taking its time isn't reported as a problem (#91).
+	end := time.Now().Add(leaveWait)
 	stopped, stopErr := client.Stop(ctx, p.GitDir)
 	if stopErr != nil {
 		problem("stopping the daemon", stopErr)
 	}
 	// A daemon that is still starting has no daemon.json to stop; it sees the consent gone and exits
 	// by itself, which is waited for here so a leave doesn't return while one is about to publish.
-	starting, err := client.WaitGone(ctx, p.GitDir, 20*time.Second)
+	starting, err := client.WaitGone(ctx, p.GitDir, time.Until(end))
 	if err != nil {
 		problem("waiting for the daemon to exit", fmt.Errorf("%w; it has no consent left and refuses requests, and stops by itself", err))
 	}
@@ -297,6 +302,10 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 	return r, nil
 }
+
+// leaveWait is how long a leave waits for the daemon to let go of the clone. A variable, for the
+// tests.
+var leaveWait = client.StopWait
 
 // othersAdvice is what to tell about the agents other than Claude Code and Codex that Murmur was
 // just added to, by what each was seen to do (2026-11-01): OpenCode watches its config, Muse and Pi
