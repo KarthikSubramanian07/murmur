@@ -68,6 +68,9 @@ type Options struct {
 	// handed the message over, so it is not repeated, and a second failure of this kind too leaves
 	// the message to the hook's notice.
 	PushRetry time.Duration
+	// ContinueHold is how long a Stop's continuation of a turn counts as at work outside T3 before
+	// another hook of the session shows the turn went on: 2 min (see continueTurnLocked).
+	ContinueHold time.Duration
 	// PageAddr is where the page for humans is served: 127.0.0.1:0, a random port on loopback.
 	// A host other than 127.0.0.1 is refused: off loopback anyone on the network could reach the
 	// page, and on another loopback address the page's Host check would refuse every request.
@@ -140,6 +143,9 @@ func (o *Options) defaults() {
 	}
 	if o.PushRetry == 0 {
 		o.PushRetry = 2 * time.Second
+	}
+	if o.ContinueHold == 0 {
+		o.ContinueHold = 2 * time.Minute
 	}
 	if o.PageAddr == "" {
 		o.PageAddr = "127.0.0.1:0"

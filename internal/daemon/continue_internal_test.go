@@ -10,10 +10,10 @@ import (
 )
 
 // A Stop's continuation that no other hook shows went on stops counting as at work after
-// continueHold, outside T3: its answer may have been lost, and the agent stopped. A hook of the
+// ContinueHold, outside T3: its answer may have been lost, and the agent stopped. A hook of the
 // session's in that time confirms it.
 func TestALostContinuationLapses(t *testing.T) {
-	d := &Daemon{dir: t.TempDir(), log: log.New(io.Discard, "", 0), device: "here-0001", started: time.Now(),
+	d := &Daemon{opt: Options{ContinueHold: time.Minute}, dir: t.TempDir(), log: log.New(io.Discard, "", 0), device: "here-0001", started: time.Now(),
 		sessions: map[string]*session{}, threadRead: map[threadKey]time.Time{},
 		st: state{Inbox: map[string][]*inMsg{}}}
 	d.mu.Lock()
@@ -25,7 +25,7 @@ func TestALostContinuationLapses(t *testing.T) {
 	if !d.hookBusyLocked(s.id) {
 		t.Fatal("not at work just after a continuation")
 	}
-	s.turnStart, s.continuedAt = now.Add(-time.Hour), now.Add(-continueHold)
+	s.turnStart, s.continuedAt = now.Add(-time.Hour), now.Add(-d.opt.ContinueHold)
 	if d.hookBusyLocked(s.id) {
 		t.Fatal("still at work after continueHold with no hook since")
 	}

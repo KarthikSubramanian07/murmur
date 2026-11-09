@@ -74,13 +74,23 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 	// them once, before waiting for anything.
 	d.kickPush()
 	for {
+		// A continuation that lapses (see continueTurnLocked) is woken for too: nothing else may
+		// come to end its turn.
+		var lapse <-chan time.Time
+		d.mu.Lock()
+		if at := d.nextLapseLocked(); !at.IsZero() {
+			lapse = time.After(time.Until(at))
+		}
+		d.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return
 		case <-d.pushKick:
+		case <-lapse:
 		}
 		wake := d.wakeSnapshot()
 		d.mu.Lock()
+		d.endLapsedTurnsLocked(wake)
 		for _, id := range sortedKeys(d.st.Inbox) {
 			if d.updating || d.pushing[id] || ctx.Err() != nil {
 				continue
@@ -366,16 +376,41 @@ func (d *Daemon) continueTurnLocked(s *session, wake pageSettings) []*inMsg {
 // messages.
 const stopBlockCap = 8
 
-// continueHold is how long a continuation counts as at work outside T3 before any other hook of
-// the session shows the turn went on. The Stop hook's answer can be lost (it gave up waiting just
-// before it came): the agent then stopped, and with nothing else to end the turn outside T3 its
-// messages would wait for the user's next prompt. In T3 the database ends such a turn.
-const continueHold = 2 * time.Minute
-
 // continuationLapsedLocked says session s's last continuation was never seen to go on, and it no
-// longer counts as at work for it (continueHold). Caller holds mu.
+// longer counts as at work for it: no other hook of the session came within ContinueHold. The Stop
+// hook's answer can be lost (it gave up waiting just before it came): the agent then stopped, and
+// outside T3 nothing else would end the turn, so its messages would wait for the user's next
+// prompt. In T3 the database ends such a turn. Caller holds mu.
 func (d *Daemon) continuationLapsedLocked(s *session) bool {
-	return !s.continuedAt.IsZero() && time.Since(s.continuedAt) >= continueHold
+	return !s.continuedAt.IsZero() && time.Since(s.continuedAt) >= d.opt.ContinueHold
+}
+
+// nextLapseLocked is when the first continuation now pending lapses, zero if none is. Caller holds
+// mu.
+func (d *Daemon) nextLapseLocked() time.Time {
+	var next time.Time
+	for _, s := range d.sessions {
+		if at := s.continuedAt.Add(d.opt.ContinueHold); !s.continuedAt.IsZero() && (next.IsZero() || at.Before(next)) {
+			next = at
+		}
+	}
+	return next
+}
+
+// endLapsedTurnsLocked ends the turn of each session whose continuation lapsed outside T3, as Stop
+// would have: what came in the meantime is held, and goes in as a turn by the session's socket.
+// In T3 the database decides, as a continued turn can run longer than ContinueHold without a tool
+// call. Caller holds mu.
+func (d *Daemon) endLapsedTurnsLocked(wake pageSettings) {
+	for _, s := range d.sessions {
+		if !d.continuationLapsedLocked(s) {
+			continue
+		}
+		s.continuedAt = time.Time{}
+		if _, inT3 := d.threadStateLocked(s.id); !inT3 {
+			d.endTurnLocked(s, wake)
+		}
+	}
 }
 
 // noWay says why a message can't be handed over by a route, without anything of it that is secret.
