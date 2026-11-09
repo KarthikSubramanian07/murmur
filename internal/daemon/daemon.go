@@ -499,7 +499,11 @@ type state struct {
 	// Junked holds the logs that were junk when this device first looked, with nothing read from
 	// them yet, and when that look was: what was sent before it is history, not to be queued.
 	Junked map[string]time.Time `json:"junked,omitempty"`
-	Inbox  map[string][]*inMsg  `json:"inbox"` // session → unread messages
+	// TagsFrom holds the logs whose backlog was given up on before it could be fetched, each with
+	// the last SHA read from it, or "" for none. Processed has moved past their messages, which are
+	// history by then, but tags don't expire, so the tags events from here on are still to be read.
+	TagsFrom map[string]string   `json:"tagsFrom,omitempty"`
+	Inbox    map[string][]*inMsg `json:"inbox"` // session → unread messages
 	// Stopped holds the sessions that stopped, and when. Their inboxes are kept for StoppedInbox,
 	// in case the session comes back; they are the only inboxes kept for sessions not running.
 	Stopped map[string]time.Time `json:"stopped,omitempty"`
@@ -971,7 +975,7 @@ func (d *Daemon) statePath() string { return filepath.Join(d.dir, "state.json") 
 
 func (d *Daemon) loadState() error {
 	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},
-		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
+		TagsFrom: map[string]string{}, Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
 		Tags: map[string]*tags.State{}, People: map[string]string{}}
@@ -991,6 +995,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Junked == nil {
 		d.st.Junked = map[string]time.Time{}
+	}
+	if d.st.TagsFrom == nil {
+		d.st.TagsFrom = map[string]string{}
 	}
 	if d.st.Inbox == nil {
 		d.st.Inbox = map[string][]*inMsg{}
