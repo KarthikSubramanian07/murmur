@@ -1274,12 +1274,26 @@ Daemons older than this ignore the new ref: their sync reads only mesh, presence
 
 Earlier versions (#148) sent a daily check-in to `/v1/checkin` (a random user ID, a hash of the
 remote, the version, OS and architecture). Since 2026-11-08 the site stores none, but still answers
-with the latest release; the rows already stored are kept as history, and `/stats` still shows them
-beside the list of public repos. The page needs a key: Tyler's, or one he gives an agent, which
-reads it as markdown at `/stats/report.md` or JSON at `/stats/data` (#150). `mur version` now hears
-of newer releases from the updater, which keeps the latest release it saw in the state dir's
-`latest.json`; with updates off it hears of none. Reading the public buses for the counts is the
-census in #199.
+with the latest release; the rows already stored are kept as history at `/stats/archive`.
+`mur version` now hears of newer releases from the updater, which keeps the latest release it saw
+in the state dir's `latest.json`; with updates off it hears of none.
+
+The counts come from the census (#259), which reads what each reported repo shows anyone. Once a
+day a GitHub Action in this repo (`.github/workflows/census.yml`, `site/census/census.mjs`) fetches
+each repo's `refs/murmur/*` and its default branch's commits without their files, and sends the
+site counts and hashes, never content: per UTC day, the sessions started (each once, though a
+daemon that restarts announces its sessions again), the messages and all records, and a hash of
+each device that wrote anything, presence included; a hash of each device's owner, the git user name
+its presence shows; and for each contributor, a hash of their GitHub login or email and the day of
+their first commit, so one person in two repos counts once. The site only ever raises a count and
+keeps every device and owner it has seen, since a bus log can be rewritten and a daemon deletes its
+presence when it stops. It runs from GitHub,
+not from the Worker, because counting needs git, and a fetch of the whole bus is one request where
+the API would need one per commit. Once the bus is encrypted (#257) a record's kind is hidden from a
+public reader, so messages stop being told from other records, and only records are counted.
+
+`/stats` shows those repos and the counts over time; it needs a key: Tyler's, or one he gives an
+agent, which reads it as markdown at `/stats/report.md` or JSON at `/stats/data` (#150).
 
 ## Risks and how the design meets them
 
