@@ -2662,7 +2662,7 @@ function fleetNeeds(rows, all = false) {
     const more = convs > 1 ? " And " + plural(convs - 1, "more question") + "." : "";
     // text is a function: a row and the inspector each need their own copy of its nodes. The
     // State column says whether the session is offline or on do not disturb, so this doesn't.
-    // The inspector leaves the question out (quote false): its conversations quote each one.
+    // The row and the details' flag box say it in the same words.
     // The wait ticks with the page's other times, so the row and its conversation agree.
     const wait = () => agoEl("span", null, when(m.at), " for ", true);
     // When the question isn't the subject (a body's "Fine?"), the subject says what it's about.
@@ -2671,7 +2671,7 @@ function fleetNeeds(rows, all = false) {
     // An asker that has ended since still counts (its question waits on a running session), and
     // says so.
     const ended = live.has(fromName(m)) ? "" : " (ended)";
-    out.set(to, { at: when(m.at), m, msgs: list, text: (quote = true) => ["No reply to ", h("b", null, fromName(m)), ended, wait(), quote ? about(m) + ": “" + questionIn(m) + "”" + more : (convs > 1 ? ", and " + plural(convs - 1, "more question") : "") + "."] });
+    out.set(to, { at: when(m.at), m, msgs: list, text: () => ["No reply to ", h("b", null, fromName(m)), ended, wait(), about(m) + ": “" + questionIn(m) + "”" + more] });
   }
   return out;
 }
@@ -3122,7 +3122,7 @@ function fleetInspector(name, need) {
       ? h(
           "span",
           { class: "fx-flag-nav" },
-          h("span", { class: "fx-flag-pos" }, at + 1 + " of " + flagged.length),
+          h("span", { class: "fx-flag-pos" }, at + 1 + " of " + flagged.length + (need ? "" : " that needed a look")),
           h("button", { "data-key": "fx-flag-prev", onclick: step(-1) }, "Previous"),
           h("button", { "data-key": "fx-flag-next", onclick: step(1) }, "Next"),
         )
@@ -3172,7 +3172,7 @@ function fleetInspector(name, need) {
       h(
         "div",
         { class: "fx-insp-need" },
-        h("span", null, need.text(false)),
+        h("span", null, need.text()),
         h(
           "div",
           { class: "fx-insp-acts" },

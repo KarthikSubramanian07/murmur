@@ -377,3 +377,4 @@ a.fx-pr:focus-visible, .fx-clear:focus-visible, .fx-insp-open:focus-visible, .fx
 /* "No status set" can head a flagged row; it stays quiet but readable (6.4:1). */
 .fx-status.fx-faint, .fx-meta dd .fx-faint { color: var(--fx-text-2); }
 .fx-flag-solo { margin: 0 0 1rem; }
+.fx-flag-solo .fx-flag-nav { margin-left: 0; }
