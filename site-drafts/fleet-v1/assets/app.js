@@ -2896,7 +2896,7 @@ function fleetRow(d, s, need, on) {
   const dev = deviceName(d);
   // Grouped by job, a pinned row sits away from its job's heading, so it names its job (as one
   // grouped by branch keeps its branch).
-  const subParts = [where && dev, where && d.owner && !dev.toLowerCase().includes(d.owner.toLowerCase()) && d.owner, s.agent, need && F.by === "group" && groupOf(s)].filter(Boolean);
+  const subParts = [where && dev, where && d.owner && !dev.toLowerCase().includes(d.owner.toLowerCase()) && d.owner, s.agent, need && F.by === "group" && groupOf(s) && "job " + groupOf(s)].filter(Boolean);
   const sub = subParts.join(" · ");
   const prTag = pr ? "#" + pr.number : "";
   return h(
@@ -2943,7 +2943,7 @@ function fleetRow(d, s, need, on) {
       ),
     ),
     h("span", { class: "fx-state" }, fxDot(state), word),
-    h("span", { class: "fx-doing" }, h("span", { class: "fx-status" + (s.doing ? "" : " fx-faint"), title: s.doing || null }, s.doing || "No status set"), need && fxReason(need)),
+    h("span", { class: "fx-doing" }, s.doing ? h("span", { class: "fx-status", title: s.doing }, s.doing) : h("span", { class: "fx-status fx-faint fx-none", title: "No status set", "aria-label": "No status set" }, "–"), need && fxReason(need)),
     h("span", { class: "fx-branch" }, s.branch && h("span", { class: "mono truncate", title: s.branch }, s.branch), pr && fxPr(pr)),
     h("span", { class: "num fx-muted" }, t ? agoEl("span", "", t) : "–"),
   );
