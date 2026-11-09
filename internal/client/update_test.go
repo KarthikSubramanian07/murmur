@@ -1,6 +1,8 @@
 package client
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -8,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,15 +65,20 @@ func TestMain(m *testing.M) {
 		if page != nil {
 			// Serve one request from the inherited socket, as the new daemon serves the tab's.
 			served := make(chan struct{})
-			go http.Serve(page, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var once sync.Once
+			srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				io.WriteString(w, "child")
-				close(served)
-			}))
+				once.Do(func() { close(served) })
+			})}
+			go srv.Serve(page)
 			select {
 			case <-served:
-				time.Sleep(100 * time.Millisecond) // let the answer go out
 			case <-time.After(20 * time.Second):
 			}
+			// Shutdown returns once the answer has gone out and the connection is idle.
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			srv.Shutdown(ctx)
+			cancel()
 		}
 		os.Exit(0)
 	}
@@ -150,9 +158,19 @@ func TestStartDaemonHandsOverThePage(t *testing.T) {
 	}
 	srv.Close()
 
-	// A request in the gap, answered by whoever serves next.
-	gap := make(chan string, 1)
-	go func() { gap <- fetch(t, addr) }()
+	// A request in the gap, sent before the child starts, and answered by whoever serves next.
+	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	if err != nil {
+		t.Fatalf("connecting in the gap: %v", err)
+	}
+	defer conn.Close()
+	req, err := http.NewRequest("GET", "http://"+addr+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := req.Write(conn); err != nil {
+		t.Fatalf("sending in the gap: %v", err)
+	}
 
 	if err := StartDaemon(exe, gitDir, page); err != nil {
 		t.Fatal(err)
@@ -174,8 +192,15 @@ func TestStartDaemonHandsOverThePage(t *testing.T) {
 		if rec.Page != addr {
 			t.Fatalf("the child's page socket: %q, want %s", rec.Page, addr)
 		}
-		if got := <-gap; got != "child" {
-			t.Fatalf("the request sent in the gap got %q, want the child's answer", got)
+		conn.SetDeadline(time.Now().Add(30 * time.Second))
+		resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+		if err != nil {
+			t.Fatalf("the request sent in the gap: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if string(body) != "child" {
+			t.Fatalf("the request sent in the gap got %q, want the child's answer", body)
 		}
 		return
 	}
