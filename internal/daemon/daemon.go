@@ -26,6 +26,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // Options configure a daemon. Zero values take the defaults in docs/VISION.md.
@@ -445,6 +446,9 @@ type inMsg struct {
 	// otherwise have gone in as a turn (#202). It goes in as one when the turn ends, if it is still
 	// unread, however long the turn took: the agent knows it is there, and it mustn't wait for good.
 	Held bool `json:"held,omitempty"`
+	// Released is when do-not-disturb came off the session, for a message queued through it:
+	// how old it is, for whether it may still go in as a turn, counts from then (see pushable).
+	Released time.Time `json:"released,omitzero"`
 }
 
 // state is what survives a restart, in state.json.
@@ -498,6 +502,11 @@ type state struct {
 	// been idle for 30 minutes, and a message is still handed to the thread, which wakes it.
 	// Local only, like NameKeys. It is kept as long as the session's inbox is.
 	T3Routes map[string]t3Route `json:"t3Routes,omitempty"`
+
+	// Tags is what is kept about the tags of this device's sessions, by the session's name ("id:"
+	// and its ID while the name is pending): the tags each set for itself and a human's marks
+	// (#198). Derived tags aren't kept.
+	Tags map[string]*tags.State `json:"tags,omitempty"`
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if
@@ -818,11 +827,13 @@ func (d *Daemon) idleLoop(ctx context.Context) {
 // for it, as no other daemon reads the bus for this clone, and it ends when the route's inbox is
 // no longer kept. A thread the page's wake setting says not to wake now has nothing to stay up for:
 // one set to never, one idle longer than its setting allows (it can only be busy again if someone
-// types in it, which starts its MCP server, and with it a daemon), and one that is settled.
+// types in it, which starts its MCP server, and with it a daemon), and one that is settled. One on
+// do not disturb still counts: the tag may come off from another device's page, and only this
+// daemon reads that and hands over what stayed queued.
 // Caller holds mu.
 func (d *Daemon) holdsRouteLocked(wake pageSettings) bool {
 	for id := range d.st.T3Routes {
-		if d.sessions[id] == nil && d.receivesLocked(id) && d.wakesLocked(id, wake) {
+		if d.sessions[id] == nil && d.receivesLocked(id) && d.mayWakeLocked(id, wake) {
 			return true
 		}
 	}
@@ -872,7 +883,8 @@ func (d *Daemon) loadState() error {
 	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},
 		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
-		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{}}
+		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
+		Tags: map[string]*tags.State{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -919,6 +931,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Reserved == nil {
 		d.st.Reserved = map[string]string{}
+	}
+	if d.st.Tags == nil {
+		d.st.Tags = map[string]*tags.State{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

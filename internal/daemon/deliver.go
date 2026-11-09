@@ -226,7 +226,17 @@ func pushable(m *inMsg) bool {
 	if m.Pushing || m.PushFailed || m.Attempted {
 		return false
 	}
-	return m.Held || !m.Noticed && time.Since(m.Arrived) <= pushMaxAge
+	return m.Held || !m.Noticed && time.Since(waitedSince(m)) <= pushMaxAge
+}
+
+// waitedSince is when message m counts as having arrived: when it came, or, for one queued
+// through do not disturb, when the tag came off (#198). A message released then is as new as one
+// that came then, for how old it may be to go in as a turn and for whether it came during a turn.
+func waitedSince(m *inMsg) time.Time {
+	if m.Released.After(m.Arrived) {
+		return m.Released
+	}
+	return m.Arrived
 }
 
 // turnableLocked says message m may go into session id as a turn, whether or not the session is
@@ -245,7 +255,7 @@ func (d *Daemon) holdableLocked(id string, m *inMsg, wake pageSettings, turnStar
 	if m.Pushing || m.PushFailed || m.Attempted {
 		return false
 	}
-	if (turnStart.IsZero() || m.Arrived.Before(turnStart)) && time.Since(m.Arrived) > pushMaxAge {
+	if at := waitedSince(m); (turnStart.IsZero() || at.Before(turnStart)) && time.Since(at) > pushMaxAge {
 		return false
 	}
 	return d.wayInLocked(id, wake)
@@ -334,7 +344,7 @@ const reconnectHold = time.Minute
 func (d *Daemon) endTurnLocked(s *session, wake pageSettings) {
 	held := false
 	for _, m := range d.st.Inbox[s.id] {
-		if !m.Noticed && !m.Held && !s.turnStart.IsZero() && !m.Arrived.Before(s.turnStart) && d.holdableLocked(s.id, m, wake, s.turnStart) {
+		if !m.Noticed && !m.Held && !s.turnStart.IsZero() && !waitedSince(m).Before(s.turnStart) && d.holdableLocked(s.id, m, wake, s.turnStart) {
 			m.Held, held = true, true
 		}
 	}
@@ -354,6 +364,7 @@ func (d *Daemon) endTurnLocked(s *session, wake pageSettings) {
 //
 // None are taken once Claude Code would refuse the continuation (stopBlockCap): it would end the
 // turn with them gone. They are then handed over as a turn, as after a turn that ends without Stop.
+// None are taken from a session on do not disturb (#198) either: wayInLocked finds no way in for it.
 func (d *Daemon) continueTurnLocked(s *session, wake pageSettings) []*inMsg {
 	if s.continuations >= stopBlockCap || !d.wayInLocked(s.id, wake) {
 		return nil

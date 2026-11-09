@@ -30,6 +30,8 @@ const ui = {
   conversationAnchor: null, // a message in it
   chatListTop: 0,
   muting: new Set(),
+  tagging: new Set(), // the sessions whose tags are being changed, by their row key
+  tagInput: null, // the row key of the session whose tag field is open
 };
 
 class AuthError extends Error {
@@ -425,7 +427,111 @@ function sessionRow(d, s) {
         h("span", { class: "meta-item", title: "Worktree" }, icon("folder"), h("span", { class: "truncate" }, s.worktree)),
       started && agoEl("span", "meta-item tabular", started, "started "),
     ),
+    tagsLine(s),
   );
+}
+
+// Tags (#198). Each chip says where the tag came from; a human can take one off or add one. The change goes to the session's own device, which
+// applies it over what the session set, so on another device it shows once that device has read it.
+const TAG_SOURCES = { human: "Set by a human", derived: "Worked out by its daemon" };
+
+function tagsLine(s) {
+  const tags = Array.isArray(s.tags) ? s.tags : [];
+  const addr = s.addr || s.name;
+  const key = "t-" + addr;
+  const busy = ui.tagging.has(key);
+  // The row opens the session's messages; nothing in here should.
+  const stop = (e) => e.stopPropagation();
+  return h(
+    "div",
+    { class: "session-tags", onclick: stop, onkeydown: stop },
+    tags.map((t) =>
+      h(
+        "span",
+        {
+          class: "badge tag badge-outline",
+          title: TAG_SOURCES[t.src] || "Set by the session",
+        },
+        t.name,
+        h(
+          "button",
+          {
+            class: "tag-remove",
+            "aria-label": "Remove " + t.name,
+            title: "Remove " + t.name,
+            "data-key": key + "-rm-" + t.name,
+            disabled: busy,
+            onclick: () => changeTags(addr, key, [], [t.name]),
+          },
+          "×",
+        ),
+      ),
+    ),
+    ui.tagInput === key
+      ? tagField(addr, key)
+      : h(
+          "button",
+          {
+            class: "btn btn-ghost btn-xs",
+            "data-key": key + "-add",
+            disabled: busy,
+            onclick: () => {
+              ui.tagInput = key;
+              delete ui.rowErrors[key];
+              render();
+              root.querySelector(`[data-key="${CSS.escape(key + "-field")}"]`)?.focus();
+            },
+          },
+          "+ Tag",
+        ),
+    ui.rowErrors[key] && h("span", { class: "row-error" }, ui.rowErrors[key]),
+  );
+}
+
+function tagField(addr, key) {
+  const close = () => {
+    ui.tagInput = null;
+    render();
+  };
+  const input = h("input", {
+    type: "text",
+    placeholder: "reviewing, model:opus-5.5",
+    "aria-label": "Tags to add",
+    "data-key": key + "-field",
+    autocomplete: "off",
+    spellcheck: "false",
+    onkeydown: (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        close();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const add = e.target.value.split(/[\s,]+/).filter(Boolean);
+        ui.tagInput = null;
+        if (add.length > 0) changeTags(addr, key, add, []);
+        else render();
+      }
+    },
+    onblur: (e) => {
+      if (ui.tagInput === key && !e.target.value.trim()) close();
+    },
+  });
+  return h("span", { class: "field" }, input);
+}
+
+async function changeTags(addr, key, add, remove) {
+  ui.tagging.add(key);
+  delete ui.rowErrors[key];
+  render();
+  try {
+    await api("/api/tags", { method: "POST", body: JSON.stringify({ addr, add, remove }) });
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    ui.rowErrors[key] = e.message;
+  }
+  ui.tagging.delete(key);
+  render();
+  poll();
 }
 
 function showDevice(id) {

@@ -111,7 +111,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 		self.Sessions = append(self.Sessions, web.Session{
 			Name: nameOr(ss.name, addr), Addr: addr, Agent: ss.agent, Branch: ss.branch,
 			Committed: d.committedLocked(ss.id), Doing: ss.shownDoing(), Worktree: ss.worktree, Started: ss.started,
-			LastActive: ss.lastActive})
+			LastActive: ss.lastActive, Tags: d.tagsOfLocked(ss)})
 	}
 	st := web.State{Device: d.device, Devices: []web.Device{self}}
 	for _, id := range sortedKeys(d.peers) {
@@ -125,7 +125,8 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 			addr := bus.Addr(id, ps.ID)
 			dv.Sessions = append(dv.Sessions, web.Session{
 				Name: nameOr(ps.Name, addr), Addr: addr, Agent: ps.Agent, Branch: ps.Branch,
-				Committed: ps.Committed, Doing: ps.Doing, Started: ps.Started, LastActive: peerActive(p, ps)})
+				Committed: ps.Committed, Doing: ps.Doing, Started: ps.Started, LastActive: peerActive(p, ps),
+				Tags: ps.Tags})
 		}
 		st.Devices = append(st.Devices, dv)
 	}
