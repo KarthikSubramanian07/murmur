@@ -1185,13 +1185,14 @@ a random ID is still data from a private repo).
 
 `internal/publicrepo` does it, from `mur init`, `mur join` and daemon start:
 
-1. If `refs/murmur/reported` is here or on the remote, stop: some clone has reported the repo.
-   A daemon's sync doesn't fetch it (it reads only mesh, presence and names), so the remote is
-   asked with one `ls-remote`, and the ref is fetched once found.
+1. If `refs/murmur/reported` is on the remote, stop: some clone has reported the repo. A daemon's
+   sync doesn't fetch it (it reads only mesh, presence and names), so the remote is asked with one
+   `ls-remote`, and once the ref is found or pushed, `publicrepo.json` in the state dir keeps the
+   address it belongs to, so this clone doesn't ask again unless its remote changes.
 2. Reduce the bus remote's URL to `github.com/<owner>/<name>`; anything else is not reported.
 3. Ask GitHub `GET api.github.com/repos/<owner>/<name>` with no credentials. A private repo answers
    404 to that, so no token is involved. Private, or not on GitHub: look again the next UTC day
-   (`publicrepo.json` in the state dir), so a repo made public later is reported within a day.
+   (`publicrepo.json` again), so a repo made public later is reported within a day.
 4. POST `{"repo": "github.com/<owner>/<name>"}` to `https://murmur.afig.dev/v1/repo`, spelled as
    GitHub spells it, with no version in the User-Agent. The site stores it only once GitHub
    confirms the repo public (when GitHub can't say, it answers 503 and the daemon sends it again
@@ -1201,7 +1202,7 @@ a random ID is still data from a private repo).
    `refs/murmur/reported`, a root commit whose body is `{"v":1,"at":...}`, leased so it is created
    only if absent. A push that fails is retried at every later look, without sending the address
    again, and a daemon keeps looking until the ref is there. Two clones racing both send; the site
-   keeps one row. Deleting the ref makes the repo report again.
+   keeps one row. Deleting the ref makes the repo report again from a clone that hasn't seen it.
 
 So each public repo reaches us once in its life. A development build (`-dev`) never reports.
 Daemons older than this ignore the new ref: their sync reads only mesh, presence and names.

@@ -125,14 +125,14 @@ func Once(ctx context.Context, o Options) (Result, error) {
 		return Waiting, err
 	}
 	repo := &bus.Repo{Git: g, Remote: remote, Name: brand.Name, Email: brand.Name + "@" + brand.Name + ".invalid"}
-	// The local copy exists once this clone has written or seen the ref here; a daemon's sync
-	// doesn't fetch it (it reads only mesh, presence and names).
-	if local, err := repo.LocalRefs(ctx); err == nil && local[brand.ReportedRef] != "" {
-		return Known, nil
-	}
 	st := readState(o.GitDir)
 	day := o.Now().UTC().Format(time.DateOnly)
 	addr := Address(repo.Config(ctx, "remote."+remote+".url"))
+	// What this clone knows is kept by address, so a remote changed to another repo is looked at
+	// afresh (Sol's review of #239).
+	if addr != "" && st.Known == addr {
+		return Known, nil
+	}
 	sent := addr != "" && st.Sent == addr // the site has it: only the ref is left
 	if !sent && st.Looked == day {
 		return Waiting, nil
@@ -146,8 +146,8 @@ func Once(ctx context.Context, o Options) (Result, error) {
 		return Waiting, err
 	}
 	if sha != "" {
-		repo.Fetch(ctx, []string{brand.ReportedRef}) // so the next look needn't ask the remote
-		return Known, nil
+		st.Known = addr // so the next look needn't ask the remote
+		return Known, writeState(o.GitDir, st)
 	}
 	if !sent {
 		full, public, err := lookUp(ctx, o, strings.TrimPrefix(addr, "github.com/"))
@@ -171,6 +171,8 @@ func Once(ctx context.Context, o Options) (Result, error) {
 	if err := mark(ctx, repo, o.Now().UTC()); err != nil {
 		return Waiting, fmt.Errorf("recording the report on the bus: %w", err)
 	}
+	st.Known = addr
+	writeState(o.GitDir, st) // if this fails, the next look finds the ref on the remote
 	return Reported, nil
 }
 
@@ -185,13 +187,10 @@ func mark(ctx context.Context, repo *bus.Repo, at time.Time) error {
 	if err != nil {
 		return err
 	}
-	switch err := repo.Push(ctx, c, brand.ReportedRef, bus.Lease, ""); {
-	case errors.Is(err, bus.ErrRejected):
-		return repo.Fetch(ctx, []string{brand.ReportedRef})
-	case err != nil:
+	if err := repo.Push(ctx, c, brand.ReportedRef, bus.Lease, ""); err != nil && !errors.Is(err, bus.ErrRejected) {
 		return err
 	}
-	return repo.UpdateLocal(ctx, brand.ReportedRef, c)
+	return nil
 }
 
 // record is refs/murmur/reported's commit: when the repo was reported, and nothing else.
@@ -264,6 +263,7 @@ func send(ctx context.Context, o Options, addr string) error {
 type state struct {
 	Looked string `json:"looked"` // the UTC day, YYYY-MM-DD, a look last found the repo private or not on GitHub
 	Sent   string `json:"sent"`   // the address the site stored; for it, only refs/murmur/reported is left to push
+	Known  string `json:"known"`  // the address whose refs/murmur/reported this clone has seen or pushed
 }
 
 func statePath(gitDir string) string { return filepath.Join(gitDir, brand.StateDir, "publicrepo.json") }

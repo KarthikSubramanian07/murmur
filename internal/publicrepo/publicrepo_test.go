@@ -259,3 +259,28 @@ func TestStoredReportOnlyRetriesTheRef(t *testing.T) {
 		t.Fatalf("no %s on the remote", brand.ReportedRef)
 	}
 }
+
+// A clone whose remote is changed to another repo, after the first was reported, reports the new
+// one: what it knows is kept by address (Sol's second review of #239).
+func TestChangedRemoteIsLookedAtAfresh(t *testing.T) {
+	ctx := context.Background()
+	f := newFakes(t)
+	gitDir := clone(t, remote(t), "https://github.com/acme/widget.git")
+	if res, err := Once(ctx, f.opts(gitDir, day1)); err != nil || res != Reported {
+		t.Fatalf("first repo: %v, %v", res, err)
+	}
+	if res, _ := Once(ctx, f.opts(gitDir, day1)); res != Known {
+		t.Fatalf("first repo again: %v", res)
+	}
+	other := remote(t)
+	url := "https://github.com/acme/gadget.git"
+	git(t, "--git-dir", gitDir, "config", "remote.origin.url", url)
+	git(t, "--git-dir", gitDir, "config", "url."+filepath.ToSlash(other)+".insteadOf", url)
+	f.full = "Acme/Gadget"
+	if res, err := Once(ctx, f.opts(gitDir, day1)); err != nil || res != Reported {
+		t.Fatalf("second repo: %v, %v", res, err)
+	}
+	if len(f.site) != 2 || f.site[1] != `{"repo":"github.com/Acme/Gadget"}` {
+		t.Errorf("sent %q", f.site)
+	}
+}
