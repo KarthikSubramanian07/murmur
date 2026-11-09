@@ -287,13 +287,21 @@ func TestPageStateMarksStaleDevice(t *testing.T) {
 	}
 }
 
-// The API gives nothing without the daemon's token, and nothing to a request that names another
-// host.
+// The API gives nothing without the page's token, and nothing to a request that names another
+// host. The daemon's own token, which sessions use, is not the page's (#42): the address reaches
+// the browser's history and extensions, and the daemon's token lets its holder send as this device.
 func TestPageNeedsTheToken(t *testing.T) {
 	d := newDevice(t, newRemote(t))
 	pg := d.page()
-	if info := d.infoFile(t); info.Token != pg.token {
-		t.Fatalf("the page's token is not the daemon's: %q and %q", pg.token, info.Token)
+	info := d.infoFile(t)
+	if info.PageToken == "" || info.PageToken != pg.token {
+		t.Fatalf("the address carries %q, daemon.json says the page's token is %q", pg.token, info.PageToken)
+	}
+	if info.PageToken == info.Token {
+		t.Fatal("the page and the sessions share a token")
+	}
+	if code, body := pg.call("GET", "/api/state", info.Token, ""); code != http.StatusUnauthorized {
+		t.Errorf("the sessions' token opens the page's API: %d %s", code, body)
 	}
 	for _, c := range []struct{ method, path, body string }{
 		{"GET", "/api/state", ""},

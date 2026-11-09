@@ -45,7 +45,7 @@ func (d *Daemon) listenPage() (net.Listener, error) {
 
 // servePage serves the page on ln until ctx is done.
 func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
-	page := web.New(pageSource{d}, d.token, repoDir(d.opt.GitDir))
+	page := web.New(pageSource{d}, d.pageTok, repoDir(d.opt.GitDir))
 	srv := &http.Server{
 		Handler:           page,
 		ReadHeaderTimeout: 10 * time.Second,
@@ -82,7 +82,7 @@ func repoDir(gitDir string) string {
 }
 
 // pageSource is the daemon as the page sees it. The page's server calls it only for requests that
-// carry the daemon's token, so each call is proof that a page is open; one from a page someone can
+// carry the page's token, so each call is proof that a page is open; one from a page someone can
 // see (web.Watched) keeps the daemon running.
 type pageSource struct{ d *Daemon }
 

@@ -75,6 +75,10 @@ type Info struct {
 	// Web is the address the daemon serves the page for humans on, host:port on loopback. Empty
 	// when it couldn't be served, and for a daemon from before the page.
 	Web string `json:"web,omitempty"`
+	// PageToken is the page's own secret (#42), apart from Token. The page's address carries it,
+	// so it reaches the browser's history and extensions; Token, which lets a caller send as this
+	// device, never does. Empty for a daemon from before the page had its own, whose page takes Token.
+	PageToken string `json:"pageToken,omitempty"`
 }
 
 // Request is one call to the daemon.

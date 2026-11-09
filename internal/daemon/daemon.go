@@ -236,7 +236,8 @@ type Daemon struct {
 	device  string
 	host    string
 	owner   string
-	token   string
+	token   string // the sessions' secret, in daemon.json
+	pageTok string // the page's secret (#42): the address carries it, so it opens the page and nothing else
 	started time.Time
 	log     *log.Logger
 
@@ -562,7 +563,7 @@ func Run(ctx context.Context, opt Options) error {
 	infoPath := filepath.Join(dir, "daemon.json")
 	info := proto.Info{Addr: ln.Addr().String(), Token: d.token, PID: os.Getpid(), Device: d.device}
 	if pageLn != nil {
-		info.Web = pageLn.Addr().String()
+		info.Web, info.PageToken = pageLn.Addr().String(), d.pageTok
 	}
 	if err := writeJSON(infoPath, info); err != nil {
 		return err
@@ -655,7 +656,7 @@ func Run(ctx context.Context, opt Options) error {
 func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	now := time.Now()
 	d := &Daemon{
-		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), started: now, lastActive: now,
+		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), pageTok: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,

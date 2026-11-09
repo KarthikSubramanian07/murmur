@@ -3,7 +3,7 @@
 // the daemon only through Source.
 //
 // Any website the user visits can send requests to localhost, so every API request must carry
-// the daemon's token, and every request must name the server by its loopback address, which
+// the page's token, and every request must name the server by its loopback address, which
 // defeats DNS rebinding. No CORS headers are sent, so no other origin can read a response.
 package web
 
@@ -50,7 +50,7 @@ type Server struct {
 	page  []byte
 }
 
-// New returns the page's handler. token is the daemon's; repoDir is the clone, where gh runs to
+// New returns the page's handler. token is the page's own, not the one that opens the daemon to sessions (#42); repoDir is the clone, where gh runs to
 // look up pull requests. The handler must be served on 127.0.0.1.
 func New(src Source, token, repoDir string) *Server {
 	return NewWithPRs(src, token, GH(repoDir))

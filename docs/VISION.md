@@ -406,11 +406,13 @@ call.
 
 - **Served by the daemon** on 127.0.0.1, on a random port of its own: the sessions' port speaks the
   daemon's protocol, and the page speaks HTTP to a browser. The address is `web` in
-  `.git/murmur/daemon.json`, and the page uses the daemon's token, the same one the sessions use. A
+  `.git/murmur/daemon.json`, with a token of its own (`pageToken`, #42): the sessions' token lets its holder
+  send as this device, and the page's address, which carries its token, reaches the browser's history
+  and extensions. A
   daemon that can't open the port logs that and keeps running without the page; `mur ui` then says
   there is none.
 - **Opened by `mur ui`**, which starts the daemon if it isn't running, opens the default browser
-  and prints the address. The token is in the address's fragment (`#token=`), which a browser
+  and prints the address. The page's token is in the address's fragment (`#token=`), which a browser
   keeps from the server; the page reads it and sends it with each request. `mur ui --no-open`
   prints the address and opens nothing.
 - **What it shows.** Every device the daemon knows, this one first, with each session's name,
