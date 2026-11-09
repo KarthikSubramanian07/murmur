@@ -99,6 +99,9 @@ func newFixtures(now time.Time) *fixtures {
 					Doing: "Deleting claims from the daemon and the MCP tools", Started: ago(2*time.Hour + 4*time.Minute), LastActive: ago(3 * time.Minute)},
 				{Name: "amber-finch", Agent: "claude-code", Branch: "main", Worktree: "murmur",
 					Started: ago(5 * time.Hour), LastActive: ago(26 * time.Minute)},
+				// Left open in a terminal for days: the page folds it away as quiet.
+				{Name: "stale-gecko", Agent: "claude-code", Branch: "old-experiment", Worktree: "old-experiment",
+					Doing: "Trying a different poll interval", Started: ago(80 * time.Hour), LastActive: ago(52 * time.Hour)},
 			},
 		},
 		{
@@ -130,6 +133,12 @@ func newFixtures(now time.Time) *fixtures {
 				{Name: "keen-pike", Agent: "claude-code", Started: ago(7 * time.Hour), LastActive: ago(55 * time.Minute)},
 			},
 		},
+	}
+	// Every session has an address, device/session, as the daemon's do.
+	for di := range f.devices {
+		for si := range f.devices[di].Sessions {
+			f.devices[di].Sessions[si].Addr = f.devices[di].ID + "/" + randomHex(3)
+		}
 	}
 	msg := func(d time.Duration, from, to, kind, subject, body string) {
 		f.messages = append(f.messages, web.Message{

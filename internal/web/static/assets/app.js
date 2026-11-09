@@ -261,8 +261,8 @@ function miniSidebar() {
       top("messages", "message", "All conversations", ui.view === "messages" && !ui.filter),
       top("recent", "clock", "Recent messages", ui.view === "recent"),
       devices().map((d) => [
-        h("div", { class: "mini-dev", title: (d.self ? "This device" : d.owner || d.id) + " · " + d.sessions.length }, deviceDot(d)),
-        d.sessions.map((s) => {
+        h("div", { class: "mini-dev", title: (d.self ? "This device" : d.owner || d.id) + " · " + liveSessions(d).length }, deviceDot(d)),
+        liveSessions(d).map((s) => {
           const key = s.addr || s.name;
           return h(
             "button",
@@ -308,6 +308,7 @@ function sidebar() {
         allButton(),
         topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")),
       ),
+      ui.notice && h("button", { class: "side-notice", title: "Dismiss", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
       devs.map((d) =>
         h(
           "div",
@@ -321,17 +322,17 @@ function sidebar() {
             icon("laptop"),
             h("span", { class: "label" }, deviceDot(d), deviceLabel(d), h("span", { class: "dev-host" }, host(d.id))),
             d.self ? h("span", { class: "dev-you" }, "you") : !d.reachable && h("span", { class: "dev-you" }, "offline"),
-            h("span", { class: "menu-count" }, d.sessions.length),
+            h("span", { class: "menu-count" }, liveSessions(d).length),
           ),
-          d.sessions.length > 0 &&
+          liveSessions(d).length > 0 &&
             h(
               "ul",
               { class: "sidebar-menu side-sessions" },
-              d.sessions.map((s) => {
+              liveSessions(d).map((s) => {
                 const key = s.addr || s.name;
                 return h(
                   "li",
-                  null,
+                  { class: "side-li" },
                   h(
                     "button",
                     {
@@ -347,9 +348,11 @@ function sidebar() {
                     },
                     ...sideSessionBody(d, s),
                   ),
+                  s.addr && hideButton(s),
                 );
               }),
             ),
+          quietFold(d),
           settledFold(d.id),
         ),
       ),
@@ -396,6 +399,117 @@ function wakeNever(d, s) {
   if (!d.self || !ui.settings) return false;
   const own = ui.settings.sessionWake?.[s.name];
   return (own ? own.when : ui.settings.wake?.when) === "never";
+}
+
+// Quiet: running, but idle for a day, or hidden by a person with the hidden tag (#211). Agents
+// in Claude Code, Codex and the rest never settle, so a session left open in a forgotten terminal
+// stays in presence for good; this keeps it out of the way. Active again, it comes back.
+const QUIET_MS = 24 * 60 * 60 * 1000;
+const HIDDEN = "hidden";
+
+function isHidden(s) {
+  return (s.tags || []).some((t) => t && t.name === HIDDEN);
+}
+
+function isQuiet(d, s) {
+  if (sessionState(d, s) === "on") return false;
+  if (isHidden(s)) return true;
+  const t = when(s.lastActive) || when(s.started);
+  return !!t && Date.now() - t > QUIET_MS;
+}
+
+function liveSessions(d) {
+  return d.sessions.filter((s) => !isQuiet(d, s));
+}
+
+function quietSessions(d) {
+  return d.sessions.filter((s) => isQuiet(d, s));
+}
+
+// Hiding is a tag a person sets, so it holds on every device that shows the session.
+async function setHidden(s, on) {
+  ui.notice = "";
+  try {
+    await api("/api/tags", { method: "POST", body: JSON.stringify({ addr: s.addr, add: on ? [HIDDEN] : [], remove: on ? [] : [HIDDEN] }) });
+    s.tags = on ? [...(s.tags || []), { name: HIDDEN, src: "human" }] : (s.tags || []).filter((t) => t.name !== HIDDEN);
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    // A daemon from before session tags (#211) has no /api/tags.
+    const old = /^40[45]/.test(e.message);
+    ui.notice = old ? "This daemon can't hide sessions: it needs session tags (#211)." : "Couldn't " + (on ? "hide " : "show ") + s.name + ": " + e.message;
+  }
+  render();
+}
+
+function hideButton(s) {
+  const hidden = isHidden(s);
+  return h(
+    "button",
+    {
+      class: "side-hide",
+      title: hidden ? "Stop hiding " + s.name : "Hide " + s.name + " until it's active again",
+      "aria-label": hidden ? "Stop hiding " + s.name : "Hide " + s.name,
+      "data-key": "hide-" + s.name,
+      onclick: () => setHidden(s, !hidden),
+    },
+    icon(hidden ? "eye" : "eyeOff"),
+  );
+}
+
+// Each device's quiet sessions, folded under its live ones.
+function quietFold(d) {
+  const rows = quietSessions(d);
+  if (!rows.length) return null;
+  ui.openQuiet = ui.openQuiet || new Set();
+  const open = ui.openQuiet.has(d.id);
+  return h(
+    "div",
+    { class: "settled" },
+    h(
+      "button",
+      {
+        class: "settled-toggle",
+        "aria-expanded": open ? "true" : "false",
+        "data-key": "quiet-" + d.id,
+        onclick: () => {
+          open ? ui.openQuiet.delete(d.id) : ui.openQuiet.add(d.id);
+          render();
+        },
+      },
+      icon(open ? "chevronDown" : "chevronRight", "settled-caret"),
+      h("span", null, rows.length + " quiet"),
+    ),
+    open &&
+      h(
+        "div",
+        { class: "settled-list" },
+        rows.map((s) => {
+          const key = s.addr || s.name;
+          const t = when(s.lastActive);
+          return h(
+            "div",
+            { class: "quiet-item" },
+            h(
+              "button",
+              {
+                class: "settled-row" + (ui.view === "messages" && ui.filter === key ? " current" : ""),
+                title: s.doing || s.name,
+                "data-key": "q-" + s.name,
+                onclick: () => {
+                  ui.filter = key;
+                  ui.conversation = null;
+                  go("messages");
+                },
+              },
+              presence(s.name, d),
+              h("span", { class: "settled-name truncate" }, s.name),
+              h("span", { class: "settled-when" }, isHidden(s) ? "hidden" : t ? ago(t).replace(" ago", "") : ""),
+            ),
+            isHidden(s) && hideButton(s),
+          );
+        }),
+      ),
+  );
 }
 
 // A face with its presence dot inside it, so it still fits the two-face pair of a DM.
@@ -534,7 +648,8 @@ function settledRow(r) {
 // All sessions' count: those running, and those settled if there are any, else the devices.
 function allSessionsSub() {
   const settled = settledSessions().length;
-  return plural(sessionCount(), "session") + " · " + (settled ? settled + " settled" : plural(devices().length, "device"));
+  const live = devices().reduce((n, d) => n + liveSessions(d).length, 0);
+  return plural(live, "session") + " · " + (settled ? settled + " settled" : plural(devices().length, "device"));
 }
 
 // Who a device belongs to, for its heading; its host name goes beside it.
@@ -606,11 +721,13 @@ function stateWord(d, s) {
   return STATE_WORDS[st];
 }
 
-// Every session, as cards under its device; a tab shows the settled ones.
+// Every session, as cards under its device; tabs show the quiet and the settled ones.
 function sessionsPage() {
   if (!ui.state) return h("div", { class: "page" });
   const devs = devices();
-  const total = sessionCount();
+  const total = devs.reduce((n, d) => n + liveSessions(d).length, 0);
+  const quiet = devs.reduce((n, d) => n + quietSessions(d).length, 0);
+  const tab = ui.sessTab || "running";
   return h(
     "div",
     { class: "g-page" },
@@ -623,13 +740,14 @@ function sessionsPage() {
         { class: "g-tabs", role: "tablist" },
         [
           ["running", "Running", total],
+          ["quiet", "Quiet", quiet],
           ["settled", "Settled", settledSessions().length],
         ].map(([id, label, n]) =>
           h(
             "button",
             {
               role: "tab",
-              "aria-selected": (ui.sessTab || "running") === id ? "true" : "false",
+              "aria-selected": tab === id ? "true" : "false",
               "data-key": "tab-" + id,
               onclick: () => {
                 ui.sessTab = id;
@@ -642,7 +760,7 @@ function sessionsPage() {
         ),
       ),
     ),
-    (ui.sessTab || "running") === "settled" ? settledPage(devs) : devs.map((d) =>
+    tab === "settled" ? settledPage(devs) : tab === "quiet" ? quietPage(devs) : devs.map((d) =>
       h(
         "section",
         { class: "g-dev" },
@@ -652,12 +770,32 @@ function sessionsPage() {
           deviceDot(d),
           h("span", null, d.self ? "This device" : d.owner || d.id),
           h("span", { class: "g-dev-host" }, host(d.id)),
-          h("span", { class: "g-dev-n" }, d.reachable ? plural(d.sessions.length, "session") : "Offline · seen " + ago(when(d.lastSeen) || 0)),
+          h("span", { class: "g-dev-n" }, d.reachable ? plural(liveSessions(d).length, "session") : "Offline · seen " + ago(when(d.lastSeen) || 0)),
         ),
-        d.sessions.length === 0
+        liveSessions(d).length === 0
           ? h("p", { class: "g-none" }, "No sessions")
-          : h("div", { class: "g-cards" }, d.sessions.map((s) => sessionCard(d, s))),
+          : h("div", { class: "g-cards" }, liveSessions(d).map((s) => sessionCard(d, s))),
       ),
+    ),
+  );
+}
+
+function quietPage(devs) {
+  const withQuiet = devs.filter((d) => quietSessions(d).length > 0);
+  if (!withQuiet.length) return h("p", { class: "g-none" }, "No quiet sessions.");
+  return withQuiet.map((d) =>
+    h(
+      "section",
+      { class: "g-dev" },
+      h(
+        "h2",
+        { class: "g-dev-head" },
+        deviceDot(d),
+        h("span", null, deviceLabel(d)),
+        h("span", { class: "g-dev-host" }, host(d.id)),
+        h("span", { class: "g-dev-n" }, quietSessions(d).length + " quiet"),
+      ),
+      h("div", { class: "g-cards" }, quietSessions(d).map((s) => sessionCard(d, s))),
     ),
   );
 }
@@ -675,7 +813,6 @@ function settledPage(devs) {
     return d ? (d.self ? "This device" : d.owner || id) : id || "Unknown device";
   };
   return [
-    h("p", { class: "g-settled-note" }, "Sessions that have stopped, or that you settled in T3. Their messages are kept; open one to read them."),
     h(
       "label",
       { class: "g-search g-search-wide" },
@@ -1070,13 +1207,13 @@ function otherIn(c) {
 }
 
 // The middle column: whose conversations they are, a search, then direct messages and group chats
-// apart. Direct messages between two settled sessions fold away under Older.
+// apart. Direct messages with a settled session fold away at the end.
 function conversationList(list) {
   const name = ui.filter && nameOf(ui.filter, ui.filter);
   const f = name && findSession(name);
   const q = (ui.cq || "").toLowerCase();
   const hit = (c) => !q || (otherIn(c) || c.title).toLowerCase().includes(q) || c.messages.some((m) => (m.subject + " " + (m.body || "")).toLowerCase().includes(q));
-  const old = (c) => c.kind === "dm" && c.pair.every((n) => isSettled(n));
+  const old = (c) => c.kind === "dm" && c.pair.some((n) => isSettled(n));
   const dms = list.filter((c) => c.kind === "dm" && hit(c) && (q || name || !old(c)));
   const older = q || name ? [] : list.filter((c) => old(c));
   const groups = list.filter((c) => c.kind !== "dm" && hit(c));
@@ -1124,7 +1261,7 @@ function conversationList(list) {
             render();
           },
         },
-        h("span", null, icon(ui.showOlder ? "chevronDown" : "chevronRight", "settled-caret"), "Older, between settled sessions"),
+        h("span", null, icon(ui.showOlder ? "chevronDown" : "chevronRight", "settled-caret"), "With settled sessions"),
         h("span", { class: "g-sec-n" }, older.length),
       ),
     ui.showOlder && older.map(conversationRow),
@@ -1176,7 +1313,7 @@ function conversationPane(c) {
   const of = o && findSession(o);
   const gs = c.kind !== "dm" ? groupSummary(c) : null;
   const about = gs
-    ? [c.kind === "all" ? "Every session in this repo" : "Every session on " + groupHost(c), plural(gs.rows.length, "member"), gs.on + " active"].join(" · ")
+    ? [groupHost(c), plural(gs.rows.length, "member"), gs.on + " active"].filter(Boolean).join(" · ")
     : o
       ? of
         ? of.session.doing || of.session.agent || ""
@@ -1211,7 +1348,6 @@ function conversationPane(c) {
       c.kind !== "dm" && membersButton(c),
     ),
     h("div", { class: "chat-thread", "data-conversation": c.key }, chatMessages(c)),
-    h("div", { class: "readonly" }, h("div", { class: "readonly-box" }, icon("message"), h("span", null, "Sessions post here with ", h("code", null, "mur send"), ". You're reading along."))),
   );
 }
 

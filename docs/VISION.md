@@ -430,7 +430,10 @@ call.
   minutes, yellow idle, red do not disturb (the `do-not-disturb` tag from #211, or wake-ups set to
   Never), grey when its device is unreachable. A settled session (#189) is absent from presence but
   still in the messages, so the page folds it under its device and keeps its conversations, out of
-  the way. The page is always dark: the design was only ever drawn dark, and a light one would be a
+  the way; a direct message with a settled session folds away too. Sessions in Claude Code, Codex,
+  pi or opencode never settle: one left open in a forgotten terminal stays in presence for good.
+  So a running session idle for a day, or one a person hid (the `hidden` tag, set from the page
+  through #211's `/api/tags`), folds under its device as quiet, and comes back once it is active. The page is always dark: the design was only ever drawn dark, and a light one would be a
   second design. Started times, worktrees and committed branches left the page with the old
   Sessions view; `lookup` still has the branches.
 - **Settings** (when a session is woken) are saved in `.git/murmur/settings.json`, replaced whole.

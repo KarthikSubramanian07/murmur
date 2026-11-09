@@ -2004,35 +2004,6 @@ code {
 .dark .chat-msg:not(.chat-msg-first):hover .avatar-gap::before {
   content: attr(data-time);
 }
-/* where a message box would be: the page only reads */
-.readonly {
-  flex-shrink: 0;
-  padding: 0 1.5rem 1.25rem;
-}
-.readonly-box {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  height: 2.75rem;
-  padding: 0 1rem;
-  border-radius: 0.625rem;
-  background: #33363d;
-  font-size: 0.875rem;
-  color: #8c8f99;
-}
-.readonly-box .icon {
-  width: 1rem;
-  height: 1rem;
-  flex-shrink: 0;
-}
-.readonly-box code {
-  padding: 0 0.3125rem;
-  border-radius: 0.25rem;
-  background: rgb(0 0 0 / 22%);
-  font-family: var(--font-mono);
-  font-size: 0.8125rem;
-  color: #c6c8ce;
-}
 /* sessions | conversations | chat */
 .dark .sidebar {
   width: 19rem;
@@ -3132,16 +3103,65 @@ code {
   .dark .chat-msg {
     padding: 0.375rem 0.75rem;
   }
-  .dark .readonly {
-    padding: 0 0.75rem 0.75rem;
-  }
-  .readonly-box {
-    height: auto;
-    min-height: 2.75rem;
-    padding-top: 0.5rem;
-    padding-bottom: 0.5rem;
-  }
   .g-page {
     padding: 1.25rem 0.75rem 3rem;
   }
+}
+
+/* quiet sessions: a session's Hide button shows on hover; a hidden one has Show in its fold */
+.side-li {
+  position: relative;
+}
+.side-hide {
+  position: absolute;
+  top: 0.375rem;
+  right: 0.375rem;
+  display: none;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: var(--radius-sm);
+  color: var(--sidebar-muted-foreground);
+}
+.side-li:hover .side-hide,
+.side-hide:focus-visible {
+  display: grid;
+}
+.side-hide:hover {
+  background: rgb(255 255 255 / 8%);
+  color: var(--sidebar-foreground);
+}
+.side-hide .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.quiet-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.quiet-item .settled-row {
+  flex: 1;
+  min-width: 0;
+}
+.quiet-item .side-hide {
+  position: static;
+  display: grid;
+  flex-shrink: 0;
+}
+.quiet-item .pres-wrap .avatar {
+  width: 1.25rem;
+  height: 1.25rem;
+  font-size: 0.5625rem;
+}
+.side-notice {
+  display: block;
+  width: calc(100% - 1rem);
+  margin: 0.5rem 0.5rem 0;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--radius-md);
+  background: rgb(242 63 67 / 14%);
+  color: #ff8a8d;
+  font-size: 0.75rem;
+  text-align: left;
 }
