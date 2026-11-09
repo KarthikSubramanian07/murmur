@@ -741,10 +741,15 @@ function gSessionBody(d, s) {
           "span",
           { class: "g-meta" },
           s.branch && h("span", { class: "g-branch truncate" }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
-          pr && h("span", { class: "g-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number),
+          pr && gPr(pr),
         ),
     ),
   ];
+}
+
+// The sidebar's PR chip says "draft" in words, as the table's does (fxPr).
+function gPr(pr) {
+  return h("span", { class: "g-pr" + (pr.draft ? " draft" : ""), title: (pr.draft ? "Draft pull request #" : "Pull request #") + pr.number }, "#" + pr.number + (pr.draft ? " draft" : ""));
 }
 
 function stateWord(d, s) {
@@ -903,7 +908,7 @@ function sessionCard(d, s) {
       "span",
       { class: "g-card-foot" },
       s.branch && h("span", { class: "g-branch truncate" }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
-      pr && h("span", { class: "g-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number),
+      pr && gPr(pr),
       h("span", { class: "g-card-chats" }, plural(convs, "chat")),
     ),
   );
