@@ -2173,6 +2173,12 @@ let timer;
 let inflight = false;
 let polled = false;
 let scrolledAt = 0;
+// Text being selected: the pointer is down, or the selection changed in the last 3 seconds. A
+// selection left standing after that doesn't hold the page still, or a lead who copied a branch
+// name would be looking at a frozen page that seems live.
+let pointerHeld = false;
+let selectedAt = 0;
+let lastConn = "";
 
 async function poll() {
   if (inflight) return;
@@ -2201,10 +2207,13 @@ async function poll() {
   const minute = VARIANT === "g" && ui.view === "sessions" ? Math.floor(Date.now() / 60000) : 0;
   const sig = JSON.stringify([ui.state, ui.cursor, ui.conn, minute]);
   const typing = document.activeElement?.tagName === "INPUT" && document.activeElement.dataset.key !== "fx-q";
-  const selecting = document.getSelection()?.isCollapsed === false;
+  const selecting = document.getSelection()?.isCollapsed === false && (pointerHeld || Date.now() - selectedAt < 3000);
   const scrolling = Date.now() - scrolledAt < 1000;
-  if (sig !== last && !typing && !selecting && !scrolling) {
+  // Losing or regaining the daemon always shows at once.
+  const connMoved = ui.conn !== lastConn;
+  if (sig !== last && (connMoved || (!typing && !selecting && !scrolling))) {
     last = sig;
+    lastConn = ui.conn;
     render();
     if (ui.fleetFocusPending) fleetFocusBack();
   }
@@ -2246,6 +2255,9 @@ window.addEventListener("hashchange", () => {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && ui.token && ui.conn !== "denied") poll();
 });
+document.addEventListener("pointerdown", () => (pointerHeld = true), true);
+for (const t of ["pointerup", "pointercancel"]) document.addEventListener(t, () => (pointerHeld = false), true);
+document.addEventListener("selectionchange", () => (selectedAt = Date.now()));
 document.addEventListener(
   "scroll",
   () => {
@@ -2956,9 +2968,10 @@ function fleetFromHash(part) {
 // data, so the poll finishes the job (fleetFocusPending).
 function fleetFocusBack() {
   ui.fleetFocusPending = false;
-  if (ui.view !== "sessions" || !ui.fleetSel || !STACKED.matches) return;
+  if (ui.view !== "sessions" || !ui.fleetSel) return;
   if (document.activeElement && document.activeElement !== document.body) return;
-  const back = root.querySelector(".fx-back");
+  // Beside the table, the open session's row; as the whole page, the way back.
+  const back = STACKED.matches ? root.querySelector(".fx-back") : root.querySelector(`[data-key="fl-${CSS.escape(ui.fleetSel)}"]`);
   if (back) back.focus({ preventScroll: true });
   else ui.fleetFocusPending = true;
 }
@@ -3173,6 +3186,7 @@ function fleetInspector(name, need) {
           }),
         )
       : h("p", { class: "fx-faint" }, "No direct messages"),
+    direct.length > 0 &&
     h(
       "button",
       {

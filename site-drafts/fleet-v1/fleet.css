@@ -360,3 +360,5 @@ a.fx-pr:focus-visible, .fx-clear:focus-visible, .fx-insp-open:focus-visible, .fx
 .fx-sheet-down { margin: 0 0 0.75rem; font-size: 0.8125rem; }
 .fx-insp-undo b { font-weight: 600; color: var(--fx-text); white-space: nowrap; }
 .fx-insp-undo + .fx-insp-undo { margin-top: -0.5rem; }
+/* "No status set" can head a flagged row; it stays quiet but readable (6.4:1). */
+.fx-status.fx-faint, .fx-meta dd .fx-faint { color: var(--fx-text-2); }
