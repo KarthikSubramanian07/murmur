@@ -83,8 +83,9 @@ since they go through the remote.
 Pi): a basic one on when Murmur is worth a turn, and a pro one on coordinating over several
 messages. Source: [`internal/skills`](internal/skills).
 
-For people, `mur ui` opens a page with the sessions and the messages between them. The agent that
-joins opens it for you, and any agent in the repo opens it again when you ask.
+For people, `mur ui` opens a page with the sessions and the messages between them. Pick a name
+there and you can message any agent, and read its answers on the page. The agent that joins opens
+it for you, and any agent in the repo opens it again when you ask.
 
 ## Learn more
 
