@@ -2941,7 +2941,7 @@ function fleetRow(d, s, need, on) {
         { class: "fx-who-text" },
         h("span", { class: "fx-name truncate", title: s.name }, s.name),
         h("span", { class: "fx-muted fx-parts", title: sub }, fxParts(subParts)),
-        s.branch && h("span", { class: "fx-muted fx-sub-branch", title: s.branch + (prTag ? " " + (pr.draft ? "draft " : "") + prTag : "") }, h("span", { class: "mono truncate" }, s.branch), prTag && h("span", { class: "fx-sub-pr" }, prTag)),
+        s.branch && h("span", { class: "fx-muted fx-sub-branch", title: s.branch + (prTag ? " " + (pr.draft ? "draft " : "") + prTag : "") }, h("span", { class: "mono truncate" }, s.branch), prTag && h("span", { class: "fx-sub-pr" }, prTag + (pr.draft ? " draft" : ""))),
       ),
     ),
     h("span", { class: "fx-state" }, fxDot(state), word),
@@ -3139,13 +3139,15 @@ function fleetInspector(name, need) {
     root.querySelector(`[data-key="fx-flag-${by > 0 ? "next" : "prev"}"]`)?.focus({ preventScroll: true });
   };
   const flagNav =
-    STACKED.matches && at >= 0 && flagged.length > 1
+    // With one flag in scope there's nothing to step to, but if the filter hid others the line
+    // still says so: "1 of 1 that needs a look · 3 more not shown".
+    STACKED.matches && at >= 0 && (flagged.length > 1 || ui.fxFlagHidden > 0)
       ? h(
           "span",
           { class: "fx-flag-nav" },
-          h("span", { class: "fx-flag-pos" }, at + 1 + " of " + flagged.length + (need ? " that need a look" : " that needed a look") + (ui.fxFlagHidden > 0 ? " · " + ui.fxFlagHidden + " more not shown" : "")),
-          h("button", { "data-key": "fx-flag-prev", onclick: step(-1) }, "Previous"),
-          h("button", { "data-key": "fx-flag-next", onclick: step(1) }, "Next"),
+          h("span", { class: "fx-flag-pos" }, at + 1 + " of " + flagged.length + (need ? (flagged.length === 1 ? " that needs a look" : " that need a look") : " that needed a look") + (ui.fxFlagHidden > 0 ? " · " + ui.fxFlagHidden + " more not shown" : "")),
+          flagged.length > 1 && h("button", { "data-key": "fx-flag-prev", onclick: step(-1) }, "Previous"),
+          flagged.length > 1 && h("button", { "data-key": "fx-flag-next", onclick: step(1) }, "Next"),
         )
       : null;
   return [
