@@ -141,6 +141,15 @@ function ago(t) {
   return Math.floor(s / 86400) + "d ago";
 }
 
+// How long since t, as a duration: "40m", "1h 59m", "2d 3h".
+function lasted(t) {
+  const m = Math.max(1, Math.round((Date.now() - t) / 60000));
+  if (m < 60) return m + "m";
+  const hrs = Math.floor(m / 60);
+  if (hrs < 24) return hrs + "h" + (m % 60 ? " " + (m % 60) + "m" : "");
+  return Math.floor(hrs / 24) + "d" + (hrs % 24 ? " " + (hrs % 24) + "h" : "");
+}
+
 function stamp(t) {
   return new Date(t).toLocaleString(undefined, {
     month: "short",
@@ -154,14 +163,14 @@ function stamp(t) {
 // An element whose text is a relative time, kept current by the ticker. A bare one is a
 // duration ("for 40m") rather than a time ("40m ago").
 function agoEl(tag, cls, t, prefix = "", bare = false) {
-  const text = (t) => (bare ? ago(t).replace(" ago", "") : ago(t));
+  const text = (t) => (bare ? lasted(t) : ago(t));
   return h(tag, { class: cls, "data-ago": t, "data-prefix": prefix, "data-bare": bare ? "1" : null, title: stamp(t) }, prefix + text(t));
 }
 
 function tick() {
   for (const el of document.querySelectorAll("[data-ago]")) {
-    const v = ago(Number(el.dataset.ago));
-    el.textContent = el.dataset.prefix + (el.dataset.bare ? v.replace(" ago", "") : v);
+    const t = Number(el.dataset.ago);
+    el.textContent = el.dataset.prefix + (el.dataset.bare ? lasted(t) : ago(t));
   }
 }
 
@@ -2309,13 +2318,14 @@ function replyTo(m) {
   return ui.messages.find((r) => r.re === m.id) || null;
 }
 
-// Whether the recipient has written back to the sender since: in this conversation, or in
-// another one unless what it sent there is a new question of its own, which answers nothing.
+// Whether the recipient has written back to the sender since: anything in this conversation,
+// or a new message elsewhere that asks nothing. A reply in another thread answers that thread,
+// and a new question of its own answers nothing.
 function answeredSince(m) {
   const to = toName(m);
   const from = fromName(m);
   const topic = (x) => (x.subject || "").replace(/^(re:\s*)+/i, "").trim().toLowerCase();
-  return !!replyTo(m) || ui.messages.some((r) => r.sortAt > m.sortAt && fromName(r) === to && r.toKind === "session" && toName(r) === from && (topic(r) === topic(m) || isReply(r) || !questionIn(r)));
+  return !!replyTo(m) || ui.messages.some((r) => r.sortAt > m.sortAt && fromName(r) === to && r.toKind === "session" && toName(r) === from && (topic(r) === topic(m) || (!isReply(r) && !questionIn(r))));
 }
 
 // What each session did and was sent, from the history and the messages.
@@ -2457,6 +2467,12 @@ function cutAtWord(q, max) {
   return (sp > max * 0.55 ? cut.slice(0, sp) : cut).trimEnd() + "…";
 }
 
+// A PR chip; a draft is grey and says so in its title.
+function fxPr(pr, href) {
+  const props = { class: "fx-pr" + (pr.draft ? " draft" : ""), title: (pr.draft ? "Draft pull request #" : "Pull request #") + pr.number };
+  return href ? h("a", { ...props, href, target: "_blank", rel: "noreferrer" }, "#" + pr.number) : h("span", props, "#" + pr.number);
+}
+
 function isReply(m) {
   return !!m.re || /^re:/i.test(m.subject || "");
 }
@@ -2471,7 +2487,8 @@ function fleetNeeds(rows) {
   const out = new Map();
   const asks = new Map();
   for (const m of ui.messages) {
-    if (m.toKind !== "session" || isReply(m) || !questionIn(m)) continue;
+    // A reply that asks something ("Which runner image?") waits like a first message does.
+    if (m.toKind !== "session" || !questionIn(m)) continue;
     const to = toName(m);
     const from = fromName(m);
     const at = when(m.at);
@@ -2492,7 +2509,8 @@ function fleetNeeds(rows) {
     // The wait ticks with the page's other times, so the row and its conversation agree.
     const wait = () => agoEl("span", null, when(m.at), " for ", true);
     // When the question isn't the subject (a body's "Fine?"), the subject says what it's about.
-    const about = (x) => (x.subject && questionIn(x) !== x.subject.trim() ? " on “" + cutAtWord(x.subject.trim(), 60) + "”" : "");
+    const topicOf = (x) => (x.subject || "").replace(/^(re:\s*)+/i, "").trim();
+    const about = (x) => (topicOf(x) && questionIn(x) !== topicOf(x) ? " on “" + cutAtWord(topicOf(x), 60) + "”" : "");
     // An asker that has ended since still counts (its question waits on a running session), and
     // says so.
     const ended = live.has(fromName(m)) ? "" : " (ended)";
@@ -2605,7 +2623,7 @@ function fleetTable(rows, needs, sel) {
     }
     if (F.by === "branch") {
       const pr = k && Object.hasOwn(ui.state.prs || {}, k) ? ui.state.prs[k] : null;
-      return [h("span", { class: "fx-group-name mono" }, k || "No branch"), pr && h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number)];
+      return [h("span", { class: "fx-group-name mono" }, k || "No branch"), pr && fxPr(pr)];
     }
     return h("span", { class: "fx-group-name" }, k || "No job");
   };
@@ -2657,12 +2675,7 @@ function fleetTable(rows, needs, sel) {
 // How long a session has been running, from its start: "35m", "5h 40m", "2d 3h".
 function runningFor(s) {
   const t = when(s.started);
-  if (!t) return "–";
-  const m = Math.max(1, Math.round((Date.now() - t) / 60000));
-  if (m < 60) return m + "m";
-  const hrs = Math.floor(m / 60);
-  if (hrs < 24) return hrs + "h" + (m % 60 ? " " + (m % 60) + "m" : "");
-  return Math.floor(hrs / 24) + "d" + (hrs % 24 ? " " + (hrs % 24) + "h" : "");
+  return t ? lasted(t) : "–";
 }
 
 // "8:53 PM" today, "Sat 8:53 PM" within the week, "Nov 2, 8:53 PM" before that.
@@ -2740,12 +2753,12 @@ function fleetRow(d, s, need, on) {
         { class: "fx-who-text" },
         h("span", { class: "fx-name truncate", title: s.name }, s.name),
         h("span", { class: "fx-muted fx-parts", title: sub }, fxParts(subParts)),
-        s.branch && h("span", { class: "fx-muted fx-sub-branch", title: s.branch + (prTag ? " " + prTag : "") }, h("span", { class: "mono truncate" }, s.branch), prTag && h("span", { class: "fx-sub-pr" }, prTag)),
+        s.branch && h("span", { class: "fx-muted fx-sub-branch", title: s.branch + (prTag ? " " + (pr.draft ? "draft " : "") + prTag : "") }, h("span", { class: "mono truncate" }, s.branch), prTag && h("span", { class: "fx-sub-pr" }, prTag)),
       ),
     ),
     h("span", { class: "fx-state" }, fxDot(state), word),
     h("span", { class: "fx-doing" }, h("span", { class: "fx-status" + (s.doing ? "" : " fx-faint"), title: s.doing || null }, s.doing || "No status set"), need && h("span", { class: "fx-reason" }, need.text())),
-    h("span", { class: "fx-branch" }, s.branch && h("span", { class: "mono truncate", title: s.branch }, s.branch), pr && h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number)),
+    h("span", { class: "fx-branch" }, s.branch && h("span", { class: "mono truncate", title: s.branch }, s.branch), pr && fxPr(pr)),
     h("span", { class: "num fx-muted" }, t ? agoEl("span", "", t) : "–"),
   );
 }
@@ -2874,7 +2887,7 @@ function fleetInspector(name, need) {
     ["Device", h("span", null, deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? ", " : "")), !d.reachable && seenAt && h("span", { class: "fx-nowrap" }, "last seen " + ago(seenAt)))],
     // Each part keeps together, so a narrow rail breaks the line at the "·", not inside a model name.
     ["Agent", agentParts.length ? h("span", { class: "fx-parts", title: agentParts.join(" · ") }, fxParts(agentParts)) : "–"],
-    ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && (pr.url ? h("a", { class: "fx-pr" + (pr.draft ? " draft" : ""), href: pr.url, target: "_blank", rel: "noreferrer" }, "#" + pr.number) : h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number))] : "–"],
+    ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && fxPr(pr, pr.url), pr?.draft && " · draft"] : "–"],
     groupOf(s) && ["Job", groupOf(s)],
     ["Running for", started ? runningFor(s) + ", since " + sinceWhen(started) : "–"],
     ["Last active", t ? agoEl("span", "", t) : "–"],
