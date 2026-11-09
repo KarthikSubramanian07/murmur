@@ -501,12 +501,19 @@ in its own session.
   `person`, so a daemon on an older version still shows them in `who`. The only new field on the bus
   is `Event.Person`, the name on a person's own messages. Everywhere sessions are listed, and in the
   header of every message from a person, they carry the `human` tag (see "Session tags").
-- **Names stay out of the names ref.** A person's name can't have the form of a session's (an
-  adjective and a noun from the lists), so an address never reads as both, and it needs no
-  compare-and-swap. A name someone on the mesh already holds is refused. A daemon's table of people
-  only grows, so a message to an old name still reaches its owner. The cost: two people who pick one
-  name before either daemon has seen the other both keep it, and each daemon resolves it to its own
-  person first, then to the first device in sorted order.
+- **A name is claimed in the names ref**, by the same compare-and-swap that gives sessions their
+  names (#268, Tyler, 2026-11-09). #249 kept people out of it to avoid that push. That let two
+  people who chose one name before either daemon saw the other both keep it, and a message to it
+  could reach the wrong one. Choosing a name now waits for the claim to land, so of two people
+  choosing at once only one gets it, and the page tells the other it is taken. A claim is an
+  assignment to `device/human`. A person's name can't have the form of a session's (an adjective and
+  a noun from the lists), so an address never reads as both, and a daemon from before passes over
+  the claim as a name it couldn't have made. The first claim in the registry stands, and like a
+  session's name it is never forgotten. So a message to an old name still reaches its owner, and a
+  registry rewritten by an older daemon, which drops people's claims, is repaired with them. A name
+  held from before the claims has the first daemon to claim it keep it. The other person's page asks
+  them for another, and until they choose one they can't send, as their messages would carry a name
+  that reaches someone else. The cost: choosing a name needs the remote, as sending does.
 - **A person's direct message wakes a session past the "Within" window**, because they are waiting
   for an answer. It doesn't wake past Never or do not disturb, which a person also chose. A broadcast
   from a person wakes nothing extra: one sentence shouldn't wake every idle session on the mesh. The

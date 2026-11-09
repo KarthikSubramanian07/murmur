@@ -79,6 +79,9 @@ type Account struct {
 	Suggested string `json:"suggested,omitempty"`
 	// Unread is the IDs of the messages sent to them that they haven't opened.
 	Unread []string `json:"unread,omitempty"`
+	// Taken is the device whose person claimed this name first, "" if nobody else did (#268): a
+	// name chosen before people's names were claimed. They are asked to choose another.
+	Taken string `json:"taken,omitempty"`
 }
 
 // Person is a person on a device.

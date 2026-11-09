@@ -481,7 +481,7 @@ function yourRow() {
   const a = me();
   const n = unreadCount();
   const count = a ? yourConversationCount() : 0;
-  const sub = !ui.state ? "" : !a ? "Talk to your agents" : n ? n + " unread" : count ? plural(count, "conversation") : "No messages yet";
+  const sub = !ui.state ? "" : !a ? "Talk to your agents" : a.taken ? "Choose a new name" : n ? n + " unread" : count ? plural(count, "conversation") : "No messages yet";
   return h(
     "button",
     { class: "all-convs top-you", "aria-current": isMyFilter() ? "page" : null, "data-key": "top-you", onclick: openYours },
@@ -2642,7 +2642,8 @@ function startChat(name) {
 }
 
 function askForName(then) {
-  ui.setup = { name: ui.state?.account?.suggested || "", error: "", busy: false, then };
+  const a = ui.state?.account;
+  ui.setup = { name: (a?.taken && a.name) || a?.suggested || "", error: "", busy: false, then };
   render();
   const field = root.querySelector('[data-key="setup-name"]');
   field?.focus();
@@ -2656,8 +2657,10 @@ async function submitName() {
   setup.error = "";
   render();
   try {
+    const was = myName();
     const account = await api("/api/account", { method: "PUT", body: JSON.stringify({ name: setup.name.trim() }) });
     ui.state.account = { ...ui.state.account, ...account };
+    moveToName(was, account.name); // asked for a new name, they may have drafts under the old one
     ui.setup = null;
     poll();
     setup.then?.();
@@ -2692,15 +2695,22 @@ function dialog(label, close, ...kids) {
 
 function setupDialog() {
   const s = ui.setup;
+  const taken = me()?.taken || "";
   const close = () => {
     ui.setup = null;
     render();
   };
   return dialog(
-    "Choose your name",
+    taken ? "Choose a new name" : "Choose your name",
     close,
-    h("h2", { class: "dialog-title" }, "Choose your name"),
-    h("p", { class: "dialog-line" }, "Agents see it, and send to it."),
+    h("h2", { class: "dialog-title" }, taken ? "Choose a new name" : "Choose your name"),
+    h(
+      "p",
+      { class: "dialog-line" },
+      taken
+        ? "The person on " + taken + " chose " + me().name + " first, so messages to that name go to them. Pick another; what was sent to you before still reaches you."
+        : "Agents see it, and send to it.",
+    ),
     h(
       "form",
       {
@@ -3214,7 +3224,7 @@ function accountSection() {
     h(
       "div",
       { class: "group" },
-      settingsRow("account", "Your name", "Agents see it, and send to it.", [
+      settingsRow("account", "Your name", a?.taken ? "The person on " + a.taken + " chose this name first. Choose another; until you do, you can't send." : "Agents see it, and send to it.", [
         h(
           "span",
           { class: "field account-field" },
@@ -3558,6 +3568,12 @@ async function poll() {
     }
     ui.state = state;
     stateAskedAt = asked;
+    // Someone else claimed this name first (#268): ask for another, once per page, unless something
+    // is already being asked.
+    if (state.account?.taken && !ui.takenAsked && !ui.setup && !ui.picker && !ui.tagMenu) {
+      ui.takenAsked = true;
+      setTimeout(() => askForName(null), 0);
+    }
     trimMessages();
     for (const id of ui.readLocal) if (!state.account?.unread?.includes(id)) ui.readLocal.delete(id);
     ui.outbox = ui.outbox.filter((item) => !(item.id && ui.ids.has(item.id)));

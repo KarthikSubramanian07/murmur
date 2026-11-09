@@ -525,6 +525,11 @@ type state struct {
 	Person      string            `json:"person,omitempty"`
 	PersonSince time.Time         `json:"personSince,omitzero"`
 	People      map[string]string `json:"people,omitempty"`
+	// PersonClaims is every person's name in the names registry, to the address that claimed it
+	// first (#268). It only grows, as Used does, and a name in it is that person's: a name chosen
+	// elsewhere at the same time is refused, and one held from before the registry had people is
+	// asked to change.
+	PersonClaims map[string]string `json:"personClaims,omitempty"`
 	// PersonLogged is the last message in the person's log when this was saved. Anything after it
 	// in the log was written by a daemon that stopped before it could save, so their inbox doesn't
 	// have it yet.
@@ -548,6 +553,11 @@ type state struct {
 	NamesTip    string `json:"namesTip,omitempty"`
 	NamesGood   string `json:"namesGood,omitempty"`
 	NamesRepair bool   `json:"namesRepair,omitempty"`
+	// NamesPeople says the registry was read from its start by a daemon that keeps people's claims
+	// (#268). One from before read their claims and passed over them, so reading on from its
+	// NamesGood would leave them unread for good: without this, the next read starts from the
+	// beginning. NamesGood stays as it was, as it also shows whether the registry was rewritten.
+	NamesPeople bool `json:"namesPeople,omitempty"`
 	// NamePool is the names the registry has set aside for this device that no session has taken
 	// yet, oldest first. NameBinds is each name a session took from the pool whose assignment to it
 	// isn't in the registry yet, with the session's ID. Reserved is each name the registry has set
@@ -1006,7 +1016,7 @@ func (d *Daemon) loadState() error {
 		TagsFrom: map[string]string{}, Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
-		Tags: map[string]*tags.State{}, People: map[string]string{}}
+		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1059,6 +1069,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Tags == nil {
 		d.st.Tags = map[string]*tags.State{}
+	}
+	if d.st.PersonClaims == nil {
+		d.st.PersonClaims = map[string]string{}
 	}
 	if d.st.People == nil {
 		d.st.People = map[string]string{}

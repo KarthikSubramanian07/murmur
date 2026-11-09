@@ -41,10 +41,15 @@ func (d *Daemon) ownPersonMsgLocked(e bus.Event) bool {
 	return e.From == addr || e.To == addr
 }
 
-// resolvePersonLocked finds who is called name: this device's person, then a person in another
-// device's presence, then anyone this daemon has seen with that name, which reaches a person whose
-// daemon has gone: their device reads the message when it comes back. Caller holds mu.
+// resolvePersonLocked finds who is called name: whoever claimed it in the names registry (#268), then
+// this device's person, then a person in another device's presence, then anyone this daemon has seen
+// with that name, which reaches a person whose daemon has gone: their device reads the message when
+// it comes back. The last three are for names from before people were in the registry, and for a
+// daemon that hasn't read it yet. Caller holds mu.
 func (d *Daemon) resolvePersonLocked(name string) (string, bool) {
+	if addr := d.st.PersonClaims[name]; addr != "" {
+		return addr, true
+	}
 	if name == d.st.Person && name != "" {
 		return d.personAddr(), true
 	}
@@ -253,23 +258,80 @@ func (d *Daemon) accountLocked() web.Account {
 	if d.st.Person == "" {
 		return web.Account{Suggested: d.suggestedNameLocked()}
 	}
-	a := web.Account{Name: d.st.Person, Addr: d.personAddr()}
+	a := web.Account{Name: d.st.Person, Addr: d.personAddr(), Taken: d.nameTakenByLocked()}
 	for _, m := range d.st.Inbox[bus.PersonSession] {
 		a.Unread = append(a.Unread, m.Event.ID)
 	}
 	return a
 }
 
-// SetAccount gives this device's person a name, or a new one. The name they had still reaches
-// them: it stays in People here and on every device that saw it.
+// nameTakenByLocked is the device whose person claimed this device's person's name in the names
+// registry first, "" if nobody else did. That can only be a name chosen before people were in the
+// registry (#268), and the page asks them for another. Caller holds mu.
+func (d *Daemon) nameTakenByLocked() string {
+	addr := d.st.PersonClaims[d.st.Person]
+	if d.st.Person == "" || addr == "" || addr == d.personAddr() {
+		return ""
+	}
+	dev, _ := bus.SplitAddr(addr)
+	return dev
+}
+
+// claimPersonName claims name for this device's person in the names registry, by the same leased
+// push that gives sessions their names, so that of two people choosing one name at once, only one
+// gets it (#268). A push refused because the registry moved is tried again after reading what moved
+// it, up to nameTries times; the error says whether someone else has the name.
+func (d *Daemon) claimPersonName(ctx context.Context, name string) error {
+	d.mu.Lock()
+	read := d.namesChecked
+	d.mu.Unlock()
+	if !read {
+		// The registry as this daemon last read it may lack a claim made since, or one an older
+		// daemon passed over (see NamesPeople); a claim on top of it would land all the same.
+		if err := d.pollOnce(ctx); err != nil {
+			return fmt.Errorf("couldn't read the names on the remote: %v", err)
+		}
+	}
+	for range nameTries {
+		err := d.pushNames(ctx, nameWork{person: name})
+		d.mu.Lock()
+		holder := d.st.PersonClaims[name]
+		d.mu.Unlock()
+		switch {
+		case holder == d.personAddr():
+			return nil
+		case holder != "":
+			dev, _ := bus.SplitAddr(holder)
+			return fmt.Errorf("%s is taken, by the person on %s.", name, dev)
+		case err == nil:
+			return errors.New("the name wasn't claimed; try again")
+		case !errors.Is(err, bus.ErrRejected):
+			return fmt.Errorf("couldn't claim the name on the remote, so nobody else can take it: %v", err)
+		}
+		if err := d.pollOnce(ctx); err != nil {
+			return fmt.Errorf("couldn't read the names on the remote: %v", err)
+		}
+	}
+	return errors.New("the remote's names were busy; try again")
+}
+
+// SetAccount gives this device's person a name, or a new one, once it is claimed in the names
+// registry. The name they had still reaches them: it stays theirs in the registry, and in People
+// here and on every device that saw it.
 func (s pageSource) SetAccount(ctx context.Context, name string) (web.Account, error) {
 	d := s.d
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	d.pageSeenLocked(ctx, time.Now())
-	if why := d.personNameProblemLocked(name); why != "" {
+	why := d.personNameProblemLocked(name)
+	d.mu.Unlock()
+	if why != "" {
 		return web.Account{}, errors.New(why)
 	}
+	if err := d.claimPersonName(ctx, name); err != nil {
+		return web.Account{}, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if d.st.Person == "" {
 		d.st.PersonSince = time.Now().Round(0)
 	}
@@ -286,10 +348,14 @@ func (s pageSource) Send(ctx context.Context, to, text string) (web.Sent, error)
 	d := s.d
 	d.pageCalled(ctx)
 	d.mu.Lock()
-	named := d.st.Person != ""
+	named, takenBy := d.st.Person != "", d.nameTakenByLocked()
 	d.mu.Unlock()
 	if !named {
 		return web.Sent{}, errors.New("choose a name first")
+	}
+	if takenBy != "" {
+		// Their messages would carry a name that reaches someone else.
+		return web.Sent{}, fmt.Errorf("the person on %s has your name; choose another before you send", takenBy)
 	}
 	subject, body := web.SplitText(text)
 	r := d.send(ctx, d.personAddr(), proto.Request{To: to, Subject: subject, Body: body})
