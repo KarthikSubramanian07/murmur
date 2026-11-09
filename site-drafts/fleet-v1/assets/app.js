@@ -2614,10 +2614,11 @@ function cutAtWord(q, max) {
   return (sp > max * 0.55 ? cut.slice(0, sp) : cut).trimEnd() + "…";
 }
 
-// A PR chip; a draft is grey and says so in its title.
+// A PR chip; a draft is grey and says "draft" in words, so the grey isn't a code to learn.
 function fxPr(pr, href) {
   const props = { class: "fx-pr" + (pr.draft ? " draft" : ""), title: (pr.draft ? "Draft pull request #" : "Pull request #") + pr.number };
-  return href ? h("a", { ...props, href, target: "_blank", rel: "noreferrer" }, "#" + pr.number) : h("span", props, "#" + pr.number);
+  const label = "#" + pr.number + (pr.draft ? " draft" : "");
+  return href ? h("a", { ...props, href, target: "_blank", rel: "noreferrer" }, label) : h("span", props, label);
 }
 
 // A reply is known by its "Re:" subject; the daemon has no reply field today (#183 proposes one).
@@ -3078,7 +3079,7 @@ function fleetInspector(name, need) {
     ["Device", h("span", null, deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? ", " : "")), !d.reachable && seenAt && h("span", { class: "fx-nowrap" }, "last seen " + ago(seenAt)))],
     // Each part keeps together, so a narrow rail breaks the line at the "·", not inside a model name.
     ["Agent", agentParts.length ? h("span", { class: "fx-parts", title: agentParts.join(" · ") }, fxParts(agentParts)) : "–"],
-    ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && fxPr(pr, pr.url), pr?.draft && " · draft"] : "–"],
+    ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && fxPr(pr, pr.url)] : "–"],
     groupOf(s) && ["Job", groupOf(s)],
     ["Running for", started ? runningFor(s) + ", since " + sinceWhen(started) : "–"],
     ["Last active", t ? agoEl("span", "", t) : "–"],
