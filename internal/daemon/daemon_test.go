@@ -212,7 +212,7 @@ func (d *device) start() {
 
 func (d *device) do(req proto.Request) proto.Response {
 	d.t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), slow(30*time.Second))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	resp, err := d.c.Do(ctx, req)
 	if err != nil {
@@ -251,7 +251,7 @@ func testLog() *log.Logger {
 // takes seconds, not tens of milliseconds, when other test runs are busy on the same machine.
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(slow(60 * time.Second))
+	deadline := time.Now().Add(60 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
 			dumpGoroutines(t)
@@ -261,21 +261,9 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// slow is a test's limit for waiting on the daemons, d, or three times d on macOS. GitHub's macOS
-// runners now and then run the whole package at half speed or worse (#217: up to 1,027 s, against
-// 485-642 s on the runs around it), and in those runs a test that takes 7 s took over a minute:
-// from 2026-11-01 to 11-09, eight daemon tests timed out there this way, each passing when run
-// again, and 1,000 runs of two of them on macOS in a row, 400 of them beside a second test run,
-// never took over 12 s. A stall in the daemon that never ends still fails, a few minutes later.
-func slow(d time.Duration) time.Duration {
-	if runtime.GOOS == "darwin" {
-		return 3 * d
-	}
-	return d
-}
-
 // dumpGoroutines prints every goroutine's stack when a test gives up waiting. The daemons run in
-// the test's process, so a stall shows where they are stuck, which the failure alone can't say.
+// the test's process, so a stall shows where they are stuck, which the failure alone can't say: it
+// is how a git whose start never came back was found (#217).
 func dumpGoroutines(t *testing.T) {
 	t.Helper()
 	buf := make([]byte, 8<<20)

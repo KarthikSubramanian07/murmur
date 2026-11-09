@@ -26,6 +26,9 @@ were deleted then (#113) and are in git history.
 - **gofmt doesn't run on Windows.** A Windows checkout turns line endings into CRLF, which gofmt
   reports as unformatted; the other two jobs check it.
 - **A newer push to the same pull request** cancels the run in progress.
+- **A daemon test that gives up waiting** prints every goroutine's stack, as the daemons run in the
+  test's process; `MURMUR_TEST_LOG=1` prints their logs too. That is how a `git` whose start never
+  came back on a macOS runner was found (#217).
 
 ## Pull requests from forks
 
