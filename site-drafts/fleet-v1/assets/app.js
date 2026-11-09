@@ -2255,6 +2255,7 @@ function fleetRailFit() {
   const need = others + (list ? Math.min(list.scrollHeight, 112) : 0);
   rail.classList.toggle("short", need > startRoom);
   if (list) list.classList.toggle("more", list.scrollTop + list.clientHeight < list.scrollHeight - 1);
+  rail.classList.toggle("more", rail.scrollTop + rail.clientHeight < rail.scrollHeight - 1);
 }
 NARROW.addEventListener("change", render);
 STACKED.addEventListener("change", () => {
@@ -2842,7 +2843,8 @@ function fleetInspector(name, need) {
     ["State", [fxDot(state), FX_STATE[state]]],
     ["Working on", s.doing || h("span", { class: "fx-faint" }, "No status set")],
     d.owner && ["Person", d.owner],
-    ["Device", deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? ", last seen " + ago(seenAt) : ""))],
+    // "last seen 47m ago" keeps together, so a narrow line breaks after "offline,".
+    ["Device", [deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? "," : "")), !d.reachable && seenAt && h("span", { class: "fx-nowrap" }, "last seen " + ago(seenAt))]],
     // Each part keeps together, so a narrow rail breaks the line at the "·", not inside a model name.
     ["Agent", agentParts.length ? h("span", { class: "fx-parts", title: agentParts.join(" · ") }, fxParts(agentParts)) : "–"],
     ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && (pr.url ? h("a", { class: "fx-pr" + (pr.draft ? " draft" : ""), href: pr.url, target: "_blank", rel: "noreferrer" }, "#" + pr.number) : h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number))] : "–"],
