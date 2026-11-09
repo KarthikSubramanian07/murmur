@@ -181,3 +181,78 @@ func TestTheCapKeepsAHumansTags(t *testing.T) {
 		t.Fatalf("Effective = %v: the human's tags should survive the cap, before the session's and the derived", got)
 	}
 }
+
+// A change read late doesn't overwrite a human's newer choice about the same tag (#251), whichever
+// order the two were read in. Times come from different machines' clocks, so a change up to a minute
+// older still goes by the order it was read in.
+func TestALateChangeLeavesANewerChoice(t *testing.T) {
+	const opus, haiku, sonnet = "model:opus-5.5", "model:haiku-5.5", "model:sonnet-5.5"
+	at := time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC)
+	later := at.Add(30 * time.Minute)
+	type change struct {
+		add, remove []string
+		at          time.Time
+	}
+	for _, c := range []struct {
+		name    string
+		base    []string
+		changes []change
+		want    []string
+	}{
+		{name: "a late removal doesn't take a newer add off",
+			changes: []change{{add: []string{"release"}, at: later}, {remove: []string{"release"}, at: at}},
+			want:    []string{"release"}},
+		{name: "a late add doesn't put a newer removal back on",
+			base:    []string{"reviewing"},
+			changes: []change{{remove: []string{"reviewing"}, at: later}, {add: []string{"reviewing"}, at: at}}},
+		{name: "a late add doesn't bring back a tag a human took away, leaving no mark",
+			changes: []change{{add: []string{"release"}, at: at.Add(10 * time.Minute)}, {remove: []string{"release"}, at: later},
+				{add: []string{"release"}, at: at}}},
+		{name: "a removal read before the older add it came after",
+			changes: []change{{remove: []string{"release"}, at: later}, {add: []string{"release"}, at: at}}},
+		{name: "a late add doesn't replace a newer one of its family",
+			changes: []change{{add: []string{haiku}, at: later}, {add: []string{sonnet}, at: at}},
+			want:    []string{haiku}},
+		{name: "a late add leaves a newer removal in its family",
+			base:    []string{opus},
+			changes: []change{{remove: []string{opus}, at: later}, {add: []string{sonnet}, at: at}},
+			want:    []string{sonnet}},
+		{name: "one late tag of a change leaves the rest to apply",
+			changes: []change{{add: []string{"release"}, at: later}, {remove: []string{"release"}, add: []string{"urgent"}, at: at}},
+			want:    []string{"release", "urgent"}},
+		{name: "a newer change applies, over a mark",
+			changes: []change{{add: []string{"release"}, at: at}, {remove: []string{"release"}, at: later}}},
+		{name: "a newer change applies, over a removal that left no mark",
+			changes: []change{{remove: []string{"release"}, at: at}, {add: []string{"release"}, at: later}},
+			want:    []string{"release"}},
+		{name: "within a minute, the order they were read in stands",
+			changes: []change{{add: []string{"release"}, at: at.Add(time.Minute)}, {remove: []string{"release"}, at: at}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var st State
+			for _, ch := range c.changes {
+				if err := st.SetHuman(c.base, ch.add, ch.remove, "tyler", ch.at); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := Names(Effective(c.base, nil, st.Human))
+			if !slices.Equal(got, append([]string{}, c.want...)) {
+				t.Errorf("tags = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// A removal that left no mark is still kept, or a late add could bring the tag back.
+func TestARemovalLeavingNoMarkIsKept(t *testing.T) {
+	var st State
+	if err := st.SetHuman(nil, nil, []string{"release"}, "tyler", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if st.Empty() {
+		t.Error("the state counts as empty, so it wouldn't be kept")
+	}
+	if got := Effective(nil, nil, st.Human); len(got) != 0 {
+		t.Errorf("tags = %v, want none", got)
+	}
+}

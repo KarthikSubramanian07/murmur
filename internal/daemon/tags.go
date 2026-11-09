@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -213,13 +214,19 @@ func (d *Daemon) humanTagsLocked(id string, add, remove []string, by string, at 
 	}
 	var self []string
 	var human map[string]tags.Mark
+	var cleared map[string]time.Time
 	if st := d.st.Tags[key]; st != nil {
-		self, human = st.Self, st.Human
+		self, human, cleared = st.Self, st.Human, st.Cleared
 	}
 	wasDND := d.dndLocked(id)
-	next := tags.State{Self: self, Human: cloneMarks(human)}
+	next := tags.State{Self: self, Human: cloneMarks(human), Cleared: maps.Clone(cleared)}
 	if err := next.SetHuman(tags.Base(self, d.derivedTagsLocked(id)), add, remove, by, at); err != nil {
 		return err
+	}
+	if maps.Equal(human, next.Human) && maps.Equal(cleared, next.Cleared) {
+		d.log.Printf("%s's change to the tags of session %s, from %s, is older than a human's later choice; not applied: %s",
+			by, bus.Addr(d.device, id), at.Format(time.RFC3339), tagChange(add, remove))
+		return nil
 	}
 	d.putTagStateLocked(key, &next)
 	d.kickPresence()
@@ -261,7 +268,13 @@ func (d *Daemon) applyTagsEventLocked(e bus.Event) {
 	if p := d.peers[from]; p != nil && p.pres.Owner != "" {
 		by = p.pres.Owner + " on " + from
 	}
-	if err := d.humanTagsLocked(sess, e.Add, e.Remove, by, e.At); err != nil {
+	// Dated later than now by a clock ahead, or a forged commit, it would hold off every change until
+	// that time came.
+	at := e.At
+	if now := time.Now().UTC(); at.After(now) {
+		at = now
+	}
+	if err := d.humanTagsLocked(sess, e.Add, e.Remove, by, at); err != nil {
 		d.log.Printf("tags from %s for %s not applied: %v", e.From, e.To, err)
 	}
 }
@@ -295,7 +308,12 @@ func (s pageSource) SetTags(ctx context.Context, addr string, add, remove []stri
 		if by == "" {
 			by = d.device
 		}
-		err := d.humanTagsLocked(sess, add, remove, by, time.Now().UTC())
+		// A click here is the newest thing there is, even if a mark's date says otherwise.
+		at := time.Now().UTC()
+		if last := d.st.Tags[d.tagKeyLocked(sess)].LastChoice(); last.After(at) {
+			at = last
+		}
+		err := d.humanTagsLocked(sess, add, remove, by, at)
 		d.mu.Unlock()
 		return err
 	}
