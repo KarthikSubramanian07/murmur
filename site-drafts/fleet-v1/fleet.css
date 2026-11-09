@@ -326,10 +326,10 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-meta .fx-parts-in { white-space: normal; }
 /* While rows are hidden below the list's edge, the edge fades, so a cut row reads as "more below"
    where scrollbars are hidden (fleetRailFit sets "more"). */
-.fx-rail .fx-dms.more { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent); }
+.fx-rail .fx-dms.more { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--fade, 2.5rem)), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - var(--fade, 2.5rem)), transparent); }
 /* A short rail scrolls as one: its header (name and Close) stays at the top, as it does on the whole
    page, and while there's more below, its bottom edge fades. The fade is a sticky overlay, not a
    mask, so the panel's own edge and corners stay crisp. */
 .fx-rail.short .fx-insp-head { position: sticky; top: -1rem; z-index: 1; margin: -1rem -1.125rem 1rem; padding: 1rem 1.125rem 0.75rem; border-bottom: 1px solid var(--fx-border); background: var(--fx-surface); }
 .fx-rail.short .fx-insp-head + .fx-meta { border-top: 0; padding-top: 0; }
-.fx-rail.short.more::after { content: ""; position: sticky; bottom: -1.25rem; flex: none; height: 2.5rem; margin: -2.5rem -1.125rem -1.25rem; background: linear-gradient(transparent, var(--fx-surface)); pointer-events: none; }
+.fx-rail.short.more::after { content: ""; position: sticky; bottom: -1.25rem; flex: none; height: var(--fade, 2.5rem); margin: calc(-1 * var(--fade, 2.5rem)) -1.125rem -1.25rem; background: linear-gradient(transparent, var(--fx-surface)); pointer-events: none; }

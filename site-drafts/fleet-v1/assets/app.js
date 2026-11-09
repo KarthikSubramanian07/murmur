@@ -2254,8 +2254,14 @@ function fleetRailFit() {
   const others = rail.scrollHeight - (list ? list.clientHeight : 0);
   const need = others + (list ? Math.min(list.scrollHeight, 112) : 0);
   rail.classList.toggle("short", need > startRoom);
-  if (list) list.classList.toggle("more", list.scrollTop + list.clientHeight < list.scrollHeight - 1);
-  rail.classList.toggle("more", rail.scrollTop + rail.clientHeight < rail.scrollHeight - 1);
+  // The fades are as tall as what's hidden, up to 2.5rem, so a row that almost fits stays readable.
+  const fade = (el) => {
+    const hidden = el.scrollHeight - el.scrollTop - el.clientHeight;
+    el.classList.toggle("more", hidden > 1);
+    el.style.setProperty("--fade", Math.min(hidden, 40) + "px");
+  };
+  if (list) fade(list);
+  fade(rail);
 }
 NARROW.addEventListener("change", render);
 STACKED.addEventListener("change", () => {
@@ -2491,7 +2497,7 @@ function fleetPage() {
   const text = (r) => {
     const need = allNeeds.get(r.s.name);
     const pr = r.s.branch && Object.hasOwn(prs, r.s.branch) ? prs[r.s.branch] : null;
-    return [r.s.name, r.s.doing, r.s.branch, r.s.agent, r.d.owner, deviceName(r.d), groupOf(r.s), pr && "#" + pr.number, ...(need ? need.msgs.flatMap((m) => [fromName(m), questionIn(m)]) : [])].join(" ");
+    return [r.s.name, FX_STATE[sessionState(r.d, r.s)], r.s.doing, r.s.branch, r.s.agent, r.d.owner, deviceName(r.d), groupOf(r.s), pr && "#" + pr.number, ...(need ? need.msgs.flatMap((m) => [fromName(m), questionIn(m)]) : [])].join(" ");
   };
   const searched = all.filter((r) => !q || text(r).toLowerCase().includes(q));
   const rows = searched.filter((r) => !F.state || sessionState(r.d, r.s) === F.state);
@@ -2844,7 +2850,7 @@ function fleetInspector(name, need) {
     ["Working on", s.doing || h("span", { class: "fx-faint" }, "No status set")],
     d.owner && ["Person", d.owner],
     // "last seen 47m ago" keeps together, so a narrow line breaks after "offline,".
-    ["Device", [deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? "," : "")), !d.reachable && seenAt && h("span", { class: "fx-nowrap" }, "last seen " + ago(seenAt))]],
+    ["Device", [deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? "," : "")), !d.reachable && seenAt && h("span", { class: "fx-nowrap" }, " last seen " + ago(seenAt))]],
     // Each part keeps together, so a narrow rail breaks the line at the "·", not inside a model name.
     ["Agent", agentParts.length ? h("span", { class: "fx-parts", title: agentParts.join(" · ") }, fxParts(agentParts)) : "–"],
     ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && (pr.url ? h("a", { class: "fx-pr" + (pr.draft ? " draft" : ""), href: pr.url, target: "_blank", rel: "noreferrer" }, "#" + pr.number) : h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number))] : "–"],
