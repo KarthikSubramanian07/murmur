@@ -2,6 +2,7 @@
 // are. Everything from the bus is untrusted text, so it only ever reaches the page as text nodes.
 import { icon } from "./icons.js";
 import { demo } from "./demo.js";
+import { brief } from "./brief.js";
 
 const NAME = document.querySelector('meta[name="app-name"]').content;
 // Draft for #179: "a" is today's page with sessions in the sidebar; "b" takes Slack's sidebar and
@@ -13,8 +14,8 @@ const TOKEN_KEY = NAME + ":token";
 const POLL_MS = 3000;
 const HIDDEN_POLL_MS = 15000;
 const MAX_MESSAGES = 2000;
-const VIEWS = ["sessions", "messages", "recent", "fleet", "settings"];
-const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", settings: "Settings" };
+const VIEWS = ["briefing", "sessions", "messages", "recent", "fleet", "settings"];
+const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", briefing: "Briefing", settings: "Settings" };
 const MODE_KEY = NAME + ":messages";
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
@@ -287,6 +288,7 @@ function miniSidebar() {
       top("messages", "message", "All conversations", ui.view === "messages" && !ui.filter),
       top("recent", "clock", "Recent messages", ui.view === "recent"),
       top("fleet", "activity", "Fleet audit", ui.view === "fleet"),
+      top("briefing", "check", "Briefing", ui.view === "briefing"),
       devices().map((d) => [
         h("div", { class: "mini-dev", title: (d.self ? "This device" : d.owner || d.id) + " · " + d.sessions.length }, deviceDot(d)),
         d.sessions.map((s) => {
@@ -336,7 +338,7 @@ function sidebar() {
       "div",
       { class: "sidebar-content" },
       VARIANT === "g"
-        ? h("div", { class: "sidebar-group g-top" }, topRow("sessions", "users", "All sessions", plural(sessionCount(), "session") + (settledSessions().length ? " · " + settledSessions().length + " settled" : " · " + plural(devices().length, "device"))), allButton(), topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")), topRow("fleet", "activity", "Fleet audit", fleetSub()))
+        ? h("div", { class: "sidebar-group g-top" }, topRow("briefing", "check", "Briefing", briefSub()), topRow("sessions", "users", "All sessions", plural(sessionCount(), "session") + (settledSessions().length ? " · " + settledSessions().length + " settled" : " · " + plural(devices().length, "device"))), allButton(), topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")), topRow("fleet", "activity", "Fleet audit", fleetSub()))
         : h(
             "div",
             { class: "sidebar-group" },
@@ -1079,6 +1081,7 @@ function page() {
   if (VARIANT === "g" && ui.view === "sessions") return gSessionsPage();
   if (VARIANT === "g" && ui.view === "recent") return gRecentPage();
   if (VARIANT === "g" && ui.view === "fleet") return fleetPage();
+  if (VARIANT === "g" && ui.view === "briefing") return briefPage();
   if (ui.view === "recent") return messagesPage();
   if (ui.view === "messages") return messagesPage();
   if (ui.view === "settings") return settingsPage();
@@ -2695,4 +2698,242 @@ function lastTool(name) {
   const t = H.events.filter((e) => e.who === name && e.kind === "tool").sort((a, b) => when(b.at) - when(a.at))[0];
   if (!t) return null;
   return h("span", { class: "fx-last-tool" + (t.ok ? "" : " error"), title: t.tool + ": " + t.detail }, h("span", { class: "mono truncate" }, t.tool + " · " + t.detail), h("span", null, (t.ok ? "" : "failed ") + ago(when(t.at))));
+}
+
+// ---------- #183: Briefing ----------
+// The page a person opens to understand the fleet: what the agents decided among themselves,
+// what each stream of work is for and where it stands, and who nobody can account for. Fleet (the
+// table) is for checking on agents; this is for following them.
+const BRIEF_ACK_KEY = NAME + ":brief-ack";
+function briefAcks() {
+  if (!ui.briefAck) {
+    try {
+      ui.briefAck = new Set(JSON.parse(localStorage.getItem(BRIEF_ACK_KEY) || "[]"));
+    } catch {
+      ui.briefAck = new Set();
+    }
+  }
+  return ui.briefAck;
+}
+function briefAck(id, on) {
+  const s = briefAcks();
+  on ? s.add(id) : s.delete(id);
+  try {
+    localStorage.setItem(BRIEF_ACK_KEY, JSON.stringify([...s]));
+  } catch {}
+  render();
+}
+
+function briefSub() {
+  if (!DEMO) return "Not built yet";
+  const n = brief.decisions.filter((d) => when(d.at) >= when(brief.lastLooked) && !briefAcks().has(d.id)).length;
+  return n ? plural(n, "decision") + " to read" : "You're caught up";
+}
+
+function briefSince() {
+  const span = ui.briefSpan || "last";
+  if (span === "day") return Date.now() - 24 * 3600000;
+  if (span === "week") return Date.now() - 7 * 24 * 3600000;
+  return when(brief.lastLooked);
+}
+
+function briefPage() {
+  if (!ui.state) return h("div", { class: "page" });
+  if (!DEMO) return h("div", { class: "fx" }, h("header", { class: "fx-head" }, h("div", null, h("h1", null, "Briefing"), h("p", null, "Needs agents to mark their decisions (#183). Shown with mock data only."))));
+  const since = briefSince();
+  const acks = briefAcks();
+  const decisions = brief.decisions.filter((d) => when(d.at) >= since);
+  const unread = decisions.filter((d) => !acks.has(d.id));
+  const streams = brief.streams;
+  const running = sessionCount();
+  const span = ui.briefSpan || "last";
+  const streamOf = (id) => streams.find((s) => s.id === id);
+  return h(
+    "div",
+    { class: "fx br" },
+    h(
+      "header",
+      { class: "fx-head" },
+      h(
+        "div",
+        null,
+        h("h1", null, "Briefing"),
+        h("p", null, span === "last" ? "Since you last looked, " + ago(since) + "." : span === "day" ? "The last 24 hours." : "The last 7 days."),
+      ),
+      fxSeg(
+        "Since",
+        [
+          ["last", "Since last look"],
+          ["day", "Today"],
+          ["week", "This week"],
+        ],
+        span,
+        (v) => {
+          ui.briefSpan = v;
+          render();
+        },
+      ),
+    ),
+    h(
+      "p",
+      { class: "br-lede" },
+      plural(running, "agent") + " are working on " + plural(streams.length, "thing") + ". They made ",
+      h("b", null, plural(decisions.length, "decision")),
+      decisions.filter((d) => d.big).length ? [" (", h("b", null, decisions.filter((d) => d.big).length + (decisions.filter((d) => d.big).length === 1 ? " that changes" : " that change") + " how Murmur works"), ")"] : "",
+      " between themselves" + (unread.length ? ", and " + unread.length + " of them you haven't read." : ", and you've read them all."),
+      brief.unexplained.length ? [" ", h("b", null, plural(brief.unexplained.length, "agent")), brief.unexplained.length === 1 ? " isn't doing anything anyone can explain." : " aren't doing anything anyone can explain."] : "",
+    ),
+    h(
+      "div",
+      { class: "br-main" },
+      h(
+        "section",
+        { class: "br-col" },
+        h("div", { class: "br-sec-head" }, h("h2", null, "Decided by agents"), unread.length > 0 && h("span", { class: "fx-badge" }, unread.length + " new")),
+        decisions.length
+          ? h("ol", { class: "br-decisions" }, decisions.map((d) => briefDecision(d, streamOf(d.stream), acks.has(d.id))))
+          : h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, "Nothing decided since then"), h("p", null, "Agents have only been working, not settling anything between them.")),
+      ),
+      h(
+        "aside",
+        { class: "br-col br-side" },
+        h("div", { class: "br-sec-head" }, h("h2", null, "What they're working on")),
+        h("ul", { class: "br-streams" }, streams.map((s) => briefStream(s, decisions.filter((d) => d.stream === s.id).length))),
+        brief.unexplained.length > 0 && [
+          h("div", { class: "br-sec-head br-gap" }, h("h2", null, "Nobody can say")),
+          h(
+            "ul",
+            { class: "br-streams" },
+            brief.unexplained.map((u) =>
+              h(
+                "li",
+                { class: "br-stream br-unknown" },
+                h("div", { class: "br-stream-top" }, h("span", { class: "br-faces" }, avatar(u.who)), h("span", { class: "br-stream-title" }, u.who)),
+                h("p", { class: "br-now" }, u.why),
+                h("div", { class: "br-actions" }, briefAsk("u-" + u.who, [u.who], "Ask " + u.who + " what it's doing")),
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+function briefFaces(names) {
+  return h("span", { class: "br-faces" }, names.slice(0, 4).map((n) => avatar(n)));
+}
+
+function briefWho(names) {
+  return names.map((n, i) => [i ? (i === names.length - 1 ? " and " : ", ") : "", h("b", null, n)]);
+}
+
+// The page can't send yet: asking would post a message from the human to those agents, which needs
+// a sender for humans on the bus (#183). The box shows what it would do.
+function briefAsk(key, to, label) {
+  const open = ui.briefAsking === key;
+  if (!open)
+    return h(
+      "button",
+      {
+        class: "br-link",
+        onclick: () => {
+          ui.briefAsking = key;
+          render();
+        },
+      },
+      icon("message"),
+      label,
+    );
+  return h(
+    "div",
+    { class: "br-ask" },
+    h("textarea", { rows: 2, placeholder: "Your question or objection", "data-key": "ask-" + key }),
+    h(
+      "div",
+      { class: "br-ask-foot" },
+      h("span", { class: "fx-faint" }, "Goes to ", to.join(" and "), " as a message from you."),
+      h(
+        "button",
+        {
+          class: "fx-btn ghost",
+          onclick: () => {
+            ui.briefAsking = null;
+            render();
+          },
+        },
+        "Cancel",
+      ),
+      h("button", { class: "fx-btn primary", disabled: true, title: "The page can't send yet" }, "Send"),
+    ),
+  );
+}
+
+function briefDecision(d, s, read) {
+  const src = ui.messages.find((m) => m.subject === d.source);
+  const open = () => {
+    if (!src) return;
+    ui.filter = null;
+    ui.conversation = conversationOf(src).key;
+    ui.conversationAnchor = src.id;
+    go("messages");
+  };
+  return h(
+    "li",
+    { class: "br-decision" + (read ? " read" : "") },
+    h("span", { class: "br-unread", "aria-label": read ? null : "Not read" }),
+    h(
+      "div",
+      { class: "br-dbody" },
+      h("p", { class: "br-what" }, d.what, d.big && h("span", { class: "fx-tag blue br-big" }, "Changes how Murmur works")),
+      h("p", { class: "br-why" }, h("span", { class: "br-why-k" }, "Why "), d.why),
+      h(
+        "div",
+        { class: "br-meta" },
+        briefFaces(d.by),
+        h("span", null, briefWho(d.by), d.broadcast ? " told everyone" : d.by.length > 1 ? " agreed" : " decided"),
+        h("span", { class: "br-dot" }, "·"),
+        agoEl("span", "", when(d.at)),
+        s && [h("span", { class: "br-dot" }, "·"), h("span", { class: "br-chip" }, s.title)],
+      ),
+      h(
+        "div",
+        { class: "br-actions" },
+        h(
+          "button",
+          { class: "br-link", onclick: () => briefAck(d.id, !read) },
+          icon("check"),
+          read ? "Read" : "Mark read",
+        ),
+        src && h("button", { class: "br-link", onclick: open }, icon("message"), "Read the " + (d.messages > 1 ? d.messages + " messages" : "message")),
+        briefAsk(d.id, d.by, "Question this"),
+      ),
+    ),
+  );
+}
+
+function briefStream(s, decided) {
+  const prs = ui.state.prs || {};
+  const tone = { ok: "on", warn: "idle", error: "dnd", off: "off" }[s.tone] || "off";
+  return h(
+    "li",
+    { class: "br-stream" },
+    h(
+      "div",
+      { class: "br-stream-top" },
+      fxDot(tone),
+      h("span", { class: "br-stream-title" }, s.title),
+      h("span", { class: "br-refs" }, s.issue && h("span", { class: "br-ref" }, "#" + s.issue), s.pr && h("span", { class: "fx-pr" + (s.draft ? " draft" : "") }, "PR #" + s.pr)),
+    ),
+    h("p", { class: "br-now" }, s.now),
+    h(
+      "div",
+      { class: "br-meta" },
+      briefFaces(s.who),
+      h("span", null, s.who.join(", ")),
+      h("span", { class: "br-dot" }, "·"),
+      h("span", null, plural(s.commits, "commit")),
+      decided > 0 && [h("span", { class: "br-dot" }, "·"), h("span", null, plural(decided, "decision"))],
+    ),
+  );
 }
