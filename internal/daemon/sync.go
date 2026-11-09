@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -260,6 +259,11 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		}
 	}
 	d.lastPollOK = polled
+	if d.presenceFor != "" && teamKeyID(d.teamKeysLocked()) != d.presenceFor {
+		// A device appeared, came back or went stale: presence goes out again, encrypted for the
+		// team as it is now, so a device that has just appeared can read it within a poll or two.
+		d.kickPresence()
+	}
 	switched := false
 	if d.mode != modeNormal && len(d.backlog) == 0 {
 		d.mode = modeNormal
@@ -626,6 +630,10 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
 		if bus.Decode(c.Message, &e) != nil {
 			continue
 		}
+		var ok bool
+		if e, ok = d.openEventLocked(e, dev, ref, c.SHA); !ok {
+			continue
+		}
 		if e.Clean(); !e.Valid() {
 			continue
 		}
@@ -819,7 +827,9 @@ func (d *Daemon) catchUpLocked(id string) {
 // updatePeer reads another device's presence. A presence that moved shows that its device is
 // alive even when it can't be read or understood (a passing git failure, a newer version, junk
 // pushed by hand): the peer's last change is still counted, so a reader never takes a device for
-// gone because of what it couldn't read, and never fails a sync over it. Caller holds advMu.
+// gone because of what it couldn't read, and never fails a sync over it. The exception is a presence
+// that isn't the device's own (checkPresenceLocked): another key, or no seal from a device that
+// seals. That one counts for nothing. Caller holds advMu.
 func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	dev := strings.TrimPrefix(ref, brand.PresencePrefix)
 	if dev == d.device || !bus.ValidDevice(dev) {
@@ -827,8 +837,9 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	}
 	d.mu.Lock()
 	p := d.peers[dev]
+	refused := d.refusedSHA[dev] == sha
 	d.mu.Unlock()
-	if p != nil && p.sha == sha {
+	if p != nil && p.sha == sha || refused {
 		return
 	}
 	c, err := d.repo.ReadCommit(ctx, sha)
@@ -845,6 +856,27 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		d.sawPresence(dev, sha, true)
 		return
 	}
+	d.mu.Lock()
+	if !d.checkPresenceLocked(dev, ref, c, pres) {
+		// Not dev's: nothing in it is taken, not even as a sign of life, and it isn't read again.
+		d.refusedSHA[dev] = sha
+		d.mu.Unlock()
+		return
+	}
+	if pres.Box != nil {
+		open, err := bus.DecryptPresence(pres, d.device, d.boxKey)
+		if err != nil {
+			// Not encrypted for this device yet: it has only just appeared, and its teammates will
+			// push their presence again for it when they see it (see pollOnce). The device is
+			// there, with nothing about it readable here.
+			if !errors.Is(err, bus.ErrNotForUs) {
+				d.log.Printf("%s: %s doesn't open: %v", ref, short(sha), err)
+			}
+			open = bus.Presence{V: pres.V, Device: pres.Device, At: pres.At, BoxKey: pres.BoxKey}
+		}
+		pres = open
+	}
+	d.mu.Unlock()
 	pres.Clean()
 	changed := time.Now()
 	if p == nil {
@@ -893,7 +925,13 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	ref := d.meshRef()
-	msg, err := bus.Encode(e, e.Line())
+	d.mu.Lock()
+	boxed, err := d.encryptEventLocked(e)
+	d.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	msg, err := bus.Encode(boxed, bus.EventSubject)
 	if err != nil {
 		return err
 	}
@@ -1120,9 +1158,18 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 		pres.Sessions = append(pres.Sessions, info)
 	}
+	pres.BoxKey = bus.BoxPublic(d.boxKey)
+	team := d.teamKeysLocked()
+	// Set at the attempt, not the success: a push that fails is retried on its own (presenceLoop),
+	// and a sync seeing the team differ from it shouldn't push at every poll meanwhile.
+	d.presenceFor = teamKeyID(team)
 	d.mu.Unlock()
 
-	msg, err := bus.Encode(pres, fmt.Sprintf("%s: %d sessions", d.device, len(pres.Sessions)))
+	pres, err := bus.EncryptPresence(pres, team)
+	if err != nil {
+		return err
+	}
+	msg, err := bus.EncodeSealed(pres, bus.PresenceSubject, d.signKey, d.device, d.presenceRef())
 	if err != nil {
 		return err
 	}

@@ -5,6 +5,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -244,6 +246,8 @@ type Daemon struct {
 	repo    *bus.Repo
 	dir     string
 	device  string
+	signKey ed25519.PrivateKey // seals this device's presence (keys.go)
+	boxKey  *ecdh.PrivateKey   // opens what is encrypted for this device
 	host    string
 	owner   string
 	token   string // the sessions' secret, in daemon.json
@@ -315,6 +319,13 @@ type Daemon struct {
 	threads      map[threadKey]t3db.State
 	threadRead   map[threadKey]time.Time
 	threadWarned map[threadKey]bool
+
+	// presenceFor is the team's keys (teamKeyID) the last presence push was encrypted for: when the
+	// team changes, presence goes out again, so a device that appears can read it. refused is when a
+	// presence claiming each device was last refused (see checkPresenceLocked), to log it once a minute.
+	presenceFor string
+	refused     map[string]time.Time
+	refusedSHA  map[string]string // the presence last refused for each device, not read again; under mu
 
 	polls atomic.Int64 // the remote listings tried, so a test can see the rate
 
@@ -530,6 +541,10 @@ type state struct {
 	// and its ID while the name is pending): the tags each set for itself and a human's marks
 	// (#198). Derived tags aren't kept.
 	Tags map[string]*tags.State `json:"tags,omitempty"`
+
+	// Pins is each device's keys as this device first pinned them (keys.go), this device's own
+	// included, by device ID. A pin is never undone.
+	Pins map[string]*keyPin `json:"pins,omitempty"`
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if
@@ -693,12 +708,13 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
+		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
 	}
-	device, err := loadDevice(dir)
+	device, signKey, boxKey, err := loadIdentity(dir, opt.Log)
 	if err != nil {
 		return nil, err
 	}
-	d.device = device
+	d.device, d.signKey, d.boxKey = device, signKey, boxKey
 	d.host, _ = os.Hostname()
 	d.repo = &bus.Repo{Git: gitx.Git{Dir: opt.GitDir}, Name: device, Email: device + "@" + brand.Name + ".invalid"}
 	if d.repo.Remote, err = bus.RemoteFor(ctx, d.repo.Git); err != nil {
@@ -708,6 +724,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}
+	d.pinSelfLocked() // nothing else runs yet
 	d.loadSettings()
 	wall := now.Round(0)
 	if !d.st.Initialized || wall.Sub(d.st.LastSync) > catchUpLimit {
@@ -908,7 +925,7 @@ func (d *Daemon) loadState() error {
 		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
-		Tags: map[string]*tags.State{}}
+		Tags: map[string]*tags.State{}, Pins: map[string]*keyPin{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -958,6 +975,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Tags == nil {
 		d.st.Tags = map[string]*tags.State{}
+	}
+	if d.st.Pins == nil {
+		d.st.Pins = map[string]*keyPin{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

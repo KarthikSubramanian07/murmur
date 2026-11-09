@@ -19,8 +19,8 @@ starts something sizeable, and asks the agent that owns the code instead of gues
 arrives in the other agent's conversation as a turn of its own, so it answers with nobody typing.
 
 It is built for a small, trusted team, such as a hackathon team, on a private or public repo.
-Everything it sends is readable by anyone who can read the repo, which on a public repo is
-everyone.
+What it sends is encrypted for the team's devices, with nothing to set up. Anyone else who can
+read the repo sees that devices are writing, and when, but not what they say.
 
 ## Get started
 

@@ -22,9 +22,9 @@ building what" among themselves, without bringing the humans in.
 
 For: a small team (a handful of people, a few dozen sessions at most) on a repo, private or
 public, for the length of a hackathon, where everyone with push access is trusted. On a public repo
-only collaborators can push, so only they can join and send (#72), but anyone can read the bus.
-An encrypted mode for teams that want it private is #156. Public repos were on the list below
-until Tyler took them off on 2026-11-03.
+only collaborators can push, so only they can join and send (#72), and anyone can read the bus,
+so what it carries is encrypted for the team's devices (#156, "The bus is encrypted", below). Public
+repos were on the list below until Tyler took them off on 2026-11-03.
 
 Not for: large teams, long-lived projects, or anyone whose agents should not take
 input from teammates' agents. These limits are deliberate. Each one keeps the design simple, and
@@ -97,14 +97,14 @@ address once; see Updating and Counting use.)
   along. The daemon pushes them with `--no-verify` and doesn't sign them: a `pre-push` hook that
   runs the test suite, or a signing prompt, on every message would make the bus unusable. These
   commits only ever go to `refs/murmur/*`, never to a branch.
-- Nor does a record carry a signature of the device's own, so a device can write records that
-  claim to come from another (#155). Only accounts with push access can write `refs/murmur/*`
-  (a fork can't), and any of them could already push code. A signature would stop one of them
-  posing as another teammate's device, and little else: a message gets no authority from who sent
-  it, and an agent can inject a prompt under its own name. A full version was built and set aside
-  on 2026-11-03 (Tyler's decision): Ed25519 keys per device, pinned on first sight, with replay
-  checks, about 860 lines, on branch `bus-signing` (PR #159, closed unmerged). Encryption (#156)
-  would need it back, to know whose a box key is.
+- Events carry no signature of the device's own, so a device can write events that claim to come
+  from another (#155). Only accounts with push access can write `refs/murmur/*` (a fork can't), and
+  any of them could already push code. A signature would stop one of them posing as another
+  teammate's device, and little else: a message gets no authority from who sent it, and an agent
+  can inject a prompt under its own name. A full version was built and set aside on 2026-11-03
+  (Tyler's decision): Ed25519 keys per device, pinned on first sight, with replay checks, about 860
+  lines, on branch `bus-signing` (PR #159, closed unmerged). Since #156 presence is sealed with that
+  branch's seal, because it carries the key a device's teammates encrypt to (next section).
 - beads (task tracking synced through `refs/dolt/data` on GitHub) shows custom refs hold up at
   scale, and two of its bugs are warnings: `git push --mirror` from an ordinary clone deletes
   custom refs on the remote (beads #5266), and checking an internal branch out in the user's repo
@@ -128,6 +128,74 @@ address once; see Updating and Counting use.)
   random hex digits (`tyler-laptop-3f2a`), kept with the daemon's other state in `.git/murmur/`,
   which no commit or checkout ever touches. (An earlier draft grouped repos by root commit;
   per-clone daemons don't need that.)
+
+### The bus is encrypted
+
+Tyler's decision (2026-11-08, #156): what goes over the repo is encrypted, in every repo, public or
+private, with **no friction for users or agents**: nobody runs a command, approves anything, copies
+a key or makes a choice. The daemon does all of it. An earlier design (#160, closed) made it a
+setting someone turned on with `mur encrypt`, and that command was the friction.
+
+- **Keys.** At start, each daemon makes any key it lacks: an Ed25519 signing key and an X25519 box
+  key, in `.git/murmur/keys` (0600, beside the device ID; no commit or checkout touches it). It
+  publishes the box key in its presence and seals the presence with the signing key. The seal is an
+  Ed25519 signature over the record's JSON, bound to the ref (`internal/bus/seal.go`, from #159).
+- **Push access is the key directory.** Only collaborators can write `refs/murmur/*`, so only they
+  can publish a key; GitHub's own access control decides who is on the team.
+- **Pinning.** A reader pins a device's signing key, in `state.json`, the first time it reads a
+  sealed presence from that device. From then on it takes a presence as that device's only if it is
+  sealed with that key: none unsealed, none with another (`internal/daemon/keys.go`). It encrypts to
+  the box key from that device's latest sealed presence. A presence that fails these checks is
+  refused and logged, the pin stays, and nobody is asked anything. A real device never changes keys
+  under its ID (see key loss), so a mismatch means a forgery or a copied `.git`. Pinning can't stop
+  someone with push access who seals a presence for a device before a new reader has seen the
+  device's own. That reader then refuses the real device. The attack takes push access, and the
+  trust model already trusts push access with code.
+- **Records.** Each record is encrypted once, with a fresh content key, and that key is wrapped for
+  each recipient device the way age does it: an ephemeral X25519 key, HKDF-SHA256, AES-256-GCM, all
+  from Go's standard library (`internal/bus/box.go`). An event is written as
+  `{"v":1,"type":"box","box":{…}}` with the whole event inside: sender, recipient, type, subject,
+  body, tags. A presence keeps its device ID, time and box key readable and encrypts its host, owner,
+  sessions and offline sessions. Commit subjects are `event` and `presence`; they used to repeat the
+  content.
+- **Recipients.** The writer itself, and every device whose key is pinned and whose presence is
+  fresh (see staleness, above). A message to one session or device also goes to that device while
+  its presence is stale, if it was seen within StoppedInbox (24 h), for a kept inbox there (#30).
+  Every record goes to the whole team, not only to a message's recipient, so the page and `lookup`
+  show every message as they did. Teammates could read everything before, and the threat is
+  outsiders. When the set of fresh devices with keys changes, the daemon pushes its presence again,
+  so a device that appears or comes back can read its teammates' presence within a poll or two.
+  Until then those teammates show with no sessions.
+- **Fails closed.** A daemon with this change never writes content in the clear. A message to a
+  device with no key is refused, and the sender is told that device runs an older Murmur.
+- **Older daemons.** A daemon from before this passes over `box` events, as it does any type it
+  doesn't know, and sees an updated device with no sessions. An updated daemon reads the older one's
+  plaintext as it always did, from a device with no pinned key. So for a while older devices can't
+  hear updated ones, and messages to them are refused. The updater (see Updating) closes that gap
+  within an hour of the release, with nobody acting. A version from before the updater needs the
+  manual install it already needed. **Until it updates, an older daemon writes in the clear, and
+  nothing can stop it.**
+- **A collaborator removed from the repo** can no longer push, so their presence goes stale within
+  StaleAfter. From then on they are left out of what is written. The one exception is a message
+  addressed to their device within 24 hours of when it was last seen. They keep what they could
+  already read.
+- **A device that joins later can't read what was written before it published its key.** A new
+  device never replayed history anyway. What it costs is the page's list of older messages.
+- **Key loss.** A deleted clone comes back as a new device. If only the keys file is gone and
+  `state.json` shows the device had keys, the daemon takes a new device ID, because its teammates
+  would refuse a new key under the old one. The old ID's presence goes stale, and its names stay
+  taken.
+- **The name registry stays in the clear, and unsealed.** It holds random names, device IDs and
+  random session IDs. A device that joins later must read all of it, history included, so that a
+  name is never given out twice, and it couldn't read records encrypted before it joined.
+- **What anyone who can read a public repo still sees:** device IDs, which begin with a slug of
+  the hostname; when each device writes, how many records and how large they are; which device IDs
+  each record is wrapped for; each device's public keys; the name registry; and
+  `refs/murmur/reported`. They don't see messages, subjects, who sent what to whom, statuses,
+  branches, tags, hosts, owners or agents.
+- **Open, for Tyler** (#156): whether the census (#199) should keep anything readable, such as
+  `owner` or an event's kind, now that encryption hides them from it; and whether new clones should
+  get a device ID without the hostname in it.
 
 ### One daemon per device, a thin MCP server per session
 
@@ -446,8 +514,8 @@ call.
   branches it has committed to when there are three or fewer. Whether a device is reachable, and
   when it was last seen, come from presence going stale. The worktree's folder name is shown for this
   device's sessions only: presence doesn't carry it, and a path from another machine would mean
-  nothing here. Messages are every one this daemon reads, whoever it is for (anyone who can read
-  the repo can read them all already), oldest first as this daemon read them, which is not by the
+  nothing here. Messages are every one this daemon reads, whoever it is for (every record is
+  encrypted for the whole team; see The bus is encrypted), oldest first as this daemon read them, which is not by the
   senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
   it never read what was sent while it was away for more than 10 minutes, except what is kept for a
   stopped session's inbox (above).
@@ -1179,8 +1247,9 @@ Tyler's goal for the project is 100 active users (2026-11-02), and the transport
 team's traffic stays in its own repo, and release downloads count installs, not use.
 
 Tyler's rule (2026-11-08, #199): **the only thing Murmur sends us is a public repo's address.** A
-public repo's bus is readable by anyone, so once we know the address, its repos, messages and
-people can be counted from the bus itself, and the address is already public, so there is no
+public repo's bus is readable by anyone, so once we know the address, its repos, devices and
+records can be counted from the bus itself (since #156 what the records say is encrypted, which
+hides messages and people from such a count), and the address is already public, so there is no
 opt-out. A private repo sends nothing and isn't counted. Weighed and turned down: a GitHub topic on
 each repo as the marker (it changes how the user's repo looks), and an ID for private repos (a
 hash of the address can't be salted for real, since the salt would ship in the public binary, and
@@ -1232,8 +1301,9 @@ census in #199.
   matches the trust model (a hackathon team), and a delivered message is text in front of the
   agent as a turn of its own, passed on as written; messages never get to bypass the receiving
   user's permission mode, and the framing's first line keeps their origin visible.
-- **Leaked secrets.** Everything on the bus stays in repo history, readable by anyone with read
-  access, and agents do paste `.env` values. Everything a session sends (its messages and status
+- **Leaked secrets.** Everything on the bus stays in repo history. It is encrypted for the devices
+  that were on the team when it was written, and those devices keep their keys; a daemon older than
+  encryption writes it in the clear. Agents do paste `.env` values. Everything a session sends (its messages and status
   line) is scanned first, and a match blocks the send rather than being redacted, so the
   agent knows what happened. V1 has its own short list of patterns (cloud and API keys, tokens,
   private keys); openhuddle's (`src/shared/scrub.js`) could extend it, license unchecked. The
