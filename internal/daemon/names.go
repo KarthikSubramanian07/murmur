@@ -243,6 +243,9 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	d.st.NamesTip = sha
 	if isCommit {
 		d.st.NamesGood = sha
+		// Read in full here, or from what was: either way, by a daemon that keeps people's claims.
+		changed = changed || !d.st.NamesPeople
+		d.st.NamesPeople = true
 	}
 	if disturbed {
 		// Only a history read from its start shows whether the registry holds every name. A
@@ -448,8 +451,10 @@ func (d *Daemon) nextNames() nameWork {
 		w.reserve = d.opt.NamePool - len(d.st.NamePool)
 	}
 	w.repair = d.st.NamesRepair
-	if d.st.Person != "" && d.st.PersonClaims[d.st.Person] == "" {
-		w.person = d.st.Person // a name from before people were in the registry
+	if d.st.Person != "" && d.st.PersonClaims[d.st.Person] == "" && d.namesChecked {
+		// A name from before people were in the registry. Only once the registry is read: until
+		// then, a claim made before this one isn't known to be there.
+		w.person = d.st.Person
 	}
 	return w
 }
@@ -611,8 +616,13 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 	defer d.mu.Unlock()
 	d.known[brand.NamesRef] = sha
 	if d.st.NamesTip == tip {
-		// Nothing newer was read meanwhile; this chain, on a tip that was read in full, is read.
-		d.st.NamesTip, d.st.NamesGood, d.st.NamesRepair = sha, sha, false
+		// Nothing newer was read meanwhile; this chain, on a tip that was read in full, is read. A
+		// tip not yet read by a daemon that keeps people's claims isn't (see NamesPeople), unless
+		// this chain is a new root, which holds every name itself.
+		d.st.NamesTip, d.st.NamesRepair = sha, false
+		if d.st.NamesPeople || parent == "" {
+			d.st.NamesGood, d.st.NamesPeople = sha, true
+		}
 	}
 	for _, b := range w.binds {
 		d.noteNameLocked(b.name, bus.Addr(d.device, b.id))

@@ -278,6 +278,16 @@ func (d *Daemon) nameTakenByLocked() string {
 // gets it (#268). A push refused because the registry moved is tried again after reading what moved
 // it, up to nameTries times; the error says whether someone else has the name.
 func (d *Daemon) claimPersonName(ctx context.Context, name string) error {
+	d.mu.Lock()
+	read := d.namesChecked
+	d.mu.Unlock()
+	if !read {
+		// The registry as this daemon last read it may lack a claim made since, or one an older
+		// daemon passed over (see NamesPeople); a claim on top of it would land all the same.
+		if err := d.pollOnce(ctx); err != nil {
+			return fmt.Errorf("couldn't read the names on the remote: %v", err)
+		}
+	}
 	for range nameTries {
 		err := d.pushNames(ctx, nameWork{person: name})
 		d.mu.Lock()

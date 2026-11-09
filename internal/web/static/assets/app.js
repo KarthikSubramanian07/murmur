@@ -2211,8 +2211,10 @@ async function submitName() {
   setup.error = "";
   render();
   try {
+    const was = myName();
     const account = await api("/api/account", { method: "PUT", body: JSON.stringify({ name: setup.name.trim() }) });
     ui.state.account = { ...ui.state.account, ...account };
+    moveToName(was, account.name); // asked for a new name, they may have drafts under the old one
     ui.setup = null;
     poll();
     setup.then?.();

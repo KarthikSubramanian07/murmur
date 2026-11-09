@@ -553,6 +553,10 @@ type state struct {
 	NamesTip    string `json:"namesTip,omitempty"`
 	NamesGood   string `json:"namesGood,omitempty"`
 	NamesRepair bool   `json:"namesRepair,omitempty"`
+	// NamesPeople says the registry was read from its start by a daemon that keeps people's claims
+	// (#268). One from before read their claims and passed over them, so its NamesGood alone would
+	// leave them unread for good: without this, the next read starts from the beginning.
+	NamesPeople bool `json:"namesPeople,omitempty"`
 	// NamePool is the names the registry has set aside for this device that no session has taken
 	// yet, oldest first. NameBinds is each name a session took from the pool whose assignment to it
 	// isn't in the registry yet, with the session's ID. Reserved is each name the registry has set
@@ -1067,6 +1071,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.PersonClaims == nil {
 		d.st.PersonClaims = map[string]string{}
+	}
+	if !d.st.NamesPeople {
+		d.st.NamesGood = "" // read from the start, for the people's claims an older daemon passed over
 	}
 	if d.st.People == nil {
 		d.st.People = map[string]string{}
