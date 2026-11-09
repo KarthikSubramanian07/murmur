@@ -39,6 +39,7 @@ func rateDaemon() *Daemon {
 
 // With a session open and nothing said, the wait doubles from Poll to PollCap and stays there.
 func TestPollEveryBacksOffToTheCap(t *testing.T) {
+	t.Parallel()
 	d := rateDaemon()
 	calm := d.opt.Poll
 	var got []time.Duration
@@ -62,6 +63,7 @@ func TestPollEveryBacksOffToTheCap(t *testing.T) {
 
 // What moves a conversation sets the poll to Poll for FastFor, and the wait doubles again after.
 func TestPollEveryIsFastAroundAConversation(t *testing.T) {
+	t.Parallel()
 	d := rateDaemon()
 	d.mu.Lock()
 	d.noteConversationLocked()
@@ -79,6 +81,7 @@ func TestPollEveryIsFastAroundAConversation(t *testing.T) {
 
 // Quiet mode is as it was: QuietPoll, whatever was said lately.
 func TestPollEveryQuietIsUnchanged(t *testing.T) {
+	t.Parallel()
 	d := rateDaemon()
 	delete(d.sessions, "bbbbbb")
 	d.mu.Lock()
@@ -92,6 +95,7 @@ func TestPollEveryQuietIsUnchanged(t *testing.T) {
 // The moves that count: a session starting, and a message queued in the inbox of a session
 // here, or handed over to it as a turn. Not one for a session on another device, or for the CLI.
 func TestWhatMovesAConversation(t *testing.T) {
+	t.Parallel()
 	msg := func(to string) bus.Event {
 		return bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa", To: to,
 			Subject: "hi", At: time.Now()}
@@ -123,6 +127,7 @@ func TestWhatMovesAConversation(t *testing.T) {
 
 // A message handed over to a session as a turn moves it; one whose handoff failed does not.
 func TestHandoffMovesTheConversation(t *testing.T) {
+	t.Parallel()
 	d, _, _ := rateRig(t, rateOptions(), false)
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa", To: d.device + "/bbbbbb", Subject: "hi"}
 	job := func() *pushJob {
@@ -252,6 +257,7 @@ func within(t *testing.T, what string, d time.Duration, ok func() bool) {
 // presence heartbeats and status changes, speeds up for a while after a message is received, slows
 // again, and speeds up after this device sends one.
 func TestPollFollowsTheConversation(t *testing.T) {
+	// Not parallel: it counts polls over real time, which other tests' load would skew.
 	opt := Options{Poll: testPoll, PollCap: testCap, FastFor: 1500 * time.Millisecond, QuietPoll: time.Hour}
 	d, peer, _ := rateRig(t, opt, true)
 	settle := 2 * time.Second // 200, 400, 800 ms of waits, with the polls themselves
@@ -313,6 +319,7 @@ func TestPollFollowsTheConversation(t *testing.T) {
 
 // With no session the poll stays at QuietPoll, a message sent from the daemon not changing that.
 func TestPollQuietStaysQuiet(t *testing.T) {
+	// Not parallel: it counts polls over real time, which other tests' load would skew.
 	opt := Options{Poll: testPoll, PollCap: testCap, FastFor: time.Minute, QuietPoll: time.Second}
 	d, _, _ := rateRig(t, opt, true)
 	d.mu.Lock()
@@ -331,6 +338,7 @@ func TestPollQuietStaysQuiet(t *testing.T) {
 
 // A poll that fails waits longer each time, even while the conversation is fresh.
 func TestPollFailureStillBacksOff(t *testing.T) {
+	// Not parallel: it counts polls over real time, which other tests' load would skew.
 	opt := Options{Poll: testPoll, PollCap: testCap, FastFor: time.Minute, QuietPoll: time.Hour}
 	d, _, clone := rateRig(t, opt, true)
 	d.mu.Lock()
@@ -347,6 +355,7 @@ func TestPollFailureStillBacksOff(t *testing.T) {
 // A conversation that moves while a failing poll waits doesn't end the wait: the remote is down or
 // limiting, and the faster rate is for when it answers.
 func TestConversationDuringAFailureKeepsTheBackoff(t *testing.T) {
+	// Not parallel: it counts polls over real time, which other tests' load would skew.
 	opt := Options{Poll: testPoll, PollCap: testCap, FastFor: time.Minute, QuietPoll: time.Hour}
 	d, _, clone := rateRig(t, opt, true)
 	d.mu.Lock()
@@ -370,6 +379,7 @@ func TestConversationDuringAFailureKeepsTheBackoff(t *testing.T) {
 // Messages kept for a conversation that reach its live session when it takes the name move the
 // conversation too, as one received does.
 func TestAdoptingAKeptInboxMovesTheConversation(t *testing.T) {
+	t.Parallel()
 	d := rateDaemon()
 	d.opt.StoppedInbox = time.Hour
 	d.st.SessionNames = map[string]string{"aaaaaa": "quiet-otter"}

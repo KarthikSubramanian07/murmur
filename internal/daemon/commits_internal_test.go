@@ -47,6 +47,7 @@ func (d *Daemon) startReq(dir, toolUse string) proto.Request {
 }
 
 func TestStartedCallsAreCapped(t *testing.T) {
+	t.Parallel()
 	d, dir := bracketDaemon(t)
 	now := time.Now()
 	d.mu.Lock()
@@ -77,6 +78,7 @@ func TestStartedCallsAreCapped(t *testing.T) {
 // A snapshot whose call never ended is dropped once it is older than bracketTTL, well short of the
 // cap.
 func TestStartedCallsExpire(t *testing.T) {
+	t.Parallel()
 	d, dir := bracketDaemon(t)
 	now := time.Now()
 	d.mu.Lock()
@@ -98,6 +100,7 @@ func TestStartedCallsExpire(t *testing.T) {
 
 // A call that ends leaves no snapshot behind, whether or not it made a commit.
 func TestEndedCallsLeaveNoSnapshot(t *testing.T) {
+	t.Parallel()
 	d, dir := bracketDaemon(t)
 	held := func() int {
 		d.mu.Lock()
@@ -118,6 +121,7 @@ func TestEndedCallsLeaveNoSnapshot(t *testing.T) {
 
 // What the hook sends that the daemon can't pair or place leaves nothing behind.
 func TestStartsThatCannotBePairedAreNotKept(t *testing.T) {
+	t.Parallel()
 	d, dir := bracketDaemon(t)
 	for name, req := range map[string]proto.Request{
 		"no tool_use_id":   {Op: proto.OpToolStart, ClaudeSession: "claude-x", Cwd: dir, GitDir: d.opt.GitDir},
@@ -142,6 +146,7 @@ func TestStartsThatCannotBePairedAreNotKept(t *testing.T) {
 // A state.json written before commits were kept has no "commits" key; loading it must leave a map
 // to credit into, as a write to a nil map would panic the daemon on the first commit.
 func TestStateFromBeforeCommitsLoads(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	old := `{"processed":{},"inbox":{},"stopped":{},"usedNames":{"quiet-otter":"s1"}}`
 	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte(old), 0o644); err != nil {
@@ -167,6 +172,7 @@ func TestStateFromBeforeCommitsLoads(t *testing.T) {
 // and the activity, taken back from when this daemon saw the presence change, so the two machines'
 // clocks never meet.
 func TestPeerActiveIsTheWritersGapOnThisClock(t *testing.T) {
+	t.Parallel()
 	seen := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
 	// The writer's clock is three hours ahead of this one.
 	wrote := seen.Add(3 * time.Hour).Add(-2 * time.Second)
@@ -193,6 +199,8 @@ func TestPeerActiveIsTheWritersGapOnThisClock(t *testing.T) {
 // A presence this daemon has never seen change is dated from when it was written, and never from
 // later than now, so a writer's clock that runs ahead can't make a device look newer than it is.
 func TestFirstSightIsWhenItWasWrittenButNeverLater(t *testing.T) {
+	// Not parallel: it allows a second between two readings of the clock, which other tests'
+	// load could stretch.
 	near := func(got time.Time, ago time.Duration) bool {
 		return time.Since(got.Add(ago)) < time.Second && time.Since(got.Add(ago)) > -time.Second
 	}
@@ -209,6 +217,7 @@ func TestFirstSightIsWhenItWasWrittenButNeverLater(t *testing.T) {
 // on the daemon's own state, as the keep time in a running daemon is a race against how slow git
 // is on the machine.)
 func TestCreditedCommitsExpireWithTheInbox(t *testing.T) {
+	t.Parallel()
 	d, _ := bracketDaemon(t)
 	now := time.Now()
 	stop := func(ago time.Duration) {
@@ -268,6 +277,7 @@ func TestCreditedCommitsExpireWithTheInbox(t *testing.T) {
 // A commit is written to state.json as soon as it is credited, not at the next stop: a daemon that
 // is killed (a crash, a reboot) would otherwise lose what it had credited since it last wrote.
 func TestCreditedCommitIsSavedAtOnce(t *testing.T) {
+	t.Parallel()
 	d, dir := bracketDaemon(t)
 	ctx := context.Background()
 	d.toolStart(ctx, d.startReq(dir, "t1"))
@@ -307,6 +317,7 @@ func TestCreditedCommitIsSavedAtOnce(t *testing.T) {
 // the notices the hook brings, doesn't wait for git. What it committed is credited all the same, and
 // a lookup waits for it.
 func TestCallEndIsAnsweredBeforeGit(t *testing.T) {
+	// Not parallel: it replaces snapshot, which every daemon in the process calls.
 	d, dir := bracketDaemon(t)
 	ctx := context.Background()
 	d.toolStart(ctx, d.startReq(dir, "t1"))
@@ -359,6 +370,7 @@ func igit(t *testing.T, dir string, args ...string) {
 // snapshot: Claude Code runs it as soon as the end is answered, and one that switches branches
 // before the snapshot would hide what the first call committed.
 func TestNextCallWaitsForTheEndBeforeIt(t *testing.T) {
+	// Not parallel: it replaces snapshot, which every daemon in the process calls.
 	d, dir := bracketDaemon(t)
 	ctx := context.Background()
 	d.toolStart(ctx, d.startReq(dir, "t1"))
@@ -399,6 +411,7 @@ func TestNextCallWaitsForTheEndBeforeIt(t *testing.T) {
 // each credited is kept in the order the calls ended, so the branches a session committed to are
 // listed most recent first all the same.
 func TestCreditsKeepTheOrderCallsEnded(t *testing.T) {
+	// Not parallel: it replaces snapshot, which every daemon in the process calls.
 	d, dir := bracketDaemon(t)
 	ctx := context.Background()
 	wt2 := filepath.Join(t.TempDir(), "two")

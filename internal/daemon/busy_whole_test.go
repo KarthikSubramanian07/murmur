@@ -159,6 +159,7 @@ func TestAFailedHandoffIsNotGivenWhole(t *testing.T) {
 // still gets the subject, and the message stays in the inbox, not delivered to a hook that would
 // print nothing of it.
 func TestAnOlderHookGetsTheSubjectOnly(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")

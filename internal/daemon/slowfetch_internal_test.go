@@ -14,6 +14,7 @@ import (
 // What a kill can leave goes once nothing has written to it for a while. A file still being written
 // stays, and so does everything of git's that isn't temporary.
 func TestRemoveStaleTemp(t *testing.T) {
+	t.Parallel()
 	gitDir := t.TempDir()
 	write := func(rel string, age time.Duration) string {
 		t.Helper()
@@ -53,6 +54,7 @@ func TestRemoveStaleTemp(t *testing.T) {
 // A slow fetch that fails waits longer before each next try, and one that lands leaves the ref to be
 // read, even if the ref moved meanwhile. A failure of the old tip's fetch says nothing about the new.
 func TestEndSlowFetch(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	const ref = "refs/murmur/mesh/zzz-0000"

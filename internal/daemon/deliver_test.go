@@ -80,7 +80,8 @@ func fakeT3(path string) int {
 }
 
 // useFakeT3 points T3CODE_CLI_PATH-style routes at the stand-in. It returns the path to put in a
-// route as T3CLI, and what the stand-in has been asked so far.
+// route as T3CLI, and what the stand-in has been asked so far. It tells the stand-in where to
+// write through the environment, so a test that uses it can't call t.Parallel (#39).
 func useFakeT3(t *testing.T) (exe string, calls func() []t3Call) {
 	t.Helper()
 	exe, err := os.Executable()

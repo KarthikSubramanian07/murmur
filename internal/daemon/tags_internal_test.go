@@ -32,6 +32,7 @@ func tagsDaemon(t *testing.T) *Daemon {
 func tagNames(ts []tags.Tag) string { return strings.Join(tags.Names(ts), " ") }
 
 func TestOwnTagsAndTheDerivedModel(t *testing.T) {
+	t.Parallel()
 	d := tagsDaemon(t)
 	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{Model: "claude-opus-5-5"}
 
@@ -70,6 +71,7 @@ func TestOwnTagsAndTheDerivedModel(t *testing.T) {
 }
 
 func TestTagsChangeNothingAboutDelivery(t *testing.T) {
+	t.Parallel()
 	// No tag carries behaviour: one called unavailable is a label like any other.
 	d := tagsDaemon(t)
 	if resp := d.setOwnTags("aaaaaa", proto.Request{Add: []string{"unavailable"}}); resp.Error != "" {
@@ -86,6 +88,7 @@ func TestTagsChangeNothingAboutDelivery(t *testing.T) {
 }
 
 func TestAHumansTagsStandOverTheSessions(t *testing.T) {
+	t.Parallel()
 	d := tagsDaemon(t)
 	d.setOwnTags("aaaaaa", proto.Request{Add: []string{"reviewing"}})
 	d.mu.Lock()
@@ -127,6 +130,7 @@ func TestAHumansTagsStandOverTheSessions(t *testing.T) {
 }
 
 func TestTagsEventValid(t *testing.T) {
+	t.Parallel()
 	base := bus.Event{V: bus.Version, ID: "abcdef12", Type: bus.Tags, From: "far/cli", To: "dev/aaaaaa", Add: []string{"ok"}}
 	if !base.Valid() {
 		t.Fatal("a good tags event isn't valid")
@@ -147,6 +151,7 @@ func TestTagsEventValid(t *testing.T) {
 }
 
 func TestAChangeForASessionThatIsntRegisteredWaitsForIt(t *testing.T) {
+	t.Parallel()
 	d := tagsDaemon(t)
 	// Its key was rekeyed once, so two keys have its name (see rekeyLocked); the name is what counts.
 	d.st.NameKeys = map[string]string{"claude:c": "name-aaaaaa", "t3:thread-aaaaaa": "name-aaaaaa"}
@@ -164,6 +169,7 @@ func TestAChangeForASessionThatIsntRegisteredWaitsForIt(t *testing.T) {
 }
 
 func TestTagsSetWhileTheNameIsPendingFollowItsName(t *testing.T) {
+	t.Parallel()
 	d := tagsDaemon(t)
 	d.st.NameHolders = map[string]string{}
 	d.mu.Lock()
@@ -182,6 +188,7 @@ func TestTagsSetWhileTheNameIsPendingFollowItsName(t *testing.T) {
 }
 
 func TestDoNotDisturbHoldsMessagesUntilTheTagComesOff(t *testing.T) {
+	t.Parallel()
 	d := tagsDaemon(t)
 	if resp := d.setOwnTags("aaaaaa", proto.Request{Add: []string{"do-not-disturb"}}); resp.Error != "" {
 		t.Fatal(resp.Error)
@@ -225,6 +232,7 @@ func TestDoNotDisturbHoldsMessagesUntilTheTagComesOff(t *testing.T) {
 }
 
 func TestDoNotDisturbSetByAHumanForASessionAway(t *testing.T) {
+	t.Parallel()
 	d := tagsDaemon(t)
 	d.st.SessionNames["aaaaaa"] = "name-aaaaaa"
 	d.mu.Lock()
@@ -244,6 +252,7 @@ func TestDoNotDisturbSetByAHumanForASessionAway(t *testing.T) {
 }
 
 func TestDoNotDisturbOfASessionThatStoppedBeforeItsNameLanded(t *testing.T) {
+	t.Parallel()
 	d := tagsDaemon(t)
 	d.mu.Lock()
 	d.sessions["aaaaaa"].name = ""
@@ -258,6 +267,7 @@ func TestDoNotDisturbOfASessionThatStoppedBeforeItsNameLanded(t *testing.T) {
 }
 
 func TestReleaseRetriesAMessageWhosePushFailedUnsent(t *testing.T) {
+	t.Parallel()
 	d := tagsDaemon(t)
 	d.setOwnTags("aaaaaa", proto.Request{Add: []string{"do-not-disturb"}})
 	d.mu.Lock()
@@ -273,6 +283,7 @@ func TestReleaseRetriesAMessageWhosePushFailedUnsent(t *testing.T) {
 }
 
 func TestTheDaemonStaysUpForAThreadOnDoNotDisturb(t *testing.T) {
+	t.Parallel()
 	d := idleDaemon(map[string]time.Duration{"aaaaaa": time.Minute})
 	d.st.Tags = map[string]*tags.State{"name-aaaaaa": {Self: []string{tags.DoNotDisturb}}}
 	d.threads = map[threadKey]t3db.State{}
