@@ -3116,16 +3116,18 @@ code {
   position: absolute;
   top: 0.375rem;
   right: 0.375rem;
-  display: none;
+  display: grid;
   place-items: center;
   width: 1.5rem;
   height: 1.5rem;
   border-radius: var(--radius-sm);
   color: var(--sidebar-muted-foreground);
+  opacity: 0;
 }
+/* see-through rather than display: none, so a keyboard can still reach it */
 .side-li:hover .side-hide,
-.side-hide:focus-visible {
-  display: grid;
+.side-li:focus-within .side-hide {
+  opacity: 1;
 }
 .side-hide:hover {
   background: rgb(255 255 255 / 8%);
@@ -3146,8 +3148,8 @@ code {
 }
 .quiet-item .side-hide {
   position: static;
-  display: grid;
   flex-shrink: 0;
+  opacity: 1;
 }
 .quiet-item .pres-wrap .avatar {
   width: 1.25rem;

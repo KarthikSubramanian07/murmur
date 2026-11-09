@@ -433,9 +433,9 @@ call.
   the way; a direct message with a settled session folds away too. Sessions in Claude Code, Codex,
   pi or opencode never settle: one left open in a forgotten terminal stays in presence for good.
   So a running session idle for a day, or one a person hid (the `hidden` tag, set from the page
-  through #211's `/api/tags`), folds under its device as quiet. Either shows while it is active;
-  a hidden one folds again when it goes idle, because a tag a person sets stays until a person
-  takes it off, and the page doesn't take tags off by itself. The page is always dark: the design was only ever drawn dark, and a light one would be a
+  through #211's `/api/tags`), folds under its device as quiet. An idle one comes back once it
+  does anything; a hidden one stays hidden until someone shows it again, because a tag a person
+  sets stays until a person takes it off. The page is always dark: the design was only ever drawn dark, and a light one would be a
   second design. Started times, worktrees and committed branches left the page with the old
   Sessions view; `lookup` still has the branches.
 - **Settings** (when a session is woken) are saved in `.git/murmur/settings.json`, replaced whole.

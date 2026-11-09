@@ -142,8 +142,13 @@ function devices() {
 // carried and puts in whatever the address is called now.
 const named = new Map();
 
+let namesLearned = 0; // goes up whenever an address gets a new name
+
 function learn(addr, name) {
-  if (addr && name && name !== addr) named.set(addr, name);
+  if (addr && name && name !== addr && named.get(addr) !== name) {
+    named.set(addr, name);
+    namesLearned++;
+  }
 }
 
 function nameOf(addr, shown) {
@@ -406,17 +411,27 @@ function wakeNever(d, s) {
 
 // Quiet: running, but idle for a day, or hidden by a person with the hidden tag (#211). Agents
 // in Claude Code, Codex and the rest never settle, so a session left open in a forgotten terminal
-// stays in presence for good; this keeps it out of the way. Active, it shows; a hidden one folds
-// away again when it goes idle, since a person's tag stays until a person takes it off.
+// stays in presence for good; this keeps it out of the way. An idle one comes back once it does
+// anything. A hidden one stays hidden until someone shows it again: a person's tag stays until a
+// person takes it off, and the fold still shows its dot.
 const QUIET_MS = 24 * 60 * 60 * 1000;
 const HIDDEN = "hidden";
 
+// A Hide or Show this page has asked for, by address, until the state it polls agrees: another
+// device's sessions carry the tag only once that device has read the change.
+const hideWanted = new Map();
+
 function isHidden(s) {
-  return (s.tags || []).some((t) => t && t.name === HIDDEN);
+  const tagged = (s.tags || []).some((t) => t && t.name === HIDDEN);
+  if (!hideWanted.has(s.addr)) return tagged;
+  if (hideWanted.get(s.addr) === tagged) {
+    hideWanted.delete(s.addr);
+    return tagged;
+  }
+  return hideWanted.get(s.addr);
 }
 
 function isQuiet(d, s) {
-  if (sessionState(d, s) === "on") return false;
   if (isHidden(s)) return true;
   const t = when(s.lastActive) || when(s.started);
   return !!t && Date.now() - t > QUIET_MS;
@@ -435,7 +450,7 @@ async function setHidden(s, on) {
   ui.notice = "";
   try {
     await api("/api/tags", { method: "POST", body: JSON.stringify({ addr: s.addr, add: on ? [HIDDEN] : [], remove: on ? [] : [HIDDEN] }) });
-    s.tags = on ? [...(s.tags || []), { name: HIDDEN, src: "human" }] : (s.tags || []).filter((t) => t.name !== HIDDEN);
+    hideWanted.set(s.addr, on);
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
     // A daemon from before session tags (#211) has no /api/tags.
@@ -451,8 +466,8 @@ function hideButton(s) {
     "button",
     {
       class: "side-hide",
-      title: hidden ? "Stop hiding " + s.name : "Hide " + s.name + ": it shows only while active",
-      "aria-label": hidden ? "Stop hiding " + s.name : "Hide " + s.name,
+      title: hidden ? "Show " + s.name + " again" : "Hide " + s.name + " until you show it again",
+      "aria-label": hidden ? "Show " + s.name + " again" : "Hide " + s.name,
       "data-key": "hide-" + s.name,
       onclick: () => setHidden(s, !hidden),
     },
@@ -592,13 +607,13 @@ function settledFold(id) {
 }
 
 // Worked out again only when the state or the messages change: a render asks many times.
-let settledMemo = { state: null, n: -1, cursor: null, rows: [], names: new Set() };
+let settledMemo = { state: null, n: -1, cursor: null, learned: -1, rows: [], names: new Set() };
 
 function settledSessions() {
   const memo = settledMemo;
-  if (memo.state === ui.state && memo.n === ui.messages.length && memo.cursor === ui.cursor) return memo.rows;
+  if (memo.state === ui.state && memo.n === ui.messages.length && memo.cursor === ui.cursor && memo.learned === namesLearned) return memo.rows;
   const rows = findSettled();
-  settledMemo = { state: ui.state, n: ui.messages.length, cursor: ui.cursor, rows, names: new Set(rows.map((r) => r.name)) };
+  settledMemo = { state: ui.state, n: ui.messages.length, cursor: ui.cursor, learned: namesLearned, rows, names: new Set(rows.map((r) => r.name)) };
   return rows;
 }
 
