@@ -248,7 +248,7 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   | The MCP server, for Codex | a `[mcp_servers.murmur]` table in `$CODEX_HOME/config.toml`, else `~/.codex/config.toml`: the command, `args = ["mcp", "--agent", "codex"]` and `default_tools_approval_mode = "approve"` | user |
   | The MCP server, for OpenCode, Muse Code, Pi and Grok | see "Other agents", below | user |
   | The skills, `murmur` and `murmur-pro` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode and Pi; Muse Code and Grok document no skills folder (2026-11-08) | user |
-  | The hook, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure` and `UserPromptSubmit` (`setup.HookEvents`) | `.claude/settings.local.json` in each worktree of the clone, kept out of `git status` through the clone's `info/exclude` | clone |
+  | The hook, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit` and `Stop` (`setup.HookEvents`) | `.claude/settings.local.json` in each worktree of the clone, kept out of `git status` through the clone's `info/exclude` | clone |
   | The daemon | started, if none is running | clone |
 
   The skills carry the judgment the tool descriptions don't: when Murmur is worth a turn, and how
@@ -443,8 +443,8 @@ the commits it made and the client's session ID, which stay on this device. Git 
 which session made a commit, so the daemon watches tool calls for them.
 
 - **Bracketing a call.** `mur join` installs the hook on `PreToolUse`, `PostToolUse` and
-  `PostToolUseFailure` as well as `UserPromptSubmit`, with matcher `*` on the three tool events, and
-  run again adds what an older join lacks. A repo set up by an `init` from before #55 had the hook
+  `PostToolUseFailure` as well as `UserPromptSubmit` and `Stop` (the end of a turn, #202), with
+  matcher `*` on the three tool events, and run again adds what an older join lacks. A repo set up by an `init` from before #55 had the hook
   in its committed `.claude/settings.json`; `mur init` removes it there, and the user's `mur join`
   installs it in `.claude/settings.local.json`. On `PreToolUse` the daemon snapshots the worktree
   of the hook's working directory (`attrib.Head`: HEAD, branch and every ref tip). On the call's end it
@@ -740,11 +740,12 @@ the agent happens to call a tool. Tyler's decision (2026-10-29, #57), which repl
 delivery: **a message from another agent reaches the receiving session as a turn of its own**, the
 way a message between two T3 threads does. Murmur's core is two agents talking with nobody typing.
 
-The daemon delivers at once, when a message arrives for a session it can reach:
+The daemon delivers at once, when a message arrives for a session it can reach, unless the hook
+has the session at work (see "A session at work", below):
 
 | Where the session runs | Delivered by | Starts a turn in an idle session |
 |---|---|---|
-| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
+| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing. A busy session the hook runs in (Claude Code) is not handed the message: the hook tells it | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
 | Claude Code outside T3 | the session's messaging socket | Unverified: a message Murmur's code wrote to a session's socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle one has not been tried |
 | Codex, OpenCode, Muse, Pi or Grok outside T3, or any delivery that fails | the hook's notice where the hook runs (Claude Code), and `inbox` | No |
 
@@ -770,6 +771,58 @@ A body past the limit is cut, as in `inbox`.
   could not be delivered stays in the inbox and is announced by the hook as before. The hook
   leaves alone a message that is waiting its turn to be delivered, behind the one being delivered:
   announced by a notice it would never become a turn.
+- **A session at work (#202).** Until 2026-11-08 a message for a busy T3 thread went to
+  `t3 thread send` like any other, and T3 queued it behind the running turn. The agent heard
+  nothing until the turn ended, Murmur couldn't tell whether T3 ever played the queued turn, and
+  T3 holds such turns rather than starting them after a run the user stopped, while the provider
+  is usage-limited, and while the thread's mode is above its ceiling (T3 source at f558007b, read,
+  not observed); a person can also delete one in T3's window. Tyler's decision (2026-11-08): where
+  Murmur's hook runs, a busy session isn't handed the message. The hook tells it after its next
+  tool call, sender and subject with the count unread, and the agent reads the body with `inbox`
+  when it chooses. What it was told of and hasn't read when the turn ends goes in as a turn then,
+  however long the turn took, so nothing waits for good. A message that comes during a turn with
+  no tool call after it goes in at the end as well.
+  - *Busy and idle come from the hook*: a prompt or a tool call means busy, and the `Stop` hook,
+    which `mur join` installs since this change, means the turn ended. "No tool call lately" would
+    not do, as one long command looks idle. A turn the user interrupts fires no `Stop`; in T3 the
+    busy state also ends when a read of T3's database that began after the hook last ran finds no
+    run of the thread queued or running. Comparing the run's recorded end with the hook's last call
+    was tried first and dropped in review (Sol, 2026-11-08): a hook that comes after the run's end,
+    such as one from a tool call the interrupt cut short, would have left the session busy for
+    good. A turn the database ends this way is ended as `Stop` ends one: what came during it and
+    wasn't told is held too. A session whose MCP connection dropped keeps its state through its
+    grace, and one that reconnects after the daemon restarted (an update, say) counts as busy while
+    T3 shows its thread's run going, and for its first minute until its thread has been read at
+    all, until its own hook runs again (a subagent's doesn't count): without that, what was held
+    for the end of its turn would go to T3's queue mid-turn. Outside T3 nothing ends it until the next prompt and the `Stop` after it, so a message to
+    an interrupted session waits for the user to come back. An update doesn't run `mur join`
+    again, so a clone joined before this change has no `Stop` hook until its user does; outside T3
+    a session is held back only once the daemon has seen a `Stop` from it, and until then a
+    message goes in as a turn, as before.
+  - *The count* is shown with each new message, and again only when it changes, not after every
+    tool call. A fall to none isn't told: the agent read them itself.
+  - *Held however long.* A message that came during a turn goes in at its end whatever its age:
+    the 15 minutes a message may wake a session (below) measure an absence, and a turn can be
+    longer. One from before the turn, told at its start, is held only if it is still within them;
+    older, it stays a notice, as it would have without the turn.
+  - *Why not hand it to T3 as well*: T3 can't take back a queued message, so the agent could read
+    it with `inbox` mid-turn and then get it again as a turn.
+  - *Where the hook doesn't run* (Codex, OpenCode, Muse, Pi and Grok in T3, as of 2026-11-08),
+    nothing tells the daemon the session is at work, and a message goes to T3 as before: without
+    the handoff the session would hear nothing at all. #205 brings those agents in line.
+  - *Subagents.* A subagent's tool call carries the parent's `session_id`, with `agent_id` set
+    (Claude Code 2.1.312, 2026-10-29). The hook tells it nothing, as its notice would land in the
+    subagent's context, not the session's (inferred, not seen; #188), and it doesn't mark the
+    session at work: a background subagent goes on after its parent's turn has ended.
+  - *Not covered:* a single tool call that runs a long time gets no notice until it ends. Whether
+    a busy Claude thread in T3 shows the hook's notice mid-turn is read from T3's source (its
+    Claude adapter leaves the Agent SDK's `settingSources` unset, so project hooks load), not
+    watched.
+  - *Considered and not chosen:* a background watcher the agent starts (it has to restart it after
+    every message, and Codex isn't told when a background process ends); Claude Code Channels
+    (events that come while Claude is busy are held for the next turn, and it is a research preview
+    the Agent SDK ignores); steering the running turn with Codex's `turn/steer` or T3's
+    `t3_thread_send` in `steer` mode, which is the interruption the 2026-10-29 rule avoids.
 - **Finding the thread (#56).** T3 gives an MCP server or a hook no thread ID, so the MCP server
   looks up the provider's own session in T3's database: `statev2.sqlite` in T3's data directory
   (`T3CODE_HOME`, or the directory the CLI's `bin` is in, or `~/.t3`), table
@@ -897,8 +950,9 @@ A body past the limit is cut, as in `inbox`.
   have taken a name in the seconds before its thread was read; nobody sees the name. A Claude Code
   subagent inside one session never registered (see Crediting commits, Subagents).
 - **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
-  decision, 2026-10-29). A message to a busy thread is queued as its next turn, not injected into
-  the one running, and the AGENTS.md wording asks for coordination, not chatting; beyond that
+  decision, 2026-10-29). A message to a busy thread is never injected into the turn running: it is
+  queued as the next turn, or, where the hook runs, announced and given as a turn when this one
+  ends (#202). The AGENTS.md wording asks for coordination, not chatting; beyond that
   only the agents stop a loop.
 - **Speed.** The daemon polls the remote every 3 s around a conversation, not 10 s (2026-10-29), and
   delivers the moment a message is fetched. Measured between two T3 threads on one laptop through GitHub over HTTPS:
@@ -995,7 +1049,8 @@ What it can't see: a person with two machines is two users, and one who turned c
 
 - **Agents replying forever.** T3's local messaging stays calm because a reply is plain text in
   the receiver's own thread; nothing goes back unless the agent deliberately sends again. Murmur
-  keeps that: no automatic replies, incoming messages queued rather than steering a running turn,
+  keeps that: no automatic replies, incoming messages that never steer a running turn (queued
+  behind it, or since #202 told by the hook and given as a turn when it ends),
   and AGENTS.md wording that asks for coordination, not chatting. No limits or caps on top of that,
   now that a message starts a turn without anyone typing (Tyler's decision, 2026-10-29): two
   agents that keep answering each other are stopped by nothing but the agents.

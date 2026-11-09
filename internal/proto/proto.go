@@ -23,6 +23,9 @@ const (
 	// worktree at the start and credits the commits that appeared by the end (#21).
 	OpToolStart = "toolstart"
 	OpToolEnd   = "toolend"
+	// OpTurnEnd is the hook at the end of a turn (Claude Code's Stop): the session is idle, and
+	// what it was told of and didn't read may go in as a turn (#202).
+	OpTurnEnd = "turnend"
 )
 
 // Protocol is the version of this protocol that the daemon speaks, reported in its ping reply. A
@@ -34,7 +37,9 @@ const (
 //	1: OpRoute, and delivering a message as a turn (#56, #57)
 //	2: the conversation's title as the default status line, which needs the transcript the hook
 //	   reports and the Codex thread ID in the route (#66)
-const Protocol = 2
+//	3: OpTurnEnd, OpNotices's Unread and Subagent: a session the hook runs in gets notices while it
+//	   is at work, and turns only when it isn't (#202)
+const Protocol = 3
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -84,6 +89,10 @@ type Request struct {
 	// Transcript is the path of the Claude Code session's transcript, the hook's transcript_path,
 	// which holds the session's title. OpNotices carries it.
 	Transcript string `json:"transcript,omitempty"`
+	// Subagent says the hook ran for a subagent's tool call (its payload has an agent_id): the
+	// session is at work, but a notice would land in the subagent's context, not the session's,
+	// so OpNotices answers with nothing (#188).
+	Subagent bool `json:"subagent,omitempty"`
 
 	// Name is the session OpLookup describes: a name, or device/session. Limit caps the messages.
 	Name string `json:"name,omitempty"`
@@ -164,6 +173,9 @@ type Response struct {
 
 	Messages []MessageView `json:"messages,omitempty"`
 	Events   []EventView   `json:"events,omitempty"`
+	// Unread is, in an OpNotices reply, how many messages the session has unread, set when there
+	// are new ones to tell or the number changed since the hook last said it; 0 otherwise.
+	Unread int `json:"unread,omitempty"`
 
 	Lookup *SessionDetail `json:"lookup,omitempty"`
 }

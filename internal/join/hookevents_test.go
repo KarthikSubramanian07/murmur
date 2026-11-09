@@ -46,7 +46,7 @@ func hookEvents(t *testing.T, path string) map[string]string {
 // setup.HookEvents has to change this too. PreToolUse and PostToolUseFailure are how the daemon
 // finds the commits a tool call made (#21); a join that leaves them out loses those commits.
 func wantHookEvents() map[string]string {
-	return map[string]string{"PreToolUse": "*", "PostToolUse": "*", "PostToolUseFailure": "*", "UserPromptSubmit": ""}
+	return map[string]string{"PreToolUse": "*", "PostToolUse": "*", "PostToolUseFailure": "*", "UserPromptSubmit": "", "Stop": ""}
 }
 
 // A join over an install from before the hook watched tool calls (PostToolUse and UserPromptSubmit

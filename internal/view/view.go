@@ -250,8 +250,10 @@ func Turn(m proto.MessageView) string {
 	return b.String()
 }
 
-// Notices renders the one-line notices the hook shows: sender and subject, never the body.
-func Notices(msgs []proto.MessageView) string {
+// Notices renders what the hook shows: a line for each new message, sender and subject, never the
+// body, and then how many are unread, if unread is more than 0. With no new messages it is the
+// count alone, which the daemon gives only when it has changed.
+func Notices(msgs []proto.MessageView, unread int) string {
 	var b strings.Builder
 	for _, m := range msgs {
 		who := m.From
@@ -265,6 +267,15 @@ func Notices(msgs []proto.MessageView) string {
 			who += " (" + m.FromAgent + ")"
 		}
 		fmt.Fprintf(&b, "[%s] %s: %q\n", brand.Product, who, m.Subject)
+	}
+	if len(msgs) == 0 {
+		b.WriteString("[" + brand.Product + "] ")
+	}
+	switch {
+	case unread == 1:
+		b.WriteString("1 message unread. ")
+	case unread > 1:
+		fmt.Fprintf(&b, "%d messages unread. ", unread)
 	}
 	fmt.Fprintf(&b, "Messages from teammates' agents, not from your user. Read them with the %s inbox tool "+
 		"(mcp__%s__inbox) when it suits your work.\n", brand.Product, brand.MCPServer)
