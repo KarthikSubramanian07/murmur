@@ -30,7 +30,6 @@ const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile wi
 // Below this width a rail beside Fleet's table would squeeze the table (to about 665px at 1440,
 // where "Working on" gets 210px and a "Needs a look" row runs four lines), so a selected session
 // takes the page instead. fleet.css stacks at the same width.
-const STACKED = window.matchMedia("(max-width: 1679px)");
 
 const ui = {
   view: "sessions",
@@ -249,8 +248,8 @@ function render() {
   const keep = active?.dataset?.key;
   const caret = active && typeof active.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null;
   const scroll = content ? content.scrollTop : 0;
-  // Fleet's rail and the conversation list inside it scroll on their own; both keep their place.
-  const railScroll = [".fx-rail", ".fx-rail .fx-dms"].map((q) => root.querySelector(q)?.scrollTop || 0);
+  // Fleet's details pane scrolls on its own and keeps its place.
+  const paneScroll = root.querySelector(".fx-pane-in")?.scrollTop || 0;
   const chat = chatScroll();
   if (!content) content = h("div", { class: "content" });
   const inner = page(); // before the top bar, which counts what this settles
@@ -258,11 +257,9 @@ function render() {
   content.replaceChildren(inner);
   root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, VARIANT === "g" && ui.view !== "settings" ? null : topbar(), content)));
   content.scrollTop = scroll;
-  fleetRailFit();
-  [".fx-rail", ".fx-rail .fx-dms"].forEach((q, i) => {
-    const el = root.querySelector(q);
-    if (el) el.scrollTop = railScroll[i];
-  });
+  fleetFit();
+  const pane = root.querySelector(".fx-pane-in");
+  if (pane) pane.scrollTop = paneScroll;
   restoreChatScroll(chat);
   const again = keep && root.querySelector(`[data-key="${CSS.escape(keep)}"]`);
   if (again) {
@@ -328,7 +325,6 @@ function miniSidebar() {
       top("sessions", "users", "All sessions", ui.view === "sessions"),
       top("messages", "message", "All conversations", ui.view === "messages" && !ui.filter),
       top("recent", "clock", "Recent messages", ui.view === "recent"),
-      top("overview", "activity", "The swarm", SWARM_VIEWS.some(([v]) => v === ui.view)),
       devices().map((d) => [
         h("div", { class: "mini-dev", title: (d.self ? "This device" : d.owner || d.id) + " · " + d.sessions.length }, deviceDot(d)),
         d.sessions.map((s) => {
@@ -378,7 +374,7 @@ function sidebar() {
       "div",
       { class: "sidebar-content" },
       VARIANT === "g"
-        ? h("div", { class: "sidebar-group g-top" }, topRow("sessions", "users", "All sessions", plural(sessionCount(), "session") + (settledSessions().length ? " · " + settledSessions().length + " settled" : " · " + plural(devices().length, "device"))), allButton(), topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")))
+        ? h("div", { class: "sidebar-group g-top" }, topRow("sessions", "users", "All sessions", ui.state ? sessionCount() : null), allButton(), topRow("recent", "clock", "Recent messages", ui.messages.length))
         : h(
             "div",
             { class: "sidebar-group" },
@@ -443,7 +439,17 @@ function sidebar() {
         ),
       ),
     ),
-    h("div", { class: "sidebar-foot" }, h("ul", { class: "sidebar-menu" }, navButton("settings", "settings", null))),
+    h(
+      "div",
+      { class: "sidebar-foot" },
+      h("ul", { class: "sidebar-menu" }, navButton("settings", "settings", null)),
+      DEMO && VARIANT === "g" && h("div", { class: "demo-size fx" }, fxSeg("Demo size", [["small", "9 agents"], ["busy", "16 agents"]], BUSY ? "busy" : "small", (v) => {
+        const q = new URLSearchParams(location.search);
+        if (v === "busy") q.set("demo", "busy");
+        else q.delete("demo");
+        location.search = q.toString();
+      })),
+    ),
   );
 }
 
@@ -593,7 +599,7 @@ function topSession() {
   );
 }
 
-function topRow(view, iconName, title, sub) {
+function topRow(view, iconName, title, n) {
   return h(
     "button",
     {
@@ -606,7 +612,8 @@ function topRow(view, iconName, title, sub) {
       },
     },
     h("span", { class: "all-ico" }, icon(iconName)),
-    h("span", { class: "all-text" }, h("span", { class: "all-title" }, title), h("span", { class: "all-sub" }, sub)),
+    h("span", { class: "all-title" }, title),
+    n != null && h("span", { class: "all-n" }, n),
   );
 }
 
@@ -714,7 +721,8 @@ function allButton() {
       },
     },
     h("span", { class: "all-ico" }, icon("message")),
-    h("span", { class: "all-text" }, h("span", { class: "all-title" }, "All conversations"), h("span", { class: "all-sub" }, plural(count, "conversation"))),
+    h("span", { class: "all-title" }, "All conversations"),
+    h("span", { class: "all-n" }, count),
   );
 }
 
@@ -726,25 +734,12 @@ function allConversations() {
   return list;
 }
 
+// The sidebar is for getting around: one line per session, its face and state and name, as in
+// Slack's and Discord's lists; All sessions has the rest. One that owes an answer carries the yellow
+// dot that marks it in the table.
 function gSessionBody(d, s) {
-  const prs = ui.state?.prs || {};
-  const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
-  return [
-    presence(s.name, d),
-    h(
-      "span",
-      { class: "side-session-text" },
-      h("span", { class: "side-session-name truncate" }, s.name),
-      h("span", { class: "side-session-doing truncate" }, s.doing || s.agent || ""),
-      (s.branch || pr) &&
-        h(
-          "span",
-          { class: "g-meta" },
-          s.branch && h("span", { class: "g-branch truncate" }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
-          pr && gPr(pr),
-        ),
-    ),
-  ];
+  const owes = ui.state && fleetNeeds(fleetRows()).has(s.name);
+  return [presence(s.name, d), h("span", { class: "side-session-name truncate" }, s.name), owes && h("span", { class: "side-flag", title: "Waiting on an answer from this session", "aria-label": "waiting on an answer" })];
 }
 
 // The sidebar's PR chip says "draft" in words, as the table's does (fxPr).
@@ -2099,7 +2094,7 @@ function setView(view) {
   const next = VIEWS.includes(view) ? view : VARIANT === "g" ? "messages" : "sessions";
   // Leaving All sessions (to a conversation, say) remembers where the list and the details were,
   // so Back to the same session finds them as they were.
-  if (ui.view === "sessions" && next !== "sessions") ui.fleetMemo = { sel: ui.fleetSel || null, pane: content?.scrollTop || 0, rail: [".fx-rail", ".fx-rail .fx-dms"].map((q) => root.querySelector(q)?.scrollTop || 0) };
+  if (ui.view === "sessions" && next !== "sessions") ui.fleetMemo = { sel: ui.fleetSel || null, page: content?.scrollTop || 0, pane: root.querySelector(".fx-pane-in")?.scrollTop || 0 };
   ui.view = next;
   if (ui.view === "settings") loadSettings();
   if (ui.view === "sessions") {
@@ -2108,11 +2103,9 @@ function setView(view) {
     ui.fleetMemo = null;
     fleetSetSel(want);
     if (memo && memo.sel === want && content) {
-      content.scrollTop = memo.pane;
-      [".fx-rail", ".fx-rail .fx-dms"].forEach((q, i) => {
-        const el = root.querySelector(q);
-        if (el) el.scrollTop = memo.rail[i];
-      });
+      content.scrollTop = memo.page;
+      const pane = root.querySelector(".fx-pane-in");
+      if (pane) pane.scrollTop = memo.pane;
     }
     fleetFocusBack();
     return;
@@ -2213,7 +2206,7 @@ async function poll() {
   const sig = JSON.stringify([ui.state, ui.cursor, ui.conn, minute]);
   const typing = document.activeElement?.tagName === "INPUT" && document.activeElement.dataset.key !== "fx-q";
   const selecting = document.getSelection()?.isCollapsed === false && (pointerHeld || Date.now() - selectedAt < 3000);
-  const scrolling = Date.now() - scrolledAt < 1000;
+  const scrolling = Date.now() - scrolledAt < 1000 || ui.fxDragging;
   // Losing or regaining the daemon always shows at once.
   const connMoved = ui.conn !== lastConn;
   if (sig !== last && (connMoved || (!typing && !selecting && !scrolling))) {
@@ -2267,46 +2260,22 @@ document.addEventListener(
   "scroll",
   () => {
     scrolledAt = Date.now();
-    fleetRailFit();
   },
   { capture: true, passive: true },
 );
-window.addEventListener("resize", () => fleetRailFit());
+window.addEventListener("resize", () => fleetFit());
 
-// Fleet's rail is as tall as the window allows from where it is now: below the heading and toolbar
-// before you scroll, near the top once it sticks, with 1rem clear below. A fixed max-height either
-// ran past the window or left it half empty.
-function fleetRailFit() {
-  const rail = root.querySelector(".fx-rail");
-  if (!rail) return;
-  const room = innerHeight - rail.getBoundingClientRect().top - 16;
-  rail.style.maxHeight = Math.max(240, room) + "px";
-  // When this session's details and a useful stretch (7rem) of its list don't fit in the room the
-  // rail has before the page scrolls, the rail scrolls as one, rather than nesting the list's
-  // scroller in a scrolling rail. It goes by the rail's starting place, not where it is now, so
-  // scrolling the table doesn't switch it.
-  const list = rail.querySelector(".fx-dms");
-  const startRoom = innerHeight - (rail.parentElement.getBoundingClientRect().top + (content?.scrollTop || 0)) - 16;
-  const others = rail.scrollHeight - (list ? list.clientHeight : 0);
-  const need = others + (list ? Math.min(list.scrollHeight, 112) : 0);
-  rail.classList.toggle("short", need > startRoom);
-  // The fades are as tall as what's hidden, up to 2.5rem, so a row that almost fits stays readable.
-  const fade = (el) => {
-    const hidden = el.scrollHeight - el.scrollTop - el.clientHeight;
-    el.classList.toggle("more", hidden > 1);
-    el.style.setProperty("--fade", Math.min(hidden, 40) + "px");
-  };
-  if (list) fade(list);
-  fade(rail);
+// The toolbar and the table's header stay in view as the table scrolls, under the demo's tab bar
+// where there is one; the header sits under the toolbar, whose height changes as it wraps.
+function fleetFit() {
+  const split = root.querySelector(".fx-split");
+  if (!split) return;
+  const tabs = root.querySelector(".sv-tabs");
+  split.style.setProperty("--fx-top", (tabs ? tabs.offsetHeight : 0) + "px");
+  const bar = split.querySelector(".fx-toolbar");
+  if (bar) split.style.setProperty("--fx-tb", bar.offsetHeight + "px");
 }
 NARROW.addEventListener("change", render);
-STACKED.addEventListener("change", () => {
-  if (STACKED.matches && ui.view === "sessions" && ui.fleetSel && !history.state?.fleetPushed) {
-    history.replaceState(null, "", fleetHash(null));
-    history.pushState({ fleetPushed: true }, "", fleetHash(ui.fleetSel));
-  }
-  render();
-});
 setInterval(tick, 10000);
 start();
 
@@ -2501,7 +2470,7 @@ function fxSeg(label, options, value, onPick) {
     options.map(([v, text, n]) =>
       h(
         "button",
-        { "aria-pressed": value === v ? "true" : "false", class: value === v ? "on" : "", "data-key": "fs-" + label + ":" + v, onclick: () => onPick(v) },
+        { "aria-pressed": value === v ? "true" : "false", class: value === v ? "on" : "", "data-key": "fs-" + label + ":" + v, title: Array.isArray(text) ? text.map((x) => (typeof x === "string" ? x : x.textContent || "")).join("").trim() || null : null, onclick: () => onPick(v) },
         text,
         n != null && h("span", { class: "fx-seg-n" + (n === 0 ? " zero" : "") }, n),
       ),
@@ -2706,8 +2675,6 @@ function fleetPage() {
   const searched = all.filter((r) => !q || text(r).toLowerCase().includes(q));
   const rows = searched.filter((r) => !F.state || sessionState(r.d, r.s) === F.state);
   const needs = fleetNeeds(rows);
-  // The flags the details step through are the ones in the table as filtered (search and state).
-  ui.fxFlagScope = needs;
   // Open details stay open when their session falls out of the filter (it went idle while you
   // read, say); they close only when the session itself is gone.
   if (ui.fleetSel && !all.some((r) => r.s.name === ui.fleetSel)) {
@@ -2725,6 +2692,12 @@ function fleetPage() {
     }
     render();
   };
+  const clear = () => {
+    F.q = "";
+    F.state = "";
+    render();
+    root.querySelector('[data-key="fx-q"]')?.focus();
+  };
   const count = (st) => searched.filter((r) => sessionState(r.d, r.s) === st).length;
   const n = allNeeds.size;
   // Filtered, the need count says how many of them are shown, so it agrees with the "Needs a
@@ -2732,63 +2705,89 @@ function fleetPage() {
   const shownNeeds = needs.size;
   const needNote = !n ? "" : shownNeeds === n ? " · " + n + (n === 1 ? " needs" : " need") + " a look" : " · " + (shownNeeds ? shownNeeds + " of the " : "none of the ") + n + (n === 1 ? " that needs" : " that need") + " a look";
   const sub = (q || F.state) && all.length
-    ? ["Showing " + rows.length + " of " + plural(all.length, "session") + needNote + " ", h("button", { class: "fx-clear", onclick: () => { F.q = ""; F.state = ""; render(); } }, "Clear")]
+    ? ["Showing " + rows.length + " of " + plural(all.length, "session") + needNote + " ", h("button", { class: "fx-clear", "data-key": "fx-clear", onclick: clear }, "Clear")]
     : all.length
       ? plural(all.length, "session") + " on " + plural(new Set(all.map((r) => r.d.id)).size, "device") + " · " + (n ? n + (n === 1 ? " needs" : " need") + " a look" : "nothing needs a look")
       : "No sessions running · " + plural(ui.state.devices?.length || 0, "device");
 
-  // Where the rail can't sit beside the table and leave it readable (see STACKED), the selected
-  // session takes the whole page, with a way back.
-  if (sel && STACKED.matches) {
-    const [head, ...rest] = fleetInspector(sel, selNeed);
-    // From 1280px the details fill the pane in two columns (fleet.css): what it is and what it
-    // waits on beside its conversations, rather than one 50rem column and empty space.
-    const items = rest.flat(Infinity).filter(Boolean);
-    const split = items.findIndex((x) => x.classList?.contains("fx-h3"));
-    const cols = split < 0 ? items : [h("div", { class: "fx-sheet-main" }, items.slice(0, split)), h("div", { class: "fx-sheet-side" }, items.slice(split))];
-    return h("div", { class: "fx fx-sheet" }, head, fleetDown() && h("p", { class: "fx-sheet-down" }, fleetDown()), h("div", { class: "fx-sheet-cols" }, cols));
-  }
-
+  // The details open in a pane beside the table at every width, as a thread does in Slack: the
+  // table narrows (and drops columns, fleet.css) rather than going away.
   return h(
     "div",
-    { class: "fx" },
-    h("header", { class: "fx-head" }, h("div", null, h("h1", null, "All sessions"), h("p", null, fleetDown() ? [fleetDown(), " · ", sub] : sub))),
+    { class: "fx-split" + (sel ? " has-pane" : ""), style: sel ? "--fx-pane-w: " + fleetPaneWidth() + "px" : null },
     h(
       "div",
-      { class: "fx-toolbar" },
+      { class: "fx" },
+      h("header", { class: "fx-head" }, h("div", null, h("h1", null, "All sessions"), h("p", null, fleetDown() ? [fleetDown(), " · ", sub] : sub))),
       h(
-        "label",
-        { class: "fx-input" },
-        icon("search"),
-        h("input", {
-          type: "search",
-          placeholder: "Search sessions",
-          value: F.q,
-          "data-key": "fx-q",
-          oninput: (e) => {
-            F.q = e.target.value;
-            render();
-          },
-        }),
+        "div",
+        { class: "fx-toolbar" },
+        h(
+          "label",
+          { class: "fx-input" },
+          icon("search"),
+          h("input", {
+            type: "search",
+            placeholder: "Search sessions",
+            "aria-label": "Search sessions",
+            value: F.q,
+            "data-key": "fx-q",
+            oninput: (e) => {
+              F.q = e.target.value;
+              render();
+            },
+          }),
+          !F.q && h("kbd", { class: "fx-kbd", "aria-hidden": "true" }, "/"),
+        ),
+        fxSeg("State", [["", "All", searched.length], ...["on", "idle", "dnd", "off"].map((st) => [st, [fxDot(st), h("span", { class: "fx-seg-word" }, FX_STATE[st])], count(st)])], F.state, set("state")),
+        h("span", { class: "fx-spacer" }),
+        h("span", { class: "fx-group-by" }, h("span", { class: "fx-label" }, "Group by"), fxSeg("Group by", [["device", "Device"], ["branch", "Branch"], ["group", "Job"]], F.by, set("by"))),
       ),
-      fxSeg("State", [["", "All", searched.length], ...["on", "idle", "dnd", "off"].map((st) => [st, [fxDot(st), FX_STATE[st]], count(st)])], F.state, set("state")),
-      h("span", { class: "fx-spacer" }),
-      h("span", { class: "fx-group-by" }, h("span", { class: "fx-label" }, "Group by"), fxSeg("Group by", [["device", "Device"], ["branch", "Branch"], ["group", "Job"]], F.by, set("by"))),
+      fleetTable(rows, needs, sel, { q: F.q.trim(), state: F.state, total: all.length, clear }),
     ),
-    h("div", { class: "fx-main" + (sel ? "" : " solo") }, fleetTable(rows, needs, sel), sel && h("aside", { class: "fx-rail" }, fleetInspector(sel, selNeed))),
+    sel && fleetPane(sel, selNeed),
   );
 }
 
-function fleetTable(rows, needs, sel) {
+// The table's columns and what each sorts by. A column sorts on its first click in the order a
+// person reaches for (names A to Z, Active first, the latest activity first), flips on the second,
+// and goes back to the table's own order on the third.
+const FX_COLS = [
+  ["who", "Session", "name"],
+  ["state", "State", "state"],
+  ["doing", "Working on", null],
+  ["branch", "Branch", "branch"],
+  ["last", "Last active", "active"],
+];
+const FX_STATE_ORDER = { on: 0, idle: 1, dnd: 2, off: 3 };
+function fleetSortVal(k, r) {
+  if (k === "name") return r.s.name;
+  if (k === "state") return FX_STATE_ORDER[sessionState(r.d, r.s)];
+  if (k === "branch") return r.s.branch || "\uffff";
+  return -(when(r.s.lastActive) || 0);
+}
+function fleetCompare(S) {
+  return (a, b) => {
+    const x = fleetSortVal(S.key, a);
+    const y = fleetSortVal(S.key, b);
+    const c = typeof x === "number" ? x - y : x.localeCompare(y);
+    return c * S.dir || a.s.name.localeCompare(b.s.name);
+  };
+}
+
+function fleetTable(rows, needs, sel, empty) {
   const F = fleetFilter();
+  const S = F.sort || {};
   const key = (r) => (F.by === "device" ? r.d.id : F.by === "branch" ? r.s.branch || "" : groupOf(r.s));
-  const pinned = rows.filter((r) => needs.has(r.s.name)).sort((a, b) => needs.get(a.s.name).at - needs.get(b.s.name).at);
+  // "Needs a look" is oldest first unless a column says otherwise.
+  const pinned = rows.filter((r) => needs.has(r.s.name)).sort(S.key ? fleetCompare(S) : (a, b) => needs.get(a.s.name).at - needs.get(b.s.name).at);
   // A fixed order, so groups and rows don't swap places as agents work: this device, then devices
-  // by name, offline ones last; branches and jobs by name, with none last; rows by name.
-  // "Needs a look" (pinned) stays oldest first.
+  // by name, offline ones last; branches and jobs by name, with none last; rows by name, or by the
+  // column sorted on.
   const rank = (r) => (F.by === "device" ? (r.d.self ? 0 : r.d.reachable ? 1 : 2) : key(r) ? 0 : 1);
   const gname = (r) => (F.by === "device" ? deviceName(r.d) + " " + r.d.id : key(r) || "");
-  const rest = [...rows].sort((a, b) => rank(a) - rank(b) || gname(a).localeCompare(gname(b)) || a.s.name.localeCompare(b.s.name));
+  const within = S.key ? fleetCompare(S) : (a, b) => a.s.name.localeCompare(b.s.name);
+  const rest = [...rows].sort((a, b) => rank(a) - rank(b) || gname(a).localeCompare(gname(b)) || within(a, b));
   const buckets = new Map();
   // Which heading each session is under, so closing one whose group is shut can focus the heading.
   ui.fxGroupOf = {};
@@ -2817,44 +2816,84 @@ function fleetTable(rows, needs, sel) {
   const filtering = !!(F.q.trim() || F.state);
   if (!filtering) ui.fxCollapsedFiltered = null;
   const collapsed = filtering ? (ui.fxCollapsedFiltered ||= new Set()) : fleetShut();
-  return h(
-    "section",
-    // Grouped by branch, each heading names the branch, so the rows drop their Branch column.
-    { class: "fx-panel fx-table" + (F.by === "branch" ? " by-branch" : ""), "aria-label": "Sessions" },
-    h("div", { class: "fx-tr fx-th", "aria-hidden": "true" }, ["Session", "State", "Working on", "Branch", "Last active"].map((c, i) => h("span", { class: i === 4 ? "num" : "" }, c))),
-    rows.length === 0
-      ? h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, fleetRows().length ? "No sessions match" : "No sessions running"))
-      : [
-          pinned.length > 0 && [
-            h("div", { class: "fx-group fx-group-need" }, h("span", { class: "fx-group-name" }, "Needs a look"), h("span", { class: "fx-badge" }, pinned.length)),
-            pinned.map(({ d, s }) => fleetRow(d, s, needs.get(s.name), sel === s.name)),
-          ],
-          [...buckets].map(([k, list]) => {
-            const shown = list.filter((r) => !needs.has(r.s.name));
-            if (!shown.length) return null;
-            const shut = collapsed.has(F.by + ":" + k);
-            return [
-              h(
-                "button",
-                {
-                  class: "fx-group",
-                  "data-key": "fg-" + F.by + ":" + k,
-                  "aria-expanded": shut ? "false" : "true",
-                  onclick: () => {
-                    if (filtering) shut ? collapsed.delete(F.by + ":" + k) : collapsed.add(F.by + ":" + k);
-                    else fleetShutSet(F.by + ":" + k, !shut);
-                    render();
-                  },
+  // A heading is a row of one cell across the table.
+  const wide = (cls, ...kids) => h("div", { class: "fx-grow", role: "row" }, h("div", { class: "fx-gcell " + cls, role: "cell", "aria-colspan": "5" }, kids));
+  const head = h(
+    "div",
+    { class: "fx-tr fx-th", role: "row" },
+    FX_COLS.map(([c, name, k]) => {
+      const on = k && S.key === k;
+      // Last active's first order is the latest first: descending by time.
+      const order = on ? ((k === "active") === S.dir > 0 ? "descending" : "ascending") : null;
+      return h(
+        "div",
+        { class: "fx-c fx-c-" + c, role: "columnheader", "aria-sort": order },
+        k
+          ? h(
+              "button",
+              {
+                class: "fx-sort" + (on ? " on" : ""),
+                "data-key": "fx-sort-" + k,
+                onclick: () => {
+                  F.sort = !on ? { key: k, dir: 1 } : S.dir > 0 ? { key: k, dir: -1 } : {};
+                  render();
                 },
-                icon(shut ? "chevronRight" : "chevronDown", "fx-chev"),
-                label(k, list),
-                list.some((r) => needs.has(r.s.name)) && h("span", { class: "fx-group-sub" }, (list.length - shown.length) + " more in Needs a look"),
-                h("span", { class: "fx-badge" }, list.length),
-              ),
-              !shut && shown.map(({ d, s }) => fleetRow(d, s, null, sel === s.name)),
-            ];
-          }),
-        ],
+              },
+              name,
+              h("span", { class: "fx-sort-ico", "aria-hidden": "true" }, icon(order === "ascending" ? "chevronUp" : "chevronDown")),
+            )
+          : name,
+      );
+    }),
+  );
+  let body;
+  if (rows.length === 0) {
+    const what = empty.state ? FX_STATE[empty.state].toLowerCase() + " sessions" : "sessions";
+    body = empty.total
+      ? wide(
+          "fx-empty",
+          h("p", { class: "fx-empty-title" }, empty.q ? "No " + what + " match “" + empty.q + "”" : "No " + what),
+          h("button", { class: "fx-btn", "data-key": "fx-empty-clear", onclick: empty.clear }, empty.q && empty.state ? "Clear search and filter" : empty.q ? "Clear search" : "Show all sessions"),
+        )
+      : wide("fx-empty", h("p", { class: "fx-empty-title" }, "No sessions running"));
+  } else {
+    body = [
+      pinned.length > 0 && [wide("fx-group fx-group-need", h("span", { class: "fx-group-name" }, "Needs a look"), h("span", { class: "fx-badge" }, pinned.length)), pinned.map(({ d, s }) => fleetRow(d, s, needs.get(s.name), sel === s.name))],
+      [...buckets].map(([k, list]) => {
+        const shown = list.filter((r) => !needs.has(r.s.name));
+        if (!shown.length) return null;
+        const shut = collapsed.has(F.by + ":" + k);
+        return [
+          wide(
+            "",
+            h(
+              "button",
+              {
+                class: "fx-group",
+                "data-key": "fg-" + F.by + ":" + k,
+                "aria-expanded": shut ? "false" : "true",
+                onclick: () => {
+                  if (filtering) shut ? collapsed.delete(F.by + ":" + k) : collapsed.add(F.by + ":" + k);
+                  else fleetShutSet(F.by + ":" + k, !shut);
+                  render();
+                },
+              },
+              icon(shut ? "chevronRight" : "chevronDown", "fx-chev"),
+              label(k, list),
+              list.some((r) => needs.has(r.s.name)) && h("span", { class: "fx-group-sub" }, list.length - shown.length + " more in Needs a look"),
+              h("span", { class: "fx-badge" }, list.length),
+            ),
+          ),
+          !shut && shown.map(({ d, s }) => fleetRow(d, s, null, sel === s.name)),
+        ];
+      }),
+    ];
+  }
+  return h(
+    "div",
+    { class: "fx-table", role: "table", "aria-label": "Sessions" },
+    h("div", { class: "fx-thead", role: "rowgroup" }, head),
+    h("div", { class: "fx-tbody", role: "rowgroup" }, body),
   );
 }
 
@@ -2882,10 +2921,10 @@ function fxParts(parts) {
   return h("span", { class: "fx-parts-in" }, parts.flatMap((x, i) => [i ? h("wbr") : null, h("span", { class: "fx-part" }, h("span", { class: "fx-sep" + (i ? "" : " lead") }, " · "), x)]));
 }
 
-// A row's "No reply…" reason, two lines at most (fleet.css), with all of it in the title; the
-// details quote the question in full.
+// A row's "No reply…" reason: one line, with all of it in the title; the details list each
+// question the session owes.
 function fxReason(need) {
-  const el = h("span", { class: "fx-reason" }, need.text());
+  const el = h("p", { class: "fx-reason" }, h("span", { class: "fx-flag", "aria-hidden": "true" }), h("span", { class: "fx-reason-text" }, need.text()));
   el.title = el.textContent;
   return el;
 }
@@ -2896,84 +2935,45 @@ function fleetRow(d, s, need, on) {
   const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
   const t = when(s.lastActive);
   const state = sessionState(d, s);
-  const word = FX_STATE[state];
   // Under a device's heading the device and person are in the heading; anywhere else the row
   // names the device first, so a cut-short line loses the agent, and the person too unless the
   // device's name already carries it.
   const where = need || F.by !== "device";
   const dev = deviceName(d);
-  // Grouped by job, a pinned row sits away from its job's heading, so it names its job (as one
-  // grouped by branch keeps its branch).
+  // Grouped by job, a pinned row sits away from its job's heading, so it names its job.
   const subParts = [where && dev, where && d.owner && !dev.toLowerCase().includes(d.owner.toLowerCase()) && d.owner, s.agent, need && F.by === "group" && groupOf(s) && "job " + groupOf(s)].filter(Boolean);
-  const sub = subParts.join(" · ");
-  const prTag = pr ? "#" + pr.number : "";
   return h(
-    "button",
-    {
-      class: "fx-tr fx-row" + (on ? " on" : "") + (need ? " need" : "") + (d.reachable ? "" : " dim"),
-      "aria-pressed": on ? "true" : "false",
-      "data-key": "fl-" + s.name,
-      onclick: (e) => {
-        // Opened as the whole page, a session gets a history entry (fleetSetSel says how it
-        // opens). Beside the table, it only changes the address, and opening or closing the rail
-        // changes the table's width and so its rows' heights.
-        if (on) return fleetCloseAsked();
-        if (STACKED.matches) {
-          history.pushState({ fleetPushed: true }, "", fleetHash(s.name));
-          return fleetSetSel(s.name);
-        }
-        const top = e.currentTarget.getBoundingClientRect().top;
-        history.replaceState(history.state, "", fleetHash(s.name));
-        ui.fleetSel = s.name;
-        render();
-        if (content) {
-          // Only when the row would otherwise leave the pane: moving it back to its old place
-          // every time scrolled the heading and toolbar away whenever rows above it grew.
-          const row = root.querySelector(`[data-key="fl-${CSS.escape(s.name)}"]`);
-          const pane = content.getBoundingClientRect();
-          const r = row?.getBoundingClientRect();
-          if (r && (r.top < pane.top || r.bottom > pane.bottom)) content.scrollTop += r.top - top;
-        }
-      },
-    },
-    // Where the table is too narrow for its Branch column, the branch gets a line of its own under
-    // the name, as in the sidebar, rather than being cut short at the end of another (fleet.css).
+    "div",
+    { class: "fx-tr fx-row" + (on ? " on" : "") + (need ? " need" : ""), role: "row" },
     h(
-      "span",
-      { class: "fx-who" },
-      avatar(s.name),
+      "div",
+      { class: "fx-c fx-c-who", role: "cell" },
       h(
-        "span",
-        { class: "fx-who-text" },
-        h("span", { class: "fx-name truncate", title: s.name }, s.name),
-        h("span", { class: "fx-muted fx-parts", title: sub }, fxParts(subParts)),
-        s.branch && h("span", { class: "fx-muted fx-sub-branch", title: s.branch + (prTag ? " " + prTag + (pr.draft ? " draft" : "") : "") }, h("span", { class: "mono truncate" }, s.branch), prTag && h("span", { class: "fx-sub-pr" }, prTag + (pr.draft ? " draft" : ""))),
+        "div",
+        { class: "fx-who" },
+        avatar(s.name),
+        h(
+          "div",
+          { class: "fx-who-text" },
+          // The name is the row's one control. It covers the whole row (fleet.css), so a click
+          // anywhere opens the details, and the keyboard has one stop per row.
+          h("button", { class: "fx-open", "data-key": "fl-" + s.name, "aria-expanded": on ? "true" : "false", "aria-controls": ui.fleetSel ? "fx-pane" : null, title: s.name, onclick: () => (on ? fleetCloseAsked() : fleetOpen(s.name)) }, s.name),
+          h("span", { class: "fx-muted fx-parts", title: subParts.join(" · ") }, fxParts(subParts)),
+          // Where the table is too narrow for Working on, it takes this line instead (fleet.css).
+          h("span", { class: "fx-muted fx-sub-doing" + (s.doing ? "" : " fx-none"), title: s.doing || null }, s.doing || "No status"),
+        ),
       ),
+      need && fxReason(need),
     ),
-    h("span", { class: "fx-state" }, fxDot(state), word),
-    h("span", { class: "fx-doing" }, s.doing ? h("span", { class: "fx-status", title: s.doing }, s.doing) : h("span", { class: "fx-status fx-faint fx-none", title: "No status set", "aria-label": "No status set" }, "–"), need && fxReason(need)),
-    h("span", { class: "fx-branch" }, s.branch && h("span", { class: "mono truncate", title: s.branch }, s.branch), pr && fxPr(pr)),
-    h("span", { class: "num fx-muted" }, t ? agoEl("span", "", t) : "–"),
+    h("div", { class: "fx-c fx-c-state", role: "cell" }, fxDot(state), FX_STATE[state]),
+    h("div", { class: "fx-c fx-c-doing", role: "cell" }, s.doing ? h("span", { class: "fx-status", title: s.doing }, s.doing) : h("span", { class: "fx-status fx-none" }, "No status")),
+    h("div", { class: "fx-c fx-c-branch", role: "cell" }, s.branch && h("span", { class: "mono", title: s.branch }, s.branch), pr && fxPr(pr)),
+    h("div", { class: "fx-c fx-c-last", role: "cell" }, t ? agoEl("span", "", t) : "–"),
   );
 }
 
-// Closing a session's details goes back to where the list was (as the whole page) and gives the
-// keyboard back to the row that opened it. Escape does the same.
-function fleetClose() {
-  const name = ui.fleetSel;
-  ui.fxFlagOrder = null;
-  const back = ui.fleetScroll;
-  ui.fleetSel = null;
-  ui.fleetScroll = null;
-  render();
-  if (STACKED.matches && back != null && content) content.scrollTop = back;
-  const to = name && (root.querySelector(`[data-key="fl-${CSS.escape(name)}"]`) || (ui.fxGroupOf?.[name] && root.querySelector(`[data-key="${CSS.escape(ui.fxGroupOf[name])}"]`)));
-  to?.focus({ preventScroll: true });
-}
 // The open session is in the address, #sessions/<name>, so Back from its conversation, Forward
-// and a reload all find it. Opened as the whole page it has a history entry of its own
-// (fleetPushed), so Back and a mouse's back button do what "← All sessions" does; that button,
-// Escape and clicking the open row go back through the entry when there is one.
+// and a reload all find it.
 function fleetHash(name) {
   return location.pathname + location.search + "#sessions" + (name ? "/" + encodeURIComponent(name) : "");
 }
@@ -2985,37 +2985,111 @@ function fleetFromHash(part) {
     return null;
   }
 }
-// Whole-page details reached by Back, Forward or a reload put focus on their way back, as a
-// click does, rather than leaving it on the page. After a reload they appear only with the first
-// data, so the poll finishes the job (fleetFocusPending).
+function fleetOpen(name) {
+  history.replaceState(history.state, "", fleetHash(name));
+  ui.fleetSel = name;
+  render();
+  // Opening the pane narrows the table, so its rows grow or shrink; keep this one in view.
+  root.querySelector(`[data-key="fl-${CSS.escape(name)}"]`)?.closest(".fx-row")?.scrollIntoView({ block: "nearest" });
+}
+// Closing gives the keyboard back to the row, or to its group's heading if the group is shut.
+// Escape does the same.
+function fleetClose() {
+  const name = ui.fleetSel;
+  ui.fleetSel = null;
+  render();
+  const to = name && (root.querySelector(`[data-key="fl-${CSS.escape(name)}"]`) || (ui.fxGroupOf?.[name] && root.querySelector(`[data-key="${CSS.escape(ui.fxGroupOf[name])}"]`)));
+  to?.focus({ preventScroll: true });
+}
+function fleetCloseAsked() {
+  history.replaceState(history.state, "", fleetHash(null));
+  fleetClose();
+}
+function fleetSetSel(want) {
+  if (want === (ui.fleetSel || null)) return render();
+  if (!want) return fleetClose();
+  ui.fleetSel = want;
+  render();
+}
+// Details reached by Back, Forward or a reload put focus on their row, as a click does. After a
+// reload they appear only with the first data, so the poll finishes the job (fleetFocusPending).
 function fleetFocusBack() {
   ui.fleetFocusPending = false;
   if (ui.view !== "sessions" || !ui.fleetSel) return;
   if (document.activeElement && document.activeElement !== document.body) return;
-  // Beside the table, the open session's row; as the whole page, the way back.
-  const back = STACKED.matches ? root.querySelector(".fx-back") : root.querySelector(`[data-key="fl-${CSS.escape(ui.fleetSel)}"]`);
+  const back = root.querySelector(`[data-key="fl-${CSS.escape(ui.fleetSel)}"]`) || root.querySelector(".fx-pane .fx-icon-btn");
   if (back) back.focus({ preventScroll: true });
   else ui.fleetFocusPending = true;
 }
-function fleetCloseAsked() {
-  if (history.state?.fleetPushed) return history.back(); // the hashchange closes them
-  history.replaceState(history.state, "", fleetHash(null));
-  fleetClose();
+
+// The pane's width is the reader's: drag its edge, or use ←/→ on it, and it stays that width.
+const FLEET_PANE_KEY = NAME + ":fleet-pane-w";
+const FLEET_PANE_DEFAULT = 416;
+function fleetPaneFit(px) {
+  // The table keeps at least 22.5rem beside it, and the pane at least 20rem.
+  const room = (content?.clientWidth || innerWidth) - 360;
+  return Math.round(Math.max(320, Math.min(px, 720, room)));
 }
-// Show the session the address names (or none): as the whole page it starts at its top, with
-// focus on the way back; closing returns to where the list was (fleetClose).
-function fleetSetSel(want) {
-  if (want === (ui.fleetSel || null)) return render();
-  if (!want) return fleetClose();
-  const whole = STACKED.matches;
-  if (whole && !ui.fleetSel) ui.fleetScroll = content ? content.scrollTop : 0;
-  ui.fleetSel = want;
-  render();
-  if (whole && content) {
-    content.scrollTop = 0;
-    root.querySelector(".fx-back")?.focus({ preventScroll: true });
-  }
+function fleetPaneWidth() {
+  let w = FLEET_PANE_DEFAULT;
+  try {
+    w = Number(localStorage.getItem(FLEET_PANE_KEY)) || w;
+  } catch {}
+  return fleetPaneFit(w);
 }
+function fleetPane(name, need) {
+  const setW = (px, save) => {
+    const v = fleetPaneFit(px);
+    root.querySelector(".fx-split")?.style.setProperty("--fx-pane-w", v + "px");
+    grip.setAttribute("aria-valuenow", v);
+    if (save) {
+      try {
+        localStorage.setItem(FLEET_PANE_KEY, String(v));
+      } catch {}
+    }
+  };
+  const grip = h("div", {
+    class: "fx-grip",
+    role: "separator",
+    tabindex: "0",
+    "aria-orientation": "vertical",
+    "aria-label": "Resize the details",
+    "aria-valuemin": "320",
+    "aria-valuemax": "720",
+    "aria-valuenow": String(fleetPaneWidth()),
+    "data-key": "fx-grip",
+    title: "Drag to resize; double-click to reset",
+    onpointerdown: (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const right = root.querySelector(".fx-split").getBoundingClientRect().right;
+      grip.setPointerCapture(e.pointerId);
+      grip.classList.add("drag");
+      ui.fxDragging = true;
+      const move = (ev) => setW(right - ev.clientX);
+      const up = (ev) => {
+        grip.removeEventListener("pointermove", move);
+        grip.removeEventListener("pointerup", up);
+        grip.removeEventListener("pointercancel", up);
+        grip.classList.remove("drag");
+        ui.fxDragging = false;
+        setW(right - ev.clientX, true);
+      };
+      grip.addEventListener("pointermove", move);
+      grip.addEventListener("pointerup", up);
+      grip.addEventListener("pointercancel", up);
+    },
+    onkeydown: (e) => {
+      const by = e.key === "ArrowLeft" ? 32 : e.key === "ArrowRight" ? -32 : 0;
+      if (!by) return;
+      e.preventDefault();
+      setW(Number(grip.getAttribute("aria-valuenow")) + by, true);
+    },
+    ondblclick: () => setW(FLEET_PANE_DEFAULT, true),
+  });
+  return h("aside", { class: "fx-pane", id: "fx-pane", "aria-label": "Session " + name }, grip, h("div", { class: "fx-pane-in" }, fleetInspector(name, need)));
+}
+
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && e.target?.dataset?.key === "fx-q" && e.target.value) return; // the box clears itself
   // "/" goes to the search box, and ↑/↓ move between rows, as in most lists people use daily.
@@ -3032,16 +3106,16 @@ document.addEventListener("keydown", (e) => {
     }
     // From the search box, ↓ or Enter goes to the first row, and ↑ from the first row comes back.
     if ((e.key === "ArrowDown" || e.key === "Enter") && e.target?.dataset?.key === "fx-q") {
-      const first = root.querySelector(".fx-row");
+      const first = root.querySelector(".fx-open");
       if (first) {
         e.preventDefault();
         first.focus();
-        first.scrollIntoView({ block: "nearest" });
+        first.closest(".fx-row").scrollIntoView({ block: "nearest" });
       }
       return;
     }
-    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && e.target?.classList?.contains("fx-row")) {
-      const rows = [...root.querySelectorAll(".fx-row")];
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && e.target?.classList?.contains("fx-open")) {
+      const rows = [...root.querySelectorAll(".fx-open")];
       const i = rows.indexOf(e.target);
       if (i === 0 && e.key === "ArrowUp") {
         e.preventDefault();
@@ -3052,7 +3126,9 @@ document.addEventListener("keydown", (e) => {
       if (next) {
         e.preventDefault();
         next.focus();
-        next.scrollIntoView({ block: "nearest" });
+        next.closest(".fx-row").scrollIntoView({ block: "nearest" });
+        // With the details open, they follow the row, as a mail client's reading pane does.
+        if (ui.fleetSel) fleetOpen(next.dataset.key.slice(3));
       }
       return;
     }
@@ -3078,11 +3154,11 @@ function fleetInspector(name, need) {
   const agentParts = [s.agent, modelOf(s)].filter(Boolean);
   const meta = [
     ["State", [fxDot(state), FX_STATE[state]]],
-    ["Working on", s.doing || h("span", { class: "fx-faint" }, "No status set")],
+    ["Working on", s.doing || h("span", { class: "fx-none" }, "No status")],
     d.owner && ["Person", d.owner],
     // "last seen 47m ago" keeps together, so a narrow line breaks after "offline,".
     ["Device", h("span", null, deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? ", " : "")), !d.reachable && seenAt && h("span", { class: "fx-nowrap" }, "last seen " + ago(seenAt)))],
-    // Each part keeps together, so a narrow rail breaks the line at the "·", not inside a model name.
+    // Each part keeps together, so a narrow pane breaks the line at the "·", not inside a model name.
     ["Agent", agentParts.length ? h("span", { class: "fx-parts", title: agentParts.join(" · ") }, fxParts(agentParts)) : "–"],
     ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && fxPr(pr, pr.url)] : "–"],
     groupOf(s) && ["Job", groupOf(s)],
@@ -3090,12 +3166,11 @@ function fleetInspector(name, need) {
     ["Last active", t ? agoEl("span", "", t) : "–"],
   ].filter(Boolean);
   const owed = need?.msgs || [];
-  // Beside the table the rail has room for six; as the whole page, twenty.
-  const shown = STACKED.matches ? 20 : 6;
   const unanswered = new Set([...fleetNeeds(fleetRows()).values()].flatMap((n) => n.msgs));
   // One row per conversation (the other session and the subject, a reply's "Re:" aside), since a
   // message and its reply open the same one. Conversations holding a question it owes come first,
-  // oldest first; then its own questions still waiting, oldest first; then the rest, newest first.
+  // oldest first; then ones marked "Not waiting"; then its own questions still waiting, oldest
+  // first; then the rest, newest first.
   const rank = (m) => (owed.includes(m) ? 0 : fromName(m) === name && unanswered.has(m) ? 1 : 2);
   const convMap = new Map();
   for (const m of ui.messages) {
@@ -3107,157 +3182,106 @@ function fleetInspector(name, need) {
     convMap.get(k).msgs.push(m);
   }
   // Conversations marked "Not waiting" whose question would still be waiting: each can be undone.
-  const convKey = (x) => fromName(x) + " " + topicOf(x).toLowerCase();
+  const ck = (other, subj) => other + " " + subj.toLowerCase();
   const marked = new Map();
   for (const x of fleetNeeds(fleetRows(), true).get(name)?.msgs || []) {
     if (!Object.hasOwn(fleetDismissed(), x.id)) continue;
-    if (!marked.has(convKey(x))) marked.set(convKey(x), []);
-    marked.get(convKey(x)).push(x);
+    const k = ck(fromName(x), topicOf(x));
+    if (!marked.has(k)) marked.set(k, []);
+    marked.get(k).push(x);
   }
-  for (const x of need?.msgs || []) marked.delete(convKey(x));
-  const markedIds = new Set([...marked.values()].flat().map((x) => x.id));
-  const direct = [...convMap.values()].map((c) => {
-    const latest = c.msgs.reduce((a, b) => (b.sortAt > a.sortAt ? b : a));
-    const waiting = c.msgs.filter((m) => rank(m) < 2).sort((a, b) => rank(a) - rank(b) || a.sortAt - b.sortAt)[0];
-    // One marked "Not waiting" keeps its place after the ones it owes, oldest first, matching the
-    // Undo lines above.
-    const markedAt = waiting ? 0 : Math.min(...c.msgs.filter((x) => markedIds.has(x.id)).map((x) => x.sortAt));
-    return { ...c, latest, waiting, markedAt, rank: waiting ? rank(waiting) : Number.isFinite(markedAt) && markedAt ? 0.5 : 2 };
-  }).sort((a, b) => a.rank - b.rank || (a.rank < 2 ? (a.waiting?.sortAt ?? a.markedAt) - (b.waiting?.sortAt ?? b.markedAt) : b.latest.sortAt - a.latest.sortAt));
-  const close = () => fleetCloseAsked();
-  // As the whole page the table isn't in view, so a line under the header steps through the
-  // sessions that need a look, in the table's order (oldest first), wrapping round: "2 of 4 that
-  // need a look · Previous · Next". It stays in that one place whether or not a flag is open. The
-  // list is the table's, as filtered, taken when the details open and kept until they close, so
-  // "Not waiting" on one question doesn't renumber the session in view or skip one.
-  if (!ui.fxFlagOrder) {
-    ui.fxFlagOrder = [...(ui.fxFlagScope || fleetNeeds(fleetRows())).entries()].sort((a, b) => a[1].at - b[1].at).map(([n]) => n);
-    // How many flags a search or state filter left out; the steps say so, since the filter is out
-    // of view here: "2 of 3 that need a look · 1 more not shown".
-    ui.fxFlagHidden = fleetNeeds(fleetRows()).size - ui.fxFlagOrder.length;
-  }
-  const flagged = ui.fxFlagOrder.filter((n) => findSession(n));
-  const at = flagged.indexOf(name);
-  const step = (by) => () => {
-    const to = flagged[(at + by + flagged.length) % flagged.length];
-    history.replaceState(history.state, "", fleetHash(to));
-    fleetSetSel(to);
-    root.querySelector(`[data-key="fx-flag-${by > 0 ? "next" : "prev"}"]`)?.focus({ preventScroll: true });
+  for (const x of owed) marked.delete(ck(fromName(x), topicOf(x)));
+  const direct = [...convMap.values()]
+    .map((c) => {
+      const latest = c.msgs.reduce((a, b) => (b.sortAt > a.sortAt ? b : a));
+      const waiting = c.msgs.filter((m) => rank(m) < 2).sort((a, b) => rank(a) - rank(b) || a.sortAt - b.sortAt)[0];
+      const isMarked = !waiting && marked.has(ck(c.other, c.subj));
+      const markedAt = isMarked ? Math.min(...marked.get(ck(c.other, c.subj)).map((x) => x.sortAt)) : 0;
+      return { ...c, latest, waiting, isMarked, markedAt, rank: waiting ? rank(waiting) : isMarked ? 0.5 : 2 };
+    })
+    .sort((a, b) => a.rank - b.rank || (a.rank < 2 ? (a.waiting?.sortAt ?? a.markedAt) - (b.waiting?.sortAt ?? b.markedAt) : b.latest.sortAt - a.latest.sortAt));
+  const owing = direct.filter((c) => c.rank === 0);
+  // "Not waiting" is for a flag that's wrong: the reply was misread, or the answer came some other
+  // way. It clears that one conversation, in this browser, and can be undone in place.
+  const dismiss = (c) => () => {
+    fleetDismiss(c.msgs.filter((x) => owed.includes(x)));
+    render();
+    root.querySelector(`[data-key="${CSS.escape("fx-undo-" + ck(c.other, c.subj))}"]`)?.focus({ preventScroll: true });
   };
-  const flagNav =
-    // With one flag in scope there's nothing to step to, but if the filter hid others the line
-    // still says so: "1 of 1 that needs a look · 3 more not shown".
-    STACKED.matches && at >= 0 && (flagged.length > 1 || ui.fxFlagHidden > 0)
-      ? h(
-          "span",
-          { class: "fx-flag-nav" },
-          h("span", { class: "fx-flag-pos" }, at + 1 + " of " + flagged.length + (need ? (flagged.length === 1 ? " that needs a look" : " that need a look") : " that needed a look") + (ui.fxFlagHidden > 0 ? " · " + ui.fxFlagHidden + " more not shown" : "")),
-          flagged.length > 1 && h("button", { "data-key": "fx-flag-prev", onclick: step(-1) }, "Previous"),
-          flagged.length > 1 && h("button", { "data-key": "fx-flag-next", onclick: step(1) }, "Next"),
-        )
-      : null;
+  const undo = (c) => () => {
+    fleetDismiss(marked.get(ck(c.other, c.subj)), false);
+    render();
+    root.querySelector(`[data-key="${CSS.escape("fx-nw-" + ck(c.other, c.subj))}"]`)?.focus({ preventScroll: true });
+  };
+  // The wait, said once: who has waited longest and for how long. Each question is in the list.
+  const asker = need && fromName(need.m);
+  const wait =
+    need &&
+    h(
+      "p",
+      { class: "fx-insp-wait" },
+      h("span", { class: "fx-flag", "aria-hidden": "true" }),
+      owing.length > 1
+        ? h("span", null, owing.length + " questions waiting · the oldest from ", h("b", null, asker), ", ", agoEl("span", null, need.at, "", true))
+        : h("span", null, "No reply to ", h("b", null, asker), agoEl("span", null, need.at, " for ", true)),
+    );
   return [
     h(
       "header",
       { class: "fx-insp-head" },
       avatar(name),
-      h("div", { class: "fx-who-text" }, h("h2", null, name)),
-      STACKED.matches
-        ? h("button", { class: "fx-back", onclick: close }, "← All sessions")
-        : h("button", { class: "fx-icon-btn", title: "Close", "aria-label": "Close", onclick: close }, icon("x")),
+      h("h2", { class: "truncate" }, name),
+      h("button", { class: "fx-icon-btn", title: "Close (Esc)", "aria-label": "Close the details", "data-key": "fx-close", onclick: () => fleetCloseAsked() }, icon("x")),
     ),
-    flagNav && h("div", { class: "fx-insp-acts fx-flag-solo" }, flagNav),
-    [...marked].map(([k, msgs]) =>
-      h(
-        "div",
-        { class: "fx-insp-undo" },
-        h("span", null, "Marked “" + cutAtWord(topicOf(msgs[0]) || questionIn(msgs[0]), 60) + "” from ", h("b", null, fromName(msgs[0])), " not waiting"),
-        h(
-          "button",
-          {
-            class: "fx-insp-dismiss",
-            "data-key": "fx-undo-" + k,
-            onclick: () => {
-              fleetDismiss(msgs, false);
-              render();
-              root.querySelector(".fx-insp-need .fx-insp-dismiss")?.focus({ preventScroll: true });
-            },
-          },
-          "Undo",
-        ),
-      ),
-    ),
-    need &&
-      h(
-        "div",
-        { class: "fx-insp-need" },
-        h("span", null, need.text()),
-        h(
-          "div",
-          { class: "fx-insp-acts" },
-          h("button", { class: "fx-insp-open", onclick: () => swOpenMessage(need.m) }, "Open the conversation →"),
-          // For a flag that's wrong: the reply was misread, or the answer came some other way.
-          h(
-            "button",
-            {
-              class: "fx-insp-dismiss",
-              title: "Clear this flag in this browser",
-              onclick: () => {
-                // Only the conversation the box names: another asker's question stays.
-                fleetDismiss(need.msgs.filter((x) => convKey(x) === convKey(need.m)));
-                render();
-                root.querySelector(`[data-key="${CSS.escape("fx-undo-" + convKey(need.m))}"]`)?.focus({ preventScroll: true });
-              },
-            },
-            "Not waiting",
-          ),
-        ),
-      ),
+    wait,
     h("dl", { class: "fx-meta" }, meta.map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
-    h("h3", { class: "fx-h3" }, "Direct conversations", h("span", { class: "fx-badge" }, direct.length > shown ? shown + " of " + direct.length : direct.length)),
+    h("h3", { class: "fx-h3" }, "Direct conversations", direct.length > 0 && h("span", { class: "fx-badge" }, direct.length)),
     direct.length
       ? h(
           "ul",
           { class: "fx-dms" },
-          direct.slice(0, shown).map((c) => {
+          direct.map((c) => {
             const m = c.waiting || c.latest;
             const out = fromName(m) === name;
-            const one = c.msgs.length === 1;
             const head =
               c.rank === 0 ? ["From ", h("b", null, c.other), " · waiting for an answer"]
               : c.rank === 1 ? ["To ", h("b", null, c.other), " · no answer yet"]
-              : c.msgs.some((x) => markedIds.has(x.id)) ? ["From ", h("b", null, c.other), " · marked not waiting"]
-              : one ? [out ? "To " : "From ", h("b", null, c.other)]
+              : c.isMarked ? ["From ", h("b", null, c.other), " · marked not waiting"]
+              : c.msgs.length === 1 ? [out ? "To " : "From ", h("b", null, c.other)]
               : ["With ", h("b", null, c.other), " · " + c.msgs.length + " messages"];
+            const k = ck(c.other, c.subj);
             return h(
               "li",
-              null,
+              { class: "fx-dm-item" + (c.rank === 0 ? " wait" : c.isMarked ? " marked" : "") },
               h(
                 "button",
-                { class: "fx-dm" + (c.rank === 0 ? " fx-dm-wait" : ""), "data-key": "fd-" + c.other + ":" + c.subj.toLowerCase(), onclick: () => swOpenMessage(m) },
+                { class: "fx-dm", "data-key": "fd-" + c.other + ":" + c.subj.toLowerCase(), onclick: () => swOpenMessage(m) },
                 h("span", { class: "fx-dm-head" }, h("span", null, head), agoEl("span", "fx-dm-time", m.sortAt)),
                 h("span", { class: "fx-dm-subj", title: c.subj }, c.subj),
                 c.rank < 2 && questionIn(m) !== c.subj && h("span", { class: "fx-dm-q" }, "“" + questionIn(m) + "”"),
               ),
+              c.rank === 0 && h("button", { class: "fx-dm-act", "data-key": "fx-nw-" + k, title: "Stop counting this question as waiting, in this browser", onclick: dismiss(c) }, "Not waiting"),
+              c.isMarked && h("button", { class: "fx-dm-act", "data-key": "fx-undo-" + k, onclick: undo(c) }, "Undo"),
             );
           }),
         )
-      : h("p", { class: "fx-faint" }, "No direct messages"),
+      : h("p", { class: "fx-none fx-dms-none" }, "No direct messages"),
     direct.length > 0 &&
-    h(
-      "button",
-      {
-        class: "fx-btn",
-        onclick: () => {
-          ui.messageMode = "conversations";
-          ui.filter = s.addr || s.name;
-          ui.conversation = null;
-          go("messages");
+      h(
+        "button",
+        {
+          class: "fx-btn",
+          "data-key": "fx-convs",
+          onclick: () => {
+            ui.messageMode = "conversations";
+            ui.filter = s.addr || s.name;
+            ui.conversation = null;
+            go("messages");
+          },
         },
-      },
-      icon("message"),
-      direct.length > shown ? "All " + direct.length + " in its conversations" : "Open its conversations",
-    ),
+        icon("message"),
+        "Open its conversations",
+      ),
   ];
 }
 
@@ -3894,13 +3918,13 @@ function swLight() {
 
 // ---------- #183: the swarm, six ways ----------
 function swarmRow() {
-  const el = topRow("fleet", "activity", "Fleet", plural(sessionCount(), "session"));
+  const el = topRow("fleet", "activity", "Fleet", sessionCount());
   el.setAttribute("aria-current", SWARM_VIEWS.some(([v]) => v === ui.view) ? "page" : "false");
   return el;
 }
 
 function swarmTabs(view) {
-  if (SWARM_VIEWS.length < 2 && !DEMO) return null;
+  if (SWARM_VIEWS.length < 2) return null;
   return h(
     "nav",
     { class: "sv-tabs", "aria-label": "Ways to look at the swarm" },
