@@ -317,4 +317,8 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-parts { display: block; min-width: 0; overflow: hidden; }
 .fx-parts-in { display: block; margin-left: -0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fx-part { white-space: nowrap; }
-.fx-part::before { content: "·"; display: inline-block; width: 0.9em; text-align: center; }
+.fx-sep { display: inline-block; width: 0.9em; text-align: center; white-space: pre; }
+.fx-sep.lead { user-select: none; }
+/* In the details there's room to wrap; a part too long for the line is cut, with the whole value as
+   its title. */
+.fx-meta .fx-parts-in { white-space: normal; }

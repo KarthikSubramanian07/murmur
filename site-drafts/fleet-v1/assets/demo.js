@@ -6,7 +6,7 @@ const iso = (minAgo) => new Date(now - minAgo * MIN).toISOString();
 
 const devices = [
   { id: "tyler-laptop-3f2a", owner: "tyler", self: true, reachable: true, lastSeen: iso(0.1), sessions: [
-    { name: "quiet-otter", agent: "claude-code in T3", branch: "web-page", doing: "Building the settings view of the web page", started: 52, active: 0.3, worktree: "murmur", tags: [{ name: "model:opus-5.5", src: "derived" }] },
+    { name: "quiet-otter", agent: "claude-code in T3", branch: "web-page", doing: "Building the settings view of the web page", started: 52, active: 0.3, worktree: "murmur", tags: [{ name: "model:claude-fable-5-1", src: "derived" }] },
     { name: "brave-heron", agent: "codex in T3", branch: "remove-claims", doing: "Deleting claims from the daemon and the MCP tools", started: 124, active: 3, worktree: "t3-remove-claims", tags: [{ name: "model:gpt-5.5", src: "derived" }] },
     { name: "amber-finch", agent: "claude-code", branch: "main", doing: "", started: 300, active: 26, worktree: "murmur" },
   ]},
