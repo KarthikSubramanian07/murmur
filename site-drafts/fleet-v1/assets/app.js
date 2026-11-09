@@ -3126,9 +3126,9 @@ function fleetInspector(name, need) {
   // "Not waiting" on one question doesn't renumber the session in view or skip one.
   if (!ui.fxFlagOrder) {
     ui.fxFlagOrder = [...(ui.fxFlagScope || fleetNeeds(fleetRows())).entries()].sort((a, b) => a[1].at - b[1].at).map(([n]) => n);
-    // Whether a search or state filter left some flags out: the count then says "shown", in the
-    // subtitle's words, since the filter is out of view here.
-    ui.fxFlagPart = ui.fxFlagOrder.length < fleetNeeds(fleetRows()).size;
+    // How many flags a search or state filter left out; the steps say so, since the filter is out
+    // of view here: "2 of 3 that need a look · 1 more not shown".
+    ui.fxFlagHidden = fleetNeeds(fleetRows()).size - ui.fxFlagOrder.length;
   }
   const flagged = ui.fxFlagOrder.filter((n) => findSession(n));
   const at = flagged.indexOf(name);
@@ -3143,7 +3143,7 @@ function fleetInspector(name, need) {
       ? h(
           "span",
           { class: "fx-flag-nav" },
-          h("span", { class: "fx-flag-pos" }, at + 1 + " of " + flagged.length + (ui.fxFlagPart ? " shown" : "") + (need ? " that need a look" : " that needed a look")),
+          h("span", { class: "fx-flag-pos" }, at + 1 + " of " + flagged.length + (need ? " that need a look" : " that needed a look") + (ui.fxFlagHidden > 0 ? " · " + ui.fxFlagHidden + " more not shown" : "")),
           h("button", { "data-key": "fx-flag-prev", onclick: step(-1) }, "Previous"),
           h("button", { "data-key": "fx-flag-next", onclick: step(1) }, "Next"),
         )

@@ -206,7 +206,7 @@
 /* Five columns need 912px (51rem of minimums, four 1rem gaps, 1rem padding each side); under
    920px Branch goes. Four need 648px. */
 @container (max-width: 920px) {
-  .fx-tr { grid-template-columns: minmax(12.5rem, 1.2fr) 7rem minmax(10.5rem, 1.8fr) 5.5rem; }
+  .fx-tr { grid-template-columns: minmax(12.5rem, 1.2fr) 7rem minmax(11.5rem, 1.8fr) 4.5rem; }
   .fx-tr > :nth-child(4) { display: none; }
   .fx-sub-branch { display: flex; align-items: baseline; min-width: 0; }
   .fx-tr .fx-status { -webkit-line-clamp: 4; } /* beats the 2-line rule below */
@@ -385,3 +385,8 @@ a.fx-pr:focus-visible, .fx-clear:focus-visible, .fx-insp-open:focus-visible, .fx
 .fx-flag-solo { margin: 0 0 1rem; }
 .fx-flag-solo .fx-flag-nav { margin-left: 0; }
 .fx-none { font-size: 1rem; }
+/* Grouped by Branch, the narrow table takes the same columns as the plain one (this follows the
+   .by-branch rule above, which would otherwise win). */
+@container (min-width: 641px) and (max-width: 920px) {
+  .by-branch .fx-tr { grid-template-columns: minmax(12.5rem, 1.2fr) 7rem minmax(11.5rem, 1.8fr) 4.5rem; }
+}
