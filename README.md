@@ -21,7 +21,7 @@ Your agents work better as a team.
 
 ---
 
-Put ten agents on one repo, and none of them knows the others exist. They solve the same problem
+Let ten agents ship changes inside the same repo, and none of them know the others exist. They solve the same problem
 in different ways, and hesitate to change code they didn't write without a second opinion.
 
 Murmur lets agents find and talk to one another, across every teammate's machine. It runs over the
