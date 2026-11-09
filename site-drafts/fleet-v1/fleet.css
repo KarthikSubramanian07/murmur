@@ -358,5 +358,5 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 a.fx-pr:focus-visible, .fx-clear:focus-visible, .fx-insp-open:focus-visible, .fx-insp-dismiss:focus-visible { outline: 2px solid #f1f1f1; outline-offset: 2px; }
 .fx-down { color: var(--fx-warning-text); font-weight: 500; }
 .fx-sheet-down { margin: 0 0 0.75rem; font-size: 0.8125rem; }
-.fx-insp-undo b { font-weight: 600; color: var(--fx-text); }
+.fx-insp-undo b { font-weight: 600; color: var(--fx-text); white-space: nowrap; }
 .fx-insp-undo + .fx-insp-undo { margin-top: -0.5rem; }

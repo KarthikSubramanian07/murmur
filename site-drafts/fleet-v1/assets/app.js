@@ -99,7 +99,8 @@ async function api(path, init = {}) {
   if (document.hidden) headers["X-Page-Hidden"] = "1";
   const repo = new URLSearchParams(location.search).get("repo") || "t4";
   path += (path.includes("?") ? "&" : "?") + "repo=" + encodeURIComponent(repo);
-  const res = await fetch(path, { ...init, headers, cache: "no-store" });
+  // A daemon that takes the request and never answers is as down as one that refuses it.
+  const res = await fetch(path, { signal: AbortSignal.timeout(8000), ...init, headers, cache: "no-store" });
   if (res.status === 401) throw new AuthError(token);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -2183,10 +2184,13 @@ async function poll() {
     ui.state = state;
     ui.conn = "ok";
     ui.okAt = Date.now();
+    ui.fails = 0;
   } catch (e) {
     inflight = false;
     if (e instanceof AuthError) return deny(e.token);
-    ui.conn = "down";
+    // One dropped request is noise; two in a row (or none ever answered) is the daemon gone.
+    ui.fails = (ui.fails || 0) + 1;
+    if (ui.fails >= 2 || !ui.state) ui.conn = "down";
   }
   inflight = false;
   // Rebuild only when something changed, and leave alone a minutes field being typed in, text being
@@ -2715,7 +2719,10 @@ function fleetPage() {
 
   // Where the rail can't sit beside the table and leave it readable (see STACKED), the selected
   // session takes the whole page, with a way back.
-  if (sel && STACKED.matches) return h("div", { class: "fx fx-sheet" }, fleetDown() && h("p", { class: "fx-sheet-down" }, fleetDown()), fleetInspector(sel, selNeed));
+  if (sel && STACKED.matches) {
+    const [head, ...rest] = fleetInspector(sel, selNeed);
+    return h("div", { class: "fx fx-sheet" }, head, fleetDown() && h("p", { class: "fx-sheet-down" }, fleetDown()), rest);
+  }
 
   return h(
     "div",
@@ -3078,6 +3085,7 @@ function fleetInspector(name, need) {
     if (!marked.has(convKey(x))) marked.set(convKey(x), []);
     marked.get(convKey(x)).push(x);
   }
+  for (const x of need?.msgs || []) marked.delete(convKey(x));
   const markedIds = new Set([...marked.values()].flat().map((x) => x.id));
   return [
     h(
@@ -3093,7 +3101,7 @@ function fleetInspector(name, need) {
       h(
         "div",
         { class: "fx-insp-undo" },
-        h("span", null, "Marked “" + (topicOf(msgs[0]) || "no subject") + "” from ", h("b", null, fromName(msgs[0])), " not waiting"),
+        h("span", null, "Marked “" + cutAtWord(topicOf(msgs[0]) || questionIn(msgs[0]), 60) + "” from ", h("b", null, fromName(msgs[0])), " not waiting"),
         h(
           "button",
           {
