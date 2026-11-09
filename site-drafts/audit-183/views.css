@@ -6,3 +6,7 @@
 .sv-tabs button:hover { color: #fff; background: #ffffff0d; }
 .sv-tabs button.on { color: #fff; background: #ffffff1f; }
 @media (max-width: 767px) { .sv-tabs { padding: 0.5rem 1rem; } }
+/* The demo-size toggle sits in the tab bar, outside the page's .fx padding. */
+.sv-tabs .sv-demo { max-width: none; margin: 0 0 0 auto; padding: 0 0 0 1rem; flex-shrink: 0; }
+.sv-tabs .sv-demo .fx-seg button { height: 100%; padding: 0 0.625rem; font-size: 0.75rem; background: none; }
+.sv-tabs .sv-demo .fx-seg button.on { background: #ffffff1f; }

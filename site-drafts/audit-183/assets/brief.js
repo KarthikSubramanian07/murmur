@@ -49,7 +49,7 @@ export const brief = {
       by: ["lucid-badger"], source: "Names are moving to refs/murmur/names", messages: 1, broadcast: true, big: true,
     },
     {
-      id: "d7", at: iso(170), stream: "remove-claims",
+      id: "d7", at: iso(117), stream: "remove-claims",
       what: "Claims are deleted entirely: claims.go and the claim and release tools go.",
       why: "No agent was using them, and wake-ups confirmed it doesn't read them.",
       by: ["brave-heron", "solar-wren"], source: "Claims are going away under you", messages: 2, big: true,

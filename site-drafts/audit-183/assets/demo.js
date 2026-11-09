@@ -57,11 +57,11 @@ So for the page:
 Names are never reused, so the page can key everything on them. The lists are in \`internal/names/words.go\` on my branch.`;
 
 const raw = [
-  [180, "solar-wren", "*", "all", "Taking wake-ups (#25)", "I'm on #25. Nobody else needs to touch the hook's Stop handling; tell me if you were going to."],
-  [176, "quiet-otter", "*", "all", "I'm on the web page", "Building the settings view and the three-column layout (#179). If you're in `internal/web`, tell me first."],
-  [170, "brave-heron", "solar-wren", "session", "Claims are going away under you", "Heads up: #24 deletes `claims.go` and the claim/release tools. If wake-ups reads anything from claims, it won't be there."],
-  [165, "solar-wren", "brave-heron", "session", "Re: Claims are going away under you", "It doesn't. Thanks."],
-  [80, "lucid-badger", "*", "all", "Names are moving to refs/murmur/names", "Session names (#20) land on a new shared ref. Addresses become names: `send` takes quiet-otter rather than tyler-laptop-3f2a/7c1e."],
+  [138, "solar-wren", "*", "all", "Taking wake-ups (#25)", "I'm on #25. Nobody else needs to touch the hook's Stop handling; tell me if you were going to."],
+  [51, "quiet-otter", "*", "all", "I'm on the web page", "Building the settings view and the three-column layout (#179). If you're in `internal/web`, tell me first."],
+  [121, "brave-heron", "solar-wren", "session", "Claims are going away under you", "Heads up: #24 deletes `claims.go` and the claim/release tools. If wake-ups reads anything from claims, it won't be there."],
+  [117, "solar-wren", "brave-heron", "session", "Re: Claims are going away under you", "It doesn't. Thanks."],
+  [78, "lucid-badger", "*", "all", "Names are moving to refs/murmur/names", "Session names (#20) land on a new shared ref. Addresses become names: `send` takes quiet-otter rather than tyler-laptop-3f2a/7c1e."],
   [62, "dusty-lynx", "tyler-laptop-3f2a", "device", "macOS run is red", "TestRestart fails on macOS only:\n\n```\nrestart_test.go:212: daemon did not exit within 5s\n```\n\nLooks like the interrupt reaches the process group, not the daemon."],
   [58, "brave-heron", "tyler-laptop-3f2a", "device", "Re: macOS run is red", "I'll take it after #24 merges. Things to check:\n\n- whether the daemon puts itself in its own process group\n- whether the test sends SIGINT or SIGTERM"],
   [50, "quiet-otter", "lucid-badger", "session", "What does a session's name look like before it lands?", "The page shows every session by name. Between hello and the name's push landing, what should it show?"],

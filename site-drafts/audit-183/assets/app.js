@@ -4,6 +4,11 @@ import { icon } from "./icons.js";
 import { demo } from "./demo.js";
 import { brief } from "./brief.js";
 import { swarm } from "./swarm.js";
+import { makeBusy } from "./busy.js";
+
+// #183: ?demo=busy grows the mock to the problem's scale, 4 people and 16 agents.
+const BUSY = !new URLSearchParams(location.search).has("repo") && new URLSearchParams(location.search).get("demo") === "busy";
+if (BUSY) makeBusy(demo, swarm);
 
 const NAME = document.querySelector('meta[name="app-name"]').content;
 // Draft for #179: "a" is today's page with sessions in the sidebar; "b" takes Slack's sidebar and
@@ -15,17 +20,21 @@ const TOKEN_KEY = NAME + ":token";
 const POLL_MS = 3000;
 const HIDDEN_POLL_MS = 15000;
 const MAX_MESSAGES = 2000;
-const VIEWS = ["overview", "timeline", "board", "graph", "office", "briefing", "sessions", "messages", "recent", "fleet", "settings"];
+const VIEWS = ["overview", "timeline", "board", "graph", "replay", "chord", "pulse", "codemap", "office", "briefing", "sessions", "messages", "recent", "fleet", "settings"];
 // The ways to look at the swarm (#183), as tabs on one page.
 const SWARM_VIEWS = [
   ["overview", "Overview"],
   ["timeline", "Timeline"],
   ["board", "Board"],
   ["graph", "Who talks to whom"],
+  ["replay", "Replay"],
+  ["chord", "Between streams"],
+  ["pulse", "Activity"],
+  ["codemap", "Code map"],
   ["office", "Office"],
   ["fleet", "Fleet"],
 ];
-const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", briefing: "Briefing", overview: "Overview", timeline: "Timeline", board: "Board", graph: "Who talks to whom", office: "Office", settings: "Settings" };
+const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", briefing: "Briefing", overview: "Overview", timeline: "Timeline", board: "Board", graph: "Who talks to whom", replay: "Replay", chord: "Between streams", pulse: "Activity", codemap: "Code map", office: "Office", settings: "Settings" };
 const MODE_KEY = NAME + ":messages";
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
@@ -3227,7 +3236,23 @@ function swarmTabs(view) {
     "nav",
     { class: "sv-tabs", "aria-label": "Ways to look at the swarm" },
     SWARM_VIEWS.map(([v, label]) => h("button", { class: v === view ? "on" : "", "aria-current": v === view ? "page" : null, "data-key": "sv-" + v, onclick: () => go(v) }, label)),
+    DEMO && h("div", { class: "sv-demo fx" }, fxSeg("Demo size", [["small", "9 agents"], ["busy", "16 agents"]], BUSY ? "busy" : "small", (v) => {
+      const q = new URLSearchParams(location.search);
+      if (v === "busy") q.set("demo", "busy");
+      else q.delete("demo");
+      location.search = q.toString();
+    })),
   );
+}
+
+// One colour per stream, by the stream's place in the list, from the dataviz skill's reference
+// palette (dark steps; on #1b1b1b worst neighbouring pair is CVD ΔE 8.4, normal vision 19.3).
+// Past eight streams, hues stop being tellable apart, so a ninth stream, and an agent in no
+// stream, is grey. Views label streams directly, so colour is never the only cue.
+const STREAM_HUES = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"];
+function streamColor(id) {
+  const i = swarm.streams.findIndex((s) => s.id === id);
+  return i >= 0 && i < STREAM_HUES.length ? STREAM_HUES[i] : "#8a8a8a";
 }
 
 function swarmShell(view) {
@@ -3252,7 +3277,7 @@ window.MUR = {
   h, icon, avatar, presence, ago, agoEl, when, stamp, plural, dayLabel,
   devices, findSession, fromName, toName, conversationOf, sessionState, onDnd, deviceDot,
   fxDot, fxSeg, briefFaces, swOpenMessage, swStreamOf, go, render,
-  demo, swarm,
+  demo, swarm, streamColor, busy: BUSY,
   get ui() { return ui; },
   get messages() { return ui.messages; },
   get state() { return ui.state; },
