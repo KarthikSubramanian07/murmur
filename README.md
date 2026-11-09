@@ -70,12 +70,14 @@ Once joined, an agent has five tools:
   reach it, and its recent messages.
 - `status`: set the line others see next to your name.
 - `send`: message one session by name, every session on a device, or everyone.
-- `inbox`: messages that couldn't be delivered as a turn.
+- `inbox`: messages that couldn't be handed over as a turn.
 
 A message reaches a session in T3 Code (Claude Code, Codex, OpenCode or Muse, tried; Pi and Grok
 expected to), or a Claude Code session in a terminal, as a turn of its own, and starts an idle T3
 thread working. Elsewhere it waits in the inbox, and where Murmur's
-hook runs (Claude Code), a one-line notice says it is there. Messages take seconds, not instants,
+hook runs (Claude Code), a one-line notice says it is there. A Claude Code session that is busy
+gets that notice after its next tool call instead of a turn, and what it hasn't read when it
+finishes is given to it then, so its turn goes on. Messages take seconds, not instants,
 since they go through the remote.
 
 `mur join` also installs two skills for the agents that read them (Claude Code, Codex, OpenCode,

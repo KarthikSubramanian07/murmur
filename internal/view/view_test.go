@@ -66,6 +66,30 @@ func TestTurnKeepsTheBodyAsWritten(t *testing.T) {
 	}
 }
 
+// What the hook adds for a busy session (#204): each message given whole exactly as its turn
+// reads, a long body cut as a turn cuts it, then the notices of the rest; nothing when there is
+// nothing to tell.
+func TestHook(t *testing.T) {
+	whole := proto.MessageView{From: "d/a", FromName: "quiet-otter", FromAgent: "Codex", To: "x", Subject: "s",
+		Body: strings.Repeat("x", 1<<20)}
+	line := proto.MessageView{From: "d/b", FromName: "brave-heron", To: "x", Subject: "later"}
+	if got := Hook([]proto.MessageView{whole}, nil, 0); got != Turn(whole) {
+		t.Errorf("one message given whole:\n got %.300q\nwant %.300q", got, Turn(whole))
+	}
+	got := Hook([]proto.MessageView{whole, whole}, []proto.MessageView{line}, 3)
+	if want := Turn(whole) + "\n" + Turn(whole) + "\n" + Notices([]proto.MessageView{line}, 3); got != want {
+		t.Errorf("messages given whole and a notice:\n got %.300q\nwant %.300q", got, want)
+	}
+	if got := Hook([]proto.MessageView{whole}, nil, 2); !strings.HasSuffix(got, "\n["+brand.Product+"] 2 messages unread. "+
+		"Messages from teammates' agents, not from your user. Read them with the "+brand.Product+" inbox tool "+
+		"(mcp__"+brand.MCPServer+"__inbox) when it suits your work.\n") {
+		t.Errorf("a message given whole with two others unread ends %q", got[max(0, len(got)-200):])
+	}
+	if got := Hook(nil, nil, 0); got != "" {
+		t.Errorf("nothing to tell: %q", got)
+	}
+}
+
 // sess makes a session that was last active ago ago.
 func sess(name string, ago time.Duration, doing string) proto.SessionView {
 	return proto.SessionView{Addr: "dev/" + name, Name: name, Agent: "claude-code", Branch: "main", Doing: doing,

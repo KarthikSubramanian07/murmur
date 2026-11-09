@@ -4,7 +4,11 @@
 // its closing is how the daemon learns the session stopped, even after a crash.
 package proto
 
-import "time"
+import (
+	"time"
+
+	"github.com/a-Fig/murmur/internal/tags"
+)
 
 // Ops.
 const (
@@ -19,10 +23,16 @@ const (
 	OpLog     = "log"
 	OpStop    = "stop"
 	OpLookup  = "lookup"
+	// OpTags adds and removes the calling session's own tags (#198).
+	OpTags = "tags"
 	// OpToolStart and OpToolEnd bracket one tool call, for the hook: the daemon snapshots the
 	// worktree at the start and credits the commits that appeared by the end (#21).
 	OpToolStart = "toolstart"
 	OpToolEnd   = "toolend"
+	// OpTurnEnd is the hook at the end of a turn (Claude Code's Stop): what the session was told of
+	// and didn't read keeps the turn going, where the hook can do that (Continues), and the session
+	// is idle otherwise (#202).
+	OpTurnEnd = "turnend"
 )
 
 // Protocol is the version of this protocol that the daemon speaks, reported in its ping reply. A
@@ -34,7 +44,13 @@ const (
 //	1: OpRoute, and delivering a message as a turn (#56, #57)
 //	2: the conversation's title as the default status line, which needs the transcript the hook
 //	   reports and the Codex thread ID in the route (#66)
-const Protocol = 2
+//	3: OpTurnEnd, OpNotices's Unread and Subagent: a session the hook runs in gets notices while it
+//	   is at work, and turns only when it isn't (#202)
+//	4: OpNotices's Delivered: a busy session may be given its messages whole by the hook (#204)
+//	5: OpTurnEnd's Continues and Delivered: the Stop hook keeps the turn going with the messages
+//	   that would have gone in as a turn after it (#202)
+//	6: session tags: OpTags, and who's search by tags (#198)
+const Protocol = 6
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -84,6 +100,20 @@ type Request struct {
 	// Transcript is the path of the Claude Code session's transcript, the hook's transcript_path,
 	// which holds the session's title. OpNotices carries it.
 	Transcript string `json:"transcript,omitempty"`
+	// Subagent says the hook ran for a subagent's tool call (its payload has an agent_id): the
+	// session is at work, but a notice would land in the subagent's context, not the session's,
+	// so OpNotices answers with nothing (#188).
+	Subagent bool `json:"subagent,omitempty"`
+	// Continues says, on OpTurnEnd, that the hook can keep the turn going with messages (Claude
+	// Code's Stop hook, by blocking the stop): the reply's Delivered is what it should give.
+	Continues bool `json:"continues,omitempty"`
+
+	// Add and Remove are the tags OpTags adds to the caller and takes from it. Tags is what OpWho
+	// searches by: a session is listed when it has every tag named, and none named after a dash
+	// (see tags.ParseFilter).
+	Add    []string `json:"add,omitempty"`
+	Remove []string `json:"remove,omitempty"`
+	Tags   []string `json:"tags,omitempty"`
 
 	// Name is the session OpLookup describes: a name, or device/session. Limit caps the messages.
 	Name string `json:"name,omitempty"`
@@ -137,9 +167,9 @@ type Hello struct {
 	// Code starts the server itself: the hook's CLAUDE_PID is how the daemon links the two.
 	ClientPID int `json:"clientPid,omitempty"`
 	// Reconnect says the session was registered with a daemon that went away, so it should get
-	// what that daemon would have delivered.
+	// what that daemon would have queued for it.
 	Reconnect bool `json:"reconnect,omitempty"`
-	// Route says how to deliver a message into the session as a turn.
+	// Route says how to hand a message over to the session as a turn.
 	Route
 }
 
@@ -164,8 +194,21 @@ type Response struct {
 
 	Messages []MessageView `json:"messages,omitempty"`
 	Events   []EventView   `json:"events,omitempty"`
+	// Unread is, in an OpNotices reply, how many messages the session has unread, set when there
+	// are new ones to tell or the number changed since the hook last said it; 0 otherwise.
+	Unread int `json:"unread,omitempty"`
+	// Delivered is, in an OpNotices reply, the new messages the page's setting gives the session
+	// whole while it is busy (#204), and in an OpTurnEnd reply, the messages that keep its turn
+	// going (#202), with their bodies. The hook shows each as its turn would read; they are
+	// delivered, and gone from the inbox.
+	Delivered []MessageView `json:"delivered,omitempty"`
 
 	Lookup *SessionDetail `json:"lookup,omitempty"`
+
+	// Filter is the search OpWho made, as it read it; empty when it listed everyone. Tags is the
+	// caller's tags after an OpTags.
+	Filter string     `json:"filter,omitempty"`
+	Tags   []tags.Tag `json:"tags,omitempty"`
 }
 
 // Device is one device as `who` shows it.
@@ -195,6 +238,8 @@ type SessionView struct {
 	// session's device doesn't say.
 	LastActive time.Time `json:"lastActive,omitzero"`
 	You        bool      `json:"you,omitempty"`
+	// Tags is the session's tags, in order of name (#198).
+	Tags []tags.Tag `json:"tags,omitempty"`
 }
 
 // SessionDetail is everything the daemon knows about one session, as `lookup` shows it. Where a
@@ -209,13 +254,14 @@ type SessionDetail struct {
 	Agent  string `json:"agent,omitempty"`
 	You    bool   `json:"you,omitempty"`
 
-	Branch    string    `json:"branch,omitempty"`
-	Committed []string  `json:"committed,omitempty"` // branches it has committed to, most recent first
-	Doing     string    `json:"doing,omitempty"`
-	Started   time.Time `json:"started,omitzero"`
+	Branch    string     `json:"branch,omitempty"`
+	Committed []string   `json:"committed,omitempty"` // branches it has committed to, most recent first
+	Doing     string     `json:"doing,omitempty"`
+	Started   time.Time  `json:"started,omitzero"`
+	Tags      []tags.Tag `json:"tags,omitempty"` // in order of name (#198)
 
 	// Running says the session is in a device's presence (or registered here), or in its grace.
-	// Reachable says a message sent now will be delivered: it is connected, and its device's
+	// Reachable says a message sent now will be queued in the session's inbox: it is connected, and its device's
 	// presence is current. A device that is Stale was last seen at DeviceSeen; a session Dropped is
 	// waiting out its grace for its MCP server to come back.
 	Running    bool      `json:"running"`

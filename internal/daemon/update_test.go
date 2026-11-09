@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestUpdateWaitsForDelivery(t *testing.T) {
+func TestUpdateWaitsForHandoffs(t *testing.T) {
 	d := &Daemon{pushing: map[string]bool{"session": true}, quit: make(chan struct{})}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -14,7 +14,7 @@ func TestUpdateWaitsForDelivery(t *testing.T) {
 	go func() { d.restartWhenIdle(ctx); close(done) }()
 	select {
 	case <-d.quit:
-		t.Fatal("stopped during delivery")
+		t.Fatal("stopped during handoff")
 	case <-time.After(30 * time.Millisecond):
 	}
 	d.mu.Lock()
@@ -28,7 +28,7 @@ func TestUpdateWaitsForDelivery(t *testing.T) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if !d.updating {
-		t.Fatal("new deliveries not blocked")
+		t.Fatal("new handoffs not blocked")
 	}
 	select {
 	case <-d.quit:
@@ -52,16 +52,16 @@ func TestUpdateWaitsForOpenPage(t *testing.T) {
 	d.mu.Lock()
 	if d.updating {
 		d.mu.Unlock()
-		t.Fatal("blocked deliveries while the page is open")
+		t.Fatal("blocked handoffs while the page is open")
 	}
-	// The last visible-page heartbeat ages out, but a delivery now in flight
+	// The last visible-page heartbeat ages out, but a handoff now in flight
 	// must still finish before restarting.
 	d.lastPage = time.Now().Add(-2 * d.opt.PageOpen)
 	d.pushing["session"] = true
 	d.mu.Unlock()
 	select {
 	case <-d.quit:
-		t.Fatal("stopped during delivery after page expiry")
+		t.Fatal("stopped during handoff after page expiry")
 	case <-time.After(150 * time.Millisecond):
 	}
 	d.mu.Lock()
@@ -70,7 +70,7 @@ func TestUpdateWaitsForOpenPage(t *testing.T) {
 	select {
 	case <-done:
 	case <-ctx.Done():
-		t.Fatal("did not restart after page expired and delivery finished")
+		t.Fatal("did not restart after page expired and handoff finished")
 	}
 	select {
 	case <-d.quit:

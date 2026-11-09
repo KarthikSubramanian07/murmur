@@ -302,7 +302,7 @@ func TestInitRemovesTheHookFromEveryEventItWasOn(t *testing.T) {
   "permissions": {"allow": ["Bash(go test:*)"]},
   "hooks": {
     ` + strings.Join(events, ",\n    ") + `,
-    "Stop": [{"hooks": [{"type": "command", "command": "other-tool"}]}]
+    "Notification": [{"hooks": [{"type": "command", "command": "other-tool"}]}]
   }
 }`})
 	initRepo(t, dir)

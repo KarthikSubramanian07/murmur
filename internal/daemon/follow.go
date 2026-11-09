@@ -40,6 +40,7 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 	if name == "" {
 		return
 	}
+	d.adoptTagsLocked(s)
 	adopted := d.adoptLocked(s, name)
 	if !adopted && d.st.NameHolders[name] == s.id && d.st.SessionNames[s.id] == name {
 		return
@@ -191,9 +192,9 @@ func (d *Daemon) forwardLocked(to string) string {
 	return bus.Addr(d.device, holder)
 }
 
-// deliveredToLocked is where a message for the address to is delivered: to, or the session it is
+// queuedAtLocked is where a message for the address to is queued: to, or the session it is
 // forwarded to. Caller holds mu.
-func (d *Daemon) deliveredToLocked(to string) string {
+func (d *Daemon) queuedAtLocked(to string) string {
 	if f := d.forwardLocked(to); f != "" {
 		return f
 	}
