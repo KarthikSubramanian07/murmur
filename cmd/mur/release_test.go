@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/update"
 )
@@ -28,6 +29,13 @@ func TestReleaseWatch(t *testing.T) {
 		if v.Latest != c.latest || v.Auto != c.auto {
 			t.Errorf("after %+v: latest %q auto %v, want %q %v", c.s, v.Latest, v.Auto, c.latest, c.auto)
 		}
+	}
+
+	// A release out after one is installed doesn't change which one the restart starts.
+	w.checkin, w.readAt = "0.3.2", time.Now()
+	w.report(update.Status{Latest: "0.3.1", Installed: true})
+	if v := w.page(); v.Latest != "0.3.1" {
+		t.Errorf("installed 0.3.1, page told of %s", v.Latest)
 	}
 
 	// A build from source says nothing of releases.

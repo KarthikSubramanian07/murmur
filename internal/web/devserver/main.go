@@ -39,7 +39,7 @@ func main() {
 	}
 	token := randomHex(16)
 	src := newFixtures(time.Now())
-	src.version = web.Version{Running: "0.3.0", Install: "curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh"}
+	src.version = web.Version{Running: "0.3.0", Daemon: "1", Install: "curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh"}
 	switch *upd {
 	case "none":
 	case "auto":
@@ -341,7 +341,7 @@ func (f *fixtures) Restart(ctx context.Context) error {
 	if !f.version.Ready {
 		return web.ErrNoUpdate
 	}
-	f.version = web.Version{Running: f.version.Latest, Install: f.version.Install}
+	f.version = web.Version{Running: f.version.Latest, Install: f.version.Install, Daemon: "2"}
 	return nil
 }
 

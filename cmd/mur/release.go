@@ -46,7 +46,8 @@ func (w *releaseWatch) page() web.Version {
 		w.checkin, w.readAt = checkin.Newer(w.gitDir, w.running), now
 	}
 	latest := w.last.Latest
-	if w.checkin != "" && (latest == "" || update.Newer(w.checkin, latest)) {
+	// Once a release is installed, that is the one a restart starts, whatever came out since.
+	if !w.last.Installed && w.checkin != "" && (latest == "" || update.Newer(w.checkin, latest)) {
 		latest = w.checkin
 	}
 	if latest != "" && update.Newer(latest, w.running) {

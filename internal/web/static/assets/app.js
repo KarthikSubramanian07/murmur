@@ -2171,10 +2171,11 @@ async function poll() {
   clearTimeout(timer);
   try {
     const [state] = await Promise.all([api("/api/state"), fetchMessages()]);
-    // A daemon of another version is serving: it restarted onto an update, and serves this page at
-    // the same address and token. Its page may differ too, so load that.
-    const was = ui.state?.version?.running;
-    if (was && state.version?.running && state.version.running !== was) {
+    // Another daemon is serving: it restarted onto an update, or a reinstall of the same version,
+    // and serves this page at the same address and token. Its page may differ too, so load that.
+    const was = ui.state?.version;
+    const now = state.version;
+    if (was && now && ((was.daemon && now.daemon && was.daemon !== now.daemon) || (was.running && now.running && was.running !== now.running))) {
       location.reload();
       return;
     }

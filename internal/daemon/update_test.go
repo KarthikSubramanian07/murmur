@@ -89,7 +89,7 @@ func TestUpdateWaitsForOpenPage(t *testing.T) {
 
 // An open page holds an installed update back, until the page asks for the restart (#240).
 func TestPageAsksForRestart(t *testing.T) {
-	d := &Daemon{opt: Options{PageOpen: time.Hour}, lastPage: time.Now(),
+	d := &Daemon{opt: Options{PageOpen: time.Hour}, lastPage: time.Now(), started: time.Now(),
 		pushing: map[string]bool{}, quit: make(chan struct{})}
 	src := pageSource{d}
 	if err := src.Restart(context.Background()); !errors.Is(err, web.ErrNoUpdate) {
@@ -105,6 +105,9 @@ func TestPageAsksForRestart(t *testing.T) {
 			t.Fatal(err)
 		}
 		if st.Version.Ready {
+			if st.Version.Daemon == "" {
+				t.Error("the page can't tell this daemon from the next")
+			}
 			break
 		}
 		select {
@@ -178,10 +181,15 @@ func TestPageHandoff(t *testing.T) {
 	if ln.Addr().String() != addr {
 		t.Fatalf("page on %s, want the old address %s", ln.Addr(), addr)
 	}
-	// With the old address taken, the page goes elsewhere rather than not at all.
+	// With the old address taken, the page goes elsewhere rather than not at all, and with a new
+	// token: whatever took the port has been sent the old one.
+	d.pageTok = "tok"
 	ln2, err := d.listenPage()
 	if err != nil {
 		t.Fatal(err)
 	}
 	ln2.Close()
+	if d.pageTok == "tok" || d.pageTok == "" {
+		t.Fatalf("the page moved and kept token %q", d.pageTok)
+	}
 }

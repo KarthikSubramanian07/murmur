@@ -45,7 +45,8 @@ type State struct {
 // Version is this daemon's version, and what is known of a newer one (#240).
 type Version struct {
 	Running string `json:"running"`
-	// Latest is the newest release, when it is newer than Running; else "".
+	// Latest is the newest release, when it is newer than Running; else "". When Ready, it is the
+	// version installed, which a later release doesn't change: that is what a restart starts.
 	Latest string `json:"latest,omitempty"`
 	// Ready says a newer binary is installed, and the daemon restarts onto it once no page has
 	// been open for a while, or when Restart asks it to.
@@ -55,6 +56,9 @@ type Version struct {
 	Auto bool `json:"auto,omitempty"`
 	// Install is the command that installs the latest release by hand, for this OS.
 	Install string `json:"install,omitempty"`
+	// Daemon tells this daemon from the one that replaces it, even at the same version (a
+	// reinstall by hand): the page reloads when it changes.
+	Daemon string `json:"daemon,omitempty"`
 }
 
 // Device is one device: one clone's daemon.

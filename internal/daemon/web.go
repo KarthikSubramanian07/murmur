@@ -46,8 +46,11 @@ func (d *Daemon) listenPage() (net.Listener, error) {
 			if ln, err := net.Listen("tcp", d.pagePrev); err == nil {
 				return ln, nil
 			}
-			d.log.Printf("the page's old address %s is taken; a tab open on it needs `%s ui` again", d.pagePrev, brand.Command)
 		}
+		// Whatever holds the old port now may be another user's process, and the open tab has been
+		// sending it the token. So the page moves with a new token, which only `ui` hands out.
+		d.log.Printf("the page's old address %s is taken; a tab open on it needs `%s ui` again", d.pagePrev, brand.Command)
+		d.pageTok, d.pagePrev = bus.RandHex(32), ""
 	}
 	return net.Listen("tcp", d.opt.PageAddr)
 }
@@ -109,6 +112,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	version.Ready = d.updateReady
+	version.Daemon = d.started.UTC().Format(time.RFC3339Nano)
 	now := time.Now()
 	d.pageSeenLocked(ctx, now)
 
