@@ -101,10 +101,11 @@ type Options struct {
 	Consent     func() bool
 	ConsentPoll time.Duration // how often to look; 1 s
 	Log         *log.Logger
-	// CheckIn, if set, runs in the background for as long as the daemon serves: the daily
-	// check-in that counts active users (internal/checkin). Tests leave it unset.
-	CheckIn func(context.Context)
-	// Update installs releases independently of check-ins, then requests a safe restart.
+	// Report, if set, runs in the background for as long as the daemon serves: it tells
+	// murmur.afig.dev the repo's address if the repo is public and nobody has yet
+	// (internal/publicrepo). Tests leave it unset.
+	Report func(context.Context)
+	// Update installs releases, then requests a safe restart.
 	Update func(context.Context, func())
 }
 
@@ -651,8 +652,8 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.Consent != nil {
 		go d.consentLoop(ctx)
 	}
-	if opt.CheckIn != nil {
-		go opt.CheckIn(ctx)
+	if opt.Report != nil {
+		go opt.Report(ctx)
 	}
 	if opt.Update != nil {
 		d.bg.Add(1)

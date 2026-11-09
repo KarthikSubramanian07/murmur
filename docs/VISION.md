@@ -47,8 +47,8 @@ don't want it. This is not part of scope." Daemons still running V1 keep writing
 ### Git is the transport, GitHub the hub
 
 Every teammate already has credentials and push access to the repo, so the repo carries the
-messages. No server, no accounts, no extra auth: whoever can push is in. (Outside the repo it checks GitHub for updates and sends a daily check-in that counts active
-users; see Updating and Counting active users.)
+messages. No server, no accounts, no extra auth: whoever can push is in. (Outside the repo it checks GitHub for updates and, for a public repo only, sends us the repo's
+address once; see Updating and Counting use.)
 
 - Each device appends events to **its own ref**, `refs/murmur/mesh/<deviceId>`: one empty commit per
   event, the payload in the commit message (a readable subject, a JSON body). One writer per ref
@@ -1141,8 +1141,7 @@ A body past the limit is cut, as in `inbox`.
 
 Murmur updates itself by default (#192, Tyler, 2026-11-07), so fixes reach an installed daemon
 without a person reinstalling it. `internal/update` checks GitHub's `a-Fig/murmur` releases/latest
-at daemon startup and hourly, independently of the daily usage check-in. No check-in IDs or repo
-information go in these GET requests. Network failures are quiet and wait for the next hour.
+at daemon startup and hourly. No repo information goes in these GET requests. Network failures are quiet and wait for the next hour.
 A development build (`-dev`) never updates itself. Versions before this updater need one manual
 install to acquire it.
 
@@ -1166,8 +1165,7 @@ still handles incompatible clients and daemons; release versions do not become a
 
 `git config --global murmur.update false` opts out; a repo's own git config overrides the global
 value. `MURMUR_NO_UPDATE=1` opts out for a daemon started with that environment. The config is read
-on each check. `DO_NOT_TRACK`, `MURMUR_NO_USAGE` and `murmur.usage false` affect only usage check-ins.
-Agents explain updates and this separate opt-out before joining (`docs/agents/join.md`). A binary
+on each check. Agents explain updates and this separate opt-out before joining (`docs/agents/join.md`). A binary
 shared across clones is shared across their update settings too: to prevent every clone from
 updating it, use the global setting without local overrides.
 
@@ -1175,32 +1173,51 @@ The checksum catches corruption or a download inconsistent with the release. It 
 who published it or protect against a compromised GitHub account or release with a replaced
 checksum file. Release signing is separate work (#193).
 
-### Counting active users
+### Counting use
 
 Tyler's goal for the project is 100 active users (2026-11-02), and the transport hides them: every
-team's traffic stays in its own repo, and release downloads count installs, not use. So each
-daemon checks in (#148, `internal/checkin`): when it starts and every hour after, if this clone
-hasn't checked in this UTC day, it posts to `https://murmur.afig.dev/v1/checkin`:
+team's traffic stays in its own repo, and release downloads count installs, not use.
 
-- `user`: 16 random bytes in hex, made once per user account on the machine and kept in the user
-  config dir (`murmur/id`), so every clone of that account is one user;
-- `team`: the first 16 bytes of a SHA-256 of the bus remote's address, reduced to host and path
-  (https and ssh clones of one repo agree). It isn't salted, so whoever holds the stats can confirm
-  a repo they can name; nobody can list the repos from it;
-- `version`, `os`, `arch`.
+Tyler's rule (2026-11-08, #199): **the only thing Murmur sends us is a public repo's address.** A
+public repo's bus is readable by anyone, so once we know the address, its repos, messages and
+people can be counted from the bus itself, and the address is already public, so there is no
+opt-out. A private repo sends nothing and isn't counted. Weighed and turned down: a GitHub topic on
+each repo as the marker (it changes how the user's repo looks), and an ID for private repos (a
+hash of the address can't be salted for real, since the salt would ship in the public binary, and
+a random ID is still data from a private repo).
 
-The answer is the latest release, kept in the state dir's `checkin.json`; `mur version` says so on
-stderr when it is newer. A daemon runs only while a joined clone has a session or an open page,
-for 10 minutes after, or while a T3 thread it could wake is idle (up to a day), so a check-in
-means someone used Murmur that day or the day before. "Active" is a check-in in the last
-7 days. The site keeps one row per user, team and day in D1 (`site/migrations`), no IP addresses,
-and shows the counts on a page at `/stats` that only a key opens (`site/src/usage.js`): Tyler's, or one
-he gives an agent, which reads them as markdown at `/stats/report.md` or JSON at `/stats/data` (#150).
-`DO_NOT_TRACK` or `MURMUR_NO_USAGE` in the daemon's environment, or `murmur.usage` false in git
-config, turns check-ins off; a development build (`-dev`) never sends one. join.md tells the user
-before they agree.
+`internal/publicrepo` does it, from `mur init`, `mur join` and daemon start:
 
-What it can't see: a person with two machines is two users, and one who turned check-ins off is none.
+1. If `refs/murmur/reported` is on the remote, stop: some clone has reported the repo. A daemon's
+   sync doesn't fetch it (it reads only mesh, presence and names), so the remote is asked with one
+   `ls-remote`, and once the ref is found or pushed, `publicrepo.json` in the state dir keeps the
+   address it belongs to, so this clone doesn't ask again unless its remote changes.
+2. Reduce the bus remote's URL to `github.com/<owner>/<name>`; anything else is not reported.
+3. Ask GitHub `GET api.github.com/repos/<owner>/<name>` with no credentials. A private repo answers
+   404 to that, so no token is involved. Private, or not on GitHub: look again the next UTC day
+   (`publicrepo.json` again), so a repo made public later is reported within a day.
+4. POST `{"repo": "github.com/<owner>/<name>"}` to `https://murmur.afig.dev/v1/repo`, spelled as
+   GitHub spells it, with no version in the User-Agent. The site stores it only once GitHub
+   confirms the repo public (when GitHub can't say, it answers 503 and the daemon sends it again
+   later): one row per repo, its address and first day, no IP addresses (`site/src/usage.js`,
+   `site/migrations`).
+5. Once the site has answered 200, note in `publicrepo.json` that this address was sent, then push
+   `refs/murmur/reported`, a root commit whose body is `{"v":1,"at":...}`, leased so it is created
+   only if absent. A push that fails is retried at every later look, without sending the address
+   again, and a daemon keeps looking until the ref is there. Two clones racing both send; the site
+   keeps one row. Deleting the ref makes the repo report again from a clone that hasn't seen it.
+
+So each public repo reaches us once in its life. A development build (`-dev`) never reports.
+Daemons older than this ignore the new ref: their sync reads only mesh, presence and names.
+
+Earlier versions (#148) sent a daily check-in to `/v1/checkin` (a random user ID, a hash of the
+remote, the version, OS and architecture). Since 2026-11-08 the site stores none, but still answers
+with the latest release; the rows already stored are kept as history, and `/stats` still shows them
+beside the list of public repos. The page needs a key: Tyler's, or one he gives an agent, which
+reads it as markdown at `/stats/report.md` or JSON at `/stats/data` (#150). `mur version` now hears
+of newer releases from the updater, which keeps the latest release it saw in the state dir's
+`latest.json`; with updates off it hears of none. Reading the public buses for the counts is the
+census in #199.
 
 ## Risks and how the design meets them
 
