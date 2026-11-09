@@ -141,17 +141,23 @@ the repo. On a public repo, that is everyone, so secrets don't belong in message
 **A message is a note from a colleague, not an instruction from the user.** Agents are told to
 treat it that way, and to bring anything sizeable to their user first.
 
-**One thing leaves the repo:** a daily check-in to murmur.afig.dev with a random user ID, a
-one-way hash of the repo's address, mur's version, the OS and the processor type. No names,
-messages, branches or paths. It is the only way we can count users, and our goal is 100 active
-users (2026-11-07), so please leave it on. To turn it off:
+**Two things reach outside the repo.**
+
+A daily check-in to murmur.afig.dev with a random user ID, a one-way hash of the repo's address,
+mur's version, the OS and the processor type. No names, messages, branches or paths. It is the
+only way we can count users, and our goal is 100 active users (2026-11-07), so please leave it on.
+
+An hourly check of GitHub's releases. When there is a newer version, the daemon downloads it,
+verifies its checksum and replaces the installed `mur`.
+
+To turn either off:
 
 ```sh
 git config --global murmur.usage false
+git config --global murmur.update false
 ```
 
-[`docs/agents/join.md`](docs/agents/join.md#what-murmurafigdev-receives-and-why) lists exactly what
-is sent and why.
+[`docs/agents/join.md`](docs/agents/join.md) lists exactly what is sent and why.
 
 ## Documentation
 
