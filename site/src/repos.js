@@ -12,6 +12,12 @@ const DAY = /^\d{4}-\d\d-\d\d$/;
 const ID = /^[0-9a-f]{16}$/;
 // A repo's last 7 days, for "active".
 const WEEK = 7;
+// D1's limits (developers.cloudflare.com/d1/platform/limits, updated 2026-10-30): 100 bound values a
+// statement; a whole db.batch() must finish within 30 seconds; and a Worker request may make 1,000
+// queries (50 on the Free plan), a batch counting as one. A census POST at the most invalid() takes
+// is about 6,550 statements of up to 33 rows: in batches of 200, 33 batches, plus one query to find
+// the repo, which fits even the Free plan.
+const BATCH = 200;
 
 // /v1/census, for the census only, with the CENSUS_KEY secret as its Bearer token:
 // - GET: the listed repos, {"repos": ["github.com/Owner/Name", ...]}.
@@ -39,18 +45,7 @@ export async function census(request, env) {
   if (!known) return new Response('Not a listed repo.\n', { status: 422 });
 
   const db = env.DB, t = c.totals;
-  const stmts = [
-    db.prepare(
-      `INSERT INTO repo_census (repo, sessions, messages, records, first_day, last_day, counted)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-       ON CONFLICT (repo) DO UPDATE SET
-         sessions = MAX(sessions, excluded.sessions), messages = MAX(messages, excluded.messages),
-         records = MAX(records, excluded.records),
-         first_day = MIN(COALESCE(first_day, excluded.first_day), COALESCE(excluded.first_day, first_day)),
-         last_day = MAX(COALESCE(last_day, excluded.last_day), COALESCE(excluded.last_day, last_day)),
-         counted = excluded.counted`,
-    ).bind(c.repo, t.sessions, t.messages, t.records, t.first_day, t.last_day, new Date().toISOString()),
-  ];
+  const stmts = [];
   // D1 binds at most 100 values a statement, so rows go in groups: 20 days of 5 values, 33 rows of 3.
   const insert = (rows, width, sql, values) => {
     const per = Math.floor(100 / width);
@@ -78,7 +73,22 @@ export async function census(request, env) {
     `INSERT INTO contributors (repo, id, first) VALUES $ROWS
      ON CONFLICT (repo, id) DO UPDATE SET first = MIN(first, excluded.first)`,
     k => [c.repo, k.id, k.first]);
-  await db.batch(stmts);
+  stmts.push(db.prepare(
+    `INSERT INTO repo_census (repo, sessions, messages, records, first_day, last_day, counted)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT (repo) DO UPDATE SET
+       sessions = MAX(sessions, excluded.sessions), messages = MAX(messages, excluded.messages),
+       records = MAX(records, excluded.records),
+       first_day = MIN(COALESCE(first_day, excluded.first_day), COALESCE(excluded.first_day, first_day)),
+       last_day = MAX(COALESCE(last_day, excluded.last_day), COALESCE(excluded.last_day, last_day)),
+       counted = excluded.counted`,
+  ).bind(c.repo, t.sessions, t.messages, t.records, t.first_day, t.last_day, new Date().toISOString()));
+  // A batch must finish within D1's 30 seconds, and a big repo makes thousands of statements, so
+  // they go BATCH at a time. Each batch is its own transaction. Every write only raises a count or
+  // adds a row, so a POST cut short between batches leaves less written, never anything wrong, and
+  // the next day's census writes the rest. The totals go last, so `counted` moves only once
+  // everything else is in.
+  for (let i = 0; i < stmts.length; i += BATCH) await db.batch(stmts.slice(i, i + BATCH));
   return Response.json({ ok: true, days: c.days.length, devices: c.devices.length, contributors: c.contributors.length }, { headers });
 }
 
@@ -97,6 +107,8 @@ function invalid(c) {
     if (!d || !day(d.day) || !['sessions', 'messages', 'records'].every(k => count(d[k]))) return 'a day';
     if (!Array.isArray(d.devices) || d.devices.length > 1000 || !d.devices.every(id)) return "a day's devices";
   }
+  // A device on a day is a row, so without this a POST could carry 3,660,000 of them.
+  if (c.days.reduce((n, d) => n + d.devices.length, 0) > 100000) return "the days' devices";
   if (!Array.isArray(c.devices) || c.devices.length > 10000) return 'devices';
   for (const v of c.devices) if (!v || !id(v.id) || !(v.person === null || id(v.person))) return 'a device';
   if (!Array.isArray(c.contributors) || c.contributors.length > 100000) return 'contributors';

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { timingSafeEqual } from 'node:crypto';
 import { census as handle } from '../src/repos.js';
-import { recordingD1 } from './d1.mjs';
+import { recordingD1, sqliteD1 } from './d1.mjs';
 
 // The Workers runtime adds this to Web Crypto; node has it only in node:crypto.
 crypto.subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
@@ -94,4 +94,50 @@ test('with no repos named, the census asks the site for its list', async t => {
   await main([], { read: name => (asked.push(name), counts(name)) });
   assert.deepEqual(asked, names);
   assert.deepEqual(sent(db), ['github.com/a/one', 'github.com/b/two']);
+});
+
+// What the site does with one POST.
+const post = (db, c) => handle(new Request('https://census.invalid/v1/census', {
+  method: 'POST', headers: { Authorization: `Bearer ${process.env.CENSUS_KEY}` }, body: JSON.stringify(c),
+}), { DB: db, CENSUS_KEY: process.env.CENSUS_KEY });
+const hex = (n, w = 16) => n.toString(16).padStart(w, '0');
+const many = n => Array.from({ length: n }, (_, i) => ({ id: hex(i), first: daysAgo(i % 30) }));
+
+test("a big repo's writes go in batches D1 can finish, with its totals last", async () => {
+  const db = recordingD1(['github.com/big/repo']);
+  const res = await post(db, counts('github.com/big/repo', { contributors: many(40000) }));
+  assert.equal(res.status, 200, await res.clone().text());
+  // 40,000 contributors in rows of 33 are 1,213 statements, with a day, a device, its day and the totals.
+  assert.deepEqual(db.batches.map(b => b.length), [200, 200, 200, 200, 200, 200, 17]);
+  const stmts = db.batches.flat();
+  const rows = stmts.filter(s => /INTO contributors/.test(s.sql)).reduce((n, s) => n + s.args.length / 3, 0);
+  assert.equal(rows, 40000);
+  assert.ok(stmts.every(s => s.args.length <= 100), 'D1 binds at most 100 values a statement');
+  assert.match(stmts.at(-1).sql, /INTO repo_census/);
+  assert.equal(stmts.filter(s => /INTO repo_census/.test(s.sql)).length, 1);
+});
+
+test('a POST with more device-days than the site keeps is refused', async () => {
+  const db = recordingD1(['github.com/big/repo']);
+  const devices = Array.from({ length: 1000 }, (_, i) => hex(i));
+  const days = Array.from({ length: 101 }, (_, i) => ({ day: daysAgo(i + 1), sessions: 0, messages: 0, records: 0, devices }));
+  const res = await post(db, counts('github.com/big/repo', { days }));
+  assert.equal(res.status, 400);
+  assert.equal(await res.text(), "Not counts: the days' devices.\n");
+  assert.equal(db.batches.length, 0);
+});
+
+const sqlite = await sqliteD1();
+
+test('the batched writes land in SQLite as D1 would keep them', { skip: !sqlite && 'no node:sqlite in this node' }, async () => {
+  const db = sqlite;
+  db.sql.exec(`INSERT INTO repos (repo, name, first) VALUES ('github.com/big/repo', 'github.com/Big/Repo', '${daysAgo(3)}')`);
+  const c = counts('github.com/big/repo', { contributors: many(40000) });
+  for (let i = 0; i < 2; i++) assert.equal((await post(db, c)).status, 200);
+  assert.equal(db.batches, 14);
+  const one = sql => db.sql.prepare(sql).get();
+  assert.equal(one('SELECT COUNT(*) AS n FROM contributors').n, 40000);
+  assert.equal(one('SELECT COUNT(*) AS n FROM device_days').n, 1);
+  assert.deepEqual({ ...one('SELECT sessions, messages, records, first_day, last_day FROM repo_census') },
+    { sessions: 1, messages: 2, records: 3, first_day: daysAgo(1), last_day: daysAgo(1) });
 });
