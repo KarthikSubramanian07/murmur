@@ -2657,7 +2657,9 @@ function fleetRow(d, s, need, on) {
   // device's name already carries it.
   const where = need || F.by !== "device";
   const dev = deviceName(d);
-  const subParts = [where && dev, where && d.owner && !dev.toLowerCase().includes(d.owner.toLowerCase()) && d.owner, s.agent].filter(Boolean);
+  // Grouped by job, a pinned row sits away from its job's heading, so it names its job (as one
+  // grouped by branch keeps its branch).
+  const subParts = [where && dev, where && d.owner && !dev.toLowerCase().includes(d.owner.toLowerCase()) && d.owner, s.agent, need && F.by === "group" && groupOf(s)].filter(Boolean);
   const sub = subParts.join(" · ");
   const prTag = pr ? "#" + pr.number : "";
   return h(

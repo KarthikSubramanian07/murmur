@@ -307,3 +307,6 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-rail .fx-dms { flex: 0 0 auto; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--fx-border-strong) transparent; }
 .fx-rail .fx-dms:has(> li:nth-child(3)) { flex: 1 1 auto; min-height: 7rem; }
 .fx-rail > .fx-btn { flex: none; }
+/* A pinned row is several lines tall already, so the line under its name, which carries more
+   there, wraps (at a "·") rather than cut short. */
+.fx-row.need .fx-who-text > .fx-muted { white-space: normal; }
