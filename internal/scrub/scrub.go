@@ -1,5 +1,6 @@
 // Package scrub blocks secrets from reaching the bus. Everything sent through Murmur stays in the
-// repo's history, readable by anyone with read access, so a match blocks the send instead of
+// repo's history, encrypted for the team's devices of the time, or in the clear from a daemon older
+// than encryption, so a match blocks the send instead of
 // being redacted: the agent learns what happened and can send again without it.
 //
 // The list is short and Murmur's own (docs/VISION.md, "Leaked secrets"). It aims at things agents

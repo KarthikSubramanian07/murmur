@@ -46,8 +46,8 @@ It usually comes as a turn headed `Message from quiet-otter (...) via Murmur:`.
   question in it: "Renaming User.id to User.uuid on main in ~10 min. Does that break you?"
 - `body` only when needed: paths, branch, exactly what you need back.
 - One complete message beats a back-and-forth.
-- Not for thanks, progress chatter, or secrets: anyone who can read the repo can read messages and
-  statuses, and they stay in its history for good.
+- Not for thanks, progress chatter, or secrets: teammates' devices can read messages and statuses,
+  and they stay in the repo's history for good.
 
 For waiting on replies, handoffs, settling an interface with another agent, broadcasts and quiet
 sessions, load the `murmur-pro` skill.
