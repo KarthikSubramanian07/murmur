@@ -674,7 +674,11 @@ tag with behaviour, below.
   session or a human takes it off. A change from another device for a session that hasn't
   registered again yet, after its daemon restarted, is kept for it the same way, however long the
   daemon was down: a skip of the backlog still reads its `tags` events (#230), and so does a backlog
-  given up on after its fetch failed for 10 minutes, once the fetch lands (#237). At the cap of 12, a
+  given up on after its fetch failed for 10 minutes, once the fetch lands (#237). Since such a change
+  can be read long after it was made, each tag goes by a human's latest choice about it: a change more
+  than a minute older than that leaves the tag as it is, whichever was read first (#251). The times are
+  the senders' clocks. A clock over a minute behind can lose a change made soon after another human's
+  on the same tag, which seemed better than an old change undoing a new one. At the cap of 12, a
   human's tags are kept first, then the session's, then derived ones. Nothing expires.
 - **Search.** `who` takes tags and lists only the sessions with all of them; `-tag` leaves out those
   with it, and a `*` at the end matches any tag that starts so (`model:opus*`). The CLI has no `who`,

@@ -13,6 +13,7 @@ package tags
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -119,13 +120,101 @@ type Mark struct {
 
 // State is what a session's device keeps about its tags: those the session set, and a human's
 // marks. Derived tags are worked out afresh each time and never kept.
+//
+// The last two decide nothing about the session's tags, and are kept only so a change from before
+// them, read late, is known to be out of date (see SetHuman). Cleared is when a human last removed a
+// tag leaving no mark. Picked is when a human last gave the session a tag of a family with several,
+// by the family: it outlasts that tag being replaced or removed.
 type State struct {
-	Self  []string        `json:"self,omitempty"`
-	Human map[string]Mark `json:"human,omitempty"`
+	Self    []string             `json:"self,omitempty"`
+	Human   map[string]Mark      `json:"human,omitempty"`
+	Cleared map[string]time.Time `json:"cleared,omitempty"`
+	Picked  map[string]time.Time `json:"picked,omitempty"`
 }
 
 // Empty says there is nothing to keep.
-func (st *State) Empty() bool { return st == nil || len(st.Self) == 0 && len(st.Human) == 0 }
+func (st *State) Empty() bool {
+	return st == nil || len(st.Self) == 0 && len(st.Human) == 0 && len(st.Cleared) == 0 && len(st.Picked) == 0
+}
+
+// Clone is a copy to change, leaving st as it is. A nil st gives an empty State.
+func (st *State) Clone() *State {
+	if st == nil {
+		return &State{}
+	}
+	return &State{Self: st.Self, Human: maps.Clone(st.Human), Cleared: maps.Clone(st.Cleared), Picked: maps.Clone(st.Picked)}
+}
+
+// SameChoices says st and o hold the same choices by a human.
+func (st *State) SameChoices(o *State) bool {
+	return maps.Equal(st.Human, o.Human) && maps.Equal(st.Cleared, o.Cleared) && maps.Equal(st.Picked, o.Picked)
+}
+
+// clockAllowance is how much older than a human's last choice a change can be and still go by the
+// order the two were read in, as they come from different machines' clocks.
+const clockAllowance = time.Minute
+
+// CapTimes brings any time later than now back to now. Such a time, from a clock since corrected or
+// kept from before changes were capped on reading, would otherwise hold off every change until it
+// came.
+func (st *State) CapTimes(now time.Time) {
+	for t, m := range st.Human {
+		if m.At.After(now) {
+			m.At = now
+			st.Human[t] = m
+		}
+	}
+	for _, times := range []map[string]time.Time{st.Cleared, st.Picked} {
+		for k, at := range times {
+			if at.After(now) {
+				times[k] = now
+			}
+		}
+	}
+}
+
+// chosenAt is when a human last chose anything about tag t, zero if never.
+func (st *State) chosenAt(t string) time.Time {
+	at := st.Human[t].At
+	if c := st.Cleared[t]; c.After(at) {
+		return c
+	}
+	return at
+}
+
+// chosenSince says a human made a choice about tag t that a change made at at is too old to undo.
+func (st *State) chosenSince(t string, at time.Time) bool {
+	return st.chosenAt(t).After(at.Add(clockAllowance))
+}
+
+// familyPickedSince says a human gave the session a tag of t's family since at: a session has at
+// most one of a family, so an add from before then is out of date, even if that tag has since gone.
+// A removal says nothing about the rest of the family, so it doesn't count. The marks are looked at
+// for those kept from before Picked.
+func (st *State) familyPickedSince(t string, at time.Time) bool {
+	limit := at.Add(clockAllowance)
+	if st.Picked[family(t)].After(limit) {
+		return true
+	}
+	for o, m := range st.Human {
+		if o != t && family(o) == family(t) && m.On && m.At.After(limit) {
+			return true
+		}
+	}
+	return false
+}
+
+// pick records that a human gave the session a tag of family f at at, if f has several tags and
+// nothing later is recorded.
+func (st *State) pick(f, t string, at time.Time) {
+	if f == t || !at.After(st.Picked[f]) {
+		return
+	}
+	if st.Picked == nil {
+		st.Picked = map[string]time.Time{}
+	}
+	st.Picked[f] = at
+}
 
 // Clean reads a list of tags as typed, each normalized. It fails on the first that isn't a tag.
 func Clean(in []string) (names []string, err error) {
@@ -177,6 +266,10 @@ func (st *State) SetSelf(add, remove []string) error {
 // session doesn't have (a page that was behind) leaves no mark either: the human turned off nothing,
 // and a mark there would stop the session from ever setting the tag, until a human cleared a mark
 // the page can't show.
+//
+// A change can be read long after it was made, and two can be read in either order, so each tag goes
+// by the human's latest choice about it (#251): a change older than that, by more than clockAllowance,
+// leaves the tag as it is. The session's own changes carry no time, and a human's beat them anyway.
 func (st *State) SetHuman(base []string, add, remove []string, by string, at time.Time) error {
 	add, err := Clean(add)
 	if err != nil {
@@ -192,24 +285,48 @@ func (st *State) SetHuman(base []string, add, remove []string, by string, at tim
 	if st.Human == nil {
 		st.Human = map[string]Mark{}
 	}
+	// A change allowed in though up to clockAllowance older keeps the later time, or a run of them
+	// could bring in one much older than the latest choice.
+	latest := func(t string) time.Time {
+		if c := st.chosenAt(t); c.After(at) {
+			return c
+		}
+		return at
+	}
+	mark := func(t string, on bool) {
+		st.Human[t] = Mark{On: on, By: by, At: latest(t)}
+		delete(st.Cleared, t)
+	}
 	for _, t := range add {
+		if st.chosenSince(t, at) || st.familyPickedSince(t, at) {
+			continue
+		}
 		for o, m := range st.Human {
 			if o != t && family(o) == family(t) && m.On {
+				st.pick(family(t), t, m.At)
 				delete(st.Human, o)
 			}
 		}
+		st.pick(family(t), t, at)
 		for _, o := range base {
-			if o != t && family(o) == family(t) {
-				st.Human[o] = Mark{On: false, By: by, At: at}
+			if o != t && family(o) == family(t) && !st.chosenSince(o, at) {
+				mark(o, false)
 			}
 		}
-		st.Human[t] = Mark{On: true, By: by, At: at}
+		mark(t, true)
 	}
 	for _, t := range remove {
-		if slices.Contains(base, t) {
-			st.Human[t] = Mark{On: false, By: by, At: at}
-		} else {
+		switch {
+		case st.chosenSince(t, at):
+		case slices.Contains(base, t):
+			mark(t, false)
+		default:
+			when := latest(t)
 			delete(st.Human, t)
+			if st.Cleared == nil {
+				st.Cleared = map[string]time.Time{}
+			}
+			st.Cleared[t] = when
 		}
 	}
 	return nil
