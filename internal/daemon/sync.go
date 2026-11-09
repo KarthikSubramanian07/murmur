@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -297,17 +301,33 @@ func readable(listed map[string]string) map[string]string {
 // fetch fetches refs in one go, or, if that fails, one by one, so that a ref git can't store here
 // costs that ref and not the rest. It returns the refs that failed and why, logging each once per
 // listed SHA. Caller holds advMu.
+//
+// Each fetch gets FetchLimit of the sync's minute, so a ref too large to fetch in time can't use up
+// the minute and fail the sync. One that runs past the limit on its own is set aside, to be fetched
+// outside the syncs (see startSlowFetchLocked). Only time can tell which ref that is: a listing gives
+// no sizes, and a filter isn't an option, since one fetch with --filter makes the user's own clone a
+// partial clone for all its later fetches.
 func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]string) map[string]error {
 	failed := map[string]error{}
 	// A ref that failed before, at the same SHA, is fetched on its own, so it can't fail the
 	// rest, and at most once a minute, so it doesn't cost every poll.
 	var batch, alone []string
 	d.mu.Lock()
+	running := d.slowRef
 	for _, ref := range refs {
 		f, ok := d.unfetched[ref]
 		switch {
+		case f.landed:
+			// Its fetch outside the syncs brought it. pollOnce reads what that was, though the ref
+			// may have moved since: a fetch now could run past the limit in its turn, and a ref
+			// that kept doing so would never be read.
+			delete(d.unfetched, ref)
+		case ref == running && f.sha != listed[ref]:
+			alone = append(alone, ref) // moved during its slow fetch, and may well still be slow
 		case !ok || f.sha != listed[ref]:
 			batch = append(batch, ref)
+		case f.slow:
+			failed[ref] = errors.New("too slow to fetch within a sync; being fetched apart")
 		case time.Since(f.at) < time.Minute:
 			failed[ref] = errors.New("failed less than a minute ago")
 		default:
@@ -315,19 +335,35 @@ func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]str
 		}
 	}
 	d.mu.Unlock()
-	if len(batch) > 0 && d.repo.Fetch(ctx, batch) != nil {
-		alone = append(alone, batch...)
+	timedOut := false
+	// try says whether the fetch itself ran past the limit, as opposed to the sync running out.
+	try := func(refs []string) (late bool, err error) {
+		fctx, cancel := context.WithTimeout(ctx, d.opt.FetchLimit)
+		defer cancel()
+		err = d.repo.Fetch(fctx, refs)
+		late = err != nil && fctx.Err() != nil && ctx.Err() == nil
+		timedOut = timedOut || late
+		return late, err
 	}
-	for _, ref := range alone {
-		if err := d.repo.Fetch(ctx, []string{ref}); err != nil {
-			failed[ref] = err
+	if len(batch) > 0 {
+		if _, err := try(batch); err != nil {
+			alone = append(alone, batch...)
 		}
 	}
-	if ctx.Err() != nil {
-		return failed // cut short, which says nothing about the refs
+	slow := map[string]bool{}
+	for _, ref := range alone {
+		late, err := try([]string{ref})
+		if err != nil {
+			failed[ref] = err
+			slow[ref] = late
+		}
 	}
+	if timedOut {
+		clearStaleTemp(d.opt.GitDir, d.log) // a git killed at the limit can leave its download behind
+	}
+	cut := ctx.Err() != nil // a failure the end of the sync caused says nothing about the ref
 	retry := time.Now()
-	removed := len(failed) > 0 && clearStaleLocks(d.opt.GitDir, d.log)
+	removed := !cut && len(failed) > 0 && clearStaleLocks(d.opt.GitDir, d.log)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if removed {
@@ -341,9 +377,15 @@ func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]str
 		}
 	}
 	for _, ref := range alone {
-		if err := failed[ref]; err == nil {
+		err := failed[ref]
+		switch {
+		case err == nil:
 			delete(d.unfetched, ref)
-		} else {
+		case slow[ref]:
+			d.log.Printf("fetching %s took over %s; fetching it apart from the syncs", ref, d.opt.FetchLimit)
+			d.unfetched[ref] = fetchFail{sha: listed[ref], slow: true}
+		case cut:
+		default:
 			if d.unfetched[ref].sha != listed[ref] {
 				d.log.Printf("fetching %s: %v", ref, err)
 			}
@@ -355,7 +397,113 @@ func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]str
 			delete(d.unfetched, ref)
 		}
 	}
+	// A slow fetch goes on when its ref merely moves, since what it brings shortens the next one: a
+	// long log on a slow link, whose owner keeps writing, would otherwise never land. It stops once
+	// the ref is gone, or its new tip has been fetched without it.
+	if r := d.slowRef; r != "" && (listed[r] == "" || slices.Contains(refs, r) && failed[r] == nil) {
+		d.slowCancel()
+	}
+	d.startSlowFetchLocked(listed)
 	return failed
+}
+
+// startSlowFetchLocked starts the fetch of one ref set aside as slow, if one is due and none is
+// running. It runs outside the syncs and holds no lock, so the rest of the bus goes on meanwhile. It
+// has SlowFetchLimit, as git keeps nothing from a fetch that doesn't finish, so a shorter limit could
+// keep a ref out for good. Each failure doubles the wait before the next try, since a try can cost as
+// much bandwidth as its limit allows. Caller holds mu.
+func (d *Daemon) startSlowFetchLocked(listed map[string]string) {
+	if d.slowRef != "" || d.bgCtx == nil || d.bgCtx.Err() != nil {
+		return // on the first sync, nothing runs in the background yet; the next poll starts it
+	}
+	now := time.Now()
+	for _, ref := range sortedKeys(d.unfetched) {
+		f := d.unfetched[ref]
+		if !f.slow || f.landed || f.sha != listed[ref] || now.Before(f.at) {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(d.bgCtx, d.opt.SlowFetchLimit)
+		d.slowRef, d.slowCancel = ref, cancel
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
+			defer cancel()
+			d.endSlowFetch(ref, f.sha, d.repo.Fetch(ctx, []string{ref}))
+		}()
+		return
+	}
+}
+
+// endSlowFetch records how a slow fetch of ref at sha ended. Once it has landed, the next sync reads
+// what it brought, even if the ref has moved since (see fetch).
+func (d *Daemon) endSlowFetch(ref, sha string, err error) {
+	if err != nil {
+		clearStaleTemp(d.opt.GitDir, d.log)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	defer d.kickPoll()
+	d.slowRef, d.slowCancel = "", nil
+	f, ok := d.unfetched[ref]
+	if !ok || !f.slow {
+		return
+	}
+	if err == nil {
+		d.log.Printf("fetched %s, which took longer than a sync allows", ref)
+		f.landed = true
+		d.unfetched[ref] = f
+		return
+	}
+	if f.sha != sha {
+		return // it moved meanwhile, so this says nothing about the new tip
+	}
+	f.tries++
+	wait := min(time.Minute<<min(f.tries-1, 6), time.Hour)
+	f.at = time.Now().Add(wait)
+	d.unfetched[ref] = f
+	if d.bgCtx.Err() == nil {
+		d.log.Printf("fetching %s apart from the syncs: %v; trying again in %s", ref, err, wait)
+	}
+}
+
+// clearStaleTemp removes what a git killed mid-download left behind, on Windows, the one platform
+// where a cancelled git is killed rather than interrupted (see gitx.run). It leaves files as big as
+// what it had downloaded, tmp_pack_* in objects/pack, one per try, and git itself removes them only
+// in a gc, two weeks on. Elsewhere it does nothing: an interrupted git cleans up after itself, and
+// a file a live git has open can be deleted there, which would fail that git when it finishes.
+func clearStaleTemp(gitDir string, l *log.Logger) {
+	if runtime.GOOS == "windows" {
+		removeStaleTemp(gitDir, l)
+	}
+}
+
+// removeStaleTemp removes git's temporary downloads that nothing has written to for staleTempAge:
+// tmp_* in objects/pack, and beside the loose objects, where a blob over core.bigFileThreshold is
+// written. Other gits may be fetching into this clone; a delete fails on a file one has open.
+func removeStaleTemp(gitDir string, l *log.Logger) {
+	objects := filepath.Join(gitDir, "objects")
+	dirs, err := os.ReadDir(objects)
+	if err != nil {
+		return
+	}
+	for _, dir := range dirs {
+		if !dir.IsDir() || dir.Name() != "pack" && len(dir.Name()) != 2 {
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(objects, dir.Name()))
+		if err != nil {
+			continue
+		}
+		for _, file := range files {
+			if !strings.HasPrefix(file.Name(), "tmp_") {
+				continue
+			}
+			path := filepath.Join(objects, dir.Name(), file.Name())
+			if fi, err := file.Info(); err == nil && !fi.IsDir() && time.Since(fi.ModTime()) > staleTempAge && os.Remove(path) == nil {
+				l.Printf("removed %s, left by a git that was stopped", path)
+			}
+		}
+	}
 }
 
 // staleLocked says whether a peer's presence went unchanged past the stale limit, as of this
