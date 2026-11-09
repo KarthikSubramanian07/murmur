@@ -130,10 +130,10 @@ for (let i = 0; i < messages.length; i++) {
 // #183's history: what the bus would carry once status changes, commits and read marks are events.
 // Each entry is [minutes ago, session, kind, ...]. Times run oldest to newest within a session.
 const HIST = [
-  ["quiet-otter", [[52, "started"], [50, "status", "Reading #179"], [40, "status", "Building the three-column layout"], [44, "commit", "web-page", "Lay the page out in three columns"], [30, "commit", "web-page", "Add the settings sheet"], [12, "status", "Building the settings view of the web page"], [14, "commit", "web-page", "Fold the sidebar to a strip"]]],
-  ["brave-heron", [[124, "started"], [120, "status", "Reading the claims code"], [100, "commit", "remove-claims", "Delete claims.go"], [70, "status", "Deleting claims from the daemon and the MCP tools"], [64, "commit", "remove-claims", "Drop the claim and release tools"], [20, "commit", "remove-claims", "Remove Claims from SessionView"]]],
+  ["quiet-otter", [[52, "started"], [50, "status", "Reading #179"], [40, "status", "Building the three-column layout"], [44, "commit", "web-page", "Lay the page out in three columns"], [30, "commit", "web-page", "Add the settings sheet"], [12, "status", "Building the settings view of the web page"], [14, "commit", "web-page", "Fold the sidebar to a strip"], [9, "tool", "Edit", "internal/web/static/assets/app.js"], [8, "tool", "Bash", "node --check internal/web/static/assets/app.js"], [7.5, "tool", "Bash", "go test ./internal/web"], [6, "tool", "Edit", "internal/web/static/assets/style.css"], [5.5, "tool", "Bash", "git commit -m 'Show presence dots on conversations'"], [5.4, "commit", "web-page", "Show presence dots on conversations", false], [2, "tool", "murmur send", "to brave-heron"], [0.4, "tool", "Read", "internal/web/web.go"]]],
+  ["brave-heron", [[124, "started"], [120, "status", "Reading the claims code"], [100, "commit", "remove-claims", "Delete claims.go"], [70, "status", "Deleting claims from the daemon and the MCP tools"], [64, "commit", "remove-claims", "Drop the claim and release tools"], [20, "commit", "remove-claims", "Remove Claims from SessionView"], [11, "tool", "Edit", "internal/daemon/serve.go"], [9, "tool", "Bash", "go test ./internal/daemon", false], [8, "tool", "Edit", "internal/daemon/serve.go"], [6.5, "tool", "Bash", "go test ./internal/daemon", false], [5, "tool", "Edit", "internal/proto/proto.go"], [3.2, "tool", "Bash", "go test ./internal/daemon", false]]],
   ["amber-finch", [[300, "started"], [298, "status", "Looking at main"], [60, "status", ""]]],
-  ["lucid-badger", [[80, "started"], [79, "status", "Taking names by compare-and-swap on refs/murmur/names"], [70, "commit", "session-names", "Take names by compare-and-swap"], [40, "commit", "session-names", "Retry with the next word pair"]]],
+  ["lucid-badger", [[80, "started"], [79, "status", "Taking names by compare-and-swap on refs/murmur/names"], [70, "commit", "session-names", "Take names by compare-and-swap"], [40, "commit", "session-names", "Retry with the next word pair"], [6, "commit", "session-names", "Log each switch in names", false]]],
   ["velvet-moth", [[35, "started"], [34, "status", "Writing the word lists"], [31, "commit", "session-names", "Add the word lists"], [29, "tag", "do-not-disturb"]]],
   ["solar-wren", [[140, "started"], [138, "status", "Reading the hook's Stop handling"], [100, "status", "Finding out whether Claude Code's messaging socket can start a turn in an idle session"], [90, "commit", "wake-ups", "Keep lastTurnEnded per session"]]],
   ["rapid-ibis", [[25, "started"], [24, "status", "Measuring ls-remote against GitHub's limits"], [10, "commit", "fix/ls-remote-rate-limit", "Poll every 10 s"]]],
@@ -147,11 +147,12 @@ const sha = (t) => {
 };
 const history = [];
 for (const [who, list] of HIST) {
-  for (const [minAgo, kind, a, b] of list) {
+  for (const [minAgo, kind, a, b, c] of list) {
     const e = { at: iso(minAgo), who, kind };
     if (kind === "status") e.doing = a;
     if (kind === "tag") e.tag = a;
-    if (kind === "commit") Object.assign(e, { branch: a, subject: b, sha: sha(who + b) });
+    if (kind === "commit") Object.assign(e, { branch: a, subject: b, sha: sha(who + b), pushed: c !== false });
+    if (kind === "tool") Object.assign(e, { tool: a, detail: b, ok: c !== false });
     history.push(e);
   }
 }

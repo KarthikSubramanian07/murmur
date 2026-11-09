@@ -2215,7 +2215,8 @@ function answeredSince(m) {
 // What each session did and was sent, from the history and the messages.
 function fleetStats(name) {
   const H = fleetHistory();
-  const ev = H ? H.events.filter((e) => e.who === name) : [];
+  const f = findSession(name);
+  const ev = H ? H.events.filter((e) => e.who === name).map((e) => seen(e, f?.device)).filter(Boolean) : [];
   const commits = ev.filter((e) => e.kind === "commit").sort((a, b) => when(a.at) - when(b.at));
   const sent = ui.messages.filter((m) => fromName(m) === name);
   const got = ui.messages.filter((m) => m.toKind === "session" && toName(m) === name);
@@ -2260,19 +2261,29 @@ function attention(rows) {
       out.push({ kind: "branch", who: list[0], others: list, at, text: [list.map((n, i) => [i ? (i === list.length - 1 ? " and " : ", ") : "", h("b", null, n)]), " are both committing to ", h("code", null, branch), "."] });
     }
   }
-  const seen = new Set();
+  if (H) {
+    for (const { d, s } of rows) {
+      if (!d.self) continue;
+      const tools = H.events.filter((e) => e.who === s.name && e.kind === "tool").sort((a, b) => when(b.at) - when(a.at));
+      // The same command, run three times in a row (edits between them don't count), failing each time.
+      const cmd = tools.find((t) => t.tool === "Bash");
+      const runs = cmd ? tools.filter((t) => t.tool === "Bash" && t.detail === cmd.detail).slice(0, 3) : [];
+      if (runs.length === 3 && runs.every((t) => !t.ok)) out.push({ kind: "failing", who: s.name, at: when(runs[0].at), text: [h("b", null, s.name), " has run ", h("code", null, cmd.detail), " three times in a row, and it failed each time."] });
+    }
+  }
+  const offDevs = new Set();
   for (const { d } of rows) {
-    if (d.reachable || seen.has(d.id)) continue;
-    seen.add(d.id);
+    if (d.reachable || offDevs.has(d.id)) continue;
+    offDevs.add(d.id);
     const t = when(d.lastSeen);
     out.push({ kind: "offline", who: d.sessions[0]?.name, others: d.sessions.map((s) => s.name), at: t, text: [h("b", null, (d.owner ? d.owner + "'s " : "") + d.id.replace(/-[0-9a-f]{4}$/, "")), " went offline " + ago(t) + ", with " + plural(d.sessions.length, "session") + " on it."] });
   }
-  const rank = { unread: 0, noreply: 1, offline: 2, branch: 3, idle: 4 };
+  const rank = { unread: 0, failing: 1, noreply: 2, offline: 3, branch: 4, idle: 5 };
   return out.sort((a, b) => rank[a.kind] - rank[b.kind] || b.at - a.at);
 }
 
-const ALERT_ICON = { unread: "inbox", noreply: "reply", idle: "clock", branch: "branch", offline: "laptop" };
-const ALERT_WORD = { unread: "Waiting", noreply: "No reply", idle: "Idle", branch: "Same branch", offline: "Offline" };
+const ALERT_ICON = { unread: "inbox", failing: "alert", noreply: "reply", idle: "clock", branch: "branch", offline: "laptop" };
+const ALERT_WORD = { unread: "Waiting", failing: "Failing", noreply: "No reply", idle: "Idle", branch: "Same branch", offline: "Offline" };
 
 function fleetFilter() {
   return (ui.fleet ||= { group: "", state: "", by: "device", q: "" });
@@ -2422,7 +2433,7 @@ function fleetTable(rows, flagged, sel) {
   const label = (k, list) => {
     if (F.by === "device") {
       const d = list[0].d;
-      return [deviceDot(d), h("span", null, d.self ? "This device" : d.owner || d.id), h("span", { class: "fl-gh-sub" }, d.id.replace(/-[0-9a-f]{4}$/, "") + (d.reachable ? "" : " · offline, seen " + ago(when(d.lastSeen) || 0)))];
+      return [deviceDot(d), h("span", null, d.self ? "This device" : d.owner || d.id), h("span", { class: "fl-gh-sub" }, d.id.replace(/-[0-9a-f]{4}$/, "") + (d.reachable ? "" : " · offline, seen " + ago(when(d.lastSeen) || 0))), seeBadge(d)];
     }
     if (F.by === "branch") return k ? [icon("branch"), h("span", null, k)] : "No branch";
     return k ? [icon("tag"), h("span", null, k)] : "No job";
@@ -2464,7 +2475,7 @@ function fleetRow(d, s, flag, on) {
         h("span", { class: "fl-sub truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · ")),
       ),
     ),
-    h("span", { class: "fl-doing" + (s.doing ? "" : " none") }, s.doing || "No status set"),
+    h("span", { class: "fl-doing-cell" }, h("span", { class: "fl-doing" + (s.doing ? "" : " none") }, s.doing || "No status set"), d.self && lastTool(s.name)),
     h("span", { class: "fl-branch" }, s.branch && h("span", { class: "g-branch truncate" }, icon("branch"), h("span", { class: "truncate" }, s.branch)), pr && h("span", { class: "g-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number)),
     h("span", { class: "fl-num" }, fleetHistory() ? [h("b", null, st.commits.length), h("span", { class: "fl-num-sub" }, last ? "last " + ago(when(last.at)) : "none")] : "–"),
     h("span", { class: "fl-num" }, h("b", null, st.sent.length + " / " + st.got.length), h("span", { class: "fl-num-sub" + (st.unread.length ? " warn" : "") }, st.unread.length ? st.unread.length + " not read" : "all read")),
@@ -2513,7 +2524,7 @@ function fleetTimeline(name) {
           : e.kind === "status"
             ? ["pencil", e.doing ? ["Status: ", h("span", { class: "fl-quote" }, e.doing)] : ["Cleared its status"], ""]
             : e.kind === "commit"
-              ? ["commit", [h("code", { class: "fl-sha" }, e.sha), h("span", null, e.subject), h("span", { class: "fl-tl-chip" }, icon("branch"), e.branch)], " commit"]
+              ? ["commit", [h("code", { class: "fl-sha" }, e.sha), e.subject ? h("span", null, e.subject) : h("span", { class: "fl-hidden" }, "not pushed yet, so only its SHA is known"), h("span", { class: "fl-tl-chip" }, icon("branch"), e.branch), f.device.self && !e.pushed && h("span", { class: "fl-tl-chip warn" }, "not pushed")], " commit"]
               : e.kind === "tag"
                 ? ["tag", ["Tagged itself ", h("code", null, e.tag)], ""]
                 : e.kind === "offline"
@@ -2545,15 +2556,60 @@ function fleetTimeline(name) {
       h("span", { class: "fl-tl-time", title: stamp(it.at) }, T(it.at)),
     );
   };
+  // Tool calls (this device only) come in runs; each run is one row that opens to show them.
+  const merged = [];
+  for (const it of items) {
+    const prev = merged[merged.length - 1];
+    if (it.e?.kind === "tool") {
+      if (prev?.tools) prev.tools.push(it.e);
+      else merged.push({ at: it.at, tools: [it.e] });
+    } else merged.push(it);
+  }
+  const toolRow = (it) => {
+    const key = name + "@" + it.at;
+    const open = ui.fleetTools?.has(key);
+    const failed = it.tools.filter((t) => !t.ok).length;
+    return h(
+      "li",
+      { class: "fl-tl-item tools" + (failed ? " warn" : "") },
+      h("span", { class: "fl-tl-ico" }, icon("activity")),
+      h(
+        "span",
+        { class: "fl-tl-main" },
+        h(
+          "button",
+          {
+            class: "fl-tl-line fl-tools-btn",
+            "aria-expanded": open ? "true" : "false",
+            onclick: () => {
+              ui.fleetTools ||= new Set();
+              open ? ui.fleetTools.delete(key) : ui.fleetTools.add(key);
+              render();
+            },
+          },
+          icon(open ? "chevronDown" : "chevronRight"),
+          plural(it.tools.length, "tool call"),
+          failed > 0 && h("span", { class: "fl-mark warn" }, failed + " failed"),
+        ),
+        open &&
+          h(
+            "ul",
+            { class: "fl-tools-list" },
+            it.tools.map((t) => h("li", { class: t.ok ? "" : "bad" }, h("span", { class: "fl-tool-name" }, t.tool), h("code", { class: "truncate", title: t.detail }, t.detail), h("span", { class: "fl-tool-t" }, T(when(t.at))))),
+          ),
+      ),
+      h("span", { class: "fl-tl-time", title: stamp(it.at) }, T(it.at)),
+    );
+  };
   const list = [];
   let day = null;
-  for (const it of items) {
+  for (const it of merged) {
     const dd = new Date(it.at).toDateString();
     if (dd !== day) {
       list.push(h("li", { class: "fl-tl-day" }, dayLabel(it.at)));
       day = dd;
     }
-    list.push(row(it));
+    list.push(it.tools ? toolRow(it) : row(it));
   }
   const s = f.session;
   return h(
@@ -2583,6 +2639,7 @@ function fleetTimeline(name) {
         icon("x"),
       ),
     ),
+    seeNote(f.device, s),
     h(
       "div",
       { class: "fl-tl-stats" },
@@ -2609,4 +2666,47 @@ function fleetTimeline(name) {
     h("ol", { class: "fl-tl-list" }, list),
     H && h("p", { class: "fl-tl-foot" }, "History since " + new Date(when(H.since)).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", read back from the bus"),
   );
+}
+
+// ---------- #183: what is visible, by where the session runs ----------
+// This device's daemon sees its own sessions closely: every hook event (so each tool call and
+// whether it failed), the commits it credited with their subjects whether pushed or not, and the
+// worktree. None of that leaves the machine. Another device's sessions are seen only through what
+// their device publishes on the bus: status, last active, branch, the SHAs and branches of commits
+// (subjects once pushed, read from the remote), and messages with read marks.
+function seen(e, d) {
+  if (!d || d.self) return e;
+  if (e.kind === "tool") return null;
+  if (e.kind === "commit" && !e.pushed) return { ...e, subject: "" };
+  return e;
+}
+
+const SEE_WORDS = {
+  full: "Full detail: tool calls, commit subjects, worktree. It stays on this device.",
+  bus: "What its device publishes: status, commits, messages and read marks. Tool calls and transcripts stay on that device.",
+};
+
+function seeBadge(d) {
+  const full = d.self;
+  return h("span", { class: "fl-see " + (full ? "full" : "bus"), title: SEE_WORDS[full ? "full" : "bus"] }, icon(full ? "laptop" : "broadcast"), full ? "Full detail" : "Bus only");
+}
+
+function seeNote(d, s) {
+  const who = (d.owner ? d.owner + "'s " : "") + d.id.replace(/-[0-9a-f]{4}$/, "");
+  return h(
+    "div",
+    { class: "fl-see-note " + (d.self ? "full" : "bus") },
+    icon(d.self ? "laptop" : "broadcast"),
+    d.self
+      ? h("span", null, h("b", null, "Full detail."), " It runs on this device, so you also see its tool calls and unpushed commits.", s.worktree && [" Worktree ", h("code", null, s.worktree), "."])
+      : h("span", null, h("b", null, "Bus only."), " It runs on " + who + ". You see what that device publishes; its tool calls and transcript stay there."),
+  );
+}
+
+function lastTool(name) {
+  const H = fleetHistory();
+  if (!H) return null;
+  const t = H.events.filter((e) => e.who === name && e.kind === "tool").sort((a, b) => when(b.at) - when(a.at))[0];
+  if (!t) return null;
+  return h("span", { class: "fl-last-tool" + (t.ok ? "" : " bad"), title: t.tool + ": " + t.detail }, h("span", { class: "fl-tool-name" }, t.tool), h("code", { class: "truncate" }, t.detail), h("span", null, (t.ok ? "" : "failed ") + ago(when(t.at))));
 }
