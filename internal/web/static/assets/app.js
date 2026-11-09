@@ -31,6 +31,11 @@ const ui = {
   muting: new Set(),
   tagging: new Set(), // the sessions whose tags are being changed, by their row key
   tagInput: null, // the row key of the session whose tag field is open
+  tagFilter: null, // a tag: the session lists show only the sessions with it
+  tagMenu: null, // { addrs, x, top or bottom, q, err }: the tag menu, open on those sessions
+  selecting: false, // All sessions picks sessions, to tag them together
+  selected: new Set(), // their addresses
+  madeTags: new Set(), // tags made here, offered in the menu even once no session has them
   restarting: 0, // when the restart onto an installed update was asked for
   reloadDue: false, // a new daemon is serving, and this page should load its page when it can
   // A person's account (#242).
@@ -222,7 +227,7 @@ function render() {
   const inner = page(); // before the top bar, which counts what this settles
   content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
   content.replaceChildren(inner);
-  root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)), ui.setup && setupDialog(), ui.picker && pickerDialog());
+  root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)), ui.setup && setupDialog(), ui.picker && pickerDialog(), ui.tagMenu && tagMenu());
   content.scrollTop = scroll;
   const sideNow = root.querySelector(".sidebar-content, .mini-scroll");
   if (sideNow) sideNow.scrollTop = side;
@@ -371,8 +376,11 @@ function sidebar() {
       ),
       ui.notice && h("button", { class: "side-notice", title: "Dismiss", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
       peopleGroup(),
-      devs.map((d) =>
-        h(
+      tagsGroup(),
+      devs.map((d) => {
+        const live = shownSessions(liveSessions(d));
+        if (ui.tagFilter && !live.length && !shownSessions(quietSessions(d)).length) return null;
+        return h(
           "div",
           { class: "sidebar-group dev-group" },
           h(
@@ -384,13 +392,13 @@ function sidebar() {
             icon("laptop"),
             h("span", { class: "label" }, deviceDot(d), deviceLabel(d), h("span", { class: "dev-host" }, host(d.id))),
             d.self ? h("span", { class: "dev-you" }, "you") : !d.reachable && h("span", { class: "dev-you" }, "offline"),
-            h("span", { class: "menu-count" }, liveSessions(d).length),
+            h("span", { class: "menu-count" }, live.length),
           ),
-          liveSessions(d).length > 0 &&
+          live.length > 0 &&
             h(
               "ul",
               { class: "sidebar-menu side-sessions" },
-              liveSessions(d).map((s) => {
+              live.map((s) => {
                 const key = s.addr || s.name;
                 return h(
                   "li",
@@ -410,15 +418,16 @@ function sidebar() {
                     },
                     ...sideSessionBody(d, s),
                   ),
+                  s.addr && tagButton(s),
                   messageButton(s.name),
                   s.addr && hideButton(s),
                 );
               }),
             ),
           quietFold(d),
-          settledFold(d.id),
-        ),
-      ),
+          !ui.tagFilter && settledFold(d.id),
+        );
+      }),
     ),
     sidebarFoot(),
   );
@@ -723,7 +732,7 @@ function hideButton(s) {
 
 // Each device's quiet sessions, folded under its live ones.
 function quietFold(d) {
-  const rows = quietSessions(d);
+  const rows = shownSessions(quietSessions(d));
   if (!rows.length) return null;
   ui.openQuiet = ui.openQuiet || new Set();
   const open = ui.openQuiet.has(d.id);
@@ -987,6 +996,7 @@ function allConversations() {
 function sideSessionBody(d, s) {
   const prs = ui.state?.prs || {};
   const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
+  const chips = tagChips(s, Infinity, true);
   return [
     presence(s.name, d),
     h(
@@ -994,12 +1004,13 @@ function sideSessionBody(d, s) {
       { class: "side-session-text" },
       h("span", { class: "side-session-name truncate" }, s.name),
       h("span", { class: "side-session-doing truncate" }, s.doing || s.agent || ""),
-      (s.branch || pr) &&
+      (s.branch || pr || chips) &&
         h(
           "span",
           { class: "g-meta" },
           s.branch && h("span", { class: "g-branch truncate" }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
           pr && h("span", { class: "g-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number),
+          chips,
         ),
     ),
   ];
@@ -1017,16 +1028,41 @@ function stateWord(d, s) {
 function sessionsPage() {
   if (!ui.state) return h("div", { class: "page" });
   const devs = devices();
-  const total = devs.reduce((n, d) => n + liveSessions(d).length, 0);
-  const quiet = devs.reduce((n, d) => n + quietSessions(d).length, 0);
+  const total = devs.reduce((n, d) => n + shownSessions(liveSessions(d)).length, 0);
+  const quiet = devs.reduce((n, d) => n + shownSessions(quietSessions(d)).length, 0);
   const tab = ui.sessTab || "running";
+  // What a selection can hold: the sessions in front of the person, so a filter or a tab leaves
+  // none picked out of sight.
+  const pickable = tab === "settled" ? [] : devs.flatMap((d) => shownSessions(tab === "quiet" ? quietSessions(d) : liveSessions(d))).filter((s) => s.addr);
+  const inView = new Set(pickable.map((s) => s.addr));
+  for (const a of ui.selected) if (!inView.has(a)) ui.selected.delete(a);
+  if (tab === "settled") ui.selecting = false;
+  const sub = ui.tagFilter ? plural(total, "session") + " tagged " + ui.tagFilter : plural(total, "session") + " running on " + plural(devs.length, "device");
   return h(
     "div",
     { class: "g-page" },
     h(
       "header",
       { class: "g-page-head g-page-head-row" },
-      h("div", null, h("h1", null, "All sessions"), h("p", null, plural(total, "session") + " running on " + plural(devs.length, "device"))),
+      h("div", null, h("h1", null, "All sessions"), h("p", null, sub)),
+      h(
+        "div",
+        { class: "g-head-tools" },
+        tab !== "settled" &&
+          h(
+            "button",
+            {
+              class: "btn btn-outline btn-xs g-select-btn",
+              "aria-pressed": ui.selecting ? "true" : "false",
+              "data-key": "select",
+              onclick: () => {
+                ui.selecting = !ui.selecting;
+                ui.selected.clear();
+                render();
+              },
+            },
+            ui.selecting ? "Done" : "Select",
+          ),
       h(
         "div",
         { class: "g-tabs", role: "tablist" },
@@ -1051,32 +1087,75 @@ function sessionsPage() {
           ),
         ),
       ),
-    ),
-    tab === "settled" ? settledPage(devs) : tab === "quiet" ? quietPage(devs) : devs.map((d) =>
-      h(
-        "section",
-        { class: "g-dev" },
-        h(
-          "h2",
-          { class: "g-dev-head" },
-          deviceDot(d),
-          h("span", null, d.self ? "This device" : d.owner || d.id),
-          h("span", { class: "g-dev-host" }, host(d.id)),
-          h("span", { class: "g-dev-n" }, d.reachable ? plural(liveSessions(d).length, "session") : "Offline · seen " + ago(when(d.lastSeen) || 0)),
-        ),
-        liveSessions(d).length === 0
-          ? h("p", { class: "g-none" }, "No sessions")
-          : h("div", { class: "g-cards" }, liveSessions(d).map((s) => sessionCard(d, s))),
       ),
     ),
+    ui.selecting && selectBar(pickable),
+    tab === "settled"
+      ? settledPage(devs)
+      : tab === "quiet"
+        ? quietPage(devs)
+        : devs.map((d) => {
+            const live = shownSessions(liveSessions(d));
+            if (ui.tagFilter && !live.length) return null;
+            return h(
+              "section",
+              { class: "g-dev" },
+              h(
+                "h2",
+                { class: "g-dev-head" },
+                deviceDot(d),
+                h("span", null, d.self ? "This device" : d.owner || d.id),
+                h("span", { class: "g-dev-host" }, host(d.id)),
+                h("span", { class: "g-dev-n" }, d.reachable ? plural(live.length, "session") : "Offline · seen " + ago(when(d.lastSeen) || 0)),
+              ),
+              live.length === 0 ? h("p", { class: "g-none" }, "No sessions") : h("div", { class: "g-cards" }, live.map((s) => sessionCard(d, s))),
+            );
+          }),
+    ui.tagFilter && tab === "running" && total === 0 && h("p", { class: "g-none" }, "No running session is tagged " + ui.tagFilter + "."),
+  );
+}
+
+// Picking sessions on All sessions, to tag them together: how many, and the tag menu for them.
+function selectBar(pickable) {
+  const n = ui.selected.size;
+  const all = n > 0 && n === pickable.length;
+  return h(
+    "div",
+    { class: "g-select-bar" },
+    h("span", { class: "g-select-n" }, n + " selected"),
+    h(
+      "button",
+      {
+        class: "btn btn-outline btn-xs",
+        disabled: n === 0,
+        "data-key": "select-tag",
+        onclick: (e) => openTagMenu([...ui.selected], e.currentTarget),
+      },
+      icon("tag"),
+      "Tag",
+    ),
+    pickable.length > 0 &&
+      h(
+        "button",
+        {
+          class: "btn btn-ghost btn-xs",
+          "data-key": "select-all",
+          onclick: () => {
+            ui.selected = all ? new Set() : new Set(pickable.map((s) => s.addr));
+            render();
+          },
+        },
+        all ? "Select none" : "Select all",
+      ),
   );
 }
 
 function quietPage(devs) {
-  const withQuiet = devs.filter((d) => quietSessions(d).length > 0);
-  if (!withQuiet.length) return h("p", { class: "g-none" }, "No quiet sessions.");
-  return withQuiet.map((d) =>
-    h(
+  const withQuiet = devs.filter((d) => shownSessions(quietSessions(d)).length > 0);
+  if (!withQuiet.length) return h("p", { class: "g-none" }, ui.tagFilter ? "No quiet session is tagged " + ui.tagFilter + "." : "No quiet sessions.");
+  return withQuiet.map((d) => {
+    const rows = shownSessions(quietSessions(d));
+    return h(
       "section",
       { class: "g-dev" },
       h(
@@ -1085,11 +1164,11 @@ function quietPage(devs) {
         deviceDot(d),
         h("span", null, deviceLabel(d)),
         h("span", { class: "g-dev-host" }, host(d.id)),
-        h("span", { class: "g-dev-n" }, quietSessions(d).length + " quiet"),
+        h("span", { class: "g-dev-n" }, rows.length + " quiet"),
       ),
-      h("div", { class: "g-cards" }, quietSessions(d).map((s) => sessionCard(d, s))),
-    ),
-  );
+      h("div", { class: "g-cards" }, rows.map((s) => sessionCard(d, s))),
+    );
+  });
 }
 
 function settledPage(devs) {
@@ -1161,12 +1240,20 @@ function sessionCard(d, s) {
   const convs = conversations().filter((c) => c.kind === "dm").length;
   ui.filter = keep;
   const st = stateWord(d, s);
+  // While picking, a card picks its session rather than opening it.
+  const picking = ui.selecting && !!s.addr;
+  const picked = picking && ui.selected.has(s.addr);
   const card = h(
     "button",
     {
-      class: "g-card" + (d.reachable ? "" : " stale"),
+      class: "g-card" + (d.reachable ? "" : " stale") + (picked ? " picked" : ""),
       "data-key": "card-" + s.name,
+      "aria-pressed": picking ? (picked ? "true" : "false") : null,
       onclick: () => {
+        if (picking) {
+          picked ? ui.selected.delete(s.addr) : ui.selected.add(s.addr);
+          return render();
+        }
         ui.filter = s.addr || s.name;
         ui.conversation = null;
         go("messages");
@@ -1177,9 +1264,10 @@ function sessionCard(d, s) {
       { class: "g-card-top" },
       presence(s.name, d),
       h("span", { class: "g-card-id" }, h("span", { class: "g-card-name truncate" }, s.name), h("span", { class: "g-card-agent truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · "))),
-      st && h("span", { class: "g-state g-state-" + sessionState(d, s) }, st),
+      picking ? h("span", { class: "g-pick" + (picked ? " on" : "") }, picked && icon("check")) : st && h("span", { class: "g-state g-state-" + sessionState(d, s) }, st),
     ),
     h("span", { class: "g-card-doing" + (s.doing ? "" : " none") }, s.doing || "No status set"),
+    tagChips(s),
     h(
       "span",
       { class: "g-card-foot" },
@@ -1190,7 +1278,7 @@ function sessionCard(d, s) {
   );
   return h(
     "div",
-    { class: "g-card-wrap" },
+    { class: "g-card-wrap" + (picking ? " picking" : "") },
     card,
     h(
       "button",
@@ -1503,6 +1591,302 @@ async function changeTags(addr, key, add, remove) {
     ui.rowErrors[key] = e.message;
   }
   ui.tagging.delete(key);
+  render();
+  poll();
+}
+
+// Tags on the session lists (#270): on each row and card, in the sidebar's Tags group, which
+// filters every list of sessions to one tag, and in the tag menu, which puts tags on one session
+// or on several picked on All sessions, and makes new ones. Tags with a meaning of their own show
+// as that meaning instead: a model: tag beside the agent, do-not-disturb as the red dot, hidden as
+// the quiet fold, human on a person (#267).
+const OWN_MEANING = new Set([HIDDEN, "do-not-disturb", "human"]);
+
+function sortsBy(name) {
+  return typeof name === "string" && !name.startsWith("model:") && !OWN_MEANING.has(name);
+}
+
+// internal/tags's rule, so the menu can say so before asking.
+function validTag(name) {
+  return name.length <= 40 && /^[a-z0-9][a-z0-9._:\/-]*$/.test(name) && name !== "model:";
+}
+
+// A change this page asked for, by address and then tag, until the state it polls agrees: another
+// device's sessions carry it only once that device has read the change, and until then the chip
+// shows as waiting. After two minutes the state wins, so a device that never applies it (one from
+// before tags, or one that is down) doesn't leave a chip that isn't there.
+const tagWanted = new Map();
+const TAG_WAIT_MS = 2 * 60000;
+
+// A session's tags as the lists show them: { names, waiting }.
+function tagsOf(s) {
+  const have = new Set((s.tags || []).filter((t) => t && typeof t.name === "string").map((t) => t.name));
+  const waiting = new Set();
+  const w = s.addr && tagWanted.get(s.addr);
+  if (w) {
+    for (const [name, x] of w) {
+      if (have.has(name) === x.on || Date.now() - x.at > TAG_WAIT_MS) {
+        w.delete(name);
+        continue;
+      }
+      x.on ? have.add(name) : have.delete(name);
+      waiting.add(name);
+    }
+    if (!w.size) tagWanted.delete(s.addr);
+  }
+  return { names: [...have].filter(sortsBy).sort(), waiting };
+}
+
+function hasTag(s, name) {
+  return tagsOf(s).names.includes(name);
+}
+
+function shownSessions(list) {
+  return ui.tagFilter ? list.filter((s) => hasTag(s, ui.tagFilter)) : list;
+}
+
+function sessionByAddr(addr) {
+  for (const d of ui.state?.devices || []) for (const s of d.sessions || []) if (s.addr === addr) return s;
+  return null;
+}
+
+// Every tag on a running session, with how many sessions have it.
+function tagCounts() {
+  const counts = new Map();
+  for (const d of ui.state?.devices || []) {
+    for (const s of d.sessions || []) for (const n of tagsOf(s).names) counts.set(n, (counts.get(n) || 0) + 1);
+  }
+  return counts;
+}
+
+// A session's tags as small chips, the one the lists are filtered by first; past max, a count of
+// the rest. In a sidebar row they share a line with the branch, and those that don't fit drop off
+// whole, so the line's tooltip names them all.
+function tagChips(s, max = Infinity, line = false) {
+  const { names, waiting } = tagsOf(s);
+  if (!names.length) return null;
+  if (ui.tagFilter && names.includes(ui.tagFilter)) names.sort((a, b) => (b === ui.tagFilter) - (a === ui.tagFilter));
+  const shown = names.slice(0, max);
+  return h(
+    "span",
+    { class: "stags", title: line ? names.join(", ") : null },
+    shown.map((n) =>
+      h("span", { class: "stag" + (n === ui.tagFilter ? " on" : "") + (waiting.has(n) ? " waiting" : ""), title: waiting.has(n) ? n + ": waiting for its device" : n }, n),
+    ),
+    names.length > shown.length && h("span", { class: "stag-more", title: names.slice(max).join(", ") }, "+" + (names.length - shown.length)),
+  );
+}
+
+// The sidebar's Tags: one chip per tag in use, which filters the lists to it.
+function tagsGroup() {
+  const counts = tagCounts();
+  if (ui.tagFilter && !counts.has(ui.tagFilter)) ui.tagFilter = null;
+  if (!counts.size) return null;
+  return h(
+    "div",
+    { class: "sidebar-group dev-group" },
+    h("div", { class: "device-link" }, h("span", { class: "label" }, "Tags"), h("span", { class: "menu-count" }, counts.size)),
+    h(
+      "div",
+      { class: "tag-filter" },
+      [...counts]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([n, c]) => {
+          const on = ui.tagFilter === n;
+          return h(
+            "button",
+            {
+              class: "tf" + (on ? " on" : ""),
+              "aria-pressed": on ? "true" : "false",
+              title: on ? "Show every session" : "Show only sessions tagged " + n,
+              "data-key": "tf-" + n,
+              onclick: () => {
+                ui.tagFilter = on ? null : n;
+                render();
+              },
+            },
+            h("span", { class: "tf-name" }, n),
+            h("span", { class: "tf-n" }, c),
+          );
+        }),
+    ),
+  );
+}
+
+// On a sidebar row, beside Message and Hide.
+function tagButton(s) {
+  return h(
+    "button",
+    {
+      class: "side-tag",
+      title: "Tag " + s.name,
+      "aria-label": "Tag " + s.name,
+      "aria-haspopup": "dialog",
+      "data-key": "tag-" + s.name,
+      onclick: (e) => {
+        e.stopPropagation();
+        openTagMenu([s.addr], e.currentTarget);
+      },
+    },
+    icon("tag"),
+  );
+}
+
+function openTagMenu(addrs, anchor) {
+  const r = anchor.getBoundingClientRect();
+  // Below the button, or above it when there is more room there than the menu's 20rem.
+  const up = window.innerHeight - r.bottom < 340 && r.top > window.innerHeight - r.bottom;
+  ui.tagMenu = { addrs, x: Math.max(8, Math.min(r.left, window.innerWidth - 264)), top: up ? null : r.bottom + 4, bottom: up ? window.innerHeight - r.top + 4 : null, q: "", err: "", known: new Set() };
+  render();
+  root.querySelector('[data-key="tagmenu-q"]')?.focus();
+}
+
+// The tag menu: each tag in use, checked when every session it is open on has it, and a field that
+// finds one or makes a new one. A click puts the tag on all of them, or takes it off all of them.
+function tagMenu() {
+  const m = ui.tagMenu;
+  const targets = m.addrs.map(sessionByAddr).filter(Boolean);
+  if (!targets.length) {
+    ui.tagMenu = null;
+    return null;
+  }
+  const close = () => {
+    ui.tagMenu = null;
+    render();
+  };
+  const q = m.q.trim().toLowerCase();
+  // A tag stays listed until the menu closes, so taking it off its last session doesn't take the
+  // row from under the pointer.
+  for (const n of tagCounts().keys()) m.known.add(n);
+  for (const n of ui.madeTags) m.known.add(n);
+  const known = m.known;
+  const rows = [...known].filter((n) => !q || n.includes(q)).sort();
+  const make = q && !known.has(q);
+  const toggle = (n) => {
+    const on = !targets.every((s) => hasTag(s, n));
+    tagSessions(targets, n, on);
+  };
+  const create = () => {
+    if (!validTag(q)) {
+      m.err = "Lowercase letters, digits and . _ : / -, up to 40";
+      return render();
+    }
+    ui.madeTags.add(q);
+    m.q = "";
+    tagSessions(targets, q, true);
+  };
+  // Placed through the CSSOM: the page's CSP refuses style attributes.
+  const menu = h(
+    "div",
+    { class: "tag-menu", role: "dialog", "aria-label": "Tags" },
+    h("div", { class: "tag-menu-head" }, targets.length === 1 ? targets[0].name : targets.length + " sessions"),
+    h(
+      "label",
+      { class: "tag-menu-q" },
+      icon("search"),
+      h("input", {
+        type: "text",
+        value: m.q,
+        placeholder: "Find or make a tag",
+        autocomplete: "off",
+        spellcheck: "false",
+        "aria-label": "Find or make a tag",
+        "data-key": "tagmenu-q",
+        oninput: (e) => {
+          m.q = e.target.value;
+          m.err = "";
+          render();
+        },
+        onkeydown: (e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          if (make) create();
+          else if (rows.includes(q)) toggle(q);
+          else if (rows.length === 1) toggle(rows[0]);
+        },
+      }),
+    ),
+    h(
+      "div",
+      { class: "tag-menu-list" },
+      rows.map((n) => {
+        const have = targets.filter((s) => hasTag(s, n)).length;
+        const all = have === targets.length;
+        return h(
+          "button",
+          {
+            class: "tag-menu-row",
+            role: "menuitemcheckbox",
+            "aria-checked": all ? "true" : have ? "mixed" : "false",
+            "data-key": "tm-" + n,
+            onclick: () => toggle(n),
+          },
+          h("span", { class: "tm-box" + (all ? " on" : have ? " some" : "") }, all && icon("check")),
+          h("span", { class: "tm-name truncate" }, n),
+          targets.length > 1 && have > 0 && !all && h("span", { class: "tm-n" }, have + " of " + targets.length),
+        );
+      }),
+      make &&
+        h(
+          "button",
+          { class: "tag-menu-row tm-make", "data-key": "tm-make", onclick: create },
+          h("span", { class: "tm-box tm-plus" }, "+"),
+          h("span", { class: "tm-name truncate" }, "Make “" + q + "”"),
+        ),
+      !rows.length && !make && h("p", { class: "tm-none" }, "No tags yet"),
+    ),
+    m.err && h("p", { class: "tm-err" }, m.err),
+  );
+  menu.style.left = m.x + "px";
+  if (m.top != null) menu.style.top = m.top + "px";
+  else menu.style.bottom = m.bottom + "px";
+  return h(
+    "div",
+    {
+      class: "menu-scrim",
+      onclick: (e) => {
+        if (e.target === e.currentTarget) close();
+      },
+      onkeydown: (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          close();
+        }
+      },
+    },
+    menu,
+  );
+}
+
+// Puts a tag on, or takes it off, each of the sessions that needs the change: one request each,
+// to the session's own device. The lists show the change at once, as waiting until it lands.
+async function tagSessions(targets, name, on) {
+  const todo = targets.filter((s) => hasTag(s, name) !== on);
+  for (const s of todo) {
+    if (!tagWanted.has(s.addr)) tagWanted.set(s.addr, new Map());
+    tagWanted.get(s.addr).set(name, { on, at: Date.now() });
+  }
+  if (ui.tagMenu) ui.tagMenu.err = "";
+  render();
+  const failed = [];
+  let denied = null;
+  await Promise.all(
+    todo.map(async (s) => {
+      try {
+        await api("/api/tags", { method: "POST", body: JSON.stringify({ addr: s.addr, add: on ? [name] : [], remove: on ? [] : [name] }) });
+      } catch (e) {
+        tagWanted.get(s.addr)?.delete(name);
+        if (e instanceof AuthError) denied = e;
+        else failed.push({ s, msg: e.message });
+      }
+    }),
+  );
+  if (denied) return deny(denied.token);
+  if (failed.length) {
+    const msg = "Couldn't " + (on ? "tag " : "untag ") + failed.map((f) => f.s.name).join(", ") + ": " + failed[0].msg;
+    if (ui.tagMenu) ui.tagMenu.err = msg;
+    else ui.notice = msg;
+  }
   render();
   poll();
 }
@@ -3159,6 +3543,13 @@ function start() {
   poll();
 }
 
+// Escape closes the tag menu wherever the focus is, even on the page's body.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && ui.tagMenu && !e.defaultPrevented) {
+    ui.tagMenu = null;
+    render();
+  }
+});
 window.addEventListener("hashchange", () => {
   if (location.hash.includes("token=")) start();
   else setView(location.hash.slice(1));
