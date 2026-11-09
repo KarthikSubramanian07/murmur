@@ -3,6 +3,7 @@
 import { icon } from "./icons.js";
 import { demo } from "./demo.js";
 import { brief } from "./brief.js";
+import { swarm } from "./swarm.js";
 
 const NAME = document.querySelector('meta[name="app-name"]').content;
 // Draft for #179: "a" is today's page with sessions in the sidebar; "b" takes Slack's sidebar and
@@ -14,8 +15,8 @@ const TOKEN_KEY = NAME + ":token";
 const POLL_MS = 3000;
 const HIDDEN_POLL_MS = 15000;
 const MAX_MESSAGES = 2000;
-const VIEWS = ["briefing", "sessions", "messages", "recent", "fleet", "settings"];
-const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", briefing: "Briefing", settings: "Settings" };
+const VIEWS = ["overview", "briefing", "sessions", "messages", "recent", "fleet", "settings"];
+const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", briefing: "Briefing", overview: "Overview", settings: "Settings" };
 const MODE_KEY = NAME + ":messages";
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
@@ -288,7 +289,7 @@ function miniSidebar() {
       top("messages", "message", "All conversations", ui.view === "messages" && !ui.filter),
       top("recent", "clock", "Recent messages", ui.view === "recent"),
       top("fleet", "activity", "Fleet audit", ui.view === "fleet"),
-      top("briefing", "check", "Briefing", ui.view === "briefing"),
+      top("overview", "activity", "Overview", ui.view === "overview"),
       devices().map((d) => [
         h("div", { class: "mini-dev", title: (d.self ? "This device" : d.owner || d.id) + " · " + d.sessions.length }, deviceDot(d)),
         d.sessions.map((s) => {
@@ -338,7 +339,7 @@ function sidebar() {
       "div",
       { class: "sidebar-content" },
       VARIANT === "g"
-        ? h("div", { class: "sidebar-group g-top" }, topRow("briefing", "check", "Briefing", briefSub()), topRow("sessions", "users", "All sessions", plural(sessionCount(), "session") + (settledSessions().length ? " · " + settledSessions().length + " settled" : " · " + plural(devices().length, "device"))), allButton(), topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")), topRow("fleet", "activity", "Fleet audit", fleetSub()))
+        ? h("div", { class: "sidebar-group g-top" }, topRow("overview", "activity", "Overview", plural(swarm.streams.length, "stream") + " of work"), topRow("sessions", "users", "All sessions", plural(sessionCount(), "session") + (settledSessions().length ? " · " + settledSessions().length + " settled" : " · " + plural(devices().length, "device"))), allButton(), topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")), topRow("fleet", "activity", "Fleet audit", fleetSub()))
         : h(
             "div",
             { class: "sidebar-group" },
@@ -1082,6 +1083,7 @@ function page() {
   if (VARIANT === "g" && ui.view === "recent") return gRecentPage();
   if (VARIANT === "g" && ui.view === "fleet") return fleetPage();
   if (VARIANT === "g" && ui.view === "briefing") return briefPage();
+  if (VARIANT === "g" && ui.view === "overview") return overviewPage();
   if (ui.view === "recent") return messagesPage();
   if (ui.view === "messages") return messagesPage();
   if (ui.view === "settings") return settingsPage();
@@ -2936,4 +2938,272 @@ function briefStream(s, decided) {
       decided > 0 && [h("span", { class: "br-dot" }, "·"), h("span", null, plural(decided, "decision"))],
     ),
   );
+}
+
+// ---------- #183: Overview ----------
+// Understanding a swarm, not auditing it. Streams of work are the loops you listen in on (mission
+// control's voice loops): each shows its goal, what's done, what's happening now and what's next
+// (ParallelPilot), and opens to the conversation behind it. The code map shows where each stream
+// is working (FASTDash, Palantír). A narrator answers questions in plain words, with its sources
+// one click away (Gas Town's Mayor, Slack's recaps).
+function swStreamOf(name) {
+  return swarm.streams.find((s) => s.who.includes(name)) || null;
+}
+
+// A stream's loop: what its agents said and were told since the first of them started.
+function swLoop(s) {
+  const starts = s.who.map((n) => when(findSession(n)?.session.started)).filter(Boolean);
+  const from = starts.length ? Math.min(...starts) : 0;
+  return ui.messages.filter((m) => m.sortAt >= from && (s.who.includes(fromName(m)) || (m.toKind === "session" && s.who.includes(toName(m))))).sort((a, b) => a.sortAt - b.sortAt);
+}
+
+function swOpenMessage(m) {
+  if (!m) return;
+  ui.filter = null;
+  ui.conversation = conversationOf(m).key;
+  ui.conversationAnchor = m.id;
+  go("messages");
+}
+
+function overviewPage() {
+  if (!ui.state) return h("div", { class: "page" });
+  if (!DEMO) return h("div", { class: "fx" }, h("header", { class: "fx-head" }, h("div", null, h("h1", null, "Overview"), h("p", null, "Shown with mock data only, for now (#183)."))));
+  const people = new Set(devices().map((d) => d.owner).filter(Boolean));
+  const agents = sessionCount();
+  const stuck = swarm.streams.filter((s) => s.tone === "error" || s.waiting || s.tone === "off").length;
+  return h(
+    "div",
+    { class: "fx sw" },
+    h(
+      "header",
+      { class: "fx-head" },
+      h("div", null, h("h1", null, "Overview"), h("p", null, plural(agents, "agent") + " on " + plural(swarm.streams.length, "stream") + " of work, for " + plural(people.size, "person").replace("persons", "people") + ". " + stuck + " of the streams are held up.")),
+    ),
+    swAsk(),
+    h(
+      "div",
+      { class: "sw-main" },
+      h(
+        "section",
+        { class: "sw-col" },
+        h("div", { class: "br-sec-head" }, h("h2", null, "Streams of work"), h("span", { class: "fx-faint sw-hint" }, "Listen to one to hear its agents talk")),
+        h("ol", { class: "sw-streams" }, swarm.streams.map((s) => swStream(s))),
+        swarm.unknown.length > 0 &&
+          h(
+            "div",
+            { class: "sw-unknown" },
+            h("h3", null, "Not part of any stream"),
+            swarm.unknown.map((u) => h("div", { class: "sw-unknown-row" }, avatar(u.who), h("div", null, h("b", null, u.who), h("p", null, u.note)))),
+          ),
+      ),
+      h("aside", { class: "sw-col" }, swMap()),
+    ),
+  );
+}
+
+// The narrator: questions in, plain answers out, every answer with its sources.
+function swAsk() {
+  const qi = ui.swQ;
+  const qa = qi != null ? swarm.questions[qi] : null;
+  return h(
+    "section",
+    { class: "sw-ask" + (qa ? " open" : "") },
+    h(
+      "div",
+      { class: "sw-ask-bar" },
+      icon("message"),
+      h("input", { type: "text", placeholder: "Ask what the agents are doing, or why", "data-key": "sw-ask", value: qa ? qa.q : "" }),
+      h("span", { class: "fx-faint sw-ask-by" }, "Answered by a narrator agent that reads the bus"),
+    ),
+    h(
+      "div",
+      { class: "sw-chips" },
+      swarm.questions.map((x, i) =>
+        h(
+          "button",
+          {
+            class: "sw-chip" + (qi === i ? " on" : ""),
+            onclick: () => {
+              ui.swQ = qi === i ? null : i;
+              render();
+            },
+          },
+          x.q,
+        ),
+      ),
+    ),
+    qa &&
+      h(
+        "div",
+        { class: "sw-answer" },
+        qa.a.map((p) => h("p", null, p)),
+        h(
+          "div",
+          { class: "sw-sources" },
+          h("span", { class: "fx-faint" }, "From"),
+          qa.sources.map((subj) => {
+            const m = ui.messages.find((x) => x.subject === subj);
+            return m && h("button", { class: "sw-source", onclick: () => swOpenMessage(m) }, avatar(fromName(m)), h("span", { class: "truncate" }, m.subject));
+          }),
+        ),
+      ),
+  );
+}
+
+function swStream(s) {
+  const listening = ui.swListen === s.id;
+  const loop = swLoop(s);
+  const last = loop[loop.length - 1];
+  const prs = ui.state.prs || {};
+  const tone = { ok: "on", warn: "idle", error: "dnd", off: "off" }[s.tone] || "off";
+  const doneOpen = ui.swDone === s.id;
+  return h(
+    "li",
+    {
+      class: "sw-stream" + (listening ? " listening" : ""),
+      onmouseenter: () => {
+        if (ui.swHover === s.id) return;
+        ui.swHover = s.id;
+        swLight();
+      },
+      onmouseleave: () => {
+        ui.swHover = null;
+        swLight();
+      },
+    },
+    h(
+      "div",
+      { class: "sw-top" },
+      fxDot(tone),
+      h("span", { class: "sw-title" }, s.title),
+      s.big && h("span", { class: "fx-tag blue" }, "Changes how Murmur works"),
+      h("span", { class: "sw-refs" }, s.issue && h("span", { class: "br-ref" }, "#" + s.issue), s.pr && h("span", { class: "fx-pr" + (s.draft ? " draft" : "") }, "PR #" + s.pr)),
+      briefFaces(s.who),
+    ),
+    h("p", { class: "sw-goal" }, s.goal),
+    h(
+      "div",
+      { class: "sw-dnn" },
+      h(
+        "div",
+        { class: "sw-cell" },
+        h("span", { class: "sw-k" }, "Done", h("span", { class: "fx-faint" }, " " + s.done.length)),
+        doneOpen
+          ? h("ul", { class: "sw-done" }, s.done.map((d) => h("li", null, d)))
+          : h("span", null, s.done[s.done.length - 1], s.done.length > 1 && h("button", { class: "sw-more", onclick: () => { ui.swDone = s.id; render(); } }, " +" + (s.done.length - 1))),
+      ),
+      h("div", { class: "sw-cell now" }, h("span", { class: "sw-k" }, "Now"), h("span", null, s.now)),
+      h("div", { class: "sw-cell" }, h("span", { class: "sw-k" }, "Next"), h("span", null, s.next)),
+    ),
+    s.waiting &&
+      h("div", { class: "sw-waiting" }, icon("clock"), h("span", null, h("b", null, s.waiting.who), " is waiting on ", h("b", null, s.waiting.on), " for " + s.waiting.what + ", for " + s.waiting.since + " minutes.")),
+    h(
+      "div",
+      { class: "sw-loopbar" },
+      h(
+        "button",
+        {
+          class: "sw-listen" + (listening ? " on" : ""),
+          "aria-expanded": listening ? "true" : "false",
+          onclick: () => {
+            ui.swListen = listening ? null : s.id;
+            render();
+          },
+        },
+        icon(listening ? "chevronDown" : "chevronRight"),
+        listening ? "Stop listening" : "Listen",
+        h("span", { class: "fx-faint" }, " · " + plural(loop.length, "message")),
+      ),
+      !listening &&
+        last &&
+        h(
+          "button",
+          { class: "sw-ticker", title: "Open this conversation", onclick: () => swOpenMessage(last) },
+          h("b", null, fromName(last)),
+          h("span", { class: "fx-faint" }, " → " + (last.toKind === "all" ? "everyone" : last.toKind === "device" ? "a device" : toName(last)) + ": "),
+          h("span", { class: "truncate" }, (last.body || last.subject).split("\n")[0]),
+          agoEl("span", "fx-faint sw-ticker-t", when(last.at)),
+        ),
+    ),
+    listening && swTranscript(s, loop),
+  );
+}
+
+// The loop at full volume: its last messages, oldest first, marking talk with other streams.
+function swTranscript(s, loop) {
+  const T = (n) => new Date(n).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return h(
+    "ol",
+    { class: "sw-transcript" },
+    loop.slice(-10).map((m) => {
+      const from = fromName(m);
+      const to = m.toKind === "all" ? "everyone" : m.toKind === "device" ? "a device" : toName(m);
+      const other = [from, to].map(swStreamOf).find((x) => x && x.id !== s.id);
+      return h(
+        "li",
+        { class: "sw-line", role: "button", tabindex: 0, onclick: () => swOpenMessage(m), onkeydown: (e) => (e.key === "Enter" ? swOpenMessage(m) : null) },
+        h("span", { class: "sw-line-t" }, T(m.sortAt)),
+        h(
+          "div",
+          { class: "sw-line-body" },
+          h("div", { class: "sw-line-head" }, avatar(from), h("b", null, from), h("span", { class: "fx-faint" }, " → " + to), other && h("span", { class: "sw-cross", title: "Talk between two streams" }, "↔ " + other.title)),
+          h("div", { class: "sw-line-subj" }, m.subject),
+          m.body && h("div", { class: "sw-line-text" }, m.body.split("\n").filter(Boolean)[0]),
+        ),
+      );
+    }),
+  );
+}
+
+// Where in the code each stream is working. Hovering a stream lights its areas.
+function swMap() {
+  const open = ui.swArea;
+  return [
+    h("div", { class: "br-sec-head" }, h("h2", null, "Where in the code"), h("span", { class: "fx-faint sw-hint" }, "From each branch's changes")),
+    h(
+      "ul",
+      { class: "sw-map" },
+      swarm.areas.map((a) => {
+        const who = [...new Set(a.files.flatMap(([, w]) => w))];
+        const streams = [...new Set(who.map((n) => swStreamOf(n)?.id).filter(Boolean))];
+        const crowded = streams.length > 1;
+        const isOpen = open === a.path;
+        return h(
+          "li",
+          { class: "sw-area" + (who.length ? "" : " empty") + (crowded ? " crowded" : "") + (isOpen ? " open" : ""), "data-who": who.join(" ") },
+          h(
+            "button",
+            {
+              class: "sw-area-head",
+              disabled: !who.length,
+              onclick: () => {
+                ui.swArea = isOpen ? null : a.path;
+                render();
+              },
+            },
+            h("span", { class: "mono sw-path" }, a.path),
+            crowded && h("span", { class: "sw-crowd" }, plural(streams.length, "stream")),
+            who.length ? briefFaces(who) : h("span", { class: "fx-faint sw-none" }, "nobody"),
+          ),
+          isOpen &&
+            h(
+              "ul",
+              { class: "sw-files" },
+              a.files.map(([f, w]) => h("li", { class: w.length > 1 ? "shared" : "" }, h("span", { class: "mono truncate" }, f), h("span", { class: "sw-file-who" }, w.join(", ")))),
+            ),
+        );
+      }),
+    ),
+    h("p", { class: "fx-faint sw-map-note" }, "Not in the code: ", h("b", null, swarm.unknown.map((u) => u.who).join(", ")), ", which hasn't changed anything we can see."),
+  ];
+}
+
+// Light the areas of the stream under the pointer, without a full render.
+function swLight() {
+  const s = swarm.streams.find((x) => x.id === ui.swHover);
+  for (const el of document.querySelectorAll(".sw-area")) {
+    const who = (el.dataset.who || "").split(" ");
+    el.classList.toggle("lit", !!s && s.who.some((n) => who.includes(n)));
+    el.classList.toggle("dim", !!s && !s.who.some((n) => who.includes(n)));
+  }
 }
