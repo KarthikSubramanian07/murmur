@@ -6,7 +6,11 @@ A release is a pushed tag. `.github/workflows/release.yml` builds `mur` for macO
 
 ## Cutting one
 
-From a commit on `main` whose checks passed:
+From a commit on `main` whose checks passed, and which a Codex (Sol) agent has reviewed whole for
+bugs, security holes and anything else that shouldn't ship. That review is Tyler's rule
+(2026-11-08): a release reaches every installed daemon within the hour (self-update), so a PR's
+review isn't enough on its own; it never sees how the merged PRs fit together. Each finding is
+fixed before the tag, filed as an issue if it can wait, or dropped if it isn't worth acting on.
 
 ```sh
 git tag v0.1.0
@@ -55,7 +59,8 @@ tag created with `GITHUB_TOKEN` starts no workflow, and then deletes all but the
 nightly releases and tags. A nightly tag with no published release (a failed build) doesn't count
 as out, so the next night tags its commit again; pruning removes the dead tag later. A rerun the
 same day finds the date's tag taken: delete it by hand first. Running the workflow with `dry_run`
-prints what it would tag and delete.
+prints what it would tag and delete. Nightlies get no pre-release review (Cutting one, above): they
+reach only daemons on the prerelease channel.
 
 ## Cutting a release through the channel
 

@@ -168,11 +168,13 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 		return fmt.Errorf("this clone hasn't joined %s, so its daemon won't run (`%s join` joins, after asking the user)", brand.Product, brand.Command)
 	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
+	releases := newReleaseWatch(version, *gitDir)
 	err := run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
-			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running}, restart)
+			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report}, restart)
 		},
+		Version: releases.page,
 		Report: func(ctx context.Context) {
 			publicrepo.Run(ctx, publicrepo.Options{Version: version, GitDir: *gitDir, Log: logger})
 		}})
