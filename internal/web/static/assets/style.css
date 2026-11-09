@@ -3245,3 +3245,80 @@ code {
   flex: 1;
   justify-content: center;
 }
+
+/* A newer release (#240): above Settings in the sidebar, at the foot of the folded sidebar, and in
+   the top bar on a phone. Green when one click restarts onto it, as in Discord. */
+.menu-button.update {
+  color: var(--sidebar-foreground);
+}
+.menu-button.update-ready,
+.menu-button.update-ready > .icon,
+.menu-button.update-ready:hover > .icon {
+  color: var(--success-foreground);
+}
+.menu-button.update-ready {
+  background: color-mix(in oklab, var(--success) 10%, transparent);
+}
+.menu-button.update-ready:hover {
+  background: color-mix(in oklab, var(--success) 18%, transparent);
+  color: var(--success-foreground);
+}
+div.menu-button.update,
+div.menu-button.update:hover {
+  background: none;
+  color: var(--sidebar-muted-foreground);
+  cursor: default;
+}
+.mini-btn.update-ready {
+  color: var(--success-foreground);
+}
+.mini-btn.mini-update {
+  background: none;
+}
+.mini-btn.update-ready {
+  background: color-mix(in oklab, var(--success) 14%, transparent);
+}
+.mini-btn:disabled {
+  cursor: default;
+}
+.nav-dot {
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.375rem;
+  margin-left: 0.25rem;
+  vertical-align: 0.15em;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+}
+.nav-dot.update-ready {
+  background: var(--success);
+}
+.icon.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    rotate: 360deg;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .icon.spin {
+    animation: none;
+  }
+}
+.install-line {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+}
+.install-line code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 0.375rem 0.5rem;
+  border-radius: var(--control-radius);
+  background: color-mix(in oklab, var(--input) 32%, transparent);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}

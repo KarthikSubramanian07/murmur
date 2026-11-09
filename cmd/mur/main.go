@@ -168,11 +168,13 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 		return fmt.Errorf("this clone hasn't joined %s, so its daemon won't run (`%s join` joins, after asking the user)", brand.Product, brand.Command)
 	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
+	releases := newReleaseWatch(version, *gitDir)
 	err := run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
-			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running}, restart)
+			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report}, restart)
 		},
+		Version: releases.page,
 		Report: func(ctx context.Context) {
 			publicrepo.Run(ctx, publicrepo.Options{Version: version, GitDir: *gitDir, Log: logger})
 		}})
@@ -196,13 +198,22 @@ func noteNewer(ctx context.Context, w io.Writer) {
 		return
 	}
 	if latest := update.Newer(gitDir, version); latest != "" {
-		fmt.Fprintf(w, "%s %s is out. Murmur updates automatically while its daemon runs, unless disabled.\nTo update by hand, run the install again:\n  %s\n", brand.Product, latest, installLine())
+		fmt.Fprintf(w, "%s %s is out. Murmur updates automatically while its daemon runs, unless disabled.\nTo update by hand, run the install again:\n  %s\n", brand.Product, latest, installLine(latest))
 	}
 }
 
-func installLine() string {
+// installLine installs latest. A prerelease (seen on the prerelease channel) is pinned, since the
+// installers' default is the latest stable release, which is older.
+func installLine(latest string) string {
+	pin := strings.Contains(latest, "-")
 	if runtime.GOOS == "windows" {
+		if pin {
+			return "$env:MURMUR_VERSION='v" + latest + "'; irm " + brand.InstallPs1 + " | iex"
+		}
 		return "irm " + brand.InstallPs1 + " | iex"
+	}
+	if pin {
+		return "curl -fsSL " + brand.InstallSh + " | MURMUR_VERSION=v" + latest + " sh"
 	}
 	return "curl -fsSL " + brand.InstallSh + " | sh"
 }

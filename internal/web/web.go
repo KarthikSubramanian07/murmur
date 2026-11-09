@@ -62,7 +62,7 @@ func New(src Source, token, repoDir string) *Server {
 func NewWithPRs(src Source, token string, prs LookupPR) *Server {
 	s := &Server{src: src, token: token, prs: newPRCache(prs), mux: http.NewServeMux()}
 	var page bytes.Buffer
-	if err := index.Execute(&page, struct{ Name string }{brand.Product}); err != nil {
+	if err := index.Execute(&page, struct{ Name, Command string }{brand.Product, brand.Command}); err != nil {
 		panic(err) // the template is embedded, so this is a bug, not a condition
 	}
 	s.page = page.Bytes()
@@ -87,6 +87,7 @@ func NewWithPRs(src Source, token string, prs LookupPR) *Server {
 	s.mux.HandleFunc("PUT /api/settings", s.putSettings)
 	s.mux.HandleFunc("POST /api/unmute", s.postUnmute)
 	s.mux.HandleFunc("POST /api/tags", s.postTags)
+	s.mux.HandleFunc("POST /api/restart", s.postRestart)
 	return s
 }
 
@@ -299,6 +300,24 @@ func (s *Server) postUnmute(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), sourceTimeout)
 	defer cancel()
 	if err := s.src.Unmute(ctx, u.By, u.Muted); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// postRestart restarts the daemon onto an installed update. The answer comes before the restart,
+// which waits for any delivery in flight; the page then reconnects to the new daemon, which
+// serves it at the same address and token.
+func (s *Server) postRestart(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), sourceTimeout)
+	defer cancel()
+	err := s.src.Restart(ctx)
+	if errors.Is(err, ErrNoUpdate) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
