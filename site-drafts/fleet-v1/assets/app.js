@@ -226,7 +226,9 @@ function render() {
     content = null;
     return;
   }
-  const keep = document.activeElement?.dataset?.key;
+  const active = document.activeElement;
+  const keep = active?.dataset?.key;
+  const caret = active && typeof active.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null;
   const scroll = content ? content.scrollTop : 0;
   const chat = chatScroll();
   if (!content) content = h("div", { class: "content" });
@@ -236,7 +238,11 @@ function render() {
   root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, VARIANT === "g" && ui.view !== "settings" ? null : topbar(), content)));
   content.scrollTop = scroll;
   restoreChatScroll(chat);
-  if (keep) root.querySelector(`[data-key="${CSS.escape(keep)}"]`)?.focus({ preventScroll: true });
+  const again = keep && root.querySelector(`[data-key="${CSS.escape(keep)}"]`);
+  if (again) {
+    again.focus({ preventScroll: true });
+    if (caret && typeof again.setSelectionRange === "function") again.setSelectionRange(...caret);
+  }
 }
 
 function navButton(view, iconName, count) {
@@ -2326,11 +2332,22 @@ function fxSeg(label, options, value, onPick) {
 // each branch's PR. Tool calls, read marks and other devices' commits aren't on the bus, so
 // nothing here depends on them (fleetHistory and the functions above are left for the old draft).
 //
-// What needs a person: a direct question nobody has answered for 15 minutes, or a device that
-// has gone offline. One reason per session, the oldest question first. Offline and do not
-// disturb explain why a question waits rather than being reasons of their own. Idle sessions and
-// two sessions on one branch are normal work, so they aren't reasons.
+// What needs a person: a direct question nobody has answered for 15 minutes. One row per session
+// that owes an answer, the oldest question first. Offline and do not disturb explain why a
+// question waits rather than being reasons of their own: closed laptops overnight would otherwise
+// fill the group every morning. A question stops counting after a day. Idle sessions and two
+// sessions on one branch are normal work, so they aren't reasons.
 const NO_ANSWER_MS = 15 * 60000;
+const GIVE_UP_MS = 24 * 3600000;
+
+// The question a message asks: the first sentence of its body that ends in "?", once links and
+// code are taken out (their "?"s aren't questions), or else its subject if that is one.
+function questionIn(m) {
+  const text = (m.body || "").replace(/```[\s\S]*?```/g, " ").replace(/`[^`]*`/g, "…").replace(/https?:\/\/\S+/g, " ");
+  const asked = text.split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).find((x) => /\?$/.test(x));
+  const q = asked || (/\?\s*$/.test(m.subject || "") && !isReply(m) ? m.subject.trim() : "");
+  return q.length > 110 ? q.slice(0, 109).trimEnd() + "…" : q;
+}
 
 function isReply(m) {
   return !!m.re || /^re:/i.test(m.subject || "");
@@ -2347,11 +2364,11 @@ function fleetNeeds(rows) {
   const out = new Map();
   const asks = new Map();
   for (const m of ui.messages) {
-    if (m.toKind !== "session" || isReply(m) || !isQuestion(m)) continue;
+    if (m.toKind !== "session" || isReply(m) || !questionIn(m)) continue;
     const to = toName(m);
     const from = fromName(m);
     const at = when(m.at);
-    if (!by.has(to) || !live.has(from) || to === from || !at || now - at < NO_ANSWER_MS || answeredSince(m)) continue;
+    if (!by.has(to) || !live.has(from) || to === from || !at || now - at < NO_ANSWER_MS || now - at > GIVE_UP_MS || answeredSince(m)) continue;
     if (!asks.has(to)) asks.set(to, []);
     asks.get(to).push(m);
   }
@@ -2362,12 +2379,7 @@ function fleetNeeds(rows) {
     const why = !d.reachable ? " Its device is offline." : onDnd(s) ? " It's on do not disturb." : "";
     const more = list.length > 1 ? " And " + plural(list.length - 1, "more question") + "." : "";
     // text is a function: a row and the inspector each need their own copy of its nodes.
-    out.set(to, { at: when(m.at), m, text: () => ["No reply to ", h("b", null, fromName(m)), " for " + ago(when(m.at)).replace(" ago", "") + ": “" + m.subject + "”" + why + more] });
-  }
-  for (const { d, s } of rows) {
-    if (d.reachable || out.has(s.name)) continue;
-    const t = when(d.lastSeen);
-    out.set(s.name, { at: t || 0, text: () => ["Its device, " + (d.owner ? d.owner + "'s " : "") + deviceName(d) + ", has been offline" + (t ? " for " + ago(t).replace(" ago", "") : "") + "."] });
+    out.set(to, { at: when(m.at), m, text: () => ["No reply to ", h("b", null, fromName(m)), " for " + ago(when(m.at)).replace(" ago", "") + ": “" + questionIn(m) + "”" + why + more] });
   }
   return out;
 }
@@ -2391,11 +2403,12 @@ function fleetPage() {
   const devs = new Set(all.map((r) => r.d.id));
   const n = fleetNeeds(all).size;
   const sub = q || F.state
-    ? [plural(rows.length, "session") + " of " + all.length + " match ", h("button", { class: "fx-clear", onclick: () => { F.q = ""; F.state = ""; render(); } }, "Clear")]
+    ? [rows.length + " of " + plural(all.length, "session") + (rows.length === 1 ? " matches " : " match "), h("button", { class: "fx-clear", onclick: () => { F.q = ""; F.state = ""; render(); } }, "Clear")]
     : plural(all.length, "session") + " on " + plural(devs.size, "device") + " · " + (n ? n + (n === 1 ? " needs" : " need") + " a look" : "nothing needs a look");
 
-  // On a phone the selected session takes the whole page, with a way back.
-  if (sel && NARROW.matches) return h("div", { class: "fx fx-sheet" }, fleetInspector(sel, needs.get(sel)));
+  // Where the rail can't sit beside the table (fleet.css stacks them at 1000px), the selected
+  // session takes the whole page, with a way back; below the table it would be off screen.
+  if (sel && window.matchMedia("(max-width: 1000px)").matches) return h("div", { class: "fx fx-sheet" }, fleetInspector(sel, needs.get(sel)));
 
   return h(
     "div",
@@ -2576,6 +2589,7 @@ function fleetInspector(name, need) {
       {
         class: "fx-btn",
         onclick: () => {
+          ui.messageMode = "conversations";
           ui.filter = s.addr || s.name;
           ui.conversation = null;
           go("messages");
@@ -2967,6 +2981,8 @@ function swLoop(s) {
 
 function swOpenMessage(m) {
   if (!m) return;
+  // A message picked from a view opens its conversation, whatever list mode was last used.
+  ui.messageMode = "conversations";
   ui.filter = null;
   ui.conversation = conversationOf(m).key;
   ui.conversationAnchor = m.id;
