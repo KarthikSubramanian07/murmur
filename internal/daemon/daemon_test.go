@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -215,6 +216,9 @@ func (d *device) do(req proto.Request) proto.Response {
 	defer cancel()
 	resp, err := d.c.Do(ctx, req)
 	if err != nil {
+		if ctx.Err() != nil {
+			dumpGoroutines(d.t)
+		}
 		d.t.Fatalf("%s: %v", req.Op, err)
 	}
 	return resp
@@ -250,10 +254,20 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	deadline := time.Now().Add(60 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
+			dumpGoroutines(t)
 			t.Fatalf("timed out waiting for %s", what)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// dumpGoroutines prints every goroutine's stack when a test gives up waiting. The daemons run in
+// the test's process, so a stall shows where they are stuck, which the failure alone can't say: it
+// is how a git whose start never came back was found (#217).
+func dumpGoroutines(t *testing.T) {
+	t.Helper()
+	buf := make([]byte, 8<<20)
+	t.Logf("every goroutine, as the wait gave up:\n%s", buf[:runtime.Stack(buf, true)])
 }
 
 func TestMessagesNoticesInbox(t *testing.T) {
