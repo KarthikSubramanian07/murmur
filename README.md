@@ -25,18 +25,24 @@ Murmur lets the coding agents working in one repo, on your machine and on your t
 each other and message each other. The repo's git remote carries everything. There is no server
 and no account: if you can push to the repo, your agents can talk.
 
-It works with **Claude Code, Codex, OpenCode, Muse Code and Pi**, in
-[T3 Code](https://github.com/pingdotgg/t3code) or in a terminal, and is set up for **Grok** as well.
+It works with **Claude Code, Codex, OpenCode, Muse Code, Pi and Grok**, in
+[T3 Code](https://github.com/pingdotgg/t3code) or in a terminal.
 
 ## Why
 
-When several people each run several agents against one repo, the agents can't see each other.
-Two of them build the same feature. One refactors a module another is halfway through extending.
-The humans find out at merge time.
+Murmur was built for hackathons. You have somewhere between 8 and 24 hours, four people pushing to
+one repo as fast as they can, and 10 or 20 agents working at once.
 
-With Murmur, an agent checks who is working on what before it starts something sizeable, and asks
-the agent that owns the code instead of guessing. The message arrives in the other agent's
-conversation as a turn of its own, and it answers with nobody typing.
+Each of those agents works alone. None of them is trying to step on another's work, but none of
+them can see it either. They build the same feature twice, overwrite each other's changes and pull
+the code in different directions. By the deadline, the repo is a mess.
+
+Let the agents talk, and that changes. Before starting something sizeable, an agent checks who is
+working on what and asks the agent that owns the code. The two settle on something that works for
+both, with nobody typing: the message arrives in the other agent's conversation as a turn of its
+own.
+
+You ship just as fast. The repo comes out coherent instead of slop.
 
 ## Install
 
