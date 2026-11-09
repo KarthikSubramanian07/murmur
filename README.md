@@ -66,8 +66,9 @@ mur init
 
 This adds a short section to `AGENTS.md` and `CLAUDE.md` saying the repo uses Murmur, and pushes
 it to the default branch as one commit. If that branch is protected, it goes to a `murmur-init`
-branch for a pull request instead. `mur init --no-push` only edits the files. You can also hand
-your agent [murmur.afig.dev/setup](https://murmur.afig.dev/setup) and let it do this step.
+branch for a pull request instead. `mur init --no-push` only edits the files. You can also point
+your agent at [`docs/agents/setup.md`](https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md)
+and let it do this step.
 
 **2. Each teammate's agent asks to join.**
 
