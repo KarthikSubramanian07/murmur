@@ -2841,7 +2841,7 @@ function fleetTable(rows, needs, sel) {
                 icon(shut ? "chevronRight" : "chevronDown", "fx-chev"),
                 label(k, list),
                 list.some((r) => needs.has(r.s.name)) && h("span", { class: "fx-group-sub" }, (list.length - shown.length) + " more in Needs a look"),
-                h("span", { class: "fx-badge" }, shown.length),
+                h("span", { class: "fx-badge" }, list.length),
               ),
               !shut && shown.map(({ d, s }) => fleetRow(d, s, null, sel === s.name)),
             ];
@@ -3098,14 +3098,28 @@ function fleetInspector(name, need) {
     if (!convMap.has(k)) convMap.set(k, { other, subj, msgs: [] });
     convMap.get(k).msgs.push(m);
   }
+  // Conversations marked "Not waiting" whose question would still be waiting: each can be undone.
+  const convKey = (x) => fromName(x) + " " + topicOf(x).toLowerCase();
+  const marked = new Map();
+  for (const x of fleetNeeds(fleetRows(), true).get(name)?.msgs || []) {
+    if (!Object.hasOwn(fleetDismissed(), x.id)) continue;
+    if (!marked.has(convKey(x))) marked.set(convKey(x), []);
+    marked.get(convKey(x)).push(x);
+  }
+  for (const x of need?.msgs || []) marked.delete(convKey(x));
+  const markedIds = new Set([...marked.values()].flat().map((x) => x.id));
   const direct = [...convMap.values()].map((c) => {
     const latest = c.msgs.reduce((a, b) => (b.sortAt > a.sortAt ? b : a));
     const waiting = c.msgs.filter((m) => rank(m) < 2).sort((a, b) => rank(a) - rank(b) || a.sortAt - b.sortAt)[0];
-    return { ...c, latest, waiting, rank: waiting ? rank(waiting) : 2 };
-  }).sort((a, b) => a.rank - b.rank || (a.rank < 2 ? a.waiting.sortAt - b.waiting.sortAt : b.latest.sortAt - a.latest.sortAt));
+    // One marked "Not waiting" keeps its place after the ones it owes, oldest first, matching the
+    // Undo lines above.
+    const markedAt = waiting ? 0 : Math.min(...c.msgs.filter((x) => markedIds.has(x.id)).map((x) => x.sortAt));
+    return { ...c, latest, waiting, markedAt, rank: waiting ? rank(waiting) : Number.isFinite(markedAt) && markedAt ? 0.5 : 2 };
+  }).sort((a, b) => a.rank - b.rank || (a.rank < 2 ? (a.waiting?.sortAt ?? a.markedAt) - (b.waiting?.sortAt ?? b.markedAt) : b.latest.sortAt - a.latest.sortAt));
   const close = () => fleetCloseAsked();
-  // As the whole page the table isn't in view, so the flag box steps through the sessions that need
-  // a look, in the table's order (oldest first), wrapping round: "2 of 4 · Previous · Next". The
+  // As the whole page the table isn't in view, so a line under the header steps through the
+  // sessions that need a look, in the table's order (oldest first), wrapping round: "2 of 4 that
+  // need a look · Previous · Next". It stays in that one place whether or not a flag is open. The
   // list is taken when the details open and kept until they close, so "Not waiting" on one
   // question doesn't renumber the session in view or skip one.
   if (!ui.fxFlagOrder) ui.fxFlagOrder = [...fleetNeeds(fleetRows()).entries()].sort((a, b) => a[1].at - b[1].at).map(([n]) => n);
@@ -3122,21 +3136,11 @@ function fleetInspector(name, need) {
       ? h(
           "span",
           { class: "fx-flag-nav" },
-          h("span", { class: "fx-flag-pos" }, at + 1 + " of " + flagged.length + (need ? "" : " that needed a look")),
+          h("span", { class: "fx-flag-pos" }, at + 1 + " of " + flagged.length + (need ? " that need a look" : " that needed a look")),
           h("button", { "data-key": "fx-flag-prev", onclick: step(-1) }, "Previous"),
           h("button", { "data-key": "fx-flag-next", onclick: step(1) }, "Next"),
         )
       : null;
-  // Conversations marked "Not waiting" whose question would still be waiting: each can be undone.
-  const convKey = (x) => fromName(x) + " " + topicOf(x).toLowerCase();
-  const marked = new Map();
-  for (const x of fleetNeeds(fleetRows(), true).get(name)?.msgs || []) {
-    if (!Object.hasOwn(fleetDismissed(), x.id)) continue;
-    if (!marked.has(convKey(x))) marked.set(convKey(x), []);
-    marked.get(convKey(x)).push(x);
-  }
-  for (const x of need?.msgs || []) marked.delete(convKey(x));
-  const markedIds = new Set([...marked.values()].flat().map((x) => x.id));
   return [
     h(
       "header",
@@ -3147,6 +3151,7 @@ function fleetInspector(name, need) {
         ? h("button", { class: "fx-back", onclick: close }, "← All sessions")
         : h("button", { class: "fx-icon-btn", title: "Close", "aria-label": "Close", onclick: close }, icon("x")),
     ),
+    flagNav && h("div", { class: "fx-insp-acts fx-flag-solo" }, flagNav),
     [...marked].map(([k, msgs]) =>
       h(
         "div",
@@ -3167,7 +3172,6 @@ function fleetInspector(name, need) {
         ),
       ),
     ),
-    !need && flagNav && h("div", { class: "fx-insp-acts fx-flag-solo" }, flagNav),
     need &&
       h(
         "div",
@@ -3192,7 +3196,6 @@ function fleetInspector(name, need) {
             },
             "Not waiting",
           ),
-          flagNav,
         ),
       ),
     h("dl", { class: "fx-meta" }, meta.map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
