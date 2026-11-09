@@ -389,7 +389,7 @@ func (p pageSettings) choice(name string) web.Wake {
 // more than N minutes ago, 0 standing for defaultWakeMinutes. A session nothing is known of yet
 // waits; the read of its thread lets the deliveries look again. Caller holds mu.
 func (d *Daemon) wakesLocked(id string, wake pageSettings) bool {
-	if d.offMeshLocked(id) {
+	if d.offMeshLocked(id) || d.dndLocked(id) {
 		return false
 	}
 	w := wake.choice(d.sessionNameLocked(id))

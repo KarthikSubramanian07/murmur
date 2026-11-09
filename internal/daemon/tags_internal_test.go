@@ -10,6 +10,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // Session tags (#198), as the session's own device decides them.
@@ -177,5 +178,67 @@ func TestTagsSetWhileTheNameIsPendingFollowItsName(t *testing.T) {
 	d.setNameLocked(s, "quiet-otter")
 	if !tags.Has(d.tagsOfLocked(s), "reviewing") || d.st.Tags["id:aaaaaa"] != nil {
 		t.Fatalf("after the name landed: tags %v, kept %v", d.tagsOfLocked(s), d.st.Tags)
+	}
+}
+
+func TestDoNotDisturbHoldsMessagesUntilTheTagComesOff(t *testing.T) {
+	d := tagsDaemon(t)
+	if resp := d.setOwnTags("aaaaaa", proto.Request{Add: []string{"do-not-disturb"}}); resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	always := pageSettings{Wake: web.Wake{When: web.WakeAlways}}
+	d.mu.Lock()
+	d.deliverLocked(bus.Event{ID: "m1", Type: bus.Message, From: "other/xxxxxx", To: "dev/aaaaaa", At: time.Now()}, modeNormal)
+	d.deliverLocked(bus.Event{ID: "m2", Type: bus.Message, From: "other/xxxxxx", To: "*", At: time.Now()}, modeNormal)
+	box := d.st.Inbox["aaaaaa"]
+	if len(box) != 2 {
+		d.mu.Unlock()
+		t.Fatalf("inbox holds %d, want both messages kept", len(box))
+	}
+	if d.wakesLocked("aaaaaa", always) || !d.wakesLocked("bbbbbb", always) {
+		d.mu.Unlock()
+		t.Fatal("a session on do not disturb may be woken, or one that isn't may not")
+	}
+	// The messages waited longer than a turn's limit.
+	for _, m := range box {
+		m.Arrived = time.Now().Add(-time.Hour)
+	}
+	d.mu.Unlock()
+
+	// No notice through the hook either.
+	if resp := d.notices(proto.Request{Session: "aaaaaa"}); len(resp.Messages) != 0 {
+		t.Fatalf("the hook was told of %d messages", len(resp.Messages))
+	}
+
+	// The tag comes off: what waited may go in as a turn, however long it waited.
+	d.setOwnTags("aaaaaa", proto.Request{Remove: []string{"do-not-disturb"}})
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.wakesLocked("aaaaaa", always) {
+		t.Fatal("still not woken after the tag came off")
+	}
+	for _, m := range d.st.Inbox["aaaaaa"] {
+		if !pushable(m) {
+			t.Errorf("message %s can't go in as a turn after the tag came off", m.Event.ID)
+		}
+	}
+}
+
+func TestDoNotDisturbSetByAHumanForASessionAway(t *testing.T) {
+	d := tagsDaemon(t)
+	d.st.SessionNames["aaaaaa"] = "name-aaaaaa"
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.sessions, "aaaaaa")
+	d.applyTagsEventLocked(bus.Event{V: bus.Version, ID: "abcdef12", Type: bus.Tags, From: "far/cli",
+		To: "dev/aaaaaa", At: time.Now(), Add: []string{"do-not-disturb"}})
+	if !d.dndLocked("aaaaaa") {
+		t.Fatal("a session away isn't on do not disturb by the tags kept for its name")
+	}
+	// Another device's session, by its presence.
+	d.peers["far"] = &peer{lastChange: time.Now(), pres: bus.Presence{Sessions: []bus.SessionInfo{
+		{ID: "cccccc", Tags: []tags.Tag{{Name: tags.DoNotDisturb}}}}}}
+	if !d.peerDNDLocked("far", "cccccc") || d.peerDNDLocked("far", "dddddd") {
+		t.Fatal("peerDNDLocked is wrong")
 	}
 }

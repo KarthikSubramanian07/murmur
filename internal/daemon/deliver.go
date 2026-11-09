@@ -200,7 +200,11 @@ func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, 
 // hook, isn't on its way in already, hasn't failed, wasn't handed over before (Attempted: not even
 // by a daemon that has since restarted), and isn't too old.
 func pushable(m *inMsg) bool {
-	return !m.Noticed && !m.Pushing && !m.PushFailed && !m.Attempted && time.Since(m.Arrived) <= pushMaxAge
+	since := m.Arrived
+	if m.Released.After(since) {
+		since = m.Released // it waited through do-not-disturb
+	}
+	return !m.Noticed && !m.Pushing && !m.PushFailed && !m.Attempted && time.Since(since) <= pushMaxAge
 }
 
 // queuedForPushLocked says message m of session id is on its way in as a turn, or will be: the

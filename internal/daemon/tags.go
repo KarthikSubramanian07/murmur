@@ -54,6 +54,53 @@ func (d *Daemon) adoptTagsLocked(s *session) {
 	}
 }
 
+// dndLocked says session id on this device is on do not disturb: its messages wait in its inbox,
+// and none goes in as a turn or shows as a notice (see wakesLocked and notices). A session that
+// isn't registered at the moment goes by the tags kept for its name. Caller holds mu.
+func (d *Daemon) dndLocked(id string) bool {
+	if s := d.sessions[id]; s != nil {
+		return tags.Has(d.tagsOfLocked(s), tags.DoNotDisturb)
+	}
+	key := d.tagKeyLocked(id)
+	st := d.st.Tags[key]
+	if key == "" || st == nil {
+		return false
+	}
+	return tags.Has(tags.Effective(st.Self, d.derivedTagsLocked(id), st.Human), tags.DoNotDisturb)
+}
+
+// peerDNDLocked says the session at dev/sess is on do not disturb: by this device's own tags, or
+// by its device's presence. Caller holds mu.
+func (d *Daemon) peerDNDLocked(dev, sess string) bool {
+	if sess == "" || sess == proto.CLISession {
+		return false
+	}
+	if dev == d.device {
+		return d.dndLocked(sess)
+	}
+	p := d.peers[dev]
+	return p != nil && tags.Has(peerTagsLocked(p, sess), tags.DoNotDisturb)
+}
+
+// releaseLocked lets what waited in the inbox of the sessions kept by key go in as usual, now that
+// do-not-disturb has come off: each message counts as arriving now, so one that waited longer than
+// a turn's limit (pushMaxAge) still goes in as a turn. Caller holds mu.
+func (d *Daemon) releaseLocked(key string) {
+	now := time.Now()
+	for id, box := range d.st.Inbox {
+		if d.tagKeyLocked(id) != key {
+			continue
+		}
+		for _, m := range box {
+			if !m.Noticed && !m.Pushing && !m.Attempted {
+				m.Released = now
+			}
+		}
+	}
+	d.saveLocked()
+	d.kickPush()
+}
+
 // derivedTagsLocked is the tags the daemon works out for session id: its model, where T3 records
 // the thread's. Caller holds mu.
 func (d *Daemon) derivedTagsLocked(id string) []string {
@@ -100,6 +147,7 @@ func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 	if st == nil {
 		st = &tags.State{}
 	}
+	wasDND := tags.Has(d.tagsOfLocked(s), tags.DoNotDisturb)
 	next := *st
 	if err := next.SetSelf(req.Add, req.Remove); err != nil {
 		return fail(err.Error())
@@ -114,6 +162,9 @@ func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 	}
 	d.putTagStateLocked(tagKeyOf(s.name, s.id), &next)
 	d.kickPresence()
+	if wasDND && !tags.Has(d.tagsOfLocked(s), tags.DoNotDisturb) {
+		d.releaseLocked(tagKeyOf(s.name, s.id))
+	}
 	note := "tags set"
 	if len(held) > 0 {
 		note = "tags set, but a human's choice on the page stands over yours for " + strings.Join(held, ", ")
@@ -155,12 +206,16 @@ func (d *Daemon) humanTagsLocked(id string, add, remove []string, by string, at 
 	if st := d.st.Tags[key]; st != nil {
 		self, human = st.Self, st.Human
 	}
+	wasDND := d.dndLocked(id)
 	next := tags.State{Self: self, Human: cloneMarks(human)}
 	if err := next.SetHuman(tags.Base(self, d.derivedTagsLocked(id)), add, remove, by, at); err != nil {
 		return err
 	}
 	d.putTagStateLocked(key, &next)
 	d.kickPresence()
+	if wasDND && !d.dndLocked(id) {
+		d.releaseLocked(key)
+	}
 	d.log.Printf("%s changed the tags of session %s: %s", by, bus.Addr(d.device, id), tagChange(add, remove))
 	return nil
 }

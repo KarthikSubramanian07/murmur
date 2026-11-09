@@ -413,6 +413,9 @@ type inMsg struct {
 	// delivery, or after one that failed, finds it, and the message is left to the hook's notice
 	// instead of being delivered a second time.
 	Attempted bool `json:"attempted,omitempty"`
+	// Released is when do-not-disturb came off the session, for a message that waited through it:
+	// how old it is, for whether it may still go in as a turn, counts from then (see pushable).
+	Released time.Time `json:"released,omitzero"`
 }
 
 // state is what survives a restart, in state.json.

@@ -415,6 +415,9 @@ func Lookup(r proto.Response) string {
 	case d.Reachable:
 		b.WriteString("  reachable: a message sent now will be delivered\n")
 	}
+	if tags.Has(d.Tags, tags.DoNotDisturb) {
+		b.WriteString("  do not disturb: a message to it waits in its inbox until it reads it or turns do not disturb off\n")
+	}
 	var times []string
 	if !d.Started.IsZero() {
 		times = append(times, "started "+Ago(d.Started))

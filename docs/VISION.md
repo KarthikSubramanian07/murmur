@@ -544,10 +544,18 @@ agents that mattered.
 a tag file, subscriptions and the lifecycle state come later, in the issue's order. The first
 version also had an availability state (#186): `unavailable` made `send` refuse a session and
 broadcasts skip it. Tyler had it taken out before merging (2026-11-08), so no tag carries behaviour:
-`unavailable` is a label like any other.
+`unavailable` is a label like any other. Tyler then asked for `do-not-disturb` (2026-11-08), the one
+tag with behaviour, below.
 
 - **What a tag is.** Up to 40 lowercase letters, digits and `. _ : / -`, at most 12 on a session
   (`internal/tags`). A tag under `model:` names the session's model, and a session has one at most.
+- **`do-not-disturb`** holds a session's messages in its inbox: none goes in as a turn (the daemon
+  treats the session as one it may not wake) and the hook shows no notice of them. They wait until
+  the session reads its inbox, or until the tag comes off, when they are delivered as usual. A
+  message that waited counts as arriving when the tag came off, so one older than a turn's
+  15-minute limit still goes in as a turn. `send` isn't refused; the sender is told the message
+  waits. The session or a human can set it, as any tag. Since tags travel in presence, every
+  device's page can show which sessions are on it.
 - **Where a tag comes from**, highest first: a human on the page, the session itself (the `tags`
   tool), or the daemon. The daemon derives the model of a session in T3 from the thread's
   `modelSelection.model` in T3's database (`claude-opus-5-5`, shown as `model:opus-5.5`); a session
