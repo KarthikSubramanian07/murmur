@@ -1061,6 +1061,19 @@ code {
   width: 0.875rem;
   height: 0.875rem;
 }
+.quiet-item .side-tag {
+  position: static;
+  flex-shrink: 0;
+}
+.quiet-item:hover .side-tag,
+.quiet-item:focus-within .side-tag {
+  opacity: 1;
+}
+.settled-row .stags {
+  flex: 0 1 auto;
+  height: 1rem;
+  margin-left: auto;
+}
 .menu-scrim {
   position: fixed;
   inset: 0;

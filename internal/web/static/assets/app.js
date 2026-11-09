@@ -314,27 +314,46 @@ function miniSidebar() {
       top("sessions", "users", "All sessions", ui.view === "sessions"),
       top("messages", "message", "All conversations", ui.view === "messages" && !ui.filter),
       top("recent", "clock", "Recent messages", ui.view === "recent"),
-      devices().map((d) => [
-        h("div", { class: "mini-dev", title: (d.self ? "This device" : d.owner || d.id) + " · " + liveSessions(d).length }, deviceDot(d)),
-        liveSessions(d).map((s) => {
-          const key = s.addr || s.name;
-          return h(
-            "button",
-            {
-              class: "mini-face" + (ui.view === "messages" && ui.filter === key ? " current" : ""),
-              title: s.name + (s.doing ? ": " + s.doing : ""),
-              "aria-label": s.name,
-              "data-key": "mini-s-" + s.name,
-              onclick: () => {
-                ui.filter = key;
-                ui.conversation = null;
-                go("messages");
-              },
+      ui.tagFilter &&
+        h(
+          "button",
+          {
+            class: "mini-btn current",
+            title: "Tagged " + ui.tagFilter + ": show every session",
+            "aria-label": "Tagged " + ui.tagFilter + ": show every session",
+            "data-key": "mini-tag",
+            onclick: () => {
+              ui.tagFilter = null;
+              render();
             },
-            presence(s.name, d),
-          );
-        }),
-      ]),
+          },
+          icon("tag"),
+        ),
+      devices().map((d) => {
+        const live = shownSessions(liveSessions(d));
+        if (ui.tagFilter && !live.length) return null;
+        return [
+          h("div", { class: "mini-dev", title: (d.self ? "This device" : d.owner || d.id) + " · " + live.length }, deviceDot(d)),
+          live.map((s) => {
+            const key = s.addr || s.name;
+            return h(
+              "button",
+              {
+                class: "mini-face" + (ui.view === "messages" && ui.filter === key ? " current" : ""),
+                title: s.name + (s.doing ? ": " + s.doing : ""),
+                "aria-label": s.name,
+                "data-key": "mini-s-" + s.name,
+                onclick: () => {
+                  ui.filter = key;
+                  ui.conversation = null;
+                  go("messages");
+                },
+              },
+              presence(s.name, d),
+            );
+          }),
+        ];
+      }),
     ),
     miniUpdate(),
     h("button", { class: "mini-btn mini-foot" + (ui.view === "settings" ? " current" : ""), title: "Settings", "aria-label": "Settings", onclick: () => go("settings") }, icon("settings")),
@@ -777,8 +796,10 @@ function quietFold(d) {
               },
               presence(s.name, d),
               h("span", { class: "settled-name truncate" }, s.name),
+              tagChips(s, Infinity, true),
               h("span", { class: "settled-when" }, isHidden(s) ? "hidden" : t ? ago(t).replace(" ago", "") : ""),
             ),
+            s.addr && tagButton(s),
             isHidden(s) && hideButton(s),
           );
         }),
@@ -1069,7 +1090,7 @@ function sessionsPage() {
         [
           ["running", "Running", total],
           ["quiet", "Quiet", quiet],
-          ["settled", "Settled", settledSessions().length],
+          ["settled", "Settled", ui.tagFilter ? 0 : settledSessions().length],
         ].map(([id, label, n]) =>
           h(
             "button",
@@ -1091,7 +1112,9 @@ function sessionsPage() {
     ),
     ui.selecting && selectBar(pickable),
     tab === "settled"
-      ? settledPage(devs)
+      ? ui.tagFilter
+        ? h("p", { class: "g-none" }, "No settled session is tagged " + ui.tagFilter + ".")
+        : settledPage(devs)
       : tab === "quiet"
         ? quietPage(devs)
         : devs.map((d) => {
@@ -1771,7 +1794,13 @@ function tagMenu() {
       m.err = "Lowercase letters, digits and . _ : / -, up to 40";
       return render();
     }
-    ui.madeTags.add(q);
+    // These have their own controls (Hide, the conversation header, the session's model), and the
+    // menu, which lists only tags to sort by, couldn't show them as on to take them off again.
+    if (!sortsBy(q)) {
+      m.err = q + " has a meaning of its own; set it under the session's name";
+      return render();
+    }
+    ui.madeTags.add(q); // sortsBy(q) holds, from above
     m.q = "";
     tagSessions(targets, q, true);
   };
@@ -1860,11 +1889,28 @@ function tagMenu() {
 
 // Puts a tag on, or takes it off, each of the sessions that needs the change: one request each,
 // to the session's own device. The lists show the change at once, as waiting until it lands.
+// A session's changes go one after another, in the order they were clicked: the daemon times a
+// change when it gets it, so two in flight at once could land the other way round.
+const tagQueues = new Map();
+
+function queueTagChange(addr, fn) {
+  const run = (tagQueues.get(addr) || Promise.resolve()).then(fn);
+  const tail = run.catch(() => {});
+  tagQueues.set(addr, tail);
+  tail.then(() => {
+    if (tagQueues.get(addr) === tail) tagQueues.delete(addr);
+  });
+  return run;
+}
+
 async function tagSessions(targets, name, on) {
   const todo = targets.filter((s) => hasTag(s, name) !== on);
+  const wishes = new Map();
   for (const s of todo) {
     if (!tagWanted.has(s.addr)) tagWanted.set(s.addr, new Map());
-    tagWanted.get(s.addr).set(name, { on, at: Date.now() });
+    const wish = { on, at: Date.now() };
+    tagWanted.get(s.addr).set(name, wish);
+    wishes.set(s.addr, wish);
   }
   if (ui.tagMenu) ui.tagMenu.err = "";
   render();
@@ -1873,9 +1919,13 @@ async function tagSessions(targets, name, on) {
   await Promise.all(
     todo.map(async (s) => {
       try {
-        await api("/api/tags", { method: "POST", body: JSON.stringify({ addr: s.addr, add: on ? [name] : [], remove: on ? [] : [name] }) });
+        await queueTagChange(s.addr, () =>
+          api("/api/tags", { method: "POST", body: JSON.stringify({ addr: s.addr, add: on ? [name] : [], remove: on ? [] : [name] }) }),
+        );
       } catch (e) {
-        tagWanted.get(s.addr)?.delete(name);
+        // A later click on the same tag has its own wish; only this one's is dropped.
+        const w = tagWanted.get(s.addr);
+        if (w?.get(name) === wishes.get(s.addr)) w.delete(name);
         if (e instanceof AuthError) denied = e;
         else failed.push({ s, msg: e.message });
       }
