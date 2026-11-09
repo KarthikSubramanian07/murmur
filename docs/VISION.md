@@ -304,13 +304,13 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   a clone that hasn't joined (so a stale client or a script can't start one). `join --leave`
   forgets the consent before it stops anything, then waits for the daemon's lock to be free as long
   as a replacement does, 40 seconds from asking it to stop (20 until #91, which was shorter than a
-  shutdown may take), and reports it as a problem, not as stopped, if it isn't. What it can't
-  close: a push already past its check when the leave lands completes, and a starter already past
-  its own check (Windows starts the daemon through WMI, which is slow) can still launch
-  `mur daemon`, which exits at its consent check before it opens any state or publishes. A repo
-  without the marker, or one the user hasn't joined, gets no daemon, no `refs/murmur/*` and nothing
-  published. A clone whose user joined but whose current branch lacks the marker keeps its daemon
-  (it is the user's, for every worktree) and gets no MCP tools there.
+  shutdown may take), saying so on standard error once it has waited 5, and reports it as a problem,
+  not as stopped, if it isn't. What it can't close: a push already past its check when the leave
+  lands completes, and a starter already past its own check (Windows starts the daemon through WMI,
+  which is slow) can still launch `mur daemon`, which exits at its consent check before it opens any
+  state or publishes. A repo without the marker, or one the user hasn't joined, gets no daemon, no
+  `refs/murmur/*` and nothing published. A clone whose user joined but whose current branch lacks
+  the marker keeps its daemon (it is the user's, for every worktree) and gets no MCP tools there.
 - **Per user, in every account T3 runs.** T3 can start Claude Code with its own `CLAUDE_CONFIG_DIR`
   (a provider instance with a home path, as `claude_personal` on Tyler's laptop, 2026-10-29), and
   Codex with its own `CODEX_HOME`. Until 2026-11-01 `mur join` wrote only to the home of the agent

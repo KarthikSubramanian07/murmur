@@ -1,6 +1,7 @@
 package join
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -32,10 +33,10 @@ func holdLock(t *testing.T, p Place) (release func()) {
 	return release
 }
 
-func setLeaveWait(t *testing.T, wait time.Duration) {
-	was := leaveWait
-	leaveWait = wait
-	t.Cleanup(func() { leaveWait = was })
+func setLeaveTimes(t *testing.T, wait, quiet time.Duration) {
+	wasWait, wasQuiet := leaveWait, leaveQuiet
+	leaveWait, leaveQuiet = wait, quiet
+	t.Cleanup(func() { leaveWait, leaveQuiet = wasWait, wasQuiet })
 }
 
 // A daemon asked to stop may hold the lock for proto.ShutdownMax; a leave waits at least that long
@@ -46,9 +47,13 @@ func TestLeaveWaitCoversAShutdown(t *testing.T) {
 	}
 }
 
-// A daemon that takes its time to let go of the lock is waited for and reported as stopped.
+// A daemon that takes its time to let go of the lock is waited for and reported as stopped, and the
+// leave says what it is waiting for while it does.
 func TestLeaveWaitsForADaemonThatIsSlowToStop(t *testing.T) {
+	setLeaveTimes(t, client.StopWait, 50*time.Millisecond)
 	sb := newSandbox(t, false)
+	var said bytes.Buffer
+	sb.Progress = &said
 	p, _ := clone(t)
 	release := holdLock(t, p)
 	time.AfterFunc(500*time.Millisecond, release)
@@ -59,12 +64,17 @@ func TestLeaveWaitsForADaemonThatIsSlowToStop(t *testing.T) {
 	if !slices.Contains(r.Did, "Stopped this clone's daemon") {
 		t.Errorf("did %q", r.Did)
 	}
+	if !strings.HasPrefix(said.String(), "Waiting for this clone's daemon to stop") {
+		t.Errorf("while waiting, said %q", said.String())
+	}
 }
 
 // A daemon still holding the lock when the wait is over is a problem, not a stopped daemon.
 func TestLeaveReportsADaemonThatStays(t *testing.T) {
-	setLeaveWait(t, 300*time.Millisecond)
+	setLeaveTimes(t, 300*time.Millisecond, time.Hour)
 	sb := newSandbox(t, false)
+	var said bytes.Buffer
+	sb.Progress = &said
 	p, _ := clone(t)
 	holdLock(t, p)
 	r, err := Leave(context.Background(), sb.Env, p.Top)
@@ -73,6 +83,9 @@ func TestLeaveReportsADaemonThatStays(t *testing.T) {
 	}
 	if slices.Contains(r.Did, "Stopped this clone's daemon") {
 		t.Errorf("did %q", r.Did)
+	}
+	if said.Len() != 0 {
+		t.Errorf("said %q before it had waited long", said.String())
 	}
 }
 
