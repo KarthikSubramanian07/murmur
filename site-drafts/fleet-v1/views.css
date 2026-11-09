@@ -1,0 +1,12 @@
+/* #183: the tabs over the ways to look at the swarm, and what the views share. */
+.content:has(.sv-shell) { background: #1b1b1b; }
+.sv-shell { min-height: 100%; }
+.sv-tabs { position: sticky; top: 0; z-index: 20; display: flex; gap: 0.25rem; overflow-x: auto; scrollbar-width: none; padding: 0.75rem 2rem; border-bottom: 1px solid #ffffff1a; background: #1b1b1bf2; backdrop-filter: blur(8px); }
+.sv-tabs button { flex-shrink: 0; height: 2rem; padding: 0 0.75rem; border-radius: 8px; color: #9e9e9e; font-size: 0.875rem; font-weight: 500; }
+.sv-tabs button:hover { color: #fff; background: #ffffff0d; }
+.sv-tabs button.on { color: #fff; background: #ffffff1f; }
+@media (max-width: 767px) { .sv-tabs { padding: 0.5rem 1rem; } }
+/* The demo-size toggle sits in the tab bar, outside the page's .fx padding. */
+.sv-tabs .sv-demo { max-width: none; margin: 0 0 0 auto; padding: 0 0 0 1rem; flex-shrink: 0; }
+.sv-tabs .sv-demo .fx-seg button { height: 100%; padding: 0 0.625rem; font-size: 0.75rem; background: none; }
+.sv-tabs .sv-demo .fx-seg button.on { background: #ffffff1f; }

@@ -1,0 +1,1471 @@
+/*
+ * The design tokens and component looks are T3 Code's (MIT, Copyright (c) 2026 T3 Tools Inc.;
+ * see THIRD_PARTY_NOTICES): apps/web/src/index.css for the themes, and components/ui/*.tsx,
+ * settings/SettingsGroup.tsx, settings/settingsLayout.tsx and sidebar/*.tsx for the pieces,
+ * translated from Tailwind classes to plain CSS. Colors are Tailwind CSS v4's palette (MIT).
+ */
+
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Tailwind CSS v4 palette, the steps T3 Code's themes use. */
+:root {
+  --white: #fff;
+  --zinc-25: oklch(99.2% 0 0);
+  --zinc-50: oklch(98.5% 0 0);
+  --zinc-100: oklch(96.7% 0.001 286.375);
+  --zinc-200: oklch(92% 0.004 286.32);
+  --zinc-300: oklch(87.1% 0.006 286.286);
+  --zinc-400: oklch(70.5% 0.015 286.067);
+  --zinc-500: oklch(55.2% 0.016 285.938);
+  --zinc-800: oklch(27.4% 0.006 286.033);
+  --zinc-900: oklch(21% 0.006 285.885);
+  --neutral-100: oklch(97% 0 0);
+  --neutral-400: oklch(70.8% 0 0);
+  --neutral-950: oklch(14.5% 0 0);
+  --red-400: oklch(70.4% 0.191 22.216);
+  --red-500: oklch(63.7% 0.237 25.331);
+  --red-700: oklch(50.5% 0.213 27.518);
+  --amber-400: oklch(82.8% 0.189 84.429);
+  --amber-500: oklch(76.9% 0.188 70.08);
+  --amber-700: oklch(55.5% 0.163 48.998);
+  --emerald-300: oklch(84.5% 0.143 164.978);
+  --emerald-400: oklch(76.5% 0.177 163.223);
+  --emerald-500: oklch(69.6% 0.17 162.48);
+  --emerald-600: oklch(59.6% 0.145 163.225);
+  --emerald-700: oklch(50.8% 0.118 165.612);
+  --blue-400: oklch(70.7% 0.165 254.624);
+  --blue-500: oklch(62.3% 0.214 259.815);
+  --blue-700: oklch(48.8% 0.243 264.376);
+}
+
+/* T3 Code's light theme (index.css :root). */
+:root {
+  color-scheme: light;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  --radius: 0.5rem;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --control-radius: 0.5rem;
+  --sidebar-width: 16rem;
+  --sidebar-content-inset: 0.5rem;
+  --sidebar-control-gap: 0.5rem;
+  --sidebar-row-content-inset: 0.625rem;
+  --topbar-height: 52px;
+  --shadow-xs-5: 0 1px 2px 0 rgb(0 0 0 / 5%);
+  --shadow-xs-10: 0 1px 2px 0 rgb(0 0 0 / 10%);
+  --scrollbar-thumb: rgb(217 217 217);
+  --scrollbar-thumb-hover: rgb(191 191 191);
+
+  --background: var(--zinc-25);
+  --foreground: var(--zinc-900);
+  --card: var(--white);
+  --popover: var(--white);
+  --primary: oklch(0.488 0.217 264);
+  --primary-foreground: var(--white);
+  --secondary: var(--zinc-50);
+  --secondary-foreground: var(--zinc-800);
+  --muted: var(--zinc-50);
+  --muted-foreground: var(--zinc-500);
+  --placeholder: var(--muted-foreground);
+  --secondary-label: var(--muted-foreground);
+  --message-surface: color-mix(in srgb, var(--zinc-200) 55%, var(--zinc-100));
+  --accent: var(--zinc-100);
+  --accent-foreground: var(--zinc-900);
+  --error: var(--red-500);
+  --error-foreground: var(--red-700);
+  --destructive: var(--error);
+  --destructive-foreground: var(--error-foreground);
+  --border: var(--zinc-200);
+  --input: var(--zinc-300);
+  --ring: var(--primary);
+  --info: var(--blue-500);
+  --info-foreground: var(--blue-700);
+  --success: var(--emerald-500);
+  --success-foreground: var(--emerald-700);
+  --warning: var(--amber-500);
+  --warning-foreground: var(--amber-700);
+  --pr-open: var(--emerald-600);
+  --pr-draft: var(--zinc-500);
+  --sidebar: var(--zinc-50);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-row-hover: var(--zinc-25);
+  --sidebar-row-active: var(--white);
+  --sidebar-row-selected: var(--white);
+  --sidebar-border: var(--border);
+  --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
+
+  /* App-chrome grain: index.css --surface-grain. */
+  --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+}
+
+/* T3 Code's dark theme (index.css :root @variant dark). */
+.dark {
+  color-scheme: dark;
+  --scrollbar-thumb: rgb(255 255 255 / 8%);
+  --scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+  --background: #000;
+  --foreground: var(--neutral-100);
+  --card: color-mix(in srgb, var(--neutral-950) 97%, var(--white));
+  --popover: color-mix(in srgb, var(--neutral-950) 97%, var(--white));
+  --primary: oklch(0.571 0.21 264);
+  --secondary: rgb(255 255 255 / 3%);
+  --secondary-foreground: var(--neutral-100);
+  --muted: rgb(255 255 255 / 3%);
+  --muted-foreground: var(--neutral-400);
+  --accent: rgb(255 255 255 / 4%);
+  --accent-foreground: var(--neutral-100);
+  --message-surface: color-mix(in srgb, var(--neutral-950) 92%, var(--white));
+  --error: color-mix(in srgb, var(--red-500) 90%, var(--white));
+  --error-foreground: var(--red-400);
+  --border: rgb(255 255 255 / 8%);
+  --input: rgb(255 255 255 / 11%);
+  --info-foreground: var(--blue-400);
+  --success-foreground: var(--emerald-400);
+  --warning-foreground: var(--amber-400);
+  --pr-open: color-mix(in oklab, var(--emerald-300) 90%, transparent);
+  --pr-draft: color-mix(in oklab, var(--zinc-400) 80%, transparent);
+  --sidebar: var(--card);
+  --sidebar-row-hover: var(--accent);
+  --sidebar-row-active: var(--accent);
+  --sidebar-row-selected: var(--muted);
+}
+
+/* The app sidebar's own hierarchy (index.css [data-app-sidebar]). */
+[data-app-sidebar] {
+  --sidebar: var(--zinc-50);
+  --sidebar-foreground: var(--zinc-900);
+  --sidebar-muted-foreground: var(--zinc-500);
+  --sidebar-row-hover: var(--zinc-25);
+  --sidebar-row-active: var(--white);
+  --sidebar-row-selected: var(--white);
+  --sidebar-border: var(--zinc-200);
+}
+.dark [data-app-sidebar] {
+  --sidebar: #000;
+  --sidebar-foreground: #f1f3f7;
+  --sidebar-muted-foreground: #a3a3a3;
+  --sidebar-row-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
+  --sidebar-row-active: color-mix(in srgb, var(--foreground) 11%, transparent);
+  --sidebar-row-selected: color-mix(in srgb, var(--foreground) 7%, transparent);
+  --sidebar-border: rgb(255 255 255 / 8%);
+  --secondary-label: #8f8f8f;
+}
+
+/* Base. */
+*,
+::before,
+::after {
+  box-sizing: border-box;
+  border: 0 solid var(--border);
+  outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
+  outline-offset: -2px;
+}
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: var(--foreground);
+  background-color: var(--background);
+  background-image: var(--surface-grain);
+  background-size: 256px 256px;
+  overflow: hidden;
+}
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+  margin: 0;
+}
+button {
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+  font: inherit;
+}
+pre,
+code {
+  font-family: var(--font-mono);
+}
+.icon {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+.icon-3 {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+.icon-3-5 {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+.truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mono {
+  font-family: var(--font-mono);
+}
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Layout: a sidebar and the main pane (components/ui/sidebar.tsx). */
+.app {
+  display: flex;
+  height: 100dvh;
+  min-height: 0;
+}
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  background-color: var(--sidebar);
+  background-image: var(--surface-grain);
+  background-size: 256px 256px;
+  border-right: 1px solid var(--sidebar-border);
+  color: var(--sidebar-foreground);
+}
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: var(--topbar-height);
+  padding: 0 calc(var(--sidebar-content-inset) + var(--sidebar-row-content-inset));
+  flex-shrink: 0;
+}
+.brand {
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.sidebar-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.sidebar-group {
+  display: flex;
+  flex-direction: column;
+  padding: var(--sidebar-content-inset);
+}
+.sidebar-group + .sidebar-group {
+  padding-top: 0;
+}
+.sidebar-label {
+  display: flex;
+  align-items: center;
+  height: 1.75rem;
+  padding: 0 var(--sidebar-row-content-inset);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: color-mix(in oklab, var(--sidebar-muted-foreground) 80%, transparent);
+}
+.sidebar-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.menu-button {
+  display: flex;
+  width: 100%;
+  height: 2rem;
+  align-items: center;
+  gap: var(--sidebar-control-gap);
+  overflow: hidden;
+  padding: 0.375rem var(--sidebar-row-content-inset);
+  border-radius: var(--control-radius);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-align: left;
+  color: color-mix(in oklab, var(--sidebar-muted-foreground) 80%, transparent);
+  outline: none;
+}
+.menu-button > .icon {
+  color: color-mix(in srgb, var(--sidebar-muted-foreground) 85%, var(--sidebar));
+}
+.menu-button:hover {
+  background: var(--sidebar-row-hover);
+  color: var(--sidebar-foreground);
+}
+.menu-button:active {
+  background: var(--sidebar-row-active);
+}
+.menu-button:hover > .icon,
+.menu-button[aria-current="page"] > .icon {
+  color: var(--sidebar-foreground);
+}
+.menu-button[aria-current="page"] {
+  background: var(--sidebar-row-selected);
+  color: var(--sidebar-foreground);
+}
+:root:not(.dark) .menu-button[aria-current="page"] {
+  box-shadow: var(--shadow-xs-5);
+}
+.menu-button:focus-visible,
+.device-link:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+.menu-button .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu-count {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--sidebar-muted-foreground);
+}
+/* A device in the sidebar, like a project folder header (sidebar/SidebarProjectFolderHeader.tsx). */
+.device-link {
+  display: flex;
+  height: 2rem;
+  width: 100%;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0 var(--sidebar-row-content-inset);
+  border-radius: var(--control-radius);
+  text-align: left;
+  outline: none;
+}
+.device-link:hover {
+  background: var(--sidebar-row-hover);
+}
+.device-link .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: color-mix(in oklab, var(--sidebar-foreground) 90%, transparent);
+}
+.device-link.stale .label {
+  color: var(--sidebar-muted-foreground);
+}
+.device-link .icon {
+  color: color-mix(in srgb, var(--sidebar-muted-foreground) 85%, var(--sidebar));
+}
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem calc(var(--sidebar-content-inset) + var(--sidebar-row-content-inset));
+  font-size: 0.75rem;
+  color: var(--sidebar-muted-foreground);
+  flex-shrink: 0;
+}
+
+.main {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  height: var(--topbar-height);
+  min-height: var(--topbar-height);
+  padding: 0 1.25rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+}
+.topbar h1 {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.topbar-meta {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.topbar-brand {
+  display: none;
+}
+.content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.page {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 1.25rem 1.25rem 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+/* The connection dot (ConnectionStatusDot.tsx). */
+.dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: color-mix(in oklab, var(--muted-foreground) 40%, transparent);
+}
+.dot.ok {
+  background: var(--success);
+}
+.dot.warn {
+  background: var(--warning);
+}
+.dot.bad {
+  background: var(--destructive);
+}
+.dot-sm {
+  width: 0.375rem;
+  height: 0.375rem;
+}
+
+/* Sections and grouped rows (settings/settingsLayout.tsx, settings/SettingsGroup.tsx). */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  scroll-margin-top: 1rem;
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 1.75rem;
+  padding: 0 1rem;
+}
+.section-title {
+  font-size: 1rem;
+  line-height: 1.5rem;
+  font-weight: 600;
+}
+.section-head .icon {
+  color: var(--muted-foreground);
+}
+.section-aside {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.group {
+  border-radius: var(--radius-xl);
+  border: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+  background: color-mix(in oklab, var(--card) 40%, transparent);
+  box-shadow: var(--shadow-xs-5);
+  overflow: hidden;
+}
+.group > * + * {
+  border-top: 1px solid color-mix(in oklab, var(--border) 50%, transparent);
+}
+.row {
+  padding: 0.75rem 1rem;
+}
+.row-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2rem;
+}
+.row-title {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.row-description {
+  margin-top: 0.25rem;
+  max-width: 42rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.row-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.row-empty {
+  padding: 0.75rem 1rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.row-error {
+  margin-top: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--destructive-foreground);
+}
+
+/* Badges (components/ui/badge.tsx, size default). */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  height: 1.125rem;
+  min-width: 1.125rem;
+  padding: 0 3px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  line-height: 1;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.badge-secondary {
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+}
+:root:not(.dark) .badge-secondary {
+  background: var(--accent);
+}
+.badge-outline {
+  border-color: var(--input);
+  background: var(--background);
+  color: var(--foreground);
+}
+.dark .badge-outline {
+  background: color-mix(in oklab, var(--input) 32%, transparent);
+}
+.badge-success {
+  background: color-mix(in oklab, var(--success) 8%, transparent);
+  color: var(--success-foreground);
+}
+.badge-warning {
+  background: color-mix(in oklab, var(--warning) 8%, transparent);
+  color: var(--warning-foreground);
+}
+.dark .badge-success {
+  background: color-mix(in oklab, var(--success) 16%, transparent);
+}
+.dark .badge-warning {
+  background: color-mix(in oklab, var(--warning) 16%, transparent);
+}
+
+/* Buttons (components/ui/button.tsx, outline and ghost, sizes xs and sm). */
+.btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  flex-shrink: 0;
+  height: 1.75rem;
+  padding: 0 calc(0.625rem - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--control-radius);
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  outline: none;
+  transition:
+    box-shadow 0.15s,
+    scale 0.15s;
+}
+.btn:active:not(:disabled) {
+  scale: 0.97;
+}
+.btn:focus-visible {
+  box-shadow:
+    inset 0 0 0 2px var(--ring),
+    0 0 0 1px var(--background);
+}
+.btn:disabled {
+  opacity: 0.64;
+  pointer-events: none;
+}
+.btn-xs {
+  height: 1.5rem;
+  gap: 0.25rem;
+  padding: 0 calc(0.5rem - 1px);
+  font-size: 0.75rem;
+}
+.btn-outline {
+  border-color: var(--input);
+  background: var(--popover);
+  background-clip: padding-box;
+  color: var(--foreground);
+  box-shadow: var(--shadow-xs-5);
+}
+.btn-outline::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: calc(var(--control-radius) - 1px);
+  box-shadow: 0 1px rgb(0 0 0 / 4%);
+  pointer-events: none;
+}
+.btn-outline:hover {
+  background: color-mix(in oklab, var(--accent) 50%, var(--popover));
+}
+.dark .btn-outline {
+  background: color-mix(in oklab, var(--input) 32%, transparent);
+  background-clip: border-box;
+}
+.dark .btn-outline::before {
+  box-shadow: 0 -1px rgb(255 255 255 / 6%);
+}
+.dark .btn-outline:hover {
+  background: color-mix(in oklab, var(--input) 64%, transparent);
+}
+.btn-ghost {
+  color: var(--muted-foreground);
+}
+.btn-ghost:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+/* Segmented control (components/ui/toggle-group.tsx, variant segmented). */
+.segmented {
+  display: inline-flex;
+  gap: 0.125rem;
+  padding: 0.125rem;
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--input) 40%, transparent);
+}
+.segmented button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.5rem;
+  padding: 0 0.625rem;
+  border-radius: var(--radius-md);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  outline: none;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+}
+.segmented button:hover {
+  background: color-mix(in oklab, var(--background) 55%, transparent);
+  color: var(--foreground);
+}
+.segmented button[aria-pressed="true"] {
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: var(--shadow-xs-10);
+}
+.dark .segmented button:hover {
+  background: color-mix(in oklab, var(--input) 32%, transparent);
+}
+.dark .segmented button[aria-pressed="true"] {
+  background: color-mix(in oklab, var(--input) 72%, transparent);
+}
+.segmented button:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+
+/* Inputs and selects (components/ui/input.tsx, select.tsx). */
+.field {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  background: var(--background);
+  background-clip: padding-box;
+  box-shadow: var(--shadow-xs-5);
+  font-size: 0.875rem;
+  color: var(--foreground);
+  transition: box-shadow 0.15s;
+}
+.dark .field {
+  background: color-mix(in oklab, var(--input) 32%, transparent);
+  background-clip: border-box;
+}
+.field:focus-within {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 3px color-mix(in oklab, var(--ring) 24%, transparent);
+}
+.field input,
+.field select {
+  height: 1.625rem;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font-size: 0.75rem;
+}
+.field input {
+  width: 3rem;
+  padding: 0 calc(0.625rem - 1px);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.field input::-webkit-inner-spin-button,
+.field input::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+.field input::placeholder {
+  color: var(--placeholder);
+}
+.field select {
+  appearance: none;
+  padding: 0 1.75rem 0 calc(0.625rem - 1px);
+  cursor: pointer;
+}
+.field select option {
+  background: var(--popover);
+  color: var(--foreground);
+}
+.field .chevron {
+  position: absolute;
+  right: 0.5rem;
+  width: 0.875rem;
+  height: 0.875rem;
+  opacity: 0.7;
+  pointer-events: none;
+  transform: rotate(90deg);
+}
+.field-suffix {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+/* Devices and sessions. */
+.device-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 1.75rem;
+  padding: 0 1rem;
+}
+.device-head .icon {
+  color: var(--muted-foreground);
+}
+.device-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.device-id {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.device-state {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.session {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.625rem 1rem 0.6875rem;
+  cursor: pointer;
+  outline: none;
+  transition: background-color 0.1s;
+}
+.session:hover {
+  background: color-mix(in oklab, var(--accent) 60%, transparent);
+}
+.session:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+.session-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.session-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.session-active {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--secondary-label);
+  font-variant-numeric: tabular-nums;
+}
+.session-doing {
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  color: color-mix(in oklab, var(--foreground) 80%, transparent);
+  padding-left: 1rem;
+}
+.session-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 0.875rem;
+  row-gap: 0.125rem;
+  min-width: 0;
+  padding-left: 1rem;
+  font-size: 0.75rem;
+  color: var(--secondary-label);
+}
+.meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  min-width: 0;
+  max-width: 100%;
+}
+.meta-item .icon {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+.session.unreachable .session-name,
+.session.unreachable .session-doing {
+  color: var(--muted-foreground);
+}
+.pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+.pr:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.pr:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.pr-open {
+  color: var(--pr-open);
+}
+.pr-draft {
+  color: var(--pr-draft);
+}
+
+/* Messages. */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 1rem;
+  margin-bottom: -0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 1.5rem;
+  padding: 0 0.25rem 0 0.5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--input);
+  background: var(--background);
+  color: var(--foreground);
+  font-weight: 500;
+}
+.dark .chip {
+  background: color-mix(in oklab, var(--input) 32%, transparent);
+}
+.chip button {
+  display: inline-flex;
+  width: 1rem;
+  height: 1rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+  line-height: 1;
+}
+.chip button:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+/* One grid for the whole list, so senders, recipients and subjects line up in columns. The
+   first and last tracks are the rows' side padding, which a subgrid can't take as padding. */
+.msg-list {
+  display: grid;
+  grid-template-columns:
+    0.5rem 0.75rem fit-content(10rem) 0.75rem fit-content(11rem) minmax(0, 1fr)
+    auto 0.5rem;
+  column-gap: 0.5rem;
+}
+.msg {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+}
+.msg-head {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  padding: 0.625rem 0;
+  text-align: left;
+  outline: none;
+  transition: background-color 0.1s;
+}
+.msg-head:hover {
+  background: color-mix(in oklab, var(--accent) 60%, transparent);
+}
+.msg-head:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+.msg-chev {
+  grid-column: 2;
+  width: 0.75rem;
+  height: 0.75rem;
+  color: var(--muted-foreground);
+  transition: transform 0.15s;
+}
+.msg[aria-expanded="true"] .msg-chev {
+  transform: rotate(90deg);
+}
+.msg-from {
+  grid-column: 3;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+.msg-head .arrow {
+  grid-column: 4;
+  width: 0.75rem;
+  height: 0.75rem;
+  color: var(--muted-foreground);
+}
+.msg-to {
+  grid-column: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  font-size: 0.8125rem;
+  color: color-mix(in oklab, var(--foreground) 80%, transparent);
+}
+.msg-to .icon {
+  width: 0.75rem;
+  height: 0.75rem;
+  color: var(--muted-foreground);
+}
+.msg-subject {
+  grid-column: 6;
+  min-width: 0;
+  margin-left: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in oklab, var(--foreground) 85%, transparent);
+}
+.msg-time {
+  grid-column: 7;
+  justify-self: end;
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--secondary-label);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.msg-detail,
+.msg-body {
+  grid-column: 3 / 8;
+}
+.msg-detail {
+  margin-top: -0.25rem;
+  margin-bottom: 0.625rem;
+  font-size: 0.75rem;
+  color: var(--secondary-label);
+}
+.msg-body {
+  margin-bottom: 0.875rem;
+  padding: 0.625rem 0.875rem;
+  max-height: 28rem;
+  overflow: auto;
+  border-radius: var(--radius-lg);
+  background: var(--message-surface);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.msg-modes {
+  margin-left: auto;
+}
+
+/* Conversations: a list and an open conversation, filling the pane and scrolling apart. */
+.content-chat {
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+.page.chat-page {
+  max-width: none;
+  height: 100%;
+  padding: 0;
+  gap: 0;
+}
+.chat-page .filter-bar {
+  flex-shrink: 0;
+  min-height: 2.75rem;
+  margin-bottom: 0;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+}
+.chat {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 20rem minmax(0, 1fr);
+}
+.chat-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.5rem;
+  border-right: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+}
+.chat-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0.5rem;
+  border-radius: var(--radius-lg);
+  text-align: left;
+  outline: none;
+  transition: background-color 0.1s;
+}
+.chat-row:hover {
+  background: color-mix(in oklab, var(--accent) 60%, transparent);
+}
+.chat-row[aria-current="true"] {
+  background: var(--accent);
+}
+.chat-row:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+.chat-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.chat-row-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.chat-row-title {
+  flex: 1;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+.chat-row-time {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  color: var(--secondary-label);
+  font-variant-numeric: tabular-nums;
+}
+.chat-row-preview {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.avatar {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  background: color-mix(in oklab, currentColor 16%, transparent);
+}
+.avatar-0 {
+  color: var(--info-foreground);
+}
+.avatar-1 {
+  color: var(--success-foreground);
+}
+.avatar-2 {
+  color: var(--warning-foreground);
+}
+.avatar-3 {
+  color: var(--error-foreground);
+}
+.avatar-4 {
+  color: var(--foreground);
+}
+.avatar-gap {
+  flex-shrink: 0;
+  width: 2rem;
+}
+/* Two faces in the room one takes. */
+.avatar-pair {
+  position: relative;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+}
+.avatar-pair .avatar {
+  position: absolute;
+  width: 1.25rem;
+  height: 1.25rem;
+  font-size: 0.625rem;
+  background: color-mix(in oklab, currentColor 16%, var(--background));
+}
+.avatar-pair .avatar:first-child {
+  top: 0;
+  left: 0;
+}
+.avatar-pair .avatar:last-child {
+  right: 0;
+  bottom: 0;
+  box-shadow: 0 0 0 2px var(--background);
+}
+.chat-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.chat-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+}
+.chat-back {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--radius-md);
+  color: var(--muted-foreground);
+}
+.chat-head-text {
+  min-width: 0;
+}
+.chat-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.chat-about {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.chat-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.75rem 0 1.5rem;
+}
+.chat-day {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1rem 1rem 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--secondary-label);
+}
+.chat-day::before,
+.chat-day::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+}
+.chat-msg {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.125rem 1rem;
+}
+.chat-msg:hover {
+  background: color-mix(in oklab, var(--accent) 40%, transparent);
+}
+.chat-msg + .chat-msg {
+  margin-top: 0.5rem;
+}
+.chat-msg + .chat-msg-first {
+  margin-top: 0.875rem;
+}
+.chat-msg-main {
+  flex: 1;
+  min-width: 0;
+}
+.chat-msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.chat-msg-from {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.chat-msg-time {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  color: var(--secondary-label);
+  font-variant-numeric: tabular-nums;
+}
+.chat-msg-subject {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.chat-msg-body {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: color-mix(in oklab, var(--foreground) 85%, transparent);
+}
+
+/* Mutes. */
+.mute-line {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  font-size: 0.875rem;
+}
+.mute-line .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--muted-foreground);
+}
+.mute-line .verb {
+  color: var(--muted-foreground);
+}
+
+/* A page with nothing to show: a line, centered, no story. */
+.blank {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 1rem;
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+}
+.gate {
+  display: flex;
+  height: 100dvh;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  text-align: center;
+  padding: 1rem;
+}
+.gate-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.gate-line {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+/* Mobile: the sidebar's nav moves into the top bar (T3 turns it into a sheet). */
+.mobile-nav {
+  display: none;
+}
+@media (max-width: 767px) {
+  .sidebar {
+    display: none;
+  }
+  .topbar {
+    padding: 0 0.75rem;
+    gap: 0.5rem;
+  }
+  .topbar h1 {
+    display: none;
+  }
+  .topbar-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .mobile-nav {
+    display: inline-flex;
+    margin-left: auto;
+  }
+  .topbar-meta {
+    display: none;
+  }
+  .page {
+    padding: 1rem 0.75rem 3rem;
+    gap: 1.5rem;
+  }
+  .row,
+  .session,
+  .msg-head {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+  .section-head,
+  .device-head,
+  .filter-bar {
+    padding: 0 0.75rem;
+  }
+  .row-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem;
+  }
+  .row-control {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .row-grid.keep-inline {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .msg-list,
+  .msg {
+    display: block;
+  }
+  .msg-head {
+    width: 100%;
+    padding: 0.625rem 0.75rem;
+    grid-template-columns: 0.75rem minmax(0, max-content) 0.75rem minmax(0, 1fr) auto;
+    grid-template-areas:
+      "chev from arrow to time"
+      ". subject subject subject subject";
+    column-gap: 0.375rem;
+    row-gap: 0.125rem;
+  }
+  .msg-chev {
+    grid-area: chev;
+  }
+  .msg-from {
+    grid-area: from;
+  }
+  .msg-head .arrow {
+    grid-area: arrow;
+  }
+  .msg-to {
+    grid-area: to;
+  }
+  .msg-subject {
+    grid-area: subject;
+    margin-left: 0;
+  }
+  .msg-time {
+    grid-area: time;
+  }
+  .msg-body,
+  .msg-detail {
+    margin-left: 1.875rem;
+    margin-right: 0.75rem;
+  }
+  .device-id {
+    display: none;
+  }
+  .page.chat-page {
+    padding: 0;
+  }
+  .chat {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .chat-list {
+    border-right: 0;
+  }
+  .chat-open .chat-list {
+    display: none;
+  }
+  .chat-back {
+    display: inline-flex;
+  }
+  .chat-head {
+    padding: 0.5rem 0.75rem;
+  }
+  .chat-msg {
+    padding: 0.125rem 0.75rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
