@@ -9,12 +9,12 @@ import (
 )
 
 // A T3 thread idle for half an hour loses its MCP server, and with it its session; its route is
-// kept so that a message can still wake it. That is of no use if the daemon that would deliver the
+// kept so that a message can still wake it. That is of no use if the daemon that would hand over the
 // message has gone, which it did ten minutes after the last session (#87, seen live on 2026-10-30).
 
 // A daemon whose only session was a T3 thread that stopped stays up past the idle time, and
-// delivers a message that comes then, through `t3`.
-func TestDaemonWithAThreadToWakeStaysUpAndDelivers(t *testing.T) {
+// hands over a message that comes then, through `t3`.
+func TestDaemonWithAThreadToWakeStaysUpAndHandsOver(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a := newDevice(t, remote)
@@ -27,7 +27,7 @@ func TestDaemonWithAThreadToWakeStaysUpAndDelivers(t *testing.T) {
 
 	holds(t, "the daemon up long after the idle time", 4*time.Second, func() bool { return !b.exited() })
 	a.send("aaaaaa", bob, "wake up", "someone wrote")
-	eventually(t, "the delivery to the sleeping thread", func() bool { return len(calls()) == 1 })
+	eventually(t, "the handoff to the sleeping thread", func() bool { return len(calls()) == 1 })
 	if got := strings.Join(calls()[0].Args, " "); got != "thread send thread-bob -" {
 		t.Errorf("t3 was run as %q, want thread send thread-bob -", got)
 	}

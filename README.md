@@ -70,7 +70,7 @@ Once joined, an agent has five tools:
   reach it, and its recent messages.
 - `status`: set the line others see next to your name.
 - `send`: message one session by name, every session on a device, or everyone.
-- `inbox`: messages that couldn't be delivered as a turn.
+- `inbox`: messages that couldn't be handed over as a turn.
 
 A message reaches a session in T3 Code (Claude Code, Codex, OpenCode or Muse, tried; Pi and Grok
 expected to), or a Claude Code session in a terminal, as a turn of its own, and starts an idle T3

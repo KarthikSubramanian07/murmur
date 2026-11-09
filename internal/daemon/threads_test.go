@@ -67,17 +67,17 @@ func TestWithinLeavesALongIdleThreadAlone(t *testing.T) {
 
 	a.send("aaaaaa", bob, "not now", "")
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "not now") })
-	holds(t, "no delivery to a thread idle 10 minutes", time.Second, func() bool { return len(calls()) == 0 })
+	holds(t, "no handoff to a thread idle 10 minutes", time.Second, func() bool { return len(calls()) == 0 })
 
 	threads.set("thread-bob", t3db.State{Busy: true})
-	eventually(t, "delivery once the thread is at work", func() bool { return len(calls()) == 1 })
+	eventually(t, "handoff once the thread is at work", func() bool { return len(calls()) == 1 })
 	if !strings.Contains(calls()[0].Stdin, "not now") {
 		t.Errorf("the delivered turn: %q", calls()[0].Stdin)
 	}
 
 	threads.set("thread-bob", t3db.State{LastRun: time.Now()})
 	a.send("aaaaaa", bob, "just now", "")
-	eventually(t, "delivery to a thread idle a moment", func() bool { return len(calls()) == 2 })
+	eventually(t, "handoff to a thread idle a moment", func() bool { return len(calls()) == 2 })
 }
 
 // A settled thread is offline: it leaves the other device's who, a message to it is refused, and
@@ -114,7 +114,7 @@ func TestSettledThreadIsOfflineAndRefusesMessages(t *testing.T) {
 	if resp := a.send("aaaaaa", bobName, "welcome back", ""); !resp.OK {
 		t.Fatalf("a send once unsettled: %q", resp.Error)
 	}
-	eventually(t, "delivery once unsettled", func() bool { return len(calls()) == 1 })
+	eventually(t, "handoff once unsettled", func() bool { return len(calls()) == 1 })
 }
 
 // A delegate is off the mesh (#188): another device stops listing it once its thread is read, a

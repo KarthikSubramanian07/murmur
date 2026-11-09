@@ -1,7 +1,7 @@
 # Vision: agents that find each other across a hackathon team
 
 Status: V1 works, in Go (2026-10-26); the next version, with names, a web page and wake-ups, is
-being built; the web page, an agent joining a repo by itself, and delivery of a message as a turn of
+being built; the web page, an agent joining a repo by itself, and a message arriving as a turn of
 the receiving session are in (2026-10-29). On 2026-10-30 a Claude thread and a Codex thread in T3
 Code, in two clones, each joined after their user said yes and then talked with nobody typing: 15 s
 from question to answer. The product is Murmur, and its command `mur` (Tyler, 2026-11-01); until
@@ -157,16 +157,16 @@ unread notices, writing nothing to the bus. Only when the grace runs out does th
 restarts, and given back if the session returns. It holds only what its daemon received: a daemon
 exits 10 minutes after its last session or open page, unless a T3 thread it could still wake is
 waiting ("A thread that is idle", below), and one back after longer than that skips what it
-missed, except for the sessions whose inbox is kept (2026-10-30, #30): to a session stopped
-within the 24 hours it delivers what was sent after the session stopped (by the sender's clock,
+missed, except for the sessions whose inbox is kept (2026-10-30, #30): for a session stopped
+within the 24 hours it queues what was sent after the session stopped (by the sender's clock,
 with a minute's allowance), which includes a message to the whole device or to everyone, as the
 live ones do and as the shorter outage's catch-up does. Before then a laptop shut overnight lost
 every message sent to its stopped sessions. A first start has no stopped sessions and skips all of
 it. A message is addressed on the bus to
 `device/session`, which a session's name stands for (see Session names); presence carries enough
 description (name, agent, branch, what it is doing) for an agent to choose a recipient. Nothing sent before a session first started is replayed to it. A
-daemon back after less than 10 minutes down delivers what it missed to the sessions that
-reconnect within 30 seconds of its start, and to sessions stopped within the 24 hours.
+daemon back after less than 10 minutes down queues what it missed for the sessions that
+reconnect within 30 seconds of its start, and for sessions stopped within the 24 hours.
 
 Sessions reach the daemon over loopback TCP, on a random port written with a random token to
 `.git/murmur/daemon.json`. A daemon with no sessions, no open page (see The page for humans) and no
@@ -175,7 +175,7 @@ next sync rather than when it goes stale.
 
 A manual upgrade replaces the binary and not the daemon already started from it, which would go on
 answering ping and refuse whatever came after the version it was built from (the route request
-and delivering a turn, #57, were the first). So the daemon reports a protocol number
+and handing a message over as a turn, #57, were the first). So the daemon reports a protocol number
 (`proto.Protocol`, 1 as of 2026-10-30; a daemon from before the number reports none, read as 0) in
 its ping reply, and a client that finds a lower number than its own stops that daemon and starts its
 own: `mur join`, `mur ui` and an MCP server registering a session do, since each may start a
@@ -296,7 +296,7 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   daemon is per clone, not per working tree, so it needs only the consent: it checks at start
   (after its first sync, which takes a while), on every request but `stop` and `ping` (which reveal
   nothing, and are how a leave finds it), again in a registration after it has resolved the branch,
-  before each push of its own (presence, the names registry) and before each delivery of a message
+  before each push of its own (presence, the names registry) and before each handoff of a message
   as a turn (the one thing it does to the user's other programs, so a message that comes in by sync
   after a leave waits in the inbox, and isn't counted as a failure), and once a second, when it stops
   itself if the user has left. The last two are what end a daemon that was still starting when
@@ -352,7 +352,7 @@ since it wasn't installed). The details, and where each came from, are in the co
   characters. A T3 instance with no directory of its own gets the user's default, not the directory
   of the instance that ran join. A session of the shared OpenCode server is registered at its first call and dropped
   after 30 minutes without one, as a stopped session is; its T3 route outlives that as any does.
-- **Delivery.** Inside T3 the existing `t3 thread send` delivery needed nothing new: an OpenCode and
+- **Delivery.** Inside T3 the existing `t3 thread send` handoff needed nothing new: an OpenCode and
   a Muse thread each took a message as a turn and answered it with `send`, nobody typing
   (2026-11-01). Outside T3 none of the four has a way in that Murmur uses yet (OpenCode has an HTTP
   API and plugins, Pi extensions can start a turn, Muse's session messaging isn't on Windows), so a
@@ -617,7 +617,7 @@ Tyler's decisions, 2026-10-28 (#20). Every session has a name of two words, an a
 noun (`quiet-otter`), unique in the repo and never reused, not even after its session ends. The
 name is the address: `send` takes it, `who` shows it, and notices and `inbox` name the sender.
 `device/session` still works. It is what a message carries on the bus, so the event format didn't
-change and a daemon that knows no names delivers by it all the same.
+change and a daemon that knows no names routes by it all the same.
 
 - **Taking a name.** A daemon picks a random name nobody has, commits it on `refs/murmur/names` (one
   commit per record: the name, the device, and Murmur's session ID, or no session for a name set
@@ -718,13 +718,13 @@ change and a daemon that knows no names delivers by it all the same.
   them (2026-10-29).
   - *Sent by name on the name's own device,* a message goes to the name's last holder there,
     running or not, if the name is still the last that session took. Otherwise the registry's
-    address goes on the bus as it would from any device, and is forwarded on delivery, so no
+    address goes on the bus as it would from any device, and is forwarded where it is queued, so no
     message is forwarded twice.
   - *The registry's own session.* A message is addressed on the bus, and the address for a name is
     the session the registry has it down for. Once that session has left the name, a message to the
     name reaches it, as A name a session has left says: running, under its new name; stopped, in
     its kept inbox, or forwarded by the name it last had to the session holding that one. The name
-    sent to isn't on message events, so delivery can't tell; putting it there is a bus format
+    sent to isn't on message events, so the receiving daemon can't tell; putting it there is a bus format
     change, Tyler's to decide (2026-10-29).
 - **V1 daemons.** They don't read the registry, and their presence has no names. Their sessions
   show without one and are reached at `device/session`, and they reach sessions named here the
@@ -740,14 +740,37 @@ the agent happens to call a tool. Tyler's decision (2026-10-29, #57), which repl
 delivery: **a message from another agent reaches the receiving session as a turn of its own**, the
 way a message between two T3 threads does. Murmur's core is two agents talking with nobody typing.
 
-The daemon delivers at once, when a message arrives for a session it can reach, unless the hook
-has the session at work (see "A session at work", below):
+**What "delivered" means.** Tyler's rule (2026-11-07, #187): a message is *delivered* only once it
+has reached the agent's context. Before that it is *queued*, wherever it waits: in the recipient
+daemon's inbox, in a T3 thread's queue behind a running turn, or for the hook's next run. Delivered
+is what a sender acts on, so a looser word would let a sender believe an agent knows something it
+hasn't seen, and may not see for hours if it is idle and nothing wakes it (#25). The words, in the
+order a message meets them:
 
-| Where the session runs | Delivered by | Starts a turn in an idle session |
+- *Queued:* the recipient's daemon has put it in the session's inbox. The daemon knows.
+- *Handed over:* the daemon has passed it to the session's client, by `t3 thread send` or the
+  messaging socket. Still queued, in the client now, and out of the daemon's inbox.
+- *Delivered:* it is in the agent's context. Where that moment is, by route:
+
+| Route | Delivered when | Can Murmur see it |
+|---|---|---|
+| `t3 thread send` | the turn carrying it starts: at once in an idle thread, after the running turn in a busy one (a busy one only where the hook doesn't run, #202) | No. The daemon sees `t3` accept the message, not the turn start; T3's database would show it (`orchestration_v2_projection_messages`), but those tables are T3's own and may change |
+| The messaging socket (Claude Code outside T3) | Claude Code takes it as a turn | No: the socket answers nothing |
+| The hook's notice (Claude Code) | the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt. That delivers the sender and subject, or the whole message where the page's busy setting says so (#204); otherwise the body is delivered by `inbox` | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
+| `inbox` | the tool's result returns to the agent | Partly: the daemon sees the messages leave in its answer, not the answer reach the agent through MCP |
+
+Nothing reports a message's state to its sender yet. Whatever does (#26, `who`, `lookup`, the web
+page) shows queued, handed over and delivered as different states, and a handed-over message as
+delivered only once something can see the turn start.
+
+The daemon hands a message over at once, when it arrives for a session it can reach, unless the
+hook has the session at work (see "A session at work", below):
+
+| Where the session runs | Handed over by | Starts a turn in an idle session |
 |---|---|---|
 | T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing. A busy session the hook runs in (Claude Code) is not handed the message: the hook tells it | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
 | Claude Code outside T3 | the session's messaging socket | Unverified: a message Murmur's code wrote to a session's socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle one has not been tried |
-| Codex, OpenCode, Muse, Pi or Grok outside T3, or any delivery that fails | the hook's notice where the hook runs (Claude Code), and `inbox` | No |
+| Codex, OpenCode, Muse, Pi or Grok outside T3, or any handoff that fails | the hook's notice where the hook runs (Claude Code), and `inbox` | No |
 
 What the agent reads:
 
@@ -762,15 +785,16 @@ Reply with Murmur's `send` to quiet-otter if a reply is needed.
 The first and last lines are Murmur's: the first says that a teammate's agent is speaking, not the
 user (the job the old "envelope" did, so that the agent treats a message as information rather
 than as the user's own typing), and the last says how to answer and that answering is optional.
-The sender's text in between is delivered as written, neither quoted nor wrapped: teammates'
+The sender's text in between is passed on as written, neither quoted nor wrapped: teammates'
 agents are trusted in Murmur's model, and a message that reads as a request is meant to be acted on.
 A body past the limit is cut, as in `inbox`.
 
-- **Marked read.** A delivered message leaves the receiving session's inbox, so neither the hook
-  nor `inbox` shows it again; the page and the daemon's log keep it as history. A message that
-  could not be delivered stays in the inbox and is announced by the hook as before. The hook
-  leaves alone a message that is waiting its turn to be delivered, behind the one being delivered:
-  announced by a notice it would never become a turn.
+- **Out of the inbox when handed over.** A message handed over leaves the receiving session's
+  inbox, so neither the hook nor `inbox` shows it again: the client has it now, and delivers it as
+  a turn. The page and the daemon's log keep it as history. A message that could not be handed over
+  stays in the inbox and is announced by the hook as before. The hook leaves alone a message that
+  is waiting its turn to be handed over, behind the one being handed over: announced by a notice it
+  would never become a turn.
 - **A session at work (#202).** Until 2026-11-08 a message for a busy T3 thread went to
   `t3 thread send` like any other, and T3 queued it behind the running turn. The agent heard
   nothing until the turn ended, Murmur couldn't tell whether T3 ever played the queued turn, and
@@ -779,9 +803,9 @@ A body past the limit is cut, as in `inbox`.
   not observed); a person can also delete one in T3's window. Tyler's decision (2026-11-08): where
   Murmur's hook runs, a busy session isn't handed the message. The hook tells it after its next
   tool call, sender and subject with the count unread, and the agent reads the body with `inbox`
-  when it chooses. What it was told of and hasn't read when the turn ends goes in as a turn then,
+  when it chooses. What it was told of and hasn't read when the turn ends is handed over as a turn then,
   however long the turn took, so nothing waits for good. A message that comes during a turn with
-  no tool call after it goes in at the end as well.
+  no tool call after it is handed over at the end as well.
   - *Busy and idle come from the hook*: a prompt or a tool call means busy, and the `Stop` hook,
     which `mur join` installs since this change, means the turn ended. "No tool call lately" would
     not do, as one long command looks idle. A turn the user interrupts fires no `Stop`; in T3 the
@@ -798,7 +822,7 @@ A body past the limit is cut, as in `inbox`.
     an interrupted session waits for the user to come back. An update doesn't run `mur join`
     again, so a clone joined before this change has no `Stop` hook until its user does; outside T3
     a session is held back only once the daemon has seen a `Stop` from it, and until then a
-    message goes in as a turn, as before.
+    message is handed over as a turn, as before.
   - *Subject or whole message (#204).* What the hook tells a busy session is the page's busy
     setting, for the device or for one session, beside the wake setting (Tyler, 2026-11-08).
     "Subject", the default, is the line above. "Whole message" is the message as its turn would
@@ -858,7 +882,7 @@ A body past the limit is cut, as in `inbox`.
   token and the socket's address stay on the device: never on the bus, the page or the log. When
   T3 restarts a thread's MCP server, or the connection is made again, the new session has the
   thread and the old one, in its grace or stopped, loses its route: a message for everyone is
-  delivered to the thread once, and a session's own broadcast doesn't come back to it as a turn.
+  handed to the thread once, and a session's own broadcast doesn't come back to it as a turn.
   What the old session had unread goes to the new one, which now has the way in, in the order the
   messages arrived, behind any that was already on its way in; it leaves behind what the new
   session sent itself and what came while it was running and was for it too, as it had its own copy
@@ -903,12 +927,12 @@ A body past the limit is cut, as in `inbox`.
   waiting, and a sleeping thread wakes up to 30 s later than a working one would. It still pushes its presence every 2 minutes (about 720 pushes a day), which tells others
   the device is there. Claude Code outside T3 has nothing like it: its messaging socket dies with
   the session. `mur join --leave` and `mur stop` end the daemon at once.
-- **When a message isn't delivered.** A failed delivery is left to the hook's notice, and the log
+- **When a handoff fails.** A failed handoff is left to the hook's notice, and the log
   says why, once per session. It is not tried again, except when it plainly never started (no `t3`
   command to run, no socket to connect to), which is tried once more after a pause (2 s). Any other
   failure may have come after T3 took the message: `t3 thread send` has no idempotency key (the
   MCP tool `t3_thread_send` has `clientRequestId`, the command line doesn't), and the messaging
-  socket answers nothing, so a second call would deliver the message twice, as two turns. The cost
+  socket answers nothing, so a second call could hand the message over twice, as two turns. The cost
   is that a failure that was only a failure (T3 starting up, say) gets a notice and no second try.
   The mark that a message was handed over ("attempted", in `state.json`) is saved before the
   handoff, not after, so it holds when the daemon stops in the middle of the call or right after a
@@ -916,31 +940,31 @@ A body past the limit is cut, as in `inbox`.
   notice, where it would otherwise have sent the turn a second time (#82). The mark comes off only
   when the call provably went nowhere, as above (that includes a `t3` call cancelled before it could
   start). A mark that can't be saved stops the handoff: the message is a notice, as after any failed
-  delivery. The save is a write to the file, which a power cut can still lose. A crash between the
+  handoff. The save is a write to the file, which a power cut can still lose. A crash between the
   save and the handoff leaves the mark on a message that was never sent, which is the safe way
   round: it is a notice, not a repeat.
   The other safe way is to look in T3's database for the message before trying again
   (`orchestration_v2_projection_messages`, by thread and text, or `t3 thread show --json`); it
   would keep the second try, and it relies on tables that are T3's own and may change in any
-  update, so it wasn't done. Nothing is delivered for a user who has left either (see Joining a
+  update, so it wasn't done. Nothing is handed over for a user who has left either (see Joining a
   repo). A message that waited more
   than 15 minutes (T3 closed, the session away) is not sprung on the agent as a turn: it stays a
   notice. The 15 minutes count from when the daemon puts the message in the inbox, so one read
   after a long outage (2026-10-30, #30) is young and wakes its thread.
   The page's wake setting (#22, #25), for the device or for one session, decides the rest.
-  "Never" keeps the notice. "Always" delivers at once. "Within N minutes", the default with N = 3,
-  delivers only to a session that is busy or was last at work no more than N minutes ago; one idle
-  longer gets the notice, and the message goes in as a turn after all if the session is at work
+  "Never" keeps the notice. "Always" hands over at once. "Within N minutes", the default with N = 3,
+  hands over only to a session that is busy or was last at work no more than N minutes ago; one idle
+  longer gets the notice, and the message is handed over as a turn after all if the session is at work
   again while it is still young enough. The reason for the limit: a session idle that briefly
   still has its prompt cache, and a turn started after the cache has gone reads the whole
-  conversation again at full price. Until 2026-11-07 "within" delivered as "always" did, which
+  conversation again at full price. Until 2026-11-07 "within" handed over as "always" did, which
   Tyler found out from the page; the minutes were saved and nothing read them. For a session in
   T3, "at work" comes from T3's database: busy while a run of its thread is queued or running,
   else idle since its latest run ended (`orchestration_v2_projection_runs`). Any other session, or
   one whose thread hasn't been read yet, goes by its start, its last request or tool call, and,
-  stopped, when it stopped; a message just delivered as a turn counts too. The database is read
+  stopped, when it stopped; a message just handed over as a turn counts too. The database is read
   every 5 s, so a decision can be that old. A daemon that starts looks at the messages its
-  inboxes kept, and delivers those that are still young enough and may be.
+  inboxes kept, and hands over those that are still young enough and may be.
 - **Settled T3 threads are offline** (Tyler, 2026-11-07, #189). A thread T3 shows as settled
   (`settledOverride` in the thread's payload), archived or deleted leaves presence, so `who`,
   `lookup` and the page show it gone; its device lists it in presence's `offline`, and a daemon
@@ -966,7 +990,7 @@ A body past the limit is cut, as in `inbox`.
   ends (#202). The AGENTS.md wording asks for coordination, not chatting; beyond that
   only the agents stop a loop.
 - **Speed.** The daemon polls the remote every 3 s around a conversation, not 10 s (2026-10-29), and
-  delivers the moment a message is fetched. Measured between two T3 threads on one laptop through GitHub over HTTPS:
+  hands a message over the moment it is fetched. Measured between two T3 threads on one laptop through GitHub over HTTPS:
   about 6–8 s from an agent's `send` to the other thread's turn starting (a push, 1.2 s; up to
   one poll; `ls-remote`, 1.2 s; a fetch; `t3 thread send`, 1.1 s), and a question answered by
   another agent's reply in about 19 s. GitHub documents no limit on git reads, and a test of 63
@@ -977,12 +1001,12 @@ A body past the limit is cut, as in `inbox`.
   4–7 s a hop is fine. So a daemon polls fast only when a reply is likely, and a session left open
   for hours, which would cost 1,200 `ls-remote` calls an hour at 3 s, costs 240.
   - *Fast, every 3 s (`Poll`), for 3 minutes (`FastFor`)* after this device sends a message, or
-    delivers or receives one for a session on this device, or a session starts here. A reply
+    queues one for a session on this device or hands one over to it, or a session starts here. A reply
     usually comes within a minute or two (the other agent's thinking time plus two hops), and each
     move restarts the 3 minutes.
   - *Otherwise, with a session live or a page open,* the wait doubles after each poll that follows
     FastFor's end: 3 s, 6, 12, up to 15 s (`PollCap`). Doubling reaches the cap in three polls; a
-    first message of a conversation then waits at most 15 s, plus the delivery.
+    first message of a conversation then waits at most 15 s, plus the handoff.
   - *Quiet:* with no session live and no page open the poll is every 30 s (`QuietPoll`, #87),
     whatever was said lately. A session registering, or a page opening, makes it look at once, and
     a session starting is itself a move, so it polls fast for the 3 minutes.
@@ -1010,8 +1034,8 @@ Identity is checked again after downloading so a manual reinstall during the dow
 An unwritable install (for example, a package manager's) is logged once and left alone until
 restart. Successful updates log the old and new versions in the daemon log.
 
-After installation, the daemon waits until no message delivery is in flight and no page counts as
-open, so an open tab keeps its port and token. It then blocks new deliveries and shuts down normally,
+After installation, the daemon waits until no message handoff is in flight and no page counts as
+open, so an open tab keeps its port and token. It then blocks new handoffs and shuts down normally,
 saving state and releasing the clone lock. It starts the installed binary with the same detached
 process helper clients use, forwarding its own flags (including poll and idle settings). Sessions
 reconnect through the existing grace and inbox restoration. Running MCP servers keep their loaded binary until their sessions
@@ -1067,7 +1091,7 @@ What it can't see: a person with two machines is two users, and one who turned c
   agents that keep answering each other are stopped by nothing but the agents.
 - **Prompt injection.** Anyone with push access can now put text in front of your agent. That
   matches the trust model (a hackathon team), and a delivered message is text in front of the
-  agent as a turn of its own, delivered as written; messages never get to bypass the receiving
+  agent as a turn of its own, passed on as written; messages never get to bypass the receiving
   user's permission mode, and the framing's first line keeps their origin visible.
 - **Leaked secrets.** Everything on the bus stays in repo history, readable by anyone with read
   access, and agents do paste `.env` values. Everything a session sends (its messages and status
@@ -1125,7 +1149,7 @@ a git library, so it gets each user's credential helpers, SSH config and URL rew
 2. MCP server and the Claude Code hook. The first useful version.
 3. T3: connect as an MCP server. `t3 thread send`, run on the same machine, queues a message
    into any thread and starts its turn, so waking an idle thread (#25) needs no change to T3.
-   Done 2026-10-29 (#56, #57): the daemon delivers a message with it.
+   Done 2026-10-29 (#56, #57): the daemon hands a message over with it.
 4. Codex specifics.
 
 ## Open questions

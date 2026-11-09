@@ -52,7 +52,7 @@ func (d *Daemon) threadLoop(ctx context.Context) {
 
 // refreshThreads reads the state of every thread a session here is in, or a stopped session whose
 // inbox is kept was in. A change to whether a thread is settled is published, and any change lets
-// the deliveries look again.
+// the handoffs look again.
 func (d *Daemon) refreshThreads(ctx context.Context) {
 	d.mu.Lock()
 	routes := map[threadKey]t3Route{}
@@ -226,7 +226,7 @@ func (d *Daemon) parentNameLocked(parent string) string {
 // clearChildInboxLocked empties session id's inbox if it is a delegate, and says whether it is one.
 // What reached it before its thread was read (a message for everyone in the first seconds, or
 // before a restarted MCP server found its thread) is not its to read. A message on its way in as a
-// turn stays until that delivery ends; it is refused at the handoff (sendTurn), and cleared here or
+// turn stays until that handoff ends; it is refused at the handoff (sendTurn), and cleared here or
 // at the next read. Caller holds mu.
 func (d *Daemon) clearChildInboxLocked(id string) bool {
 	if _, child := d.parentOfLocked(id); !child {
@@ -348,8 +348,8 @@ func (d *Daemon) offlineIDsLocked() []string {
 }
 
 // touchLocked notes that session s is at work now. A message held back because s had been idle
-// longer than its wake setting allows may go in as a turn now, so the deliveries look again; the
-// hook's notice leaves alone what they will deliver (see queuedForPushLocked). Caller holds mu.
+// longer than its wake setting allows may go in as a turn now, so the handoffs look again; the
+// hook's notice leaves alone what they will hand over (see queuedForPushLocked). Caller holds mu.
 func (d *Daemon) touchLocked(s *session, now time.Time) {
 	s.lastActive = now
 	if len(d.st.Inbox[s.id]) > 0 {
@@ -362,7 +362,7 @@ func (d *Daemon) touchLocked(s *session, now time.Time) {
 // database: busy while a run is queued or running, else
 // idle since its latest run. Any other session, or one in T3 whose thread hasn't been read, goes
 // by the session: its start, its last request or tool call, or when it stopped. A message
-// delivered as a turn counts too. Zero if nothing says. Caller holds mu.
+// handed over as a turn counts too. Zero if nothing says. Caller holds mu.
 func (d *Daemon) idleSinceLocked(id string) (since time.Time, busy bool) {
 	if d.hookBusyLocked(id) {
 		return time.Time{}, true
@@ -416,7 +416,7 @@ func (p pageSettings) busyChoice(name string) string {
 // mesh, nor if the page says never. Always: yes. Within N minutes (the default, and what an
 // unset choice means): if the session is busy, which needs no waking, or was last at work no
 // more than N minutes ago, 0 standing for defaultWakeMinutes. A session nothing is known of yet
-// waits; the read of its thread lets the deliveries look again. Caller holds mu.
+// waits; the read of its thread lets the handoffs look again. Caller holds mu.
 func (d *Daemon) wakesLocked(id string, wake pageSettings) bool {
 	if d.offMeshLocked(id) {
 		return false

@@ -210,8 +210,8 @@ func Inbox(r proto.Response) string {
 	return b.String()
 }
 
-// Turn renders a message as the turn it becomes in the session it is for, when Murmur delivers it
-// at once (docs/VISION.md, "Delivering a message as a turn"): who it is from, as Murmur knows them,
+// Turn renders a message as the turn it becomes in the session it is for, when Murmur hands it
+// over at once (docs/VISION.md, "Delivering a message as a turn"): who it is from, as Murmur knows them,
 // then the message as its sender wrote it, then how to answer. What the agent reads here is all it
 // has, so the first line says it is a teammate's agent and not the user, and the last says how to
 // reply and that doing so is optional. The sender's text is not wrapped or quoted: teammates'
@@ -393,7 +393,7 @@ func Lookup(r proto.Response) string {
 	case d.Stale:
 		fmt.Fprintf(&b, "  not reachable: its device was last seen %s, so a message may not arrive\n", Ago(d.DeviceSeen))
 	case d.Reachable:
-		b.WriteString("  reachable: a message sent now will be delivered\n")
+		b.WriteString("  reachable: a message sent now reaches its inbox at once (queued, not yet seen by the agent)\n")
 	}
 	var times []string
 	if !d.Started.IsZero() {

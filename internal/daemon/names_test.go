@@ -518,7 +518,7 @@ func TestNameIsPendingUntilItLands(t *testing.T) {
 }
 
 // send takes a name. The message is addressed to the session's device/session on the bus, so a
-// daemon that doesn't know names delivers it all the same; and the recipient sees who sent it by
+// daemon that doesn't know names queues it all the same; and the recipient sees who sent it by
 // name.
 func TestSendByName(t *testing.T) {
 	remote := newRemote(t)

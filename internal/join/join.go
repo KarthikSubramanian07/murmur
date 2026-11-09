@@ -195,8 +195,8 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	} else if news {
 		r.Did = append(r.Did, "Recorded that you joined "+brand.Product+" in this clone ("+p.consentPath()+")")
 	}
-	// A daemon left running by an older mur answers, but can't do what this one does (deliver a message
-	// as a turn, for one): it is replaced, which Connect does for a client that may start daemons.
+	// A daemon left running by an older mur answers, but can't do what this one does (hand a message
+	// over as a turn, for one): it is replaced, which Connect does for a client that may start daemons.
 	c, err := client.Connect(ctx, p.GitDir, false)
 	switch {
 	case errors.Is(err, client.ErrNoDaemon):

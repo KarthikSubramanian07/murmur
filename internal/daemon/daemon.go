@@ -39,8 +39,8 @@ type Options struct {
 	Heartbeat  time.Duration // how often to re-push presence when nothing changed; 2 min
 	StaleAfter time.Duration // presence unchanged this long means the device is gone; 6 min
 	// PollCap is the slowest the poll gets while a session is live and nothing is happening: 15 s.
-	// FastFor is how long after a conversation moves (this device sends a message, or delivers or
-	// receives one for a session here, or a session starts) the poll stays at Poll: 3 min (#93).
+	// FastFor is how long after a conversation moves (this device sends a message, or queues one
+	// for a session here or hands one over to it, or a session starts) the poll stays at Poll: 3 min (#93).
 	// Neither is ever below Poll.
 	PollCap, FastFor time.Duration
 	// Idle is how long a daemon with no sessions, no open page and no T3 thread to wake (see
@@ -63,9 +63,9 @@ type Options struct {
 	// holds fewer, the daemon sets more aside. Negative: none, and every session waits for its name
 	// to land in the registry.
 	NamePool int
-	// PushRetry is how long a delivery of a message as a turn that never got started (no `t3`
+	// PushRetry is how long a handoff of a message as a turn that never got started (no `t3`
 	// to run, no socket to connect to) waits before its one retry: 2 s. Any other failure may have
-	// delivered the message, so it is not repeated, and a second failure of this kind too leaves
+	// handed the message over, so it is not repeated, and a second failure of this kind too leaves
 	// the message to the hook's notice.
 	PushRetry time.Duration
 	// PageAddr is where the page for humans is served: 127.0.0.1:0, a random port on loopback.
@@ -272,10 +272,10 @@ type Daemon struct {
 	// unsnapped holds a channel for each ended call whose worktree hasn't been snapshotted again
 	// yet, closed when it has; the next call's start waits for them (see toolStart).
 	unsnapped []chan struct{}
-	// pushing is the sessions a delivery goroutine is working for, and pushWarned those whose last
-	// delivery failed or that have no way to be delivered to, so that is logged once, not for every
+	// pushing is the sessions a handoff goroutine is working for, and pushWarned those whose last
+	// handoff failed or that have no way to be handed a message, so that is logged once, not for every
 	// message (see deliver.go).
-	updating   bool // under mu: no new deliveries after the safe restart point
+	updating   bool // under mu: no new handoffs after the safe restart point
 	pushing    map[string]bool
 	pushWarned map[string]bool
 	// pushedAt is when a message last went into each session as a turn: the session is at work from
@@ -302,8 +302,8 @@ type Daemon struct {
 
 	kick     chan struct{}
 	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
-	pushKick chan struct{} // wakes pushLoop, which delivers messages into sessions as turns
-	pushSem  chan struct{} // bounds the deliveries running at once
+	pushKick chan struct{} // wakes pushLoop, which hands messages over to sessions as turns
+	pushSem  chan struct{} // bounds the handoffs running at once
 	nameKick chan struct{} // wakes nameLoop, the only user of nameSrc
 	nameSrc  io.Reader
 	pushOne  chan struct{} // held while this device pushes to the remote (see push)
@@ -374,16 +374,16 @@ func (s *session) shownDoing() string {
 type syncMode int
 
 const (
-	// modeSkip records every ref's tip without delivering anything: the first sync of a new
+	// modeSkip records every ref's tip without queueing anything: the first sync of a new
 	// clone, or after a long gap, when no session is still waiting for what it missed.
 	modeSkip syncMode = iota
-	// modeCatchUp delivers what arrived while the daemon was down, but only to sessions that
+	// modeCatchUp queues what arrived while the daemon was down, but only for sessions that
 	// were running before it went down and reconnected: the first sync after a restart.
 	modeCatchUp
 	modeNormal
 )
 
-// catchUpLimit is the longest outage after which a restarted daemon still delivers what it
+// catchUpLimit is the longest outage after which a restarted daemon still queues what it
 // missed; past it, the sessions that were waiting have moved on. catchUpWindow is how long after
 // starting it holds what it missed for sessions still reconnecting.
 const (
@@ -413,17 +413,17 @@ type inMsg struct {
 	Event   bus.Event `json:"event"`
 	Arrived time.Time `json:"arrived"`
 	Noticed bool      `json:"noticed"`
-	// Pushing says the message is being delivered into its session as a turn, so the hook's notice
+	// Pushing says the message is being handed over to its session as a turn, so the hook's notice
 	// and inbox leave it alone: it either arrives as the turn, and is gone from the inbox, or the
-	// delivery fails and it is theirs again. PushFailed says that delivery failed. Neither is kept
+	// handoff fails and it is theirs again. PushFailed says that handoff failed. Neither is kept
 	// over a restart.
 	Pushing    bool `json:"-"`
 	PushFailed bool `json:"-"`
 	// Attempted says the message was handed to T3 or the socket, and it may be in the session's
 	// conversation, though the daemon doesn't know (see deliver.go). It is saved before the handoff
 	// and taken off only when the attempt provably went nowhere, so a restart in the middle of a
-	// delivery, or after one that failed, finds it, and the message is left to the hook's notice
-	// instead of being delivered a second time.
+	// handoff, or after one that failed, finds it, and the message is left to the hook's notice
+	// instead of being handed over a second time.
 	Attempted bool `json:"attempted,omitempty"`
 	// Held says the hook told the session of the message while it was at work, where it would
 	// otherwise have gone in as a turn (#202). It goes in as one when the turn ends, if it is still
@@ -434,11 +434,11 @@ type inMsg struct {
 // state is what survives a restart, in state.json.
 type state struct {
 	// Initialized is set once the first syncs have read the backlog, recording every log's tip
-	// as processed without delivering it: history from before this device joined isn't replayed.
+	// as processed without queueing it: history from before this device joined isn't replayed.
 	Initialized bool              `json:"initialized"`
-	Processed   map[string]string `json:"processed"` // mesh ref → last SHA delivered
+	Processed   map[string]string `json:"processed"` // mesh ref → last SHA processed
 	// Junked holds the logs that were junk when this device first looked, with nothing read from
-	// them yet, and when that look was: what was sent before it is history, not to be delivered.
+	// them yet, and when that look was: what was sent before it is history, not to be queued.
 	Junked map[string]time.Time `json:"junked,omitempty"`
 	Inbox  map[string][]*inMsg  `json:"inbox"` // session → unread messages
 	// Stopped holds the sessions that stopped, and when. Their inboxes are kept for StoppedInbox,
@@ -479,7 +479,7 @@ type state struct {
 
 	// T3Routes is the T3 thread each session on this device is, with T3's command line, for the
 	// sessions that are in T3: a thread outlives its MCP server, which T3 stops when the thread has
-	// been idle for 30 minutes, and a message is still delivered to the thread, which wakes it.
+	// been idle for 30 minutes, and a message is still handed to the thread, which wakes it.
 	// Local only, like NameKeys. It is kept as long as the session's inbox is.
 	T3Routes map[string]t3Route `json:"t3Routes,omitempty"`
 }
@@ -953,8 +953,8 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-// restartWhenIdle waits without cancelling delivery or stranding an open page. The
-// same mutex keeps pushLoop from starting a delivery after the safe restart point.
+// restartWhenIdle waits without cancelling a handoff or stranding an open page. The
+// same mutex keeps pushLoop from starting a handoff after the safe restart point.
 func (d *Daemon) restartWhenIdle(ctx context.Context) {
 	t := time.NewTicker(100 * time.Millisecond)
 	defer t.Stop()

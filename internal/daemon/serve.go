@@ -185,7 +185,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	if name == "" {
 		d.kickNames()
 	}
-	d.kickPush() // a session back may have messages waiting that its route can now deliver
+	d.kickPush() // a session back may have messages waiting that its route can now hand over
 
 	addr := bus.Addr(d.device, h.ID)
 	reply := proto.Response{OK: true, Self: addr, Name: name, NamePending: name == "", ClaudeSession: live}
@@ -473,7 +473,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			shown[w.msg.Event.ID] = true
 			wholeMsgs = append(wholeMsgs, w.msg)
 		}
-		d.deliveredLocked(w.id, w.msg, "through the hook")
+		d.outOfInboxLocked(w.id, w.msg, "delivered", "through the hook")
 	}
 	if len(fresh) > 0 || len(whole) > 0 {
 		d.saveLocked()
@@ -524,7 +524,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		return fail(err.Error())
 	}
 	// A name is an address: it is turned into the session's device/session here, and that is what
-	// goes on the bus, so a daemon that doesn't know names delivers the message all the same.
+	// goes on the bus, so a daemon that doesn't know names queues the message all the same.
 	var toName, renamed string
 	if names.Valid(to) {
 		d.mu.Lock()
@@ -533,7 +533,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		isDevice = isDevice || to == d.device // a device may have an ID shaped like a name
 		var now string
 		if ok {
-			now, _, _ = d.sessionInfoLocked(d.deliveredToLocked(addr))
+			now, _, _ = d.sessionInfoLocked(d.queuedAtLocked(addr))
 		}
 		d.mu.Unlock()
 		switch {
@@ -555,7 +555,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	var note string
 	if to != "*" {
 		d.mu.Lock()
-		at := d.deliveredToLocked(to)
+		at := d.queuedAtLocked(to)
 		dev, sess := bus.SplitAddr(at)
 		known := d.addressKnownLocked(dev, sess)
 		_, stopped := d.st.Stopped[sess]
@@ -593,7 +593,7 @@ func (d *Daemon) addressKnownLocked(dev, sess string) bool {
 	if p == nil || d.staleLocked(p) {
 		return false
 	}
-	// Every daemon delivers to its own CLI, which presence doesn't list.
+	// Every daemon queues for its own CLI, which presence doesn't list.
 	if sess == "" || sess == proto.CLISession {
 		return true
 	}
