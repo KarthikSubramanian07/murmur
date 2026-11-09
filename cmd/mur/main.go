@@ -46,8 +46,9 @@ Setup:
                                 --leave undoes it
 
 For humans:
-  mur ui [--no-open]            open the page showing sessions and messages in a browser; --no-open
-                                only prints its address (starts the clone's daemon if it isn't running)
+  mur ui [--no-open]            open the page in a browser, to see sessions and messages and to message
+                                agents; --no-open only prints its address (starts the clone's daemon
+                                if it isn't running)
   mur stop                      stop this clone's daemon
 
 Started by other programs:

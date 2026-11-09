@@ -303,6 +303,9 @@ type Daemon struct {
 	msgs     []pageMsg
 	msgSeq   uint64
 	msgIDs   map[string]bool
+	// ownMsgs is how many of msgs are to or from this device's person, which PageMessages doesn't
+	// count (see keepMessageLocked).
+	ownMsgs int
 	// brackets holds the tool calls in flight whose start was snapshotted, by Claude session and
 	// tool-use ID (see toolStart). snapLogged is when a failed snapshot was last logged.
 	brackets   map[string]*bracket
@@ -505,12 +508,27 @@ type state struct {
 	// Junked holds the logs that were junk when this device first looked, with nothing read from
 	// them yet, and when that look was: what was sent before it is history, not to be queued.
 	Junked map[string]time.Time `json:"junked,omitempty"`
-	Inbox  map[string][]*inMsg  `json:"inbox"` // session → unread messages
+	// TagsFrom holds the logs whose backlog was given up on before it could be fetched, each with
+	// the last SHA read from it, or "" for none. Processed has moved past their messages, which are
+	// history by then, but tags don't expire, so the tags events from here on are still to be read.
+	TagsFrom map[string]string   `json:"tagsFrom,omitempty"`
+	Inbox    map[string][]*inMsg `json:"inbox"` // session → unread messages
 	// Stopped holds the sessions that stopped, and when. Their inboxes are kept for StoppedInbox,
 	// in case the session comes back; they are the only inboxes kept for sessions not running.
 	Stopped map[string]time.Time `json:"stopped,omitempty"`
 	// LastSync tells the next daemon how long this one was down.
 	LastSync time.Time `json:"lastSync"`
+
+	// Person is the name this device's human chose on the page, "" until they do, and PersonSince
+	// is when (#242). People is the address of every person's name this daemon has seen, in presence
+	// or on a message. It only grows, so a person's earlier name still reaches them.
+	Person      string            `json:"person,omitempty"`
+	PersonSince time.Time         `json:"personSince,omitzero"`
+	People      map[string]string `json:"people,omitempty"`
+	// PersonLogged is the last message in the person's log when this was saved. Anything after it
+	// in the log was written by a daemon that stopped before it could save, so their inbox doesn't
+	// have it yet.
+	PersonLogged string `json:"personLogged,omitempty"`
 
 	// Used is every session name this daemon has ever seen, in the registry's history or in
 	// another device's presence, with the session's address where known. It only grows.
@@ -788,6 +806,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		return nil, err
 	}
 	d.loadSettings()
+	d.loadPersonLog()
 	wall := now.Round(0)
 	if !d.st.Initialized || wall.Sub(d.st.LastSync) > catchUpLimit {
 		d.mode = modeSkip
@@ -984,10 +1003,10 @@ func (d *Daemon) statePath() string { return filepath.Join(d.dir, "state.json") 
 
 func (d *Daemon) loadState() error {
 	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},
-		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
+		TagsFrom: map[string]string{}, Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
-		Tags: map[string]*tags.State{}}
+		Tags: map[string]*tags.State{}, People: map[string]string{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1004,6 +1023,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Junked == nil {
 		d.st.Junked = map[string]time.Time{}
+	}
+	if d.st.TagsFrom == nil {
+		d.st.TagsFrom = map[string]string{}
 	}
 	if d.st.Inbox == nil {
 		d.st.Inbox = map[string][]*inMsg{}
@@ -1037,6 +1059,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Tags == nil {
 		d.st.Tags = map[string]*tags.State{}
+	}
+	if d.st.People == nil {
+		d.st.People = map[string]string{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

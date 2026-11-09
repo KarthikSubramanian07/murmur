@@ -477,6 +477,49 @@ call.
   the background doesn't keep the daemon, and its polling of GitHub, up for good (Opus review,
   2026-10-29). A request without the token doesn't count.
 
+### A person on the page
+
+Added 2026-11-08 (#242). Someone with the page open can talk to agents, and agents answer them the
+way they answer each other. Before this, a person could only watch, and reached an agent by typing
+in its own session.
+
+- **An account is a name** a person picks for this clone, offered from `git config user.name`. It
+  has no password and proves nothing: whoever can open the page is already at that keyboard, and
+  anyone who can push to the repo can write anything on the bus. A person's message gets no more
+  authority than an agent's. Verified identity is left out, and so is one person on two devices,
+  which is two accounts for now.
+- **The address is `device/human`.** Presence lists the person as a session whose agent is
+  `person`, so a daemon on an older version still shows them in `who`. The only new field on the bus
+  is `Event.Person`, the name on a person's own messages.
+- **Names stay out of the names ref.** A person's name can't have the form of a session's (an
+  adjective and a noun from the lists), so an address never reads as both, and it needs no
+  compare-and-swap. A name someone on the mesh already holds is refused. A daemon's table of people
+  only grows, so a message to an old name still reaches its owner. The cost: two people who pick one
+  name before either daemon has seen the other both keep it, and each daemon resolves it to its own
+  person first, then to the first device in sorted order.
+- **A person's direct message wakes a session past the "Within" window**, because they are waiting
+  for an answer. It doesn't wake past Never or do not disturb, which a person also chose. A broadcast
+  from a person wakes nothing extra: one sentence shouldn't wake every idle session on the mesh. The
+  turn says who it is from, that they see only what the agent sends, and how to answer.
+- **What the person keeps.** Messages to and from them go to `.git/murmur/person-messages.jsonl`,
+  the last 2,000, apart from the page's 500, so a conversation outlasts a daemon restart. Unread is
+  the person's inbox, which holds direct messages only: counting broadcasts would keep the badge lit
+  in a busy repo. Their inbox also takes what was sent while the daemon was down, since a person's
+  daemon exits soon after their page closes and an agent may answer hours later.
+- **On the page**, "Your messages" holds the person's own conversations, each with a composer.
+  Others' conversations are read-only, with a way to message either side. A message shows at once as
+  sending, and if it fails it stays on screen with its text. Enter sends, except on a phone, where
+  Enter is a new line and the button sends. The first Enter in the Everyone chat only arms it, and
+  says how many sessions it reaches. The line above the composer says working, do not disturb,
+  offline or waiting. "Working" is a guess from the session's last activity: nothing on the bus says
+  a session is answering.
+- **The draft survives a rebuild.** The page rebuilds its DOM on every state change, so each
+  conversation's textarea is kept and reused, which keeps its text, caret and focus when a reply
+  arrives.
+
+Desktop notifications aren't built: the page's port is random, so a browser would ask permission
+again after each daemon restart. The tab's title carries the unread count instead.
+
 ### What a session has done
 
 Added 2026-10-29 (#21). `lookup` (an MCP tool; it has no command, like the other messaging tools)
@@ -630,7 +673,8 @@ tag with behaviour, below.
   restarts and the session finding its T3 thread (its key changes then, its name doesn't), until the
   session or a human takes it off. A change from another device for a session that hasn't
   registered again yet, after its daemon restarted, is kept for it the same way, however long the
-  daemon was down: a skip of the backlog still reads its `tags` events (#230). At the cap of 12, a
+  daemon was down: a skip of the backlog still reads its `tags` events (#230), and so does a backlog
+  given up on after its fetch failed for 10 minutes, once the fetch lands (#237). At the cap of 12, a
   human's tags are kept first, then the session's, then derived ones. Nothing expires.
 - **Search.** `who` takes tags and lists only the sessions with all of them; `-tag` leaves out those
   with it, and a `*` at the end matches any tag that starts so (`model:opus*`). The CLI has no `who`,
@@ -1168,7 +1212,8 @@ On restart the daemon hands the page's listening socket to the new daemon, which
 leaves the page's address and token beside it in `page.json` in its state directory. The port is
 bound from the old daemon's last answer to the new one's first, so a tab's requests in between wait
 in the socket's queue, and the new daemon answers them; the tab sees a new daemon and reloads onto
-the new version. Each daemon serves the page from a listener made from a second hold on the socket,
+the new version. The reload waits while a person has text in a composer or a message that failed,
+since those live only in the page (#242); the tab works with the new daemon until then. Each daemon serves the page from a listener made from a second hold on the socket,
 which keeps it bound after the page's server closes its listener.
 
 Decided 2026-11-09 (#255, from Sol's pre-release review). Before, the new daemon bound the old port

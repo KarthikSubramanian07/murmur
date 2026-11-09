@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -185,6 +186,9 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	d.pageSeenLocked(ctx, now)
 
 	self := web.Device{ID: d.device, Host: d.host, Owner: d.owner, Self: true, Reachable: true, LastSeen: now}
+	if d.st.Person != "" {
+		self.Person = &web.Person{Name: d.st.Person, Addr: d.personAddr(), LastActive: d.lastPage}
+	}
 	live := d.liveNamesLocked()
 	for _, ss := range d.sortedSessionsLocked() {
 		if !ss.dropped.IsZero() && live[ss.name] {
@@ -199,7 +203,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 			Committed: d.committedLocked(ss.id), Doing: ss.shownDoing(), Worktree: ss.worktree, Started: ss.started,
 			LastActive: ss.lastActive, Tags: d.tagsOfLocked(ss)})
 	}
-	st := web.State{Device: d.device, Devices: []web.Device{self}, Version: version}
+	st := web.State{Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked()}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Reachable: !d.staleLocked(p),
@@ -209,6 +213,10 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 				continue // V1 daemons list their CLI
 			}
 			addr := bus.Addr(id, ps.ID)
+			if ps.ID == bus.PersonSession {
+				dv.Person = &web.Person{Name: ps.Name, Addr: addr, LastActive: peerActive(p, ps)}
+				continue
+			}
 			dv.Sessions = append(dv.Sessions, web.Session{
 				Name: nameOr(ps.Name, addr), Addr: addr, Agent: ps.Agent, Branch: ps.Branch,
 				Committed: ps.Committed, Doing: ps.Doing, Started: ps.Started, LastActive: peerActive(p, ps),
@@ -245,16 +253,43 @@ type pageMsg struct {
 	e   bus.Event
 }
 
-// recordMessageLocked keeps a message for the page, dropping the oldest once there are
-// PageMessages. Every message this daemon reads goes in, whoever it is for: anyone who can read
-// the repo can read them all already. Caller holds mu.
+// recordMessageLocked keeps a message for the page. Every message this daemon reads goes in,
+// whoever it is for: anyone who can read the repo can read them all already. One to or from this
+// device's person goes on disk too. Caller holds mu.
 func (d *Daemon) recordMessageLocked(e bus.Event) {
 	if d.msgIDs[e.ID] {
 		return
 	}
-	if len(d.msgs) >= d.opt.PageMessages {
-		delete(d.msgIDs, d.msgs[0].e.ID)
-		d.msgs = d.msgs[:copy(d.msgs, d.msgs[1:])]
+	d.keepMessageLocked(e)
+	if d.ownPersonMsgLocked(e) {
+		d.logPersonLocked(e)
+	}
+}
+
+// keepMessageLocked adds e to the page's messages, dropping the oldest once there are PageMessages.
+// A person's own messages are counted apart, up to maxPersonLog, so a busy repo doesn't push a
+// person's conversations out from under them. Caller holds mu.
+func (d *Daemon) keepMessageLocked(e bus.Event) {
+	own := d.ownPersonMsgLocked(e)
+	if own {
+		d.ownMsgs++
+	}
+	drop := func(mine bool) {
+		i := slices.IndexFunc(d.msgs, func(m pageMsg) bool { return d.ownPersonMsgLocked(m.e) == mine })
+		if i < 0 {
+			return
+		}
+		delete(d.msgIDs, d.msgs[i].e.ID)
+		d.msgs = slices.Delete(d.msgs, i, i+1)
+		if mine {
+			d.ownMsgs--
+		}
+	}
+	if d.ownMsgs > maxPersonLog {
+		drop(true)
+	}
+	if !own && len(d.msgs)-d.ownMsgs >= d.opt.PageMessages {
+		drop(false)
 	}
 	d.msgSeq++
 	d.msgs = append(d.msgs, pageMsg{d.msgSeq, e})
@@ -302,6 +337,9 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 		if name, _, _ := d.sessionInfoLocked(addr); name != "" {
 			return name
 		}
+		if name := d.personNameOfLocked(addr); name != "" {
+			return name
+		}
 		if byAddr == nil {
 			byAddr = d.namesByAddrLocked()
 		}
@@ -310,7 +348,10 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 	out := make([]web.Message, 0, len(d.msgs)-first)
 	for _, m := range d.msgs[first:] {
 		msg := web.Message{ID: m.e.ID, From: label(m.e.From), Subject: m.e.Subject, Body: m.e.Body, At: m.e.At,
-			FromAddr: m.e.From, ToAddr: m.e.To}
+			FromAddr: m.e.From, ToAddr: m.e.To, FromPerson: bus.IsPerson(m.e.From), ToPerson: bus.IsPerson(m.e.To)}
+		if msg.From == m.e.From && m.e.Person != "" {
+			msg.From = m.e.Person
+		}
 		switch {
 		case m.e.To == "*":
 			msg.To, msg.ToKind = "*", web.ToAll
