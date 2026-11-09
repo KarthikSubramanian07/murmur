@@ -116,7 +116,26 @@ func TestRegisterPi(t *testing.T) {
 	}
 	path := piExtensionPath(sb.PiDir)
 	got := read(t, path)
-	for _, want := range []string{`pi.registerMcpServer("murmur"`, `MURMUR_PI_SESSION_FILE`, `"--agent", "pi"`, `exposure: "direct"`, `"session_start"`} {
+	for _, want := range []string{`pi.registerMcpServer("murmur"`, `MURMUR_PI_SESSION_FILE`, `"--agent", "pi"`, `exposure: "direct"`, `"session_start"`,
+		// Messages (#205): the hook at Claude Code's moments, and the socket for a turn when idle.
+		`MURMUR_PI_MESSAGING_SOCKET: sock`, `MURMUR_PI_MESSAGING_TOKEN: token`, `["hook", "--agent", "pi"]`,
+		`hook("UserPromptSubmit"`, `hook("PostToolUse"`, `hook("Stop"`, `"tool_result"`, `"agent_before_settle"`,
+		`deliverAs: "steer"`, `triggerTurn: true, deliverAs: "followUp"`, `continue: true`, `customType: "murmur"`,
+		`"session_shutdown"`, `rec?.token !== key`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the extension lacks %s:\n%s", want, got)
+		}
+	}
+	// The user's own words are never forged: nothing Murmur says goes in as the user's message.
+	for _, bad := range []string{"sendUserMessage", "{{"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("the extension has %s:\n%s", bad, got)
+		}
+	}
+	// What the hook prints and what the socket takes are what package hook and package msgsock
+	// write: the extension reads them by these names.
+	for _, want := range []string{`hookSpecificOutput?.additionalContext`, `r?.decision !== "block"`, `r?.reason`,
+		`rec?.type !== "auth"`, `rec?.type === "user"`, `rec?.message?.content`, `session_id: file, hook_event_name: event`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the extension lacks %s:\n%s", want, got)
 		}

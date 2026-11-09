@@ -266,12 +266,17 @@ func nativeID(native string) string {
 }
 
 // routeFromEnv is what this process's environment says about reaching its client: inside T3, T3's
-// command line; in Claude Code, the messaging socket and the token for it. T3's thread isn't in
-// the environment: link.seek finds it. The daemon keeps all of this to itself (see proto.Route).
+// command line; in Claude Code, the messaging socket and the token for it; in Pi, the socket
+// Murmur's extension opens in the session, which takes the same lines (internal/join/pi.go). T3's
+// thread isn't in the environment: link.seek finds it. The daemon keeps all of this to itself (see
+// proto.Route).
 func routeFromEnv(agent string) proto.Route {
 	r := proto.Route{T3CLI: os.Getenv("T3CODE_CLI_PATH"), T3Home: os.Getenv("T3CODE_HOME")}
-	if isClaude(agent) {
+	switch {
+	case isClaude(agent):
 		r.MsgSocket, r.MsgToken = os.Getenv("CLAUDE_CODE_MESSAGING_SOCKET"), os.Getenv("CLAUDE_CODE_MESSAGING_TOKEN")
+	case agent == "pi":
+		r.MsgSocket, r.MsgToken = os.Getenv("MURMUR_PI_MESSAGING_SOCKET"), os.Getenv("MURMUR_PI_MESSAGING_TOKEN")
 	}
 	return r
 }

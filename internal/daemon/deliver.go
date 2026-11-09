@@ -24,9 +24,10 @@ import (
 //     message as its next turn, nothing is interrupted, and it works for a thread whose MCP server
 //     T3 has stopped (idle threads lose theirs after 30 minutes), which is the thread most worth
 //     waking;
-//   - in Claude Code outside T3, the session's messaging socket (package msgsock).
+//   - in Claude Code outside T3, the session's messaging socket (package msgsock), and in Pi
+//     outside T3 the socket Murmur's extension opens in the session, which speaks the same lines.
 //
-// A session Murmur's hook runs in (Claude Code) is not given a turn while it is at work (#202): T3
+// A session Murmur's hook runs in (Claude Code, and Pi through its extension) is not given a turn while it is at work (#202): T3
 // would queue it behind the running turn, and nothing could take it back, so the agent could read
 // it with `inbox` and then get it again as a turn. The hook tells it of the message after its next
 // tool call instead, and what it hasn't read when the turn ends keeps the turn going: the Stop
