@@ -407,7 +407,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 //
 // A session the page sets to be given messages whole while busy (#204) gets each new one with its
 // body instead, which the hook shows as its turn would read: it is delivered then, and leaves the
-// inbox and the count.
+// inbox and the count. Only a hook that says it prints them (req.Whole) gets them so.
 func (d *Daemon) notices(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
@@ -455,8 +455,9 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		if s := d.sessions[id]; s != nil {
 			told = append(told, s)
 		}
-		// Only the hook shows a message whole: a request without its Claude Code session isn't one.
-		givesWhole := req.ClaudeSession != "" && wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
+		// Only the hook shows a message whole: a request without its Claude Code session isn't one,
+		// and a hook that doesn't say it prints Delivered (req.Whole) would lose it (#229).
+		givesWhole := req.ClaudeSession != "" && req.Whole && wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
 			if m.Pushing {
 				continue

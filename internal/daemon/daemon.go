@@ -39,6 +39,9 @@ type Options struct {
 	QuietPoll  time.Duration
 	Heartbeat  time.Duration // how often to re-push presence when nothing changed; 2 min
 	StaleAfter time.Duration // presence unchanged this long means the device is gone; 6 min
+	// FetchLimit is how long one fetch may take within a sync: 15 s. A ref that runs past it on its
+	// own is set aside; SlowFetchLimit is how long its fetch may then take, outside the syncs: 10 min.
+	FetchLimit, SlowFetchLimit time.Duration
 	// PollCap is the slowest the poll gets while a session is live and nothing is happening: 15 s.
 	// FastFor is how long after a conversation moves (this device sends a message, or queues one
 	// for a session here or hands one over to it, or a session starts) the poll stays at Poll: 3 min (#93).
@@ -98,10 +101,11 @@ type Options struct {
 	Consent     func() bool
 	ConsentPoll time.Duration // how often to look; 1 s
 	Log         *log.Logger
-	// CheckIn, if set, runs in the background for as long as the daemon serves: the daily
-	// check-in that counts active users (internal/checkin). Tests leave it unset.
-	CheckIn func(context.Context)
-	// Update installs releases independently of check-ins, then requests a safe restart.
+	// Report, if set, runs in the background for as long as the daemon serves: it tells
+	// murmur.afig.dev the repo's address if the repo is public and nobody has yet
+	// (internal/publicrepo). Tests leave it unset.
+	Report func(context.Context)
+	// Update installs releases, then requests a safe restart.
 	Update func(context.Context, func())
 }
 
@@ -114,6 +118,12 @@ func (o *Options) defaults() {
 	}
 	if o.PollCap == 0 {
 		o.PollCap = 15 * time.Second
+	}
+	if o.FetchLimit == 0 {
+		o.FetchLimit = 15 * time.Second
+	}
+	if o.SlowFetchLimit == 0 {
+		o.SlowFetchLimit = 10 * time.Minute
 	}
 	if o.FastFor == 0 {
 		o.FastFor = 3 * time.Minute
@@ -254,9 +264,12 @@ type Daemon struct {
 	// backlog lists the mesh refs the first listing showed that haven't been read yet: they are
 	// read under the mode the daemon started in, and the mode turns normal once all have been.
 	// nil until that listing.
-	backlog    map[string]bool
-	backlogAt  time.Time            // when the backlog was taken
-	unfetched  map[string]fetchFail // refs whose fetch failed, and when
+	backlog   map[string]bool
+	backlogAt time.Time            // when the backlog was taken
+	unfetched map[string]fetchFail // refs whose fetch failed, and when
+	// slowRef is the ref being fetched outside the syncs, "" if none, and slowCancel stops that fetch.
+	slowRef    string
+	slowCancel context.CancelFunc
 	junkTried  map[string]time.Time // blocking refs clearOwnJunk last tried to delete, and when
 	lastPollOK time.Time            // when the last successful sync listed the remote (monotonic)
 	// convAt is when a conversation last moved, for how fast to poll (see pollEvery); zero if none
@@ -421,11 +434,20 @@ type peer struct {
 }
 
 // fetchFail is a ref whose fetch failed: at which listed SHA, and when. It is fetched again on
-// its own a minute after at; a zero at means at the next poll.
+// its own a minute after at; a zero at means at the next poll. A slow one ran past FetchLimit, and is
+// fetched outside the syncs instead, not before at, which tries have pushed back. Once that fetch has
+// landed, the next sync reads what it brought.
 type fetchFail struct {
-	sha string
-	at  time.Time
+	sha    string
+	at     time.Time
+	slow   bool
+	tries  int
+	landed bool
 }
+
+// staleTempAge is how long a temporary download has gone unwritten before it is taken for one a
+// stopped git left behind (see clearStaleTemp).
+const staleTempAge = 10 * time.Minute
 
 type inMsg struct {
 	Event   bus.Event `json:"event"`
@@ -541,6 +563,7 @@ func Run(ctx context.Context, opt Options) error {
 	if !d.consented() {
 		return ErrNoConsent
 	}
+	clearStaleTemp(d.opt.GitDir, d.log) // a daemon stopped mid-fetch leaves no one else to do it
 	// Sync once before accepting sessions, so whatever this sync finds was sent before any of
 	// them registered: it is the backlog, and nothing a new session should get.
 	sctx, scancel := context.WithTimeout(ctx, 10*time.Second)
@@ -629,8 +652,8 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.Consent != nil {
 		go d.consentLoop(ctx)
 	}
-	if opt.CheckIn != nil {
-		go opt.CheckIn(ctx)
+	if opt.Report != nil {
+		go opt.Report(ctx)
 	}
 	if opt.Update != nil {
 		d.bg.Add(1)

@@ -47,8 +47,8 @@ don't want it. This is not part of scope." Daemons still running V1 keep writing
 ### Git is the transport, GitHub the hub
 
 Every teammate already has credentials and push access to the repo, so the repo carries the
-messages. No server, no accounts, no extra auth: whoever can push is in. (Outside the repo it checks GitHub for updates and sends a daily check-in that counts active
-users; see Updating and Counting active users.)
+messages. No server, no accounts, no extra auth: whoever can push is in. (Outside the repo it checks GitHub for updates and, for a public repo only, sends us the repo's
+address once; see Updating and Counting use.)
 
 - Each device appends events to **its own ref**, `refs/murmur/mesh/<deviceId>`: one empty commit per
   event, the payload in the commit message (a readable subject, a JSON body). One writer per ref
@@ -629,7 +629,8 @@ tag with behaviour, below.
 - **Kept by the session's name**, in `state.json`: a tag lasts across MCP restarts, resumes, daemon
   restarts and the session finding its T3 thread (its key changes then, its name doesn't), until the
   session or a human takes it off. A change from another device for a session that hasn't
-  registered again yet, after its daemon restarted, is kept for it the same way. At the cap of 12, a
+  registered again yet, after its daemon restarted, is kept for it the same way, however long the
+  daemon was down: a skip of the backlog still reads its `tags` events (#230). At the cap of 12, a
   human's tags are kept first, then the session's, then derived ones. Nothing expires.
 - **Search.** `who` takes tags and lists only the sessions with all of them; `-tag` leaves out those
   with it, and a `*` at the end matches any tag that starts so (`model:opus*`). The CLI has no `who`,
@@ -684,8 +685,9 @@ evidence is in #19.
     `PostToolUseFailure` and `UserPromptSubmit`, not `SessionStart`, so a session moves at the
     first tool call or prompt after the switch, not at the switch. Until then it shows its old name, and what is sent to that reaches it.
   - *Subagents.* A subagent's hooks carry its parent session's `session_id` and `CLAUDE_PID`,
-    with `agent_id` set, so a subagent's tool calls don't move the session (seen on 2.1.312,
-    2026-10-29).
+    with `agent_id` set (seen on 2.1.312, 2026-10-29). One started before a `/clear` may still
+    report the conversation the session left (inferred, not seen; #231), so a subagent's hooks find
+    the session by its process and never move it.
 - **Under T3 the session is the thread, not the provider's session under it.** The Claude
   session ID under one thread changes when the user switches Claude accounts, and has gone
   A → B → A. T3 gives MCP servers and hooks no way to learn the thread ID. Tyler decided on
@@ -938,8 +940,9 @@ A body past the limit is cut, as in `inbox`.
     every message in front of it mid-task, at full length, whether or not it matters to the task.
     A message given whole counts as delivered once the daemon answers the hook, so a hook that gave
     up waiting (3 s) just before the answer came loses it. One that was handed to T3 or the socket
-    before, and may be there already, gets the subject only. Where the hook doesn't run, the
-    setting does nothing.
+    before, and may be there already, gets the subject only, as does a hook from before the
+    setting, which prints only subjects: its request doesn't say it prints whole messages, and the
+    message stays in the inbox (#229). Where the hook doesn't run, the setting does nothing.
   - *The count* is shown with each new message, and again only when it changes, not after every
     tool call. A fall to none isn't told: the agent read them itself.
   - *Held however long.* A message that came during a turn goes in at its end whatever its age:
@@ -1103,6 +1106,19 @@ A body past the limit is cut, as in `inbox`.
   `ls-remote` requests about 2 s apart drew none, which is a short test, not evidence about
   hours of them from every device of a team. A poll that fails waits twice as long each time, to
   at most a minute (or 20 polls, if Poll is shorter), and goes back to its usual rate when it works.
+- **A ref too slow to fetch (2026-11-08, #15).** Anyone with push access can put a large object on
+  a bus ref, on purpose or with a mistaken push. A sync has a minute, and a fetch that used it up
+  failed that sync and the next, for as long as the object stayed. So each fetch in a sync now has
+  15 s (`FetchLimit`). A ref that runs past it on its own is fetched outside the syncs, one at a time,
+  for up to 10 minutes (`SlowFetchLimit`), waiting 1 minute after a failure and twice as long after
+  each one that follows, to at most an hour. The next sync reads what that fetch brought, rather than
+  fetching the ref again, which on a link slow enough to run past the limit every time would mean
+  never reading it (#223's first version did this). The cost that remains: an object that does finish
+  downloading stays in the clone until a gc removes it, since git can't cap what a fetch brings. `git
+  fetch --filter` would, but one such fetch makes the user's own clone a partial clone
+  (`remote.origin.promisor`), for their branches too. On Windows a fetch cut off is killed, which leaves its
+  `tmp_pack_*` behind, one per try (seen 2026-11-08), so the daemon removes those that have gone
+  unwritten for 10 minutes.
 - **How often it polls (2026-10-30, #93).** Tyler: agents don't need real-time communication, and
   4–7 s a hop is fine. So a daemon polls fast only when a reply is likely, and a session left open
   for hours, which would cost 1,200 `ls-remote` calls an hour at 3 s, costs 240.
@@ -1125,8 +1141,7 @@ A body past the limit is cut, as in `inbox`.
 
 Murmur updates itself by default (#192, Tyler, 2026-11-07), so fixes reach an installed daemon
 without a person reinstalling it. `internal/update` checks GitHub's `a-Fig/murmur` releases/latest
-at daemon startup and hourly, independently of the daily usage check-in. No check-in IDs or repo
-information go in these GET requests. Network failures are quiet and wait for the next hour.
+at daemon startup and hourly. No repo information goes in these GET requests. Network failures are quiet and wait for the next hour.
 A development build (`-dev`) never updates itself. Versions before this updater need one manual
 install to acquire it.
 
@@ -1150,8 +1165,7 @@ still handles incompatible clients and daemons; release versions do not become a
 
 `git config --global murmur.update false` opts out; a repo's own git config overrides the global
 value. `MURMUR_NO_UPDATE=1` opts out for a daemon started with that environment. The config is read
-on each check. `DO_NOT_TRACK`, `MURMUR_NO_USAGE` and `murmur.usage false` affect only usage check-ins.
-Agents explain updates and this separate opt-out before joining (`docs/agents/join.md`). A binary
+on each check. Agents explain updates and this separate opt-out before joining (`docs/agents/join.md`). A binary
 shared across clones is shared across their update settings too: to prevent every clone from
 updating it, use the global setting without local overrides.
 
@@ -1159,32 +1173,51 @@ The checksum catches corruption or a download inconsistent with the release. It 
 who published it or protect against a compromised GitHub account or release with a replaced
 checksum file. Release signing is separate work (#193).
 
-### Counting active users
+### Counting use
 
 Tyler's goal for the project is 100 active users (2026-11-02), and the transport hides them: every
-team's traffic stays in its own repo, and release downloads count installs, not use. So each
-daemon checks in (#148, `internal/checkin`): when it starts and every hour after, if this clone
-hasn't checked in this UTC day, it posts to `https://murmur.afig.dev/v1/checkin`:
+team's traffic stays in its own repo, and release downloads count installs, not use.
 
-- `user`: 16 random bytes in hex, made once per user account on the machine and kept in the user
-  config dir (`murmur/id`), so every clone of that account is one user;
-- `team`: the first 16 bytes of a SHA-256 of the bus remote's address, reduced to host and path
-  (https and ssh clones of one repo agree). It isn't salted, so whoever holds the stats can confirm
-  a repo they can name; nobody can list the repos from it;
-- `version`, `os`, `arch`.
+Tyler's rule (2026-11-08, #199): **the only thing Murmur sends us is a public repo's address.** A
+public repo's bus is readable by anyone, so once we know the address, its repos, messages and
+people can be counted from the bus itself, and the address is already public, so there is no
+opt-out. A private repo sends nothing and isn't counted. Weighed and turned down: a GitHub topic on
+each repo as the marker (it changes how the user's repo looks), and an ID for private repos (a
+hash of the address can't be salted for real, since the salt would ship in the public binary, and
+a random ID is still data from a private repo).
 
-The answer is the latest release, kept in the state dir's `checkin.json`; `mur version` says so on
-stderr when it is newer. A daemon runs only while a joined clone has a session or an open page,
-for 10 minutes after, or while a T3 thread it could wake is idle (up to a day), so a check-in
-means someone used Murmur that day or the day before. "Active" is a check-in in the last
-7 days. The site keeps one row per user, team and day in D1 (`site/migrations`), no IP addresses,
-and shows the counts on a page at `/stats` that only a key opens (`site/src/usage.js`): Tyler's, or one
-he gives an agent, which reads them as markdown at `/stats/report.md` or JSON at `/stats/data` (#150).
-`DO_NOT_TRACK` or `MURMUR_NO_USAGE` in the daemon's environment, or `murmur.usage` false in git
-config, turns check-ins off; a development build (`-dev`) never sends one. join.md tells the user
-before they agree.
+`internal/publicrepo` does it, from `mur init`, `mur join` and daemon start:
 
-What it can't see: a person with two machines is two users, and one who turned check-ins off is none.
+1. If `refs/murmur/reported` is on the remote, stop: some clone has reported the repo. A daemon's
+   sync doesn't fetch it (it reads only mesh, presence and names), so the remote is asked with one
+   `ls-remote`, and once the ref is found or pushed, `publicrepo.json` in the state dir keeps the
+   address it belongs to, so this clone doesn't ask again unless its remote changes.
+2. Reduce the bus remote's URL to `github.com/<owner>/<name>`; anything else is not reported.
+3. Ask GitHub `GET api.github.com/repos/<owner>/<name>` with no credentials. A private repo answers
+   404 to that, so no token is involved. Private, or not on GitHub: look again the next UTC day
+   (`publicrepo.json` again), so a repo made public later is reported within a day.
+4. POST `{"repo": "github.com/<owner>/<name>"}` to `https://murmur.afig.dev/v1/repo`, spelled as
+   GitHub spells it, with no version in the User-Agent. The site stores it only once GitHub
+   confirms the repo public (when GitHub can't say, it answers 503 and the daemon sends it again
+   later): one row per repo, its address and first day, no IP addresses (`site/src/usage.js`,
+   `site/migrations`).
+5. Once the site has answered 200, note in `publicrepo.json` that this address was sent, then push
+   `refs/murmur/reported`, a root commit whose body is `{"v":1,"at":...}`, leased so it is created
+   only if absent. A push that fails is retried at every later look, without sending the address
+   again, and a daemon keeps looking until the ref is there. Two clones racing both send; the site
+   keeps one row. Deleting the ref makes the repo report again from a clone that hasn't seen it.
+
+So each public repo reaches us once in its life. A development build (`-dev`) never reports.
+Daemons older than this ignore the new ref: their sync reads only mesh, presence and names.
+
+Earlier versions (#148) sent a daily check-in to `/v1/checkin` (a random user ID, a hash of the
+remote, the version, OS and architecture). Since 2026-11-08 the site stores none, but still answers
+with the latest release; the rows already stored are kept as history, and `/stats` still shows them
+beside the list of public repos. The page needs a key: Tyler's, or one he gives an agent, which
+reads it as markdown at `/stats/report.md` or JSON at `/stats/data` (#150). `mur version` now hears
+of newer releases from the updater, which keeps the latest release it saw in the state dir's
+`latest.json`; with updates off it hears of none. Reading the public buses for the counts is the
+census in #199.
 
 ## Risks and how the design meets them
 

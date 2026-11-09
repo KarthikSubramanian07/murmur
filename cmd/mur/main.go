@@ -20,12 +20,12 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
-	"github.com/a-Fig/murmur/internal/checkin"
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/daemon"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/mcpserver"
+	"github.com/a-Fig/murmur/internal/publicrepo"
 	"github.com/a-Fig/murmur/internal/setup"
 	"github.com/a-Fig/murmur/internal/update"
 )
@@ -168,16 +168,13 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 		return fmt.Errorf("this clone hasn't joined %s, so its daemon won't run (`%s join` joins, after asking the user)", brand.Product, brand.Command)
 	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
-	if off, why := checkin.Off(ctx, os.Getenv, *gitDir); off {
-		logger.Printf("no daily check-in: %s", why)
-	}
 	err := run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
 			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running}, restart)
 		},
-		CheckIn: func(ctx context.Context) {
-			checkin.Run(ctx, checkin.Options{Version: version, GitDir: *gitDir, Log: logger})
+		Report: func(ctx context.Context) {
+			publicrepo.Run(ctx, publicrepo.Options{Version: version, GitDir: *gitDir, Log: logger})
 		}})
 	if errors.Is(err, daemon.ErrUpdated) {
 		if exeErr != nil {
@@ -192,13 +189,13 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 }
 
 // noteNewer says so when the clone in the current directory last heard of a newer release, from its
-// daily check-in. It writes to stderr, so stdout stays the one line scripts read.
+// daemon's update check. It writes to stderr, so stdout stays the one line scripts read.
 func noteNewer(ctx context.Context, w io.Writer) {
 	gitDir, err := client.FindGitDir(ctx, ".")
 	if err != nil {
 		return
 	}
-	if latest := checkin.Newer(gitDir, version); latest != "" {
+	if latest := update.Newer(gitDir, version); latest != "" {
 		fmt.Fprintf(w, "%s %s is out. Murmur updates automatically while its daemon runs, unless disabled.\nTo update by hand, run the install again:\n  %s\n", brand.Product, latest, installLine())
 	}
 }
@@ -249,6 +246,7 @@ func runInit(ctx context.Context, args []string, out io.Writer) error {
 		if p.Checkout != "" {
 			fmt.Fprintf(out, "%s%s.\n", strings.ToUpper(p.Checkout[:1]), p.Checkout[1:])
 		}
+		reportPublic(ctx, *dir, out)
 		return nil
 	case p.Pending:
 		fmt.Fprintf(out, "%s refused the push to %s: %s\n", p.Remote, p.Branch, p.Refused)
@@ -275,7 +273,22 @@ func runInit(ctx context.Context, args []string, out io.Writer) error {
 	fmt.Fprintf(out, "\nA teammate's agent that reads the section asks its user whether to join, and if the user says yes\n"+
 		"it installs %[1]s and sets it up itself. The section installs nothing, and %[1]s does nothing in a\n"+
 		"clone until its user has joined there.\n", brand.Product)
+	reportPublic(ctx, *dir, out)
 	return nil
+}
+
+// reportPublic tells murmur.afig.dev this repo's address if the repo is public and nobody has yet
+// (internal/publicrepo), and says so. A failure is left for a daemon to try again.
+func reportPublic(ctx context.Context, dir string, out io.Writer) {
+	gitDir, err := client.FindGitDir(ctx, dir)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if res, _ := publicrepo.Once(ctx, publicrepo.Options{Version: version, GitDir: gitDir}); res == publicrepo.Reported {
+		fmt.Fprintf(out, "\n%s\n", publicrepo.Told)
+	}
 }
 
 // initWorkTree is init before it pushed, kept as --no-push: it edits this working tree and leaves
@@ -306,6 +319,7 @@ func runJoin(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	env.Version = version
 	do := join.Join
 	if *leave {
 		do = join.Leave

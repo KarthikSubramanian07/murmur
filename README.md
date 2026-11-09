@@ -138,8 +138,9 @@ treat it that way, and to bring anything sizeable to their user first.
 
 **The only data we collect is a public repo's name.** If a repo that uses Murmur is public,
 Murmur sends its address (such as `github.com/a-Fig/murmur`) to murmur.afig.dev, once for the
-whole repo. A private repo sends nothing, and nothing else is ever sent. We use it only to count
-how many repos and people use Murmur.
+whole repo. A private repo sends nothing, and nothing else is ever sent: no IDs, names, messages,
+branches, paths or anything about your machine. We use it only to count how many repos and people
+use Murmur; the address is already public, so there is nothing to turn off.
 
 **Murmur updates itself.** The daemon checks GitHub's releases hourly, and installs a newer `mur`
 after verifying its checksum. To turn that off:
