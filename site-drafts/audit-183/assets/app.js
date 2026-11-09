@@ -20,21 +20,17 @@ const TOKEN_KEY = NAME + ":token";
 const POLL_MS = 3000;
 const HIDDEN_POLL_MS = 15000;
 const MAX_MESSAGES = 2000;
-const VIEWS = ["overview", "timeline", "board", "graph", "replay", "chord", "pulse", "codemap", "office", "briefing", "sessions", "messages", "recent", "fleet", "settings"];
+const VIEWS = ["overview", "timeline", "board", "graph", "office", "briefing", "sessions", "messages", "recent", "fleet", "settings"];
 // The ways to look at the swarm (#183), as tabs on one page.
 const SWARM_VIEWS = [
   ["overview", "Overview"],
   ["timeline", "Timeline"],
   ["board", "Board"],
   ["graph", "Who talks to whom"],
-  ["replay", "Replay"],
-  ["chord", "Between streams"],
-  ["pulse", "Activity"],
-  ["codemap", "Code map"],
   ["office", "Office"],
   ["fleet", "Fleet"],
 ];
-const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", briefing: "Briefing", overview: "Overview", timeline: "Timeline", board: "Board", graph: "Who talks to whom", replay: "Replay", chord: "Between streams", pulse: "Activity", codemap: "Code map", office: "Office", settings: "Settings" };
+const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", briefing: "Briefing", overview: "Overview", timeline: "Timeline", board: "Board", graph: "Who talks to whom", office: "Office", settings: "Settings" };
 const MODE_KEY = NAME + ":messages";
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
@@ -3245,16 +3241,6 @@ function swarmTabs(view) {
   );
 }
 
-// One colour per stream, by the stream's place in the list, from the dataviz skill's reference
-// palette (dark steps; on #1b1b1b worst neighbouring pair is CVD ΔE 8.4, normal vision 19.3).
-// Past eight streams, hues stop being tellable apart, so a ninth stream, and an agent in no
-// stream, is grey. Views label streams directly, so colour is never the only cue.
-const STREAM_HUES = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"];
-function streamColor(id) {
-  const i = swarm.streams.findIndex((s) => s.id === id);
-  return i >= 0 && i < STREAM_HUES.length ? STREAM_HUES[i] : "#8a8a8a";
-}
-
 function swarmShell(view) {
   let inner;
   if (view === "overview") inner = overviewPage();
@@ -3277,7 +3263,7 @@ window.MUR = {
   h, icon, avatar, presence, ago, agoEl, when, stamp, plural, dayLabel,
   devices, findSession, fromName, toName, conversationOf, sessionState, onDnd, deviceDot,
   fxDot, fxSeg, briefFaces, swOpenMessage, swStreamOf, go, render,
-  demo, swarm, streamColor, busy: BUSY,
+  demo, swarm, busy: BUSY,
   get ui() { return ui; },
   get messages() { return ui.messages; },
   get state() { return ui.state; },

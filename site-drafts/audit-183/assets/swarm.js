@@ -65,6 +65,17 @@ export const swarm = {
       next: "Rerun TestRestart for rapid-ibis.",
     },
   ],
+  // What each pair of agents is talking about, in a few words, for the lines on "Who talks to whom".
+  // A small model reading the pair's messages would write these; here they're written by hand.
+  topics: {
+    "lucid-badger|quiet-otter": "names before they land",
+    "brave-heron|quiet-otter": "SessionView changes",
+    "brave-heron|solar-wren": "claims going away",
+    "mellow-yak|solar-wren": "idle time on receipts",
+    "amber-finch|lucid-badger": "still on main?",
+    "dusty-lynx|rapid-ibis": "rerun TestRestart?",
+    "quiet-otter|velvet-moth": "word lists final?",
+  },
   // For the board: issues nobody has picked up, and work merged in the last day.
   backlog: [
     { issue: 27, title: "Mute a session", note: "Asked for by Maya. Nobody has picked it up." },

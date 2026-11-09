@@ -230,6 +230,29 @@ export function makeBusy(demo, swarm) {
   }
   ev.sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
 
+  // What the new pairs are talking about (see swarm.topics).
+  Object.assign(swarm.topics, {
+    "quiet-otter|sly-mole": "the page on phones",
+    "quiet-otter|vivid-marmot": "where search goes",
+    "proud-walrus|vivid-marmot": "how search works",
+    "sly-mole|vivid-marmot": "search on phones",
+    "brave-heron|proud-walrus": "both in proto.go",
+    "copper-wasp|lone-gannet": "shipping for Windows",
+    "ivory-crab|lone-gannet": "Windows install steps",
+    "copper-wasp|ivory-crab": "Windows docs",
+    "copper-wasp|solar-wren": "both in hook.go",
+    "dusty-lynx|lone-gannet": "CI runners",
+    "lone-gannet|rapid-ibis": "polling on Windows",
+    "hazy-condor|lucid-badger": "names in the docs",
+    "hazy-condor|quiet-otter": "the page in the docs",
+    "hazy-condor|ivory-crab": "who writes which doc",
+    "hazy-condor|solar-wren": "wake-ups in the docs",
+    "hazy-condor|mellow-yak": "receipts in the docs",
+    "amber-finch|hazy-condor": "writing docs too?",
+    "brave-heron|lucid-badger": "merge order",
+    "mellow-yak|vivid-marmot": "read marks in search",
+  });
+
   // The swarm's view of the work.
   const web = swarm.streams.find((s) => s.id === "web-page");
   web.who.push("sly-mole", "vivid-marmot", "proud-walrus");
