@@ -27,10 +27,10 @@ const SWARM_VIEWS = [["fleet", "Fleet"]];
 const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", briefing: "Briefing", overview: "Overview", catchup: "Since you looked", mine: "Your agents", decisions: "Decisions", timeline: "Timeline", board: "Board", graph: "Who talks to whom", office: "Office", settings: "Settings" };
 const MODE_KEY = NAME + ":messages";
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
-// Below this width a rail beside Fleet's table would squeeze the table under the 640px its
-// columns need (about 300px at 1024, 506px at 1280), so a selected session takes the page
-// instead. fleet.css stacks at the same width.
-const STACKED = window.matchMedia("(max-width: 1439px)");
+// Below this width a rail beside Fleet's table would squeeze the table (to about 665px at 1440,
+// where "Working on" gets 210px and a "Needs a look" row runs four lines), so a selected session
+// takes the page instead. fleet.css stacks at the same width.
+const STACKED = window.matchMedia("(max-width: 1679px)");
 
 const ui = {
   view: "sessions",
@@ -2149,8 +2149,12 @@ async function poll() {
   inflight = false;
   // Rebuild only when something changed, and leave alone a minutes field being typed in, text being
   // selected, and a pane being scrolled: a rebuild would drop the selection or stop the scroll.
-  const sig = JSON.stringify([ui.state, ui.cursor, ui.conn]);
-  const typing = document.activeElement?.tagName === "INPUT";
+  // Fleet's search box is exempt: it keeps its caret across a rebuild (render), and holding the
+  // table still while it has focus left the rows stale. The sessions view also rebuilds once a
+  // minute, since its "No reply for 40m" waits come from the clock, not the state.
+  const minute = VARIANT === "g" && ui.view === "sessions" ? Math.floor(Date.now() / 60000) : 0;
+  const sig = JSON.stringify([ui.state, ui.cursor, ui.conn, minute]);
+  const typing = document.activeElement?.tagName === "INPUT" && document.activeElement.dataset.key !== "fx-q";
   const selecting = document.getSelection()?.isCollapsed === false;
   const scrolling = Date.now() - scrolledAt < 1000;
   if (sig !== last && !typing && !selecting && !scrolling) {
@@ -2455,7 +2459,12 @@ function fleetTable(rows, needs, sel) {
   const F = fleetFilter();
   const key = (r) => (F.by === "device" ? r.d.id : F.by === "branch" ? r.s.branch || "" : groupOf(r.s));
   const pinned = rows.filter((r) => needs.has(r.s.name)).sort((a, b) => needs.get(a.s.name).at - needs.get(b.s.name).at);
-  const rest = [...rows].sort((a, b) => (F.by === "device" ? (a.d.self ? 0 : a.d.reachable ? 1 : 2) - (b.d.self ? 0 : b.d.reachable ? 1 : 2) : 0) || (when(b.s.lastActive) || 0) - (when(a.s.lastActive) || 0));
+  // A fixed order, so groups and rows don't swap places as agents work: this device, then devices
+  // by name, offline ones last; branches and jobs by name, with none last; rows by name.
+  // "Needs a look" (pinned) stays oldest first.
+  const rank = (r) => (F.by === "device" ? (r.d.self ? 0 : r.d.reachable ? 1 : 2) : key(r) ? 0 : 1);
+  const gname = (r) => (F.by === "device" ? deviceName(r.d) + " " + r.d.id : key(r) || "");
+  const rest = [...rows].sort((a, b) => rank(a) - rank(b) || gname(a).localeCompare(gname(b)) || a.s.name.localeCompare(b.s.name));
   const buckets = new Map();
   for (const r of rest) {
     const k = key(r);
@@ -2641,7 +2650,10 @@ function fleetInspector(name, need) {
   ].filter(Boolean);
   const owed = need?.msgs || [];
   const unanswered = new Set([...fleetNeeds(fleetRows()).values()].flatMap((n) => n.msgs));
-  const direct = ui.messages.filter((m) => m.toKind === "session" && (fromName(m) === name || toName(m) === name)).sort((a, b) => owed.includes(b) - owed.includes(a) || (owed.includes(a) ? owed.indexOf(a) - owed.indexOf(b) : b.sortAt - a.sortAt));
+  // Questions it owes, oldest first; then its own questions still waiting, oldest first; then the
+  // rest, newest first.
+  const rank = (m) => (owed.includes(m) ? 0 : fromName(m) === name && unanswered.has(m) ? 1 : 2);
+  const direct = ui.messages.filter((m) => m.toKind === "session" && (fromName(m) === name || toName(m) === name)).sort((a, b) => rank(a) - rank(b) || (rank(a) < 2 ? a.sortAt - b.sortAt : b.sortAt - a.sortAt));
   const close = fleetClose;
   return [
     h(
@@ -2671,7 +2683,7 @@ function fleetInspector(name, need) {
                 { class: "fx-dm" + (waits ? " fx-dm-wait" : ""), onclick: () => swOpenMessage(m) },
                 h("span", { class: "fx-dm-head" }, h("span", null, out ? "To " : "From ", h("b", null, out ? toName(m) : fromName(m)), waits ? " · waiting for an answer" : out && unanswered.has(m) ? " · no answer yet" : ""), agoEl("span", "fx-dm-time", m.sortAt)),
                 h("span", { class: "fx-dm-subj" }, m.subject),
-                waits && questionIn(m) !== m.subject && h("span", { class: "fx-dm-q" }, "“" + questionIn(m) + "”"),
+                (waits || (out && unanswered.has(m))) && questionIn(m) !== m.subject && h("span", { class: "fx-dm-q" }, "“" + questionIn(m) + "”"),
               ),
             );
           }),

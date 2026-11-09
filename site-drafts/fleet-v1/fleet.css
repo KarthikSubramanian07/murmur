@@ -202,7 +202,7 @@
   .fx-tr > :nth-child(4), .fx-tr > :nth-child(5) { display: none; }
   .fx-doing { grid-column: 1 / -1; padding-left: 2.375rem; }
 }
-@media (max-width: 1439px) {
+@media (max-width: 1679px) {
   .fx-main { grid-template-columns: minmax(0, 1fr); }
   .fx-rail { position: static; max-height: none; }
   .fx-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -263,3 +263,11 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* With the details open beside the table, the page may use the room a wide window has. */
 .fx:has(.fx-main:not(.solo)) { max-width: 100rem; }
 .fx-seg-n.zero { opacity: 0.5; }
+/* Where search, the state filter and Group by can't share a line, Group by joins search and the
+   state filter takes the next line, rather than each taking one. */
+.fx-toolbar { container-type: inline-size; }
+@container (max-width: 980px) {
+  .fx-group-by { order: 1; }
+  .fx-toolbar > .fx-spacer { order: 1; }
+  .fx-toolbar > .fx-seg { order: 2; }
+}
