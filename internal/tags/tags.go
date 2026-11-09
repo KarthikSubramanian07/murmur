@@ -119,8 +119,9 @@ type Mark struct {
 
 // State is what a session's device keeps about its tags: those the session set, and a human's
 // marks. Derived tags are worked out afresh each time and never kept. Cleared is when a human last
-// took a tag away leaving no mark: it decides nothing about the session's tags, and is kept only so
-// that a change from before then, read late, doesn't bring the tag back.
+// took a tag away leaving no mark, by removing it or giving the session another of its family: it
+// decides nothing about the session's tags, and is kept only so that a change from before then, read
+// late, doesn't bring the tag back.
 type State struct {
 	Self    []string             `json:"self,omitempty"`
 	Human   map[string]Mark      `json:"human,omitempty"`
@@ -136,36 +137,48 @@ func (st *State) Empty() bool {
 // order the two were read in, as they come from different machines' clocks.
 const clockAllowance = time.Minute
 
-// LastChoice is when a human last chose anything about these tags, zero if never.
-func (st *State) LastChoice() time.Time {
-	var last time.Time
-	if st == nil {
-		return last
-	}
-	for _, m := range st.Human {
-		if m.At.After(last) {
-			last = m.At
+// CapTimes brings any time later than now back to now. Such a time, from a clock since corrected or
+// kept from before changes were capped on reading, would otherwise hold off every change until it
+// came.
+func (st *State) CapTimes(now time.Time) {
+	for t, m := range st.Human {
+		if m.At.After(now) {
+			m.At = now
+			st.Human[t] = m
 		}
 	}
-	for _, at := range st.Cleared {
-		if at.After(last) {
-			last = at
+	for t, at := range st.Cleared {
+		if at.After(now) {
+			st.Cleared[t] = now
 		}
 	}
-	return last
+}
+
+// chosenAt is when a human last chose anything about tag t, zero if never.
+func (st *State) chosenAt(t string) time.Time {
+	at := st.Human[t].At
+	if c := st.Cleared[t]; c.After(at) {
+		return c
+	}
+	return at
 }
 
 // chosenSince says a human made a choice about tag t that a change made at at is too old to undo.
 func (st *State) chosenSince(t string, at time.Time) bool {
-	limit := at.Add(clockAllowance)
-	return st.Human[t].At.After(limit) || st.Cleared[t].After(limit)
+	return st.chosenAt(t).After(at.Add(clockAllowance))
 }
 
-// familyChosenSince says a human gave the session another tag of t's family since at.
+// familyChosenSince says that since at a human gave the session another tag of t's family, or took
+// one away: a session has at most one of a family, so an add from before then is out of date.
 func (st *State) familyChosenSince(t string, at time.Time) bool {
 	limit := at.Add(clockAllowance)
 	for o, m := range st.Human {
 		if o != t && family(o) == family(t) && m.On && m.At.After(limit) {
+			return true
+		}
+	}
+	for o, c := range st.Cleared {
+		if o != t && family(o) == family(t) && c.After(limit) {
 			return true
 		}
 	}
@@ -241,9 +254,25 @@ func (st *State) SetHuman(base []string, add, remove []string, by string, at tim
 	if st.Human == nil {
 		st.Human = map[string]Mark{}
 	}
+	// A change allowed in though up to clockAllowance older keeps the later time, or a run of them
+	// could bring in one much older than the latest choice.
+	latest := func(t string) time.Time {
+		if c := st.chosenAt(t); c.After(at) {
+			return c
+		}
+		return at
+	}
 	mark := func(t string, on bool) {
-		st.Human[t] = Mark{On: on, By: by, At: at}
+		st.Human[t] = Mark{On: on, By: by, At: latest(t)}
 		delete(st.Cleared, t)
+	}
+	takeAway := func(t string) {
+		when := latest(t)
+		delete(st.Human, t)
+		if st.Cleared == nil {
+			st.Cleared = map[string]time.Time{}
+		}
+		st.Cleared[t] = when
 	}
 	for _, t := range add {
 		if st.chosenSince(t, at) || st.familyChosenSince(t, at) {
@@ -251,7 +280,7 @@ func (st *State) SetHuman(base []string, add, remove []string, by string, at tim
 		}
 		for o, m := range st.Human {
 			if o != t && family(o) == family(t) && m.On {
-				delete(st.Human, o)
+				takeAway(o)
 			}
 		}
 		for _, o := range base {
@@ -267,11 +296,7 @@ func (st *State) SetHuman(base []string, add, remove []string, by string, at tim
 		case slices.Contains(base, t):
 			mark(t, false)
 		default:
-			delete(st.Human, t)
-			if st.Cleared == nil {
-				st.Cleared = map[string]time.Time{}
-			}
-			st.Cleared[t] = at
+			takeAway(t)
 		}
 	}
 	return nil

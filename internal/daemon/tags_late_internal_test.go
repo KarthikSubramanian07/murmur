@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // #251. A human on another device takes do-not-disturb off a session while that device's log can't
@@ -35,19 +36,32 @@ func TestATagChangeReadLateLeavesANewerOne(t *testing.T) {
 	}
 }
 
-// A click on this device's page is the newest thing there is, whatever a mark says: one read from
-// a device whose clock ran ahead, kept from before times were capped, can't make the page ignore it.
-func TestAClickHereStandsOverAMarkFromTheFuture(t *testing.T) {
+// A mark dated in the future can already be in state.json, from before times were capped or from a
+// clock since corrected. It can't make the page ignore a click, and a click on another tag doesn't
+// take on its date, which would hold off every change from another device to that tag until then.
+func TestAMarkFromTheFutureHoldsNothingOff(t *testing.T) {
 	r := newGiveUpRig(t)
 	r.bobKnown()
 	r.bobHas("do-not-disturb")
 	addr := bus.Addr(r.d.device, "bbbbbb")
+	tomorrow := time.Now().Add(24 * time.Hour).UTC()
 	r.d.mu.Lock()
-	err := r.d.humanTagsLocked("bbbbbb", nil, []string{"do-not-disturb"}, "maya", time.Now().Add(24*time.Hour))
+	r.d.st.Tags["quiet-otter"].Human = map[string]tags.Mark{
+		"do-not-disturb": {On: false, By: "maya", At: tomorrow},
+		"release":        {On: true, By: "maya", At: tomorrow},
+	}
 	r.d.mu.Unlock()
-	if err != nil {
+	if err := (pageSource{r.d}).SetTags(r.ctx, addr, []string{"urgent"}, nil); err != nil {
 		t.Fatal(err)
 	}
+	r.d.mu.Lock()
+	r.d.applyTagsEventLocked(r.tagsEvent(time.Now().Add(-time.Minute), "urgent"))
+	_, urgent := r.d.st.Tags["quiet-otter"].Human["urgent"]
+	r.d.mu.Unlock()
+	if urgent {
+		t.Error("the click took on a future date, and held off a change from another device")
+	}
+
 	if err := (pageSource{r.d}).SetTags(r.ctx, addr, []string{"do-not-disturb"}, nil); err != nil {
 		t.Fatal(err)
 	}

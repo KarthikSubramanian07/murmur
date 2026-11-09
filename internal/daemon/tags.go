@@ -219,7 +219,15 @@ func (d *Daemon) humanTagsLocked(id string, add, remove []string, by string, at 
 		self, human, cleared = st.Self, st.Human, st.Cleared
 	}
 	wasDND := d.dndLocked(id)
+	// Nothing is later than now, whatever a clock ahead or a forged commit says. So a change dated
+	// later can't hold off the next, and a click on this device's page, dated now, is the newest.
+	now := time.Now().UTC()
+	if at.After(now) {
+		at = now
+	}
 	next := tags.State{Self: self, Human: cloneMarks(human), Cleared: maps.Clone(cleared)}
+	next.CapTimes(now)
+	human, cleared = maps.Clone(next.Human), maps.Clone(next.Cleared)
 	if err := next.SetHuman(tags.Base(self, d.derivedTagsLocked(id)), add, remove, by, at); err != nil {
 		return err
 	}
@@ -268,13 +276,7 @@ func (d *Daemon) applyTagsEventLocked(e bus.Event) {
 	if p := d.peers[from]; p != nil && p.pres.Owner != "" {
 		by = p.pres.Owner + " on " + from
 	}
-	// Dated later than now by a clock ahead, or a forged commit, it would hold off every change until
-	// that time came.
-	at := e.At
-	if now := time.Now().UTC(); at.After(now) {
-		at = now
-	}
-	if err := d.humanTagsLocked(sess, e.Add, e.Remove, by, at); err != nil {
+	if err := d.humanTagsLocked(sess, e.Add, e.Remove, by, e.At); err != nil {
 		d.log.Printf("tags from %s for %s not applied: %v", e.From, e.To, err)
 	}
 }
@@ -308,12 +310,7 @@ func (s pageSource) SetTags(ctx context.Context, addr string, add, remove []stri
 		if by == "" {
 			by = d.device
 		}
-		// A click here is the newest thing there is, even if a mark's date says otherwise.
-		at := time.Now().UTC()
-		if last := d.st.Tags[d.tagKeyLocked(sess)].LastChoice(); last.After(at) {
-			at = last
-		}
-		err := d.humanTagsLocked(sess, add, remove, by, at)
+		err := d.humanTagsLocked(sess, add, remove, by, time.Now().UTC())
 		d.mu.Unlock()
 		return err
 	}
