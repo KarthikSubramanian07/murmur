@@ -336,7 +336,7 @@ function sidebar() {
       "div",
       { class: "sidebar-content" },
       VARIANT === "g"
-        ? h("div", { class: "sidebar-group g-top" }, topRow("sessions", "users", "All sessions", plural(sessionCount(), "session") + (settledSessions().length ? " · " + settledSessions().length + " settled" : " · " + plural(devices().length, "device"))), allButton(), topRow("recent", "clock", "Recent messages", "Newest first, from everyone"), topRow("fleet", "activity", "Fleet audit", fleetSub()))
+        ? h("div", { class: "sidebar-group g-top" }, topRow("sessions", "users", "All sessions", plural(sessionCount(), "session") + (settledSessions().length ? " · " + settledSessions().length + " settled" : " · " + plural(devices().length, "device"))), allButton(), topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")), topRow("fleet", "activity", "Fleet audit", fleetSub()))
         : h(
             "div",
             { class: "sidebar-group" },
@@ -672,7 +672,7 @@ function allButton() {
       },
     },
     h("span", { class: "all-ico" }, icon("message")),
-    h("span", { class: "all-text" }, h("span", { class: "all-title" }, "All conversations"), h("span", { class: "all-sub" }, plural(count, "conversation") + " · every session")),
+    h("span", { class: "all-text" }, h("span", { class: "all-title" }, "All conversations"), h("span", { class: "all-sub" }, plural(count, "conversation"))),
   );
 }
 
@@ -884,7 +884,7 @@ function gRecentPage() {
   return h(
     "div",
     { class: "g-page g-recent" },
-    h("header", { class: "g-page-head" }, h("h1", null, "Recent messages"), h("p", null, "Every message, newest first. Click one to open its conversation.")),
+    h("header", { class: "g-page-head" }, h("h1", null, "Recent messages"), h("p", null, plural(ui.messages.length, "message"))),
     list.length ? h("div", { class: "g-feed" }, out) : h("p", { class: "g-none" }, "No messages yet"),
   );
 }
@@ -1449,9 +1449,9 @@ function gList(list) {
         ? [
             h("div", { class: "g-head-who" }, f ? presence(name, f.device) : avatar(name), h("h2", { class: "truncate" }, name)),
             f && f.session.doing && h("p", { class: "g-head-doing" }, f.session.doing),
-            !f && h("p", { class: "g-head-doing" }, "Settled. Its messages are kept."),
+            !f && h("p", { class: "g-head-doing" }, "Settled · " + ago(settledSessions().find((r) => r.name === name)?.last || 0)),
           ]
-        : [h("h2", null, "All conversations"), h("p", { class: "g-head-doing" }, plural(list.length, "conversation") + " between every session")],
+        : [h("h2", null, "All conversations"), h("p", { class: "g-head-doing" }, plural(list.length, "conversation"))],
     ),
     h(
       "label",

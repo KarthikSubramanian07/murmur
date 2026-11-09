@@ -360,20 +360,29 @@
 .mini-face.current::before { content: ""; position: absolute; left: -0.625rem; top: 0.625rem; bottom: 0.625rem; width: 0.25rem; border-radius: 0 4px 4px 0; background: #f0f1f3; }
 .mini-face .avatar { width: 2.25rem; height: 2.25rem; font-size: 0.875rem; }
 
-/* a DM's two faces side by side, like the members pile, each dot on its outer corner */
-:is([data-variant="e"], [data-variant="g"]) .avatar-pair { position: static; display: inline-flex; align-items: center; width: auto !important; height: auto !important; flex-shrink: 0; }
-:is([data-variant="e"], [data-variant="g"]) .avatar-pair .avatar,
-:is([data-variant="e"], [data-variant="g"]) .avatar-pair .avatar.dotted { position: relative !important; inset: auto !important; width: 1.875rem !important; height: 1.875rem !important; font-size: 0.75rem !important; box-shadow: 0 0 0 2.5px #25272c; }
-:is([data-variant="e"], [data-variant="g"]) .avatar-pair .avatar + .avatar { margin-left: -0.5rem; }
-:is([data-variant="e"], [data-variant="g"]) .avatar-pair .avatar:first-child.dotted > .pres { left: -0.1875rem; right: auto; bottom: -0.1875rem; }
-:is([data-variant="e"], [data-variant="g"]) .avatar-pair .avatar:last-child.dotted > .pres { right: -0.1875rem; left: auto; bottom: -0.1875rem; }
-:is([data-variant="e"], [data-variant="g"]) .avatar-pair .avatar.dotted > .pres { width: 0.625rem; height: 0.625rem; box-shadow: 0 0 0 2.5px #25272c; }
-.chat-row[aria-current="true"] .avatar-pair .avatar, .chat-row:hover .avatar-pair .avatar,
-.chat-row[aria-current="true"] .avatar-pair .avatar.dotted > .pres, .chat-row:hover .avatar-pair .avatar.dotted > .pres { box-shadow: 0 0 0 2.5px #33363c !important; }
-.chat-head .avatar-pair .avatar, .chat-head .avatar-pair .avatar.dotted > .pres { box-shadow: 0 0 0 2.5px #2a2c32 !important; }
+/* a DM's two faces on a diagonal, top right to bottom left; each dot on its face's free bottom-right corner */
+:is([data-variant="e"], [data-variant="g"]) .avatar-pair { position: relative; display: block; flex-shrink: 0; width: 2.5rem !important; height: 2.5rem !important; }
+:is([data-variant="e"], [data-variant="g"]) .avatar-pair .avatar, :is([data-variant="e"], [data-variant="g"]) .avatar-pair .avatar.dotted { position: absolute !important; width: 1.5rem !important; height: 1.5rem !important; font-size: 0.6875rem !important; box-shadow: none; }
+:is([data-variant="e"], [data-variant="g"]) .avatar-pair .avatar:first-child { top: 0; right: 0; left: auto; bottom: auto; z-index: auto; }
+:is([data-variant="e"], [data-variant="g"]) .avatar-pair .avatar:last-child { left: 0; bottom: 0; top: auto; right: auto; z-index: 1; box-shadow: 0 0 0 2px #25272c; }
+:is([data-variant="e"], [data-variant="g"]) .avatar-pair .avatar.dotted > .pres { width: 0.5rem; height: 0.5rem; box-shadow: 0 0 0 2px #25272c; }
+:is([data-variant="e"], [data-variant="g"]) .avatar-pair .avatar:first-child.dotted > .pres { left: auto; right: -2px; bottom: -2px; z-index: 2; }
+:is([data-variant="e"], [data-variant="g"]) .avatar-pair .avatar:last-child.dotted > .pres { left: auto; right: -2px; bottom: -2px; }
+.chat-row[aria-current="true"] .avatar-pair .avatar:last-child, .chat-row:hover .avatar-pair .avatar:last-child,
+.chat-row[aria-current="true"] .avatar-pair .avatar.dotted > .pres, .chat-row:hover .avatar-pair .avatar.dotted > .pres { box-shadow: 0 0 0 2px #33363c; }
+:is([data-variant="e"], [data-variant="g"]) .chat-head > .avatar-pair { width: 2.25rem !important; height: 2.25rem !important; }
+:is([data-variant="e"], [data-variant="g"]) .chat-head > .avatar-pair .avatar, :is([data-variant="e"], [data-variant="g"]) .chat-head > .avatar-pair .avatar.dotted { width: 1.375rem !important; height: 1.375rem !important; font-size: 0.625rem !important; }
+.chat-head .avatar-pair .avatar:last-child, .chat-head .avatar-pair .avatar.dotted > .pres { box-shadow: 0 0 0 2px #2a2c32; }
+
+/* smaller presence dots everywhere in G */
+[data-variant="g"] .pres { width: 0.5rem; height: 0.5rem; }
+[data-variant="g"] .avatar.dotted > .pres { width: 0.5625rem; height: 0.5625rem; right: -0.125rem; bottom: -0.125rem; box-shadow: 0 0 0 2px #25272c; }
+.chat-row[aria-current="true"] .avatar.dotted > .pres, .chat-row:hover .avatar.dotted > .pres { box-shadow: 0 0 0 2px #33363c; }
+.chat-head .avatar.dotted > .pres { box-shadow: 0 0 0 2px #2a2c32; }
+[data-variant="g"] .dev-dot { width: 0.4375rem; height: 0.4375rem; }
 /* rows line their text up whatever the picture: a pair is the widest */
 [data-variant="g"] .chat { grid-template-columns: 21rem minmax(0, 1fr); }
-[data-variant="g"] .g-list .chat-row > .g-grid, [data-variant="g"] .g-list .chat-row > .avatar { margin-right: 1rem; }
+[data-variant="g"] .g-list .chat-row > .g-grid, [data-variant="g"] .g-list .chat-row > .avatar { margin-right: 0.25rem; }
 
 /* settled sessions: folded under each device, a tab on All sessions, an Older section in conversations */
 .settled { margin-top: 0.125rem; }
