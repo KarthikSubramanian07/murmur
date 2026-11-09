@@ -92,6 +92,14 @@ func (r *giveUpRig) away() {
 // starts a new history, as a rewrite of the log does.
 func (r *giveUpRig) append(parent string, e bus.Event) string {
 	r.t.Helper()
+	sha := r.commit(parent, e)
+	r.git(r.author, "push", "-q", "--force", r.remote, sha+":"+giveUpRef)
+	return sha
+}
+
+// commit makes the commit of an event without putting it on the remote.
+func (r *giveUpRig) commit(parent string, e bus.Event) string {
+	r.t.Helper()
 	msg, err := bus.Encode(e, e.Line())
 	if err != nil {
 		r.t.Fatal(err)
@@ -101,9 +109,7 @@ func (r *giveUpRig) append(parent string, e bus.Event) string {
 	if parent != "" {
 		args = append(args, "-p", parent)
 	}
-	sha := r.git(r.author, args...)
-	r.git(r.author, "push", "-q", "--force", r.remote, sha+":"+giveUpRef)
-	return sha
+	return r.git(r.author, args...)
 }
 
 func (r *giveUpRig) tagsEvent(at time.Time, remove ...string) bus.Event {
@@ -291,6 +297,83 @@ func TestAGivenUpBacklogRewrittenMeanwhileIsNotReplayed(t *testing.T) {
 	r.sync()
 	if got := r.queued(); !slices.Equal(got, []string{"after the rewrite"}) {
 		t.Errorf("queued %q, want what came after the rewrite", got)
+	}
+}
+
+// The same when the fetch failed before it brought the tip given up on, which failFetches can't show:
+// git downloads the objects before it takes the ref's lock. With the listing at a tip that doesn't
+// hold what was given up on, the log was rewritten, so nothing in the new history is replayed, on a
+// log new to this device or one sharing history with what it read.
+func TestAGivenUpTipThatNeverCameIsARewrite(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		shared bool
+	}{{name: "a log new to the device"}, {name: "a log with history in common", shared: true}} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newGiveUpRig(t)
+			r.bobKnown()
+			r.bobHas("do-not-disturb")
+			read := ""
+			if c.shared {
+				read = r.append("", r.message("read before"))
+				r.sync()
+			}
+			gone := r.commit(read, r.message("never fetched")) // on no ref of the remote
+			tip := r.append(read, r.tagsEvent(time.Now(), "do-not-disturb"))
+			r.d.mu.Lock()
+			r.d.st.Processed[giveUpRef], r.d.st.TagsFrom[giveUpRef] = gone, read
+			r.d.mu.Unlock()
+
+			r.sync()
+			if r.off("do-not-disturb") {
+				t.Error("a tag change from the rewritten log's new history was applied")
+			}
+			if _, ok := r.d.st.TagsFrom[giveUpRef]; ok {
+				t.Error("the cursor is still there")
+			}
+			r.append(tip, r.message("after the rewrite"))
+			r.sync()
+			if got := r.queued(); !slices.Equal(got, []string{"after the rewrite"}) {
+				t.Errorf("queued %q, want what came after the rewrite", got)
+			}
+		})
+	}
+}
+
+// A fetch that started before the give-up can land on a tip older than the one given up on, as a slow
+// one does. The listing still shows the later tip, so this is no rewrite: the log waits for that tip,
+// with nothing moved back, and its tags events are then applied and its messages still passed over.
+func TestAGivenUpBacklogWaitsWhenAnOlderFetchLands(t *testing.T) {
+	r := newGiveUpRig(t)
+	r.bobKnown()
+	r.bobHas("do-not-disturb")
+	read := r.append("", r.message("read before"))
+	r.sync()
+	older := r.append(read, r.tagsEvent(time.Now(), "do-not-disturb"))
+	if err := r.d.repo.Fetch(r.ctx, []string{giveUpRef}); err != nil {
+		t.Fatal(err)
+	}
+	tip := r.append(older, r.message("given up on"))
+	r.d.mu.Lock()
+	r.d.st.Processed[giveUpRef], r.d.st.TagsFrom[giveUpRef] = tip, read
+	r.d.mu.Unlock()
+
+	r.d.advMu.Lock()
+	r.d.advanceMesh(r.ctx, giveUpRef, older, tip)
+	r.d.advMu.Unlock()
+	if got := r.d.st.Processed[giveUpRef]; got != tip {
+		t.Errorf("processed %s, want the tip given up on, %s", got, tip)
+	}
+	if _, ok := r.d.st.TagsFrom[giveUpRef]; !ok {
+		t.Error("the cursor went before the tip given up on came")
+	}
+
+	r.sync()
+	if !r.off("do-not-disturb") {
+		t.Error("the tag change wasn't applied once the tip came")
+	}
+	if got := r.queued(); len(got) != 0 {
+		t.Errorf("queued %q from what was given up on", got)
 	}
 }
 

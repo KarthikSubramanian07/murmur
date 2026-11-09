@@ -245,7 +245,7 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			d.processNames(ctx, sha)
 		case strings.HasPrefix(ref, brand.MeshPrefix):
 			if _, ok := meshDevice(ref); ok {
-				d.advanceMesh(ctx, ref, sha)
+				d.advanceMesh(ctx, ref, sha, listed[ref])
 			}
 		case strings.HasPrefix(ref, brand.PresencePrefix):
 			d.updatePeer(ctx, ref, sha)
@@ -535,9 +535,10 @@ func firstSight(written time.Time) time.Time {
 }
 
 // advanceMesh processes a device's log up to sha and queues its messages, as the sync mode
-// says. Caller holds advMu.
-func (d *Daemon) advanceMesh(ctx context.Context, ref, sha string) {
-	if !d.readGivenUpTags(ctx, ref, sha) {
+// says. listed is the tip the remote is known to have, which a fetch can land short of. Caller holds
+// advMu.
+func (d *Daemon) advanceMesh(ctx context.Context, ref, sha, listed string) {
+	if !d.readGivenUpTags(ctx, ref, sha, listed) {
 		return
 	}
 	d.mu.Lock()
@@ -687,9 +688,10 @@ func (d *Daemon) tagsKnownLocked() bool {
 
 // readGivenUpTags applies the tags events of the stretch of ref's log that a give-up passed over
 // (see state.TagsFrom), now that sha has been fetched. The stretch ends at Processed, the tip when
-// it was given up on; what came later is read as usual, messages too. It says false if git failed:
-// the log then waits for the next poll, as it does for any failure reading it. Caller holds advMu.
-func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha string) bool {
+// it was given up on; what came later is read as usual, messages too. listed is the tip the sync's
+// listing shows. It says false if the log has to wait for the next poll: git failed, as with any
+// failure reading a log, or that tip hasn't come yet. Caller holds advMu.
+func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha, listed string) bool {
 	d.mu.Lock()
 	from, given := d.st.TagsFrom[ref]
 	to := d.st.Processed[ref]
@@ -707,22 +709,27 @@ func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha string) bool {
 		return failed(err)
 	}
 	if !ok {
-		// The tip given up on never came, as the log was rewritten or an older fetch landed, or it
-		// was junk. Read as far as the log goes now; a later part comes through advanceMesh.
-		if ok, err = d.repo.IsCommit(ctx, sha); err != nil {
+		// The tip given up on isn't here, or it was junk, so sha doesn't hold it. A fetch that started
+		// earlier may have landed, as a slow one does: a later fetch brings that tip, and meanwhile
+		// advanceMesh would take sha for a rewrite and move Processed back past it.
+		if sha != listed {
+			return false
+		}
+		isCommit, err := d.repo.IsCommit(ctx, sha)
+		if err != nil {
 			return failed(err)
 		}
-		if !ok {
-			return true // junk again, which advanceMesh passes over; its owner builds over it
+		if !isCommit {
+			return true // junk, which advanceMesh passes over; its owner builds over it
 		}
-		to = sha
-	}
-	var commits []bus.Commit
-	if ok = from == ""; !ok {
+		// The remote is at sha. It can't be told from here whether the log was rewritten or built
+		// over junk, so it gets what a rewritten log gets: its history isn't replayed.
+	} else if from != "" {
 		if ok, err = d.repo.IsAncestor(ctx, from, to); err != nil {
 			return failed(err)
 		}
 	}
+	var commits []bus.Commit
 	if ok {
 		if commits, err = d.repo.Log(ctx, from, to); err != nil {
 			return failed(err)
@@ -1004,7 +1011,7 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 				d.noteConversationLocked() // a message went out; the answer may come soon
 			}
 			d.mu.Unlock()
-			d.advanceMesh(ctx, ref, sha) // queues for sessions on this device
+			d.advanceMesh(ctx, ref, sha, sha) // queues for sessions on this device
 			d.advMu.Unlock()
 			return nil
 		}
