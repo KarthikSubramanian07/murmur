@@ -60,12 +60,19 @@ const (
 
 // prCache answers PR state from memory and refreshes it in the background, so a page poll never
 // waits on GitHub. A failed lookup counts as no PR until the next one.
+//
+// A lookup runs gh in the clone, so one still running when the page's server stops would outlive
+// it there: close cancels the lookups in flight, waits for them, and starts no more.
 type prCache struct {
 	lookup LookupPR
 	sem    chan struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 
 	mu      sync.Mutex
 	entries map[string]*prEntry
+	closed  bool
 }
 
 type prEntry struct {
@@ -76,7 +83,17 @@ type prEntry struct {
 }
 
 func newPRCache(lookup LookupPR) *prCache {
-	return &prCache{lookup: lookup, sem: make(chan struct{}, prParallel), entries: map[string]*prEntry{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &prCache{lookup: lookup, sem: make(chan struct{}, prParallel), ctx: ctx, cancel: cancel, entries: map[string]*prEntry{}}
+}
+
+// close cancels the lookups in flight and returns once they have ended. Later gets start none.
+func (c *prCache) close() {
+	c.mu.Lock()
+	c.closed = true
+	c.mu.Unlock()
+	c.cancel()
+	c.wg.Wait()
 }
 
 // get returns what is known of each branch's PR, leaving out branches with none or not yet
@@ -99,8 +116,9 @@ func (c *prCache) get(branches []string) map[string]PR {
 		if e.pr != nil {
 			out[b] = *e.pr
 		}
-		if !e.inflight && now.Sub(e.fetched) >= prTTL {
+		if !c.closed && !e.inflight && now.Sub(e.fetched) >= prTTL {
 			e.inflight = true
+			c.wg.Add(1) // under mu, which close takes before it waits, so never after the wait began
 			go c.refresh(b)
 		}
 	}
@@ -113,11 +131,19 @@ func (c *prCache) get(branches []string) map[string]PR {
 }
 
 func (c *prCache) refresh(branch string) {
-	c.sem <- struct{}{}
-	defer func() { <-c.sem }()
-	ctx, cancel := context.WithTimeout(context.Background(), prTimeout)
+	defer c.wg.Done()
+	select {
+	case c.sem <- struct{}{}:
+		defer func() { <-c.sem }()
+	case <-c.ctx.Done():
+	}
+	ctx, cancel := context.WithTimeout(c.ctx, prTimeout)
 	defer cancel()
-	pr, err := c.lookup(ctx, branch)
+	var pr *PR
+	var err error
+	if ctx.Err() == nil { // closed while it waited for a turn: no lookup
+		pr, err = c.lookup(ctx, branch)
+	}
 	if err != nil {
 		pr = nil // gh missing, logged out, offline: show no PR state rather than an error
 	}
