@@ -2479,7 +2479,7 @@ function fleetPage() {
   const devs = new Set(all.map((r) => r.d.id));
   const n = allNeeds.size;
   const sub = (q || F.state) && all.length
-    ? ["Showing " + rows.length + " of " + plural(all.length, "session") + " ", h("button", { class: "fx-clear", onclick: () => { F.q = ""; F.state = ""; render(); } }, "Clear")]
+    ? ["Showing " + rows.length + " of " + plural(all.length, "session") + (n ? " · " + n + (n === 1 ? " needs" : " need") + " a look" : "") + " ", h("button", { class: "fx-clear", onclick: () => { F.q = ""; F.state = ""; render(); } }, "Clear")]
     : plural(all.length, "session") + " on " + plural(devs.size, "device") + " · " + (n ? n + (n === 1 ? " needs" : " need") + " a look" : "nothing needs a look");
 
   // Where the rail can't sit beside the table and leave it readable (see STACKED), the selected
@@ -2663,7 +2663,7 @@ function fleetRow(d, s, need, on) {
       ),
     ),
     h("span", { class: "fx-state" }, fxDot(state), word),
-    h("span", { class: "fx-doing" }, h("span", { class: "fx-status" + (s.doing ? "" : " fx-faint") }, s.doing || "No status set"), need && h("span", { class: "fx-reason" }, need.text())),
+    h("span", { class: "fx-doing" }, h("span", { class: "fx-status" + (s.doing ? "" : " fx-faint"), title: s.doing || null }, s.doing || "No status set"), need && h("span", { class: "fx-reason" }, need.text())),
     h("span", { class: "fx-branch" }, s.branch && h("span", { class: "mono truncate", title: s.branch }, s.branch), pr && h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number)),
     h("span", { class: "num fx-muted" }, t ? agoEl("span", "", t) : "–"),
   );
@@ -2727,6 +2727,29 @@ function fleetSetSel(want) {
 }
 document.addEventListener("keydown", (e) => {
   if (e.target?.dataset?.key === "fx-q" && e.target.value) return; // the box clears itself
+  // "/" goes to the search box, and ↑/↓ move between rows, as in most lists people use daily.
+  if (ui.view === "sessions" && VARIANT === "g" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const tag = e.target?.tagName;
+    if (e.key === "/" && tag !== "INPUT" && tag !== "TEXTAREA") {
+      const box = root.querySelector('[data-key="fx-q"]');
+      if (box) {
+        e.preventDefault();
+        box.focus();
+        box.select();
+        return;
+      }
+    }
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && e.target?.classList?.contains("fx-row")) {
+      const rows = [...root.querySelectorAll(".fx-row")];
+      const next = rows[rows.indexOf(e.target) + (e.key === "ArrowDown" ? 1 : -1)];
+      if (next) {
+        e.preventDefault();
+        next.focus();
+        next.scrollIntoView({ block: "nearest" });
+      }
+      return;
+    }
+  }
   if (e.key === "Escape" && !e.defaultPrevented && ui.view === "sessions" && ui.fleetSel) {
     e.preventDefault();
     fleetCloseAsked();
@@ -2760,10 +2783,24 @@ function fleetInspector(name, need) {
   // Beside the table the rail has room for six; as the whole page, twenty.
   const shown = STACKED.matches ? 20 : 6;
   const unanswered = new Set([...fleetNeeds(fleetRows()).values()].flatMap((n) => n.msgs));
-  // Questions it owes, oldest first; then its own questions still waiting, oldest first; then the
-  // rest, newest first.
+  // One row per conversation (the other session and the subject, a reply's "Re:" aside), since a
+  // message and its reply open the same one. Conversations holding a question it owes come first,
+  // oldest first; then its own questions still waiting, oldest first; then the rest, newest first.
   const rank = (m) => (owed.includes(m) ? 0 : fromName(m) === name && unanswered.has(m) ? 1 : 2);
-  const direct = ui.messages.filter((m) => m.toKind === "session" && (fromName(m) === name || toName(m) === name)).sort((a, b) => rank(a) - rank(b) || (rank(a) < 2 ? a.sortAt - b.sortAt : b.sortAt - a.sortAt));
+  const convMap = new Map();
+  for (const m of ui.messages) {
+    if (m.toKind !== "session" || (fromName(m) !== name && toName(m) !== name)) continue;
+    const other = fromName(m) === name ? toName(m) : fromName(m);
+    const subj = (m.subject || "").replace(/^(re:\s*)+/i, "");
+    const k = JSON.stringify([other, subj]);
+    if (!convMap.has(k)) convMap.set(k, { other, subj, msgs: [] });
+    convMap.get(k).msgs.push(m);
+  }
+  const direct = [...convMap.values()].map((c) => {
+    const latest = c.msgs.reduce((a, b) => (b.sortAt > a.sortAt ? b : a));
+    const waiting = c.msgs.filter((m) => rank(m) < 2).sort((a, b) => rank(a) - rank(b) || a.sortAt - b.sortAt)[0];
+    return { ...c, latest, waiting, rank: waiting ? rank(waiting) : 2 };
+  }).sort((a, b) => a.rank - b.rank || (a.rank < 2 ? a.waiting.sortAt - b.waiting.sortAt : b.latest.sortAt - a.latest.sortAt));
   const close = () => fleetCloseAsked();
   return [
     h(
@@ -2777,23 +2814,29 @@ function fleetInspector(name, need) {
     ),
     need && h("button", { class: "fx-insp-need", onclick: () => swOpenMessage(need.m) }, h("span", null, need.text(need.msgs.length === 1)), h("span", { class: "fx-insp-open" }, "Open the conversation →")),
     h("dl", { class: "fx-meta" }, meta.map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
-    h("h3", { class: "fx-h3" }, "Direct messages", h("span", { class: "fx-badge" }, direct.length > shown ? shown + " of " + direct.length : direct.length)),
+    h("h3", { class: "fx-h3" }, "Direct conversations", h("span", { class: "fx-badge" }, direct.length > shown ? shown + " of " + direct.length : direct.length)),
     direct.length
       ? h(
           "ul",
           { class: "fx-dms" },
-          direct.slice(0, shown).map((m) => {
+          direct.slice(0, shown).map((c) => {
+            const m = c.waiting || c.latest;
             const out = fromName(m) === name;
-            const waits = owed.includes(m);
+            const one = c.msgs.length === 1;
+            const head =
+              c.rank === 0 ? ["From ", h("b", null, c.other), " · waiting for an answer"]
+              : c.rank === 1 ? ["To ", h("b", null, c.other), " · no answer yet"]
+              : one ? [out ? "To " : "From ", h("b", null, c.other)]
+              : ["With ", h("b", null, c.other), " · " + c.msgs.length + " messages"];
             return h(
               "li",
               null,
               h(
                 "button",
-                { class: "fx-dm" + (waits ? " fx-dm-wait" : ""), onclick: () => swOpenMessage(m) },
-                h("span", { class: "fx-dm-head" }, h("span", null, out ? "To " : "From ", h("b", null, out ? toName(m) : fromName(m)), waits ? " · waiting for an answer" : out && unanswered.has(m) ? " · no answer yet" : ""), agoEl("span", "fx-dm-time", m.sortAt)),
-                h("span", { class: "fx-dm-subj" }, m.subject),
-                (waits || (out && unanswered.has(m))) && questionIn(m) !== m.subject && h("span", { class: "fx-dm-q" }, "“" + questionIn(m) + "”"),
+                { class: "fx-dm" + (c.rank === 0 ? " fx-dm-wait" : ""), onclick: () => swOpenMessage(m) },
+                h("span", { class: "fx-dm-head" }, h("span", null, head), agoEl("span", "fx-dm-time", m.sortAt)),
+                h("span", { class: "fx-dm-subj" }, c.subj),
+                c.rank < 2 && questionIn(m) !== c.subj && h("span", { class: "fx-dm-q" }, "“" + questionIn(m) + "”"),
               ),
             );
           }),

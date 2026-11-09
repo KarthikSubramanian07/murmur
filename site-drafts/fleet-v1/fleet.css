@@ -196,6 +196,7 @@
   .fx-tr { grid-template-columns: minmax(11rem, 1.2fr) 7rem minmax(12rem, 1.8fr) 5.5rem; }
   .fx-tr > :nth-child(4) { display: none; }
   .fx-sub-branch { display: flex; align-items: baseline; min-width: 0; }
+  .fx-status { -webkit-line-clamp: 3; }
 }
 @container (max-width: 640px) {
   .fx-th { display: none; }
@@ -232,7 +233,7 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-dm:hover { background: var(--fx-hover); }
 .fx-dm-head { display: flex; justify-content: space-between; gap: 0.5rem; color: var(--fx-text-2); font-size: 0.75rem; }
 .fx-dm-head b { color: var(--fx-text); font-weight: 600; }
-.fx-dm-time { color: var(--fx-text-3); white-space: nowrap; }
+.fx-dm-time { color: var(--fx-text-2); white-space: nowrap; }
 .fx-dm-subj { color: var(--fx-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fx-sheet .fx-insp-head { position: sticky; top: 0; z-index: 5; margin: -2rem -2rem 1rem; padding: 0.75rem 2rem; border-bottom: 1px solid var(--fx-border); background: #1b1b1b; }
 @media (max-width: 1000px) {
