@@ -31,6 +31,7 @@ import (
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:0", "loopback address to listen on")
+	taken := flag.Bool("taken", false, "start with an account named maya, a name the person on maya-mbp chose first (#268)")
 	upd := flag.String("update", "none", "what the page is told of a newer release: none, auto (being installed), manual (updates off), or ready (installed, waiting for a restart)")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*addr)
@@ -54,6 +55,9 @@ func main() {
 		src.version.Latest, src.version.Auto, src.version.Ready = "0.3.1", true, true
 	default:
 		log.Fatalf("-update must be none, auto, manual or ready")
+	}
+	if *taken {
+		src.account = web.Account{Name: "maya", Addr: src.self + "/human", Taken: "maya-mbp-91c0"}
 	}
 	go src.run()
 	fmt.Printf("http://%s/#token=%s\n", ln.Addr(), token)
@@ -310,7 +314,7 @@ func (f *fixtures) SetAccount(ctx context.Context, name string) (web.Account, er
 	if name == "maya" {
 		return web.Account{}, errors.New("maya is taken, by the person on maya-mbp-91c0.")
 	}
-	f.account.Name, f.account.Addr, f.account.Suggested = name, f.self+"/human", ""
+	f.account.Name, f.account.Addr, f.account.Suggested, f.account.Taken = name, f.self+"/human", "", ""
 	for i := range f.devices {
 		if f.devices[i].Self {
 			f.devices[i].Person = &web.Person{Name: name, Addr: f.account.Addr, LastActive: time.Now()}
@@ -322,6 +326,12 @@ func (f *fixtures) SetAccount(ctx context.Context, name string) (web.Account, er
 // Send takes as long as a push does, refuses what scrub would, and has the session answer a few
 // seconds later, as an agent does, going active first so the page can show it working.
 func (f *fixtures) Send(ctx context.Context, to, text string) (web.Sent, error) {
+	f.mu.Lock()
+	takenBy := f.account.Taken
+	f.mu.Unlock()
+	if takenBy != "" {
+		return web.Sent{}, fmt.Errorf("the person on %s has your name; choose another before you send", takenBy)
+	}
 	select {
 	case <-time.After(700 * time.Millisecond):
 	case <-ctx.Done():
