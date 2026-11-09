@@ -803,9 +803,28 @@ A body past the limit is cut, as in `inbox`.
   not observed); a person can also delete one in T3's window. Tyler's decision (2026-11-08): where
   Murmur's hook runs, a busy session isn't handed the message. The hook tells it after its next
   tool call, sender and subject with the count unread, and the agent reads the body with `inbox`
-  when it chooses. What it was told of and hasn't read when the turn ends is handed over as a turn then,
-  however long the turn took, so nothing waits for good. A message that comes during a turn with
-  no tool call after it is handed over at the end as well.
+  when it chooses. What it was told of and hasn't read when the turn ends is given to it then,
+  however long the turn took, so nothing waits for good, and so is a message that came during the
+  turn with no tool call after it.
+  - *At the end of the turn* the `Stop` hook keeps the turn going with those messages: it blocks
+    the stop, and Claude Code gives the agent the hook's reason, each message as its turn would
+    read (Tyler, 2026-11-08; first built as a new turn, handed to T3 or the socket). That needs
+    neither T3 nor a messaging socket, and nothing goes into T3's queue, which may hold a turn for
+    good (above). The cost is a longer turn: its user sees it go on after what looked like the
+    agent's last word. The messages are delivered once the daemon answers the hook, so a hook that
+    gave up waiting (3 s) just before the answer came loses them, as a whole message can (#204).
+    The session is at work again, so a message that comes now waits for the turn's next end.
+    Outside T3 that lasts 2 minutes unless another hook of the session shows the turn went on: an
+    answer that was lost leaves an agent that stopped, and nothing else there would end its turn.
+    The page's wake setting decides as it does for a turn: under never, they stay in the inbox. A
+    turn that ends without `Stop`, one the user interrupted in T3, has them handed over as a turn
+    instead, and so does a hook that says it can't keep a turn going (`Continues` unset). So does
+    a ninth `Stop` in a row with no tool call between: Claude Code ends the turn after eight
+    continuations whatever the hook says (its hooks reference, 2026-11-08), so the daemon counts
+    them. The user's own Stop hooks count toward that cap too, and the daemon doesn't see them.
+    The first `Stop` that can keep a turn going also gives what the session was told of before
+    it, when there may have been no way in. Not seen in the world: a T3 thread or terminal
+    session kept going by the hook; the `decision: block` answer is Claude Code's documented one.
   - *Busy and idle come from the hook*: a prompt or a tool call means busy, and the `Stop` hook,
     which `mur join` installs since this change, means the turn ended. "No tool call lately" would
     not do, as one long command looks idle. A turn the user interrupts fires no `Stop`; in T3 the
@@ -985,9 +1004,9 @@ A body past the limit is cut, as in `inbox`.
   have taken a name in the seconds before its thread was read; nobody sees the name. A Claude Code
   subagent inside one session never registered (see Crediting commits, Subagents).
 - **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
-  decision, 2026-10-29). A message to a busy thread is never injected into the turn running: it is
-  queued as the next turn, or, where the hook runs, announced and given as a turn when this one
-  ends (#202). The AGENTS.md wording asks for coordination, not chatting; beyond that
+  decision, 2026-10-29). A message to a busy thread never steers the turn running mid-task: it is
+  queued as the next turn, or, where the hook runs, announced, and given at the turn's end, which
+  the turn then goes on with (#202). The AGENTS.md wording asks for coordination, not chatting; beyond that
   only the agents stop a loop.
 - **Speed.** The daemon polls the remote every 3 s around a conversation, not 10 s (2026-10-29), and
   hands a message over the moment it is fetched. Measured between two T3 threads on one laptop through GitHub over HTTPS:
@@ -1085,7 +1104,7 @@ What it can't see: a person with two machines is two users, and one who turned c
 - **Agents replying forever.** T3's local messaging stays calm because a reply is plain text in
   the receiver's own thread; nothing goes back unless the agent deliberately sends again. Murmur
   keeps that: no automatic replies, incoming messages that never steer a running turn (queued
-  behind it, or since #202 told by the hook and given as a turn when it ends),
+  behind it, or since #202 told by the hook and given at its end),
   and AGENTS.md wording that asks for coordination, not chatting. No limits or caps on top of that,
   now that a message starts a turn without anyone typing (Tyler's decision, 2026-10-29): two
   agents that keep answering each other are stopped by nothing but the agents.

@@ -493,9 +493,11 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	return resp
 }
 
-// turnEnd is the hook at the end of a turn (Claude Code's Stop): the sessions it speaks for are
-// idle, and the messages they were told of while at work and haven't read go in as a turn, and so
-// do those that came during the turn and weren't told, however long it took (#202).
+// turnEnd is the hook at the end of a turn (Claude Code's Stop). The messages the sessions it
+// speaks for were told of while at work and haven't read, and those that came during the turn and
+// weren't told, however long it took, would go in as a turn now (#202). Where the hook can keep the
+// turn going (req.Continues), they are its reply instead, delivered, and the turn goes on with them
+// (Tyler, 2026-11-08). A session with none is idle.
 func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
@@ -503,12 +505,47 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 	if req.ClaudeSession == "" || req.Subagent {
 		return proto.Response{OK: true}
 	}
+	var given []delivery
+	held := false
 	for _, s := range d.touchHookLocked(req) {
-		s.stopSeen = true
+		first := req.Continues && !s.stopContinues
+		s.stopSeen, s.stopContinues = true, req.Continues
+		if first {
+			// What it was told of before its Stop was known to keep a turn going wasn't held, as
+			// there may have been no way in: it is now.
+			for _, m := range d.st.Inbox[s.id] {
+				if m.Noticed && !m.Held && d.holdableLocked(s.id, m, wake, s.turnStart) {
+					m.Held, held = true, true
+				}
+			}
+		}
 		d.endTurnLocked(s, wake)
+		if !req.Continues || !d.liveLocked(s.id) || d.clearChildInboxLocked(s.id) {
+			continue
+		}
+		for _, m := range d.continueTurnLocked(s, wake) {
+			given = append(given, delivery{s.id, m})
+		}
 	}
 	d.kickPush()
-	return proto.Response{OK: true}
+	if len(given) == 0 {
+		if held {
+			d.saveLocked()
+		}
+		return proto.Response{OK: true}
+	}
+	// A message for everyone is in each inbox the hook speaks for, and is given once.
+	var msgs []*inMsg
+	shown := map[string]bool{}
+	for _, g := range given {
+		if !shown[g.msg.Event.ID] {
+			shown[g.msg.Event.ID] = true
+			msgs = append(msgs, g.msg)
+		}
+		d.outOfInboxLocked(g.id, g.msg, "delivered", "through the Stop hook, keeping its turn going")
+	}
+	d.saveLocked()
+	return proto.Response{OK: true, Delivered: d.messageViewsLocked(msgs, true)}
 }
 
 func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto.Response {

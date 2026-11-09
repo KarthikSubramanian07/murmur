@@ -92,6 +92,8 @@ type device struct {
 	snapshot time.Duration
 	// pushRetry is PushRetry, the wait between a handoff's two attempts; zero takes 200 ms.
 	pushRetry time.Duration
+	// continueHold is ContinueHold; zero takes the daemon's default.
+	continueHold time.Duration
 	// quietPoll is QuietPoll, the poll while no session is live; zero takes poll, so that a device with
 	// no session yet looks at the remote as fast as one with.
 	quietPoll time.Duration
@@ -183,7 +185,7 @@ func (d *device) start() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
 			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll,
-			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry,
+			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState, Log: logger})
 		if err != nil {

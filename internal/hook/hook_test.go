@@ -226,13 +226,13 @@ func TestStopTellsTheDaemonTheTurnEnded(t *testing.T) {
 	for _, r := range requests() {
 		switch r.Op {
 		case proto.OpTurnEnd:
-			ended = r.ClaudeSession == "claude-x"
+			ended = r.ClaudeSession == "claude-x" && r.Continues
 		case proto.OpNotices:
 			t.Error("Stop asked for notices")
 		}
 	}
 	if !ended {
-		t.Errorf("the daemon wasn't told the turn of claude-x ended: %+v", requests())
+		t.Errorf("the daemon wasn't told the turn of claude-x ended, by a hook that can keep it going: %+v", requests())
 	}
 }
 
@@ -300,5 +300,31 @@ func TestDeliveredMessagesAreShownWhole(t *testing.T) {
 		Body: "Are you changing it?"}
 	if want := view.Hook([]proto.MessageView{m}, nil, 1); got.HookSpecificOutput.AdditionalContext != want {
 		t.Errorf("the hook added %q, want %q", got.HookSpecificOutput.AdditionalContext, want)
+	}
+}
+
+// The messages the daemon gives at the end of a turn keep it going: the Stop hook blocks the stop,
+// with each message as its turn would read as the reason, which Claude Code gives the agent (#202).
+func TestStopKeepsTheTurnGoingWithItsMessages(t *testing.T) {
+	repo := newRepo(t)
+	fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpTurnEnd {
+			return `{"ok":true,"delivered":[{"id":"m1","from":"other-0001/bbbbbb",` +
+				`"fromName":"brave-heron","subject":"auth middleware?","body":"Are you changing it?"}]}`
+		}
+		return `{"ok":true}`
+	})
+	out, _ := run("Stop", repo)
+	var got struct {
+		Decision string `json:"decision"`
+		Reason   string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("Stop printed %q: %v", out, err)
+	}
+	m := proto.MessageView{ID: "m1", From: "other-0001/bbbbbb", FromName: "brave-heron", Subject: "auth middleware?",
+		Body: "Are you changing it?"}
+	if want := view.Hook([]proto.MessageView{m}, nil, 0); got.Decision != "block" || got.Reason != want {
+		t.Errorf("Stop printed %+v, want block with %q", got, want)
 	}
 }

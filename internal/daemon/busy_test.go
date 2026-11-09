@@ -11,7 +11,9 @@ import (
 )
 
 // A session Murmur's hook runs in is told of a message by the hook while it is at work, not given
-// it as a turn T3 would queue; what it hasn't read when its turn ends goes in as a turn then (#202).
+// it as a turn T3 would queue; what it hasn't read when its turn ends goes in as a turn then (#202),
+// where the turn's end is a hook that can't keep the turn going, as these tests' turnEnd is. Claude
+// Code's Stop hook can, and keeps it going with them instead (busy_continue_test.go).
 
 // hookNotices is what the hook asks for after a prompt or a tool call of Claude session claude.
 func (d *device) hookNotices(claude string) proto.Response {
