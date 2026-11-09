@@ -612,6 +612,11 @@ func Run(ctx context.Context, opt Options) error {
 		return err
 	}
 	defer lock.Close()
+	// A daemon.json here now is a dead daemon's, as a live one would hold the lock. It goes at once,
+	// not when this one's is written after the first sync: until then a client would ping its
+	// address, find the lock held, and take whatever answers there for this daemon.
+	infoPath := filepath.Join(dir, "daemon.json")
+	os.Remove(infoPath)
 
 	d, err := open(ctx, opt, dir)
 	if err != nil {
@@ -656,7 +661,6 @@ func Run(ctx context.Context, opt Options) error {
 			keep.Close()
 		}
 	}()
-	infoPath := filepath.Join(dir, "daemon.json")
 	info := proto.Info{Addr: ln.Addr().String(), Token: d.token, PID: os.Getpid(), Device: d.device}
 	if pageLn != nil {
 		info.Web, info.PageToken = pageLn.Addr().String(), d.pageTok
