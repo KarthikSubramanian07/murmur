@@ -162,9 +162,20 @@ setting someone turned on with `mur encrypt`, and that command was the friction.
   body, tags. A presence keeps its device ID, time and box key readable and encrypts its host, owner,
   sessions and offline sessions. Commit subjects are `event` and `presence`; they used to repeat the
   content.
-- **Recipients.** The writer itself, and every device whose key is pinned and whose presence is
-  fresh (see staleness, above). A message to one session or device also goes to that device while
-  its presence is stale, if it was seen within StoppedInbox (24 h), for a kept inbox there (#30).
+- **Recipients.** The writer itself, and every device whose key is pinned and from which this
+  daemon took a sealed presence within StaleAfter. That is measured on this machine's clock against
+  now, not against the last successful sync as `who`'s staleness is, so a daemon that has been
+  offline for a while writes for no one else until a sync shows it the team again. A presence that
+  couldn't be read, or was refused, counts for nothing here, though `who` takes it as a sign of
+  life. A device's first presence in a daemon's run is dated by its writer's clock, as for `who`,
+  unless that clock is more than a minute ahead of this one; then it counts only once it changes.
+  These three are from Sol's review: each let a device whose user had lost push access go on
+  reading. A message to one session or device also goes to that device while it is out of the team,
+  if this daemon took a presence from it that it hadn't taken before within StoppedInbox (24 h), so
+  a kept inbox there still works (#30). A broadcast isn't addressed to the device, though, so one
+  whose daemon is down, or asleep past StaleAfter, misses the broadcasts sent meanwhile, which a
+  kept inbox used to catch up on. Encrypting broadcasts for devices away up to 24 hours would keep
+  them, at the cost of a removed collaborator reading the team's broadcasts for that long.
   Every record goes to the whole team, not only to a message's recipient, so the page and `lookup`
   show every message as they did. Teammates could read everything before, and the threat is
   outsiders. When the set of fresh devices with keys changes, the daemon pushes its presence again,
@@ -176,14 +187,16 @@ setting someone turned on with `mur encrypt`, and that command was the friction.
   device with no key is refused, and the sender is told that device runs an older Murmur.
 - **Older daemons.** A daemon from before this passes over `box` events, as it does any type it
   doesn't know, and sees an updated device with no sessions. An updated daemon reads the older one's
-  plaintext as it always did, from a device with no pinned key. So for a while older devices can't
+  plaintext as it always did. It reads a plaintext event from any device, since events carry no
+  signature to hold them to, and plaintext presence only from a device it hasn't pinned. So for a while older devices can't
   hear updated ones, and messages to them are refused. The updater (see Updating) closes that gap
   within an hour of the release, with nobody acting. A version from before the updater needs the
   manual install it already needed. **Until it updates, an older daemon writes in the clear, and
   nothing can stop it.**
 - **A collaborator removed from the repo** can no longer push, so their presence goes stale within
   StaleAfter. From then on they are left out of what is written. The one exception is a message
-  addressed to their device within 24 hours of when it was last seen. They keep what they could
+  addressed to their device within 24 hours of when a teammate's daemon last took a new presence
+  from it. They keep what they could
   already read.
 - **A device that joins later can't read what was written before it published its key.** A new
   device never replayed history anyway. What it costs is the page's list of older messages.
@@ -195,7 +208,10 @@ setting someone turned on with `mur encrypt`, and that command was the friction.
   neither, and keeps its ID.
 - **The name registry stays in the clear, and unsealed.** It holds random names, device IDs and
   random session IDs. A device that joins later must read all of it, history included, so that a
-  name is never given out twice, and it couldn't read records encrypted before it joined.
+  name is never given out twice, and it couldn't read records encrypted before it joined. For the
+  same reason an encrypted presence carries its sessions' names and IDs beside the box: a device
+  that can't open it, having joined while its writer couldn't push, still knows those names are
+  taken. That exposes nothing the registry doesn't.
 - **What anyone who can read a public repo still sees:** device IDs, which begin with a slug of
   the hostname; when each device writes, how many records and how large they are; which device IDs
   each record is wrapped for; each device's public keys; the name registry; and

@@ -455,6 +455,11 @@ type peer struct {
 	// machines' clocks.
 	listed     string
 	lastChange time.Time
+	// verified is when this daemon last took a sealed presence from the device, on this machine's
+	// clock: what the device's keys count as current by (see teamKeysLocked). Only a presence that
+	// passed checkPresenceLocked sets it; one that didn't, or couldn't be read, moves lastChange
+	// alone. Zero for a device that has never sealed one.
+	verified time.Time
 }
 
 // fetchFail is a ref whose fetch failed: at which listed SHA, and when. It is fetched again on

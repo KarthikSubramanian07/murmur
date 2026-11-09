@@ -857,7 +857,8 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		return
 	}
 	d.mu.Lock()
-	if !d.checkPresenceLocked(dev, ref, c, pres) {
+	ok, sealed := d.checkPresenceLocked(dev, ref, c, pres)
+	if !ok {
 		// Not dev's: nothing in it is taken, not even as a sign of life, and it isn't read again.
 		d.refusedSHA[dev] = sha
 		d.mu.Unlock()
@@ -872,7 +873,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 			if !errors.Is(err, bus.ErrNotForUs) {
 				d.log.Printf("%s: %s doesn't open: %v", ref, short(sha), err)
 			}
-			open = bus.Presence{V: pres.V, Device: pres.Device, At: pres.At, BoxKey: pres.BoxKey}
+			open = bus.Presence{V: pres.V, Device: pres.Device, At: pres.At, BoxKey: pres.BoxKey, Names: pres.Names}
 		}
 		pres = open
 	}
@@ -882,12 +883,31 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	if p == nil {
 		changed = firstSight(c.Time) // no change of ours to time it by
 	}
+	var verified time.Time
+	if sealed {
+		// Seen changing, a presence is as new as now. The first this run takes from a device isn't
+		// seen changing, nor is any before the first sync has finished: the one before it came
+		// from the clone's own copy (restore), which may be any age.
+		d.mu.Lock()
+		live := p != nil && !p.verified.IsZero() && !d.lastPollOK.IsZero()
+		d.mu.Unlock()
+		verified = time.Now()
+		if !live {
+			verified = firstVerified(c.Time)
+		}
+	}
 	d.mu.Lock()
-	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed}
+	d.noteSeenLocked(dev, sha, verified)
+	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, verified: verified}
 	// A name in another device's presence is in use, whether or not the registry shows it yet.
 	seen := false
 	for _, s := range pres.Sessions {
 		if s.Name != "" && d.noteNameLocked(s.Name, bus.Addr(dev, s.ID)) {
+			seen = true
+		}
+	}
+	for name, id := range pres.Names { // the same, from a presence this device can't open
+		if d.noteNameLocked(name, bus.Addr(dev, id)) {
 			seen = true
 		}
 	}

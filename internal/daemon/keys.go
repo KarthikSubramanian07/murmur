@@ -27,12 +27,13 @@ import (
 // can publish a key. docs/VISION.md, "The bus is encrypted", has the reasons and what it costs.
 
 // keyPin is what this device knows of a device's keys: the signing key it pinned on first sight,
-// the box key that device's latest sealed presence carried, and when that presence was written (by
-// its writer's clock, never later than when it was read).
+// the box key that device's latest sealed presence carried, and when this daemon last took a sealed
+// presence from it that it hadn't taken before (SHA), by this machine's clock (see noteSeenLocked).
 type keyPin struct {
 	Sign string    `json:"sign"`
 	Box  string    `json:"box"`
-	Seen time.Time `json:"seen"`
+	Seen time.Time `json:"seen,omitzero"`
+	SHA  string    `json:"sha,omitempty"`
 }
 
 // keyFile is the device's private keys, in .git/murmur/keys: never committed, never on the bus.
@@ -167,29 +168,22 @@ func (d *Daemon) pinSelfLocked() {
 // This trusts whoever seals first. Anyone who can push could seal a presence for a device before a
 // reader has seen the device's own, and that reader would then refuse the device: what a team of
 // people who can all push already trust each other with. Caller holds mu.
-func (d *Daemon) checkPresenceLocked(dev, ref string, c bus.Commit, pres bus.Presence) bool {
+func (d *Daemon) checkPresenceLocked(dev, ref string, c bus.Commit, pres bus.Presence) (ok, sealed bool) {
 	state, seal := bus.OpenSeal(c.Message, ref)
 	pin := d.st.Pins[dev]
 	switch {
 	case state == bus.Unsealed && pin == nil && pres.BoxKey == "" && pres.Box == nil:
-		return true // a daemon from before encryption
+		return true, false // a daemon from before encryption
 	case state == bus.Sealed && seal.By == dev && (pin == nil || pin.Sign == seal.Key) && bus.ValidBoxKey(pres.BoxKey):
-		seen := c.Time
-		if now := time.Now(); seen.After(now) {
-			seen = now
-		}
-		seen = seen.UTC()
 		switch {
 		case pin == nil:
-			d.st.Pins[dev] = &keyPin{Sign: seal.Key, Box: pres.BoxKey, Seen: seen}
+			d.st.Pins[dev] = &keyPin{Sign: seal.Key, Box: pres.BoxKey}
 			d.saveLocked()
 		case pin.Box != pres.BoxKey:
-			pin.Box, pin.Seen = pres.BoxKey, seen
+			pin.Box = pres.BoxKey
 			d.saveLocked()
-		case seen.After(pin.Seen):
-			pin.Seen = seen // saved with the next save: a presence comes every 2 minutes
 		}
-		return true
+		return true, true
 	}
 	why := "its seal doesn't hold"
 	switch {
@@ -208,7 +202,40 @@ func (d *Daemon) checkPresenceLocked(dev, ref string, c bus.Commit, pres bus.Pre
 		d.log.Printf("%s: ignoring %s, which claims to be from %s: %s", ref, short(c.SHA), dev, why)
 	}
 	d.refused[dev] = time.Now()
-	return false
+	return false, false
+}
+
+// clockAllowance is how far ahead of this machine's clock a writer's may run before what it dates
+// is taken for no date at all.
+const clockAllowance = time.Minute
+
+// firstVerified is when to take a sealed presence first read in this run as written: by its
+// writer's clock, as firstSight does, unless that clock is ahead of this one by more than
+// clockAllowance. A presence dated in the future would otherwise look current, for as long as its
+// writer chose, to a daemon that starts any time before then, and a device whose user has lost push
+// access could go on reading what is new that way (Sol's review of #156). Such a presence counts
+// as never verified, until the device writes again and this daemon sees it change.
+func firstVerified(written time.Time) time.Time {
+	if written.After(time.Now().Add(clockAllowance)) {
+		return time.Time{}
+	}
+	return firstSight(written)
+}
+
+// noteSeenLocked records that this daemon took sha, a sealed presence of dev's, verified when
+// verified says (on this machine's clock), for the 24 hours a message addressed to dev may still be
+// encrypted for it (encryptEventLocked). Reading the same presence again, as after a restart,
+// renews nothing: only a presence this daemon hasn't taken before does. It is saved with the next
+// save, as a presence comes every 2 minutes. Caller holds mu.
+func (d *Daemon) noteSeenLocked(dev, sha string, verified time.Time) {
+	pin := d.st.Pins[dev]
+	if pin == nil || verified.IsZero() || pin.SHA == sha {
+		return
+	}
+	pin.SHA = sha
+	if wall := time.Now().Add(-time.Since(verified)).Round(0).UTC(); wall.After(pin.Seen) {
+		pin.Seen = wall
+	}
 }
 
 func short(sha string) string {
@@ -219,13 +246,21 @@ func short(sha string) string {
 }
 
 // teamKeysLocked is who this device's records are encrypted for: itself, and every other device
-// whose keys are pinned and whose presence is fresh. A device gone stale is out, which is how a
-// collaborator removed from the repo, whose daemon can no longer push, stops getting what is new
-// within StaleAfter. Caller holds mu.
+// whose keys are pinned and from which this daemon took a sealed presence within StaleAfter. That
+// is how a collaborator removed from the repo, whose daemon can no longer push, stops getting what
+// is new within StaleAfter.
+//
+// It is measured against now, not against the last successful sync as staleLocked is for showing a
+// device: a daemon that has been offline knows nothing of who is on the team now, so after
+// StaleAfter it writes for itself and the device a message is addressed to, until a sync shows it
+// the team again. Nor does a presence that couldn't be read, or that was refused, count: anyone who
+// can push could otherwise keep a device that has gone in the team by pushing junk over its
+// presence (Sol's review of #156). Caller holds mu.
 func (d *Daemon) teamKeysLocked() map[string]string {
 	keys := map[string]string{d.device: bus.BoxPublic(d.boxKey)}
 	for dev, p := range d.peers {
-		if pin := d.st.Pins[dev]; pin != nil && pin.Box != "" && !d.staleLocked(p) {
+		pin := d.st.Pins[dev]
+		if pin != nil && pin.Box != "" && !p.verified.IsZero() && time.Since(p.verified) <= d.opt.StaleAfter {
 			keys[dev] = pin.Box
 		}
 	}

@@ -63,7 +63,8 @@ func TestRestartDoesNotReplayToNewSessions(t *testing.T) {
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "sent while b was down"})
 	b.start()
 	b.session("cccccc", "") // a new session, registered as soon as the daemon is up
-	eventually(t, "b back", func() bool { return b.seesDevices(2) })
+	// a encrypts for the devices it has seen since b came back.
+	eventually(t, "b back", func() bool { return b.seesDevices(2) && a.seesDevices(2) })
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "sent after"})
 
 	for _, sess := range []string{"cccccc", proto.CLISession} {
@@ -177,14 +178,20 @@ func TestRestartCatchesUpReconnectingSessions(t *testing.T) {
 	b.helloAgain("bbbbbb", true)
 	b.session("cccccc", "")
 
+	// Only what was addressed to bob: b was off the team while it was down, so the broadcast wasn't
+	// encrypted for it (docs/VISION.md, "The bus is encrypted").
 	var got []string
 	eventually(t, "bob catches up", func() bool {
 		for _, m := range b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages {
 			got = append(got, m.Subject)
 		}
-		return len(got) >= 2
+		return len(got) >= 1
 	})
-	if len(got) != 2 {
+	time.Sleep(time.Second) // anything else would have come with it
+	for _, m := range b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages {
+		got = append(got, m.Subject)
+	}
+	if len(got) != 1 || got[0] != "direct, during the restart" {
 		t.Fatalf("bob got %q", got)
 	}
 	for _, sess := range []string{"cccccc", proto.CLISession} {
@@ -266,7 +273,9 @@ func TestFirstSyncFailedStillQueues(t *testing.T) {
 	b := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
 	b.start()
 	bob, _ := b.session("bbbbbb", "")
-	eventually(t, "a sees bob", func() bool { return a.seesSession(bob) })
+	// a sees b's device and its key, not bob: b, having read nobody's presence, can't encrypt its
+	// own for anyone else yet (docs/VISION.md, "The bus is encrypted").
+	eventually(t, "a sees b", func() bool { return a.seesDevices(2) })
 
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast"})
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "direct"})

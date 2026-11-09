@@ -105,10 +105,14 @@ func TestEncryptedPresence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range []string{"secret", "Secret", "quiet-otter", "aaaaaa", "cccccc", "claude"} {
+	for _, s := range []string{"secret", "Secret", "cccccc", "claude"} {
 		if strings.Contains(msg, s) {
 			t.Fatalf("%q is readable in %s", s, msg)
 		}
+	}
+	// Session names stay readable, with their sessions' IDs, as the name registry has them.
+	if enc.Names["quiet-otter"] != "aaaaaa" || len(enc.Names) != 1 {
+		t.Fatalf("names beside the box: %v", enc.Names)
 	}
 	if st, seal := OpenSeal(msg, ref); st != Sealed || seal.By != "dev-0001" || seal.Key != SignPublic(sk) {
 		t.Fatalf("seal: %v %+v", st, seal)

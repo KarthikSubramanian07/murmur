@@ -103,7 +103,9 @@ func TestKeptInboxCatchesUpAfterALongOutage(t *testing.T) {
 	}
 	b.start()
 
-	want := []string{"broadcast, while the daemon was down", "direct, while the daemon was down", "forged, while the daemon was down"}
+	// The broadcast isn't among them: b was off the team while its daemon was down, so it wasn't
+	// encrypted for b (docs/VISION.md, "The bus is encrypted"). What was addressed to it was.
+	want := []string{"direct, while the daemon was down", "forged, while the daemon was down"}
 	eventually(t, "bob's inbox is kept", func() bool { return len(keptFor(t, b, "bbbbbb")) >= len(want) })
 	if got := keptFor(t, b, "bbbbbb"); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("bob's kept inbox: %q, want %q", got, want)

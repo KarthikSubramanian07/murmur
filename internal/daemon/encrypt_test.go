@@ -2,6 +2,8 @@ package daemon_test
 
 import (
 	"bytes"
+	"crypto/ecdh"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -361,4 +363,75 @@ func sealedCopy(work, dev string) (string, bool) {
 	msg := gitOK(work, "log", "-1", "--format=%B", ref, "--")
 	st, seal := bus.OpenSeal(msg, ref)
 	return msg, st == bus.Sealed && seal.By == dev
+}
+
+// boxKeyOf reads a test device's private box key from its keys file.
+func boxKeyOf(t *testing.T, d *device) *ecdh.PrivateKey {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(d.gitDir, "murmur", "keys"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kf struct {
+		Box string `json:"box"`
+	}
+	if err := json.Unmarshal(b, &kf); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := hex.DecodeString(kf.Box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := ecdh.X25519().NewPrivateKey(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k
+}
+
+// openedLog is d's log on the remote as d reads it, newest first: each commit's subject and JSON,
+// with every encrypted event opened, as the log read before encryption.
+func openedLog(t *testing.T, remote string, d *device) string {
+	t.Helper()
+	dev, key := d.self(), boxKeyOf(t, d)
+	work := t.TempDir()
+	git(t, work, "init", "-q")
+	git(t, work, "fetch", "-q", remote, "refs/murmur/mesh/"+dev)
+	var out []string
+	for _, msg := range strings.Split(git(t, work, "log", "--format=%B%x1e", "FETCH_HEAD"), "\x1e") {
+		if msg = strings.TrimSpace(msg); msg == "" {
+			continue
+		}
+		var e bus.Event
+		if bus.Decode(msg, &e) == nil && e.Type == bus.Boxed {
+			in, err := bus.DecryptEvent(e, dev, dev, key)
+			if err != nil {
+				t.Fatalf("a box on %s's log doesn't open for it: %v", dev, err)
+			}
+			if msg, err = bus.Encode(in, in.Line()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		out = append(out, strings.TrimSpace(msg))
+	}
+	return strings.Join(out, "\n")
+}
+
+// openedPresence is d's presence on the remote as d reads it: its JSON, opened.
+func openedPresence(t *testing.T, remote string, d *device) string {
+	t.Helper()
+	dev := d.self()
+	if gitOK(remote, "rev-parse", "--verify", "-q", "refs/murmur/presence/"+dev) == "" {
+		return ""
+	}
+	p := presenceOn(t, remote, dev)
+	if p.Box != nil {
+		open, err := bus.DecryptPresence(p, dev, boxKeyOf(t, d))
+		if err != nil {
+			t.Fatalf("%s's presence doesn't open for it: %v", dev, err)
+		}
+		p = open
+	}
+	b, _ := json.Marshal(p)
+	return string(b)
 }

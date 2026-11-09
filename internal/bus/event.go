@@ -123,6 +123,11 @@ func (e *Event) Clean() {
 // Clean does for a presence what Event.Clean does for an event, and drops sessions whose IDs
 // Murmur wouldn't write.
 func (p *Presence) Clean() {
+	for name, id := range p.Names {
+		if !names.Valid(name) || !ValidName(id) {
+			delete(p.Names, name)
+		}
+	}
 	p.Host = OneLine(p.Host, 64)
 	p.Owner = OneLine(p.Owner, 64)
 	var keep []SessionInfo
@@ -245,6 +250,10 @@ type Presence struct {
 	// Box holds Host, Owner, Sessions and Offline, encrypted for the team's devices; those fields
 	// are then empty. Opened, it is nil.
 	Box *Box `json:"box,omitempty"`
+	// Names is, beside a Box, each session's name with the session's ID, readable: a device that
+	// can't open the box (it joined while this one couldn't push) still knows those names are taken,
+	// and never gives one out again. The name registry holds the same in the clear.
+	Names map[string]string `json:"names,omitempty"`
 }
 
 // SessionInfo is one session as its device's presence describes it.

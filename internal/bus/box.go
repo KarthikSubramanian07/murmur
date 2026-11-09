@@ -222,6 +222,14 @@ func EncryptPresence(p Presence, recipients map[string]string) (Presence, error)
 		return Presence{}, err
 	}
 	out := Presence{V: p.V, Device: p.Device, At: p.At, Sessions: []SessionInfo{}, BoxKey: p.BoxKey}
+	for _, s := range p.Sessions {
+		if s.Name != "" {
+			if out.Names == nil {
+				out.Names = map[string]string{}
+			}
+			out.Names[s.Name] = s.ID
+		}
+	}
 	if out.Box, err = SealBox(plain, presenceAAD(p.Device), recipients); err != nil {
 		return Presence{}, err
 	}

@@ -23,7 +23,6 @@ func TestPushesNeverOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := newDevice(t, remote)
-	dev := a.self()
 
 	// A session starting pushes its name, its start on the device's log, and the device's presence.
 	for _, id := range []string{"aaaaaa", "aaaaab", "aaaaac"} {
@@ -32,7 +31,7 @@ func TestPushesNeverOverlap(t *testing.T) {
 		eventually(t, "the registry to have "+name, func() bool { return readRegistry(t, remote).holdsNames(name) })
 	}
 	eventually(t, "the sessions' starts on the bus", func() bool {
-		return strings.Count(busText(t, remote, dev), " started (") == 3
+		return strings.Count(busText(t, remote, a), " started (") == 3
 	})
 	if b, err := os.ReadFile(filepath.Join(remote, "overlaps")); err == nil {
 		t.Fatalf("%d pushes arrived while another was being received", strings.Count(string(b), "overlap"))
