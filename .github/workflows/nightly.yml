@@ -72,17 +72,17 @@ jobs:
           nightlies=$(gh api "repos/$GH_REPO/git/matching-refs/tags/v" --paginate \
             --jq '.[] | select(.ref | test("^refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\.[0-9]{8}$")) | "\(.ref | ltrimstr("refs/tags/")) \(.object.sha)"' \
             | awk '{ split($1, a, "nightly."); print a[2], $0 }' | sort -k1,1n -k2,2V | cut -d' ' -f2-)
-          # A newest nightly with no release is a build that failed after its tag was made. Left in
-          # place, it would make the commit look published already, so it goes and is tagged again.
-          while [ -n "$nightlies" ]; do
-            last=$(printf '%s\n' "$nightlies" | tail -n 1 | cut -d' ' -f1)
-            if has_release "$last"; then break; fi
-            echo "$last has no release; deleting its tag to try again."
-            if [ "$DRY_RUN" != true ]; then gh api -X DELETE "repos/$GH_REPO/git/refs/tags/$last" --silent; fi
-            nightlies=$(printf '%s\n' "$nightlies" | sed '$d')
+          # What counts as already out is the newest nightly with a published release. A tag without
+          # one is a failed (or still running) build: its commit is tagged again under the next
+          # night's date, and pruning removes the tag in time. It isn't deleted here, since a
+          # release run may still be building it.
+          published=
+          for t in $(printf '%s\n' "$nightlies" | cut -d' ' -f1 | sed '/^$/d' | tac); do
+            if has_release "$t"; then published=$(printf '%s\n' "$nightlies" | awk -v t="$t" '$1 == t { print $2 }'); break; fi
+            echo "$t has no published release; not counting it."
           done
           # A stable tag cut off main (a hotfix) leaves main diverged from it, which still counts as new.
-          for base in "$stable" $(printf '%s\n' "$nightlies" | tail -n 1 | cut -d' ' -f2); do
+          for base in "$stable" $published; do
             s=$(status "$base" "$sha")
             if [ "$s" = identical ] || [ "$s" = behind ]; then
               echo "::notice::$sha has nothing new since $base; nothing tagged."; exit 0

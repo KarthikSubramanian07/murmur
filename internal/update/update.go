@@ -235,7 +235,8 @@ type release struct {
 // channel lists every release and takes the highest version, not the newest date, so a stable
 // release published after a higher prerelease doesn't pull the channel back. It reads every page,
 // since an old candidate can outrank the newest releases; old nightlies are pruned, so that is
-// usually one request. A failed page fails the check rather than choosing from part of the list.
+// usually one request. A failed page, or more than ten, fails the check rather than choosing from
+// part of the list.
 func pick(ctx context.Context, o Options, prerelease bool) (*release, error) {
 	if !prerelease {
 		b, err := get(ctx, o, o.URL+"/latest", 1<<20)
@@ -253,7 +254,10 @@ func pick(ctx context.Context, o Options, prerelease bool) (*release, error) {
 	}
 	const perPage, maxPages = 100, 10
 	var best *release
-	for page := 1; page <= maxPages; page++ {
+	for page := 1; ; page++ {
+		if page > maxPages {
+			return nil, errors.New("more releases than the prerelease channel reads")
+		}
 		b, err := get(ctx, o, fmt.Sprintf("%s?per_page=%d&page=%d", o.URL, perPage, page), 16<<20)
 		if err != nil {
 			return nil, err
@@ -272,10 +276,9 @@ func pick(ctx context.Context, o Options, prerelease bool) (*release, error) {
 			}
 		}
 		if len(all) < perPage {
-			break
+			return best, nil
 		}
 	}
-	return best, nil
 }
 
 func verify(data, sums []byte, name string) error {

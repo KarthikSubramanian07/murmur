@@ -52,9 +52,10 @@ run passed and, if `main` has changed since the last nightly and the latest stab
 `vX.Y.Z-nightly.YYYYMMDD`, where X.Y.Z is the latest stable release with its patch raised by one: it
 sorts above that release and below the next. It publishes the tag by calling `release.yml`, since a
 tag created with `GITHUB_TOKEN` starts no workflow, and then deletes all but the newest seven
-nightly releases and tags. A newest nightly tag with no release is a failed build: the next run
-deletes the tag and tags again. Running it by hand with `dry_run` prints what it would tag and
-delete.
+nightly releases and tags. A nightly tag with no published release (a failed build) doesn't count
+as out, so the next night tags its commit again; pruning removes the dead tag later. A rerun the
+same day finds the date's tag taken: delete it by hand first. Running the workflow with `dry_run`
+prints what it would tag and delete.
 
 ## Cutting a release through the channel
 

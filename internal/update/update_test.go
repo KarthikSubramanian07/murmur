@@ -167,12 +167,18 @@ func TestChannels(t *testing.T) {
 		long = append(long, rel{fmt.Sprintf("v1.2.%d", i), false})
 	}
 	long = append(long, rel{"v2.0.0-rc.1", true})
+	// More than ten full pages: the eleventh is never read, so nothing is chosen from the ten.
+	var huge []rel
+	for i := 1000; i > 0; i-- {
+		huge = append(huge, rel{fmt.Sprintf("v1.3.%d", i), false})
+	}
+	huge = append(huge, rel{"v2.0.0", false})
 	for _, c := range []struct {
 		name, running string
 		prerelease    bool
 		latest        string // the stable release GitHub calls latest
 		list          []rel  // newest first, as GitHub lists them
-		want          string // the version installed, or "" for none
+		want          string // the version installed, "" for none, "error" for a failed check
 	}{
 		{"stable channel skips a newer prerelease", "1.2.3", false, "v1.2.4", []rel{{"v1.2.5-nightly.20261108", true}, {"v1.2.4", false}}, "1.2.4"},
 		{"prerelease channel takes it", "1.2.3", true, "v1.2.4", []rel{{"v1.2.5-nightly.20261108", true}, {"v1.2.4", false}}, "1.2.5-nightly.20261108"},
@@ -183,7 +189,8 @@ func TestChannels(t *testing.T) {
 		{"no downgrade from a pruned nightly", "1.2.5-nightly.20261101", true, "v1.2.4", []rel{{"v1.2.5-nightly.20261031", true}, {"v1.2.4", false}}, ""},
 		{"no downgrade after leaving the channel", "1.2.5-nightly.20261101", false, "v1.2.4", nil, ""},
 		{"the stable channel leaves a nightly for the next stable", "1.2.5-nightly.20261101", false, "v1.2.5", nil, "1.2.5"},
-		{"every page is read", "1.2.3", true, "v1.2.100", long, "2.0.0-rc.1"},
+		{"a later page is read", "1.2.3", true, "v1.2.100", long, "2.0.0-rc.1"},
+		{"too many pages is an error", "1.2.3", true, "v2.0.0", huge, "error"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var url string
@@ -228,6 +235,12 @@ func TestChannels(t *testing.T) {
 			original, _ := Identity(path)
 			o := Options{Version: c.running, GitDir: gitDir, Executable: path, URL: url, OS: "linux", Arch: "amd64", Client: srv.Client(), Log: log.New(io.Discard, "", 0)}
 			done, err := attempt(context.Background(), o, original)
+			if c.want == "error" {
+				if err == nil || done {
+					t.Fatalf("no error: done=%v", done)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
