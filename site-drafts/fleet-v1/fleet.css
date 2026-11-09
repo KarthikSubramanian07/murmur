@@ -121,8 +121,9 @@
 .fx-tag.gray { background: #303030; border-color: #ffffff14; color: #d4d4d4; }
 
 /* Rail */
-/* Sticky under the tab bar (views.css: 2rem buttons, 0.75rem padding, a 1px border), not behind it. */
-.fx-rail { position: sticky; top: calc(4.5rem + 1px); display: flex; flex-direction: column; max-height: calc(100vh - 5.5rem - 1px); overflow-y: auto; padding: 1rem 1.125rem 1.25rem; border-radius: var(--fx-radius-box); background: var(--fx-surface); }
+/* Sticky at the top, or under the tab bar where there is one (views.css: 2rem buttons, 0.75rem
+   padding, a 1px border), not behind it. On real data there's no bar. */
+.fx-rail { position: sticky; top: 1rem; display: flex; flex-direction: column; max-height: calc(100vh - 2rem); overflow-y: auto; padding: 1rem 1.125rem 1.25rem; border-radius: var(--fx-radius-box); background: var(--fx-surface); }
 .fx-rail-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
 .fx-rail-head h2 { font-size: 1.0625rem; font-weight: 600; }
 .fx-alerts { display: flex; flex-direction: column; list-style: none; margin: 0 -0.5rem; }
@@ -195,7 +196,7 @@
   .fx-tr > :nth-child(4), .fx-tr > :nth-child(5) { display: none; }
   .fx-doing { grid-column: 1 / -1; padding-left: 2.375rem; }
 }
-@media (max-width: 1279px) {
+@media (max-width: 1439px) {
   .fx-main { grid-template-columns: minmax(0, 1fr); }
   .fx-rail { position: static; max-height: none; }
   .fx-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -226,8 +227,10 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-dm-head b { color: var(--fx-text); font-weight: 600; }
 .fx-dm-time { color: var(--fx-text-3); white-space: nowrap; }
 .fx-dm-subj { color: var(--fx-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fx-sheet .fx-insp-head { position: sticky; top: calc(3.5rem + 1px); z-index: 5; margin: -2rem -2rem 1rem; padding: 0.75rem 2rem; border-bottom: 1px solid var(--fx-border); background: #1b1b1bf2; }
+.fx-sheet .fx-insp-head { position: sticky; top: 0; z-index: 5; margin: -2rem -2rem 1rem; padding: 0.75rem 2rem; border-bottom: 1px solid var(--fx-border); background: #1b1b1bf2; }
 @media (max-width: 1000px) {
   .fx-toolbar .fx-seg { flex-wrap: wrap; height: auto; }
   .fx-toolbar .fx-seg button { height: 1.75rem; }
 }
+.sv-shell:has(> .sv-tabs) .fx-rail { top: calc(4.5rem + 1px); max-height: calc(100vh - 5.5rem - 1px); }
+.sv-shell:has(> .sv-tabs) .fx-sheet .fx-insp-head { top: calc(3.5rem + 1px); }

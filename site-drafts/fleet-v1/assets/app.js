@@ -27,9 +27,10 @@ const SWARM_VIEWS = [["fleet", "Fleet"]];
 const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", briefing: "Briefing", overview: "Overview", catchup: "Since you looked", mine: "Your agents", decisions: "Decisions", timeline: "Timeline", board: "Board", graph: "Who talks to whom", office: "Office", settings: "Settings" };
 const MODE_KEY = NAME + ":messages";
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
-// Below this width a rail beside Fleet's table would leave the table too narrow to read (about
-// 300px at 1024), so a selected session takes the page instead. fleet.css stacks at the same width.
-const STACKED = window.matchMedia("(max-width: 1279px)");
+// Below this width a rail beside Fleet's table would squeeze the table under the 640px its
+// columns need (about 300px at 1024, 506px at 1280), so a selected session takes the page
+// instead. fleet.css stacks at the same width.
+const STACKED = window.matchMedia("(max-width: 1439px)");
 
 const ui = {
   view: "sessions",
@@ -2520,14 +2521,20 @@ function fleetRow(d, s, need, on) {
       role: "row",
       "aria-selected": on ? "true" : "false",
       "data-key": "fl-" + s.name,
-      onclick: () => {
+      onclick: (e) => {
         // Opened as the whole page, a session starts at its top, and closing it goes back to
-        // where the list was (fleetInspector's close).
+        // where the list was (fleetInspector's close). Beside the table, opening or closing the
+        // rail changes the table's width and so its rows' heights; the clicked row stays put.
         const whole = !on && STACKED.matches;
+        const top = e.currentTarget.getBoundingClientRect().top;
         if (whole) ui.fleetScroll = content ? content.scrollTop : 0;
         ui.fleetSel = on ? null : s.name;
         render();
         if (whole && content) content.scrollTop = 0;
+        else if (content) {
+          const row = root.querySelector(`[data-key="fl-${CSS.escape(s.name)}"]`);
+          if (row) content.scrollTop += row.getBoundingClientRect().top - top;
+        }
       },
     },
     h("span", { class: "fx-who" }, avatar(s.name), h("span", { class: "fx-who-text" }, h("span", { class: "fx-name truncate" }, s.name), h("span", { class: "fx-muted truncate" }, sub))),
@@ -3255,6 +3262,7 @@ function swarmRow() {
 }
 
 function swarmTabs(view) {
+  if (SWARM_VIEWS.length < 2 && !DEMO) return null;
   return h(
     "nav",
     { class: "sv-tabs", "aria-label": "Ways to look at the swarm" },
