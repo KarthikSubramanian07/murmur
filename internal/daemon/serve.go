@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -26,21 +27,37 @@ const maxBody = bus.MaxBody
 func fail(msg string) proto.Response { return proto.Response{Error: msg} }
 
 func (d *Daemon) serve(ctx context.Context, ln net.Listener) {
+	var wait time.Duration
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				continue
-			}
 			// A daemon nobody can reach would still hold the clone's lock, so no replacement
 			// could start. Exit instead; the next client starts a new one.
-			d.log.Printf("accepting connections: %v; exiting", err)
-			d.stop()
-			return
+			if errors.Is(err, net.ErrClosed) {
+				d.log.Printf("accepting connections: %v; exiting", err)
+				d.stop()
+				return
+			}
+			// Anything else passes, such as running out of file descriptors (EMFILE), which any
+			// local user can cause by holding connections open, and which once stopped the daemon.
+			// Wait and try again, as net/http's server does: 5 ms, doubling up to a second.
+			if wait == 0 {
+				d.log.Printf("accepting connections: %v; trying again", err)
+				wait = 5 * time.Millisecond
+			} else {
+				wait = min(2*wait, time.Second)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(wait):
+			}
+			continue
 		}
+		wait = 0
 		d.bg.Add(1)
 		go func() {
 			defer d.bg.Done()
