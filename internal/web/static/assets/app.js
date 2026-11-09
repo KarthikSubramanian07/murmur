@@ -31,6 +31,16 @@ const ui = {
   tagging: new Set(), // the sessions whose tags are being changed, by their row key
   tagInput: null, // the row key of the session whose tag field is open
   restarting: 0, // when the restart onto an installed update was asked for
+  // A person's account (#242).
+  setup: null, // the name being chosen: { name, error, busy, then }, then what to do once there is one
+  picker: null, // the new-message list: { q, index }
+  draftTo: null, // who a conversation with no messages yet is with
+  outbox: [], // what the person sent that isn't among the messages yet, or that failed
+  notes: new Map(), // a conversation's key → what the daemon said of the last message sent in it
+  readLocal: new Set(), // messages marked read that the state doesn't know of yet
+  reading: null, // the conversation someone was last seen looking at, null if nobody is looking
+  newMark: null, // the open conversation's first unread message: { key, id }
+  armed: null, // the group chat whose next send goes: its key
 };
 
 class AuthError extends Error {
@@ -201,6 +211,7 @@ function render() {
     return;
   }
   const keep = document.activeElement?.dataset?.key;
+  const caret = caretOf(document.activeElement);
   const scroll = content ? content.scrollTop : 0;
   const chat = chatScroll();
   const side = root.querySelector(".sidebar-content, .mini-scroll")?.scrollTop || 0;
@@ -208,12 +219,34 @@ function render() {
   const inner = page(); // before the top bar, which counts what this settles
   content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
   content.replaceChildren(inner);
-  root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)));
+  root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)), ui.setup && setupDialog(), ui.picker && pickerDialog());
   content.scrollTop = scroll;
   const sideNow = root.querySelector(".sidebar-content, .mini-scroll");
   if (sideNow) sideNow.scrollTop = side;
   restoreChatScroll(chat);
-  if (keep) root.querySelector(`[data-key="${CSS.escape(keep)}"]`)?.focus({ preventScroll: true });
+  if (keep) {
+    const el = root.querySelector(`[data-key="${CSS.escape(keep)}"]`);
+    el?.focus({ preventScroll: true });
+    restoreCaret(el, caret);
+  }
+  fitComposers();
+  document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME;
+  queueMicrotask(markOpenRead);
+}
+
+// A rebuild makes new fields, whose caret starts at one end.
+function caretOf(el) {
+  try {
+    return el && typeof el.selectionStart === "number" ? [el.selectionStart, el.selectionEnd] : null;
+  } catch {
+    return null;
+  }
+}
+
+function restoreCaret(el, caret) {
+  try {
+    if (el && caret) el.setSelectionRange(caret[0], caret[1]);
+  } catch {}
 }
 
 function navButton(view, iconName, count) {
@@ -269,6 +302,7 @@ function miniSidebar() {
     h(
       "div",
       { class: "mini-scroll" },
+      miniYou(),
       top("sessions", "users", "All sessions", ui.view === "sessions"),
       top("messages", "message", "All conversations", ui.view === "messages" && !ui.filter),
       top("recent", "clock", "Recent messages", ui.view === "recent"),
@@ -299,6 +333,16 @@ function miniSidebar() {
   );
 }
 
+function miniYou() {
+  const n = unreadCount();
+  return h(
+    "button",
+    { class: "mini-btn" + (isMyFilter() ? " current" : ""), title: "Your messages", "aria-label": n ? "Your messages, " + n + " unread" : "Your messages", "data-key": "mini-you", onclick: openYours },
+    icon("user"),
+    n > 0 && h("span", { class: "mini-unread" }),
+  );
+}
+
 function sidebar() {
   if (mini) return miniSidebar();
   const devs = devices();
@@ -317,11 +361,13 @@ function sidebar() {
       h(
         "div",
         { class: "sidebar-group g-top" },
+        yourRow(),
         topRow("sessions", "users", "All sessions", allSessionsSub()),
         allButton(),
         topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")),
       ),
       ui.notice && h("button", { class: "side-notice", title: "Dismiss", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
+      peopleGroup(),
       devs.map((d) =>
         h(
           "div",
@@ -361,6 +407,7 @@ function sidebar() {
                     },
                     ...sideSessionBody(d, s),
                   ),
+                  messageButton(s.name),
                   s.addr && hideButton(s),
                 );
               }),
@@ -370,7 +417,94 @@ function sidebar() {
         ),
       ),
     ),
-    h("div", { class: "sidebar-foot" }, h("ul", { class: "sidebar-menu" }, updateItem(), navButton("settings", "settings", null))),
+    sidebarFoot(),
+  );
+}
+
+// The foot says who you are here, once you are someone.
+function sidebarFoot() {
+  const a = me();
+  if (!a) return h("div", { class: "sidebar-foot" }, h("ul", { class: "sidebar-menu" }, updateItem(), navButton("settings", "settings", null)));
+  const update = updateItem();
+  return h(
+    "div",
+    { class: "sidebar-foot" },
+    update && h("ul", { class: "sidebar-menu" }, update),
+    h(
+      "div",
+      { class: "foot-account" },
+      h(
+        "button",
+        { class: "account-chip", title: "Your account", "data-key": "account-chip", onclick: () => go("settings") },
+        avatar(a.name),
+        h("span", { class: "account-name truncate" }, a.name),
+      ),
+      h("button", { class: "foot-settings", title: "Settings", "aria-label": "Settings", "aria-current": ui.view === "settings" ? "page" : null, "data-key": "nav-settings", onclick: () => go("settings") }, icon("settings")),
+    ),
+  );
+}
+
+// Your messages, at the top of the sidebar, with what is unread. With no account yet, it is where
+// you get one.
+function yourRow() {
+  const a = me();
+  const n = unreadCount();
+  const count = a ? yourConversationCount() : 0;
+  const sub = !ui.state ? "" : !a ? "Talk to your agents" : n ? n + " unread" : count ? plural(count, "conversation") : "No messages yet";
+  return h(
+    "button",
+    { class: "all-convs top-you", "aria-current": isMyFilter() ? "page" : null, "data-key": "top-you", onclick: openYours },
+    h("span", { class: "all-ico ico-you" }, icon("user")),
+    h("span", { class: "all-text" }, h("span", { class: "all-title" }, "Your messages"), h("span", { class: "all-sub" }, sub)),
+    n > 0 && h("span", { class: "unread-badge" }, n),
+  );
+}
+
+function peopleGroup() {
+  const others = people().filter((p) => p.name !== myName());
+  if (!others.length) return null;
+  return h(
+    "div",
+    { class: "sidebar-group dev-group" },
+    h("div", { class: "device-link" }, h("span", { class: "label" }, "People"), h("span", { class: "menu-count" }, others.length)),
+    h(
+      "ul",
+      { class: "sidebar-menu side-sessions" },
+      others.map((p) =>
+        h(
+          "li",
+          { class: "side-li" },
+          h(
+            "button",
+            { class: "side-session", "data-key": "person-" + p.name, title: "Message " + p.name, onclick: () => startChat(p.name) },
+            presence(p.name, p.device),
+            h(
+              "span",
+              { class: "side-session-text" },
+              h("span", { class: "side-session-name truncate" }, p.name),
+              h("span", { class: "side-session-doing truncate" }, personOnline(p) ? "On " + NAME + " now" : deviceLabel(p.device)),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+function messageButton(name) {
+  return h(
+    "button",
+    {
+      class: "side-msg",
+      title: "Message " + name,
+      "aria-label": "Message " + name,
+      "data-key": "msg-" + name,
+      onclick: (e) => {
+        e.stopPropagation();
+        startChat(name);
+      },
+    },
+    icon("message"),
   );
 }
 
@@ -491,6 +625,8 @@ const STATE_TIPS = {
   dnd: "Do not disturb: messages wait in its inbox, with no turn and no notice, until it reads its inbox or the tag comes off",
   off: "Its device can't be reached",
 };
+
+const PERSON_TIPS = { on: "On " + NAME + " now", off: "Not on " + NAME + " now" };
 
 // A model: tag (#211, derived for T3 sessions), shown beside the agent.
 function modelOf(s) {
@@ -641,10 +777,11 @@ function quietFold(d) {
 // A face with its presence dot inside it, so it still fits the two-face pair of a DM.
 function dotted(name) {
   const a = avatar(name);
+  const p = findPerson(name);
   const f = findSession(name);
-  const st = f ? sessionState(f.device, f.session) : "off";
+  const st = p ? (personOnline(p) ? "on" : "off") : f ? sessionState(f.device, f.session) : "off";
   a.classList.add("dotted");
-  a.append(h("span", { class: "pres pres-" + st, title: name + ": " + STATE_TIPS[st] }));
+  a.append(h("span", { class: "pres pres-" + st, title: name + ": " + (isPerson(name) ? PERSON_TIPS[st] : STATE_TIPS[st]) }));
   return a;
 }
 
@@ -661,6 +798,11 @@ function deviceDot(d, cls = "") {
 }
 
 function presence(name, d) {
+  const p = findPerson(name);
+  if (p) {
+    const st = personOnline(p) ? "on" : "off";
+    return h("span", { class: "pres-wrap" }, avatar(name), h("span", { class: "pres pres-" + st, title: PERSON_TIPS[st] }));
+  }
   const f = findSession(name);
   const st = sessionState(f ? f.device : d, f ? f.session : null);
   return h("span", { class: "pres-wrap" }, avatar(name), h("span", { class: "pres pres-" + st, title: STATE_TIPS[st] }));
@@ -738,7 +880,7 @@ function findSettled() {
   }
   const seen = new Map();
   const note = (name, addr, m) => {
-    if (!name || running.has(name) || (addr && runningAddrs.has(addr)) || name.includes("/")) return;
+    if (!name || running.has(name) || (addr && runningAddrs.has(addr)) || name.includes("/") || isPerson(name)) return;
     const r = seen.get(name) || { name, device: "", last: 0, lastMsg: null, peers: new Set() };
     if (addr && addr.includes("/")) {
       r.device = addr.split("/")[0];
@@ -1016,7 +1158,7 @@ function sessionCard(d, s) {
   const convs = conversations().filter((c) => c.kind === "dm").length;
   ui.filter = keep;
   const st = stateWord(d, s);
-  return h(
+  const card = h(
     "button",
     {
       class: "g-card" + (d.reachable ? "" : " stale"),
@@ -1041,6 +1183,22 @@ function sessionCard(d, s) {
       s.branch && h("span", { class: "g-branch truncate" }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
       pr && h("span", { class: "g-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number),
       h("span", { class: "g-card-chats" }, plural(convs, "chat")),
+    ),
+  );
+  return h(
+    "div",
+    { class: "g-card-wrap" },
+    card,
+    h(
+      "button",
+      {
+        class: "g-card-msg btn btn-outline btn-xs",
+        "aria-label": "Message " + s.name,
+        "data-key": "card-msg-" + s.name,
+        onclick: () => startChat(s.name),
+      },
+      icon("message"),
+      "Message",
     ),
   );
 }
@@ -1098,8 +1256,7 @@ function recentItem(m, at) {
         h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who" }, to)),
         h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
       ),
-      m.subject && h("div", { class: "chat-msg-subject" }, m.subject),
-      m.body && h("div", { class: "chat-msg-body rich" }, rich(m.body)),
+      messageText(m),
     ),
   );
 }
@@ -1118,7 +1275,7 @@ function groupMembers(c) {
     if (c.kind === "device" && d.id !== c.title) continue;
     for (const s of d.sessions) rows.push({ name: s.name, d, s, posted: posted.get(s.name) || 0 });
   }
-  for (const [name, n] of posted) if (!rows.some((r) => r.name === name)) rows.push({ name, addr: addrs.get(name), d: null, s: null, posted: n });
+  for (const [name, n] of posted) if (!rows.some((r) => r.name === name)) rows.push({ name, addr: addrs.get(name), d: findPerson(name)?.device || null, s: null, posted: n, person: isPerson(name) });
   return rows;
 }
 
@@ -1151,8 +1308,8 @@ function membersButton(c) {
 function membersPanel(c, rows) {
   const groups = new Map();
   for (const r of rows) {
-    const key = r.d ? (r.d.self ? "This device" : r.d.owner || r.d.id) : "Not running";
-    if (!groups.has(key)) groups.set(key, { d: r.d, host: r.d ? host(r.d.id) : "", rows: [] });
+    const key = r.person ? "People" : r.d ? (r.d.self ? "This device" : r.d.owner || r.d.id) : "Not running";
+    if (!groups.has(key)) groups.set(key, { d: r.person ? null : r.d, host: r.d && !r.person ? host(r.d.id) : "", rows: [] });
     groups.get(key).rows.push(r);
   }
   return h(
@@ -1168,6 +1325,7 @@ function membersPanel(c, rows) {
             class: "g-mp-row" + (r.d && !r.d.reachable ? " stale" : ""),
             onclick: () => {
               ui.membersOpen = false;
+              if (r.person) return startChat(r.name);
               const f = findSession(r.name);
               ui.filter = f ? f.session.addr || r.name : r.addr || r.name;
               ui.conversation = null;
@@ -1175,7 +1333,7 @@ function membersPanel(c, rows) {
             },
           },
           r.d ? presence(r.name, r.d) : avatar(r.name),
-          h("span", { class: "g-mp-text" }, h("span", { class: "g-mp-name truncate" }, r.name), h("span", { class: "g-mp-doing truncate" }, r.s ? r.s.doing || r.s.agent || "" : "Not running")),
+          h("span", { class: "g-mp-text" }, h("span", { class: "g-mp-name truncate" }, r.name), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || r.s.agent || "" : "Not running")),
           r.posted > 0 && h("span", { class: "g-mp-posted" }, r.posted === 1 ? "1 post" : r.posted + " posts"),
         ),
       ),
@@ -1205,11 +1363,17 @@ function topbar() {
     h(
       "div",
       { class: "mobile-nav segmented", role: "group", "aria-label": "Views" },
+      h(
+        "button",
+        { "aria-pressed": isMyFilter() ? "true" : "false", "data-key": "m-you", "aria-label": unreadCount() ? "You, " + unreadCount() + " unread" : "You", onclick: openYours },
+        "You",
+        unreadCount() > 0 && h("span", { class: "m-unread" }, unreadCount()),
+      ),
       VIEWS.map((v) =>
         h(
           "button",
           {
-            "aria-pressed": ui.view === v ? "true" : "false",
+            "aria-pressed": ui.view === v && !(v === "messages" && isMyFilter()) ? "true" : "false",
             "data-key": "m-" + v,
             title: v === "settings" && update ? update.text : null,
             onclick: () => {
@@ -1220,7 +1384,7 @@ function topbar() {
               go(v);
             },
           },
-          TITLES[v],
+          v === "messages" ? "All" : TITLES[v],
           v === "settings" && update && h("span", { class: "nav-dot update-" + update.kind, "aria-label": update.text }),
         ),
       ),
@@ -1349,6 +1513,7 @@ async function changeTags(addr, key, add, remove) {
 function visibleMessages() {
   const f = ui.filter;
   if (!f) return ui.messages;
+  if (isMyFilter()) return myMessages();
   const name = nameOf(f, f);
   const slash = f.indexOf("/");
   const device = slash > 0 ? f.slice(0, slash) : findSession(name)?.device.id;
@@ -1360,6 +1525,14 @@ function visibleMessages() {
       (m.toKind === "device" && m.to === device) ||
       m.toKind === "all",
   );
+}
+
+// Your messages: direct ones, and the group chats you have posted in, whole.
+function myMessages() {
+  const mine = myName();
+  const groups = new Set();
+  for (const m of ui.messages) if (m.toKind !== "session" && fromName(m) === mine) groups.add(conversationOf(m).key);
+  return ui.messages.filter((m) => (m.toKind === "session" ? fromName(m) === mine || toName(m) === mine : groups.has(conversationOf(m).key)));
 }
 
 function noMessages() {
@@ -1395,10 +1568,24 @@ function conversations() {
     if (!byKey.has(c.key)) byKey.set(c.key, { ...c, messages: [] });
     byKey.get(c.key).messages.push(m);
   }
+  // A conversation just begun has no messages yet, and is at the top while it is open.
+  const fresh = draftConversation();
+  if (fresh && (!ui.filter || isMyFilter()) && !byKey.has(fresh.key)) byKey.set(fresh.key, fresh);
   const list = [...byKey.values()];
   for (const c of list) c.messages.sort((a, b) => a.sortAt - b.sortAt);
-  const latest = (c) => c.messages[c.messages.length - 1].sortAt;
+  const latest = (c) => (c.messages.length ? c.messages[c.messages.length - 1].sortAt : Infinity);
   return list.sort((a, b) => latest(b) - latest(a));
+}
+
+function dmKey(a, b) {
+  return "dm:" + JSON.stringify([...new Set([a, b])].sort());
+}
+
+function draftConversation() {
+  if (!ui.draftTo || !me()) return null;
+  const pair = [...new Set([myName(), ui.draftTo])].sort();
+  const key = dmKey(myName(), ui.draftTo);
+  return ui.conversation === key ? { key, kind: "dm", title: pair.join(" & "), pair, messages: [] } : null;
 }
 
 // The same name always gets the same color. The classes are in style.css: the page's content
@@ -1406,7 +1593,7 @@ function conversations() {
 function avatar(name) {
   let n = 0;
   for (const ch of name) n = (n * 31 + ch.codePointAt(0)) % 997;
-  return h("span", { class: "avatar avatar-" + (n % 5), "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
+  return h("span", { class: isPerson(name) ? "avatar avatar-person" : "avatar avatar-" + (n % 5), "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
 }
 
 // A group chat is named for whose it is, and its face is its members'.
@@ -1461,7 +1648,8 @@ function conversationsPage() {
   }
   if (!ui.conversation && list.length && !NARROW.matches) ui.conversation = list[0].key;
   const open = list.find((c) => c.key === ui.conversation);
-  ui.conversationAnchor = open?.messages[open.messages.length - 1].id;
+  ui.conversationAnchor = open?.messages[open.messages.length - 1]?.id;
+  if (ui.newMark && ui.newMark.key !== ui.conversation) ui.newMark = null;
   return h(
     "div",
     { class: "page chat-page" },
@@ -1472,16 +1660,16 @@ function conversationsPage() {
           "div",
           { class: "chat" + (open ? " chat-open" : "") },
           conversationList(list),
-          open && conversationPane(open),
+          open ? conversationPane(open) : isMyFilter() && !NARROW.matches && startPane(),
         ),
   );
 }
 
 // With a session picked, a chat with it is called by the other session's name.
 function otherIn(c) {
-  if (!ui.filter || c.kind !== "dm") return null;
-  const me = nameOf(ui.filter, ui.filter);
-  return c.pair.includes(me) ? c.pair.find((n) => n !== me) || me : null;
+  if (c.kind !== "dm") return null;
+  const self = ui.filter ? nameOf(ui.filter, ui.filter) : myName();
+  return self && c.pair.includes(self) ? c.pair.find((n) => n !== self) || self : null;
 }
 
 // The middle column: whose conversations they are, a search, then direct messages and group chats
@@ -1505,9 +1693,22 @@ function conversationList(list) {
     h(
       "div",
       { class: "g-head" },
-      name
+      isMyFilter()
+        ? h(
+            "div",
+            { class: "g-head-row" },
+            h("div", { class: "g-head-text" }, h("h2", null, "Your messages"), list.some((c) => c.messages.length) && h("p", { class: "g-head-doing" }, plural(list.filter((c) => c.messages.length).length, "conversation"))),
+            newMessageButton(),
+          )
+        : name
         ? [
-            h("div", { class: "g-head-who" }, f ? presence(name, f.device) : avatar(name), h("h2", { class: "truncate" }, name)),
+            h(
+              "div",
+              { class: "g-head-who" },
+              f ? presence(name, f.device) : avatar(name),
+              h("h2", { class: "truncate" }, name),
+              f && h("button", { class: "btn btn-outline btn-xs g-head-msg", "data-key": "head-msg", onclick: () => startChat(name) }, icon("message"), "Message"),
+            ),
             f && f.session.doing && h("p", { class: "g-head-doing" }, f.session.doing),
             f && tagsLine(f.session),
             !f && h("p", { class: "g-head-doing" }, "Settled · " + ago(settledSessions().find((r) => r.name === name)?.last || 0)),
@@ -1576,19 +1777,22 @@ function conversationList(list) {
 
 function conversationRow(c) {
   const last = c.messages[c.messages.length - 1];
-  const at = when(last.at);
+  const at = last && when(last.at);
   const o = otherIn(c);
-  const me = ui.filter && nameOf(ui.filter, ui.filter);
+  const self = ui.filter ? nameOf(ui.filter, ui.filter) : myName();
+  const unread = unreadIn(c);
+  const preview = !last ? "New conversation" : (o && fromName(last) === o ? "" : (o && fromName(last) === self) || fromName(last) === myName() ? "You: " : fromName(last) + ": ") + last.subject;
   return h(
     "button",
     {
-      class: "chat-row",
+      class: "chat-row" + (unread ? " chat-row-unread" : ""),
       "aria-current": c.key === ui.conversation ? "true" : null,
       "data-key": "c-" + c.key,
       onclick: () => {
         ui.conversation = c.key;
-        ui.conversationAnchor = c.messages[c.messages.length - 1].id; // the key can be out of date
+        ui.conversationAnchor = c.messages[c.messages.length - 1]?.id; // the key can be out of date
         render();
+        focusComposer();
       },
     },
     o ? dotted(o) : conversationIcon(c),
@@ -1606,7 +1810,12 @@ function conversationRow(c) {
           : h("span", { class: "chat-row-title truncate", title: c.title }, o || c.title),
         at && agoEl("span", "chat-row-time", at),
       ),
-      h("span", { class: "chat-row-preview truncate" }, (o && fromName(last) === o ? "" : o && fromName(last) === me ? "You: " : fromName(last) + ": ") + last.subject),
+      h(
+        "span",
+        { class: "chat-row-line" },
+        h("span", { class: "chat-row-preview truncate" }, preview),
+        unread > 0 && h("span", { class: "unread-badge", "aria-label": unread + " unread" }, unread),
+      ),
     ),
   );
 }
@@ -1616,12 +1825,17 @@ function conversationPane(c) {
   const o = otherIn(c);
   const of = o && findSession(o);
   const gs = c.kind !== "dm" ? groupSummary(c) : null;
+  const op = o && findPerson(o);
   const about = gs
     ? [groupHost(c), plural(gs.rows.length, "member"), gs.on + " active"].filter(Boolean).join(" · ")
     : o
-      ? of
-        ? of.session.doing || of.session.agent || ""
-        : "Not running"
+      ? isPerson(o)
+        ? op
+          ? "Person · " + (personOnline(op) ? "on " + NAME + " now" : deviceLabel(op.device))
+          : "Person"
+        : of
+          ? of.session.doing || of.session.agent || ""
+          : "Not running"
       : "";
   return h(
     "section",
@@ -1637,6 +1851,7 @@ function conversationPane(c) {
           "data-key": "chat-back",
           onclick: () => {
             ui.conversation = null;
+            ui.draftTo = null;
             render();
           },
         },
@@ -1649,9 +1864,27 @@ function conversationPane(c) {
         h("h2", { class: "chat-title truncate", title: c.title }, gs ? groupName(c) : o || c.title),
         about && h("div", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
       ),
+      of && h("span", { class: "g-state g-state-" + sessionState(of.device, of.session) }, stateWord(of.device, of.session)),
       c.kind !== "dm" && membersButton(c),
     ),
-    h("div", { class: "chat-thread", "data-conversation": c.key }, chatMessages(c)),
+    h("div", { class: "chat-thread", "data-conversation": c.key }, c.messages.length || pendingIn(c).length ? chatMessages(c) : chatIntro(o)),
+    waitLine(c),
+    paneFoot(c),
+  );
+}
+
+// An empty conversation says who it is with, and what they are up to.
+function chatIntro(name) {
+  if (!name) return null;
+  const f = findSession(name);
+  const details = f ? [f.session.agent, modelOf(f.session), f.session.branch].filter(Boolean).join(" · ") : isPerson(name) ? "Person" : "";
+  return h(
+    "div",
+    { class: "chat-intro" },
+    h("div", { class: "chat-intro-face" }, avatar(name)),
+    h("h3", null, name),
+    f?.session.doing && h("p", { class: "chat-intro-doing" }, f.session.doing),
+    details && h("p", { class: "chat-intro-meta" }, details),
   );
 }
 
@@ -1672,10 +1905,54 @@ function chatMessages(c) {
     }
     const from = fromName(m);
     const head = !prev || fromName(prev) !== from || !at || at - (when(prev.at) || 0) > RUN_MS;
+    if (ui.newMark?.key === c.key && ui.newMark.id === m.id) out.push(h("div", { class: "chat-new" }, h("span", null, "New")));
     out.push(chatMessage(m, from, at, head));
     prev = m;
   }
+  for (const item of pendingIn(c)) {
+    const head = !prev || fromName(prev) !== myName() || item.status === "failed";
+    out.push(pendingMessage(item, head));
+    prev = { from: myName(), fromAddr: me()?.addr };
+  }
   return out;
+}
+
+// What a person wrote, whole, from the subject and body the bus carries it as (web.SplitText).
+function personText(m) {
+  const subject = m.subject || "";
+  const body = m.body || "";
+  if (subject.endsWith("…") && body.startsWith(subject.slice(0, -1))) return body;
+  return body ? subject + "\n" + body : subject;
+}
+
+// A message's text: a person's as they wrote it, an agent's with its subject over its body.
+function messageText(m) {
+  if (m.fromPerson) return h("div", { class: "chat-msg-body rich" }, rich(personText(m)));
+  return [m.subject && h("div", { class: "chat-msg-subject" }, m.subject), m.body && h("div", { class: "chat-msg-body rich" }, rich(m.body))];
+}
+
+function pendingMessage(item, head) {
+  const failed = item.status === "failed";
+  return h(
+    "article",
+    { class: "chat-msg" + (head ? " chat-msg-first" : "") + (failed ? " chat-msg-failed" : " chat-msg-sending"), "data-cid": item.cid },
+    head ? avatar(myName()) : h("span", { class: "avatar-gap" }),
+    h(
+      "div",
+      { class: "chat-msg-main" },
+      head && h("div", { class: "chat-msg-head" }, h("span", { class: "chat-msg-from chat-msg-you truncate" }, myName()), h("span", { class: "chat-msg-via" }, "you")),
+      h("div", { class: "chat-msg-body rich" }, rich(item.text)),
+      failed
+        ? h(
+            "div",
+            { class: "msg-failed", role: "alert" },
+            h("span", { class: "msg-failed-why" }, item.error),
+            h("button", { class: "msg-action", "data-key": "retry-" + item.cid, onclick: () => deliver(item) }, icon("retry"), "Try again"),
+            h("button", { class: "msg-action", "data-key": "edit-" + item.cid, onclick: () => editFailed(item) }, icon("pencil"), "Edit"),
+          )
+        : item.status === "sending" && h("div", { class: "msg-sending" }, "Sending…"),
+    ),
+  );
 }
 
 function dayLabel(t) {
@@ -1688,6 +1965,8 @@ function dayLabel(t) {
 
 function chatMessage(m, from, at, head) {
   const sender = findSession(from);
+  const mine = from === myName();
+  const copy = m.fromPerson ? personText(m) : (m.subject ? m.subject + "\n\n" : "") + (m.body || "");
   return h(
     "article",
     { class: "chat-msg" + (head ? " chat-msg-first" : ""), "data-id": m.id, title: head ? null : messageDetail(m) },
@@ -1699,12 +1978,13 @@ function chatMessage(m, from, at, head) {
         h(
           "div",
           { class: "chat-msg-head" },
-          h("span", { class: "chat-msg-from truncate" }, from),
+          h("span", { class: "chat-msg-from truncate" + (mine ? " chat-msg-you" : "") }, from),
+          mine && h("span", { class: "chat-msg-via" }, "you"),
+          !mine && m.fromPerson && h("span", { class: "chat-msg-via" }, "person"),
           sender && h("span", { class: "chat-msg-via truncate" }, [sender.session.agent, sender.device.self ? null : sender.device.id].filter(Boolean).join(" · ")),
           h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
         ),
-      m.subject && h("div", { class: "chat-msg-subject" }, m.subject),
-      m.body && h("div", { class: "chat-msg-body rich" }, rich(m.body)),
+      messageText(m),
     ),
     h(
       "div",
@@ -1714,7 +1994,7 @@ function chatMessage(m, from, at, head) {
         {
           title: "Copy",
           "aria-label": "Copy message",
-          onclick: () => navigator.clipboard?.writeText((m.subject ? m.subject + "\n\n" : "") + (m.body || "")),
+          onclick: () => navigator.clipboard?.writeText(copy),
         },
         icon("copy"),
       ),
@@ -1778,6 +2058,8 @@ function inline(t) {
   return out;
 }
 
+let toEnd = false; // the person just sent something: show it, wherever they had scrolled to
+
 // A render builds the panes anew. The list keeps its place. So does a conversation being read
 // further up; one that is open at its end, or just opened, shows its newest message.
 function chatScroll() {
@@ -1795,7 +2077,516 @@ function restoreChatScroll(was) {
   if (list) list.scrollTop = ui.chatListTop;
   const same = chatMoved || thread?.dataset.conversation === was.key;
   chatMoved = false;
-  if (thread) thread.scrollTop = same && !was.atEnd ? was.top : thread.scrollHeight;
+  if (thread) thread.scrollTop = same && !was.atEnd && !toEnd ? was.top : thread.scrollHeight;
+  toEnd = false;
+}
+
+// A person's account (#242).
+
+const personNames = new Set(); // every name known to be a person's, running or not
+
+function me() {
+  return ui.state?.account?.name ? ui.state.account : null;
+}
+
+function myName() {
+  return me()?.name || "";
+}
+
+function isPerson(name) {
+  return personNames.has(name) || (!!name && name === myName());
+}
+
+function isMyFilter() {
+  return !!ui.filter && !!me() && ui.filter === me().addr && ui.view === "messages";
+}
+
+function people() {
+  const out = [];
+  for (const d of ui.state?.devices || []) if (d.person) out.push({ ...d.person, device: d });
+  return out;
+}
+
+function findPerson(name) {
+  return people().find((p) => p.name === name) || null;
+}
+
+// A person counts as here while a page they can see is calling: it does so every 3 s, and a
+// presence that says so can take as long as a heartbeat to arrive.
+function personOnline(p) {
+  const t = when(p.lastActive);
+  return p.device.reachable && !!t && Date.now() - t < 2.5 * 60000;
+}
+
+// Unread: what the daemon has down as unread, less what this page has just opened, of the messages
+// it holds.
+function unreadIds() {
+  return (ui.state?.account?.unread || []).filter((id) => ui.ids.has(id) && !ui.readLocal.has(id));
+}
+
+function unreadCount() {
+  return unreadIds().length;
+}
+
+function unreadIn(c) {
+  const ids = new Set(unreadIds());
+  return ids.size ? c.messages.filter((m) => ids.has(m.id)).length : 0;
+}
+
+function yourConversationCount() {
+  return new Set(myMessages().map((m) => conversationOf(m).key)).size;
+}
+
+// Opening a conversation marks it read, if someone is looking: a hidden page or a window in the
+// background reads nothing. What was unread when they came to it stays marked "New" until they
+// leave. What arrives while they are reading it is just the next message.
+function markOpenRead() {
+  const looking = ui.view === "messages" && !!ui.conversation && !document.hidden && document.hasFocus();
+  const arriving = looking && ui.reading !== ui.conversation;
+  ui.reading = looking ? ui.conversation : null;
+  if (!looking) return;
+  const unread = new Set(unreadIds());
+  if (!unread.size) return;
+  const ids = ui.messages
+    .filter((m) => unread.has(m.id) && conversationOf(m).key === ui.conversation)
+    .sort((a, b) => a.sortAt - b.sortAt)
+    .map((m) => m.id);
+  if (!ids.length) return;
+  if (arriving) ui.newMark = { key: ui.conversation, id: ids[0] };
+  for (const id of ids) ui.readLocal.add(id);
+  api("/api/read", { method: "POST", body: JSON.stringify({ ids }) }).catch((e) => {
+    if (e instanceof AuthError) deny(e.token);
+    else for (const id of ids) ui.readLocal.delete(id);
+  });
+  render();
+}
+
+function openYours() {
+  if (!ui.state) return;
+  if (!me()) return askForName(openYours);
+  ui.filter = me().addr;
+  ui.conversation = null;
+  ui.draftTo = null;
+  go("messages");
+  setView("messages");
+}
+
+// Open the conversation with someone, whether or not it has any messages yet.
+function startChat(name) {
+  if (!ui.state) return;
+  if (!me()) return askForName(() => startChat(name));
+  if (name === myName()) return openYours();
+  ui.picker = null;
+  ui.filter = me().addr;
+  ui.draftTo = name;
+  ui.conversation = dmKey(myName(), name);
+  go("messages");
+  setView("messages"); // the hash changes later, and the composer has to be there to focus now
+  focusComposer();
+}
+
+function askForName(then) {
+  ui.setup = { name: ui.state?.account?.suggested || "", error: "", busy: false, then };
+  render();
+  const field = root.querySelector('[data-key="setup-name"]');
+  field?.focus();
+  field?.select();
+}
+
+async function submitName() {
+  const setup = ui.setup;
+  if (!setup || setup.busy) return;
+  setup.busy = true;
+  setup.error = "";
+  render();
+  try {
+    const account = await api("/api/account", { method: "PUT", body: JSON.stringify({ name: setup.name.trim() }) });
+    ui.state.account = { ...ui.state.account, ...account };
+    ui.setup = null;
+    poll();
+    setup.then?.();
+    render();
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    setup.busy = false;
+    setup.error = e.message;
+    render();
+    root.querySelector('[data-key="setup-name"]')?.focus();
+  }
+}
+
+function dialog(label, close, ...kids) {
+  return h(
+    "div",
+    {
+      class: "scrim",
+      onclick: (e) => {
+        if (e.target === e.currentTarget) close();
+      },
+      onkeydown: (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          close();
+        }
+      },
+    },
+    h("div", { class: "dialog", role: "dialog", "aria-modal": "true", "aria-label": label }, kids),
+  );
+}
+
+function setupDialog() {
+  const s = ui.setup;
+  const close = () => {
+    ui.setup = null;
+    render();
+  };
+  return dialog(
+    "Choose your name",
+    close,
+    h("h2", { class: "dialog-title" }, "Choose your name"),
+    h("p", { class: "dialog-line" }, "Agents see it, and send to it."),
+    h(
+      "form",
+      {
+        class: "setup-form",
+        onsubmit: (e) => {
+          e.preventDefault();
+          submitName();
+        },
+      },
+      h(
+        "div",
+        { class: "setup-row" },
+        h("span", { class: "setup-face" }, faceOf(s.name)),
+        h(
+          "span",
+          { class: "field setup-field" + (s.error ? " field-bad" : "") },
+          h("input", {
+            type: "text",
+            value: s.name,
+            maxlength: 32,
+            placeholder: "ada-lovelace",
+            autocomplete: "off",
+            autocapitalize: "none",
+            spellcheck: "false",
+            "aria-label": "Your name",
+            "aria-invalid": s.error ? "true" : null,
+            "data-key": "setup-name",
+            oninput: (e) => {
+              s.name = e.target.value.toLowerCase().replace(/[\s_]+/g, "-");
+              s.error = "";
+              if (e.target.value !== s.name) e.target.value = s.name;
+              root.querySelector(".setup-face")?.replaceChildren(faceOf(s.name));
+              root.querySelector(".dialog-error")?.remove();
+              root.querySelector(".setup-field")?.classList.remove("field-bad");
+            },
+          }),
+        ),
+      ),
+      s.error && h("p", { class: "dialog-error", role: "alert" }, s.error),
+      h(
+        "div",
+        { class: "dialog-actions" },
+        h("button", { type: "button", class: "btn btn-ghost", onclick: close }, "Cancel"),
+        h("button", { type: "submit", class: "btn btn-primary", disabled: s.busy }, s.busy ? "Saving…" : "Continue"),
+      ),
+    ),
+  );
+}
+
+// The face a name would have: a person's, whatever is typed so far.
+function faceOf(name) {
+  return h("span", { class: "avatar avatar-person", "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
+}
+
+// Everyone a person can start a conversation with: people, then sessions, those at work first.
+function reachable() {
+  const rows = [];
+  for (const p of people()) {
+    if (p.name !== myName()) rows.push({ name: p.name, d: p.device, person: p, line: personOnline(p) ? "On " + NAME + " now" : "Person", rank: personOnline(p) ? 0 : 1, at: when(p.lastActive) || 0 });
+  }
+  for (const d of devices()) {
+    for (const s of d.sessions) {
+      if (isHidden(s)) continue;
+      const st = sessionState(d, s);
+      rows.push({ name: s.name, d, s, line: s.doing || s.agent || "", rank: st === "on" ? 0 : st === "idle" ? 1 : st === "dnd" ? 2 : 3, at: when(s.lastActive) || when(s.started) || 0 });
+    }
+  }
+  return rows.sort((a, b) => a.rank - b.rank || b.at - a.at);
+}
+
+function matches(r, q) {
+  if (!q) return true;
+  return [r.name, r.line, r.s?.branch, r.s?.agent, r.d.owner, r.d.id].some((x) => (x || "").toLowerCase().includes(q));
+}
+
+function personRow(r, cur, onclick) {
+  return h(
+    "button",
+    { class: "pick-row" + (cur ? " current" : ""), role: "option", "aria-selected": cur ? "true" : "false", "data-pick": r.name, onclick },
+    presence(r.name, r.d),
+    h("span", { class: "pick-text" }, h("span", { class: "pick-name truncate" }, r.name), h("span", { class: "pick-line truncate" }, r.line)),
+    h("span", { class: "pick-where truncate" }, r.person ? "" : r.d.self ? "This device" : r.d.owner || host(r.d.id)),
+  );
+}
+
+function newMessageButton() {
+  return h("button", { class: "icon-btn", title: "New message", "aria-label": "New message", "data-key": "new-message", onclick: openPicker }, icon("compose"));
+}
+
+function openPicker() {
+  if (!me()) return askForName(openPicker);
+  ui.picker = { q: "", index: 0 };
+  render();
+  root.querySelector('[data-key="picker-q"]')?.focus();
+}
+
+function pickerDialog() {
+  const p = ui.picker;
+  const close = () => {
+    ui.picker = null;
+    render();
+  };
+  const q = p.q.trim().toLowerCase();
+  const rows = reachable().filter((r) => matches(r, q));
+  p.index = Math.min(p.index, Math.max(rows.length - 1, 0));
+  return dialog(
+    "New message",
+    close,
+    h(
+      "label",
+      { class: "pick-search" },
+      icon("search"),
+      h("input", {
+        type: "text",
+        value: p.q,
+        placeholder: "Message a session or a person",
+        autocomplete: "off",
+        spellcheck: "false",
+        role: "combobox",
+        "aria-expanded": "true",
+        "aria-label": "Who to message",
+        "data-key": "picker-q",
+        oninput: (e) => {
+          p.q = e.target.value;
+          p.index = 0;
+          render();
+        },
+        onkeydown: (e) => {
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            p.index = Math.max(0, Math.min(rows.length - 1, p.index + (e.key === "ArrowDown" ? 1 : -1)));
+            render();
+            root.querySelector(".pick-row.current")?.scrollIntoView({ block: "nearest" });
+          } else if (e.key === "Enter" && rows[p.index]) {
+            e.preventDefault();
+            startChat(rows[p.index].name);
+          }
+        },
+      }),
+    ),
+    h(
+      "div",
+      { class: "pick-list", role: "listbox", "aria-label": "Sessions and people" },
+      rows.length ? rows.map((r, i) => personRow(r, i === p.index, () => startChat(r.name))) : h("p", { class: "pick-none" }, "Nobody matches."),
+    ),
+  );
+}
+
+// With no conversation open in your messages: who you could talk to.
+function startPane() {
+  const all = reachable();
+  const rows = all.slice(0, 8);
+  return h(
+    "section",
+    { class: "chat-pane start-pane", "aria-label": "Start a conversation" },
+    h(
+      "div",
+      { class: "start-inner" },
+      h("h2", { class: "start-title" }, rows.length ? "Who do you want to talk to?" : "Nobody is here yet."),
+      rows.length > 0 && h("div", { class: "pick-list start-list" }, rows.map((r) => personRow(r, false, () => startChat(r.name)))),
+      all.length > rows.length && h("button", { class: "btn btn-ghost", "data-key": "start-more", onclick: openPicker }, "See everyone"),
+    ),
+  );
+}
+
+// The composer. Each conversation keeps one textarea element across renders, so a draft, its caret
+// and its undo history outlast the rebuilds that polling causes.
+const composers = new Map();
+let composing = false; // an input method is partway through a character
+
+function composerFor(key, send, onchange) {
+  let el = composers.get(key);
+  if (!el) {
+    el = document.createElement("textarea");
+    el.rows = 1;
+    el.className = "composer-input";
+    el.dataset.key = "composer-" + key;
+    el.dataset.composer = key;
+    el.addEventListener("compositionstart", () => (composing = true));
+    el.addEventListener("compositionend", () => (composing = false));
+    composers.set(key, el);
+  }
+  // Set anew each time: who it sends to can change while the element lasts.
+  el.oninput = () => {
+    fit(el);
+    onchange();
+  };
+  el.onkeydown = (e) => {
+    // On a phone Enter is a new line, and the button sends.
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !NARROW.matches) {
+      e.preventDefault();
+      send();
+    }
+  };
+  return el;
+}
+
+function fit(el) {
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight + 2, Math.round(window.innerHeight * 0.4)) + "px";
+}
+
+function fitComposers() {
+  for (const el of root.querySelectorAll(".composer-input")) fit(el);
+}
+
+function focusComposer() {
+  if (NARROW.matches) return; // a phone's keyboard shouldn't jump up on opening a conversation
+  root.querySelector(".composer-input")?.focus({ preventScroll: true });
+}
+
+function pendingIn(c) {
+  return ui.outbox.filter((item) => item.key === c.key);
+}
+
+// Who a message written in this conversation goes to; null if it isn't yours to write in.
+function targetOf(c) {
+  if (!me()) return null;
+  if (c.kind === "all") return { to: "*", label: "everyone", count: sessionCount() };
+  if (c.kind === "device") {
+    const d = (ui.state?.devices || []).find((x) => x.id === c.title);
+    return { to: c.title, label: groupName(c), count: d ? d.sessions.length : 0 };
+  }
+  if (!c.pair.includes(myName())) return null;
+  const other = c.pair.find((n) => n !== myName()) || myName();
+  return { to: other, label: other, count: 1 };
+}
+
+// Under a conversation: somewhere to write, or, under one between two others, a way to either.
+function paneFoot(c) {
+  const target = targetOf(c);
+  if (target) return composer(c, target);
+  if (c.kind !== "dm") return h("div", { class: "pane-foot" }, h("button", { class: "btn btn-outline", "data-key": "foot-name", onclick: () => askForName(render) }, "Choose a name to write here"));
+  const running = c.pair.filter((n) => findSession(n) || findPerson(n));
+  if (!running.length) return null;
+  return h(
+    "div",
+    { class: "pane-foot" },
+    running.map((n) => h("button", { class: "btn btn-outline", "data-key": "foot-" + n, onclick: () => startChat(n) }, icon("message"), "Message " + n)),
+  );
+}
+
+function composer(c, target) {
+  const key = c.key;
+  const big = target.to === "*" || (c.kind === "device" && target.count > 1);
+  const trySend = () => sendFrom(c, target, el, big);
+  const el = composerFor(key, trySend, () => {
+    if (ui.armed === key) {
+      ui.armed = null;
+      root.querySelector(".composer-warn")?.remove();
+    }
+    const btn = root.querySelector(".composer-send");
+    if (btn) btn.disabled = !el.value.trim();
+  });
+  el.placeholder = "Message " + target.label;
+  el.setAttribute("aria-label", "Message " + target.label);
+  return h(
+    "div",
+    { class: "composer-wrap" },
+    ui.armed === key && h("p", { class: "composer-warn", role: "alert" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
+    h(
+      "div",
+      { class: "composer" },
+      el,
+      h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim(), "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),
+    ),
+  );
+}
+
+function sendFrom(c, target, el, big) {
+  const text = el.value.trim();
+  if (!text) return;
+  if (big && ui.armed !== c.key) {
+    ui.armed = c.key;
+    render();
+    return;
+  }
+  ui.armed = null;
+  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key: c.key, to: target.to, text, status: "sending" };
+  ui.outbox.push(item);
+  ui.notes.delete(c.key);
+  el.value = "";
+  toEnd = true;
+  deliver(item);
+  if (!NARROW.matches) el.focus({ preventScroll: true });
+}
+
+async function deliver(item) {
+  item.status = "sending";
+  item.error = "";
+  render();
+  try {
+    const sent = await api("/api/send", { method: "POST", body: JSON.stringify({ to: item.to, text: item.text }) });
+    item.id = sent.id;
+    if (sent.note) ui.notes.set(item.key, { id: sent.id, text: sent.note });
+    else ui.notes.delete(item.key);
+    item.status = "sent";
+    clearTimeout(timer);
+    timer = setTimeout(poll, 100); // what was sent is among the messages by now
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    item.status = "failed";
+    item.error = e.message.charAt(0).toUpperCase() + e.message.slice(1); // the daemon writes for agents, in lower case
+  }
+  render();
+}
+
+function editFailed(item) {
+  ui.outbox = ui.outbox.filter((x) => x !== item);
+  const el = composers.get(item.key);
+  if (el) el.value = el.value ? item.text + "\n" + el.value : item.text;
+  render();
+  focusComposer();
+}
+
+// Above the composer: what has become of your last message, as far as can be known. Nothing here
+// claims the agent has read it, which the daemon can't tell (#26). It lasts until a reply, or an hour.
+function waitLine(c) {
+  const target = targetOf(c);
+  if (!target || c.kind !== "dm" || target.to === myName()) return null;
+  const f = findSession(target.to);
+  const last = c.messages[c.messages.length - 1];
+  const pending = pendingIn(c).some((x) => x.status !== "failed");
+  const mineLast = !!last && fromName(last) === myName();
+  const waiting = pending || (mineLast && Date.now() - (when(last.at) || 0) < 3600000);
+  const note = ui.notes.get(c.key);
+  if (note && mineLast && last.id === note.id) return h("p", { class: "wait-line" }, note.text);
+  if (isPerson(target.to)) {
+    const p = findPerson(target.to);
+    return !waiting || (p && personOnline(p)) ? null : h("p", { class: "wait-line" }, target.to + " will see this next time they open " + NAME + ".");
+  }
+  if (!f) return h("p", { class: "wait-line wait-warn" }, target.to + " isn't running, so it may never read this.");
+  const st = sessionState(f.device, f.session);
+  if (st === "off") return h("p", { class: "wait-line wait-warn" }, target.to + "'s device is offline. It gets this when it's back.");
+  if (st === "dnd") return h("p", { class: "wait-line wait-warn" }, target.to + " is on do not disturb. Your message waits in its inbox.");
+  if (!waiting) return null;
+  const active = when(f.session.lastActive);
+  const sentAt = mineLast ? when(last.at) || 0 : Date.now();
+  if (active && Date.now() - active < 90000 && active >= sentAt - 5000) {
+    return h("p", { class: "wait-line wait-working" }, h("span", { class: "dots", "aria-hidden": "true" }, h("i"), h("i"), h("i")), target.to + " is working");
+  }
+  return pending ? null : h("p", { class: "wait-line" }, "Waiting for " + target.to);
 }
 
 // Settings.
@@ -1949,8 +2740,61 @@ function settingsRow(key, title, description, control, extraClass = "") {
   );
 }
 
+function accountSection() {
+  const a = me();
+  const value = ui.accountDraft ?? (a?.name || ui.state?.account?.suggested || "");
+  return h(
+    "section",
+    { class: "section" },
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Your account")),
+    h(
+      "div",
+      { class: "group" },
+      settingsRow("account", "Your name", "Agents see it, and send to it.", [
+        h(
+          "span",
+          { class: "field account-field" },
+          h("input", {
+            type: "text",
+            value,
+            maxlength: 32,
+            autocomplete: "off",
+            spellcheck: "false",
+            "aria-label": "Your name",
+            "data-key": "account-name",
+            oninput: (e) => {
+              ui.accountDraft = e.target.value;
+            },
+            onkeydown: (e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                saveAccount(e.target.value.trim());
+              }
+            },
+          }),
+        ),
+        h("button", { class: "btn btn-outline btn-xs", "data-key": "account-save", onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) }, a ? "Save" : "Choose"),
+      ]),
+    ),
+  );
+}
+
+async function saveAccount(name) {
+  delete ui.rowErrors.account;
+  try {
+    const account = await api("/api/account", { method: "PUT", body: JSON.stringify({ name }) });
+    if (ui.state) ui.state.account = { ...ui.state.account, ...account };
+    ui.accountDraft = null;
+    poll();
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    ui.rowErrors.account = e.message;
+  }
+  render();
+}
+
 function settingsPage() {
-  const sections = [];
+  const sections = [ui.state ? accountSection() : null];
   if (ui.settings) {
     const set = ui.settings;
     const local = (ui.state?.devices || []).find((d) => d.self)?.sessions || [];
@@ -1959,7 +2803,7 @@ function settingsPage() {
       settingsRow(
         "wake",
         "Device default",
-        "Whether a message from another session may wake an idle session.",
+        "Whether a message from another session may wake an idle session. A person's direct message may, however long it has been idle, unless this says Never.",
         wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }), false),
       ),
       ...[...local]
@@ -2141,6 +2985,8 @@ async function fetchMessages() {
     for (const m of r.messages || []) {
       learn(m.fromAddr, m.from);
       if (m.toKind === "session") learn(m.toAddr, m.to);
+      if (m.fromPerson) personNames.add(m.from);
+      if (m.toPerson) personNames.add(m.to);
       if (ui.ids.has(m.id)) continue;
       ui.ids.add(m.id);
       // A clock can be wrong. A message with no time goes where it arrived, and one from the future
@@ -2179,8 +3025,16 @@ async function poll() {
       location.reload();
       return;
     }
-    for (const d of state.devices || []) for (const s of d.sessions || []) learn(s.addr, s.name);
+    for (const d of state.devices || []) {
+      for (const s of d.sessions || []) learn(s.addr, s.name);
+      if (d.person) {
+        learn(d.person.addr, d.person.name);
+        personNames.add(d.person.name);
+      }
+    }
     ui.state = state;
+    for (const id of ui.readLocal) if (!state.account?.unread?.includes(id)) ui.readLocal.delete(id);
+    ui.outbox = ui.outbox.filter((item) => !(item.id && ui.ids.has(item.id)));
     ui.conn = "ok";
   } catch (e) {
     inflight = false;
@@ -2190,8 +3044,12 @@ async function poll() {
   inflight = false;
   // Rebuild only when something changed, and leave alone a minutes field being typed in, text being
   // selected, and a pane being scrolled: a rebuild would drop the selection or stop the scroll.
-  const sig = JSON.stringify([ui.state, ui.cursor, ui.conn, ui.restarting > 0, restartStuck()]);
-  const typing = document.activeElement?.tagName === "INPUT";
+  const sig = JSON.stringify([ui.state, ui.cursor, ui.conn, ui.restarting > 0, restartStuck(), ui.outbox.length, Math.floor(Date.now() / 15000)]);
+  // A composer keeps its own element, so what is being typed there survives a rebuild, unless an
+  // input method is partway through a character. On a phone it wouldn't: refocusing it isn't a tap,
+  // so the keyboard would drop. There the thread catches up when the composer loses focus.
+  const inComposer = document.activeElement?.tagName === "TEXTAREA";
+  const typing = document.activeElement?.tagName === "INPUT" || composing || (inComposer && NARROW.matches);
   const selecting = document.getSelection()?.isCollapsed === false;
   const scrolling = Date.now() - scrolledAt < 1000;
   if (sig !== last && !typing && !selecting && !scrolling) {
@@ -2209,8 +3067,12 @@ async function poll() {
 function start() {
   const token = takeToken();
   if (token !== ui.token) {
-    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0 });
+    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0, draftTo: null, outbox: [], setup: null, picker: null, newMark: null, armed: null });
     ui.ids = new Set();
+    ui.notes = new Map();
+    ui.readLocal = new Set();
+    composers.clear();
+    personNames.clear();
     named.clear();
     for (const key of [...minuteEdits.keys()]) cancelMinutes(key);
     confirmed = null;
@@ -2232,6 +3094,10 @@ window.addEventListener("hashchange", () => {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && ui.token && ui.conn !== "denied") poll();
 });
+window.addEventListener("focus", () => {
+  if (ui.token && ui.conn !== "denied") markOpenRead();
+});
+window.addEventListener("blur", markOpenRead); // nobody is looking now, so what comes next is new
 document.addEventListener("scroll", () => (scrolledAt = Date.now()), { capture: true, passive: true });
 NARROW.addEventListener("change", render);
 setInterval(tick, 10000);
