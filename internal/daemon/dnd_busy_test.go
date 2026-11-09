@@ -68,7 +68,7 @@ func TestDoNotDisturbOnABusySessionHoldsEveryRouteUntilItComesOff(t *testing.T) 
 	b.turnEnd("claude-bob")
 	holds(t, "no turn at the turn's end", time.Second, func() bool { return len(calls()) == 0 })
 
-	// At work again, the tag comes off: the hook delivers the message whole, once, and the turn's
+	// At work again, the tag comes off: the hook gives the message whole, once, and the turn's
 	// end hands nothing over, as it is no longer queued.
 	b.hookNotices("claude-bob")
 	b.tagSelf("bbbbbb", nil, []string{"do-not-disturb"})

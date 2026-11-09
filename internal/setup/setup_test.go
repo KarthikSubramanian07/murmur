@@ -134,7 +134,7 @@ func TestTheAgentPagesExistAndSayWhatTheSectionPromises(t *testing.T) {
 	}
 }
 
-// The page on using Murmur quotes the turn a delivered message becomes. An agent that reads the
+// The page on using Murmur quotes the turn a message arrives as. An agent that reads the
 // quote and then meets a header worded differently has no way to tell Murmur's turn from a user's,
 // so the quote is the turn view.Turn renders, word for word, and this fails if either one is
 // reworded.

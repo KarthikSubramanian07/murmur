@@ -13,7 +13,7 @@ import (
 
 // The page's busy setting (#204): a session at work is given each new message by the hook either
 // as a line with its subject, the default, or whole, as its turn would read. A message given whole
-// is delivered: it leaves the inbox and the count, and doesn't go in as a turn when the turn ends.
+// is read: it leaves the inbox and the count, and doesn't go in as a turn when the turn ends.
 func TestBusySessionGetsTheWholeMessageThroughTheHook(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
@@ -156,7 +156,7 @@ func TestAFailedHandoffIsNotGivenWhole(t *testing.T) {
 }
 
 // A hook from before Whole prints only the subjects in Messages (#229). With whole messages set, it
-// still gets the subject, and the message stays in the inbox, not delivered to a hook that would
+// still gets the subject, and the message stays in the inbox, not given whole to a hook that would
 // print nothing of it.
 func TestAnOlderHookGetsTheSubjectOnly(t *testing.T) {
 	remote := newRemote(t)

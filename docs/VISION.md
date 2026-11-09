@@ -923,15 +923,16 @@ message meets them:
   they opened the conversation, which marks it read (a hidden page, or one in a background
   window, marks nothing).
 
-A message that arrives whole skips delivered and is read at once: a turn, the hook's whole message,
-the `Stop` hook's continuation. So does every message to an agent the hook doesn't run in, which
-gets no notice. Where each moment is for an agent, by route:
+A message that arrives whole (a turn, the hook's whole message, the `Stop` hook's continuation)
+is read then. If no notice told of it first, it skipped delivered: so does every message to an
+agent the hook doesn't run in, which gets no notice. One the hook's notice told of during a turn
+was delivered then, and is read later, by whichever of these comes first. Where each moment is for an agent, by route:
 
 | Route | Delivered or read when | Can Murmur see it |
 |---|---|---|
 | `t3 thread send` | read when the turn carrying it starts: at once in an idle thread, after the running turn in a busy one (a busy one only where the hook doesn't run, #202) | No. The daemon sees `t3` accept the message, not the turn start; T3's database would show it (`orchestration_v2_projection_messages`), but those tables are T3's own and may change |
 | The messaging socket (Claude Code outside T3) | read when Claude Code takes it as a turn | No: the socket answers nothing |
-| The hook's notice (Claude Code) | delivered when the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt, with the sender and subject. Where the page's busy setting says whole message (#204), or the `Stop` hook keeps the turn going with it, it is read then instead; otherwise it is read by `inbox` | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
+| The hook's notice (Claude Code) | delivered when the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt, with the sender and subject. Where the page's busy setting says whole message (#204), it is read then instead. A message told of is read later by `inbox`, by the `Stop` hook keeping the turn going with it, or as a turn handed over when the turn ends | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
 | `inbox` | read when the tool's result returns to the agent | Partly: the daemon sees the messages leave in its answer, not the answer reach the agent through MCP |
 
 Nothing reports a message's state to its sender yet. Whatever does (#26, `who`, `lookup`, the web
