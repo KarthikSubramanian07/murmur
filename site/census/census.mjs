@@ -5,9 +5,9 @@
 //   CENSUS_KEY=... node site/census/census.mjs            # every repo the site lists
 //   node site/census/census.mjs --dry github.com/a/b      # print one repo's counts; send nothing
 //
-// For each repo it fetches two public things, as any reader could:
-// - its bus, refs/murmur/*: each device's log of events (sessions started, messages) and its
-//   presence (which names the git user);
+// For each repo it fetches two public things, as any reader could, and commits only:
+// - its bus, refs/murmur/mesh/* and refs/murmur/presence/*: each device's log of events (sessions
+//   started, messages) and its presence (which names the git user);
 // - its default branch's commits, without their files: who committed, and when each first did.
 //
 // It sends counts and hashes, not content: per UTC day, how many sessions, messages and records
@@ -25,11 +25,29 @@ import { pathToFileURL } from 'node:url';
 const SITE = process.env.CENSUS_SITE || 'https://murmur.afig.dev';
 const REPO = /^github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9._-]{1,100})$/;
 
-function git(dir, args, opts = {}) {
-  return execFileSync('git', ['-C', dir, ...args], {
-    encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, ...opts,
-  });
+// What one repo may cost: BUDGET of git's time, and MAX_REFS devices' refs (a device has two, its
+// log and its presence). Anyone can list a repo, and one with huge objects or 100,000 refs would
+// otherwise hold the census past its job's 30 minutes, and every repo after it would go uncounted.
+// A repo over either is skipped, and fails the day's run as a refused one does, so it shows.
+const BUDGET = 3 * 60e3;
+const MAX_REFS = 2000;
+
+const skip = message => Object.assign(new Error(message), { skipped: true });
+
+// Runs git in dir, killed at `deadline` (a Date.now() time).
+function git(dir, args, deadline = Infinity) {
+  const timeout = deadline - Date.now();
+  if (timeout <= 0) throw skip('took too long to count');
+  try {
+    return execFileSync('git', ['-C', dir, ...args], {
+      encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      ...(Number.isFinite(timeout) && { timeout, killSignal: 'SIGKILL' }),
+    });
+  } catch (err) {
+    if (err.code === 'ETIMEDOUT') throw skip('took too long to count');
+    throw err;
+  }
 }
 
 const dayOf = t => {
@@ -46,8 +64,8 @@ const EPOCH = '2026-10-01';
 const latestDay = now => new Date(now + 864e5).toISOString().slice(0, 10);
 
 // Each commit on ref, newest first: its hash, committer date and message.
-function log(dir, ref) {
-  const out = git(dir, ['log', '--format=%H%x00%cI%x00%B%x01', ref]);
+function log(dir, ref, deadline) {
+  const out = git(dir, ['log', '--format=%H%x00%cI%x00%B%x01', ref], deadline);
   return out.split('\x01').map(s => s.replace(/^\n/, '')).filter(s => s.includes('\x00')).map(s => {
     const [hash, date, msg] = s.split('\x00');
     return { hash, date, msg };
@@ -89,13 +107,14 @@ const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
 //
 // A record is dated by its `at`, or by its commit's date when `at` isn't believable, and isn't
 // counted when neither is.
-export function count(dir, now = Date.now()) {
+export function count(dir, { now = Date.now(), deadline = Infinity, maxRefs = MAX_REFS } = {}) {
   const latest = latestDay(now);
   const busDay = t => {
     const d = dayOf(t);
     return d && d >= EPOCH && d <= latest ? d : null;
   };
-  const refs = git(dir, ['for-each-ref', '--format=%(refname)', 'refs/murmur/']).split('\n').filter(Boolean);
+  const refs = git(dir, ['for-each-ref', '--format=%(refname)', 'refs/murmur/'], deadline).split('\n').filter(Boolean);
+  if (refs.length > maxRefs) throw skip(`${refs.length} refs on its bus, more than ${maxRefs}`);
   const days = new Map(); // day -> { devices: Set, sessions, messages, records }
   const day = d => {
     if (!days.has(d)) days.set(d, { devices: new Set(), sessions: 0, messages: 0, records: 0 });
@@ -109,7 +128,7 @@ export function count(dir, now = Date.now()) {
   for (const ref of refs) {
     const [, , kind, device] = ref.split('/');
     if ((kind !== 'mesh' && kind !== 'presence') || !device) continue;
-    for (const c of log(dir, ref)) {
+    for (const c of log(dir, ref, deadline)) {
       if (seen.has(c.hash)) continue;
       seen.add(c.hash);
       const r = record(c.msg);
@@ -147,9 +166,9 @@ export function count(dir, now = Date.now()) {
 // A commit dated after tomorrow is on the branch all the same, so its author counts, as of today;
 // the site keeps the earliest day it is sent. Old dates are believed: people commit for years
 // before a repo takes up Murmur.
-export function contributors(dir, now = Date.now()) {
+export function contributors(dir, { now = Date.now(), deadline = Infinity } = {}) {
   const today = new Date(now).toISOString().slice(0, 10), latest = latestDay(now);
-  const out = git(dir, ['log', '--format=%aE%x00%aN%x00%aI', 'FETCH_HEAD']);
+  const out = git(dir, ['log', '--format=%aE%x00%aN%x00%aI', 'FETCH_HEAD'], deadline);
   const first = new Map();
   for (const line of out.split('\n')) {
     const [email, name, at] = line.split('\x00');
@@ -162,20 +181,28 @@ export function contributors(dir, now = Date.now()) {
   return [...first].map(([id, f]) => ({ id, first: f }));
 }
 
-// Fetches one repo's bus and its default branch's commits into a scratch repo and counts them.
-export function census(name) {
+// Fetches one repo's bus and its default branch's commits into a scratch repo and counts them,
+// within BUDGET. `url`, where it is fetched from, is for the tests.
+//
+// Only the refs count() reads are fetched, and of them only commits: a bus commit's tree is empty
+// (VISION), and a ref elsewhere under refs/murmur/, or a commit made to look like a bus's, could
+// point at gigabytes.
+export function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS } = {}) {
   const m = REPO.exec(name);
   if (!m) throw new Error(`not a repo: ${name}`);
+  const deadline = Date.now() + budget;
+  url ??= `https://github.com/${m[1]}/${m[2]}.git`;
   const dir = mkdtempSync(join(tmpdir(), 'census-'));
   try {
-    git(dir, ['init', '-q', '--bare']);
-    const url = `https://github.com/${m[1]}/${m[2]}.git`;
-    git(dir, ['fetch', '-q', '--no-tags', url, '+refs/murmur/*:refs/murmur/*']);
-    const bus = count(dir);
-    git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url, 'HEAD']);
-    return { repo: name.toLowerCase(), ...bus, contributors: contributors(dir) };
+    git(dir, ['init', '-q', '--bare'], deadline);
+    git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url,
+      '+refs/murmur/mesh/*:refs/murmur/mesh/*', '+refs/murmur/presence/*:refs/murmur/presence/*'], deadline);
+    const bus = count(dir, { deadline, maxRefs });
+    git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url, 'HEAD'], deadline);
+    return { repo: name.toLowerCase(), ...bus, contributors: contributors(dir, { deadline }) };
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    // Retried: a git killed at the deadline may leave a child writing here for a moment.
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
   }
 }
 
@@ -193,20 +220,26 @@ async function call(path, init = {}) {
 //
 // What goes wrong with one repo is that repo's alone: the census goes on to the next, so a repo the
 // site refuses can't leave every repo after it uncounted. A repo that can't be read, because it
-// has gone private or been deleted, keeps the counts it had, and the job still succeeds. Counts the
-// site refused fail the job once every repo has had its turn, so the run shows in red in Actions.
+// has gone private or been deleted, keeps the counts it had, and the job still succeeds. A repo
+// skipped for what it would cost (BUDGET, MAX_REFS), and counts the site refused, fail the job once
+// every repo has had its turn, so the run shows in red in Actions.
 export async function main(args, { read = census } = {}) {
   const dry = args.includes('--dry');
   let names = args.filter(a => !a.startsWith('--'));
   if (!dry && !process.env.CENSUS_KEY) throw new Error('CENSUS_KEY is not set');
   if (!names.length) names = (await call('/v1/census')).repos;
   let unread = 0;
-  const unsent = [];
+  const skipped = [], unsent = [];
   for (const name of names) {
     let c;
     try {
       c = read(name);
     } catch (err) {
+      if (err.skipped) {
+        console.error(`${name}: skipped: ${err.message}`);
+        skipped.push(name);
+        continue;
+      }
       console.error(`${name}: not counted: ${String(err.stderr || err.message).trim()}`);
       unread++;
       continue;
@@ -227,7 +260,11 @@ export async function main(args, { read = census } = {}) {
     }
     console.log(line);
   }
-  if (unsent.length) throw new Error(`${unsent.length} of ${names.length} repos counted but not sent: ${unsent.join(', ')}`);
+  const failed = [
+    skipped.length && `${skipped.length} of ${names.length} repos skipped: ${skipped.join(', ')}`,
+    unsent.length && `${unsent.length} of ${names.length} repos counted but not sent: ${unsent.join(', ')}`,
+  ].filter(Boolean);
+  if (failed.length) throw new Error(failed.join('; '));
   if (unread === names.length && names.length) throw new Error('no repo could be counted');
 }
 

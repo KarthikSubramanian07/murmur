@@ -1323,7 +1323,8 @@ in the state dir's `latest.json`; with updates off it hears of none.
 
 The counts come from the census (#259), which reads what each reported repo shows anyone. Once a
 day a GitHub Action in this repo (`.github/workflows/census.yml`, `site/census/census.mjs`) fetches
-each repo's `refs/murmur/*` and its default branch's commits without their files, and sends the
+the commits, without their files, of each repo's device logs and presences
+(`refs/murmur/mesh/*`, `refs/murmur/presence/*`) and of its default branch, and sends the
 site counts and hashes, never content: per UTC day, the sessions started (each once, though a
 daemon that restarts announces its sessions again), the messages and all records, and a hash of
 each device that wrote anything, presence included; a hash of each device's owner, the git user name
@@ -1336,9 +1337,11 @@ the API would need one per commit. Once the bus is encrypted (#257) a record's k
 public reader, so messages stop being told from other records, and only records are counted.
 
 Each repo is counted on its own, since anyone can list one (#ISSUE). A repo that can't be read (gone
-private, or deleted) keeps the counts it had. One whose counts the site refuses is skipped, and the
-day's run fails after every other repo has been sent, so it shows in Actions without leaving the
-repos after it, alphabetically, uncounted.
+private, or deleted) keeps the counts it had. A repo may take 3 minutes of git's time and show
+2,000 refs of devices, so that one with huge objects or 100,000 refs can't hold the job past its
+30 minutes. One over either, or whose counts the site refuses, is skipped, and the day's run fails
+after every other repo has been sent, so it shows in Actions without leaving the repos after it,
+alphabetically, uncounted.
 
 A time on the bus or a branch is its writer's clock, and can say any year up to 9999. A day after
 tomorrow (UTC) is never believed, since one would keep a repo active and its people new for ever,

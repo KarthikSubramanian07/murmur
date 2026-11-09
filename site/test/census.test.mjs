@@ -19,7 +19,7 @@ process.env.CENSUS_KEY = 'test-key';
 // The census's git, and the tests', read none of the developer's own config.
 process.env.GIT_CONFIG_GLOBAL = devNull;
 process.env.GIT_CONFIG_NOSYSTEM = '1';
-const { main, count, contributors } = await import('../census/census.mjs');
+const { main, count, contributors, census: readRepo } = await import('../census/census.mjs');
 
 const today = new Date().toISOString().slice(0, 10);
 const daysAgo = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
@@ -171,7 +171,7 @@ function repo(t) {
     tips.set(ref, sha);
     return sha;
   };
-  return { dir, commit };
+  return { dir, git, commit };
 }
 const event = r => `event\n\n${JSON.stringify(r)}\n`;
 const NOW = Date.parse('2026-11-09T12:00:00Z');
@@ -190,7 +190,7 @@ test("a bus time after tomorrow, or before Murmur, gives way to its commit's dat
   // A device whose every time is in the future was never seen.
   commit('refs/murmur/presence/dev2', event({ owner: 'Someone', at: '9999-12-31T00:00:00Z' }), { date: '2099-01-01T00:00:00Z' });
 
-  const c = count(dir, NOW);
+  const c = count(dir, { now: NOW });
   assert.deepEqual(c.days.map(d => [d.day, d.messages]), [['2026-11-05', 1], ['2026-11-06', 1], ['2026-11-07', 1], ['2026-11-08', 1], ['2026-11-10', 1]]);
   assert.deepEqual(c.totals, { sessions: 0, messages: 5, records: 5, first_day: '2026-11-05', last_day: '2026-11-10' });
   assert.equal(c.devices.length, 1);
@@ -202,7 +202,7 @@ test("a commit dated after tomorrow counts its author as of today; an old one is
   commit('refs/heads/main', 'two\n', { date: '2099-01-01T00:00:00Z', who: 'Bob <bob@example.com>' });
   const tip = commit('refs/heads/main', 'three\n', { date: '2026-11-01T00:00:00Z', who: 'Ann <ann@example.com>' });
   writeFileSync(join(dir, 'FETCH_HEAD'), `${tip}\t\tbranch 'main' of test\n`);
-  assert.deepEqual(contributors(dir, NOW).map(k => k.first).sort(), ['2025-01-01', '2026-11-09']);
+  assert.deepEqual(contributors(dir, { now: NOW }).map(k => k.first).sort(), ['2025-01-01', '2026-11-09']);
 });
 
 test('the site refuses a day after tomorrow, and a bus day before Murmur, but not an old first commit', async () => {
@@ -240,4 +240,55 @@ test('rows dated after today make no repo active and no one new', { skip: !sqlit
   n = await repoNumbers(db, 14);
   assert.deepEqual([n.activeRepos, n.contributors, n.newContributors], [1, 1, 1]);
   assert.equal(n.repoList[0].week, 1);
+});
+
+// A repo for census() to fetch, served as GitHub serves one: partial fetches allowed, HEAD on main,
+// which has one commit by Ann.
+function remote(t) {
+  const r = repo(t);
+  r.git(['config', 'uploadpack.allowFilter', 'true']);
+  r.git(['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  r.commit('refs/heads/main', 'start\n', { who: 'Ann <ann@example.com>' });
+  return { ...r, url: 'file://' + r.dir, at: new Date(Date.now() - 864e5).toISOString() };
+}
+
+test("census() fetches a repo's bus and default branch, and only the refs it reads", t => {
+  const r = remote(t);
+  r.commit('refs/murmur/mesh/dev1', event({ type: 'session.started', from: 's1', at: r.at }));
+  r.commit('refs/murmur/mesh/dev1', event({ type: 'message', at: r.at }));
+  r.commit('refs/murmur/presence/dev1', event({ owner: 'Ann', at: r.at }));
+  // Under refs/murmur/ but not read: were it fetched, the bus would have 3 refs, more than 2.
+  r.commit('refs/murmur/junk', event({ type: 'message', at: r.at }));
+  const c = readRepo('github.com/A/One', { url: r.url, maxRefs: 2 });
+  assert.equal(c.repo, 'github.com/a/one');
+  const day = r.at.slice(0, 10);
+  assert.deepEqual(c.totals, { sessions: 1, messages: 1, records: 2, first_day: day, last_day: day });
+  assert.equal(c.devices.length, 1);
+  assert.notEqual(c.devices[0].person, null);
+  assert.equal(c.contributors.length, 1);
+});
+
+test('a repo with more refs on its bus than the census reads is skipped', t => {
+  const r = remote(t);
+  for (const d of ['dev1', 'dev2', 'dev3']) r.commit(`refs/murmur/mesh/${d}`, event({ type: 'message', at: r.at }));
+  assert.throws(() => readRepo('github.com/a/one', { url: r.url, maxRefs: 2 }), { skipped: true, message: '3 refs on its bus, more than 2' });
+});
+
+test('a repo that takes longer than its budget is skipped', t => {
+  const r = remote(t);
+  r.commit('refs/murmur/mesh/dev1', event({ type: 'message', at: r.at }));
+  assert.throws(() => readRepo('github.com/a/one', { url: r.url, budget: 1 }), { skipped: true, message: 'took too long to count' });
+});
+
+test('a skipped repo fails the run, after the repos after it are sent', async t => {
+  const names = ['github.com/a/one', 'github.com/b/two', 'github.com/c/three'];
+  const db = recordingD1(names);
+  const said = site(t, db);
+  const read = name => {
+    if (name.endsWith('two')) throw Object.assign(new Error('took too long to count'), { skipped: true });
+    return counts(name);
+  };
+  await assert.rejects(main(names, { read }), { message: '1 of 3 repos skipped: github.com/b/two' });
+  assert.deepEqual(sent(db), ['github.com/a/one', 'github.com/c/three']);
+  assert.deepEqual(said.error, ['github.com/b/two: skipped: took too long to count']);
 });
