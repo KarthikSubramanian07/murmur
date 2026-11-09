@@ -104,7 +104,7 @@ func (d *Daemon) notePersonClaimLocked(name, addr string) bool {
 // waiting for a session to need a name, if the registry is missing any.
 func (d *Daemon) processNames(ctx context.Context, sha string) {
 	d.mu.Lock()
-	tip, good, checked := d.st.NamesTip, d.st.NamesGood, d.namesChecked
+	tip, good, checked, peopleRead := d.st.NamesTip, d.st.NamesGood, d.namesChecked, d.st.NamesPeople
 	d.mu.Unlock()
 	if checked && tip == sha {
 		return
@@ -169,10 +169,14 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 				fail(err)
 				return
 			}
-			if desc {
-				from = good
-			} else {
+			switch {
+			case !desc:
 				disturbed = true
+			case peopleRead:
+				from = good
+			default:
+				// Not damaged, but read by a daemon that passed over people's claims (see
+				// NamesPeople): read again from the start, for them.
 			}
 		}
 		var err error
@@ -263,6 +267,9 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	}
 	repair := d.st.NamesRepair
 	changed = changed || repair != wasRepair
+	// The claim of a name from before people were in the registry waits for this first read (see
+	// nextNames), and nothing else would wake the assigner for it.
+	claim := !checked && d.st.Person != "" && d.st.PersonClaims[d.st.Person] == ""
 	d.namesChecked = true
 	if changed {
 		d.saveLocked()
@@ -271,7 +278,7 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	if repair && !wasRepair {
 		d.log.Printf("the names registry lost names; writing a snapshot of every name in use")
 	}
-	if repair {
+	if repair || claim {
 		d.kickNames()
 	}
 }
