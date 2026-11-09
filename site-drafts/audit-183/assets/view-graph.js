@@ -167,18 +167,19 @@ function model(mur, back) {
 // Streams on a grid, the busiest in the middle, arranged so the most talk crosses the least
 // distance; agents in no stream share the last cell. Up to four faces sit two to a row, so names
 // don't collide. Laid out from all messages, so nothing moves with the window or the slider.
-function layout(M, swarm, narrow) {
+function layout(M, swarm, narrow, spec) {
   const { nodes, allByPair } = M;
-  const cols = narrow ? 2 : 3;
-  const CW = narrow ? 176 : 254, GAP = narrow ? 10 : 18, PAD = narrow ? 4 : 8;
+  // Talk groups run to five agents, three to a row, so they get wider boxes.
+  const cols = spec ? (narrow ? 1 : 2) : narrow ? 2 : 3;
+  const CW = spec ? (narrow ? 352 : 370) : narrow ? 176 : 254, GAP = spec ? (narrow ? 44 : 64) : narrow ? 10 : 18, PAD = narrow ? 4 : 8;
   const TITLE = narrow ? 44 : 50, ROWH = narrow ? 78 : 92, BODY = narrow ? 100 : 112;
   const pairList = [...allByPair].map(([k, ms]) => [...k.split("|"), ms.length]);
   const deg = (n) => pairList.filter((q) => q[0] === n || q[1] === n).length;
-  const groups = swarm.streams
-    .map((st) => ({ id: st.id, stream: st, title: st.title, names: st.who.filter((n) => nodes.has(n)) }))
-    .filter((g) => g.names.length);
+  const groups = spec
+    ? spec.groups.map((g) => ({ ...g }))
+    : swarm.streams.map((st) => ({ id: st.id, stream: st, title: st.title, names: st.who.filter((n) => nodes.has(n)) })).filter((g) => g.names.length);
   groups.sort((x, y) => y.names.reduce((t, n) => t + deg(n), 0) - x.names.reduce((t, n) => t + deg(n), 0));
-  const loners = [...nodes.values()].filter((n) => !n.stream).map((n) => n.name);
+  const loners = spec ? spec.loners : [...nodes.values()].filter((n) => !n.stream).map((n) => n.name);
   const total = groups.length + (loners.length ? 1 : 0);
   const rows = Math.max(1, Math.ceil(total / cols));
   const cells = [];
@@ -207,11 +208,12 @@ function layout(M, swarm, narrow) {
     heap(groups.map((_, i) => i), groups.length);
   }
   const regions = groups.map((g, i) => ({ ...g, cell: free[order[i]] }));
-  if (loners.length) regions.push({ id: "_none", stream: null, title: "In no stream", names: loners, cell: lonerCell });
+  if (loners.length) regions.push({ id: "_none", stream: null, title: spec ? spec.lonerTitle : "In no stream", names: loners, cell: lonerCell, alone: true });
   const perRow = (n) => (n <= 1 ? 1 : n <= 4 ? 2 : 3);
   const maxRows = Math.max(1, ...regions.map((rg) => Math.ceil(rg.names.length / perRow(rg.names.length))));
   const CH = TITLE + Math.max(BODY, maxRows * ROWH);
-  const W = cols * CW + (cols - 1) * GAP + PAD * 2;
+  const GUTTER = spec && narrow ? 40 : 0;
+  const W = cols * CW + (cols - 1) * GAP + PAD * 2 + GUTTER;
   const H = rows * CH + (rows - 1) * GAP + PAD * 2;
   for (const rg of regions) {
     rg.x = PAD + rg.cell[1] * (CW + GAP);
@@ -222,7 +224,7 @@ function layout(M, swarm, narrow) {
       const nd = nodes.get(name);
       const row = Math.floor(i / k), col = i % k;
       const inRow = Math.min(k, n - row * k);
-      const spread = inRow === 2 ? 0.5 : 0.31;
+      const spread = inRow === 2 ? 0.5 : spec ? 0.32 : 0.31;
       nd.x = rg.x + CW * (0.5 + (col - (inRow - 1) / 2) * spread);
       nd.y = rg.y + TITLE + ((CH - TITLE) * (row + 0.5)) / rowsR - (narrow ? 14 : 16);
       nd.r = (narrow ? 13 : 16) + Math.min(deg(name), 5) * (narrow ? 1 : 1.4);
@@ -230,7 +232,76 @@ function layout(M, swarm, narrow) {
   }
   // Positions live here, not on the model, because the slider builds a new model for each moment.
   const pos = new Map([...nodes.values()].map((nd) => [nd.name, { x: nd.x, y: nd.y, r: nd.r }]));
-  return { W, H, regions, narrow, pos, boxes: true };
+  const groupOf = new Map(regions.flatMap((rg) => rg.names.map((n) => [n, rg])));
+  return { W, H, regions, narrow, pos, boxes: true, grouped: !!spec, groupOf };
+}
+
+// "Groups by talk": the boxes, but drawn around the agents who actually talk to each other rather
+// than around how work is filed. Groups come from greedy modularity merging (Clauset, Newman and
+// Moore, 2004): start with every agent alone and keep merging the two groups whose merge most
+// raises the share of talk that stays inside groups, until no merge helps. Talk is weighted like
+// "Pulled by talk": a back-and-forth conversation counts double. RESOLUTION above 1 favours
+// smaller, tighter groups; an agent left alone joins the group it talks with most, and agents
+// who talk to nobody get a box of their own. All talk between two groups is one band, so the
+// picture shows a handful of lines instead of every pair's.
+const RESOLUTION = 1.6;
+function talkGroups(M, swarm, fromName) {
+  const { nodes, allByPair } = M;
+  const names = [...nodes.keys()].sort((a, b) => (nodes.get(a).stream?.id || "~").localeCompare(nodes.get(b).stream?.id || "~") || a.localeCompare(b));
+  const n = names.length;
+  const idx = new Map(names.map((nm, i) => [nm, i]));
+  const w = Array.from({ length: n }, () => new Float64Array(n));
+  for (const [k, ms] of allByPair) {
+    const [a, b] = k.split("|");
+    const ab = ms.filter((m) => fromName(m) === a).length, ba = ms.length - ab;
+    const weight = (ab + ba) * (ab && ba ? RECIPROCAL : 1);
+    w[idx.get(a)][idx.get(b)] += weight;
+    w[idx.get(b)][idx.get(a)] += weight;
+  }
+  const deg = w.map((r) => r.reduce((t, x) => t + x, 0));
+  const m2 = deg.reduce((t, d) => t + d, 0);
+  const between = (A, B) => A.reduce((t, i) => t + B.reduce((u, j) => u + w[i][j], 0), 0);
+  const tot = (A) => A.reduce((t, i) => t + deg[i], 0);
+  let groups = names.map((_, i) => [i]).filter(([i]) => deg[i] > 0);
+  const loners = names.filter((_, i) => deg[i] === 0);
+  for (;;) {
+    let best = null, gain = 1e-9;
+    for (let x = 0; x < groups.length; x++) for (let y = x + 1; y < groups.length; y++) {
+      const e = between(groups[x], groups[y]);
+      if (!e) continue;
+      const g = 2 * (e / m2 - (RESOLUTION * tot(groups[x]) * tot(groups[y])) / (m2 * m2));
+      if (g > gain) { gain = g; best = [x, y]; }
+    }
+    if (!best) break;
+    groups[best[0]] = groups[best[0]].concat(groups[best[1]]);
+    groups.splice(best[1], 1);
+  }
+  for (;;) {
+    const x = groups.findIndex((g) => g.length === 1);
+    if (x < 0 || groups.length < 2) break;
+    const [one] = groups.splice(x, 1);
+    let to = 0, most = -1;
+    groups.forEach((g, y) => { const e = between(one, g); if (e > most) { most = e; to = y; } });
+    groups[to] = groups[to].concat(one);
+  }
+  // A group is titled by what its agents talk about most (two topics), and underneath by the
+  // streams they're filed under, biggest first. Named by streams alone, groups came out as
+  // "No stream + 2 more".
+  const topics = swarm.topics || {};
+  return {
+    groups: groups.map((g, gi) => {
+      const members = g.map((i) => names[i]).sort((a, b) => idx.get(a) - idx.get(b));
+      const inside = [...allByPair].filter(([k]) => { const [a, b] = k.split("|"); return members.includes(a) && members.includes(b); }).sort((p, q) => q[1].length - p[1].length);
+      const about = inside.slice(0, 2).map(([k, ms]) => topics[k] || short((ms[ms.length - 1].subject || "").replace(/^Re: /, ""), 24));
+      const count = new Map();
+      for (const nm of members) { const t = nodes.get(nm).stream?.title; if (t) count.set(t, (count.get(t) || 0) + 1); }
+      const streams = [...count].sort((p, q) => q[1] - p[1]).map(([t]) => t);
+      if (members.some((nm) => !nodes.get(nm).stream)) streams.push("no stream");
+      return { id: "g" + gi, title: about.join(" · ") || streams[0] || "Talking", sub: "From " + streams.join(", "), names: members, alone: false };
+    }),
+    loners,
+    lonerTitle: "Talking to no one",
+  };
 }
 
 // "Pulled by talk": no boxes. Every pair that has messaged is a spring, pulling harder the more
@@ -365,13 +436,17 @@ function build(mur) {
     if (sel?.type === "node" && !nodes.has(sel.name)) sel = null;
     if (sel?.type === "edge" && !edges.has(pairKey(sel.a, sel.b))) sel = null;
     if (sel?.type === "clash" && !clashes.some((c) => c.key === pairKey(sel.a, sel.b))) sel = null;
+    if (sel?.type === "glink" && !(L.grouped && L.regions.some((r) => r.id === sel.a) && L.regions.some((r) => r.id === sel.b))) sel = null;
     const selKey = sel && sel.type !== "node" ? pairKey(sel.a, sel.b) : null;
+    const boxOf = (n) => L.groupOf?.get(n);
+    const inLink = (a, b) => sel?.type === "glink" && pairKey(boxOf(a)?.id, boxOf(b)?.id) === selKey;
     const litNode = (name) => {
       if (!sel) return true;
       if (sel.type === "node") return sel.name === name || nodes.get(sel.name).partners.has(name) || waits.some((w) => (w.who === sel.name && w.on === name) || (w.on === sel.name && w.who === name)) || clashes.some((c) => (c.a === sel.name && c.b === name) || (c.b === sel.name && c.a === name));
+      if (sel.type === "glink") return boxOf(name)?.id === sel.a || boxOf(name)?.id === sel.b;
       return sel.a === name || sel.b === name;
     };
-    const litPair = (a, b) => (!sel ? true : sel.type === "node" ? a === sel.name || b === sel.name : pairKey(a, b) === selKey);
+    const litPair = (a, b) => (!sel ? true : sel.type === "node" ? a === sel.name || b === sel.name : sel.type === "glink" ? inLink(a, b) : pairKey(a, b) === selKey);
 
     const svg = s("svg", { class: "gx-svg", viewBox: `0 0 ${L.W} ${L.H}`, role: "group", "aria-label": "Map of which agents message which, and what about" });
     svg.addEventListener("click", (ev) => { if (ev.target === svg || ev.target.classList?.contains("gx-bg")) pick(null); });
@@ -380,8 +455,9 @@ function build(mur) {
     const obstacles = [];
     // What a stream's own agents are discussing, busiest first, as much as fits under the title.
     const inner = (rg) => {
-      if (!rg.stream) return "";
-      const list = edgeList.filter((e) => !e.cross && nodes.get(e.a).stream?.id === rg.id).sort((x, y) => y.msgs.length - x.msgs.length);
+      if (L.grouped) return rg.sub ? short(rg.sub, Math.floor((rg.w - 28) / (L.narrow ? 5.6 : 6.2))) : "";
+      if (rg.alone || !rg.stream) return "";
+      const list = edgeList.filter((e) => boxOf(e.a) === rg && boxOf(e.b) === rg).sort((x, y) => y.msgs.length - x.msgs.length);
       const room = Math.floor((rg.w - 28) / (L.narrow ? 5.6 : 6.2));
       let out = "";
       for (const e of list) {
@@ -393,9 +469,9 @@ function build(mur) {
     };
     for (const rg of L.regions) {
       const dim = sel && !rg.names.some(litNode);
-      svg.append(s("g", { class: "gx-region" + (rg.stream ? "" : " gx-region-alone") + (dim ? " gx-dim" : "") },
+      svg.append(s("g", { class: "gx-region" + (rg.alone ? " gx-region-alone" : "") + (dim ? " gx-dim" : "") },
         s("rect", { class: "gx-bg", x: rg.x, y: rg.y, width: rg.w, height: rg.h, rx: 16 }),
-        s("text", { class: "gx-rtitle", x: rg.x + 14, y: rg.y + 22 }, L.narrow ? short(rg.title, 19) : rg.title),
+        s("text", { class: "gx-rtitle", x: rg.x + 14, y: rg.y + 22 }, L.narrow ? short(rg.title, L.grouped ? 40 : 19) : rg.title),
         // A phone's box has no room for the PR number beside the title.
         !L.narrow && s("text", { class: "gx-rsub", x: rg.x + rg.w - 14, y: rg.y + 22, "text-anchor": "end" }, rg.stream?.pr ? "#" + rg.stream.pr : ""),
         inner(rg) && s("text", { class: "gx-rtopics", x: rg.x + 14, y: rg.y + (L.narrow ? 36 : 40) }, inner(rg))));
@@ -422,7 +498,22 @@ function build(mur) {
     const lineG = s("g", { class: "gx-edges" });
     svg.append(lineG);
     const waitOf = (key) => waits.find((w) => w.key === key);
+    const drawn = new Set();
+    // Between talk groups, all the talk is one band; a pair's own line shows only when you pick
+    // one of the two agents, the band, or the line itself.
+    const bands = new Map();
     for (const e of edgeList) {
+      const ga = boxOf(e.a), gb = boxOf(e.b);
+      if (L.grouped && ga !== gb) {
+        const key = pairKey(ga.id, gb.id);
+        if (!bands.has(key)) bands.set(key, { key, a: ga.id < gb.id ? ga : gb, b: ga.id < gb.id ? gb : ga, edges: [], n: 0 });
+        const band = bands.get(key);
+        band.edges.push(e);
+        band.n += e.msgs.length;
+        const mine = (sel?.type === "node" && (e.a === sel.name || e.b === sel.name)) || inLink(e.a, e.b) || (sel?.type === "edge" && e.key === selKey);
+        if (!mine) continue;
+      }
+      drawn.add(e.key);
       const A = nodes.get(e.a), B = nodes.get(e.b);
       const c = curve(A, B);
       e.c = c;
@@ -443,18 +534,51 @@ function build(mur) {
       g.addEventListener("click", (ev) => { ev.stopPropagation(); open(); });
       g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); } });
       lineG.append(g);
-      // In boxes, talk inside a stream is named under the box's title instead.
-      if (w || e.cross || !L.boxes) pills.push({ kind: w ? "wait" : "topic", rank: w ? 0 : 2, n: e.msgs.length, c, lit, isSel, text: w ? (L.narrow ? "waiting " + w.since + "m" : "waiting " + w.since + "m · " + e.topic) : e.topic, alt: w ? "waiting " + w.since + "m" : null, open, key: e.key });
+      // In boxes, talk inside a box is named under the box's title instead.
+      if (w || !L.boxes || boxOf(e.a) !== boxOf(e.b) || boxOf(e.a)?.alone) pills.push({ kind: w ? "wait" : "topic", rank: w ? 0 : 2, n: e.msgs.length, c, lit, isSel, text: w ? (L.narrow ? "waiting " + w.since + "m" : "waiting " + w.since + "m · " + e.topic) : e.topic, alt: w ? "waiting " + w.since + "m" : null, open, key: e.key });
     }
-    // A wait with no talk in this window still gets its arrow.
+    // A wait whose line isn't drawn still gets its arrow.
     for (const w of waits) {
-      if (edges.has(w.key)) continue;
+      if (drawn.has(w.key)) continue;
       const from = nodes.get(w.who), target = nodes.get(w.on);
       const c = curve(from, target);
       const tip = toward(c, target, target.r);
       const lit = litPair(w.who, w.on);
       lineG.append(s("path", { class: "gx-waitline gx-waitonly" + (lit ? "" : " gx-dim"), d: `M${from.x.toFixed(1)} ${from.y.toFixed(1)} Q${c.M.x.toFixed(1)} ${c.M.y.toFixed(1)} ${tip.x.toFixed(1)} ${tip.y.toFixed(1)}`, "marker-end": "url(#gx-arrow)" }));
       pills.push({ kind: "wait", rank: 0, n: 0, c, lit, text: "waiting " + w.since + "m", open: () => toggle({ type: "node", name: w.who }), key: w.key });
+    }
+    // The bands, from box edge to box edge, under everything else.
+    const maxBand = Math.max(1, ...[...bands.values()].map((b) => b.n));
+    const edgePoint = (from, to) => {
+      const cx = from.x + from.w / 2, cy = from.y + from.h / 2, dx = to.x + to.w / 2 - cx, dy = to.y + to.h / 2 - cy;
+      const t = Math.min(dx ? from.w / 2 / Math.abs(dx) : Infinity, dy ? from.h / 2 / Math.abs(dy) : Infinity);
+      return { x: cx + dx * t, y: cy + dy * t };
+    };
+    let lane = 0;
+    for (const band of [...bands.values()].sort((x, y) => x.n - y.n)) {
+      // On a phone the boxes stand in one column, and a band between two boxes that aren't
+      // neighbours would run through the ones between, so it goes round them on the right.
+      const far = L.narrow && Math.abs(band.a.cell[0] - band.b.cell[0]) > 1;
+      let c;
+      if (far) {
+        const xa = band.a.x + band.a.w, x = xa + 10 + 9 * lane++;
+        const ya = band.a.y + band.a.h / 2 + (lane % 2 ? 8 : -8), yb = band.b.y + band.b.h / 2 + (lane % 2 ? 8 : -8);
+        c = { d: `M${xa} ${ya} H${x} V${yb} H${xa}`, pt: (t) => ({ x, y: ya + (yb - ya) * t }), A: { x, y: ya }, B: { x, y: yb }, M: { x, y: (ya + yb) / 2 }, far: true };
+      } else {
+        const A = edgePoint(band.a, band.b), B = edgePoint(band.b, band.a);
+        c = curve(A, B, 0);
+      }
+      const lit = !sel || (sel.type === "glink" && selKey === band.key) || (sel.type === "node" && [band.a, band.b].includes(boxOf(sel.name)));
+      const isSel = sel?.type === "glink" && selKey === band.key;
+      const top = [...band.edges].sort((x, y) => y.msgs.length - x.msgs.length)[0];
+      const open = () => toggle({ type: "glink", a: band.key.split("|")[0], b: band.key.split("|")[1] });
+      const g = s("g", { class: "gx-band" + (lit ? "" : " gx-dim") + (isSel ? " gx-sel" : ""), tabindex: 0, role: "button", "aria-label": `${band.a.title} and ${band.b.title}: ${band.n} messages` });
+      g.append(s("path", { class: "gx-bandline", d: c.d, "stroke-width": (c.far ? 2 + (band.n / maxBand) * 4 : 3 + (band.n / maxBand) * 11).toFixed(1) }), s("path", { class: "gx-hit", d: c.d }), s("title", null, `${plural(band.n, "message")} between these groups, most about ${top.topic}`));
+      g.addEventListener("click", (ev) => { ev.stopPropagation(); open(); });
+      g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); } });
+      lineG.prepend(g);
+      // A band round the side has no room for a label; its tooltip and panel say how much.
+      if (!c.far) pills.push({ kind: "band", rank: 1, n: band.n, c, lit, isSel, text: plural(band.n, "message"), alt: String(band.n), open, key: "band:" + band.key });
     }
     const shown = clashes.filter((cl) => sel && ((sel.type === "clash" && cl.key === selKey) || (sel.type === "node" && (cl.a === sel.name || cl.b === sel.name))));
     for (const cl of shown) {
@@ -548,7 +672,7 @@ function build(mur) {
   }
 
   // ---- The panel beside it
-  function panelFor(M) {
+  function panelFor(M, L) {
     const { nodes, edges, edgeList, waits, clashes, troubles, inWin } = M;
     const sel = ui.gxSel || null;
     if (sel?.type === "node" && nodes.has(sel.name)) {
@@ -589,6 +713,21 @@ function build(mur) {
         h("p", { class: "gx-kv" }, h("span", null, e.b), h("b", null, cb + " sent · " + (nb.stream ? nb.stream.title : "no stream"))),
         h("h3", null, "The conversation"),
         h("div", { class: "gx-lines" }, [...e.msgs].reverse().map((m) => msgRow(m, fromName(m)))));
+    }
+    if (sel?.type === "glink" && L.grouped) {
+      const ra = L.regions.find((r) => r.id === sel.a), rb = L.regions.find((r) => r.id === sel.b);
+      const list = ra && rb ? edgeList.filter((e) => { const x = L.groupOf.get(e.a), y = L.groupOf.get(e.b); return (x === ra && y === rb) || (x === rb && y === ra); }).sort((x, y) => y.msgs.length - x.msgs.length) : [];
+      if (list.length) {
+        const all = list.flatMap((e) => e.msgs).sort((x, y) => at(y) - at(x)).slice(0, 8);
+        return h("div", { class: "gx-panel-in" },
+          h("h2", null, ra.title + " and " + rb.title),
+          h("p", { class: "gx-sub" }, plural(list.reduce((t, e) => t + e.msgs.length, 0), "message") + " between the two groups"),
+          h("h3", null, "Who talks across"),
+          h("ul", { class: "gx-rank" }, list.map((e) => h("li", null, h("button", { onclick: () => pick({ type: "edge", a: e.a, b: e.b }) },
+            h("span", { class: "gx-pair" }, avatar(e.a), avatar(e.b)), h("span", { class: "gx-rn" }, h("b", null, e.a + " and " + e.b), h("span", null, e.topic)), h("span", { class: "gx-c" }, e.msgs.length))))),
+          h("h3", null, "Latest messages"),
+          h("div", { class: "gx-lines" }, all.map((m) => msgRow(m, fromName(m) + " to " + toName(m)))));
+      }
     }
     if (sel?.type === "clash") {
       const c = clashes.find((x) => x.key === pairKey(sel.a, sel.b));
@@ -639,17 +778,17 @@ function build(mur) {
   // ---- Assemble. The slider repaints the picture in place, so dragging isn't interrupted by a
   // rebuild of the whole page.
   let M = model(mur, ui.gxT);
-  const byTalk = ui.gxLayout === "talk";
-  const L = byTalk ? forceLayout(M, narrow, fromName) : layout(M, swarm, narrow);
+  const byTalk = ui.gxLayout === "talk", byGroups = ui.gxLayout === "groups";
+  const L = byTalk ? forceLayout(M, narrow, fromName) : byGroups ? layout(M, swarm, narrow, talkGroups(M, swarm, fromName)) : layout(M, swarm, narrow);
   const sub = h("p", null, subtitle(M));
   const host = h("div", { class: "gx-host" }, svgFor(M, L));
-  const panel = h("aside", { class: "gx-panel", "aria-live": "polite" }, panelFor(M));
+  const panel = h("aside", { class: "gx-panel", "aria-live": "polite" }, panelFor(M, L));
   const timeText = (back) => (back === 0 ? "Now" : clock(Date.now() - back * 60000) + " · " + dur(back * 60000) + " ago");
   const tLabel = h("span", { class: "gx-tnow" }, timeText(ui.gxT));
   const repaint = () => {
     M = model(mur, ui.gxT);
     host.replaceChildren(svgFor(M, L));
-    panel.replaceChildren(panelFor(M));
+    panel.replaceChildren(panelFor(M, L));
     sub.textContent = subtitle(M);
     tLabel.textContent = timeText(ui.gxT);
     slider.value = String(reach - ui.gxT);
@@ -689,6 +828,7 @@ function build(mur) {
 
   const legend = h("div", { class: "gx-legend" },
     byTalk && h("span", null, h("i", { class: "gx-sw-near" }), "Closer, more talk; back-and-forth counts double"),
+    byGroups && h("span", null, h("i", { class: "gx-sw gx-sw-band" }), "All the talk between two groups"),
     h("span", null, h("i", { class: "gx-sw gx-sw-fat" }), "Thicker line, more messages"),
     h("span", null, h("i", { class: "gx-sw gx-sw-x" }), "Between different streams"),
     h("span", null, h("i", { class: "gx-sw gx-sw-wait" }), "Waiting for an answer"));
@@ -697,7 +837,7 @@ function build(mur) {
     h("header", { class: "fx-head" },
       h("div", null, h("h1", null, "Who talks to whom"), sub),
       h("div", { class: "gx-controls" },
-        mur.fxSeg("Arrange", [["boxes", "Stream boxes"], ["talk", "Pulled by talk"]], byTalk ? "talk" : "boxes", (v) => { ui.gxLayout = v; ui.gxAnimate = v === "talk"; stopPlay(); mur.render(); }),
+        mur.fxSeg("Arrange", [["boxes", "Stream boxes"], ["groups", "Groups by talk"], ["talk", "Pulled by talk"]], byTalk ? "talk" : byGroups ? "groups" : "boxes", (v) => { ui.gxLayout = v; ui.gxAnimate = v === "talk"; stopPlay(); mur.render(); }),
         mur.fxSeg("Time window", WINDOWS.map((w) => [w[0], w[1]]), M.win[0], (v) => { ui.gxWin = v; stopPlay(); mur.render(); }))),
     h("div", { class: "gx-body" },
       h("div", { class: "gx-map" },
