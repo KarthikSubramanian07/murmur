@@ -1,0 +1,75 @@
+/* #183 view: Your agents. Classes start with my-. */
+.my-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2rem; align-items: start; }
+.my-col { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+.my-h2 { display: flex; align-items: baseline; gap: 0.5rem; font-size: 1.0625rem; font-weight: 600; }
+.my-h2-fine { margin-top: 1rem; }
+.my-n { color: var(--fx-text-3); font-size: 0.75rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* An agent that needs its person */
+.my-need { padding: 1rem 1rem 0.875rem; border: 1px solid var(--fx-border); border-radius: var(--fx-radius-el); background: var(--fx-surface); }
+.my-who { display: flex; gap: 0.75rem; align-items: flex-start; }
+.my .my-who .avatar, .my .my-fine .avatar { width: 2rem; height: 2rem; font-size: 0.8125rem; }
+.my .pres { box-shadow: 0 0 0 2px var(--fx-surface); }
+.my .my-fine .pres { box-shadow: 0 0 0 2px var(--fx-page); }
+.my-id { min-width: 0; }
+.my-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.5rem; font-weight: 600; }
+.my-where { color: var(--fx-text-3); font-size: 0.75rem; font-weight: 400; }
+.my-doing { color: var(--fx-text-2); }
+.my-last { margin-top: 0.125rem; color: var(--fx-text-3); font-size: 0.75rem; }
+.my-issues { display: flex; flex-direction: column; gap: 0.125rem; margin: 0.75rem 0 0 2.75rem; list-style: none; }
+.my-issue > span, .my-ev { display: block; padding: 0.375rem 0.5rem; border-left: 2px solid #ffffff2e; color: #d4d4d4; }
+.my-warn > span, .my-warn .my-ev { border-left-color: var(--fx-warning); }
+.my-bad > span, .my-bad .my-ev { border-left-color: var(--fx-error); }
+.my-ev { display: flex; align-items: center; gap: 0.5rem; width: 100%; text-align: left; border-radius: 0 6px 6px 0; transition: background-color 175ms var(--fx-ease); }
+.my-ev > span { flex: 1; min-width: 0; }
+.my-ev svg { width: 0.875rem; height: 0.875rem; flex-shrink: 0; color: var(--fx-text-3); }
+.my-ev:hover { background: var(--fx-hover); color: #fff; }
+.my-ev:hover svg { color: var(--fx-text); }
+.my-act { display: flex; align-items: center; gap: 0.5rem; margin: 0.625rem 0 0 2.75rem; color: var(--fx-warning-text); font-weight: 500; }
+.my-act svg { width: 0.875rem; height: 0.875rem; flex-shrink: 0; }
+
+/* Agents with nothing wrong */
+.my-fines { display: flex; flex-direction: column; }
+.my-fine { display: flex; gap: 0.75rem; align-items: flex-start; padding: 0.75rem 0.25rem; border-top: 1px solid var(--fx-border); }
+.my-fine:first-child { border-top: 0; padding-top: 0.25rem; }
+
+/* People */
+.my-map { padding: 1rem 1rem 0.5rem; border: 1px solid var(--fx-border); border-radius: var(--fx-radius-box); background: #ffffff05; }
+.my-svg { display: block; width: 100%; height: auto; margin-top: 0.25rem; overflow: visible; user-select: none; }
+.my-band { stroke: #fff; stroke-opacity: 0.08; stroke-linecap: round; }
+.my-band-on { stroke-opacity: 0.22; }
+.my-pill rect { fill: #262626; stroke: #ffffff24; }
+.my-pill text { fill: #d4d4d4; font-size: 12px; font-weight: 500; }
+.my-pill-off { opacity: 0.55; }
+.my-pill-wait rect { fill: #2b2618; stroke: #ffce2f66; }
+.my-pill-wait text { fill: #ffd95e; }
+.my-person { cursor: pointer; outline: none; }
+.my-ring { fill: #1b1b1b; stroke: #ffffff2e; stroke-width: 2; transition: stroke 175ms var(--fx-ease); }
+.my-person:hover .my-ring, .my-person:focus-visible .my-ring { stroke: #ffffff80; }
+.my-person-on .my-ring { stroke: #fff; stroke-width: 2.5; }
+.my-face { overflow: visible; pointer-events: none; }
+.my-face .avatar { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; font-size: 18px; }
+.my-pname { fill: var(--fx-text); font-size: 14px; font-weight: 600; paint-order: stroke; stroke: #1e1e1e; stroke-width: 5px; stroke-linejoin: round; }
+.my-psub { fill: var(--fx-text-3); font-size: 12px; paint-order: stroke; stroke: #1e1e1e; stroke-width: 5px; stroke-linejoin: round; }
+
+/* Which agents, about what */
+.my-with { display: flex; flex-direction: column; }
+.my-with h3 { display: flex; align-items: baseline; gap: 0.5rem; margin: 0.75rem 0 0.25rem; font-size: 0.875rem; font-weight: 600; }
+.my-pair { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; padding: 0.5rem; border-radius: var(--fx-radius-inner); text-align: left; transition: background-color 175ms var(--fx-ease); }
+.my-pair:hover { background: var(--fx-hover); }
+.my-pfaces { display: flex; }
+.my .my-pfaces .avatar { width: 1.375rem; height: 1.375rem; font-size: 0.625rem; box-shadow: 0 0 0 2px var(--fx-page); }
+.my .my-pfaces .avatar + .avatar { margin-left: -0.375rem; }
+.my-ptext { display: flex; flex-direction: column; min-width: 0; }
+.my-pnames { color: var(--fx-text); }
+.my-ptopic { color: var(--fx-text-2); font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.my-pair-wait .my-ptopic { color: var(--fx-warning-text); }
+.my-pn { color: var(--fx-text-3); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 1023px) {
+  .my-body { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 767px) {
+  .my-issues, .my-act { margin-left: 0; }
+  .my-map { padding: 0.75rem 0.5rem 0.25rem; }
+}

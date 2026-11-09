@@ -20,17 +20,20 @@ const TOKEN_KEY = NAME + ":token";
 const POLL_MS = 3000;
 const HIDDEN_POLL_MS = 15000;
 const MAX_MESSAGES = 2000;
-const VIEWS = ["overview", "timeline", "board", "graph", "office", "briefing", "sessions", "messages", "recent", "fleet", "settings"];
+const VIEWS = ["overview", "catchup", "mine", "decisions", "timeline", "board", "graph", "office", "briefing", "sessions", "messages", "recent", "fleet", "settings"];
 // The ways to look at the swarm (#183), as tabs on one page.
 const SWARM_VIEWS = [
   ["overview", "Overview"],
+  ["catchup", "Since you looked"],
+  ["mine", "Your agents"],
+  ["decisions", "Decisions"],
   ["timeline", "Timeline"],
   ["board", "Board"],
   ["graph", "Who talks to whom"],
   ["office", "Office"],
   ["fleet", "Fleet"],
 ];
-const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", briefing: "Briefing", overview: "Overview", timeline: "Timeline", board: "Board", graph: "Who talks to whom", office: "Office", settings: "Settings" };
+const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", briefing: "Briefing", overview: "Overview", catchup: "Since you looked", mine: "Your agents", decisions: "Decisions", timeline: "Timeline", board: "Board", graph: "Who talks to whom", office: "Office", settings: "Settings" };
 const MODE_KEY = NAME + ":messages";
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 

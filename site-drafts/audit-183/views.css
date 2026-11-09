@@ -1,4 +1,4 @@
-/* #183: the tabs over the six ways to look at the swarm, and what the views share. */
+/* #183: the tabs over the ways to look at the swarm, and what the views share. */
 .content:has(.sv-shell) { background: #1b1b1b; }
 .sv-shell { min-height: 100%; }
 .sv-tabs { position: sticky; top: 0; z-index: 20; display: flex; gap: 0.25rem; overflow-x: auto; scrollbar-width: none; padding: 0.75rem 2rem; border-bottom: 1px solid #ffffff1a; background: #1b1b1bf2; backdrop-filter: blur(8px); }

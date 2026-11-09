@@ -1,0 +1,102 @@
+/* #183 view: Since you looked. Classes start with cu-. One readable column, a standup recap. */
+.cu { max-width: 46rem; }
+.cu-head { align-items: flex-end; }
+.cu-head p { max-width: 34rem; }
+
+.cu-sec { margin-top: 2.25rem; }
+.cu-sec:first-of-type { margin-top: 0.5rem; }
+.cu-sec-head { display: flex; align-items: baseline; gap: 0.5rem; margin-bottom: 0.75rem; }
+.cu-sec-head h2 { font-size: 1.0625rem; font-weight: 600; line-height: 1.4; }
+.cu-n { color: var(--fx-text-3); font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+
+.cu ol, .cu ul { margin: 0; padding: 0; list-style: none; }
+
+/* Faces: up to three, overlapping, each ringed in the colour behind it so the overlap reads. */
+.cu-faces { display: inline-flex; flex-shrink: 0; align-items: center; }
+.fx .cu-faces .avatar { width: 1.5rem; height: 1.5rem; font-size: 0.6875rem; box-shadow: 0 0 0 2px var(--cu-bg, #1b1b1b); }
+.fx .cu-faces .avatar + .avatar { margin-left: -0.3125rem; }
+
+/* Needs you: the one raised panel on the page. */
+.cu-needs { border-radius: var(--fx-radius-el); background: var(--fx-surface); --cu-bg: #262626; }
+.cu-need { display: grid; grid-template-columns: 4rem 1fr; gap: 0.75rem; padding: 1rem 1.125rem 1rem 1rem; }
+.cu-need + .cu-need { border-top: 1px solid var(--fx-border); }
+.cu-need > .cu-faces { justify-content: flex-end; padding-top: 0.0625rem; align-self: start; }
+.cu-need-body { min-width: 0; }
+.cu-what { font-weight: 500; line-height: 1.5; }
+.cu-what b, .cu-row-text b { font-weight: 600; }
+.cu-why { margin-top: 0.25rem; color: var(--fx-text-2); font-size: 0.8125rem; line-height: 1.55; }
+.cu-act { display: flex; gap: 0.375rem; margin-top: 0.5rem; font-size: 0.8125rem; line-height: 1.5; }
+.cu-act .icon { width: 0.875rem; height: 0.875rem; margin-top: 0.1875rem; color: var(--fx-info); }
+.cu-link { color: var(--fx-info); font: inherit; font-weight: 500; text-decoration: none; transition: color 175ms var(--fx-ease); }
+.cu-link:hover { color: #9dbcff; text-decoration: underline; text-underline-offset: 3px; }
+.fx .cu-what code { padding: 0.0625rem 0.3125rem; border-radius: 5px; background: #ffffff12; font-size: 0.78rem; overflow-wrap: anywhere; }
+
+/* Lines that say what's safe to ignore. */
+.cu-safe { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; color: var(--fx-text-2); font-size: 0.8125rem; }
+.cu-safe .icon { width: 0.875rem; height: 0.875rem; color: var(--fx-success); }
+.cu-none { margin-top: 0; padding: 1rem 1.125rem; border-radius: var(--fx-radius-el); background: var(--fx-surface); color: var(--fx-text); font-size: 0.875rem; }
+.cu-quiet { color: var(--fx-text-2); }
+
+/* Fold buttons. */
+.cu-fold { display: inline-flex; align-items: flex-start; line-height: 1.5; gap: 0.375rem; margin-top: 0.75rem; padding: 0.25rem 0.5rem 0.25rem 0.25rem; margin-left: -0.25rem; border-radius: var(--fx-radius-inner); color: var(--fx-text-2); font-size: 0.8125rem; text-align: left; transition: background-color 175ms var(--fx-ease), color 175ms var(--fx-ease); }
+.cu-fold:hover { color: var(--fx-text); background: var(--fx-hover); }
+.cu-fold .icon { width: 0.875rem; height: 0.875rem; margin-top: 0.1875rem; }
+
+/* Decided and What moved: plain rows on the page. */
+.cu-list { display: flex; flex-direction: column; }
+.cu-item { display: grid; grid-template-columns: 4rem 1fr; gap: 0.75rem; padding: 0.625rem 0; }
+.cu-item + .cu-item { border-top: 1px solid var(--fx-border); }
+.cu-item > .cu-faces { align-self: start; justify-content: flex-end; padding-top: 0.0625rem; }
+.cu-item-body p:first-child { line-height: 1.5; }
+.cu-meta { margin-top: 0.125rem; color: var(--fx-text-3); font-size: 0.75rem; line-height: 1.6; }
+.cu-foot { margin-top: 0.5rem; color: var(--fx-text-2); font-size: 0.8125rem; }
+
+.cu-row { padding: 0.75rem 0; }
+.cu-row + .cu-row { border-top: 1px solid var(--fx-border); }
+.cu-row-top { display: flex; align-items: center; gap: 0.625rem; min-width: 0; }
+.cu-row-top .fx-dot { margin: 0 0.25rem 0 0.125rem; }
+.cu-title { flex: 1; min-width: 0; font-weight: 600; }
+.cu-merged { display: inline-flex; margin: 0 0.125rem 0 -0.0625rem; color: var(--fx-success); }
+.cu-merged .icon { width: 0.875rem; height: 0.875rem; }
+.cu-row-text { margin-top: 0.1875rem; padding-left: 1.4375rem; color: var(--fx-text-2); font-size: 0.8125rem; line-height: 1.55; }
+.cu-bad { color: var(--fx-error-text); }
+
+/* The rest, folded. */
+.cu-rest { padding-top: 0.25rem; border-top: 1px solid var(--fx-border); }
+.cu-rest > .cu-fold { margin-top: 0.75rem; }
+.cu-sub { margin: 1.25rem 0 0.25rem; color: var(--fx-text-2); font-size: 0.8125rem; font-weight: 500; }
+.cu-commits li { display: flex; align-items: center; gap: 0.75rem; padding: 0.375rem 0; }
+.fx .cu-commits .avatar { width: 1.5rem; height: 1.5rem; font-size: 0.6875rem; }
+.cu-commit-text { display: flex; flex: 1; min-width: 0; gap: 0.5rem; align-items: baseline; }
+.cu-commit-subj { min-width: 0; overflow: hidden; font-size: 0.8125rem; text-overflow: ellipsis; white-space: nowrap; }
+.cu-commit-who { flex-shrink: 0; color: var(--fx-text-3); font-size: 0.75rem; }
+.fx .cu-sha { color: var(--fx-text-3); font-size: 0.6875rem; }
+.cu-convs { display: flex; flex-direction: column; }
+.cu-convs.gone { opacity: 0.6; margin-top: 0; }
+.cu-conv { display: flex; align-items: center; gap: 0.75rem; width: 100%; padding: 0.5rem 0.5rem; margin: 0 -0.5rem; border-radius: var(--fx-radius-inner); text-align: left; transition: background-color 175ms var(--fx-ease); box-sizing: content-box; }
+.cu-conv:hover { background: var(--fx-hover); --cu-bg: #222222; }
+.cu-conv > .cu-faces { width: 2.25rem; }
+.cu-conv-text { display: flex; flex: 1; min-width: 0; gap: 0.5rem; align-items: baseline; }
+.cu-conv-who { flex-shrink: 0; font-size: 0.8125rem; font-weight: 500; }
+.cu-conv-what { min-width: 0; overflow: hidden; color: var(--fx-text-2); font-size: 0.8125rem; text-overflow: ellipsis; white-space: nowrap; }
+.cu-conv-n { min-width: 1.25rem; color: var(--fx-text-3); font-size: 0.75rem; font-variant-numeric: tabular-nums; text-align: right; }
+.cu-conv-t { width: 4.25rem; color: var(--fx-text-3); font-size: 0.75rem; font-variant-numeric: tabular-nums; text-align: right; }
+
+@media (max-width: 767px) {
+  .cu-head { flex-direction: column; align-items: stretch; }
+  .cu-head .fx-seg { align-self: flex-start; }
+  .cu-need { grid-template-columns: 1fr; gap: 0.5rem; padding: 0.875rem; }
+  .cu-item { grid-template-columns: 1fr; gap: 0.375rem; }
+  .cu-item > .cu-faces { padding-left: 0; }
+  .cu-row-text { padding-left: 0; }
+  .cu-conv-text { flex-direction: column; gap: 0; }
+  .cu-conv-who { flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+  .cu-conv-t { display: none; }
+  .cu-commit-text { flex-direction: column; gap: 0; }
+  .cu-commit-subj { max-width: 100%; }
+  .fx .cu-sha { display: none; }
+}
+@media (max-width: 767px) {
+  /* The sentences carry the names; on a phone the faces only push them down. */
+  .cu-need > .cu-faces, .cu-item > .cu-faces { display: none; }
+}
