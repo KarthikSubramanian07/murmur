@@ -276,3 +276,5 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* As the whole page, the details keep a reading width, so a message's time stays near its subject,
    and the list's left edge, so the page doesn't shift sideways on opening them. */
 .fx.fx-sheet { max-width: 50rem; margin-left: 0; }
+/* Two notes in a group heading ("tyler-laptop · 1 more in Needs a look") get the page's separator. */
+.fx-group-sub:not(:empty) + .fx-group-sub::before { content: "· "; }

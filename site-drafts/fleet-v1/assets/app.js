@@ -2426,6 +2426,7 @@ function fleetNeeds(rows) {
     if (!asks.has(to)) asks.set(to, []);
     asks.get(to).push(m);
   }
+  const live = new Set(fleetRows().map((r) => r.s.name));
   for (const [to, list] of asks) {
     list.sort((a, b) => when(a.at) - when(b.at));
     const m = list[0];
@@ -2433,10 +2434,12 @@ function fleetNeeds(rows) {
     const more = list.length > 1 ? " And " + plural(list.length - 1, "more question") + "." : "";
     // text is a function: a row and the inspector each need their own copy of its nodes. The
     // State column says whether the session is offline or on do not disturb, so this doesn't.
-    // The inspector quotes it only when it is the one question (quote false otherwise): its
-    // messages quote each one.
+    // The inspector leaves the question out (quote false): its conversations quote each one.
     const wait = " for " + ago(when(m.at)).replace(" ago", "");
-    out.set(to, { at: when(m.at), m, msgs: list, text: (quote = true) => ["No reply to ", h("b", null, fromName(m)), quote ? wait + ": “" + questionIn(m) + "”" + more : wait + (list.length > 1 ? ", and " + plural(list.length - 1, "more question") : "") + "."] });
+    // An asker that has ended since still counts (its question waits on a running session), and
+    // says so.
+    const ended = live.has(fromName(m)) ? "" : " (ended)";
+    out.set(to, { at: when(m.at), m, msgs: list, text: (quote = true) => ["No reply to ", h("b", null, fromName(m)), ended, quote ? wait + ": “" + questionIn(m) + "”" + more : wait + (list.length > 1 ? ", and " + plural(list.length - 1, "more question") : "") + "."] });
   }
   return out;
 }
@@ -2726,7 +2729,7 @@ function fleetSetSel(want) {
   }
 }
 document.addEventListener("keydown", (e) => {
-  if (e.target?.dataset?.key === "fx-q" && e.target.value) return; // the box clears itself
+  if (e.key === "Escape" && e.target?.dataset?.key === "fx-q" && e.target.value) return; // the box clears itself
   // "/" goes to the search box, and ↑/↓ move between rows, as in most lists people use daily.
   if (ui.view === "sessions" && VARIANT === "g" && !e.ctrlKey && !e.metaKey && !e.altKey) {
     const tag = e.target?.tagName;
@@ -2739,9 +2742,25 @@ document.addEventListener("keydown", (e) => {
         return;
       }
     }
+    // From the search box, ↓ or Enter goes to the first row, and ↑ from the first row comes back.
+    if ((e.key === "ArrowDown" || e.key === "Enter") && e.target?.dataset?.key === "fx-q") {
+      const first = root.querySelector(".fx-row");
+      if (first) {
+        e.preventDefault();
+        first.focus();
+        first.scrollIntoView({ block: "nearest" });
+      }
+      return;
+    }
     if ((e.key === "ArrowDown" || e.key === "ArrowUp") && e.target?.classList?.contains("fx-row")) {
       const rows = [...root.querySelectorAll(".fx-row")];
-      const next = rows[rows.indexOf(e.target) + (e.key === "ArrowDown" ? 1 : -1)];
+      const i = rows.indexOf(e.target);
+      if (i === 0 && e.key === "ArrowUp") {
+        e.preventDefault();
+        root.querySelector('[data-key="fx-q"]')?.focus();
+        return;
+      }
+      const next = rows[i + (e.key === "ArrowDown" ? 1 : -1)];
       if (next) {
         e.preventDefault();
         next.focus();
@@ -2812,7 +2831,7 @@ function fleetInspector(name, need) {
         ? h("button", { class: "fx-back", onclick: close }, "← All sessions")
         : h("button", { class: "fx-icon-btn", title: "Close", "aria-label": "Close", onclick: close }, icon("x")),
     ),
-    need && h("button", { class: "fx-insp-need", onclick: () => swOpenMessage(need.m) }, h("span", null, need.text(need.msgs.length === 1)), h("span", { class: "fx-insp-open" }, "Open the conversation →")),
+    need && h("button", { class: "fx-insp-need", onclick: () => swOpenMessage(need.m) }, h("span", null, need.text(false)), h("span", { class: "fx-insp-open" }, "Open the conversation →")),
     h("dl", { class: "fx-meta" }, meta.map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
     h("h3", { class: "fx-h3" }, "Direct conversations", h("span", { class: "fx-badge" }, direct.length > shown ? shown + " of " + direct.length : direct.length)),
     direct.length
@@ -2835,7 +2854,7 @@ function fleetInspector(name, need) {
                 "button",
                 { class: "fx-dm" + (c.rank === 0 ? " fx-dm-wait" : ""), onclick: () => swOpenMessage(m) },
                 h("span", { class: "fx-dm-head" }, h("span", null, head), agoEl("span", "fx-dm-time", m.sortAt)),
-                h("span", { class: "fx-dm-subj" }, c.subj),
+                h("span", { class: "fx-dm-subj", title: c.subj }, c.subj),
                 c.rank < 2 && questionIn(m) !== c.subj && h("span", { class: "fx-dm-q" }, "“" + questionIn(m) + "”"),
               ),
             );
