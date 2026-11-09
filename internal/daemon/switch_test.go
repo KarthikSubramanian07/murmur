@@ -761,3 +761,39 @@ func TestHookRunDrivesASwitch(t *testing.T) {
 		t.Fatalf("the hook printed %q", out)
 	}
 }
+
+// A subagent started before a /clear still reports the conversation it started in (#231). Its
+// hooks are the session's, for what it commits, but the session doesn't follow them back: it keeps
+// the new conversation's name, and the do-not-disturb that conversation set.
+func TestASubagentsOldClaudeIDMovesNothing(t *testing.T) {
+	remote := newRemote(t)
+	b := newDevice(t, remote)
+	bob, _, _ := b.sessionPID("bbbbbb", "claude-a", procP)
+	nameA := b.named(bob)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-b", ClientPID: procP})
+	nameB := b.nameHeld(bob, nameA)
+	b.tagSelf("bbbbbb", []string{"do-not-disturb"}, nil)
+
+	for _, op := range []string{proto.OpNotices, proto.OpToolStart, proto.OpToolEnd, proto.OpTurnEnd} {
+		b.do(proto.Request{Op: op, ClaudeSession: "claude-a", ClientPID: procP, Subagent: true, ToolUseID: "t1"})
+	}
+	if got := b.nameOf(bob); got != nameB {
+		t.Fatalf("after a subagent's hooks, the session is called %q, want %q", got, nameB)
+	}
+	var dnd bool
+	for _, dv := range b.do(proto.Request{Op: proto.OpWho}).Devices {
+		for _, s := range dv.Sessions {
+			if s.Addr == bob {
+				for _, tg := range s.Tags {
+					dnd = dnd || tg.Name == "do-not-disturb"
+				}
+			}
+		}
+	}
+	if !dnd {
+		t.Errorf("a subagent's hook lifted the session's do-not-disturb")
+	}
+	if logHas(b, nameB+" -> "+nameA) {
+		t.Errorf("the session followed a subagent's hook back to the conversation it left")
+	}
+}
