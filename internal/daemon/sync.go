@@ -711,9 +711,16 @@ func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha, listed string) b
 	if !ok {
 		// The tip given up on isn't here, or it was junk, so sha doesn't hold it. A fetch that started
 		// earlier may have landed, as a slow one does: a later fetch brings that tip, and meanwhile
-		// advanceMesh would take sha for a rewrite and move Processed back past it.
+		// advanceMesh would take sha for a rewrite and move Processed back past it. A fetch that went
+		// past the listing, as the peer wrote between the two, is no older, and has settled it.
 		if sha != listed {
-			return false
+			current, err := d.repo.IsAncestor(ctx, listed, sha)
+			if err != nil {
+				return failed(err)
+			}
+			if !current {
+				return false
+			}
 		}
 		isCommit, err := d.repo.IsCommit(ctx, sha)
 		if err != nil {

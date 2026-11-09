@@ -377,6 +377,39 @@ func TestAGivenUpBacklogWaitsWhenAnOlderFetchLands(t *testing.T) {
 	}
 }
 
+// A fetch can also land past the listing, when the peer writes between the two. That is no older
+// fetch: it holds the listed tip, so the rewrite is settled, and a peer that keeps writing doesn't
+// keep its log waiting.
+func TestAGivenUpTipThatNeverCameWithAFetchPastTheListing(t *testing.T) {
+	r := newGiveUpRig(t)
+	r.bobKnown()
+	r.bobHas("do-not-disturb")
+	read := r.append("", r.message("read before"))
+	r.sync()
+	gone := r.commit(read, r.message("never fetched"))
+	listed := r.append(read, r.tagsEvent(time.Now(), "do-not-disturb"))
+	past := r.append(listed, r.message("written since the listing"))
+	if err := r.d.repo.Fetch(r.ctx, []string{giveUpRef}); err != nil {
+		t.Fatal(err)
+	}
+	r.d.mu.Lock()
+	r.d.st.Processed[giveUpRef], r.d.st.TagsFrom[giveUpRef] = gone, read
+	r.d.mu.Unlock()
+
+	r.d.advMu.Lock()
+	r.d.advanceMesh(r.ctx, giveUpRef, past, listed)
+	r.d.advMu.Unlock()
+	if _, ok := r.d.st.TagsFrom[giveUpRef]; ok {
+		t.Error("the log is still waiting for a tip that is gone")
+	}
+	if got := r.d.st.Processed[giveUpRef]; got != past {
+		t.Errorf("processed %s, want the fetched tip, %s", got, past)
+	}
+	if r.off("do-not-disturb") {
+		t.Error("a tag change from the rewritten log's new history was applied")
+	}
+}
+
 // With no session here and none it knows of, as on a new clone, nothing in the log can be for this
 // device, so a give-up keeps no cursor and a log of any length costs nothing later.
 func TestAGivenUpBacklogKeepsNoCursorWithNoSession(t *testing.T) {
