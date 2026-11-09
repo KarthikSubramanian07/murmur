@@ -95,7 +95,7 @@
 /* An offline session doesn't fade: what it was doing and where is what you look at it for, and
    State already says Offline. */
 .fx-row:focus-visible { outline: 2px solid #f1f1f1; outline-offset: -2px; }
-.fx-group { display: flex; align-items: center; gap: 0.5rem; width: 100%; height: 2.5rem; padding: 0 1rem; border-bottom: 1px solid var(--fx-border); background: #ffffff05; text-align: left; }
+.fx-group { display: flex; align-items: center; gap: 0.5rem; width: 100%; min-height: 2.5rem; padding: 0.375rem 1rem; border-bottom: 1px solid var(--fx-border); background: #ffffff05; text-align: left; }
 .fx-group:hover { background: var(--fx-hover); }
 .fx-chev { width: 0.875rem; height: 0.875rem; color: var(--fx-text-2); flex-shrink: 0; }
 .fx-group-name { font-weight: 600; }
@@ -189,7 +189,9 @@
 
 .fx-sub-branch { display: none; }
 .fx-sub-branch .mono { font-size: 0.6875rem; }
-.fx-sub-pr { flex: none; margin-left: 0.375rem; }
+/* A gap, not a margin, so a PR that wraps under a long branch lines up with it. */
+.fx-sub-branch { column-gap: 0.375rem; }
+.fx-sub-pr { flex: none; }
 /* The table drops columns by its own width. Below 640px (what four columns need) a row is the name and state, with what
    it's working on, and why it needs a look, underneath. */
 /* The five-column table's Working on is narrowest just above 920px; a status may run three lines. */
@@ -322,3 +324,6 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* In the details there's room to wrap; a part too long for the line is cut, with the whole value as
    its title. */
 .fx-meta .fx-parts-in { white-space: normal; }
+/* While rows are hidden below the list's edge, the edge fades, so a cut row reads as "more below"
+   where scrollbars are hidden (fleetRailFit sets "more"). */
+.fx-rail .fx-dms.more { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent); }

@@ -2254,6 +2254,7 @@ function fleetRailFit() {
   const others = rail.scrollHeight - (list ? list.clientHeight : 0);
   const need = others + (list ? Math.min(list.scrollHeight, 112) : 0);
   rail.classList.toggle("short", need > startRoom);
+  if (list) list.classList.toggle("more", list.scrollTop + list.clientHeight < list.scrollHeight - 1);
 }
 NARROW.addEventListener("change", render);
 STACKED.addEventListener("change", () => {
