@@ -2242,7 +2242,12 @@ window.addEventListener("resize", () => fleetRailFit());
 // ran past the window or left it half empty.
 function fleetRailFit() {
   const rail = root.querySelector(".fx-rail");
-  if (rail) rail.style.maxHeight = Math.max(240, innerHeight - rail.getBoundingClientRect().top - 16) + "px";
+  if (!rail) return;
+  const room = innerHeight - rail.getBoundingClientRect().top - 16;
+  rail.style.maxHeight = Math.max(240, room) + "px";
+  // A window too short to show the details and a useful stretch of the list: the rail scrolls as
+  // one. It goes by the window, not the room left, so scrolling the table doesn't switch it.
+  rail.classList.toggle("short", innerHeight < 800);
 }
 NARROW.addEventListener("change", render);
 STACKED.addEventListener("change", () => {

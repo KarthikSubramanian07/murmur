@@ -198,7 +198,7 @@
   .fx-tr { grid-template-columns: minmax(11rem, 1.2fr) 7rem minmax(12rem, 1.8fr) 5.5rem; }
   .fx-tr > :nth-child(4) { display: none; }
   .fx-sub-branch { display: flex; align-items: baseline; min-width: 0; }
-  .fx-tr .fx-status { -webkit-line-clamp: 3; } /* beats the 2-line rule below */
+  .fx-tr .fx-status { -webkit-line-clamp: 4; } /* beats the 2-line rule below */
   /* The lines under a name wrap here rather than cut the device or branch short. */
   .fx-who-text > .fx-muted, .fx-sub-branch .mono { white-space: normal; overflow-wrap: anywhere; }
   .fx-sub-branch { flex-wrap: wrap; }
@@ -271,12 +271,15 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx:has(.fx-main:not(.solo)) { max-width: 100rem; }
 .fx-seg-n.zero { opacity: 0.5; }
 /* Where search, the state filter and Group by can't share a line, Group by joins search and the
-   state filter takes the next line, rather than each taking one. */
+   state filter takes the next line, rather than each taking one. They need up to about 1000px (the
+   state filter grows with its counts), so the switch is at 1040px, and a zero-height break keeps
+   the state filter on its own line even where the three would fit in the other order. */
 .fx-toolbar { container-type: inline-size; }
-@container (max-width: 980px) {
+@container (max-width: 1040px) {
   .fx-group-by { order: 1; }
   .fx-toolbar > .fx-spacer { order: 1; }
-  .fx-toolbar > .fx-seg { order: 2; }
+  .fx-toolbar::after { content: ""; order: 2; flex-basis: 100%; height: 0; margin-top: -0.5rem; }
+  .fx-toolbar > .fx-seg { order: 3; }
 }
 /* As the whole page, the details keep a reading width, so a message's time stays near its subject,
    and the list's left edge, so the page doesn't shift sideways on opening them. */
@@ -291,6 +294,9 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-sheet .fx-insp-head + .fx-meta { border-top: 0; padding-top: 0; }
 /* An empty note (a reachable device that isn't this one) takes no gap. */
 .fx-group-sub:empty { display: none; }
+/* On a short window the rail scrolls as a whole, and its list takes its full height inside it
+   rather than nesting a second scroller (fleetRailFit sets "short"). */
+.fx-rail.short .fx-dms, .fx-rail.short .fx-dms:has(> li:nth-child(3)) { flex: 0 0 auto; min-height: 0; overflow: visible; }
 /* Beside the table, a list long enough to need it scrolls on its own, with a thin scrollbar so it
    shows that it does, keeping the details above it and "All N in its conversations" below it in
    view; on a short window the rail scrolls as a whole. A short list keeps its own height. */
