@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -160,6 +161,12 @@ func TestChannels(t *testing.T) {
 		tag string
 		pre bool
 	}
+	// A full first page of newer, lower releases, with an older, higher candidate on the second.
+	var long []rel
+	for i := 100; i > 0; i-- {
+		long = append(long, rel{fmt.Sprintf("v1.2.%d", i), false})
+	}
+	long = append(long, rel{"v2.0.0-rc.1", true})
 	for _, c := range []struct {
 		name, running string
 		prerelease    bool
@@ -176,6 +183,7 @@ func TestChannels(t *testing.T) {
 		{"no downgrade from a pruned nightly", "1.2.5-nightly.20261101", true, "v1.2.4", []rel{{"v1.2.5-nightly.20261031", true}, {"v1.2.4", false}}, ""},
 		{"no downgrade after leaving the channel", "1.2.5-nightly.20261101", false, "v1.2.4", nil, ""},
 		{"the stable channel leaves a nightly for the next stable", "1.2.5-nightly.20261101", false, "v1.2.5", nil, "1.2.5"},
+		{"every page is read", "1.2.3", true, "v1.2.100", long, "2.0.0-rc.1"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var url string
@@ -187,10 +195,14 @@ func TestChannels(t *testing.T) {
 				switch {
 				case r.URL.Path == "/latest":
 					json.NewEncoder(w).Encode(map[string]any{"tag_name": c.latest, "assets": assets(c.latest)})
-				case r.URL.Path == "/" && r.URL.RawQuery == "per_page=30":
+				case r.URL.Path == "/" && r.URL.Query().Get("per_page") == "100":
 					listed.Store(true)
-					var out []map[string]any
-					for _, x := range c.list {
+					page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+					out := []map[string]any{}
+					for i, x := range c.list {
+						if i/100 != page-1 {
+							continue
+						}
 						out = append(out, map[string]any{"tag_name": x.tag, "prerelease": x.pre, "draft": x.tag == "v9.9.9", "assets": assets(x.tag)})
 					}
 					json.NewEncoder(w).Encode(out)

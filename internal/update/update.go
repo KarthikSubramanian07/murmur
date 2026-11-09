@@ -232,9 +232,10 @@ type release struct {
 
 // pick returns the release to compare against the running version, or nil if there is none. The
 // stable channel asks for GitHub's latest release, which is never a prerelease. The prerelease
-// channel lists recent releases and takes the highest version, not the newest date, so a stable
-// release published after a higher prerelease doesn't pull the channel back. Old nightlies are
-// pruned, so the 30 most recent releases hold the highest one.
+// channel lists every release and takes the highest version, not the newest date, so a stable
+// release published after a higher prerelease doesn't pull the channel back. It reads every page,
+// since an old candidate can outrank the newest releases; old nightlies are pruned, so that is
+// usually one request. A failed page fails the check rather than choosing from part of the list.
 func pick(ctx context.Context, o Options, prerelease bool) (*release, error) {
 	if !prerelease {
 		b, err := get(ctx, o, o.URL+"/latest", 1<<20)
@@ -250,22 +251,28 @@ func pick(ctx context.Context, o Options, prerelease bool) (*release, error) {
 		}
 		return &r, nil
 	}
-	b, err := get(ctx, o, o.URL+"?per_page=30", 8<<20)
-	if err != nil {
-		return nil, err
-	}
-	var all []release
-	if err = json.Unmarshal(b, &all); err != nil {
-		return nil, err
-	}
+	const perPage, maxPages = 100, 10
 	var best *release
-	for i := range all {
-		r := &all[i]
-		if r.Draft {
-			continue
+	for page := 1; page <= maxPages; page++ {
+		b, err := get(ctx, o, fmt.Sprintf("%s?per_page=%d&page=%d", o.URL, perPage, page), 16<<20)
+		if err != nil {
+			return nil, err
 		}
-		if _, _, ok := version(r.Tag); ok && (best == nil || newer(r.Tag, best.Tag)) {
-			best = r
+		var all []release
+		if err = json.Unmarshal(b, &all); err != nil {
+			return nil, err
+		}
+		for i := range all {
+			r := &all[i]
+			if r.Draft {
+				continue
+			}
+			if _, _, ok := version(r.Tag); ok && (best == nil || newer(r.Tag, best.Tag)) {
+				best = r
+			}
+		}
+		if len(all) < perPage {
+			break
 		}
 	}
 	return best, nil
