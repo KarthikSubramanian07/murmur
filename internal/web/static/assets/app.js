@@ -36,6 +36,7 @@ const ui = {
   setup: null, // the name being chosen: { name, error, busy, then }, then what to do once there is one
   picker: null, // the new-message list: { q, index }
   draftTo: null, // who a conversation with no messages yet is with
+  restored: null, // the conversation a failed message's text just went back into
   outbox: [], // what the person sent that isn't among the messages yet, or that failed
   notes: new Map(), // a conversation's key → what the daemon said of the last message sent in it
   readLocal: new Set(), // messages marked read that the state doesn't know of yet
@@ -1588,6 +1589,7 @@ function dmKey(a, b) {
 }
 
 function draftConversation() {
+  if (ui.restored?.key === ui.conversation) return { ...ui.restored, messages: [] };
   if (!ui.draftTo || !me()) return null;
   const pair = [...new Set([myName(), ui.draftTo])].sort();
   const key = dmKey(myName(), ui.draftTo);
@@ -2530,7 +2532,8 @@ function sendFrom(c, target, el, big) {
     return;
   }
   ui.armed = null;
-  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key: c.key, conversation: c, to: target.to, text, status: "sending" };
+  const { messages, ...conversation } = c; // not the messages: this can outlive them
+  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key: c.key, conversation, to: target.to, text, status: "sending" };
   ui.outbox.push(item);
   ui.notes.delete(c.key);
   el.value = "";
@@ -2562,7 +2565,7 @@ async function deliver(item) {
 function editFailed(item) {
   ui.outbox = ui.outbox.filter((x) => x !== item);
   // It may have been all that listed its conversation, which the text is going back into.
-  if (item.conversation.kind === "dm") ui.draftTo = item.to;
+  ui.restored = item.conversation;
   const el = composers.get(item.key);
   if (el) el.value = el.value ? item.text + "\n" + el.value : item.text;
   render();
@@ -3094,7 +3097,7 @@ async function poll() {
 function start() {
   const token = takeToken();
   if (token !== ui.token) {
-    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0, draftTo: null, outbox: [], setup: null, picker: null, newMark: null, armed: null });
+    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0, draftTo: null, restored: null, outbox: [], setup: null, picker: null, newMark: null, armed: null });
     ui.ids = new Set();
     ui.notes = new Map();
     ui.readLocal = new Set();
