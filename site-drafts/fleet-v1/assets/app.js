@@ -2400,19 +2400,26 @@ function attention(rows) {
 // one way; the state filter and search start fresh.
 const FLEET_BY_KEY = NAME + ":fleet-by";
 const FLEET_SHUT_KEY = NAME + ":fleet-shut";
-function fleetShut() {
-  if (!ui.fxCollapsed) {
-    ui.fxCollapsed = new Set();
-    try {
-      for (const k of JSON.parse(localStorage.getItem(FLEET_SHUT_KEY) || "[]")) ui.fxCollapsed.add(String(k));
-    } catch {}
+// Both sets are read once and written as changes against what storage holds now, so two tabs
+// don't overwrite each other; another tab's change arrives through the storage event.
+function fleetStored(key, empty) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || empty);
+  } catch {
+    return JSON.parse(empty);
   }
+}
+function fleetShut() {
+  if (!ui.fxCollapsed) ui.fxCollapsed = new Set(fleetStored(FLEET_SHUT_KEY, "[]").map(String));
   return ui.fxCollapsed;
 }
-function fleetShutSave() {
+function fleetShutSet(k, shut) {
+  const all = new Set(fleetStored(FLEET_SHUT_KEY, "[]").map(String));
+  shut ? all.add(k) : all.delete(k);
   try {
-    localStorage.setItem(FLEET_SHUT_KEY, JSON.stringify([...fleetShut()]));
+    localStorage.setItem(FLEET_SHUT_KEY, JSON.stringify([...all]));
   } catch {}
+  ui.fxCollapsed = all;
 }
 
 // Questions a lead has said nobody is waiting on (an answer the finder misread, or one given out of
@@ -2421,20 +2428,25 @@ const FLEET_DISMISSED_KEY = NAME + ":fleet-not-waiting";
 function fleetDismissed() {
   if (!ui.fxDismissed) {
     ui.fxDismissed = {};
-    try {
-      const all = JSON.parse(localStorage.getItem(FLEET_DISMISSED_KEY) || "{}");
-      for (const [id, at] of Object.entries(all)) if (Date.now() - at < 2 * GIVE_UP_MS) ui.fxDismissed[id] = at;
-    } catch {}
+    for (const [id, at] of Object.entries(fleetStored(FLEET_DISMISSED_KEY, "{}"))) if (Date.now() - at < 2 * GIVE_UP_MS) ui.fxDismissed[id] = at;
   }
   return ui.fxDismissed;
 }
-function fleetDismiss(msgs) {
-  const d = fleetDismissed();
-  for (const m of msgs) d[m.id] = Date.now();
+// Marks msgs as not waiting (on true) or waiting again (on false, for Undo).
+function fleetDismiss(msgs, on = true) {
+  const all = fleetStored(FLEET_DISMISSED_KEY, "{}");
+  for (const m of msgs) on ? (all[m.id] = Date.now()) : delete all[m.id];
   try {
-    localStorage.setItem(FLEET_DISMISSED_KEY, JSON.stringify(d));
+    localStorage.setItem(FLEET_DISMISSED_KEY, JSON.stringify(all));
   } catch {}
+  ui.fxDismissed = null;
 }
+addEventListener("storage", (e) => {
+  if (e.key !== FLEET_SHUT_KEY && e.key !== FLEET_DISMISSED_KEY && e.key !== null) return;
+  ui.fxCollapsed = null;
+  ui.fxDismissed = null;
+  if (ui.view === "sessions") render();
+});
 function fleetFilter() {
   if (!ui.fleet) {
     let by = "device";
@@ -2465,7 +2477,7 @@ function fxSeg(label, options, value, onPick) {
     options.map(([v, text, n]) =>
       h(
         "button",
-        { "aria-pressed": value === v ? "true" : "false", class: value === v ? "on" : "", onclick: () => onPick(v) },
+        { "aria-pressed": value === v ? "true" : "false", class: value === v ? "on" : "", "data-key": "fs-" + label + ":" + v, onclick: () => onPick(v) },
         text,
         n != null && h("span", { class: "fx-seg-n" + (n === 0 ? " zero" : "") }, n),
       ),
@@ -2538,7 +2550,8 @@ function askedIn(raw) {
     // and `You asked "which runner?" Use windows-2025.` don't end at its "?". The sentence still
     // asks when it ends there: `Did you mean "Sure?"`. One that starts a sentence or follows a
     // colon is the question itself: `Jun asked: "is it signed?"`.
-    .replace(/(["“])([^"“”\n]*?)(["”])/g, (all, o, inner, c, at, str) => {
+    // A straight quote opens only at the start or after a space or bracket; 27" is inches.
+    .replace(/((?<=^|[\s(\[])"|“)([^"“”\n]*?)(["”])/g, (all, o, inner, c, at, str) => {
       const before = str.slice(0, at);
       const mid = /\S/.test(before.split(/[.!?]\s+|\n/).pop()) && !/:\s*$/.test(before);
       return mid ? o + inner.replace(/\?/g, "\uE003") + c : all;
@@ -2733,8 +2746,11 @@ function fleetTable(rows, needs, sel) {
   const gname = (r) => (F.by === "device" ? deviceName(r.d) + " " + r.d.id : key(r) || "");
   const rest = [...rows].sort((a, b) => rank(a) - rank(b) || gname(a).localeCompare(gname(b)) || a.s.name.localeCompare(b.s.name));
   const buckets = new Map();
+  // Which heading each session is under, so closing one whose group is shut can focus the heading.
+  ui.fxGroupOf = {};
   for (const r of rest) {
     const k = key(r);
+    ui.fxGroupOf[r.s.name] = "fg-" + F.by + ":" + k;
     if (!buckets.has(k)) buckets.set(k, []);
     buckets.get(k).push(r);
   }
@@ -2778,10 +2794,11 @@ function fleetTable(rows, needs, sel) {
                 "button",
                 {
                   class: "fx-group",
+                  "data-key": "fg-" + F.by + ":" + k,
                   "aria-expanded": shut ? "false" : "true",
                   onclick: () => {
-                    shut ? collapsed.delete(F.by + ":" + k) : collapsed.add(F.by + ":" + k);
-                    if (!filtering) fleetShutSave();
+                    if (filtering) shut ? collapsed.delete(F.by + ":" + k) : collapsed.add(F.by + ":" + k);
+                    else fleetShutSet(F.by + ":" + k, !shut);
                     render();
                   },
                 },
@@ -2892,12 +2909,14 @@ function fleetRow(d, s, need, on) {
 // keyboard back to the row that opened it. Escape does the same.
 function fleetClose() {
   const name = ui.fleetSel;
+  ui.fxUndo = null;
   const back = ui.fleetScroll;
   ui.fleetSel = null;
   ui.fleetScroll = null;
   render();
   if (STACKED.matches && back != null && content) content.scrollTop = back;
-  if (name) root.querySelector(`[data-key="fl-${CSS.escape(name)}"]`)?.focus({ preventScroll: true });
+  const to = name && (root.querySelector(`[data-key="fl-${CSS.escape(name)}"]`) || (ui.fxGroupOf?.[name] && root.querySelector(`[data-key="${CSS.escape(ui.fxGroupOf[name])}"]`)));
+  to?.focus({ preventScroll: true });
 }
 // The open session is in the address, #sessions/<name>, so Back from its conversation, Forward
 // and a reload all find it. Opened as the whole page it has a history entry of its own
@@ -2938,6 +2957,7 @@ function fleetSetSel(want) {
   const whole = STACKED.matches;
   if (whole && !ui.fleetSel) ui.fleetScroll = content ? content.scrollTop : 0;
   ui.fleetSel = want;
+  ui.fxUndo = null;
   render();
   if (whole && content) {
     content.scrollTop = 0;
@@ -3040,6 +3060,7 @@ function fleetInspector(name, need) {
     return { ...c, latest, waiting, rank: waiting ? rank(waiting) : 2 };
   }).sort((a, b) => a.rank - b.rank || (a.rank < 2 ? a.waiting.sortAt - b.waiting.sortAt : b.latest.sortAt - a.latest.sortAt));
   const close = () => fleetCloseAsked();
+  const undo = ui.fxUndo?.name === name ? ui.fxUndo.msgs : null;
   return [
     h(
       "header",
@@ -3050,6 +3071,26 @@ function fleetInspector(name, need) {
         ? h("button", { class: "fx-back", onclick: close }, "← All sessions")
         : h("button", { class: "fx-icon-btn", title: "Close", "aria-label": "Close", onclick: close }, icon("x")),
     ),
+    undo &&
+      h(
+        "div",
+        { class: "fx-insp-undo" },
+        h("span", null, "Marked “" + (topicOf(undo[0]) || "no subject") + "” not waiting"),
+        h(
+          "button",
+          {
+            class: "fx-insp-dismiss",
+            "data-key": "fx-undo",
+            onclick: () => {
+              fleetDismiss(undo, false);
+              ui.fxUndo = null;
+              render();
+              root.querySelector(".fx-insp-dismiss")?.focus({ preventScroll: true });
+            },
+          },
+          "Undo",
+        ),
+      ),
     need &&
       h(
         "div",
@@ -3066,9 +3107,13 @@ function fleetInspector(name, need) {
               class: "fx-insp-dismiss",
               title: "Clear this flag in this browser",
               onclick: () => {
-                fleetDismiss(need.msgs);
+                // Only the conversation the box names: another asker's question stays.
+                const k = (x) => fromName(x) + " " + topicOf(x).toLowerCase();
+                const these = need.msgs.filter((x) => k(x) === k(need.m));
+                fleetDismiss(these);
+                ui.fxUndo = { name, msgs: these };
                 render();
-                document.querySelector(".fx-insp-head button")?.focus();
+                root.querySelector('[data-key="fx-undo"]')?.focus({ preventScroll: true });
               },
             },
             "Not waiting",
@@ -3088,6 +3133,7 @@ function fleetInspector(name, need) {
             const head =
               c.rank === 0 ? ["From ", h("b", null, c.other), " · waiting for an answer"]
               : c.rank === 1 ? ["To ", h("b", null, c.other), " · no answer yet"]
+              : c.msgs.some((x) => Object.hasOwn(fleetDismissed(), x.id)) ? ["From ", h("b", null, c.other), " · marked not waiting"]
               : one ? [out ? "To " : "From ", h("b", null, c.other)]
               : ["With ", h("b", null, c.other), " · " + c.msgs.length + " messages"];
             return h(
@@ -3095,7 +3141,7 @@ function fleetInspector(name, need) {
               null,
               h(
                 "button",
-                { class: "fx-dm" + (c.rank === 0 ? " fx-dm-wait" : ""), onclick: () => swOpenMessage(m) },
+                { class: "fx-dm" + (c.rank === 0 ? " fx-dm-wait" : ""), "data-key": "fd-" + c.other + ":" + c.subj.toLowerCase(), onclick: () => swOpenMessage(m) },
                 h("span", { class: "fx-dm-head" }, h("span", null, head), agoEl("span", "fx-dm-time", m.sortAt)),
                 h("span", { class: "fx-dm-subj", title: c.subj }, c.subj),
                 c.rank < 2 && questionIn(m) !== c.subj && h("span", { class: "fx-dm-q" }, "“" + questionIn(m) + "”"),

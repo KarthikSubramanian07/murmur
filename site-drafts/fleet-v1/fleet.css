@@ -264,8 +264,9 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-insp-open, .fx-insp-dismiss { padding: 0; font-size: 0.75rem; cursor: pointer; }
 .fx-insp-open { color: var(--fx-warning-text); }
 .fx-insp-open:hover { text-decoration: underline; }
-.fx-insp-dismiss { color: var(--fx-text-3); }
-.fx-insp-dismiss:hover { color: var(--fx-text-2); }
+.fx-insp-dismiss { color: var(--fx-text-2); }
+.fx-insp-dismiss:hover { color: var(--fx-text); text-decoration: underline; }
+.fx-insp-undo { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-bottom: 1rem; padding: 0.5rem 0.75rem; border-left: 2px solid var(--fx-border-strong); color: var(--fx-text-2); font-size: 0.75rem; }
 /* Grouped by branch, the heading names the branch; only pinned rows, away from their heading,
    keep it under the name. */
 /* The same four columns as a table under 920px (above), so it fits wherever those do; under 640px
@@ -354,4 +355,4 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* The shared ring on the search box (as the box, since its input draws none), the details' PR link
    and Clear, which sit on text and so take it outside. */
 .fx-input:has(input:focus-visible) { outline: 2px solid #f1f1f1; outline-offset: -1px; }
-a.fx-pr:focus-visible, .fx-clear:focus-visible { outline: 2px solid #f1f1f1; outline-offset: 2px; }
+a.fx-pr:focus-visible, .fx-clear:focus-visible, .fx-insp-open:focus-visible, .fx-insp-dismiss:focus-visible { outline: 2px solid #f1f1f1; outline-offset: 2px; }
