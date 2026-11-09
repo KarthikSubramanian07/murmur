@@ -230,7 +230,108 @@ function layout(M, swarm, narrow) {
   }
   // Positions live here, not on the model, because the slider builds a new model for each moment.
   const pos = new Map([...nodes.values()].map((nd) => [nd.name, { x: nd.x, y: nd.y, r: nd.r }]));
-  return { W, H, regions, narrow, pos };
+  return { W, H, regions, narrow, pos, boxes: true };
+}
+
+// "Pulled by talk": no boxes. Every pair that has messaged is a spring, pulling harder the more
+// they've said, and a back-and-forth conversation pulls twice as hard as messages one way; every
+// agent pushes every other away. Run to rest (Fruchterman and Reingold, 1991), the agents that
+// talk most end up together, whatever stream they're filed under, and an agent talking to two
+// groups sits between them. It starts from a circle in stream order and has no randomness, so the
+// same messages always give the same picture. Laid out from all messages, like the boxes.
+const RECIPROCAL = 2;
+const GRAVITY = 0.45;
+let forceCache = null;
+function forceLayout(M, narrow, fromName) {
+  const { nodes, allByPair } = M;
+  const W = narrow ? 360 : 780, H = narrow ? 600 : 540, PAD = narrow ? 42 : 60;
+  const names = [...nodes.keys()].sort((a, b) => (nodes.get(a).stream?.id || "~").localeCompare(nodes.get(b).stream?.id || "~") || a.localeCompare(b));
+  const idx = new Map(names.map((n, i) => [n, i]));
+  const links = [];
+  for (const [k, ms] of allByPair) {
+    const [a, b] = k.split("|");
+    const ab = ms.filter((m) => fromName(m) === a).length, ba = ms.length - ab;
+    links.push({ i: idx.get(a), j: idx.get(b), w: (ab + ba) * (ab && ba ? RECIPROCAL : 1) });
+  }
+  const sig = [narrow, names.join(","), links.map((l) => l.i + "-" + l.j + ":" + l.w).join(",")].join("|");
+  if (forceCache?.sig === sig) return forceCache.L;
+  const n = names.length;
+  const deg = names.map((_, i) => links.filter((l) => l.i === i || l.j === i).length);
+  const rad = deg.map((d) => (narrow ? 13 : 16) + Math.min(d, 5) * (narrow ? 1 : 1.4));
+  const cx = W / 2, cy = H / 2;
+  const p = names.map((_, i) => {
+    const t = (2 * Math.PI * i) / n - Math.PI / 2;
+    return { x: cx + Math.cos(t) * (W / 2 - PAD), y: cy + Math.sin(t) * (H / 2 - PAD) };
+  });
+  const k = 1.15 * Math.sqrt(((W - 2 * PAD) * (H - 2 * PAD)) / n);
+  const wmax = Math.max(1, ...links.map((l) => l.w));
+
+  // Fit a set of points to the map: centred, scaled per axis but never stretched more than
+  // twice as much one way as the other, so groups keep their shape.
+  const fit = (pts) => {
+    const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    let fx = (W - 2 * PAD) / Math.max(1, x1 - x0), fy = (H - 2 * PAD) / Math.max(1, y1 - y0);
+    fx = Math.min(fx, fy * 2, 2.2);
+    fy = Math.min(fy, fx * 2, 2.2);
+    return pts.map((q) => ({ x: cx + (q.x - (x0 + x1) / 2) * fx, y: cy + (q.y - (y0 + y1) / 2) * fy }));
+  };
+  const toMap = (pts) => new Map(names.map((nm, i) => [nm, { x: pts[i].x, y: pts[i].y, r: rad[i] }]));
+  const frames = [toMap(p)];
+
+  // The forces, with no walls: agents pressed against the map's edge settle into flat rows along
+  // it. Each step of the settling is fitted to the map for the animation.
+  let temp = Math.min(W, H) / 5;
+  for (let it = 0; it < 320; it++) {
+    const dx = new Float64Array(n), dy = new Float64Array(n);
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      let x = p[i].x - p[j].x, y = p[i].y - p[j].y;
+      if (Math.abs(x) + Math.abs(y) < 0.01) { x = 0.01 * (i - j); y = 0.01; }
+      const d = Math.hypot(x, y), f = (k * k) / d;
+      dx[i] += (x / d) * f; dy[i] += (y / d) * f;
+      dx[j] -= (x / d) * f; dy[j] -= (y / d) * f;
+    }
+    for (const l of links) {
+      const x = p[l.i].x - p[l.j].x, y = p[l.i].y - p[l.j].y, d = Math.hypot(x, y) || 0.01;
+      const f = ((d * d) / k) * (0.25 + 1.75 * Math.sqrt(l.w / wmax));
+      dx[l.i] -= (x / d) * f; dy[l.i] -= (y / d) * f;
+      dx[l.j] += (x / d) * f; dy[l.j] += (y / d) * f;
+    }
+    for (let i = 0; i < n; i++) {
+      // A pull toward the middle keeps an agent nobody talks to from drifting off, weaker
+      // sideways so the picture spreads to the map's shape.
+      dx[i] -= (p[i].x - cx) * GRAVITY * (H / W);
+      dy[i] -= (p[i].y - cy) * GRAVITY;
+      const d = Math.hypot(dx[i], dy[i]) || 1, step = Math.min(d, temp);
+      p[i].x += (dx[i] / d) * step;
+      p[i].y += (dy[i] / d) * step;
+    }
+    temp = Math.max(1, temp * 0.982);
+    if (it % 4 === 3) frames.push(toMap(fit(p)));
+  }
+
+  // Then, on the map, push apart any two agents whose faces or names would overlap.
+  const q = fit(p);
+  const sx = narrow ? 88 : 112, sy = narrow ? 70 : 80;
+  for (let it = 0; it < 300; it++) {
+    let moved = false;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const nx = (q[j].x - q[i].x) / sx, ny = (q[j].y - q[i].y) / sy, e = Math.hypot(nx, ny);
+      if (e >= 1) continue;
+      moved = true;
+      const push = (1 - e) / 2 + 0.005, ux = e ? nx / e : 1, uy = e ? ny / e : 0;
+      q[i].x -= ux * push * sx; q[i].y -= uy * push * sy;
+      q[j].x += ux * push * sx; q[j].y += uy * push * sy;
+    }
+    for (const r of q) { r.x = Math.min(W - PAD, Math.max(PAD, r.x)); r.y = Math.min(H - PAD, Math.max(PAD, r.y)); }
+    if (it % 5 === 4) frames.push(toMap(q));
+    if (!moved) break;
+  }
+  const pos = toMap(q);
+  frames.push(pos);
+  const L = { W, H, regions: [], narrow, pos, boxes: false, frames };
+  forceCache = { sig, L };
+  return L;
 }
 
 function build(mur) {
@@ -342,7 +443,8 @@ function build(mur) {
       g.addEventListener("click", (ev) => { ev.stopPropagation(); open(); });
       g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); } });
       lineG.append(g);
-      if (w || e.cross) pills.push({ kind: w ? "wait" : "topic", rank: w ? 0 : 2, n: e.msgs.length, c, lit, isSel, text: w ? (L.narrow ? "waiting " + w.since + "m" : "waiting " + w.since + "m · " + e.topic) : e.topic, open, key: e.key });
+      // In boxes, talk inside a stream is named under the box's title instead.
+      if (w || e.cross || !L.boxes) pills.push({ kind: w ? "wait" : "topic", rank: w ? 0 : 2, n: e.msgs.length, c, lit, isSel, text: w ? (L.narrow ? "waiting " + w.since + "m" : "waiting " + w.since + "m · " + e.topic) : e.topic, alt: w ? "waiting " + w.since + "m" : null, open, key: e.key });
     }
     // A wait with no talk in this window still gets its arrow.
     for (const w of waits) {
@@ -403,22 +505,41 @@ function build(mur) {
     const inside = (r) => r.x >= 0 && r.y >= 0 && r.x + r.w <= L.W && r.y + r.h <= L.H;
     pills.sort((x, y) => x.rank - y.rank || y.n - x.n);
     let placed = 0;
+    if (L.settling) pills.length = 0;
     for (const p of pills) {
       const forced = p.rank < 2 || p.isSel;
       if (!forced && (placed >= budget || !p.lit)) continue;
-      const w = p.text.length * cw + 16, hh = fs + 8;
-      let spot = null;
-      for (const t of [0.5, 0.42, 0.58, 0.35, 0.65, 0.28, 0.72, 0.22, 0.78]) {
-        const q = p.c.pt(t);
-        const r = { x: q.x - w / 2, y: q.y - hh / 2, w, h: hh };
-        if (inside(r) && !hit(r)) { spot = r; break; }
+      const hh = fs + 8;
+      const overlap = (r) => obstacles.reduce((t, o) => t + Math.max(0, Math.min(r.x + r.w, o.x + o.w) - Math.max(r.x, o.x)) * Math.max(0, Math.min(r.y + r.h, o.y + o.h) - Math.max(r.y, o.y)), 0);
+      // On the line if there's room, else just beside it: a short line between two close faces
+      // (common when talk pulls them together) has no room on it. A label that must show (a wait)
+      // tries its short form, then takes the spot that covers least.
+      const { A, B, M: Q } = p.c;
+      const spots = (text, offs) => {
+        const w = text.length * cw + 16, out = [];
+        for (const off of offs) for (const t of [0.5, 0.42, 0.58, 0.35, 0.65, 0.28, 0.72, 0.22, 0.78]) {
+          const q = p.c.pt(t);
+          const tx = 2 * (1 - t) * (Q.x - A.x) + 2 * t * (B.x - Q.x), ty = 2 * (1 - t) * (Q.y - A.y) + 2 * t * (B.y - Q.y), tl = Math.hypot(tx, ty) || 1;
+          const r = { x: q.x - (ty / tl) * off - w / 2, y: q.y + (tx / tl) * off - hh / 2, w, h: hh };
+          if (inside(r)) out.push(r);
+        }
+        return out;
+      };
+      let spot = null, text = p.text;
+      for (const [tx, offs] of [[p.text, [0, 16, -16, 30, -30]], ...(p.alt ? [[p.alt, [0, 16, -16, 30, -30, 46, -46]]] : [])]) {
+        spot = spots(tx, offs).find((r) => !hit(r)) || null;
+        if (spot) { text = tx; break; }
       }
-      if (!spot && forced) { const q = p.c.pt(0.5); spot = { x: q.x - w / 2, y: q.y - hh / 2, w, h: hh }; }
+      if (!spot && forced) {
+        text = p.alt || p.text;
+        spot = spots(text, [0, 16, -16, 30, -30, 46, -46]).sort((x, y) => overlap(x) - overlap(y))[0] || null;
+      }
       if (!spot) continue;
+      const w = spot.w;
       obstacles.push(spot);
       if (p.kind === "topic") placed++;
       const g = s("g", { class: "gx-pill gx-pill-" + p.kind + (p.lit ? "" : " gx-dim") + (p.isSel ? " gx-sel" : "") });
-      g.append(s("rect", { x: spot.x, y: spot.y, width: w, height: hh, rx: hh / 2 }), s("text", { x: spot.x + w / 2, y: spot.y + hh / 2 + fs * 0.36, "text-anchor": "middle", "font-size": fs }, p.text));
+      g.append(s("rect", { x: spot.x, y: spot.y, width: w, height: hh, rx: hh / 2 }), s("text", { x: spot.x + w / 2, y: spot.y + hh / 2 + fs * 0.36, "text-anchor": "middle", "font-size": fs }, text));
       g.addEventListener("click", (ev) => { ev.stopPropagation(); p.open(); });
       pillG.append(g);
     }
@@ -518,7 +639,8 @@ function build(mur) {
   // ---- Assemble. The slider repaints the picture in place, so dragging isn't interrupted by a
   // rebuild of the whole page.
   let M = model(mur, ui.gxT);
-  const L = layout(M, swarm, narrow);
+  const byTalk = ui.gxLayout === "talk";
+  const L = byTalk ? forceLayout(M, narrow, fromName) : layout(M, swarm, narrow);
   const sub = h("p", null, subtitle(M));
   const host = h("div", { class: "gx-host" }, svgFor(M, L));
   const panel = h("aside", { class: "gx-panel", "aria-live": "polite" }, panelFor(M));
@@ -551,7 +673,22 @@ function build(mur) {
     repaint();
   });
 
+  // Switching to "Pulled by talk" plays the layout settling, once, unless motion is turned down.
+  if (L.frames && ui.gxAnimate) {
+    ui.gxAnimate = false;
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      let i = 0;
+      const step = () => {
+        if (!host.isConnected && i > 0) return;
+        if (i < L.frames.length) { host.replaceChildren(svgFor(M, { ...L, pos: L.frames[i], settling: true })); i++; requestAnimationFrame(step); }
+        else host.replaceChildren(svgFor(M, L));
+      };
+      requestAnimationFrame(step);
+    }
+  }
+
   const legend = h("div", { class: "gx-legend" },
+    byTalk && h("span", null, h("i", { class: "gx-sw-near" }), "Closer, more talk; back-and-forth counts double"),
     h("span", null, h("i", { class: "gx-sw gx-sw-fat" }), "Thicker line, more messages"),
     h("span", null, h("i", { class: "gx-sw gx-sw-x" }), "Between different streams"),
     h("span", null, h("i", { class: "gx-sw gx-sw-wait" }), "Waiting for an answer"));
@@ -559,7 +696,9 @@ function build(mur) {
   return h("div", { class: "fx gx" },
     h("header", { class: "fx-head" },
       h("div", null, h("h1", null, "Who talks to whom"), sub),
-      mur.fxSeg("Time window", WINDOWS.map((w) => [w[0], w[1]]), M.win[0], (v) => { ui.gxWin = v; stopPlay(); mur.render(); })),
+      h("div", { class: "gx-controls" },
+        mur.fxSeg("Arrange", [["boxes", "Stream boxes"], ["talk", "Pulled by talk"]], byTalk ? "talk" : "boxes", (v) => { ui.gxLayout = v; ui.gxAnimate = v === "talk"; stopPlay(); mur.render(); }),
+        mur.fxSeg("Time window", WINDOWS.map((w) => [w[0], w[1]]), M.win[0], (v) => { ui.gxWin = v; stopPlay(); mur.render(); }))),
     h("div", { class: "gx-body" },
       h("div", { class: "gx-map" },
         host,
