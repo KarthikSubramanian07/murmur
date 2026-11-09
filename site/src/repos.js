@@ -41,56 +41,66 @@ export async function census(request, env) {
   const db = env.DB, t = c.totals;
   const stmts = [
     db.prepare(
-      `INSERT INTO repo_census (repo, devices, people, sessions, messages, records, first_day, last_day, counted)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+      `INSERT INTO repo_census (repo, sessions, messages, records, first_day, last_day, counted)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
        ON CONFLICT (repo) DO UPDATE SET
-         devices = MAX(devices, excluded.devices), people = MAX(people, excluded.people),
          sessions = MAX(sessions, excluded.sessions), messages = MAX(messages, excluded.messages),
          records = MAX(records, excluded.records),
          first_day = MIN(COALESCE(first_day, excluded.first_day), COALESCE(excluded.first_day, first_day)),
          last_day = MAX(COALESCE(last_day, excluded.last_day), COALESCE(excluded.last_day, last_day)),
          counted = excluded.counted`,
-    ).bind(c.repo, t.devices, t.people, t.sessions, t.messages, t.records, t.first_day, t.last_day, new Date().toISOString()),
+    ).bind(c.repo, t.sessions, t.messages, t.records, t.first_day, t.last_day, new Date().toISOString()),
   ];
-  // D1 binds at most 100 values a statement: 14 days of 7, or 33 contributors of 3.
-  for (let i = 0; i < c.days.length; i += 14) {
-    const rows = c.days.slice(i, i + 14);
-    stmts.push(db.prepare(
-      `INSERT INTO repo_days (repo, day, devices, people, sessions, messages, records) VALUES
-       ${rows.map((_, j) => `(?${7 * j + 1}, ?${7 * j + 2}, ?${7 * j + 3}, ?${7 * j + 4}, ?${7 * j + 5}, ?${7 * j + 6}, ?${7 * j + 7})`).join(', ')}
-       ON CONFLICT (repo, day) DO UPDATE SET
-         devices = MAX(devices, excluded.devices), people = MAX(people, excluded.people),
-         sessions = MAX(sessions, excluded.sessions), messages = MAX(messages, excluded.messages),
-         records = MAX(records, excluded.records)`,
-    ).bind(...rows.flatMap(d => [c.repo, d.day, d.devices, d.people, d.sessions, d.messages, d.records])));
-  }
-  for (let i = 0; i < c.contributors.length; i += 33) {
-    const rows = c.contributors.slice(i, i + 33);
-    stmts.push(db.prepare(
-      `INSERT INTO contributors (repo, id, first) VALUES
-       ${rows.map((_, j) => `(?${3 * j + 1}, ?${3 * j + 2}, ?${3 * j + 3})`).join(', ')}
-       ON CONFLICT (repo, id) DO UPDATE SET first = MIN(first, excluded.first)`,
-    ).bind(...rows.flatMap(k => [c.repo, k.id, k.first])));
-  }
+  // D1 binds at most 100 values a statement, so rows go in groups: 20 days of 5 values, 33 rows of 3.
+  const insert = (rows, width, sql, values) => {
+    const per = Math.floor(100 / width);
+    for (let i = 0; i < rows.length; i += per) {
+      const group = rows.slice(i, i + per);
+      const tuples = group.map((_, j) => `(${Array.from({ length: width }, (_, k) => `?${width * j + k + 1}`).join(', ')})`).join(', ');
+      stmts.push(db.prepare(sql.replace('$ROWS', tuples)).bind(...group.flatMap(values)));
+    }
+  };
+  insert(c.days, 5,
+    `INSERT INTO repo_days (repo, day, sessions, messages, records) VALUES $ROWS
+     ON CONFLICT (repo, day) DO UPDATE SET
+       sessions = MAX(sessions, excluded.sessions), messages = MAX(messages, excluded.messages),
+       records = MAX(records, excluded.records)`,
+    d => [c.repo, d.day, d.sessions, d.messages, d.records]);
+  // An owner once seen is kept: a daemon deletes its presence when it stops.
+  insert(c.devices, 3,
+    `INSERT INTO devices (repo, device, person) VALUES $ROWS
+     ON CONFLICT (repo, device) DO UPDATE SET person = COALESCE(excluded.person, person)`,
+    v => [c.repo, v.id, v.person]);
+  insert(c.days.flatMap(d => d.devices.map(v => [d.day, v])), 3,
+    `INSERT INTO device_days (repo, day, device) VALUES $ROWS ON CONFLICT DO NOTHING`,
+    ([day, v]) => [c.repo, day, v]);
+  insert(c.contributors, 3,
+    `INSERT INTO contributors (repo, id, first) VALUES $ROWS
+     ON CONFLICT (repo, id) DO UPDATE SET first = MIN(first, excluded.first)`,
+    k => [c.repo, k.id, k.first]);
   await db.batch(stmts);
-  return Response.json({ ok: true, days: c.days.length, contributors: c.contributors.length }, { headers });
+  return Response.json({ ok: true, days: c.days.length, devices: c.devices.length, contributors: c.contributors.length }, { headers });
 }
 
 // What is wrong with a census POST's body, or "" if nothing is.
 function invalid(c) {
   const count = n => Number.isSafeInteger(n) && n >= 0;
   const day = d => typeof d === 'string' && DAY.test(d) && !Number.isNaN(Date.parse(d));
+  const id = v => typeof v === 'string' && ID.test(v);
   if (!c || typeof c !== 'object') return 'no object';
   if (typeof c.repo !== 'string' || !REPO.test(c.repo)) return 'repo';
   const t = c.totals;
-  if (!t || !['devices', 'people', 'sessions', 'messages', 'records'].every(k => count(t[k]))) return 'totals';
+  if (!t || !['sessions', 'messages', 'records'].every(k => count(t[k]))) return 'totals';
   if (!(t.first_day === null || day(t.first_day)) || !(t.last_day === null || day(t.last_day))) return 'totals days';
   if (!Array.isArray(c.days) || c.days.length > 3660) return 'days';
   for (const d of c.days) {
-    if (!d || !day(d.day) || !['devices', 'people', 'sessions', 'messages', 'records'].every(k => count(d[k]))) return 'a day';
+    if (!d || !day(d.day) || !['sessions', 'messages', 'records'].every(k => count(d[k]))) return 'a day';
+    if (!Array.isArray(d.devices) || d.devices.length > 1000 || !d.devices.every(id)) return "a day's devices";
   }
+  if (!Array.isArray(c.devices) || c.devices.length > 10000) return 'devices';
+  for (const v of c.devices) if (!v || !id(v.id) || !(v.person === null || id(v.person))) return 'a device';
   if (!Array.isArray(c.contributors) || c.contributors.length > 100000) return 'contributors';
-  for (const k of c.contributors) if (!k || typeof k.id !== 'string' || !ID.test(k.id) || !day(k.first)) return 'a contributor';
+  for (const k of c.contributors) if (!k || !id(k.id) || !day(k.first)) return 'a contributor';
   return '';
 }
 
@@ -107,18 +117,32 @@ export async function repoNumbers(db, days) {
   const weekFrom = addDays(today, -(WEEK - 1));
   const [repos, byDay, people, counted] = await db.batch([
     // Each repo, with its totals and when it started: its first day on the bus, or the day it was
-    // reported if the census hasn't read it yet.
+    // reported if the census hasn't read it yet. A device whose owner the census has never seen is
+    // a person of its own. Its week is how many of the last 7 days its devices wrote anything, presence included.
     db.prepare(
       `SELECT r.repo, r.name, r.first AS reported,
-         COALESCE(c.devices, 0) AS devices, COALESCE(c.people, 0) AS people,
+         (SELECT COUNT(*) FROM devices v WHERE v.repo = r.repo) AS devices,
+         (SELECT COUNT(DISTINCT COALESCE(v.person, v.device)) FROM devices v WHERE v.repo = r.repo) AS people,
          COALESCE(c.sessions, 0) AS sessions, COALESCE(c.messages, 0) AS messages, COALESCE(c.records, 0) AS records,
          MIN(r.first, COALESCE(c.first_day, r.first)) AS start, c.last_day AS last, c.counted,
          (SELECT COUNT(*) FROM contributors k WHERE k.repo = r.repo) AS contributors,
-         (SELECT COALESCE(SUM(records), 0) FROM repo_days d WHERE d.repo = r.repo AND d.day >= ?1) AS week
+         (SELECT COUNT(DISTINCT d.day) FROM device_days d WHERE d.repo = r.repo AND d.day >= ?1) AS week
        FROM repos r LEFT JOIN repo_census c ON c.repo = r.repo
        ORDER BY week DESC, records DESC, r.repo`,
     ).bind(weekFrom),
-    db.prepare(`SELECT repo, day, devices, people, sessions, messages, records FROM repo_days WHERE day BETWEEN ?1 AND ?2 ORDER BY day`).bind(from, today),
+    // Per repo per day: its active devices and the people behind them, and its counts.
+    db.prepare(
+      `WITH dd AS (
+         SELECT d.repo, d.day, COUNT(*) AS devices, COUNT(DISTINCT COALESCE(v.person, d.device)) AS people
+         FROM device_days d LEFT JOIN devices v ON v.repo = d.repo AND v.device = d.device
+         WHERE d.day BETWEEN ?1 AND ?2 GROUP BY d.repo, d.day),
+       k AS (SELECT repo, day FROM dd UNION SELECT repo, day FROM repo_days WHERE day BETWEEN ?1 AND ?2)
+       SELECT k.repo, k.day, COALESCE(dd.devices, 0) AS devices, COALESCE(dd.people, 0) AS people,
+         COALESCE(r.sessions, 0) AS sessions, COALESCE(r.messages, 0) AS messages, COALESCE(r.records, 0) AS records
+       FROM k LEFT JOIN dd ON dd.repo = k.repo AND dd.day = k.day
+         LEFT JOIN repo_days r ON r.repo = k.repo AND r.day = k.day
+       ORDER BY k.day, k.repo`,
+    ).bind(from, today),
     // Each contributor once, however many repos they are in, by the day of their first commit to any.
     db.prepare(`SELECT first AS day, COUNT(*) AS n FROM (SELECT MIN(first) AS first FROM contributors GROUP BY id) GROUP BY first ORDER BY first`),
     db.prepare(`SELECT MAX(counted) AS at FROM repo_census`),
@@ -135,7 +159,7 @@ export async function repoNumbers(db, days) {
     series.push({
       day: d,
       repos: list.filter(r => r.start <= d).length,
-      activeRepos: on.filter(r => r.records > 0).length,
+      activeRepos: on.filter(r => r.devices > 0 || r.records > 0).length,
       contributors: firsts.filter(f => f.day <= d).reduce((s, f) => s + f.n, 0),
       devices: sum('devices'), people: sum('people'), sessions: sum('sessions'), messages: sum('messages'), records: sum('records'),
     });
@@ -175,7 +199,7 @@ export function repoReport(n, origin) {
     weeks.push([n.series[i].day, n.series[i].repos, n.series[i].contributors, sum('sessions'), sum('messages'), sum('records')]);
   }
   const repos = n.repoList.length
-    ? table(['Repo', 'Contributors', 'Devices', 'People', 'Sessions', 'Messages', 'Bus records', 'Last 7 days', 'First on the bus', 'Last on the bus'],
+    ? table(['Repo', 'Contributors', 'Devices', 'People', 'Sessions', 'Messages', 'Bus records', 'Days active of the last 7', 'First on the bus', 'Last on the bus'],
       n.repoList.map(r => [`[${short(r.name)}](https://${r.name})`, r.contributors, r.devices, r.people, r.sessions, r.messages, r.records, r.week, r.start, r.last ?? '–']))
     : 'None yet.';
   return `# Public repos using Murmur, ${n.today}
@@ -212,8 +236,8 @@ ${repos}
 
 - A **repo** is listed once one of its clones reports it: Murmur sends a public repo's address, once per repo, and nothing else.
 - Everything else is read by the census from what each repo shows anyone, once a day${n.counted ? ` (last at ${n.counted})` : ''}: its bus, \`refs/murmur/*\`, and its default branch's commits.
-- A **contributor** has committed to a repo's default branch, at any time; one person in two repos counts once. A **device** is one clone running Murmur; a **person**, one git user name among a repo's devices, so one person in two repos counts twice.
-- A **session** is an agent session that started; a **message**, one agent's message to another. A **bus record** is anything a device wrote to its log. Once the bus is encrypted (#257), a record's kind is hidden and only records are counted.
+- A **contributor** has committed to a repo's default branch, at any time; one person in two repos counts once. A **device** is one clone running Murmur; a **person**, one git user name among a repo's devices, as their presence shows it, so one person in two repos counts twice. A daemon deletes its presence when it stops, so a device whose owner the census never saw counts as a person of its own.
+- A **session** is an agent session, counted once on the day it started, however often its daemon restarts; a **message**, one agent's message to another. A **bus record** is anything a device wrote to its log. Once the bus is encrypted (#257), a record's kind is hidden and only records are counted.
 - A count is only ever raised. Days are UTC.
 
 The check-ins of earlier versions, which are no longer stored, are at ${origin}/stats/archive/report.md. The same numbers as JSON: ${origin}/stats/data?days=N (N from 14 to 730, default 90), with the same key. This page takes \`?days=N\` too.

@@ -164,7 +164,7 @@
 
     <section class="card wide">
       <h2>Agent sessions per day</h2>
-      <div class="sub">sessions that started, by repo</div>
+      <div class="sub">sessions that started, each once however often its daemon restarts, by repo</div>
       <div class="chart" id="c-sessions"></div>
       <div class="legend" id="l-sessions"></div>
     </section>
@@ -178,14 +178,14 @@
 
     <section class="card half">
       <h2>Devices active per day</h2>
-      <div class="sub">clones running Murmur that wrote to their repo's bus, by repo</div>
+      <div class="sub">clones running Murmur that wrote anything to their repo's bus, by repo</div>
       <div class="chart" id="c-devices"></div>
       <div class="legend" id="l-devices"></div>
     </section>
 
     <section class="card wide">
       <h2>Repos</h2>
-      <div class="sub">most active in the last 7 days first</div>
+      <div class="sub">most active first; days active counts the last 7 days</div>
       <div id="t-repos"></div>
     </section>
   </div>
@@ -377,7 +377,7 @@ function repoTable(box, list, colors) {
   if (!list.length) { box.append(el('div', { class: 'empty' }, 'No repos yet.')); return; }
   const table = el('table');
   const head = el('tr');
-  const cols = [['Repo'], ['Contributors', 1], ['Devices', 1], ['People', 1], ['Sessions', 1], ['Messages', 1], ['Bus records', 1], ['Last 7 days', 1], ['First on the bus'], ['Last on the bus']];
+  const cols = [['Repo'], ['Contributors', 1], ['Devices', 1], ['People', 1], ['Sessions', 1], ['Messages', 1], ['Bus records', 1], ['Days active', 1], ['First on the bus'], ['Last on the bus']];
   for (const [t, num] of cols) head.append(el('th', num ? { class: 'num' } : {}, t));
   table.append(head);
   for (const r of list) {

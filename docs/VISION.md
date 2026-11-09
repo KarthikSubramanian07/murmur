@@ -1236,10 +1236,13 @@ in the state dir's `latest.json`; with updates off it hears of none.
 The counts come from the census (#259), which reads what each reported repo shows anyone. Once a
 day a GitHub Action in this repo (`.github/workflows/census.yml`, `site/census/census.mjs`) fetches
 each repo's `refs/murmur/*` and its default branch's commits without their files, and sends the
-site counts, never content: per UTC day, the devices that wrote to the bus, the git user names
-behind them, the sessions started, the messages and all records; and for each contributor, a hash
-of their GitHub login or email and the day of their first commit, so one person in two repos counts
-once. The site only ever raises a count, since a bus log can be rewritten. It runs from GitHub,
+site counts and hashes, never content: per UTC day, the sessions started (each once, though a
+daemon that restarts announces its sessions again), the messages and all records, and a hash of
+each device that wrote anything, presence included; a hash of each device's owner, the git user name
+its presence shows; and for each contributor, a hash of their GitHub login or email and the day of
+their first commit, so one person in two repos counts once. The site only ever raises a count and
+keeps every device and owner it has seen, since a bus log can be rewritten and a daemon deletes its
+presence when it stops. It runs from GitHub,
 not from the Worker, because counting needs git, and a fetch of the whole bus is one request where
 the API would need one per commit. Once the bus is encrypted (#257) a record's kind is hidden from a
 public reader, so messages stop being told from other records, and only records are counted.

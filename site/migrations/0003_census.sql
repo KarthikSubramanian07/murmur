@@ -1,28 +1,40 @@
 -- What the census (#259) reads from each public repo in the repos table: its bus (refs/murmur/*)
 -- and its commit history, both public. site/census/census.mjs counts them in a GitHub Action each
--- day and sends the counts to /v1/census. Only counts are kept, and a hash for each contributor so
--- one person in two repos counts once: no names, no message text.
+-- day and sends them to /v1/census. Only counts and hashes are kept: no names, no message text, no
+-- device IDs.
 --
--- A count is only ever raised. A bus log can be rewritten, and history can be pushed over, and a
--- count that has been seen stays seen.
+-- Nothing is taken away. A bus log can be rewritten and a daemon deletes its presence when it stops,
+-- so a count is only ever raised, and a device or contributor once seen stays.
 
--- One row per repo per UTC day with anything on its bus.
+-- One row per repo per UTC day with anything in its devices' logs.
 CREATE TABLE repo_days (
   repo     TEXT NOT NULL,              -- repos.repo
   day      TEXT NOT NULL,              -- YYYY-MM-DD, UTC
-  devices  INTEGER NOT NULL DEFAULT 0, -- clones running Murmur that wrote to the bus that day
-  people   INTEGER NOT NULL DEFAULT 0, -- of them, distinct git user names, where the bus shows one
-  sessions INTEGER NOT NULL DEFAULT 0, -- agent sessions started
+  sessions INTEGER NOT NULL DEFAULT 0, -- agent sessions that started that day, each counted once
   messages INTEGER NOT NULL DEFAULT 0, -- messages between agents, where the bus shows the kind
   records  INTEGER NOT NULL DEFAULT 0, -- everything the devices wrote to their logs
   PRIMARY KEY (repo, day)
 );
 
--- One row per repo: its totals over all time, from the last census.
+-- Each clone running Murmur in a repo, and the person behind it once the census has seen one.
+CREATE TABLE devices (
+  repo   TEXT NOT NULL, -- repos.repo
+  device TEXT NOT NULL, -- the first 16 hex digits of the SHA-256 of its device ID
+  person TEXT,          -- the same of its owner, the git user name its presence shows; NULL until seen
+  PRIMARY KEY (repo, device)
+);
+
+-- The days each device wrote anything to its repo's bus: an event or its presence.
+CREATE TABLE device_days (
+  repo   TEXT NOT NULL, -- repos.repo
+  device TEXT NOT NULL, -- devices.device
+  day    TEXT NOT NULL, -- YYYY-MM-DD, UTC
+  PRIMARY KEY (repo, day, device)
+);
+
+-- One row per repo: its totals from the last census.
 CREATE TABLE repo_census (
   repo      TEXT PRIMARY KEY,           -- repos.repo
-  devices   INTEGER NOT NULL DEFAULT 0,
-  people    INTEGER NOT NULL DEFAULT 0,
   sessions  INTEGER NOT NULL DEFAULT 0,
   messages  INTEGER NOT NULL DEFAULT 0,
   records   INTEGER NOT NULL DEFAULT 0,

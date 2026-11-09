@@ -10,8 +10,9 @@
 //   presence (which names the git user);
 // - its default branch's commits, without their files: who committed, and when each first did.
 //
-// It sends counts, not content: per UTC day, how many devices wrote and how many sessions and
-// messages there were; and for each contributor a hash, so one person in two repos counts once.
+// It sends counts and hashes, not content: per UTC day, how many sessions, messages and records
+// there were and which devices wrote, each device by a hash with a hash of its owner; and each
+// contributor by a hash, so one person in two repos counts once.
 // Once the bus is encrypted (#257) a record's kind is hidden, and only records are counted.
 
 import { execFileSync } from 'node:child_process';
@@ -67,7 +68,16 @@ function identity(email, name) {
 
 const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
 
-// What one repo shows: its counts by day, its totals, and its contributors.
+// What one repo shows: its counts by day, its totals, and its devices.
+//
+// A device is sent as a hash of its ID, with a hash of its owner (the git user name its presence
+// shows) when the bus shows one. A daemon deletes its presence when it stops, so the owner is often
+// missing; the site keeps an owner once it has seen one, and counts a device whose owner it has
+// never seen as a person of its own. A device counts as active on a day it wrote anything: an event
+// or its presence.
+//
+// A session counts once, on the first day it started: a daemon that restarts announces its running
+// sessions again under the same IDs.
 export function count(dir) {
   const refs = git(dir, ['for-each-ref', '--format=%(refname)', 'refs/murmur/']).split('\n').filter(Boolean);
   const days = new Map(); // day -> { devices: Set, sessions, messages, records }
@@ -76,9 +86,10 @@ export function count(dir) {
     return days.get(d);
   };
   const owners = new Map(); // device -> git user name, from its newest presence that shows one
+  const started = new Map(); // session -> the first day it started
   const seen = new Set();
   const devices = new Set();
-  let sessions = 0, messages = 0, records = 0;
+  let messages = 0, records = 0;
   for (const ref of refs) {
     const [, , kind, device] = ref.split('/');
     if ((kind !== 'mesh' && kind !== 'presence') || !device) continue;
@@ -97,22 +108,22 @@ export function count(dir) {
         continue;
       }
       t.records++, records++;
-      if (r.type === 'session.started') t.sessions++, sessions++;
       if (r.type === 'message') t.messages++, messages++;
+      if (r.type === 'session.started') {
+        const id = typeof r.from === 'string' && r.from ? r.from : c.hash;
+        if (!started.has(id) || d < started.get(id)) started.set(id, d);
+      }
     }
   }
-  // A device whose owner the bus doesn't show is a person of its own.
-  const person = dev => (owners.has(dev) ? 'owner:' + owners.get(dev).toLowerCase() : 'device:' + dev);
+  for (const d of started.values()) day(d).sessions++;
   const sorted = [...days.keys()].sort();
   return {
     days: sorted.map(d => {
       const t = days.get(d);
-      return { day: d, devices: t.devices.size, people: new Set([...t.devices].map(person)).size, sessions: t.sessions, messages: t.messages, records: t.records };
+      return { day: d, sessions: t.sessions, messages: t.messages, records: t.records, devices: [...t.devices].map(v => hash('device:' + v)).sort() };
     }),
-    totals: {
-      devices: devices.size, people: new Set([...devices].map(person)).size, sessions, messages, records,
-      first_day: sorted[0] ?? null, last_day: sorted[sorted.length - 1] ?? null,
-    },
+    devices: [...devices].sort().map(v => ({ id: hash('device:' + v), person: owners.has(v) ? hash('owner:' + owners.get(v).trim().toLowerCase()) : null })),
+    totals: { sessions: started.size, messages, records, first_day: sorted[0] ?? null, last_day: sorted[sorted.length - 1] ?? null },
   };
 }
 
@@ -172,7 +183,7 @@ async function main(args) {
       failed++;
       continue;
     }
-    const line = `${name}: ${c.totals.devices} devices, ${c.totals.people} people, ${c.totals.sessions} sessions, ` +
+    const line = `${name}: ${c.devices.length} devices, ${new Set(c.devices.map(v => v.person ?? v.id)).size} people, ${c.totals.sessions} sessions, ` +
       `${c.totals.messages} messages, ${c.totals.records} records, ${c.contributors.length} contributors, ${c.days.length} days`;
     if (dry) {
       console.log(line);
