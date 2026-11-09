@@ -2312,8 +2312,18 @@ function attention(rows) {
   return out.sort((a, b) => rank[a.kind] - rank[b.kind] || b.at - a.at);
 }
 
+// Group by is remembered across reloads, since a lead tends to work one way; the state filter and
+// search start fresh.
+const FLEET_BY_KEY = NAME + ":fleet-by";
 function fleetFilter() {
-  return (ui.fleet ||= { state: "", by: "device", q: "" });
+  if (!ui.fleet) {
+    let by = "device";
+    try {
+      by = localStorage.getItem(FLEET_BY_KEY) || by;
+    } catch {}
+    ui.fleet = { state: "", by, q: "" };
+  }
+  return ui.fleet;
 }
 
 function fleetSub() {
@@ -2409,22 +2419,35 @@ function fleetPage() {
   if (!["device", "branch", "group"].includes(F.by)) F.by = "device";
   const all = fleetRows();
   const q = F.q.trim().toLowerCase();
-  const searched = all.filter((r) => !q || [r.s.name, r.s.doing, r.s.branch, r.s.agent, r.d.owner, deviceName(r.d), groupOf(r.s)].join(" ").toLowerCase().includes(q));
+  // Search covers what a row shows: the asker and question it waits on, and the PR too.
+  const allNeeds = fleetNeeds(all);
+  const prs = ui.state.prs || {};
+  const text = (r) => {
+    const need = allNeeds.get(r.s.name);
+    const pr = r.s.branch && Object.hasOwn(prs, r.s.branch) ? prs[r.s.branch] : null;
+    return [r.s.name, r.s.doing, r.s.branch, r.s.agent, r.d.owner, deviceName(r.d), groupOf(r.s), pr && "#" + pr.number, ...(need ? need.msgs.flatMap((m) => [fromName(m), questionIn(m)]) : [])].join(" ");
+  };
+  const searched = all.filter((r) => !q || text(r).toLowerCase().includes(q));
   const rows = searched.filter((r) => !F.state || sessionState(r.d, r.s) === F.state);
   const needs = fleetNeeds(rows);
   // Open details stay open when their session falls out of the filter (it went idle while you
   // read, say); they close only when the session itself is gone.
   if (ui.fleetSel && !all.some((r) => r.s.name === ui.fleetSel)) ui.fleetSel = null;
   const sel = ui.fleetSel;
-  const selNeed = sel ? needs.get(sel) || fleetNeeds(all).get(sel) : null;
+  const selNeed = sel ? allNeeds.get(sel) : null;
   const set = (k) => (v) => {
     F[k] = v;
+    if (k === "by") {
+      try {
+        localStorage.setItem(FLEET_BY_KEY, v);
+      } catch {}
+    }
     render();
   };
   const count = (st) => searched.filter((r) => sessionState(r.d, r.s) === st).length;
   const devs = new Set(all.map((r) => r.d.id));
-  const n = fleetNeeds(all).size;
-  const sub = q || F.state
+  const n = allNeeds.size;
+  const sub = (q || F.state) && all.length
     ? ["Showing " + rows.length + " of " + plural(all.length, "session") + " ", h("button", { class: "fx-clear", onclick: () => { F.q = ""; F.state = ""; render(); } }, "Clear")]
     : plural(all.length, "session") + " on " + plural(devs.size, "device") + " · " + (n ? n + (n === 1 ? " needs" : " need") + " a look" : "nothing needs a look");
 
@@ -2498,7 +2521,7 @@ function fleetTable(rows, needs, sel) {
     { class: "fx-panel fx-table" + (F.by === "branch" ? " by-branch" : ""), "aria-label": "Sessions" },
     h("div", { class: "fx-tr fx-th", "aria-hidden": "true" }, ["Session", "State", "Working on", "Branch", "Last active"].map((c, i) => h("span", { class: i === 4 ? "num" : "" }, c))),
     rows.length === 0
-      ? h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, "No sessions match"))
+      ? h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, fleetRows().length ? "No sessions match" : "No sessions running"))
       : [
           pinned.length > 0 && [
             h("div", { class: "fx-group fx-group-need" }, h("span", { class: "fx-group-name" }, "Needs a look"), h("span", { class: "fx-badge" }, pinned.length)),
@@ -2579,6 +2602,7 @@ function fleetRow(d, s, need, on) {
         const top = e.currentTarget.getBoundingClientRect().top;
         if (whole) ui.fleetScroll = content ? content.scrollTop : 0;
         ui.fleetSel = on ? null : s.name;
+        if (whole) history.pushState({ fleetSel: s.name }, "");
         render();
         if (whole && content) {
           content.scrollTop = 0;
@@ -2625,10 +2649,27 @@ function fleetClose() {
   if (STACKED.matches && back != null && content) content.scrollTop = back;
   if (name) root.querySelector(`[data-key="fl-${CSS.escape(name)}"]`)?.focus({ preventScroll: true });
 }
+// Opened as the whole page, details have a history entry (fleetRow), so Back and a mouse's back
+// button do what "← All sessions" does; that button and Escape go back through it too.
+function fleetCloseAsked() {
+  if (history.state?.fleetSel) history.back(); // popstate below closes them
+  else fleetClose();
+}
+window.addEventListener("popstate", (e) => {
+  if (ui.view !== "sessions") return;
+  const want = e.state?.fleetSel || null;
+  if (ui.fleetSel && !want) fleetClose();
+  else if (want && want !== ui.fleetSel && STACKED.matches) {
+    ui.fleetScroll = content ? content.scrollTop : 0;
+    ui.fleetSel = want;
+    render();
+    if (content) content.scrollTop = 0;
+  }
+});
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !e.defaultPrevented && ui.view === "sessions" && ui.fleetSel) {
     e.preventDefault();
-    fleetClose();
+    fleetCloseAsked();
   }
 });
 
@@ -2661,7 +2702,7 @@ function fleetInspector(name, need) {
   // rest, newest first.
   const rank = (m) => (owed.includes(m) ? 0 : fromName(m) === name && unanswered.has(m) ? 1 : 2);
   const direct = ui.messages.filter((m) => m.toKind === "session" && (fromName(m) === name || toName(m) === name)).sort((a, b) => rank(a) - rank(b) || (rank(a) < 2 ? a.sortAt - b.sortAt : b.sortAt - a.sortAt));
-  const close = fleetClose;
+  const close = () => fleetCloseAsked();
   return [
     h(
       "header",

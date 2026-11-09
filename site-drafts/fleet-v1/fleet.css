@@ -50,7 +50,7 @@
 .fx-seg button { display: inline-flex; align-items: center; gap: 0.375rem; height: 100%; padding: 0 0.625rem; border-radius: 6px; color: var(--fx-text-2); font-weight: 500; white-space: nowrap; transition: background-color 175ms var(--fx-ease), color 175ms var(--fx-ease); }
 .fx-seg button:hover { color: var(--fx-text); }
 .fx-seg button.on { background: #ffffff1f; color: var(--fx-text); box-shadow: 0 1px 2px #0000004d; }
-.fx-seg-n { color: var(--fx-text-3); font-variant-numeric: tabular-nums; }
+.fx-seg-n { color: var(--fx-text-2); font-variant-numeric: tabular-nums; }
 .fx-seg button.on .fx-seg-n { color: var(--fx-text-2); }
 
 /* State dot */
