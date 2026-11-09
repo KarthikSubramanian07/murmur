@@ -1353,7 +1353,8 @@ function conversationsPage() {
   return h(
     "div",
     { class: "page chat-page" },
-    list.length === 0
+    // A picked session keeps its header, and so its tags, before it has any messages.
+    list.length === 0 && !ui.filter
       ? h("div", { class: "blank" }, noMessages())
       : h(
           "div",
@@ -1372,7 +1373,7 @@ function otherIn(c) {
 }
 
 // The middle column: whose conversations they are, a search, then direct messages and group chats
-// apart. Direct messages with a settled session fold away at the end.
+// in one list. Direct messages with a settled session fold away at the end.
 function conversationList(list) {
   const name = ui.filter && nameOf(ui.filter, ui.filter);
   const f = name && findSession(name);
