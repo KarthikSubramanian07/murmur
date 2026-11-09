@@ -419,7 +419,20 @@ func (c *Client) Hello(ctx context.Context, h proto.Hello) (net.Conn, proto.Resp
 		conn.Close()
 		return nil, resp, errors.New(resp.Error)
 	}
-	return conn, resp, nil
+	return sessionConn{conn}, resp, nil
+}
+
+// sessionConn is a session's connection, whose Close shuts the socket down before closing it. A
+// close alone ends only this process's descriptor: a child forked at that moment, not yet started
+// as its program, holds a copy, and the daemon sees the session end only when that copy goes. In
+// the daemon's tests one such child never got that far (#217), and the session never ended.
+type sessionConn struct{ net.Conn }
+
+func (c sessionConn) Close() error {
+	if tc, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		tc.CloseWrite()
+	}
+	return c.Conn.Close()
 }
 
 func writeLine(conn net.Conn, v any) error {
