@@ -345,3 +345,7 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
    after the padding rather than inside the clip. */
 .fx-meta .fx-part { display: inline-block; position: relative; max-width: 100%; padding-left: 0.9em; white-space: normal; vertical-align: top; }
 .fx-meta .fx-sep { position: absolute; left: 0; top: 0; }
+/* The shared ring on the search box (as the box, since its input draws none), the details' PR link
+   and Clear, which sit on text and so take it outside. */
+.fx-input:has(input:focus-visible) { outline: 2px solid #f1f1f1; outline-offset: -1px; }
+a.fx-pr:focus-visible, .fx-clear:focus-visible { outline: 2px solid #f1f1f1; outline-offset: 2px; }

@@ -2441,7 +2441,10 @@ function questionIn(m) {
   const asked = text.split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).find((x) => /\?$/.test(x));
   // A subject that asks is the question as its sender put it, and how the message is listed.
   const q = (/\?\s*$/.test(m.subject || "") && !isReply(m) ? m.subject.trim() : "") || asked || "";
-  return q.length > 110 ? q.slice(0, 109).trimEnd() + "…" : q;
+  // Cut at a word, not inside one.
+  if (q.length <= 110) return q;
+  const cut = q.slice(0, 109);
+  return (cut.lastIndexOf(" ") > 60 ? cut.slice(0, cut.lastIndexOf(" ")) : cut).trimEnd() + "…";
 }
 
 function isReply(m) {
@@ -2477,10 +2480,12 @@ function fleetNeeds(rows) {
     // State column says whether the session is offline or on do not disturb, so this doesn't.
     // The inspector leaves the question out (quote false): its conversations quote each one.
     const wait = " for " + ago(when(m.at)).replace(" ago", "");
+    // When the question isn't the subject (a body's "Fine?"), the subject says what it's about.
+    const about = (x) => (x.subject && questionIn(x) !== x.subject.trim() ? " on “" + x.subject.trim() + "”" : "");
     // An asker that has ended since still counts (its question waits on a running session), and
     // says so.
     const ended = live.has(fromName(m)) ? "" : " (ended)";
-    out.set(to, { at: when(m.at), m, msgs: list, text: (quote = true) => ["No reply to ", h("b", null, fromName(m)), ended, quote ? wait + ": “" + questionIn(m) + "”" + more : wait + (list.length > 1 ? ", and " + plural(list.length - 1, "more question") : "") + "."] });
+    out.set(to, { at: when(m.at), m, msgs: list, text: (quote = true) => ["No reply to ", h("b", null, fromName(m)), ended, quote ? wait + about(m) + ": “" + questionIn(m) + "”" + more : wait + (list.length > 1 ? ", and " + plural(list.length - 1, "more question") : "") + "."] });
   }
   return out;
 }
@@ -2497,7 +2502,7 @@ function fleetPage() {
   const text = (r) => {
     const need = allNeeds.get(r.s.name);
     const pr = r.s.branch && Object.hasOwn(prs, r.s.branch) ? prs[r.s.branch] : null;
-    return [r.s.name, FX_STATE[sessionState(r.d, r.s)], r.s.doing, r.s.branch, r.s.agent, r.d.owner, deviceName(r.d), groupOf(r.s), pr && "#" + pr.number, ...(need ? need.msgs.flatMap((m) => [fromName(m), questionIn(m)]) : [])].join(" ");
+    return [r.s.name, FX_STATE[sessionState(r.d, r.s)], r.s.doing, r.s.branch, r.s.agent, r.d.owner, deviceName(r.d), groupOf(r.s), pr && "#" + pr.number, ...(need ? need.msgs.flatMap((m) => [fromName(m), m.subject, questionIn(m)]) : [])].join(" ");
   };
   const searched = all.filter((r) => !q || text(r).toLowerCase().includes(q));
   const rows = searched.filter((r) => !F.state || sessionState(r.d, r.s) === F.state);
