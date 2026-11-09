@@ -19,6 +19,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/web"
 )
@@ -34,26 +35,93 @@ const defaultWakeMinutes = 3
 // protocol, and the page speaks HTTP to a browser. Only 127.0.0.1 will do, not just any loopback
 // address: the page answers only requests addressed to 127.0.0.1 or localhost (web's Host check),
 // so on [::1] or 127.0.0.2 it would refuse everything sent to the address it gave out.
-func (d *Daemon) listenPage() (net.Listener, error) {
+//
+// inherited, if not nil, is the page's socket from the daemon this one replaced, and h that
+// daemon's handoff (#255); listenPage closes it. The page goes on there, with the old token, only
+// if it is the socket h names: the port was bound all along, so an open tab has sent its token to
+// no one else. Otherwise the page gets a new port and keeps the token open made. A port that was
+// ever free could have been taken by another user's process, which a tab open on it then sent the
+// old token, so that token must not open the page again; only `ui` hands out the new one.
+//
+// keep is a second hold on the page's socket, which lets it outlive the listener (see keepable).
+func (d *Daemon) listenPage(inherited *os.File, h pageHandoff, handed bool) (ln net.Listener, keep *os.File, err error) {
 	host, _, err := net.SplitHostPort(d.opt.PageAddr)
+	if err == nil && host != "127.0.0.1" {
+		err = fmt.Errorf("%s isn't on 127.0.0.1, the loopback address the page answers on", d.opt.PageAddr)
+	}
+	if err != nil {
+		if inherited != nil {
+			inherited.Close()
+		}
+		return nil, nil, err
+	}
+	if inherited != nil {
+		ln, err := d.inheritedPage(inherited, h, handed)
+		inherited.Close()
+		if err == nil {
+			d.pageTok = h.Token
+			ln, keep := d.keepable(ln)
+			return ln, keep, nil
+		}
+		d.log.Printf("the page's socket from the daemon before isn't used (%v), so the page moves; a tab open on it needs `%s ui` again", err, brand.Command)
+	} else if handed {
+		d.log.Printf("the daemon before didn't hand over the page's socket, so the page moves; a tab open on it needs `%s ui` again", brand.Command)
+	}
+	if ln, err = net.Listen("tcp", d.opt.PageAddr); err != nil {
+		return nil, nil, err
+	}
+	ln, keep = d.keepable(ln)
+	return ln, keep, nil
+}
+
+// inheritedPage is the listener on f, if f is the socket h names.
+func (d *Daemon) inheritedPage(f *os.File, h pageHandoff, handed bool) (net.Listener, error) {
+	if !handed {
+		return nil, errors.New("it came without the page's address and token")
+	}
+	if d.opt.PageAddr != defaultPageAddr {
+		return nil, fmt.Errorf("this daemon serves the page on %s", d.opt.PageAddr)
+	}
+	// On Windows the socket is still tied to the completion port of the daemon before, which
+	// served the page from it.
+	if err := proc.Unpoll(f); err != nil {
+		return nil, err
+	}
+	ln, err := net.FileListener(f)
 	if err != nil {
 		return nil, err
 	}
-	if host != "127.0.0.1" {
-		return nil, fmt.Errorf("%s isn't on 127.0.0.1, the loopback address the page answers on", d.opt.PageAddr)
+	if host, _, err := net.SplitHostPort(h.Web); err != nil || host != "127.0.0.1" || ln.Addr().String() != h.Web {
+		ln.Close()
+		return nil, fmt.Errorf("it is on %s, and the page was on %s", ln.Addr(), h.Web)
 	}
-	if d.pagePrev != "" {
-		if host, _, err := net.SplitHostPort(d.pagePrev); err == nil && host == "127.0.0.1" {
-			if ln, err := net.Listen("tcp", d.pagePrev); err == nil {
-				return ln, nil
-			}
+	return ln, nil
+}
+
+// keepable returns a listener on ln's socket to serve the page from, in place of ln, and a second
+// hold on that socket, which keeps the socket bound, and queueing connections, after the listener
+// is closed: the page's server closes its listener when it stops, and a daemon restarting onto an
+// update hands the socket to the next one (#255). Without a hold, ln is served as it is, and a
+// restart moves the page.
+//
+// The listener is made from the hold rather than being ln itself because on Windows, taking the
+// hold detaches ln's socket from the runtime's I/O completion port.
+func (d *Daemon) keepable(ln net.Listener) (net.Listener, *os.File) {
+	tl, ok := ln.(*net.TCPListener)
+	if !ok {
+		return ln, nil
+	}
+	keep, err := tl.File()
+	if err == nil {
+		var serve net.Listener
+		if serve, err = net.FileListener(keep); err == nil {
+			ln.Close()
+			return serve, keep
 		}
-		// Whatever holds the old port now may be another user's process, and the open tab has been
-		// sending it the token. So the page moves with a new token, which only `ui` hands out.
-		d.log.Printf("the page's old address %s is taken; a tab open on it needs `%s ui` again", d.pagePrev, brand.Command)
-		d.pageTok, d.pagePrev = bus.RandHex(32), ""
+		keep.Close()
 	}
-	return net.Listen("tcp", d.opt.PageAddr)
+	d.log.Printf("the page's port can't be held for a restart, which will move it: %v", err)
+	return ln, nil
 }
 
 // servePage serves the page on ln until ctx is done.

@@ -1211,12 +1211,26 @@ reconnect through the existing grace and inbox restoration. Running MCP servers 
 restart; if they need to launch a daemon they use the installed path. The protocol number above
 still handles incompatible clients and daemons; release versions do not become a second protocol.
 
-On restart the daemon leaves the page's address and token in `page.json` in its state directory.
-The new daemon, if it starts within two minutes, serves the page there, so an open tab reconnects
-and reloads onto the new version. The reload waits while a person has text in a composer or a
-message that failed, since those live only in the page (#242). If that port is taken, the page moves
-to a new port with a new token, since whatever took the port has been sent the old one, and the tab
-needs `mur ui` again.
+On restart the daemon hands the page's listening socket to the new daemon, which inherits it
+(descriptor 3 on Unix, the same handle on Windows, named to it by `MURMUR_PAGE_LISTENER`), and
+leaves the page's address and token beside it in `page.json` in its state directory. The port is
+bound from the old daemon's last answer to the new one's first, so a tab's requests in between wait
+in the socket's queue, and the new daemon answers them; the tab sees a new daemon and reloads onto
+the new version. The reload waits while a person has text in a composer or a message that failed,
+since those live only in the page (#242); the tab works with the new daemon until then. Each daemon serves the page from a listener made from a second hold on the socket,
+which keeps it bound after the page's server closes its listener.
+
+Decided 2026-11-09 (#255, from Sol's pre-release review). Before, the new daemon bound the old port
+again and kept the token. In the gap, another user's process could take the port, be sent one of the
+tab's requests with its token, and let the port go before the new daemon bound it, and the new
+daemon then answered that token. Checking that the port is free can't prove it stayed free, so the
+token now goes only with the socket: a daemon that gets `page.json` without a socket at that address
+(a start through WMI, which can't hand handles over, or a socket it can't take up) serves the page
+on a new port with a new token, and the tab needs `mur ui` again. Rotating the token on every
+restart, with the tab fetching the new one, was set aside: whatever the tab holds, a page served on
+its port in the gap could read (a reload there runs that page in the tab's origin), and the tab
+can't tell who is listening. On Windows a socket stays tied to the I/O completion port of the
+process that served it, so the new daemon detaches it before taking it up.
 
 The page shows a newer release above Settings in its sidebar (a dot on Settings on a phone), with
 the version in Settings: "Restart to update" while an installed update waits on the open page,
