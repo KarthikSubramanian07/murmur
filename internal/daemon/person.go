@@ -128,7 +128,6 @@ func (d *Daemon) loadPersonLog() {
 		d.log.Printf("reading a person's messages: %v", err)
 		return
 	}
-	defer f.Close()
 	var events []bus.Event
 	lines := bufio.NewScanner(f)
 	lines.Buffer(nil, 8*bus.MaxBody) // a line is one JSON-escaped event, at most a body and a subject
@@ -144,6 +143,7 @@ func (d *Daemon) loadPersonLog() {
 	if err := lines.Err(); err != nil {
 		d.log.Printf("reading a person's messages: %v", err)
 	}
+	f.Close() // before rewritePersonLog: Windows won't rename over a file that is open
 	long := len(events) > 2*maxPersonLog
 	events = events[max(len(events)-maxPersonLog, 0):]
 	for _, e := range events {
@@ -163,11 +163,13 @@ func (d *Daemon) rewritePersonLog(events []bus.Event) {
 		}
 	}
 	tmp := d.personLogPath() + ".tmp"
-	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err == nil {
+	err := os.WriteFile(tmp, []byte(b.String()), 0o600)
+	if err == nil {
 		err = os.Rename(tmp, d.personLogPath())
-		if err != nil {
-			d.log.Printf("cutting back a person's messages: %v", err)
-		}
+	}
+	if err != nil {
+		d.log.Printf("cutting back a person's messages: %v", err)
+		os.Remove(tmp)
 	}
 }
 

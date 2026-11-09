@@ -417,3 +417,46 @@ func TestAgentsChatterDoesntPushOutAPersonsMessages(t *testing.T) {
 		t.Errorf("the page holds %v, want the person's and the last 3", got)
 	}
 }
+
+// A log grown to more than twice what is kept is cut back when the daemon starts, and the newest
+// messages are the ones left. On Windows this only works once the reader has closed the file.
+func TestALongPersonLogIsCutBack(t *testing.T) {
+	a := newDevice(t, newRemote(t))
+	pa := a.page()
+	pa.choose("ada")
+	self := a.self()
+	a.stop()
+
+	path := filepath.Join(a.gitDir, brand.StateDir, "person-messages.jsonl")
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	const kept = 2000 // maxPersonLog
+	total := 2*kept + 1
+	for i := range total {
+		if err := enc.Encode(bus.Event{
+			V: bus.Version, ID: fmt.Sprintf("%016x", i+1), Type: bus.Message,
+			From: self + "/bbbbbb", To: self + "/" + bus.PersonSession,
+			Subject: fmt.Sprintf("message %d", i),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a.start()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(got), "\n"); n != kept {
+		t.Errorf("the log has %d lines after a restart, want %d", n, kept)
+	}
+	if !strings.Contains(string(got), fmt.Sprintf(`"message %d"`, total-1)) {
+		t.Error("the newest message isn't among those kept")
+	}
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("the temporary file is still there: %v", err)
+	}
+}

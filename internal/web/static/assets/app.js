@@ -7,7 +7,8 @@ const COMMAND = document.querySelector('meta[name="app-command"]')?.content || "
 const TOKEN_KEY = NAME + ":token";
 const POLL_MS = 3000;
 const HIDDEN_POLL_MS = 15000;
-const MAX_MESSAGES = 2000;
+const MAX_MESSAGES = 2000; // the page's limit for what isn't the person's own
+const MAX_OWN_MESSAGES = 2000; // and for what is, as the daemon keeps it (maxPersonLog)
 const VIEWS = ["sessions", "messages", "recent", "settings"];
 const TITLES = { sessions: "Sessions", messages: "Conversations", recent: "Recent", settings: "Settings" };
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
@@ -1571,10 +1572,15 @@ function conversations() {
   // A conversation just begun has no messages yet, and is at the top while it is open.
   const fresh = draftConversation();
   if (fresh && (!ui.filter || isMyFilter()) && !byKey.has(fresh.key)) byKey.set(fresh.key, fresh);
+  // So is one whose only message hasn't gone: nothing else lists it, and a message that failed has
+  // to stay reachable, with its text and its Try again, after the person looks at something else.
+  if (!ui.filter || isMyFilter()) {
+    for (const item of ui.outbox) if (!byKey.has(item.key)) byKey.set(item.key, { ...item.conversation, messages: [] });
+  }
   const list = [...byKey.values()];
   for (const c of list) c.messages.sort((a, b) => a.sortAt - b.sortAt);
   const latest = (c) => (c.messages.length ? c.messages[c.messages.length - 1].sortAt : Infinity);
-  return list.sort((a, b) => latest(b) - latest(a));
+  return list.sort((a, b) => latest(b) - latest(a) || 0); // two with no messages subtract to NaN
 }
 
 function dmKey(a, b) {
@@ -1781,7 +1787,8 @@ function conversationRow(c) {
   const o = otherIn(c);
   const self = ui.filter ? nameOf(ui.filter, ui.filter) : myName();
   const unread = unreadIn(c);
-  const preview = !last ? "New conversation" : (o && fromName(last) === o ? "" : (o && fromName(last) === self) || fromName(last) === myName() ? "You: " : fromName(last) + ": ") + last.subject;
+  const failed = pendingIn(c).find((item) => item.status === "failed");
+  const preview = failed ? "Not sent: " + failed.text : !last ? "New conversation" : (o && fromName(last) === o ? "" : (o && fromName(last) === self) || fromName(last) === myName() ? "You: " : fromName(last) + ": ") + last.subject;
   return h(
     "button",
     {
@@ -2134,7 +2141,7 @@ function unreadIn(c) {
 }
 
 function yourConversationCount() {
-  return new Set(myMessages().map((m) => conversationOf(m).key)).size;
+  return new Set([...myMessages().map((m) => conversationOf(m).key), ...ui.outbox.map((item) => item.key)]).size;
 }
 
 // Opening a conversation marks it read, if someone is looking: a hidden page or a window in the
@@ -2523,7 +2530,7 @@ function sendFrom(c, target, el, big) {
     return;
   }
   ui.armed = null;
-  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key: c.key, to: target.to, text, status: "sending" };
+  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key: c.key, conversation: c, to: target.to, text, status: "sending" };
   ui.outbox.push(item);
   ui.notes.delete(c.key);
   el.value = "";
@@ -2554,6 +2561,8 @@ async function deliver(item) {
 
 function editFailed(item) {
   ui.outbox = ui.outbox.filter((x) => x !== item);
+  // It may have been all that listed its conversation, which the text is going back into.
+  if (item.conversation.kind === "dm") ui.draftTo = item.to;
   const el = composers.get(item.key);
   if (el) el.value = el.value ? item.text + "\n" + el.value : item.text;
   render();
@@ -2996,13 +3005,30 @@ async function fetchMessages() {
       ui.messages.push(m);
       added++;
     }
-    if (ui.messages.length > MAX_MESSAGES) {
-      for (const m of ui.messages.splice(0, ui.messages.length - MAX_MESSAGES)) ui.ids.delete(m.id);
-    }
     const moved = r.cursor !== ui.cursor;
     ui.cursor = r.cursor || ui.cursor;
     if (!added || !moved) return;
   }
+}
+
+// Drops the oldest of what is over each limit, so agents talking among themselves can't push out a
+// person's conversations or the unread messages in them. It needs the account, so it runs once the
+// state has come.
+function trimMessages() {
+  const addr = me()?.addr;
+  const own = (m) => !!addr && (m.fromAddr === addr || m.toAddr === addr);
+  const ownCount = ui.messages.filter(own).length;
+  let overOwn = ownCount - MAX_OWN_MESSAGES;
+  let overRest = ui.messages.length - ownCount - MAX_MESSAGES;
+  if (overOwn <= 0 && overRest <= 0) return;
+  ui.messages = ui.messages.filter((m) => {
+    const mine = own(m);
+    if ((mine ? overOwn : overRest) <= 0) return true;
+    if (mine) overOwn--;
+    else overRest--;
+    ui.ids.delete(m.id);
+    return false;
+  });
 }
 
 let last = "";
@@ -3033,6 +3059,7 @@ async function poll() {
       }
     }
     ui.state = state;
+    trimMessages();
     for (const id of ui.readLocal) if (!state.account?.unread?.includes(id)) ui.readLocal.delete(id);
     ui.outbox = ui.outbox.filter((item) => !(item.id && ui.ids.has(item.id)));
     ui.conn = "ok";
