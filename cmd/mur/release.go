@@ -35,7 +35,7 @@ func (w *releaseWatch) report(s update.Status) {
 
 // page is the daemon's Version. It reads a file at most once a minute, and never the network.
 func (w *releaseWatch) page() web.Version {
-	v := web.Version{Running: w.running, Install: installLine()}
+	v := web.Version{Running: w.running, Install: installLine("")}
 	if strings.HasSuffix(w.running, "-dev") {
 		return v // a build from source is updated from source
 	}
@@ -50,7 +50,8 @@ func (w *releaseWatch) page() web.Version {
 		latest = w.recorded
 	}
 	if latest != "" && update.After(latest, w.running) {
-		v.Latest = latest
+		// A prerelease (on the prerelease channel) is pinned: the installers' default is older.
+		v.Latest, v.Install = latest, installLine(latest)
 	}
 	// Until the updater's first check, which waits for the daemon's first sync, updates count as
 	// on: they are unless turned off, and the first check says so within seconds.

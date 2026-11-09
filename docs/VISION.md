@@ -1178,7 +1178,10 @@ recorded. Builds from source (`-dev`) show no notice.
 
 `git config --global murmur.update false` opts out; a repo's own git config overrides the global
 value. `MURMUR_NO_UPDATE=1` opts out for a daemon started with that environment. The config is read
-on each check. Agents explain updates and this separate opt-out before joining (`docs/agents/join.md`). A binary
+on each check. Agents explain updates and this separate opt-out before joining (`docs/agents/join.md`).
+`git config murmur.channel prerelease` opts into prereleases and nightlies as well (#244, Tyler,
+2026-11-08), so a release runs on our own machines before a stable tag sends it to everyone;
+`docs/releasing.md` has the channels. A binary
 shared across clones is shared across their update settings too: to prevent every clone from
 updating it, use the global setting without local overrides.
 
