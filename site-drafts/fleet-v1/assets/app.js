@@ -27,6 +27,9 @@ const SWARM_VIEWS = [["fleet", "Fleet"]];
 const TITLES = { sessions: "Sessions", messages: "Messages", recent: "Recent", fleet: "Fleet audit", briefing: "Briefing", overview: "Overview", catchup: "Since you looked", mine: "Your agents", decisions: "Decisions", timeline: "Timeline", board: "Board", graph: "Who talks to whom", office: "Office", settings: "Settings" };
 const MODE_KEY = NAME + ":messages";
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
+// Below this width a rail beside Fleet's table would leave the table too narrow to read (about
+// 300px at 1024), so a selected session takes the page instead. fleet.css stacks at the same width.
+const STACKED = window.matchMedia("(max-width: 1279px)");
 
 const ui = {
   view: "sessions",
@@ -2190,6 +2193,7 @@ document.addEventListener("visibilitychange", () => {
 });
 document.addEventListener("scroll", () => (scrolledAt = Date.now()), { capture: true, passive: true });
 NARROW.addEventListener("change", render);
+STACKED.addEventListener("change", render);
 setInterval(tick, 10000);
 start();
 
@@ -2409,9 +2413,9 @@ function fleetPage() {
     ? [rows.length + " of " + plural(all.length, "session") + (rows.length === 1 ? " matches " : " match "), h("button", { class: "fx-clear", onclick: () => { F.q = ""; F.state = ""; render(); } }, "Clear")]
     : plural(all.length, "session") + " on " + plural(devs.size, "device") + " · " + (n ? n + (n === 1 ? " needs" : " need") + " a look" : "nothing needs a look");
 
-  // Where the rail can't sit beside the table (fleet.css stacks them at 1000px), the selected
-  // session takes the whole page, with a way back; below the table it would be off screen.
-  if (sel && window.matchMedia("(max-width: 1000px)").matches) return h("div", { class: "fx fx-sheet" }, fleetInspector(sel, needs.get(sel)));
+  // Where the rail can't sit beside the table and leave it readable (see STACKED), the selected
+  // session takes the whole page, with a way back.
+  if (sel && STACKED.matches) return h("div", { class: "fx fx-sheet" }, fleetInspector(sel, needs.get(sel)));
 
   return h(
     "div",
@@ -2517,8 +2521,13 @@ function fleetRow(d, s, need, on) {
       "aria-selected": on ? "true" : "false",
       "data-key": "fl-" + s.name,
       onclick: () => {
+        // Opened as the whole page, a session starts at its top, and closing it goes back to
+        // where the list was (fleetInspector's close).
+        const whole = !on && STACKED.matches;
+        if (whole) ui.fleetScroll = content ? content.scrollTop : 0;
         ui.fleetSel = on ? null : s.name;
         render();
+        if (whole && content) content.scrollTop = 0;
       },
     },
     h("span", { class: "fx-who" }, avatar(s.name), h("span", { class: "fx-who-text" }, h("span", { class: "fx-name truncate" }, s.name), h("span", { class: "fx-muted truncate" }, sub))),
@@ -2554,8 +2563,11 @@ function fleetInspector(name, need) {
   ].filter(Boolean);
   const direct = ui.messages.filter((m) => m.toKind === "session" && (fromName(m) === name || toName(m) === name)).sort((a, b) => b.sortAt - a.sortAt);
   const close = () => {
+    const back = ui.fleetScroll;
     ui.fleetSel = null;
+    ui.fleetScroll = null;
     render();
+    if (STACKED.matches && back != null && content) content.scrollTop = back;
   };
   return [
     h(
