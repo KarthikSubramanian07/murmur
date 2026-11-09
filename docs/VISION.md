@@ -1208,8 +1208,10 @@ still handles incompatible clients and daemons; release versions do not become a
 
 On restart the daemon leaves the page's address and token in `page.json` in its state directory.
 The new daemon, if it starts within two minutes, serves the page there, so an open tab reconnects
-and reloads onto the new version. If that port is taken, the page moves to a new port with a new
-token, since whatever took the port has been sent the old one, and the tab needs `mur ui` again.
+and reloads onto the new version. The reload waits while a person has text in a composer or a
+message that failed, since those live only in the page (#242). If that port is taken, the page moves
+to a new port with a new token, since whatever took the port has been sent the old one, and the tab
+needs `mur ui` again.
 
 The page shows a newer release above Settings in its sidebar (a dot on Settings on a phone), with
 the version in Settings: "Restart to update" while an installed update waits on the open page,

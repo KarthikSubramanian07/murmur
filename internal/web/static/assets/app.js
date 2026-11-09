@@ -32,6 +32,7 @@ const ui = {
   tagging: new Set(), // the sessions whose tags are being changed, by their row key
   tagInput: null, // the row key of the session whose tag field is open
   restarting: 0, // when the restart onto an installed update was asked for
+  reloadDue: false, // a new daemon is serving, and this page should load its page when it can
   // A person's account (#242).
   setup: null, // the name being chosen: { name, error, busy, then }, then what to do once there is one
   picker: null, // the new-message list: { q, index }
@@ -3040,6 +3041,10 @@ let inflight = false;
 let polled = false;
 let scrolledAt = 0;
 
+function hasUnsent() {
+  return ui.outbox.length > 0 || [...composers.values()].some((el) => el.value.trim());
+}
+
 async function poll() {
   if (inflight) return;
   inflight = true;
@@ -3051,8 +3056,16 @@ async function poll() {
     const was = ui.state?.version;
     const now = state.version;
     if (was && now && ((was.daemon && now.daemon && was.daemon !== now.daemon) || (was.running && now.running && was.running !== now.running))) {
-      location.reload();
-      return;
+      ui.reloadDue = true;
+    }
+    // It waits for what someone is writing, and for a message that failed: a reload would lose both.
+    // This page goes on working with the new daemon until then.
+    if (ui.reloadDue) {
+      if (!hasUnsent()) {
+        location.reload();
+        return;
+      }
+      ui.restarting = 0;
     }
     for (const d of state.devices || []) {
       for (const s of d.sessions || []) learn(s.addr, s.name);
