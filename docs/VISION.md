@@ -629,7 +629,8 @@ tag with behaviour, below.
 - **Kept by the session's name**, in `state.json`: a tag lasts across MCP restarts, resumes, daemon
   restarts and the session finding its T3 thread (its key changes then, its name doesn't), until the
   session or a human takes it off. A change from another device for a session that hasn't
-  registered again yet, after its daemon restarted, is kept for it the same way. At the cap of 12, a
+  registered again yet, after its daemon restarted, is kept for it the same way, however long the
+  daemon was down: a skip of the backlog still reads its `tags` events (#230). At the cap of 12, a
   human's tags are kept first, then the session's, then derived ones. Nothing expires.
 - **Search.** `who` takes tags and lists only the sessions with all of them; `-tag` leaves out those
   with it, and a `*` at the end matches any tag that starts so (`model:opus*`). The CLI has no `who`,
@@ -684,8 +685,9 @@ evidence is in #19.
     `PostToolUseFailure` and `UserPromptSubmit`, not `SessionStart`, so a session moves at the
     first tool call or prompt after the switch, not at the switch. Until then it shows its old name, and what is sent to that reaches it.
   - *Subagents.* A subagent's hooks carry its parent session's `session_id` and `CLAUDE_PID`,
-    with `agent_id` set, so a subagent's tool calls don't move the session (seen on 2.1.312,
-    2026-10-29).
+    with `agent_id` set (seen on 2.1.312, 2026-10-29). One started before a `/clear` may still
+    report the conversation the session left (inferred, not seen; #231), so a subagent's hooks find
+    the session by its process and never move it.
 - **Under T3 the session is the thread, not the provider's session under it.** The Claude
   session ID under one thread changes when the user switches Claude accounts, and has gone
   A → B → A. T3 gives MCP servers and hooks no way to learn the thread ID. Tyler decided on
@@ -938,8 +940,9 @@ A body past the limit is cut, as in `inbox`.
     every message in front of it mid-task, at full length, whether or not it matters to the task.
     A message given whole counts as delivered once the daemon answers the hook, so a hook that gave
     up waiting (3 s) just before the answer came loses it. One that was handed to T3 or the socket
-    before, and may be there already, gets the subject only. Where the hook doesn't run, the
-    setting does nothing.
+    before, and may be there already, gets the subject only, as does a hook from before the
+    setting, which prints only subjects: its request doesn't say it prints whole messages, and the
+    message stays in the inbox (#229). Where the hook doesn't run, the setting does nothing.
   - *The count* is shown with each new message, and again only when it changes, not after every
     tool call. A fall to none isn't told: the agent read them itself.
   - *Held however long.* A message that came during a turn goes in at its end whatever its age:
