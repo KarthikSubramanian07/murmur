@@ -247,8 +247,18 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   | Permission for its tools | `mcp__murmur` in `permissions.allow` of `settings.json` next to it | user |
   | The MCP server, for Codex | a `[mcp_servers.murmur]` table in `$CODEX_HOME/config.toml`, else `~/.codex/config.toml`: the command, `args = ["mcp", "--agent", "codex"]` and `default_tools_approval_mode = "approve"` | user |
   | The MCP server, for OpenCode, Muse Code, Pi and Grok | see "Other agents", below | user |
+  | The skills, `murmur` and `murmur-pro` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode and Pi; Muse Code and Grok document no skills folder (2026-11-08) | user |
   | The hook, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit` and `Stop` (`setup.HookEvents`) | `.claude/settings.local.json` in each worktree of the clone, kept out of `git status` through the clone's `info/exclude` | clone |
   | The daemon | started, if none is running | clone |
+
+  The skills carry the judgment the tool descriptions don't: when Murmur is worth a turn, and how
+  to coordinate over several messages (#206). A SKILL.md of the same name without the skills'
+  marker comment is the user's own, and is left alone; one with it is rewritten to this binary's.
+  A leave leaves them, like the server, and says how to delete them. Unlike the server, they cost
+  every session of those agents their descriptions' worth of context in any repo, so each
+  description starts by saying it applies only where the repo has the Murmur section. The folders
+  are from each agent's documentation, not tried in a session (2026-11-08). OpenCode also reads
+  `~/.claude/skills`, so with Claude Code beside it it sees each skill twice, the same text.
 
   A client that isn't installed is skipped. Each file is edited, never replaced: other servers,
   settings and comments stay, and a form it can't edit safely (a dotted `mcp_servers.murmur.command`

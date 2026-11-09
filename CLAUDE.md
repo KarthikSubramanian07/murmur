@@ -50,6 +50,10 @@ Tyler's rule: no new label without a reason.
 
 Tyler's rules:
 
+- Keep what agents and users outside this repo read current and lean: the skills
+  (`internal/skills`), `docs/agents/`, the MCP server's instructions and tool descriptions, and the
+  README. A change to behavior updates them in the same PR. They load into other people's agents,
+  next to real work, so each line earns its place: cut what an agent doesn't need to act.
 - Commit messages and PR bodies explain *why*.
 - Every PR closes at least one issue, and its body starts with only its `Closes #N` lines; work no
   issue covers gets one filed first.
