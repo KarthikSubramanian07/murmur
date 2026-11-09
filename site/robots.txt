@@ -1,0 +1,5 @@
+# Cloudflare puts its managed content-signals block above this file when that setting is on.
+User-agent: *
+Allow: /
+
+Sitemap: https://murmur.afig.dev/sitemap.xml
