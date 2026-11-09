@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,13 +26,14 @@ import (
 )
 
 // A server that starts a daemon runs this binary as `mur daemon --git-dir DIR`, which under test is
-// the test binary. Here it only notes in DIR that it was asked to, and exits: a test of a server
-// that must not start one looks for that note.
+// the test binary. Here it only notes in DIR that it was asked to, with its PID, and exits: a test
+// of a server that must not start one looks for that note, and each test's cleanup waits for the
+// process to be gone (see waitSpawned).
 func TestMain(m *testing.M) {
 	if len(os.Args) > 3 && os.Args[1] == "daemon" && os.Args[2] == "--git-dir" {
 		f, err := os.OpenFile(filepath.Join(os.Args[3], spawnNote), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err == nil {
-			f.WriteString("spawned\n")
+			fmt.Fprintf(f, "spawned %d\n", os.Getpid())
 			f.Close()
 		}
 		return
@@ -250,6 +253,9 @@ func TestReconnectBringsTheLiveClaudeID(t *testing.T) {
 func repo(t *testing.T, marked bool, f *fakeDaemon) join.Place {
 	t.Helper()
 	dir := t.TempDir()
+	// Registered after the temporary directory and before the server (open), so it runs after the
+	// server has stopped and before the directory is removed.
+	t.Cleanup(func() { waitSpawned(t, filepath.Join(dir, ".git")) })
 	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v\n%s", err, out)
 	}
@@ -327,6 +333,46 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 
 // settle gives a server that might wrongly act time to do it.
 func settle() { time.Sleep(400 * time.Millisecond) }
+
+// waitSpawned waits for every daemon a server started for the clone to have run and exited. A
+// daemon runs in the clone's top directory, and on Windows a directory can't be removed while a
+// process works in it (#116). The log file is created just before a start, so where it exists a
+// daemon was started, and its note, with its PID, comes once it has run. The server has stopped by
+// now, and Serve waits for a start in progress, so no other start can follow.
+func waitSpawned(t *testing.T, gitDir string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(gitDir, "murmur", "daemon.log")); err != nil {
+		return
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	var pids []int
+	for len(pids) == 0 {
+		if time.Now().After(deadline) {
+			t.Errorf("a daemon was started for %s and never ran", gitDir)
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+		b, _ := os.ReadFile(filepath.Join(gitDir, spawnNote))
+		for _, line := range strings.Split(string(b), "\n") {
+			if pid, err := strconv.Atoi(strings.TrimPrefix(line, "spawned ")); err == nil {
+				pids = append(pids, pid)
+			}
+		}
+	}
+	for _, pid := range pids {
+		p, err := os.FindProcess(pid)
+		if err != nil {
+			continue // on Windows, the process has exited already
+		}
+		exited := make(chan struct{})
+		go func() { p.Wait(); close(exited) }()
+		select {
+		case <-exited:
+		case <-time.After(time.Until(deadline)):
+			t.Errorf("the daemon started for %s (pid %d) is still running", gitDir, pid)
+		}
+	}
+}
 
 // spawned reports whether anything tried to start a daemon for the clone: the note the test binary
 // leaves when run as one, or the log file the client creates just before it does.

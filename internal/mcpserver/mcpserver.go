@@ -85,9 +85,22 @@ func Serve(ctx context.Context, opt Options, t mcp.Transport) error {
 		sopts.Instructions = Instructions // fixed at initialize; the repo's own section says the rest
 	}
 	s.srv = mcp.NewServer(&mcp.Implementation{Name: brand.MCPServer, Version: opt.Version}, sopts)
+	// The work below can be starting a daemon (on Windows through WMI, which takes seconds) with the
+	// clone's daemon.log open. Serve doesn't return while it runs, so a caller that removes the
+	// clone once Serve has returned, as a test does with its temporary one, finds nothing using it.
+	ctx, cancel := context.WithCancel(ctx)
+	defer func() {
+		s.mu.Lock()
+		s.closed = true
+		s.mu.Unlock()
+		cancel()
+		s.bg.Wait()
+	}()
 	if located {
 		s.sync(ctx)
-		go s.watch(ctx)
+		s.mu.Lock()
+		s.goBG(func() { s.watch(ctx) })
+		s.mu.Unlock()
 	}
 	return s.srv.Run(ctx, t)
 }
@@ -216,6 +229,30 @@ type server struct {
 	// the session; link is nil then. lctx is the context they run in.
 	links map[string]*sessionLink
 	lctx  context.Context
+	// bg counts the goroutines that watch the repo and keep links registered; Serve waits for them
+	// before it returns. closed, set as Serve stops, keeps any more from starting.
+	bg     sync.WaitGroup
+	closed bool
+}
+
+// goBGUnlocked is goBG for a caller that doesn't hold s.mu: a link's own goroutines.
+func (s *server) goBGUnlocked(f func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.goBG(f)
+}
+
+// goBG runs f as background work Serve waits for. s.mu must be held, so it never starts once
+// Serve has begun to wait.
+func (s *server) goBG(f func()) {
+	if s.closed {
+		return
+	}
+	s.bg.Add(1)
+	go func() {
+		defer s.bg.Done()
+		f()
+	}()
 }
 
 // sessionLink is one session's link in a server that serves many.
@@ -243,7 +280,7 @@ var sharedIdle = 30 * time.Minute
 func (s *server) activate(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.on {
+	if s.on || s.closed {
 		return
 	}
 	c := &client.Client{GitDir: s.place.GitDir, Spawn: true, MaySpawn: s.place.Active}
@@ -256,15 +293,17 @@ func (s *server) activate(ctx context.Context) {
 		s.tools(s.srv)
 		return
 	}
-	l := s.newLink(c, helloFor(s.opt.Agent, s.cwd))
+	l := s.newLink(lctx, c, helloFor(s.opt.Agent, s.cwd))
 	s.link = l
 	s.tools(s.srv)
-	go l.run(lctx)
+	s.goBG(func() { l.run(lctx) })
 }
 
-// newLink makes the link for a registration.
-func (s *server) newLink(c *client.Client, h proto.Hello) *link {
-	l := &link{c: c, hello: h, native: h.Native, changed: make(chan struct{}), allowed: s.place.Active, seek: currentSeek()}
+// newLink makes the link for a registration, which runs in ctx. Its goroutines are background work
+// Serve waits for.
+func (s *server) newLink(ctx context.Context, c *client.Client, h proto.Hello) *link {
+	l := &link{c: c, hello: h, native: h.Native, changed: make(chan struct{}), allowed: s.place.Active, seek: currentSeek(),
+		ctx: ctx, goBG: s.goBGUnlocked}
 	l.findInT3()
 	return l
 }
@@ -280,7 +319,7 @@ func (s *server) sessionLinkFor(req *mcp.CallToolRequest) *link {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.links == nil {
+	if s.links == nil || s.closed {
 		return nil
 	}
 	now := time.Now()
@@ -298,10 +337,10 @@ func (s *server) sessionLinkFor(req *mcp.CallToolRequest) *link {
 	if native != "" {
 		h.ID, h.Native = nativeID(native), native
 	}
-	l := s.newLink(s.c, h)
 	ctx, cancel := context.WithCancel(s.lctx)
+	l := s.newLink(ctx, s.c, h)
 	s.links[native] = &sessionLink{l: l, cancel: cancel, last: now}
-	go l.run(ctx)
+	s.goBG(func() { l.run(ctx) })
 	return l
 }
 
@@ -379,7 +418,14 @@ func (s *server) noteMeta(ctx context.Context, req *mcp.CallToolRequest) {
 		return
 	}
 	if id, _ := req.Params.GetMeta()["threadId"].(string); id != "" {
-		l.learnNative(context.WithoutCancel(ctx), id)
+		// What learnNative starts outlives the call, but not the link: it can reach the daemon, and
+		// even start one, so it ends with the link and Serve waits for it.
+		if l.ctx != nil {
+			ctx = l.ctx
+		} else {
+			ctx = context.WithoutCancel(ctx)
+		}
+		l.learnNative(ctx, id)
 	}
 }
 
@@ -483,6 +529,20 @@ type link struct {
 	// writes the line; nil writes it to standard error.
 	routeWarned bool
 	logf        func(format string, args ...any)
+	// ctx is the context the link runs in, and goBG starts its goroutines as work Serve waits for:
+	// a route update can reach the daemon, and so start one. Both are nil in a link a test makes;
+	// goroutines are then plain ones.
+	ctx  context.Context
+	goBG func(func())
+}
+
+// spawn runs f in a goroutine of the link's (see goBG).
+func (l *link) spawn(f func()) {
+	if l.goBG != nil {
+		l.goBG(f)
+		return
+	}
+	go f()
 }
 
 func (l *link) set(up bool, err error) {
@@ -589,7 +649,7 @@ func (l *link) startSeek(ctx context.Context) {
 	l.seeking = true
 	seek := l.seek
 	l.mu.Unlock()
-	go func() {
+	l.spawn(func() {
 		defer func() {
 			l.mu.Lock()
 			l.seeking = false
@@ -609,7 +669,7 @@ func (l *link) startSeek(ctx context.Context) {
 				return
 			}
 		}
-	}()
+	})
 }
 
 // tellRoute gives the daemon the route as it is now, if the session is registered. A server that
@@ -677,16 +737,16 @@ func (l *link) learnNative(ctx context.Context, id string) {
 			l.hello.CodexHome = home
 			l.mu.Unlock()
 		}
-		go l.tellRoute(ctx)
+		l.spawn(func() { l.tellRoute(ctx) })
 		return
 	}
-	go func() {
+	l.spawn(func() {
 		if l.lookupThread(ctx, 3*time.Second); l.threadKnown() {
 			l.tellRoute(ctx)
 		} else {
 			l.startSeek(ctx)
 		}
-	}()
+	})
 }
 
 // wait returns the session ID once registered, or the last error after timeout.
@@ -770,7 +830,7 @@ func (l *link) run(ctx context.Context) {
 		stale := l.hello.Route != h.Route
 		l.mu.Unlock()
 		if stale {
-			go l.tellRoute(ctx)
+			l.spawn(func() { l.tellRoute(ctx) })
 		}
 		done := make(chan struct{})
 		go func() {
