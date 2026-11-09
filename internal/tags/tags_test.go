@@ -284,3 +284,32 @@ func TestARemovalLeavingNoMarkIsKept(t *testing.T) {
 		t.Errorf("tags = %v, want none", got)
 	}
 }
+
+// human is Murmur's to give, from a person's address (#267): nobody types it on or off, and nothing
+// read off the bus or kept from before carries it.
+func TestHumanIsMurmursToGive(t *testing.T) {
+	if _, err := Clean([]string{"reviewing", " Human "}); err == nil {
+		t.Error("Clean took human")
+	}
+	var st State
+	if err := st.SetSelf([]string{"human"}, nil); err == nil || len(st.Self) != 0 {
+		t.Errorf("a session set human: %v %v", err, st.Self)
+	}
+	if err := st.SetHuman(nil, nil, []string{"human"}, "ada", time.Now()); err == nil {
+		t.Error("a human removed human")
+	}
+	if got := CleanRead([]Tag{{Name: Human, Src: SrcDerived}, {Name: "reviewing"}}); Has(got, Human) || !Has(got, "reviewing") {
+		t.Errorf("CleanRead: %+v", got)
+	}
+	kept := Effective([]string{"human", "reviewing"}, nil, map[string]Mark{Human: {On: true}})
+	if Has(kept, Human) || !Has(kept, "reviewing") {
+		t.Errorf("Effective: %+v", kept)
+	}
+	if got := Person(); len(got) != 1 || got[0] != (Tag{Name: Human, Src: SrcDerived}) {
+		t.Errorf("Person: %+v", got)
+	}
+	f, _ := ParseFilter([]string{"human"})
+	if !f.Match(Person()) || f.Match(nil) {
+		t.Error("who human doesn't find people")
+	}
+}

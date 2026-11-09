@@ -7,7 +7,7 @@
 // One tag carries behaviour: do-not-disturb, set by the session or a human, keeps the session's
 // messages queued in its inbox. None is handed over as a turn or delivered by the hook until the
 // session reads its inbox or the tag comes off. A tag under model: names the model the session runs, and a
-// session has at most one.
+// session has at most one. One is Murmur's alone: human, on a person's account (#267).
 package tags
 
 import (
@@ -18,6 +18,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/a-Fig/murmur/internal/brand"
 )
 
 const (
@@ -26,6 +28,11 @@ const (
 	// delivered when the session reads its inbox, or by whichever route applies once the tag comes
 	// off.
 	DoNotDisturb = "do-not-disturb"
+	// Human marks a person's account on the page (#242), at a device's address device/human, and
+	// nothing else: an agent at a glance can tell who it is talking to (#267). It is worked out from
+	// the address, never kept or read off the bus, so no session can take it and nobody can take it
+	// off. Clean refuses it, CleanRead and Effective drop it, and Person gives it.
+	Human = "human"
 	// ModelPrefix starts the tag naming the session's model. A session has at most one.
 	ModelPrefix = "model:"
 	// MaxLen caps a tag's length, and MaxPerSession how many a session has.
@@ -216,7 +223,11 @@ func (st *State) pick(f, t string, at time.Time) {
 	st.Picked[f] = at
 }
 
-// Clean reads a list of tags as typed, each normalized. It fails on the first that isn't a tag.
+// Person is the tags of a person's account: human, worked out from the address.
+func Person() []Tag { return []Tag{{Name: Human, Src: SrcDerived}} }
+
+// Clean reads a list of tags as typed, each normalized. It fails on the first that isn't a tag, or
+// that is Murmur's to give (Human).
 func Clean(in []string) (names []string, err error) {
 	for _, raw := range in {
 		t := Normalize(raw)
@@ -225,6 +236,9 @@ func Clean(in []string) (names []string, err error) {
 		}
 		if !Valid(t) {
 			return nil, fmt.Errorf("%q isn't a tag: a tag is up to %d lowercase letters, digits and . _ : / -, starting with a letter or a digit", raw, MaxLen)
+		}
+		if t == Human {
+			return nil, fmt.Errorf("%s is %s's to give: it marks a person's account, and nobody sets or removes it", Human, brand.Product)
 		}
 		if !slices.Contains(names, t) {
 			names = append(names, t)
@@ -372,6 +386,7 @@ func Effective(self, derived []string, human map[string]Mark) []Tag {
 			delete(src, t)
 		}
 	}
+	delete(src, Human) // a session's, or a human's mark, kept from before it was Murmur's (see Human)
 	out := make([]Tag, 0, len(src))
 	for t, s := range src {
 		out = append(out, Tag{Name: t, Src: s})
@@ -397,11 +412,12 @@ func Sort(ts []Tag) {
 }
 
 // CleanRead holds tags read from the bus to what Murmur writes: valid names from a known source,
-// none repeated, at most MaxPerSession. Anyone who can push can write the bus.
+// none repeated, at most MaxPerSession, and never Human, which a reader works out from the address.
+// Anyone who can push can write the bus.
 func CleanRead(in []Tag) []Tag {
 	var out []Tag
 	for _, t := range in {
-		if !Valid(t.Name) || Has(out, t.Name) || len(out) >= MaxPerSession {
+		if !Valid(t.Name) || t.Name == Human || Has(out, t.Name) || len(out) >= MaxPerSession {
 			continue
 		}
 		switch t.Src {

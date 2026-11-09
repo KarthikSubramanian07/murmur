@@ -10,6 +10,7 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // lookup (#21) gathers what the daemon knows about one session: what presence shows of anyone's,
@@ -116,6 +117,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 			det.LastActive, det.Worktree, det.ClientSession = s.lastActive, s.worktree, s.claudeSession
 		} else if sess == bus.PersonSession && d.st.Person != "" {
 			det.Name, det.Agent, det.Started, det.LastActive = d.st.Person, bus.AgentPerson, d.st.PersonSince, d.lastPage
+			det.Tags = tags.Person()
 			det.Running, det.Reachable = true, true
 		} else {
 			det.Name = d.st.SessionNames[sess]
