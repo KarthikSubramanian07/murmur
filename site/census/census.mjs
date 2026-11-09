@@ -34,8 +34,16 @@ function git(dir, args, opts = {}) {
 
 const dayOf = t => {
   const ms = Date.parse(t);
-  return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : null;
+  const d = Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : null;
+  return d && /^\d{4}-\d\d-\d\d$/.test(d) ? d : null;
 };
+
+// A time on the bus or the branch is the writer's clock's, and can say anything from year 0 to 9999.
+// A day after tomorrow (UTC) isn't believed: a clock can run a little fast, but a day in the future
+// would keep a repo active and its people new for ever. Nor is a bus day before EPOCH, when there
+// was no bus yet. The site refuses both (src/repos.js has the same EPOCH).
+const EPOCH = '2026-10-01';
+const latestDay = now => new Date(now + 864e5).toISOString().slice(0, 10);
 
 // Each commit on ref, newest first: its hash, committer date and message.
 function log(dir, ref) {
@@ -78,7 +86,15 @@ const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
 //
 // A session counts once, on the first day it started: a daemon that restarts announces its running
 // sessions again under the same IDs.
-export function count(dir) {
+//
+// A record is dated by its `at`, or by its commit's date when `at` isn't believable, and isn't
+// counted when neither is.
+export function count(dir, now = Date.now()) {
+  const latest = latestDay(now);
+  const busDay = t => {
+    const d = dayOf(t);
+    return d && d >= EPOCH && d <= latest ? d : null;
+  };
   const refs = git(dir, ['for-each-ref', '--format=%(refname)', 'refs/murmur/']).split('\n').filter(Boolean);
   const days = new Map(); // day -> { devices: Set, sessions, messages, records }
   const day = d => {
@@ -98,7 +114,7 @@ export function count(dir) {
       seen.add(c.hash);
       const r = record(c.msg);
       if (!r) continue;
-      const d = dayOf(r.at) || dayOf(c.date);
+      const d = busDay(r.at) || busDay(c.date);
       if (!d) continue;
       devices.add(device);
       const t = day(d);
@@ -128,13 +144,19 @@ export function count(dir) {
 }
 
 // Everyone who has committed to the default branch, with the day of their first commit there.
-export function contributors(dir) {
+// A commit dated after tomorrow is on the branch all the same, so its author counts, as of today;
+// the site keeps the earliest day it is sent. Old dates are believed: people commit for years
+// before a repo takes up Murmur.
+export function contributors(dir, now = Date.now()) {
+  const today = new Date(now).toISOString().slice(0, 10), latest = latestDay(now);
   const out = git(dir, ['log', '--format=%aE%x00%aN%x00%aI', 'FETCH_HEAD']);
   const first = new Map();
   for (const line of out.split('\n')) {
     const [email, name, at] = line.split('\x00');
     if (!at || /\[bot\]/i.test(name) || /\[bot\]@/i.test(email)) continue;
-    const id = hash(identity(email, name)), d = dayOf(at);
+    const id = hash(identity(email, name));
+    let d = dayOf(at);
+    if (d > latest) d = today;
     if (d && (!first.has(id) || d < first.get(id))) first.set(id, d);
   }
   return [...first].map(([id, f]) => ({ id, first: f }));

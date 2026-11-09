@@ -3,8 +3,12 @@
 // `node --test site/test/census.test.mjs`; it needs git, and nothing installed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { timingSafeEqual } from 'node:crypto';
-import { census as handle } from '../src/repos.js';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { devNull, tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { census as handle, repoNumbers } from '../src/repos.js';
 import { recordingD1, sqliteD1 } from './d1.mjs';
 
 // The Workers runtime adds this to Web Crypto; node has it only in node:crypto.
@@ -12,7 +16,10 @@ crypto.subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
 
 process.env.CENSUS_SITE = 'https://census.invalid';
 process.env.CENSUS_KEY = 'test-key';
-const { main } = await import('../census/census.mjs');
+// The census's git, and the tests', read none of the developer's own config.
+process.env.GIT_CONFIG_GLOBAL = devNull;
+process.env.GIT_CONFIG_NOSYSTEM = '1';
+const { main, count, contributors } = await import('../census/census.mjs');
 
 const today = new Date().toISOString().slice(0, 10);
 const daysAgo = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
@@ -120,7 +127,8 @@ test("a big repo's writes go in batches D1 can finish, with its totals last", as
 test('a POST with more device-days than the site keeps is refused', async () => {
   const db = recordingD1(['github.com/big/repo']);
   const devices = Array.from({ length: 1000 }, (_, i) => hex(i));
-  const days = Array.from({ length: 101 }, (_, i) => ({ day: daysAgo(i + 1), sessions: 0, messages: 0, records: 0, devices }));
+  // The same day, again and again: there aren't yet 101 days since Murmur began.
+  const days = Array.from({ length: 101 }, () => ({ day: daysAgo(1), sessions: 0, messages: 0, records: 0, devices }));
   const res = await post(db, counts('github.com/big/repo', { days }));
   assert.equal(res.status, 400);
   assert.equal(await res.text(), "Not counts: the days' devices.\n");
@@ -140,4 +148,96 @@ test('the batched writes land in SQLite as D1 would keep them', { skip: !sqlite 
   assert.equal(one('SELECT COUNT(*) AS n FROM device_days').n, 1);
   assert.deepEqual({ ...one('SELECT sessions, messages, records, first_day, last_day FROM repo_census') },
     { sessions: 1, messages: 2, records: 3, first_day: daysAgo(1), last_day: daysAgo(1) });
+});
+
+// A bare repo in a temporary directory, and a way to commit to it as a device or a person would,
+// with the dates given.
+function repo(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'census-test-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (args, { input = '', date, who = 'Dev <dev@example.com>' } = {}) => {
+    const [, name, email] = /^(.*) <(.*)>$/.exec(who);
+    const env = { ...process.env, GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: email, GIT_COMMITTER_NAME: name, GIT_COMMITTER_EMAIL: email };
+    if (date) env.GIT_AUTHOR_DATE = env.GIT_COMMITTER_DATE = date;
+    return execFileSync('git', ['-C', dir, ...args], { input, encoding: 'utf8', env, stdio: ['pipe', 'pipe', 'pipe'] });
+  };
+  git(['init', '-q', '--bare']);
+  const tree = git(['hash-object', '-t', 'tree', '-w', '--stdin']).trim();
+  const tips = new Map();
+  const commit = (ref, message, opts) => {
+    const parent = tips.get(ref);
+    const sha = git(['commit-tree', tree, ...(parent ? ['-p', parent] : [])], { ...opts, input: message }).trim();
+    git(['update-ref', ref, sha]);
+    tips.set(ref, sha);
+    return sha;
+  };
+  return { dir, commit };
+}
+const event = r => `event\n\n${JSON.stringify(r)}\n`;
+const NOW = Date.parse('2026-11-09T12:00:00Z');
+
+test("a bus time after tomorrow, or before Murmur, gives way to its commit's date, and neither is counted", t => {
+  const { dir, commit } = repo(t);
+  const mesh = 'refs/murmur/mesh/dev1';
+  commit(mesh, event({ type: 'message', at: '2026-11-05T10:00:00Z' }), { date: '2026-11-05T10:00:00Z' });
+  commit(mesh, event({ type: 'message', at: '9999-12-31T00:00:00Z' }), { date: '2026-11-06T00:00:00Z' });
+  commit(mesh, event({ type: 'message', at: '2020-01-01T00:00:00Z' }), { date: '2026-11-07T00:00:00Z' });
+  // A clock a few hours fast is believed.
+  commit(mesh, event({ type: 'message', at: '2026-11-10T20:00:00Z' }), { date: '2026-11-10T20:00:00Z' });
+  commit(mesh, event({ type: 'message', at: '9999-12-31T00:00:00Z' }), { date: '2099-01-01T00:00:00Z' });
+  // A year JavaScript can read but the site's YYYY-MM-DD can't hold.
+  commit(mesh, event({ type: 'message', at: '+275760-09-13T00:00:00Z' }), { date: '2026-11-08T00:00:00Z' });
+  // A device whose every time is in the future was never seen.
+  commit('refs/murmur/presence/dev2', event({ owner: 'Someone', at: '9999-12-31T00:00:00Z' }), { date: '2099-01-01T00:00:00Z' });
+
+  const c = count(dir, NOW);
+  assert.deepEqual(c.days.map(d => [d.day, d.messages]), [['2026-11-05', 1], ['2026-11-06', 1], ['2026-11-07', 1], ['2026-11-08', 1], ['2026-11-10', 1]]);
+  assert.deepEqual(c.totals, { sessions: 0, messages: 5, records: 5, first_day: '2026-11-05', last_day: '2026-11-10' });
+  assert.equal(c.devices.length, 1);
+});
+
+test("a commit dated after tomorrow counts its author as of today; an old one is believed", t => {
+  const { dir, commit } = repo(t);
+  commit('refs/heads/main', 'one\n', { date: '2025-01-01T00:00:00Z', who: 'Ann <ann@example.com>' });
+  commit('refs/heads/main', 'two\n', { date: '2099-01-01T00:00:00Z', who: 'Bob <bob@example.com>' });
+  const tip = commit('refs/heads/main', 'three\n', { date: '2026-11-01T00:00:00Z', who: 'Ann <ann@example.com>' });
+  writeFileSync(join(dir, 'FETCH_HEAD'), `${tip}\t\tbranch 'main' of test\n`);
+  assert.deepEqual(contributors(dir, NOW).map(k => k.first).sort(), ['2025-01-01', '2026-11-09']);
+});
+
+test('the site refuses a day after tomorrow, and a bus day before Murmur, but not an old first commit', async () => {
+  const name = 'github.com/a/one';
+  const status = async c => {
+    const res = await post(recordingD1([name]), c);
+    return [res.status, (await res.text()).trim()];
+  };
+  const one = (day, contributors = []) => {
+    const c = counts(name, { days: [{ day, sessions: 0, messages: 1, records: 1, devices: [ID] }], contributors });
+    c.totals.first_day = c.totals.last_day = daysAgo(1);
+    return c;
+  };
+  assert.deepEqual(await status(one(daysAgo(-1))), [200, JSON.stringify({ ok: true, days: 1, devices: 1, contributors: 0 })]);
+  assert.deepEqual(await status(one(daysAgo(-2))), [400, 'Not counts: a day.']);
+  assert.deepEqual(await status(one('9999-12-31')), [400, 'Not counts: a day.']);
+  assert.deepEqual(await status(one('2026-09-30')), [400, 'Not counts: a day.']);
+  assert.deepEqual(await status(counts(name, { days: [{ day: '9999-12-31', sessions: 0, messages: 0, records: 0, devices: [] }] })), [400, 'Not counts: totals days.']);
+  assert.deepEqual(await status(one(daysAgo(1), [{ id: ID, first: '9999-12-31' }])), [400, 'Not counts: a contributor.']);
+  assert.equal((await status(one(daysAgo(1), [{ id: ID, first: '2001-02-03' }])))[0], 200);
+});
+
+test('rows dated after today make no repo active and no one new', { skip: !sqlite && 'no node:sqlite in this node' }, async () => {
+  const db = await sqliteD1();
+  const run = (sql, ...args) => db.sql.prepare(sql).run(...args);
+  run(`INSERT INTO repos (repo, name, first) VALUES ('github.com/a/one', 'github.com/a/one', ?1)`, daysAgo(30));
+  run(`INSERT INTO devices (repo, device, person) VALUES ('github.com/a/one', ?1, NULL)`, ID);
+  run(`INSERT INTO device_days (repo, day, device) VALUES ('github.com/a/one', '9999-12-31', ?1)`, ID);
+  run(`INSERT INTO contributors (repo, id, first) VALUES ('github.com/a/one', ?1, '9999-12-31')`, ID);
+  let n = await repoNumbers(db, 14);
+  assert.deepEqual([n.activeRepos, n.contributors, n.newContributors], [0, 0, 0]);
+
+  run(`INSERT INTO device_days (repo, day, device) VALUES ('github.com/a/one', ?1, ?2)`, today, ID);
+  run(`INSERT INTO contributors (repo, id, first) VALUES ('github.com/a/one', ?1, ?2)`, PERSON, today);
+  n = await repoNumbers(db, 14);
+  assert.deepEqual([n.activeRepos, n.contributors, n.newContributors], [1, 1, 1]);
+  assert.equal(n.repoList[0].week, 1);
 });

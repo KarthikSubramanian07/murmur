@@ -1340,6 +1340,12 @@ private, or deleted) keeps the counts it had. One whose counts the site refuses 
 day's run fails after every other repo has been sent, so it shows in Actions without leaving the
 repos after it, alphabetically, uncounted.
 
+A time on the bus or a branch is its writer's clock, and can say any year up to 9999. A day after
+tomorrow (UTC) is never believed, since one would keep a repo active and its people new for ever,
+and nor is a bus day before 2026-10-01, when there was no bus. A record with such a time is dated by
+its commit, or isn't counted. A commit dated in the future counts its author as of the day it is
+read. The site refuses such days, and the stats count nothing after today.
+
 `/stats` shows those repos and the counts over time; it needs a key: Tyler's, or one he gives an
 agent, which reads it as markdown at `/stats/report.md` or JSON at `/stats/data` (#150).
 

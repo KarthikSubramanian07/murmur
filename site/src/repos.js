@@ -12,6 +12,8 @@ const DAY = /^\d{4}-\d\d-\d\d$/;
 const ID = /^[0-9a-f]{16}$/;
 // A repo's last 7 days, for "active".
 const WEEK = 7;
+// The first day a bus could have anything on it: Murmur began on 2026-10-26.
+const EPOCH = '2026-10-01';
 // D1's limits (developers.cloudflare.com/d1/platform/limits, updated 2026-10-30): 100 bound values a
 // statement; a whole db.batch() must finish within 30 seconds; and a Worker request may make 1,000
 // queries (50 on the Free plan), a batch counting as one. A census POST at the most invalid() takes
@@ -93,18 +95,24 @@ export async function census(request, env) {
 }
 
 // What is wrong with a census POST's body, or "" if nothing is.
+//
+// No day may be after tomorrow (UTC): a day in the future would keep a repo active and its people
+// new for ever. Nor may a bus day be before EPOCH, when there was no bus. A contributor's first
+// commit can be years before that. The census dates what it reads the same way (census.mjs).
 function invalid(c) {
+  const latest = addDays(new Date().toISOString().slice(0, 10), 1);
   const count = n => Number.isSafeInteger(n) && n >= 0;
-  const day = d => typeof d === 'string' && DAY.test(d) && !Number.isNaN(Date.parse(d));
+  const day = d => typeof d === 'string' && DAY.test(d) && !Number.isNaN(Date.parse(d)) && d <= latest;
+  const busDay = d => day(d) && d >= EPOCH;
   const id = v => typeof v === 'string' && ID.test(v);
   if (!c || typeof c !== 'object') return 'no object';
   if (typeof c.repo !== 'string' || !REPO.test(c.repo)) return 'repo';
   const t = c.totals;
   if (!t || !['sessions', 'messages', 'records'].every(k => count(t[k]))) return 'totals';
-  if (!(t.first_day === null || day(t.first_day)) || !(t.last_day === null || day(t.last_day))) return 'totals days';
+  if (!(t.first_day === null || busDay(t.first_day)) || !(t.last_day === null || busDay(t.last_day))) return 'totals days';
   if (!Array.isArray(c.days) || c.days.length > 3660) return 'days';
   for (const d of c.days) {
-    if (!d || !day(d.day) || !['sessions', 'messages', 'records'].every(k => count(d[k]))) return 'a day';
+    if (!d || !busDay(d.day) || !['sessions', 'messages', 'records'].every(k => count(d[k]))) return 'a day';
     if (!Array.isArray(d.devices) || d.devices.length > 1000 || !d.devices.every(id)) return "a day's devices";
   }
   // A device on a day is a row, so without this a POST could carry 3,660,000 of them.
@@ -138,10 +146,10 @@ export async function repoNumbers(db, days) {
          COALESCE(c.sessions, 0) AS sessions, COALESCE(c.messages, 0) AS messages, COALESCE(c.records, 0) AS records,
          MIN(r.first, COALESCE(c.first_day, r.first)) AS start, c.last_day AS last, c.counted,
          (SELECT COUNT(*) FROM contributors k WHERE k.repo = r.repo) AS contributors,
-         (SELECT COUNT(DISTINCT d.day) FROM device_days d WHERE d.repo = r.repo AND d.day >= ?1) AS week
+         (SELECT COUNT(DISTINCT d.day) FROM device_days d WHERE d.repo = r.repo AND d.day BETWEEN ?1 AND ?2) AS week
        FROM repos r LEFT JOIN repo_census c ON c.repo = r.repo
        ORDER BY week DESC, records DESC, r.repo`,
-    ).bind(weekFrom),
+    ).bind(weekFrom, today),
     // Per repo per day: its active devices and the people behind them, and its counts.
     db.prepare(
       `WITH dd AS (
@@ -156,7 +164,12 @@ export async function repoNumbers(db, days) {
        ORDER BY k.day, k.repo`,
     ).bind(from, today),
     // Each contributor once, however many repos they are in, by the day of their first commit to any.
-    db.prepare(`SELECT first AS day, COUNT(*) AS n FROM (SELECT MIN(first) AS first FROM contributors GROUP BY id) GROUP BY first ORDER BY first`),
+    // Nothing after today counts, here or above: the site refuses later days now, but rows from
+    // before it did can't then make a repo active, or a person new, for ever.
+    db.prepare(
+      `SELECT first AS day, COUNT(*) AS n FROM (SELECT MIN(first) AS first FROM contributors GROUP BY id)
+       WHERE first <= ?1 GROUP BY first ORDER BY first`,
+    ).bind(today),
     db.prepare(`SELECT MAX(counted) AS at FROM repo_census`),
   ]);
 
