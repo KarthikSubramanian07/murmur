@@ -198,7 +198,7 @@
   .fx-tr { grid-template-columns: minmax(11rem, 1.2fr) 7rem minmax(12rem, 1.8fr) 5.5rem; }
   .fx-tr > :nth-child(4) { display: none; }
   .fx-sub-branch { display: flex; align-items: baseline; min-width: 0; }
-  .fx-status { -webkit-line-clamp: 3; }
+  .fx-tr .fx-status { -webkit-line-clamp: 3; } /* beats the 2-line rule below */
 }
 @container (max-width: 640px) {
   .fx-th { display: none; }
@@ -288,7 +288,9 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-sheet .fx-insp-head + .fx-meta { border-top: 0; padding-top: 0; }
 /* An empty note (a reachable device that isn't this one) takes no gap. */
 .fx-group-sub:empty { display: none; }
-/* Beside the table, the conversation list scrolls on its own, so the details above it and "All N in
-   its conversations" below it stay in view; on a short window the rail scrolls as a whole. */
-.fx-rail .fx-dms { flex: 1 1 auto; min-height: 7rem; overflow-y: auto; }
+/* Beside the table, a list long enough to need it scrolls on its own, with a thin scrollbar so it
+   shows that it does, keeping the details above it and "All N in its conversations" below it in
+   view; on a short window the rail scrolls as a whole. A short list keeps its own height. */
+.fx-rail .fx-dms { flex: 0 0 auto; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--fx-border-strong) transparent; }
+.fx-rail .fx-dms:has(> li:nth-child(3)) { flex: 1 1 auto; min-height: 7rem; }
 .fx-rail > .fx-btn { flex: none; }

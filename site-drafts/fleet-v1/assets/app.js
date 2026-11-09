@@ -243,6 +243,7 @@ function render() {
   content.replaceChildren(inner);
   root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, VARIANT === "g" && ui.view !== "settings" ? null : topbar(), content)));
   content.scrollTop = scroll;
+  fleetRailFit();
   [".fx-rail", ".fx-rail .fx-dms"].forEach((q, i) => {
     const el = root.querySelector(q);
     if (el) el.scrollTop = railScroll[i];
@@ -2226,7 +2227,23 @@ window.addEventListener("hashchange", () => {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && ui.token && ui.conn !== "denied") poll();
 });
-document.addEventListener("scroll", () => (scrolledAt = Date.now()), { capture: true, passive: true });
+document.addEventListener(
+  "scroll",
+  () => {
+    scrolledAt = Date.now();
+    fleetRailFit();
+  },
+  { capture: true, passive: true },
+);
+window.addEventListener("resize", () => fleetRailFit());
+
+// Fleet's rail is as tall as the window allows from where it is now: below the heading and toolbar
+// before you scroll, near the top once it sticks, with 1rem clear below. A fixed max-height either
+// ran past the window or left it half empty.
+function fleetRailFit() {
+  const rail = root.querySelector(".fx-rail");
+  if (rail) rail.style.maxHeight = Math.max(240, innerHeight - rail.getBoundingClientRect().top - 16) + "px";
+}
 NARROW.addEventListener("change", render);
 STACKED.addEventListener("change", () => {
   if (STACKED.matches && ui.view === "sessions" && ui.fleetSel && !history.state?.fleetPushed) {
