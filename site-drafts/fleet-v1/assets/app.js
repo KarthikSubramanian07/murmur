@@ -2070,9 +2070,11 @@ function go(view) {
 }
 
 function setView(view) {
-  if (view === "fleet") view = "sessions";
+  const [v, open] = view.split("/");
+  view = v === "fleet" ? "sessions" : v;
   ui.view = VIEWS.includes(view) ? view : VARIANT === "g" ? "messages" : "sessions";
   if (ui.view === "settings") loadSettings();
+  if (ui.view === "sessions") return fleetSetSel(fleetFromHash(open));
   render();
 }
 
@@ -2184,8 +2186,10 @@ function start() {
     last = "";
     polled = false;
   }
-  const want = location.hash.slice(1) === "fleet" ? "sessions" : location.hash.slice(1);
+  const [v, open] = location.hash.slice(1).split("/");
+  const want = v === "fleet" ? "sessions" : v;
   ui.view = VIEWS.includes(want) ? want : VARIANT === "g" ? "messages" : "sessions";
+  if (ui.view === "sessions") ui.fleetSel = fleetFromHash(open);
   render();
   if (!ui.token) return;
   if (ui.view === "settings") loadSettings();
@@ -2201,7 +2205,13 @@ document.addEventListener("visibilitychange", () => {
 });
 document.addEventListener("scroll", () => (scrolledAt = Date.now()), { capture: true, passive: true });
 NARROW.addEventListener("change", render);
-STACKED.addEventListener("change", render);
+STACKED.addEventListener("change", () => {
+  if (STACKED.matches && ui.view === "sessions" && ui.fleetSel && !history.state?.fleetPushed) {
+    history.replaceState(null, "", fleetHash(null));
+    history.pushState({ fleetPushed: true }, "", fleetHash(ui.fleetSel));
+  }
+  render();
+});
 setInterval(tick, 10000);
 start();
 
@@ -2341,11 +2351,11 @@ function fxDot(st) {
 function fxSeg(label, options, value, onPick) {
   return h(
     "div",
-    { class: "fx-seg", role: "radiogroup", "aria-label": label },
+    { class: "fx-seg", role: "group", "aria-label": label },
     options.map(([v, text, n]) =>
       h(
         "button",
-        { role: "radio", "aria-checked": value === v ? "true" : "false", class: value === v ? "on" : "", onclick: () => onPick(v) },
+        { "aria-pressed": value === v ? "true" : "false", class: value === v ? "on" : "", onclick: () => onPick(v) },
         text,
         n != null && h("span", { class: "fx-seg-n" + (n === 0 ? " zero" : "") }, n),
       ),
@@ -2595,19 +2605,19 @@ function fleetRow(d, s, need, on) {
       "aria-pressed": on ? "true" : "false",
       "data-key": "fl-" + s.name,
       onclick: (e) => {
-        // Opened as the whole page, a session starts at its top, and closing it goes back to
-        // where the list was (fleetInspector's close). Beside the table, opening or closing the
-        // rail changes the table's width and so its rows' heights; the clicked row stays put.
-        const whole = !on && STACKED.matches;
+        // Opened as the whole page, a session gets a history entry (fleetSetSel says how it
+        // opens). Beside the table, it only changes the address, and opening or closing the rail
+        // changes the table's width and so its rows' heights.
+        if (on) return fleetCloseAsked();
+        if (STACKED.matches) {
+          history.pushState({ fleetPushed: true }, "", fleetHash(s.name));
+          return fleetSetSel(s.name);
+        }
         const top = e.currentTarget.getBoundingClientRect().top;
-        if (whole) ui.fleetScroll = content ? content.scrollTop : 0;
-        ui.fleetSel = on ? null : s.name;
-        if (whole) history.pushState({ fleetSel: s.name }, "");
+        history.replaceState(history.state, "", fleetHash(s.name));
+        ui.fleetSel = s.name;
         render();
-        if (whole && content) {
-          content.scrollTop = 0;
-          root.querySelector(".fx-back")?.focus({ preventScroll: true });
-        } else if (content) {
+        if (content) {
           // Only when the row would otherwise leave the pane: moving it back to its old place
           // every time scrolled the heading and toolbar away whenever rows above it grew.
           const row = root.querySelector(`[data-key="fl-${CSS.escape(s.name)}"]`);
@@ -2649,23 +2659,40 @@ function fleetClose() {
   if (STACKED.matches && back != null && content) content.scrollTop = back;
   if (name) root.querySelector(`[data-key="fl-${CSS.escape(name)}"]`)?.focus({ preventScroll: true });
 }
-// Opened as the whole page, details have a history entry (fleetRow), so Back and a mouse's back
-// button do what "← All sessions" does; that button and Escape go back through it too.
-function fleetCloseAsked() {
-  if (history.state?.fleetSel) history.back(); // popstate below closes them
-  else fleetClose();
+// The open session is in the address, #sessions/<name>, so Back from its conversation, Forward
+// and a reload all find it. Opened as the whole page it has a history entry of its own
+// (fleetPushed), so Back and a mouse's back button do what "← All sessions" does; that button,
+// Escape and clicking the open row go back through the entry when there is one.
+function fleetHash(name) {
+  return location.pathname + location.search + "#sessions" + (name ? "/" + encodeURIComponent(name) : "");
 }
-window.addEventListener("popstate", (e) => {
-  if (ui.view !== "sessions") return;
-  const want = e.state?.fleetSel || null;
-  if (ui.fleetSel && !want) fleetClose();
-  else if (want && want !== ui.fleetSel && STACKED.matches) {
-    ui.fleetScroll = content ? content.scrollTop : 0;
-    ui.fleetSel = want;
-    render();
-    if (content) content.scrollTop = 0;
+function fleetFromHash(part) {
+  if (!part) return null;
+  try {
+    return decodeURIComponent(part);
+  } catch {
+    return null;
   }
-});
+}
+function fleetCloseAsked() {
+  if (history.state?.fleetPushed) return history.back(); // the hashchange closes them
+  history.replaceState(history.state, "", fleetHash(null));
+  fleetClose();
+}
+// Show the session the address names (or none): as the whole page it starts at its top, with
+// focus on the way back; closing returns to where the list was (fleetClose).
+function fleetSetSel(want) {
+  if (want === (ui.fleetSel || null)) return render();
+  if (!want) return fleetClose();
+  const whole = STACKED.matches;
+  if (whole && !ui.fleetSel) ui.fleetScroll = content ? content.scrollTop : 0;
+  ui.fleetSel = want;
+  render();
+  if (whole && content) {
+    content.scrollTop = 0;
+    root.querySelector(".fx-back")?.focus({ preventScroll: true });
+  }
+}
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !e.defaultPrevented && ui.view === "sessions" && ui.fleetSel) {
     e.preventDefault();
@@ -2697,6 +2724,8 @@ function fleetInspector(name, need) {
     ["Last active", t ? agoEl("span", "", t) : "–"],
   ].filter(Boolean);
   const owed = need?.msgs || [];
+  // Beside the table the rail has room for six; as the whole page, twenty.
+  const shown = STACKED.matches ? 20 : 6;
   const unanswered = new Set([...fleetNeeds(fleetRows()).values()].flatMap((n) => n.msgs));
   // Questions it owes, oldest first; then its own questions still waiting, oldest first; then the
   // rest, newest first.
@@ -2715,12 +2744,12 @@ function fleetInspector(name, need) {
     ),
     need && h("button", { class: "fx-insp-need", onclick: () => swOpenMessage(need.m) }, h("span", null, need.text(need.msgs.length === 1)), h("span", { class: "fx-insp-open" }, "Open the conversation →")),
     h("dl", { class: "fx-meta" }, meta.map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
-    h("h3", { class: "fx-h3" }, "Direct messages", h("span", { class: "fx-badge" }, direct.length)),
+    h("h3", { class: "fx-h3" }, "Direct messages", h("span", { class: "fx-badge" }, direct.length > shown ? shown + " of " + direct.length : direct.length)),
     direct.length
       ? h(
           "ul",
           { class: "fx-dms" },
-          direct.slice(0, 6).map((m) => {
+          direct.slice(0, shown).map((m) => {
             const out = fromName(m) === name;
             const waits = owed.includes(m);
             return h(
@@ -2749,7 +2778,7 @@ function fleetInspector(name, need) {
         },
       },
       icon("message"),
-      direct.length > 6 ? "All " + direct.length + " in its conversations" : "Open its conversations",
+      direct.length > shown ? "All " + direct.length + " in its conversations" : "Open its conversations",
     ),
   ];
 }
