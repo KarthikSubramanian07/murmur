@@ -228,7 +228,8 @@ func Inbox(r proto.Response) string {
 // has, so the first line says it is a teammate's agent and not the user, and the last says how to
 // reply and that doing so is optional. The sender's text is not wrapped or quoted: teammates'
 // agents are trusted in Murmur's model, and a message that reads as a request is meant to be acted
-// on.
+// on. The sender is described (its agent, whose machine) only in the first turn the session has
+// from it (m.Introduced, #216): after that it is a name the agent has met.
 func Turn(m proto.MessageView) string {
 	who := m.From
 	if m.FromName != "" {
@@ -239,10 +240,10 @@ func Turn(m proto.MessageView) string {
 		agent = "the command line"
 	}
 	var about []string
-	if agent != "" {
+	if agent != "" && !m.Introduced {
 		about = append(about, agent)
 	}
-	if m.FromOwner != "" {
+	if m.FromOwner != "" && !m.Introduced {
 		about = append(about, "on "+m.FromOwner+"'s machine")
 	}
 	var b strings.Builder

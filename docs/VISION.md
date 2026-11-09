@@ -323,6 +323,33 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   off is named under "Not done", and without T3 nothing changes. The file holds API keys, so join
   decodes only those fields, takes an environment value only by name and only if T3 doesn't mark it
   sensitive, and never prints the file.
+- **A session that started outside the repo** (2026-11-08, #200). The MCP server picks its repo from
+  the directory the agent started it in, so a session started in a parent folder, the home directory
+  or a workspace holding several repos never got a name in the repo it then worked in. Now each
+  server publishes a record of itself (its PID, its agent's PID, Claude Code's session ID, the
+  clone it is in and whether it is on) in the user's config directory, `murmur/sessions/`, and
+  `mur join` finds the record of the session that ran it: the agent's process is the server's
+  parent and an ancestor of the command, the nearest such ancestor winning. Claude Code also puts its
+  PID in `CLAUDE_PID`, but that is used only where the ancestors can't be read: an agent Claude Code
+  starts inherits it, and would otherwise move Claude's session instead of its own. Join leaves a
+  move there, which the server picks up on its next look for a join or a leave: it turns off where
+  it was and on in the joined clone, with the joined directory as its working directory. A session
+  is in one repo at a time (Tyler accepted either answer; one was chosen because the tools take no
+  repo, and two meshes would need one on every call and every message), so a move takes it out of
+  the repo it was in. A move doesn't stand in for consent: in a clone the user hasn't joined the
+  server stays off. Where one agent process runs several sessions and nothing tells them apart
+  (Codex's app server in T3), join moves none and says so; OpenCode's one server serves every
+  session in its directory, so it can't be moved; it publishes a record marked fixed anyway, which
+  stops the search up the process tree, so a join from an OpenCode that Claude Code started is
+  refused rather than moving Claude's session. A move carries the agent
+  process's start time and Claude session ID from the record, so a new process that took a dead
+  agent's PID doesn't follow it; records and moves of exited processes are cleared whenever they are
+  read. Moving ends the old registration's context, and a call still on its way to the old repo's
+  daemon with it: the client sets a past deadline on the connection when the call's context ends,
+  which stops a write or read already under way, and checks the context just before sending. The instructions an MCP server
+  gives at initialize can't change afterwards, so a session that moves in has the repo's section
+  and the tool descriptions, not them. The hook is per worktree, and runs in the directory the
+  agent started in, so commits aren't credited to a session that moved in (`internal/here`).
 
 #### Other agents
 
@@ -424,6 +451,21 @@ call.
   senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
   it never read what was sent while it was away for more than 10 minutes, except what is kept for a
   stopped session's inbox (above).
+- **How it's laid out** (#179, 2026-11-08), after Discord and Slack: sessions down the left under
+  their devices, then a column of conversations (direct messages and group chats in one list, newest
+  first, narrowed to either with a switch), then the open conversation. A conversation is two sessions' messages to each other, a device's, or
+  everyone's: the bus has no threads. Each face carries a dot: green active in the last five
+  minutes, yellow idle, red do not disturb (the `do-not-disturb` tag from #211, or wake-ups set to
+  Never), grey when its device is unreachable. A settled session (#189) is absent from presence but
+  still in the messages, so the page folds it under its device and keeps its conversations, out of
+  the way; a direct message with a settled session folds away too. Sessions in Claude Code, Codex,
+  pi or opencode never settle: one left open in a forgotten terminal stays in presence for good.
+  So a running session idle for a day, or one a person hid (the `hidden` tag, set from the page
+  through #211's `/api/tags`), folds under its device as quiet. An idle one comes back once it
+  does anything; a hidden one stays hidden until someone shows it again, because a tag a person
+  sets stays until a person takes it off. An open session's tags show under its name, where a person can add one or take one off. The page is always dark: the design was only ever drawn dark, and a light one would be a
+  second design. Started times, worktrees and committed branches left the page with the old
+  Sessions view; `lookup` still has the branches.
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
   `.git/murmur/settings.json`, replaced whole; "Delivering a message as a turn" says what they do.
   Mutes (#27) aren't built, so the page shows none and refuses to unmute.

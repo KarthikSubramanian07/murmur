@@ -493,7 +493,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	}
 	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
 	if len(whole) > 0 {
-		resp.Delivered = d.messageViewsLocked(wholeMsgs, true)
+		resp.Delivered = d.wholeViewsLocked(wholeMsgs, whole)
 	}
 	changed := false
 	for _, s := range told {
@@ -558,7 +558,7 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 		d.outOfInboxLocked(g.id, g.msg, "delivered", "through the Stop hook, keeping its turn going")
 	}
 	d.saveLocked()
-	return proto.Response{OK: true, Delivered: d.messageViewsLocked(msgs, true)}
+	return proto.Response{OK: true, Delivered: d.wholeViewsLocked(msgs, given)}
 }
 
 func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto.Response {

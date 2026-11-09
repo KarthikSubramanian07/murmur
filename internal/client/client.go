@@ -355,12 +355,26 @@ func (c *Client) roundTrip(ctx context.Context, req proto.Request) (resp proto.R
 	} else {
 		conn.SetDeadline(time.Now().Add(2 * time.Minute))
 	}
+	// Cancelling ctx ends a write or read already under way: a deadline in the past makes both
+	// return at once. The MCP server cancels a call when its session moves to another repo or
+	// leaves, and the call must not reach the old repo's daemon, or wait on it, after that.
+	stop := context.AfterFunc(ctx, func() { conn.SetDeadline(time.Unix(1, 0)) })
+	defer stop()
+	if ctx.Err() != nil {
+		return proto.Response{}, false, ctx.Err()
+	}
 	req.Token = info.Token
 	if err := writeLine(conn, req); err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return proto.Response{}, true, err
 	}
 	line, err := bufio.NewReader(conn).ReadBytes('\n')
 	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return proto.Response{}, true, err
 	}
 	if err := json.Unmarshal(line, &resp); err != nil {
@@ -405,7 +419,20 @@ func (c *Client) Hello(ctx context.Context, h proto.Hello) (net.Conn, proto.Resp
 		conn.Close()
 		return nil, resp, errors.New(resp.Error)
 	}
-	return conn, resp, nil
+	return sessionConn{conn}, resp, nil
+}
+
+// sessionConn is a session's connection, whose Close shuts the socket down before closing it. A
+// close alone ends only this process's descriptor: a child forked at that moment, not yet started
+// as its program, holds a copy, and the daemon sees the session end only when that copy goes. In
+// the daemon's tests one such child never got that far (#217), and the session never ended.
+type sessionConn struct{ net.Conn }
+
+func (c sessionConn) Close() error {
+	if tc, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		tc.CloseWrite()
+	}
+	return c.Conn.Close()
 }
 
 func writeLine(conn net.Conn, v any) error {

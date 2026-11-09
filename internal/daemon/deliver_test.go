@@ -205,6 +205,36 @@ func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 	}
 }
 
+// Only a session's first turn from a sender says what agent the sender is and whose machine it is
+// on; later ones name it alone (#216). Another sender is introduced in its own first turn.
+func TestASenderIsDescribedOnlyInItsFirstTurn(t *testing.T) {
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	carol, _ := a.session("cccccc", "")
+	bob, _ := b.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	aliceName, carolName := a.named(alice), a.named(carol)
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) && b.seesSession(carol) })
+
+	a.send("aaaaaa", bob, "one", "")
+	eventually(t, "the first handoff", func() bool { return len(calls()) >= 1 })
+	a.send("aaaaaa", bob, "two", "")
+	eventually(t, "the second handoff", func() bool { return len(calls()) >= 2 })
+	a.send("cccccc", bob, "three", "")
+	eventually(t, "the third handoff", func() bool { return len(calls()) >= 3 })
+
+	for i, want := range []string{
+		"Message from " + aliceName + " (test",
+		"Message from " + aliceName + " via " + brand.Product + ":\n\ntwo\n",
+		"Message from " + carolName + " (test",
+	} {
+		if c := calls()[i]; !strings.HasPrefix(c.Stdin, want) {
+			t.Errorf("handoff %d was %q, want it to start %q", i, c.Stdin, want)
+		}
+	}
+}
+
 // A session that isn't in T3 and has no messaging socket can't be put a turn into, so its
 // messages are the hook's notices, as they were, and the daemon says so once.
 func TestWithNoWayInMessagesStayNotices(t *testing.T) {

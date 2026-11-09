@@ -38,6 +38,10 @@ func TestTurn(t *testing.T) {
 			proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", FromAgent: "Codex", To: "*", Subject: "using zustand"},
 			"Message from quiet-otter (Codex) via " + name + ", sent to everyone:\n\nusing zustand\n\nReply with " + name +
 				"'s `send` to quiet-otter if a reply is needed.\n"},
+		{"a sender the session has met",
+			proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", FromAgent: "Claude Code", FromOwner: "smash",
+				To: "dev-0002/def456", Subject: "done", Introduced: true},
+			"Message from quiet-otter via " + name + ":\n\ndone\n\nReply with " + name + "'s `send` to quiet-otter if a reply is needed.\n"},
 	} {
 		if got := Turn(tc.m); got != tc.want {
 			t.Errorf("%s:\n got %q\nwant %q", tc.what, got, tc.want)

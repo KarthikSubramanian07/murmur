@@ -41,6 +41,7 @@ Setup:
   mur init [--no-push]          add the section to AGENTS.md and CLAUDE.md that says this repo uses Murmur,
                                 as a commit pushed to the default branch; --no-push only edits the files here
   mur join [--leave]            join Murmur in this repo, after the user agreed (an agent runs this);
+                                the agent's session joins too, even one that started outside the repo;
                                 --leave undoes it
 
 For humans:
@@ -310,6 +311,9 @@ func runJoin(ctx context.Context, args []string, out io.Writer) error {
 		do = join.Leave
 	}
 	report, err := do(ctx, env, *dir)
+	if !*leave && err == nil {
+		bringCaller(ctx, *dir, &report)
+	}
 	fmt.Fprint(out, report.String())
 	return err
 }
