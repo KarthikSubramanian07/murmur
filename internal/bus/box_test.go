@@ -95,7 +95,8 @@ func TestEncryptedPresence(t *testing.T) {
 	k, sk := NewBoxKey(), NewSignKey()
 	p := Presence{V: Version, Device: "dev-0001", Host: "secret-host", Owner: "Secret Owner", At: time.Now().UTC(),
 		BoxKey: BoxPublic(k), Offline: []string{"cccccc"},
-		Sessions: []SessionInfo{{ID: "aaaaaa", Name: "quiet-otter", Agent: "claude", Branch: "secret-branch", Doing: "secret status"}}}
+		Sessions: []SessionInfo{{ID: "aaaaaa", Name: "quiet-otter", Agent: "claude", Branch: "secret-branch", Doing: "secret status"},
+			{ID: PersonSession, Name: "secretperson", Agent: AgentPerson}}}
 	enc, err := EncryptPresence(p, map[string]string{"dev-0001": BoxPublic(k)})
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +127,7 @@ func TestEncryptedPresence(t *testing.T) {
 		t.Fatalf("older reader sees %+v", read)
 	}
 	open, err := DecryptPresence(read, "dev-0001", k)
-	if err != nil || open.Host != p.Host || open.Owner != p.Owner || len(open.Sessions) != 1 ||
+	if err != nil || open.Host != p.Host || open.Owner != p.Owner || len(open.Sessions) != 2 ||
 		open.Sessions[0].Doing != "secret status" || len(open.Offline) != 1 || open.Box != nil {
 		t.Fatalf("opened %+v, %v", open, err)
 	}

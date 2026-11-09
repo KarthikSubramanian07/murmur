@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+
+	"github.com/a-Fig/murmur/internal/names"
 )
 
 // Everything a device writes that carries content is encrypted for the team's devices (#156): on a
@@ -223,7 +225,8 @@ func EncryptPresence(p Presence, recipients map[string]string) (Presence, error)
 	}
 	out := Presence{V: p.V, Device: p.Device, At: p.At, Sessions: []SessionInfo{}, BoxKey: p.BoxKey}
 	for _, s := range p.Sessions {
-		if s.Name != "" {
+		// Only names the registry holds in the clear anyway: a person's (#242) isn't one.
+		if s.ID != PersonSession && names.Valid(s.Name) {
 			if out.Names == nil {
 				out.Names = map[string]string{}
 			}

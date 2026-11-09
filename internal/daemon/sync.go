@@ -595,7 +595,7 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha, listed string) {
 		// registered since (what was sent after they started is for them), or an inbox is kept for
 		// a stopped session (what was sent after it stopped is for it, #30).
 		d.mu.Lock()
-		waiting := len(d.sessions) > 0 || d.keptInboxLocked()
+		waiting := len(d.sessions) > 0 || d.keptInboxLocked() || d.st.Person != ""
 		known := d.tagsKnownLocked()
 		d.mu.Unlock()
 		if !waiting && !known {
@@ -653,12 +653,15 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha, listed string) {
 			d.applyTagsEventLocked(e)
 		}
 		if e.Type == bus.Message {
+			if e.Person != "" {
+				d.st.People[e.Person] = e.From
+			}
 			// A skip passes over history, but a ref read in one only after sessions registered
 			// (the first sync failed) also holds what was sent since this daemon started, which
 			// is new to it: by the sender's clock, with the minute queueLocked allows. What a
 			// skip gave a kept inbox (#30) was read too, so the page lists it.
 			kept := d.queueLocked(e, mode)
-			if mode != modeSkip || kept || !e.At.Before(d.started.Add(-time.Minute)) {
+			if mode != modeSkip || kept || !e.At.Before(d.started.Add(-time.Minute)) || d.ownPersonMsgLocked(e) {
 				d.recordMessageLocked(e)
 			}
 		}
@@ -824,6 +827,9 @@ func (d *Daemon) recipientsLocked() []string {
 			ids = append(ids, id)
 		}
 	}
+	if d.st.Person != "" {
+		ids = append(ids, bus.PersonSession)
+	}
 	return append(ids, proto.CLISession)
 }
 
@@ -834,6 +840,12 @@ func (d *Daemon) recipientsLocked() []string {
 // its inbox was kept (see keptSinceLocked): it can't take all the daemon was down for, as that may
 // be the whole history of a ref. Caller holds mu.
 func (d *Daemon) inTimeLocked(e bus.Event, id string, mode syncMode) bool {
+	if id == bus.PersonSession {
+		// A person's daemon goes away when their page closes, and an answer can take hours: what was
+		// sent to them is theirs, however long the daemon was down. What they already have is known
+		// by its ID, so a read of old history adds nothing.
+		return !d.msgIDs[e.ID]
+	}
 	if mode == modeNormal || d.sentSinceLocked(e, id, mode) {
 		return true
 	}
@@ -887,6 +899,9 @@ func (d *Daemon) addressedLocked(e bus.Event, id string) bool {
 	addr := bus.Addr(d.device, id)
 	if e.From == addr {
 		return false
+	}
+	if id == bus.PersonSession {
+		return e.To == addr // agents' broadcasts show in their group chats, not as a person's unread
 	}
 	if e.To == addr {
 		return d.forwardLocked(e.To) == ""
@@ -996,6 +1011,13 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	// A name in another device's presence is in use, whether or not the registry shows it yet.
 	seen := false
 	for _, s := range pres.Sessions {
+		if s.ID == bus.PersonSession {
+			// A person's name stays out of the registry, which holds session names for good.
+			if addr := bus.Addr(dev, s.ID); d.st.People[s.Name] != addr {
+				d.st.People[s.Name], seen = addr, true
+			}
+			continue
+		}
 		if s.Name != "" && d.noteNameLocked(s.Name, bus.Addr(dev, s.ID)) {
 			seen = true
 		}
@@ -1272,6 +1294,9 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 		pres.Sessions = append(pres.Sessions, info)
 	}
+	if d.st.Person != "" {
+		pres.Sessions = append(pres.Sessions, d.personInfoLocked())
+	}
 	pres.BoxKey = bus.BoxPublic(d.boxKey)
 	team := d.teamKeysLocked()
 	// Set at the attempt, not the success: a push that fails is retried on its own (presenceLoop),
@@ -1332,7 +1357,7 @@ func (d *Daemon) pruneInboxes() {
 		return
 	}
 	for id := range d.st.Inbox {
-		if _, stopped := d.st.Stopped[id]; id != proto.CLISession && d.sessions[id] == nil && !stopped {
+		if _, stopped := d.st.Stopped[id]; id != proto.CLISession && id != bus.PersonSession && d.sessions[id] == nil && !stopped {
 			delete(d.st.Inbox, id)
 			d.saveLocked()
 		}

@@ -575,6 +575,49 @@ call.
   the background doesn't keep the daemon, and its polling of GitHub, up for good (Opus review,
   2026-10-29). A request without the token doesn't count.
 
+### A person on the page
+
+Added 2026-11-08 (#242). Someone with the page open can talk to agents, and agents answer them the
+way they answer each other. Before this, a person could only watch, and reached an agent by typing
+in its own session.
+
+- **An account is a name** a person picks for this clone, offered from `git config user.name`. It
+  has no password and proves nothing: whoever can open the page is already at that keyboard, and
+  anyone who can push to the repo can write anything on the bus. A person's message gets no more
+  authority than an agent's. Verified identity is left out, and so is one person on two devices,
+  which is two accounts for now.
+- **The address is `device/human`.** Presence lists the person as a session whose agent is
+  `person`, so a daemon on an older version still shows them in `who`. The only new field on the bus
+  is `Event.Person`, the name on a person's own messages.
+- **Names stay out of the names ref.** A person's name can't have the form of a session's (an
+  adjective and a noun from the lists), so an address never reads as both, and it needs no
+  compare-and-swap. A name someone on the mesh already holds is refused. A daemon's table of people
+  only grows, so a message to an old name still reaches its owner. The cost: two people who pick one
+  name before either daemon has seen the other both keep it, and each daemon resolves it to its own
+  person first, then to the first device in sorted order.
+- **A person's direct message wakes a session past the "Within" window**, because they are waiting
+  for an answer. It doesn't wake past Never or do not disturb, which a person also chose. A broadcast
+  from a person wakes nothing extra: one sentence shouldn't wake every idle session on the mesh. The
+  turn says who it is from, that they see only what the agent sends, and how to answer.
+- **What the person keeps.** Messages to and from them go to `.git/murmur/person-messages.jsonl`,
+  the last 2,000, apart from the page's 500, so a conversation outlasts a daemon restart. Unread is
+  the person's inbox, which holds direct messages only: counting broadcasts would keep the badge lit
+  in a busy repo. Their inbox also takes what was sent while the daemon was down, since a person's
+  daemon exits soon after their page closes and an agent may answer hours later.
+- **On the page**, "Your messages" holds the person's own conversations, each with a composer.
+  Others' conversations are read-only, with a way to message either side. A message shows at once as
+  sending, and if it fails it stays on screen with its text. Enter sends, except on a phone, where
+  Enter is a new line and the button sends. The first Enter in the Everyone chat only arms it, and
+  says how many sessions it reaches. The line above the composer says working, do not disturb,
+  offline or waiting. "Working" is a guess from the session's last activity: nothing on the bus says
+  a session is answering.
+- **The draft survives a rebuild.** The page rebuilds its DOM on every state change, so each
+  conversation's textarea is kept and reused, which keeps its text, caret and focus when a reply
+  arrives.
+
+Desktop notifications aren't built: the page's port is random, so a browser would ask permission
+again after each daemon restart. The tab's title carries the unread count instead.
+
 ### What a session has done
 
 Added 2026-10-29 (#21). `lookup` (an MCP tool; it has no command, like the other messaging tools)
@@ -1264,8 +1307,10 @@ still handles incompatible clients and daemons; release versions do not become a
 
 On restart the daemon leaves the page's address and token in `page.json` in its state directory.
 The new daemon, if it starts within two minutes, serves the page there, so an open tab reconnects
-and reloads onto the new version. If that port is taken, the page moves to a new port with a new
-token, since whatever took the port has been sent the old one, and the tab needs `mur ui` again.
+and reloads onto the new version. The reload waits while a person has text in a composer or a
+message that failed, since those live only in the page (#242). If that port is taken, the page moves
+to a new port with a new token, since whatever took the port has been sent the old one, and the tab
+needs `mur ui` again.
 
 The page shows a newer release above Settings in its sidebar (a dot on Settings on a phone), with
 the version in Settings: "Restart to update" while an installed update waits on the open page,
@@ -1328,12 +1373,28 @@ Daemons older than this ignore the new ref: their sync reads only mesh, presence
 
 Earlier versions (#148) sent a daily check-in to `/v1/checkin` (a random user ID, a hash of the
 remote, the version, OS and architecture). Since 2026-11-08 the site stores none, but still answers
-with the latest release; the rows already stored are kept as history, and `/stats` still shows them
-beside the list of public repos. The page needs a key: Tyler's, or one he gives an agent, which
-reads it as markdown at `/stats/report.md` or JSON at `/stats/data` (#150). `mur version` now hears
-of newer releases from the updater, which keeps the latest release it saw in the state dir's
-`latest.json`; with updates off it hears of none. Reading the public buses for the counts is the
-census in #199.
+with the latest release; the rows already stored are kept as history at `/stats/archive`.
+`mur version` now hears of newer releases from the updater, which keeps the latest release it saw
+in the state dir's `latest.json`; with updates off it hears of none.
+
+The counts come from the census (#259), which reads what each reported repo shows anyone. Once a
+day a GitHub Action in this repo (`.github/workflows/census.yml`, `site/census/census.mjs`) fetches
+each repo's `refs/murmur/*` and its default branch's commits without their files, and sends the
+site counts and hashes, never content: per UTC day, the sessions started (each once, though a
+daemon that restarts announces its sessions again), the messages and all records, and a hash of
+each device that wrote anything, presence included; a hash of each device's owner, the git user name
+its presence shows; and for each contributor, a hash of their GitHub login or email and the day of
+their first commit, so one person in two repos counts once. The site only ever raises a count and
+keeps every device and owner it has seen, since a bus log can be rewritten and a daemon deletes its
+presence when it stops. It runs from GitHub,
+not from the Worker, because counting needs git, and a fetch of the whole bus is one request where
+the API would need one per commit. Once the bus is encrypted (#257) a record's kind is hidden from a
+public reader, so messages stop being told from other records, and only records are counted. An
+updated device's presence hides its owner and sessions too, so the census then can't count its
+sessions or tell its person apart. Whether some of that should stay readable is open on #156.
+
+`/stats` shows those repos and the counts over time; it needs a key: Tyler's, or one he gives an
+agent, which reads it as markdown at `/stats/report.md` or JSON at `/stats/data` (#150).
 
 ## Risks and how the design meets them
 
