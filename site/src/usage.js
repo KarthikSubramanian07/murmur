@@ -70,9 +70,9 @@ export async function reportRepo(request, env) {
 
 // Whether GitHub shows owner/name to someone signed out: true, false, or null when GitHub can't say.
 // The API answers first. A Worker shares Cloudflare's egress addresses, and others have usually
-// spent the API's rate limit for them (#253), so when the API can't say, the repo's own page does.
+// spent the API's rate limit for them (#253), so when the API can't say, git's own endpoint on github.com does.
 async function isPublic(owner, name, env) {
-  return (await publicOnApi(owner, name, env)) ?? (await publicOnPage(owner, name));
+  return (await publicOnApi(owner, name, env)) ?? (await publicByGit(owner, name));
 }
 
 // The API's answer, or null when it can't give one (a rate limit, an outage). GITHUB_TOKEN, if that
@@ -92,22 +92,24 @@ async function publicOnApi(owner, name, env) {
   }
 }
 
-// github.com/owner/name asked for signed out: 200 is a public repo, 404 a private or missing one,
-// as GitHub shows both to someone signed out. A renamed repo redirects to its new name and is
-// followed; the address stored is still the one reported, since it leads to a public repo. Anything
-// else, a redirect to somewhere that isn't a repo included, is no answer.
-async function publicOnPage(owner, name) {
+// What git itself is told, signed out, by github.com/owner/name/info/refs: 200 for a public repo, 401
+// for a private or missing one. The repo's own page would do, but the same address is also a topic,
+// a product page and more (github.com/topics/javascript answers 200), so it can't say a repo is
+// there. A renamed repo redirects to its new name and is followed; the address stored is still the
+// one reported, since it leads to a public repo. Anything else is no answer.
+async function publicByGit(owner, name) {
   try {
-    const res = await fetch(`https://github.com/${owner}/${name}`, {
-      method: 'HEAD', headers: { 'User-Agent': 'murmur-site' }, signal: AbortSignal.timeout(5000),
+    // Protocol 2, so a big repo answers with its capabilities and not every ref.
+    const res = await fetch(`https://github.com/${owner}/${name}/info/refs?service=git-upload-pack`, {
+      headers: { 'User-Agent': 'git/murmur-site', 'Git-Protocol': 'version=2' }, signal: AbortSignal.timeout(5000),
     });
-    if (res.status === 404) return false;
+    res.body?.cancel();
+    if (res.status === 401 || res.status === 404) return false;
     if (res.status !== 200) throw new Error(`GitHub answered ${res.status}`);
-    const end = new URL(res.url);
-    if (end.hostname !== 'github.com' || end.pathname.split('/').filter(Boolean).length !== 2) throw new Error(`ended at ${res.url}`);
+    if (res.headers.get('Content-Type') !== 'application/x-git-upload-pack-advertisement') throw new Error('not git');
     return true;
   } catch (err) {
-    console.log(`is ${owner}/${name} public, by its page: ${err}`);
+    console.log(`is ${owner}/${name} public, by git: ${err}`);
     return null;
   }
 }
