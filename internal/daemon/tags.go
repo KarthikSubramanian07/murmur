@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"strings"
 	"time"
 
@@ -212,12 +211,6 @@ func (d *Daemon) humanTagsLocked(id string, add, remove []string, by string, at 
 	if key == "" {
 		return fmt.Errorf("session %s isn't known here", bus.Addr(d.device, id))
 	}
-	var self []string
-	var human map[string]tags.Mark
-	var cleared map[string]time.Time
-	if st := d.st.Tags[key]; st != nil {
-		self, human, cleared = st.Self, st.Human, st.Cleared
-	}
 	wasDND := d.dndLocked(id)
 	// Nothing is later than now, whatever a clock ahead or a forged commit says. So a change dated
 	// later can't hold off the next, and a click on this device's page, dated now, is the newest.
@@ -225,32 +218,27 @@ func (d *Daemon) humanTagsLocked(id string, add, remove []string, by string, at 
 	if at.After(now) {
 		at = now
 	}
-	next := tags.State{Self: self, Human: cloneMarks(human), Cleared: maps.Clone(cleared)}
+	next := d.st.Tags[key].Clone()
 	next.CapTimes(now)
-	human, cleared = maps.Clone(next.Human), maps.Clone(next.Cleared)
-	if err := next.SetHuman(tags.Base(self, d.derivedTagsLocked(id)), add, remove, by, at); err != nil {
+	capped := next.Clone()
+	if err := next.SetHuman(tags.Base(next.Self, d.derivedTagsLocked(id)), add, remove, by, at); err != nil {
 		return err
 	}
-	if maps.Equal(human, next.Human) && maps.Equal(cleared, next.Cleared) {
+	if next.SameChoices(capped) {
+		// Kept all the same: a date capped only for now would go on refusing changes, as it is capped
+		// afresh, at a later now, each time.
+		d.putTagStateLocked(key, next)
 		d.log.Printf("%s's change to the tags of session %s, from %s, is older than a human's later choice; not applied: %s",
 			by, bus.Addr(d.device, id), at.Format(time.RFC3339), tagChange(add, remove))
 		return nil
 	}
-	d.putTagStateLocked(key, &next)
+	d.putTagStateLocked(key, next)
 	d.kickPresence()
 	if wasDND && !d.dndLocked(id) {
 		d.releaseLocked(key)
 	}
 	d.log.Printf("%s changed the tags of session %s: %s", by, bus.Addr(d.device, id), tagChange(add, remove))
 	return nil
-}
-
-func cloneMarks(m map[string]tags.Mark) map[string]tags.Mark {
-	out := make(map[string]tags.Mark, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
 }
 
 func tagChange(add, remove []string) string {

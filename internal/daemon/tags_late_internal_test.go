@@ -76,6 +76,28 @@ func TestAMarkFromTheFutureHoldsNothingOff(t *testing.T) {
 	}
 }
 
+// A change refused for being older than a mark from the future still brings that mark back to now
+// for good. Otherwise the mark goes on refusing what was sent over a minute before it is read, since
+// its date is capped afresh, at a later now, each time.
+func TestARefusedChangeStillCapsAMarkFromTheFuture(t *testing.T) {
+	r := newGiveUpRig(t)
+	r.bobKnown()
+	r.bobHas("do-not-disturb")
+	r.d.mu.Lock()
+	defer r.d.mu.Unlock()
+	r.d.st.Tags["quiet-otter"].Human = map[string]tags.Mark{
+		"do-not-disturb": {On: true, By: "maya", At: time.Now().Add(24 * time.Hour).UTC()},
+	}
+	r.d.applyTagsEventLocked(r.tagsEvent(time.Now().Add(-time.Hour), "do-not-disturb"))
+	m := r.d.st.Tags["quiet-otter"].Human["do-not-disturb"]
+	if !m.On {
+		t.Fatal("the change older than the mark was applied")
+	}
+	if m.At.After(time.Now()) {
+		t.Errorf("the mark is still dated %s, in the future", m.At)
+	}
+}
+
 // A tags event dated in the future, by a clock ahead or a forged commit, is taken as sent now, so it
 // can't hold off every later change until that time comes.
 func TestATagChangeFromTheFutureCountsAsNow(t *testing.T) {
