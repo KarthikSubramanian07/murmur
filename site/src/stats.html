@@ -88,12 +88,15 @@
   }
   .star .why::before { content: ''; position: absolute; left: 0; right: 0; top: -12px; height: 12px; }
   .star .why {
-    display: none; position: absolute; left: 0; top: 28px; z-index: 3; width: min(340px, 100%);
+    display: none; position: absolute; left: 0; top: 28px; z-index: 3; width: max-content; max-width: min(340px, 100%);
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
     box-shadow: 0 6px 20px rgba(0,0,0,.12); color: var(--text-secondary); font-size: 13px; font-weight: 400;
     letter-spacing: 0; line-height: 1.45;
   }
-  .star .why p + p { margin-top: 6px; }
+  .star .why p { margin-bottom: 6px; }
+  .star .why .how { display: flex; gap: 10px; }
+  .star .why .how b { min-width: 24px; text-align: right; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .star .why .fine { margin: 6px 0 0; color: var(--text-muted); font-size: 12px; }
   .star:hover .why, .star:focus-within .why { display: block; }
   .section { grid-column: span 12; color: var(--text-muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-top: 12px; }
   .tiles { grid-column: span 12; display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
@@ -449,12 +452,17 @@ function render() {
   note('users-new', d.newUsers ? `+${fmt(d.newUsers)}` : '0', `new in the last ${d.week} days`, d.newUsers > 0);
   note('users-active', fmt(d.activeUsers), `active in the last ${d.week} days`);
   const b = d.usersBy;
-  const why = [
-    'Approximate. Murmur sends us only a public repo’s address, and nothing that names a person, so users are estimated from what those repos show anyone.',
-    'Each device’s presence shows its owner’s git name. That name is matched to a commit author of the same name in the repo, and that author’s GitHub account counts once across all repos. With no matching commit, the git name counts instead; with no name ever seen, the device.',
-    `Of ${plural(d.users, 'user')}: ${fmt(b.account)} matched to an account, ${fmt(b.name)} by git name only, ${fmt(b.device)} by device only. Private repos aren’t counted.`,
-  ];
-  $('users-why').replaceChildren(...why.map(t => el('p', {}, t)));
+  // What the asterisk means: an estimate, and how many users were told apart each way.
+  const rows = [[b.account, 'by GitHub account'], [b.name, 'by git name only'], [b.device, 'by device only']].map(([n, how]) => {
+    const row = el('div', { class: 'how' });
+    row.append(el('b', {}, fmt(n)), el('span', {}, how));
+    return row;
+  });
+  $('users-why').replaceChildren(
+    el('p', {}, 'Estimated from public repos. Each person counts once:'),
+    ...rows,
+    el('p', { class: 'fine' }, 'Private repos aren’t counted.'),
+  );
   $('t-contributors').textContent = fmt(d.contributors);
   $('t-contributors-note').textContent = `people who have committed to them; ${fmt(d.newContributors)} new in the last ${d.week} days`;
   $('t-devices').textContent = fmt(d.devices);
