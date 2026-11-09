@@ -2325,7 +2325,7 @@ function answeredSince(m) {
   const to = toName(m);
   const from = fromName(m);
   const topic = (x) => (x.subject || "").replace(/^(re:\s*)+/i, "").trim().toLowerCase();
-  return !!replyTo(m) || ui.messages.some((r) => r.sortAt > m.sortAt && fromName(r) === to && r.toKind === "session" && toName(r) === from && (topic(r) === topic(m) || (!isReply(r) && !questionIn(r))));
+  return ui.messages.some((r) => r.sortAt > m.sortAt && fromName(r) === to && r.toKind === "session" && toName(r) === from && (topic(r) === topic(m) || (!isReply(r) && !questionIn(r))));
 }
 
 // What each session did and was sent, from the history and the messages.
@@ -2449,33 +2449,61 @@ function fxSeg(label, options, value, onPick) {
 const NO_ANSWER_MS = 15 * 60000;
 const GIVE_UP_MS = 24 * 3600000;
 
-// The question a message asks: its subject if that asks and starts the thread, or else the first
-// sentence of its body that ends in "?". Code blocks, links and quoted lines ("> ...", usually the
-// question being answered) are left out, since their "?"s aren't this message's questions. Inline
-// code is set aside while sentences are found, so its "?" or "." can't end one, and put back
-// without its backticks. A "?" may sit inside closing marks (**bold?**, (aside?), "quoted?").
+// The question a message asks: its subject if that is one and starts the thread, or else the first
+// sentence of its body that ends in "?", or else of its subject (send makes the body optional).
+// Code blocks and quoted lines ("> ...", usually the question being answered) are left out, since
+// their "?"s aren't this message's questions. Inline code and links are set aside while sentences
+// are found, so their "?" or "." can't end one, and put back plainly: code without its backticks,
+// a link as its text, "#36" for a pull request or issue, or its host. A "?" may sit inside closing
+// marks (**bold?**, (aside?), asked: "quoted?"), and "e.g." or "etc." doesn't end a sentence.
 function questionIn(m) {
-  const codes = [];
-  const text = (m.body || "")
+  const subject = (m.subject || "").trim();
+  if (/\?\s*$/.test(subject) && !isReply(m)) return cutAtWord(subject, 110);
+  return cutAtWord(askedIn(m.body || "") || (isReply(m) ? "" : askedIn(subject)), 110);
+}
+
+function askedIn(raw) {
+  const kept = [];
+  const keep = (x) => "\uE000" + (kept.push(x) - 1) + "\uE001";
+  const link = (url) => {
+    const n = url.match(/\/(?:pull|issues)\/(\d+)/);
+    return n ? "#" + n[1] : url.replace(/^https?:\/\//, "").split(/[/?#]/)[0];
+  };
+  const text = raw
     .replace(/```[\s\S]*?```/g, " ")
     .split("\n").filter((line) => !/^\s*>/.test(line)).join("\n")
-    .replace(/https?:\/\/\S+/g, " ")
-    .replace(/`([^`\n]*)`/g, (_, c) => "\uE000" + (codes.push(c) - 1) + "\uE001");
+    .replace(/`([^`\n]*)`/g, (_, c) => keep(c))
+    .replace(/\[([^\]\n]+)\]\(https?:\/\/[^)\s]*\)/g, (_, t) => keep(t))
+    // A link ends before the punctuation after it: "review https://…/pull/36?" still asks.
+    .replace(/https?:\/\/[^\s<>]+/g, (u) => {
+      const [, url, tail] = u.match(/^(.*?)([.,;:!?)\]'"”’]*)$/);
+      return keep(link(url)) + tail;
+    })
+    .replace(/\b(?:e\.g|i\.e|vs|etc)\./gi, (x) => x.replace(/\./g, "\uE002"));
   const CLOSE = { '"': '"', "”": "“", "’": "‘", ")": "(", "]": "[", "*": "*", _: "_" };
   const clean = (x) => {
-    let [, stem, tail] = x.match(/^([\s\S]*?\?)([*_)\]"”’]*)$/);
-    // Start after the mark that opens what the closing marks close: `asked: "is it?"` -> `is it?`.
+    const [, stem0, tail] = x.match(/^([\s\S]*?\?)([*_)\]"”’]*)$/);
+    let stem = stem0;
+    // Start after the mark that opens what the closing marks close, when that mark starts the
+    // sentence or follows a colon: `asked: "is it?"` is “is it?”, but `say "Sure?"` stays whole.
     for (const c of new Set(tail)) {
       const at = stem.lastIndexOf(CLOSE[c]);
-      if (at >= 0) stem = stem.slice(at + 1);
+      if (at < 0) continue;
+      if (/(?:^|:)\s*[*_(\["“‘]*$/.test(stem.slice(0, at))) stem = stem.slice(at + 1);
+      else {
+        stem = x;
+        break;
+      }
     }
-    return stem.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").replace(/^[*_\s]+/, "").replace(/\uE000(\d+)\uE001/g, (_, i) => codes[i]).trim();
+    return stem
+      .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "")
+      .replace(/^[*_\s]+/, "")
+      .replace(/\uE002/g, ".")
+      .replace(/\uE000(\d+)\uE001/g, (_, i) => kept[i])
+      .trim();
   };
   const found = text.split(/(?<=[.!?][*_)\]"”’]*)\s+|\n+/).map((x) => x.trim()).find((x) => /\?[*_)\]"”’]*$/.test(x));
-  const asked = found ? clean(found) : "";
-  // A subject that asks is the question as its sender put it, and how the message is listed.
-  const q = (/\?\s*$/.test(m.subject || "") && !isReply(m) ? m.subject.trim() : "") || asked || "";
-  return cutAtWord(q, 110);
+  return found ? clean(found) : "";
 }
 
 // Text no longer than max, cut at a word rather than inside one.
@@ -2492,8 +2520,9 @@ function fxPr(pr, href) {
   return href ? h("a", { ...props, href, target: "_blank", rel: "noreferrer" }, "#" + pr.number) : h("span", props, "#" + pr.number);
 }
 
+// A reply is known by its "Re:" subject; the daemon has no reply field today (#183 proposes one).
 function isReply(m) {
-  return !!m.re || /^re:/i.test(m.subject || "");
+  return /^re:/i.test(m.subject || "");
 }
 
 function deviceName(d) {
@@ -2531,7 +2560,8 @@ function fleetNeeds(rows) {
     // The wait ticks with the page's other times, so the row and its conversation agree.
     const wait = () => agoEl("span", null, when(m.at), " for ", true);
     // When the question isn't the subject (a body's "Fine?"), the subject says what it's about.
-    const about = (x) => (topicOf(x) && questionIn(x) !== topicOf(x) ? " on “" + cutAtWord(topicOf(x), 60) + "”" : "");
+    // A subject that holds the question ("Can you review #36? It blocks") adds nothing.
+    const about = (x) => (topicOf(x) && !topicOf(x).includes(questionIn(x).replace(/…$/, "")) ? " on “" + cutAtWord(topicOf(x), 60) + "”" : "");
     // An asker that has ended since still counts (its question waits on a running session), and
     // says so.
     const ended = live.has(fromName(m)) ? "" : " (ended)";
