@@ -234,7 +234,7 @@
 .fx-clear { color: var(--fx-text); text-decoration: underline; text-underline-offset: 2px; }
 .fx-name { font-weight: 500; }
 .fx-status { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.fx-reason { margin-top: 0.125rem; color: var(--fx-warning-text); font-size: 0.75rem; line-height: 1.5; }
+.fx-reason { margin-top: 0.125rem; color: var(--fx-warning-text); font-size: 0.75rem; line-height: 1.5; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .fx-reason b, .fx-insp-need b { font-weight: 600; }
 .fx-group-need { cursor: default; }
 .fx-group-need:hover { background: #ffffff05; }
@@ -298,6 +298,13 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* As the whole page, the details keep a reading width, so a message's time stays near its subject,
    and the list's left edge, so the page doesn't shift sideways on opening them. */
 .fx.fx-sheet { max-width: 50rem; margin-left: 0; }
+/* From 1280px the whole-page details fill the pane: facts and the flag on the left, conversations on
+   the right. */
+@media (min-width: 1280px) {
+  .fx.fx-sheet { max-width: 90rem; }
+  .fx-sheet-cols { display: grid; grid-template-columns: minmax(0, 30rem) minmax(0, 1fr); gap: 0 2.5rem; align-items: start; }
+  .fx-sheet-side > .fx-h3:first-child { margin-top: 0; }
+}
 /* Two notes in a group heading ("tyler-laptop · 1 more in Needs a look") get the page's separator. */
 /* The heading's 0.5rem gap sits before the dot, so it pulls back 0.25rem to sit centred. */
 .fx-group-sub:not(:empty) + .fx-group-sub::before { content: "·"; margin: 0 0.25rem 0 -0.25rem; }
@@ -305,7 +312,7 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* Mono reads larger than the sans beside it; in the details' values it matches their size. */
 .fx-meta .mono { font-size: 0.8125rem; }
 /* As the whole page with no waiting question, the header's rule is the list's top rule. */
-.fx-sheet .fx-insp-head + .fx-meta { border-top: 0; padding-top: 0; }
+.fx-sheet .fx-insp-head + .fx-meta, .fx-sheet-main > .fx-meta:first-child { border-top: 0; padding-top: 0; }
 /* An empty note (a reachable device that isn't this one) takes no gap. */
 .fx-group-sub:empty { display: none; }
 /* On a short window the rail scrolls as a whole, and its list takes its full height inside it

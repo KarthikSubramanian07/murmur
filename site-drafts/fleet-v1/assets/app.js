@@ -2733,7 +2733,12 @@ function fleetPage() {
   // session takes the whole page, with a way back.
   if (sel && STACKED.matches) {
     const [head, ...rest] = fleetInspector(sel, selNeed);
-    return h("div", { class: "fx fx-sheet" }, head, fleetDown() && h("p", { class: "fx-sheet-down" }, fleetDown()), rest);
+    // From 1280px the details fill the pane in two columns (fleet.css): what it is and what it
+    // waits on beside its conversations, rather than one 50rem column and empty space.
+    const items = rest.flat(Infinity).filter(Boolean);
+    const split = items.findIndex((x) => x.classList?.contains("fx-h3"));
+    const cols = split < 0 ? items : [h("div", { class: "fx-sheet-main" }, items.slice(0, split)), h("div", { class: "fx-sheet-side" }, items.slice(split))];
+    return h("div", { class: "fx fx-sheet" }, head, fleetDown() && h("p", { class: "fx-sheet-down" }, fleetDown()), h("div", { class: "fx-sheet-cols" }, cols));
   }
 
   return h(
@@ -2869,6 +2874,14 @@ function fxParts(parts) {
   return h("span", { class: "fx-parts-in" }, parts.flatMap((x, i) => [i ? h("wbr") : null, h("span", { class: "fx-part" }, h("span", { class: "fx-sep" + (i ? "" : " lead") }, " · "), x)]));
 }
 
+// A row's "No reply…" reason, two lines at most (fleet.css), with all of it in the title; the
+// details quote the question in full.
+function fxReason(need) {
+  const el = h("span", { class: "fx-reason" }, need.text());
+  el.title = el.textContent;
+  return el;
+}
+
 function fleetRow(d, s, need, on) {
   const F = fleetFilter();
   const prs = ui.state.prs || {};
@@ -2930,7 +2943,7 @@ function fleetRow(d, s, need, on) {
       ),
     ),
     h("span", { class: "fx-state" }, fxDot(state), word),
-    h("span", { class: "fx-doing" }, h("span", { class: "fx-status" + (s.doing ? "" : " fx-faint"), title: s.doing || null }, s.doing || "No status set"), need && h("span", { class: "fx-reason" }, need.text())),
+    h("span", { class: "fx-doing" }, h("span", { class: "fx-status" + (s.doing ? "" : " fx-faint"), title: s.doing || null }, s.doing || "No status set"), need && fxReason(need)),
     h("span", { class: "fx-branch" }, s.branch && h("span", { class: "mono truncate", title: s.branch }, s.branch), pr && fxPr(pr)),
     h("span", { class: "num fx-muted" }, t ? agoEl("span", "", t) : "–"),
   );
