@@ -34,7 +34,28 @@ type Options struct {
 	Getenv   func(string) string
 	Log      *log.Logger
 	Every    time.Duration
+	// Report, if set, hears the outcome of every check, so the page for humans can say whether
+	// this version is out of date and what will happen about it (#240).
+	Report func(Status)
 }
+
+// Status is what the last check found.
+type Status struct {
+	// Latest is the newest release the check saw, without the v; "" if the check didn't get that
+	// far, or a newer binary was already installed by hand.
+	Latest string
+	// Off says updates are turned off (MURMUR_NO_UPDATE, murmur.update=false), so nothing is
+	// installed without the user.
+	Off bool
+	// Failed says the check or the install failed: a release newer than this one isn't coming
+	// on its own, at least until the next check.
+	Failed bool
+	// Installed says a newer binary is in place and the daemon restarts onto it when it can.
+	Installed bool
+}
+
+// Newer says release version a comes after b. Development builds ("-dev") are never newer.
+func Newer(a, b string) bool { return newer(a, b) }
 
 func Off(ctx context.Context, getenv func(string) string, gitDir string) bool {
 	v := strings.TrimSpace(getenv("MURMUR_NO_UPDATE"))
@@ -89,6 +110,11 @@ func Run(ctx context.Context, o Options, restart func()) {
 	if o.OS == "windows" {
 		cleanup(o.Executable)
 	}
+	report := func(s Status) {
+		if o.Report != nil {
+			o.Report(s)
+		}
+	}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -97,12 +123,19 @@ func Run(ctx context.Context, o Options, restart func()) {
 			return
 		case <-timer.C:
 		}
-		if !Off(ctx, o.Getenv, o.GitDir) {
-			done, err := attempt(ctx, o, original)
+		if Off(ctx, o.Getenv, o.GitDir) {
+			report(Status{Off: true})
+		} else {
+			done, latest, err := attempt(ctx, o, original)
 			if done {
+				report(Status{Latest: latest, Installed: true})
 				restart()
 				return
 			}
+			if ctx.Err() != nil {
+				return
+			}
+			report(Status{Latest: latest, Failed: err != nil})
 			if errors.Is(err, os.ErrPermission) {
 				o.Log.Printf("self-update disabled until restart: binary directory is not writable: %v", err)
 				return
@@ -144,24 +177,26 @@ func get(ctx context.Context, o Options, url string, limit int64) ([]byte, error
 	return b, err
 }
 
-func attempt(ctx context.Context, o Options, original os.FileInfo) (bool, error) {
+// attempt installs the latest release if it is newer than this one. latest is that release's
+// version, once the check has read it.
+func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, latest string, err error) {
 	// Serialize daemons from different clones sharing this install. Never replace a binary
 	// another updater has already installed with a release selected by this older process.
 	lock, err := proc.Lock(o.Executable + ".update.lock")
 	if err != nil {
-		return false, err
+		return false, latest, err
 	}
 	defer lock.Close()
 	current, err := Identity(o.Executable)
 	if err != nil {
-		return false, err
+		return false, latest, err
 	}
 	if !os.SameFile(original, current) {
-		return true, nil
+		return true, latest, nil
 	}
 	b, err := get(ctx, o, o.URL, 1<<20)
 	if err != nil {
-		return false, err
+		return false, latest, err
 	}
 	var release struct {
 		Tag        string `json:"tag_name"`
@@ -173,50 +208,54 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (bool, error)
 		} `json:"assets"`
 	}
 	if err = json.Unmarshal(b, &release); err != nil {
-		return false, err
+		return false, latest, err
 	}
-	if release.Draft || release.Prerelease || !newer(release.Tag, o.Version) {
-		return false, nil
+	if release.Draft || release.Prerelease {
+		return false, "", nil
+	}
+	latest = strings.TrimPrefix(release.Tag, "v")
+	if !newer(release.Tag, o.Version) {
+		return false, latest, nil
 	}
 	name := assetName(o.OS, o.Arch)
 	if name == "" {
-		return false, nil
+		return false, latest, fmt.Errorf("no release binary for %s/%s", o.OS, o.Arch)
 	}
 	urls := map[string]string{}
 	for _, a := range release.Assets {
 		urls[a.Name] = a.URL
 	}
 	if urls[name] == "" || urls["SHA256SUMS"] == "" {
-		return false, errors.New("missing release assets")
+		return false, latest, errors.New("missing release assets")
 	}
 	sums, err := get(ctx, o, urls["SHA256SUMS"], 1<<20)
 	if err != nil {
-		return false, err
+		return false, latest, err
 	}
 	data, err := get(ctx, o, urls[name], 128<<20)
 	if err != nil {
-		return false, err
+		return false, latest, err
 	}
 	if err = verify(data, sums, name); err != nil {
-		return false, err
+		return false, latest, err
 	}
 	if ctx.Err() != nil {
-		return false, ctx.Err()
+		return false, latest, ctx.Err()
 	}
 	// Manual installers do not take our lock. Do not overwrite a reinstall that
 	// completed while the release was downloading; restart onto it instead.
 	current, err = Identity(o.Executable)
 	if err != nil {
-		return false, err
+		return false, latest, err
 	}
 	if !os.SameFile(original, current) {
-		return true, nil
+		return true, latest, nil
 	}
 	if err = replace(o.Executable, data, o.OS, os.Rename); err != nil {
-		return false, err
+		return false, latest, err
 	}
 	o.Log.Printf("self-update: %s -> %s", o.Version, strings.TrimPrefix(release.Tag, "v"))
-	return true, nil
+	return true, latest, nil
 }
 
 func verify(data, sums []byte, name string) error {

@@ -27,6 +27,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // Options configure a daemon. Zero values take the defaults in docs/VISION.md.
@@ -106,7 +107,13 @@ type Options struct {
 	CheckIn func(context.Context)
 	// Update installs releases independently of check-ins, then requests a safe restart.
 	Update func(context.Context, func())
+	// Version, if set, is this binary's version and what is known of a newer release, for the
+	// page (#240). The daemon adds whether an installed update is waiting. The page calls for
+	// it every few seconds, so it must not reach the network.
+	Version func() web.Version
 }
+
+const defaultPageAddr = "127.0.0.1:0"
 
 func (o *Options) defaults() {
 	if o.Poll == 0 {
@@ -158,7 +165,7 @@ func (o *Options) defaults() {
 		o.ContinueHold = 2 * time.Minute
 	}
 	if o.PageAddr == "" {
-		o.PageAddr = "127.0.0.1:0"
+		o.PageAddr = defaultPageAddr
 	}
 	if o.PageOpen == 0 {
 		o.PageOpen = 2 * time.Minute
@@ -247,8 +254,11 @@ type Daemon struct {
 	owner   string
 	token   string // the sessions' secret, in daemon.json
 	pageTok string // the page's secret (#42): the address carries it, so it opens the page, not the sessions' port
-	started time.Time
-	log     *log.Logger
+	// pagePrev is the address the daemon this one replaced served the page on, when it restarted
+	// onto an update: this one serves the page there, with its token, so an open tab carries on.
+	pagePrev string
+	started  time.Time
+	log      *log.Logger
 
 	mu         sync.Mutex
 	sessions   map[string]*session
@@ -295,9 +305,12 @@ type Daemon struct {
 	// pushing is the sessions a handoff goroutine is working for, and pushWarned those whose last
 	// handoff failed or that have no way to be handed a message, so that is logged once, not for every
 	// message (see deliver.go).
-	updating   bool // under mu: no new handoffs after the safe restart point
-	pushing    map[string]bool
-	pushWarned map[string]bool
+	updating bool // under mu: no new handoffs after the safe restart point
+	// updateReady says an update is installed and restartWhenIdle is waiting to restart onto it;
+	// restartAsked, that the page asked for the restart, so an open page no longer holds it back.
+	updateReady, restartAsked bool
+	pushing                   map[string]bool
+	pushWarned                map[string]bool
 	// introduced is, for each conversation, the senders it has had a message from as a turn, so
 	// later turns from them can say less (#216). It is keyed by the session's key, not its ID: a
 	// Claude Code session that /clears keeps its ID but starts a conversation that has seen nothing,
@@ -580,6 +593,11 @@ func Run(ctx context.Context, opt Options) error {
 		return err
 	}
 	defer ln.Close()
+	// A daemon that restarted onto an update left the page's address and token for this one. Only
+	// a daemon free to choose its page's port takes them.
+	if h, ok := takePageHandoff(dir); ok && d.opt.PageAddr == defaultPageAddr {
+		d.pageTok, d.pagePrev = h.Token, h.Web
+	}
 	// A page that can't be served costs the page, not the daemon: sessions don't need it.
 	pageLn, err := d.listenPage()
 	if err != nil {
@@ -676,9 +694,42 @@ func Run(ctx context.Context, opt Options) error {
 	updated := d.updating
 	d.mu.Unlock()
 	if updated {
+		if info.Web != "" {
+			if err := writeJSON(filepath.Join(dir, pageHandoffFile), pageHandoff{Web: info.Web, Token: info.PageToken}); err != nil {
+				d.log.Printf("the page won't carry over the restart: %v", err)
+			}
+		}
 		return ErrUpdated
 	}
 	return nil
+}
+
+// pageHandoffFile is where a daemon restarting onto an update leaves the page's address and token
+// for the daemon that replaces it, so a tab open on the page reconnects to the new one (#240).
+const pageHandoffFile = "page.json"
+
+// pageHandoffAge is how old a handoff may be and still be taken up: a restart takes seconds.
+const pageHandoffAge = 2 * time.Minute
+
+type pageHandoff struct {
+	Web   string `json:"web"`
+	Token string `json:"token"`
+}
+
+// takePageHandoff reads and removes the handoff a restarting daemon left, if it is recent.
+func takePageHandoff(dir string) (pageHandoff, bool) {
+	path := filepath.Join(dir, pageHandoffFile)
+	st, err := os.Stat(path)
+	if err != nil {
+		return pageHandoff{}, false
+	}
+	b, err := os.ReadFile(path)
+	os.Remove(path)
+	var h pageHandoff
+	if err != nil || time.Since(st.ModTime()) > pageHandoffAge || json.Unmarshal(b, &h) != nil || h.Web == "" || h.Token == "" {
+		return pageHandoff{}, false
+	}
+	return h, true
 }
 
 func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
@@ -1018,7 +1069,8 @@ func (d *Daemon) restartWhenIdle(ctx context.Context) {
 			d.mu.Unlock()
 			return
 		}
-		if len(d.pushing) == 0 && !d.pageOpenLocked(time.Now()) {
+		d.updateReady = true
+		if len(d.pushing) == 0 && (d.restartAsked || !d.pageOpenLocked(time.Now())) {
 			d.updating = true
 			d.mu.Unlock()
 			d.stop()

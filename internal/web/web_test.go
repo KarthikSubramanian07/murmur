@@ -28,6 +28,7 @@ type fakeSource struct {
 	unmuted  [][2]string
 	tagged   []string // each SetTags: addr +added -removed
 	watched  []bool   // what Watched said of each State call
+	restarts int
 }
 
 func (f *fakeSource) State(ctx context.Context) (State, error) {
@@ -70,6 +71,16 @@ func (f *fakeSource) SetTags(ctx context.Context, addr string, add, remove []str
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.tagged = append(f.tagged, addr+" +"+strings.Join(add, ",")+" -"+strings.Join(remove, ","))
+	return nil
+}
+
+func (f *fakeSource) Restart(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.state.Version.Ready {
+		return ErrNoUpdate
+	}
+	f.restarts++
 	return nil
 }
 
@@ -180,6 +191,9 @@ func TestTokenRequired(t *testing.T) {
 	}
 	if resp := h.do("POST", "/api/unmute", host, "", `{"by":"a-b","muted":"c-d"}`); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("POST /api/unmute without token: %d, want 401", resp.StatusCode)
+	}
+	if resp := h.do("POST", "/api/restart", host, "", ""); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("POST /api/restart without token: %d, want 401", resp.StatusCode)
 	}
 	// The token goes in the header only: not as a query parameter, not without "Bearer".
 	if resp := h.do("GET", "/api/state?token="+testToken, host, "", ""); resp.StatusCode != http.StatusUnauthorized {
@@ -499,5 +513,34 @@ func TestHiddenPageIsNotWatched(t *testing.T) {
 	defer src.mu.Unlock()
 	if !reflect.DeepEqual(src.watched, []bool{true, false}) {
 		t.Errorf("watched = %v, want [true false]: a visible page's call, then a hidden one's", src.watched)
+	}
+}
+
+// The page learns the daemon's version and any newer release from the state, and asks for the
+// restart onto an installed one (#240).
+func TestVersionAndRestart(t *testing.T) {
+	src := newFake()
+	src.state.Version = Version{Running: "0.3.0", Latest: "0.3.1", Install: "curl -fsSL https://example.test/install.sh | sh"}
+	h := start(t, src, noPRs)
+	got := decode[stateResponse](t, h.ok("GET", "/api/state", ""))
+	if got.Version != src.state.Version {
+		t.Errorf("version %+v, want %+v", got.Version, src.state.Version)
+	}
+
+	host := "127.0.0.1:" + h.port
+	if resp := h.do("POST", "/api/restart", host, testToken, ""); resp.StatusCode != http.StatusConflict {
+		t.Errorf("restart with nothing installed: %d, want 409", resp.StatusCode)
+	}
+	src.mu.Lock()
+	src.state.Version.Ready = true
+	src.mu.Unlock()
+	h.ok("POST", "/api/restart", "")
+	src.mu.Lock()
+	defer src.mu.Unlock()
+	if src.restarts != 1 {
+		t.Errorf("restarts %d, want 1", src.restarts)
+	}
+	if resp := h.do("GET", "/api/restart", host, testToken, ""); resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("GET /api/restart: %d, want 405", resp.StatusCode)
 	}
 }

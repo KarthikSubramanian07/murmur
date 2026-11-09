@@ -27,6 +27,7 @@ import (
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:0", "loopback address to listen on")
+	upd := flag.String("update", "none", "what the page is told of a newer release: none, auto (being installed), manual (updates off), or ready (installed, waiting for a restart)")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*addr)
 	if err != nil || (host != "127.0.0.1" && host != "localhost") {
@@ -38,6 +39,18 @@ func main() {
 	}
 	token := randomHex(16)
 	src := newFixtures(time.Now())
+	src.version = web.Version{Running: "0.3.0", Install: "curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh"}
+	switch *upd {
+	case "none":
+	case "auto":
+		src.version.Latest, src.version.Auto = "0.3.1", true
+	case "manual":
+		src.version.Latest = "0.3.1"
+	case "ready":
+		src.version.Latest, src.version.Auto, src.version.Ready = "0.3.1", true, true
+	default:
+		log.Fatalf("-update must be none, auto, manual or ready")
+	}
 	go src.run()
 	fmt.Printf("http://%s/#token=%s\n", ln.Addr(), token)
 	srv := &http.Server{Handler: web.NewWithPRs(src, token, fixturePRs), ReadHeaderTimeout: 10 * time.Second}
@@ -79,6 +92,7 @@ type fixtures struct {
 	messages []web.Message
 	mutes    []web.Mute
 	settings web.Settings
+	version  web.Version
 }
 
 func newFixtures(now time.Time) *fixtures {
@@ -251,7 +265,7 @@ func (f *fixtures) run() {
 func (f *fixtures) State(ctx context.Context) (web.State, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	st := web.State{Device: f.self, Mutes: append([]web.Mute(nil), f.mutes...)}
+	st := web.State{Device: f.self, Mutes: append([]web.Mute(nil), f.mutes...), Version: f.version}
 	for _, d := range f.devices {
 		d.Sessions = append([]web.Session(nil), d.Sessions...)
 		st.Devices = append(st.Devices, d)
@@ -317,6 +331,18 @@ func copySettings(s web.Settings) web.Settings {
 		out.SessionBusy[k] = v
 	}
 	return out
+}
+
+// Restart acts out a daemon restarting onto the installed update: the page loses the server for
+// a few seconds, then finds the new version.
+func (f *fixtures) Restart(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.version.Ready {
+		return web.ErrNoUpdate
+	}
+	f.version = web.Version{Running: f.version.Latest, Install: f.version.Install}
+	return nil
 }
 
 // SetTags applies a human's change as the session's device would, with no derived tags to

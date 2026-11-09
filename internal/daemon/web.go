@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/web"
@@ -39,6 +40,14 @@ func (d *Daemon) listenPage() (net.Listener, error) {
 	}
 	if host != "127.0.0.1" {
 		return nil, fmt.Errorf("%s isn't on 127.0.0.1, the loopback address the page answers on", d.opt.PageAddr)
+	}
+	if d.pagePrev != "" {
+		if host, _, err := net.SplitHostPort(d.pagePrev); err == nil && host == "127.0.0.1" {
+			if ln, err := net.Listen("tcp", d.pagePrev); err == nil {
+				return ln, nil
+			}
+			d.log.Printf("the page's old address %s is taken; a tab open on it needs `%s ui` again", d.pagePrev, brand.Command)
+		}
 	}
 	return net.Listen("tcp", d.opt.PageAddr)
 }
@@ -93,8 +102,13 @@ var _ web.Source = pageSource{}
 // device/session address instead, which `send` takes just as well.
 func (s pageSource) State(ctx context.Context) (web.State, error) {
 	d := s.d
+	var version web.Version
+	if d.opt.Version != nil {
+		version = d.opt.Version()
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	version.Ready = d.updateReady
 	now := time.Now()
 	d.pageSeenLocked(ctx, now)
 
@@ -113,7 +127,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 			Committed: d.committedLocked(ss.id), Doing: ss.shownDoing(), Worktree: ss.worktree, Started: ss.started,
 			LastActive: ss.lastActive, Tags: d.tagsOfLocked(ss)})
 	}
-	st := web.State{Device: d.device, Devices: []web.Device{self}}
+	st := web.State{Device: d.device, Devices: []web.Device{self}, Version: version}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Reachable: !d.staleLocked(p),
@@ -131,6 +145,18 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 		st.Devices = append(st.Devices, dv)
 	}
 	return st, nil
+}
+
+// Restart lets an installed update restart the daemon although a page is open: the page asked.
+func (s pageSource) Restart(ctx context.Context) error {
+	d := s.d
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.updateReady {
+		return web.ErrNoUpdate
+	}
+	d.restartAsked = true
+	return nil
 }
 
 func nameOr(name, addr string) string {

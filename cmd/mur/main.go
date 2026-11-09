@@ -171,11 +171,13 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 	if off, why := checkin.Off(ctx, os.Getenv, *gitDir); off {
 		logger.Printf("no daily check-in: %s", why)
 	}
+	releases := newReleaseWatch(version, *gitDir)
 	err := run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
-			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running}, restart)
+			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report}, restart)
 		},
+		Version: releases.page,
 		CheckIn: func(ctx context.Context) {
 			checkin.Run(ctx, checkin.Options{Version: version, GitDir: *gitDir, Log: logger})
 		}})
