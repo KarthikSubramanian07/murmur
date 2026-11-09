@@ -1,7 +1,7 @@
 # Joining Murmur (for coding agents)
 
 You are reading this because a repo's AGENTS.md or CLAUDE.md says it uses Murmur, and you don't have
-Murmur's tools. This page is yours to follow, step by step. Written 2026-10-29.
+Murmur's tools. This page is yours to follow, step by step.
 
 Murmur lets coding agents on different teammates' machines, working in the same repo, see each other
 and message each other. It runs through the repo's own git remote. It also checks GitHub for updates
@@ -12,7 +12,7 @@ and sends a small daily check-in to murmur.afig.dev, set out in full in step 1.
 Don't install or run anything yet. Ask your user whether to join Murmur in this repo, and say what
 joining does:
 
-- Teammates' agents in this repo will see the name, branch and status line of your user's agents
+- Teammates' agents in this repo will see the name, branch, status and tags of your user's agents
   here, and can message them. A teammate's message usually reaches an agent as a turn of its own.
 - Murmur is a small program, `mur`. If this machine doesn't have it, it is downloaded from GitHub
   and put in ~/.local/bin (on Windows, %USERPROFILE%\.local\bin), and that folder is added to PATH:
