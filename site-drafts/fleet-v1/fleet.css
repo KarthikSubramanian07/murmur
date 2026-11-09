@@ -190,7 +190,8 @@
 .fx-sub-pr { flex: none; margin-left: 0.375rem; }
 /* The table drops columns by its own width. Below 640px (what four columns need) a row is the name and state, with what
    it's working on, and why it needs a look, underneath. */
-@container (max-width: 760px) {
+/* Five columns need about 865px (their minimums, gaps and padding); under 880px Branch goes. */
+@container (max-width: 880px) {
   .fx-tr { grid-template-columns: minmax(11rem, 1.2fr) 7rem minmax(12rem, 1.8fr) 5.5rem; }
   .fx-tr > :nth-child(4) { display: none; }
   .fx-sub-branch { display: flex; align-items: baseline; min-width: 0; }
@@ -247,7 +248,9 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-insp-open { margin-top: 0.375rem; font-size: 0.75rem; color: var(--fx-warning-text); }
 /* Grouped by branch, the heading names the branch; only pinned rows, away from their heading,
    keep it under the name. */
-.by-branch .fx-tr { grid-template-columns: minmax(12rem, 1.2fr) 8rem minmax(14rem, 1.8fr) 6rem; }
+/* The same four columns as a table under 880px (above), so it fits wherever those do; under 640px
+   the compact layout takes over. */
+.by-branch .fx-tr { grid-template-columns: minmax(11rem, 1.2fr) 7rem minmax(12rem, 1.8fr) 5.5rem; }
 .by-branch .fx-tr > :nth-child(4) { display: none; }
 .by-branch .fx-row:not(.need) .fx-sub-branch { display: none; }
 .by-branch .fx-row.need .fx-sub-branch { display: flex; align-items: baseline; min-width: 0; }
