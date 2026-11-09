@@ -2245,9 +2245,15 @@ function fleetRailFit() {
   if (!rail) return;
   const room = innerHeight - rail.getBoundingClientRect().top - 16;
   rail.style.maxHeight = Math.max(240, room) + "px";
-  // A window too short to show the details and a useful stretch of the list: the rail scrolls as
-  // one. It goes by the window, not the room left, so scrolling the table doesn't switch it.
-  rail.classList.toggle("short", innerHeight < 800);
+  // When this session's details and a useful stretch (7rem) of its list don't fit in the room the
+  // rail has before the page scrolls, the rail scrolls as one, rather than nesting the list's
+  // scroller in a scrolling rail. It goes by the rail's starting place, not where it is now, so
+  // scrolling the table doesn't switch it.
+  const list = rail.querySelector(".fx-dms");
+  const startRoom = innerHeight - (rail.parentElement.getBoundingClientRect().top + (content?.scrollTop || 0)) - 16;
+  const others = rail.scrollHeight - (list ? list.clientHeight : 0);
+  const need = others + (list ? Math.min(list.scrollHeight, 112) : 0);
+  rail.classList.toggle("short", need > startRoom);
 }
 NARROW.addEventListener("change", render);
 STACKED.addEventListener("change", () => {

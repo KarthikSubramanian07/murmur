@@ -192,6 +192,10 @@
 .fx-sub-pr { flex: none; margin-left: 0.375rem; }
 /* The table drops columns by its own width. Below 640px (what four columns need) a row is the name and state, with what
    it's working on, and why it needs a look, underneath. */
+/* The five-column table's Working on is narrowest just above 920px; a status may run three lines. */
+@container (max-width: 1000px) {
+  .fx-tr .fx-status { -webkit-line-clamp: 3; }
+}
 /* Five columns need 912px (51rem of minimums, four 1rem gaps, 1rem padding each side); under
    920px Branch goes. Four need 648px. */
 @container (max-width: 920px) {
