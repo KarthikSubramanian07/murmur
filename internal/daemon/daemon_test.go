@@ -19,6 +19,7 @@ import (
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/daemon"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/view"
 )
 
@@ -106,9 +107,11 @@ type device struct {
 	pageMsgs       int
 	pageAddr       string
 	logTo          io.Writer
-	c              *client.Client
-	stop           func()
-	done           chan struct{} // closed when the daemon's Run has returned
+	// threadState, if set, stands in for T3's database (the daemon's ThreadState).
+	threadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
+	c           *client.Client
+	stop        func()
+	done        chan struct{} // closed when the daemon's Run has returned
 }
 
 // newDevice clones remote and starts a daemon for the clone. stale, if given, overrides the
@@ -182,7 +185,7 @@ func (d *device) start() {
 			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll,
 			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
-			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, Log: logger})
+			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState, Log: logger})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)
 		}

@@ -521,6 +521,13 @@ func (d *Daemon) deliverLocked(e bus.Event, mode syncMode) (delivered bool) {
 		if !d.addressedLocked(e, id) {
 			continue
 		}
+		if d.offMeshLocked(id) {
+			// Offline (#189): nothing is kept for it, and it is told nothing.
+			if mode == modeNormal && !held && e.To == bus.Addr(d.device, id) {
+				d.log.Printf("message %s is for %s, whose T3 thread is settled; dropped", e.ID, e.To)
+			}
+			continue
+		}
 		if !d.inTimeLocked(e, id, mode) &&
 			!(fwd == bus.Addr(d.device, id) && d.receivesLocked(sess) && d.inTimeLocked(e, sess, mode)) {
 			continue
@@ -640,7 +647,7 @@ func (d *Daemon) catchUpLocked(id string) {
 	}
 	d.caughtUp[id] = true
 	for _, e := range d.pending {
-		if d.addressedLocked(e, id) {
+		if d.addressedLocked(e, id) && !d.offMeshLocked(id) {
 			d.addInboxLocked(id, e)
 		}
 	}
@@ -935,7 +942,11 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	// key has come back under another ID has handed its name on: a peer sending to the name must
 	// reach the live one, not the one about to stop.
 	live := d.liveNamesLocked()
+	pres.Offline = d.offlineIDsLocked()
 	for _, s := range d.sortedSessionsLocked() {
+		if d.offMeshLocked(s.id) {
+			continue // offline: listed in Offline instead
+		}
 		name := s.name
 		if !s.dropped.IsZero() && live[name] {
 			name = ""
@@ -987,6 +998,11 @@ func (d *Daemon) pruneInboxes() {
 			delete(d.st.Commits, id)
 			delete(d.st.T3Routes, id)
 			d.saveLocked()
+		}
+	}
+	for id := range d.pushedAt {
+		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {
+			delete(d.pushedAt, id)
 		}
 	}
 	if time.Since(d.started) < 2*time.Minute {

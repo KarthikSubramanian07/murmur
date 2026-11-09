@@ -44,8 +44,9 @@ func (d *Daemon) listenPage() (net.Listener, error) {
 
 // servePage serves the page on ln until ctx is done.
 func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
+	page := web.New(pageSource{d}, d.token, repoDir(d.opt.GitDir))
 	srv := &http.Server{
-		Handler:           web.New(pageSource{d}, d.token, repoDir(d.opt.GitDir)),
+		Handler:           page,
 		ReadHeaderTimeout: 10 * time.Second,
 		ErrorLog:          d.log,
 	}
@@ -65,6 +66,9 @@ func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
 		if srv.Shutdown(sctx) != nil {
 			srv.Close()
 		}
+		// The page's PR lookups run gh in the clone; the daemon waits for them as for its other
+		// background work, so none is left running there after it exits.
+		page.Close()
 	}()
 }
 
@@ -98,6 +102,9 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	for _, ss := range d.sortedSessionsLocked() {
 		if !ss.dropped.IsZero() && live[ss.name] {
 			continue // its name went to the session that took over, which stands for the conversation
+		}
+		if d.offMeshLocked(ss.id) {
+			continue // offline: its T3 thread is settled (#189)
 		}
 		addr := bus.Addr(d.device, ss.id)
 		self.Sessions = append(self.Sessions, web.Session{

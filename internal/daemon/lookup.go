@@ -3,6 +3,7 @@ package daemon
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/bus"
@@ -79,6 +80,9 @@ func (d *Daemon) sessionKnownLocked(dev, sess string) bool {
 				return true
 			}
 		}
+		if slices.Contains(p.pres.Offline, sess) {
+			return true // a settled T3 thread's (#189)
+		}
 	}
 	for _, a := range d.st.Used {
 		if a == addr {
@@ -104,6 +108,12 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 			det.Name = d.st.SessionNames[sess]
 			det.StoppedAt = d.st.Stopped[sess]
 		}
+		if d.offMeshLocked(sess) {
+			det.Offline, det.Reachable = true, false
+			if parent, child := d.parentOfLocked(sess); child {
+				det.DelegateOf = d.parentNameLocked(parent)
+			}
+		}
 		recs := d.st.Commits[sess]
 		det.CommitCount = len(recs)
 		for _, r := range recs[max(len(recs)-lookupCommits, 0):] {
@@ -120,6 +130,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 			det.Committed, det.LastActive = s.Committed, peerActive(p, s)
 			det.Running, det.Reachable = true, !det.Stale
 		}
+		det.Offline = d.offlineLocked(dev, sess)
 	}
 	if det.Name == "" {
 		det.Name = byAddr[addr]
