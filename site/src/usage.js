@@ -68,10 +68,17 @@ export async function reportRepo(request, env) {
   return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
-// Whether GitHub shows owner/name to someone signed out: true, false, or null when GitHub can't say
-// (a rate limit, an outage). GITHUB_TOKEN, if that secret is set, only raises the rate limit: a
-// private repo it can see answers private: true, and is refused.
+// Whether GitHub shows owner/name to someone signed out: true, false, or null when GitHub can't say.
+// The API answers first. A Worker shares Cloudflare's egress addresses, and others have usually
+// spent the API's rate limit for them (#253), so when the API can't say, the repo's own page does.
 async function isPublic(owner, name, env) {
+  return (await publicOnApi(owner, name, env)) ?? (await publicOnPage(owner, name));
+}
+
+// The API's answer, or null when it can't give one (a rate limit, an outage). GITHUB_TOKEN, if that
+// secret is set, only raises the rate limit: a private repo it can see answers private: true, and
+// is refused.
+async function publicOnApi(owner, name, env) {
   const headers = { 'User-Agent': 'murmur-site', Accept: 'application/vnd.github+json' };
   if (env.GITHUB_TOKEN) headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
   try {
@@ -80,7 +87,27 @@ async function isPublic(owner, name, env) {
     if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
     return (await res.json()).private === false;
   } catch (err) {
-    console.log(`is ${owner}/${name} public: ${err}`);
+    console.log(`is ${owner}/${name} public, by the API: ${err}`);
+    return null;
+  }
+}
+
+// github.com/owner/name asked for signed out: 200 is a public repo, 404 a private or missing one,
+// as GitHub shows both to someone signed out. A renamed repo redirects to its new name and is
+// followed; the address stored is still the one reported, since it leads to a public repo. Anything
+// else, a redirect to somewhere that isn't a repo included, is no answer.
+async function publicOnPage(owner, name) {
+  try {
+    const res = await fetch(`https://github.com/${owner}/${name}`, {
+      method: 'HEAD', headers: { 'User-Agent': 'murmur-site' }, signal: AbortSignal.timeout(5000),
+    });
+    if (res.status === 404) return false;
+    if (res.status !== 200) throw new Error(`GitHub answered ${res.status}`);
+    const end = new URL(res.url);
+    if (end.hostname !== 'github.com' || end.pathname.split('/').filter(Boolean).length !== 2) throw new Error(`ended at ${res.url}`);
+    return true;
+  } catch (err) {
+    console.log(`is ${owner}/${name} public, by its page: ${err}`);
     return null;
   }
 }
