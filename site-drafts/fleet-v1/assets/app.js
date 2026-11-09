@@ -2449,11 +2449,30 @@ function fxSeg(label, options, value, onPick) {
 const NO_ANSWER_MS = 15 * 60000;
 const GIVE_UP_MS = 24 * 3600000;
 
-// The question a message asks: the first sentence of its body that ends in "?", once links and
-// code are taken out (their "?"s aren't questions), or else its subject if that is one.
+// The question a message asks: its subject if that asks and starts the thread, or else the first
+// sentence of its body that ends in "?". Code blocks, links and quoted lines ("> ...", usually the
+// question being answered) are left out, since their "?"s aren't this message's questions. Inline
+// code is set aside while sentences are found, so its "?" or "." can't end one, and put back
+// without its backticks. A "?" may sit inside closing marks (**bold?**, (aside?), "quoted?").
 function questionIn(m) {
-  const text = (m.body || "").replace(/```[\s\S]*?```/g, " ").replace(/`[^`]*`/g, "…").replace(/https?:\/\/\S+/g, " ");
-  const asked = text.split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).find((x) => /\?$/.test(x));
+  const codes = [];
+  const text = (m.body || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .split("\n").filter((line) => !/^\s*>/.test(line)).join("\n")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/`([^`\n]*)`/g, (_, c) => "\uE000" + (codes.push(c) - 1) + "\uE001");
+  const CLOSE = { '"': '"', "”": "“", "’": "‘", ")": "(", "]": "[", "*": "*", _: "_" };
+  const clean = (x) => {
+    let [, stem, tail] = x.match(/^([\s\S]*?\?)([*_)\]"”’]*)$/);
+    // Start after the mark that opens what the closing marks close: `asked: "is it?"` -> `is it?`.
+    for (const c of new Set(tail)) {
+      const at = stem.lastIndexOf(CLOSE[c]);
+      if (at >= 0) stem = stem.slice(at + 1);
+    }
+    return stem.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").replace(/^[*_\s]+/, "").replace(/\uE000(\d+)\uE001/g, (_, i) => codes[i]).trim();
+  };
+  const found = text.split(/(?<=[.!?][*_)\]"”’]*)\s+|\n+/).map((x) => x.trim()).find((x) => /\?[*_)\]"”’]*$/.test(x));
+  const asked = found ? clean(found) : "";
   // A subject that asks is the question as its sender put it, and how the message is listed.
   const q = (/\?\s*$/.test(m.subject || "") && !isReply(m) ? m.subject.trim() : "") || asked || "";
   return cutAtWord(q, 110);
@@ -2482,6 +2501,7 @@ function deviceName(d) {
 }
 
 function fleetNeeds(rows) {
+  const topicOf = (x) => (x.subject || "").replace(/^(re:\s*)+/i, "").trim();
   const now = Date.now();
   const by = new Map(rows.map((r) => [r.s.name, r]));
   const out = new Map();
@@ -2502,19 +2522,20 @@ function fleetNeeds(rows) {
     list.sort((a, b) => when(a.at) - when(b.at));
     const m = list[0];
     const { d, s } = by.get(to);
-    const more = list.length > 1 ? " And " + plural(list.length - 1, "more question") + "." : "";
+    // "More" counts conversations, as the details list them: a nudge in the same thread is one.
+    const convs = new Set(list.map((x) => JSON.stringify([fromName(x), topicOf(x).toLowerCase()]))).size;
+    const more = convs > 1 ? " And " + plural(convs - 1, "more question") + "." : "";
     // text is a function: a row and the inspector each need their own copy of its nodes. The
     // State column says whether the session is offline or on do not disturb, so this doesn't.
     // The inspector leaves the question out (quote false): its conversations quote each one.
     // The wait ticks with the page's other times, so the row and its conversation agree.
     const wait = () => agoEl("span", null, when(m.at), " for ", true);
     // When the question isn't the subject (a body's "Fine?"), the subject says what it's about.
-    const topicOf = (x) => (x.subject || "").replace(/^(re:\s*)+/i, "").trim();
     const about = (x) => (topicOf(x) && questionIn(x) !== topicOf(x) ? " on “" + cutAtWord(topicOf(x), 60) + "”" : "");
     // An asker that has ended since still counts (its question waits on a running session), and
     // says so.
     const ended = live.has(fromName(m)) ? "" : " (ended)";
-    out.set(to, { at: when(m.at), m, msgs: list, text: (quote = true) => ["No reply to ", h("b", null, fromName(m)), ended, wait(), quote ? about(m) + ": “" + questionIn(m) + "”" + more : (list.length > 1 ? ", and " + plural(list.length - 1, "more question") : "") + "."] });
+    out.set(to, { at: when(m.at), m, msgs: list, text: (quote = true) => ["No reply to ", h("b", null, fromName(m)), ended, wait(), quote ? about(m) + ": “" + questionIn(m) + "”" + more : (convs > 1 ? ", and " + plural(convs - 1, "more question") : "") + "."] });
   }
   return out;
 }
