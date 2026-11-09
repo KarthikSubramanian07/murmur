@@ -2464,7 +2464,9 @@ function fleetTable(rows, needs, sel) {
   const label = (k, list) => {
     if (F.by === "device") {
       const d = list[0].d;
-      return [h("span", { class: "fx-group-name" }, d.self ? "This device" : (d.owner ? d.owner + "'s " : "") + deviceName(d)), h("span", { class: "fx-group-sub" }, d.self ? deviceName(d) : d.reachable ? "" : "offline · seen " + ago(when(d.lastSeen) || 0))];
+      const dev = deviceName(d);
+      const owner = d.owner && !dev.toLowerCase().includes(d.owner.toLowerCase()) ? d.owner + "'s " : "";
+      return [h("span", { class: "fx-group-name" }, d.self ? "This device" : owner + dev), h("span", { class: "fx-group-sub" }, d.self ? deviceName(d) : d.reachable ? "" : "offline · seen " + ago(when(d.lastSeen) || 0))];
     }
     if (F.by === "branch") {
       const pr = k && Object.hasOwn(ui.state.prs || {}, k) ? ui.state.prs[k] : null;
@@ -2553,10 +2555,16 @@ function fleetRow(d, s, need, on) {
         if (whole) ui.fleetScroll = content ? content.scrollTop : 0;
         ui.fleetSel = on ? null : s.name;
         render();
-        if (whole && content) content.scrollTop = 0;
-        else if (content) {
+        if (whole && content) {
+          content.scrollTop = 0;
+          root.querySelector(".fx-back")?.focus({ preventScroll: true });
+        } else if (content) {
+          // Only when the row would otherwise leave the pane: moving it back to its old place
+          // every time scrolled the heading and toolbar away whenever rows above it grew.
           const row = root.querySelector(`[data-key="fl-${CSS.escape(s.name)}"]`);
-          if (row) content.scrollTop += row.getBoundingClientRect().top - top;
+          const pane = content.getBoundingClientRect();
+          const r = row?.getBoundingClientRect();
+          if (r && (r.top < pane.top || r.bottom > pane.bottom)) content.scrollTop += r.top - top;
         }
       },
     },
@@ -2581,6 +2589,24 @@ function fleetRow(d, s, need, on) {
   );
 }
 
+// Closing a session's details goes back to where the list was (as the whole page) and gives the
+// keyboard back to the row that opened it. Escape does the same.
+function fleetClose() {
+  const name = ui.fleetSel;
+  const back = ui.fleetScroll;
+  ui.fleetSel = null;
+  ui.fleetScroll = null;
+  render();
+  if (STACKED.matches && back != null && content) content.scrollTop = back;
+  if (name) root.querySelector(`[data-key="fl-${CSS.escape(name)}"]`)?.focus({ preventScroll: true });
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !e.defaultPrevented && ui.view === "sessions" && ui.fleetSel) {
+    e.preventDefault();
+    fleetClose();
+  }
+});
+
 // One session: why it needs a look, what it is, and its direct messages. Broadcasts go to
 // everyone, so they say nothing about this session and stay out.
 function fleetInspector(name, need) {
@@ -2597,7 +2623,7 @@ function fleetInspector(name, need) {
     ["State", [fxDot(state), FX_STATE[state]]],
     ["Working on", s.doing || h("span", { class: "fx-faint" }, "No status set")],
     d.owner && ["Person", d.owner],
-    ["Device", deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? " since " + ago(seenAt) : ""))],
+    ["Device", deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? ", last seen " + ago(seenAt) : ""))],
     ["Agent", [s.agent, modelOf(s)].filter(Boolean).join(" · ") || "–"],
     ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && (pr.url ? h("a", { class: "fx-pr" + (pr.draft ? " draft" : ""), href: pr.url, target: "_blank", rel: "noreferrer" }, "#" + pr.number) : h("span", { class: "fx-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number))] : "–"],
     groupOf(s) && ["Job", groupOf(s)],
@@ -2606,13 +2632,7 @@ function fleetInspector(name, need) {
   ].filter(Boolean);
   const owed = need?.msgs || [];
   const direct = ui.messages.filter((m) => m.toKind === "session" && (fromName(m) === name || toName(m) === name)).sort((a, b) => owed.includes(b) - owed.includes(a) || (owed.includes(a) ? owed.indexOf(a) - owed.indexOf(b) : b.sortAt - a.sortAt));
-  const close = () => {
-    const back = ui.fleetScroll;
-    ui.fleetSel = null;
-    ui.fleetScroll = null;
-    render();
-    if (STACKED.matches && back != null && content) content.scrollTop = back;
-  };
+  const close = fleetClose;
   return [
     h(
       "header",

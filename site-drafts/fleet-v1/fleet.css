@@ -258,3 +258,7 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-dm-q { color: var(--fx-text-2); font-size: 0.8125rem; line-height: 1.5; }
 .fx-back { order: -1; flex: none; padding: 0.375rem 0.625rem; margin-right: 0.25rem; border-radius: var(--fx-radius-inner); color: var(--fx-text-2); font-size: 0.8125rem; }
 .fx-back:hover { background: var(--fx-hover); color: var(--fx-text); }
+/* A long branch wraps to a second line rather than being cut; the tooltip has it too. */
+.fx-branch .mono { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.4; }
+/* With the details open beside the table, the page may use the room a wide window has. */
+.fx:has(.fx-main:not(.solo)) { max-width: 100rem; }
