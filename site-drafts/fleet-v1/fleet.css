@@ -209,6 +209,8 @@
   .fx-who-text > .fx-parts > .fx-parts-in { white-space: normal; }
   .fx-sub-branch .mono { white-space: normal; overflow-wrap: anywhere; }
   .fx-sub-branch { flex-wrap: wrap; }
+  /* Two lines at most, like the Branch column; the whole name is in the title. */
+  .fx-sub-branch .mono { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 }
 @container (max-width: 640px) {
   .fx-th { display: none; }
@@ -237,7 +239,7 @@
 .fx-group-need { cursor: default; }
 .fx-group-need:hover { background: #ffffff05; }
 .fx-group-need .fx-group-name { color: var(--fx-warning-text); }
-.fx-insp-need { display: block; width: 100%; text-align: left; cursor: pointer; margin-bottom: 1rem; padding: 0.625rem 0.75rem; border-left: 2px solid var(--fx-warning); border-radius: 0 var(--fx-radius-inner) var(--fx-radius-inner) 0; background: #ffce2f0f; color: var(--fx-text); line-height: 1.5; }
+.fx-insp-need { display: block; width: 100%; text-align: left; margin-bottom: 1rem; padding: 0.625rem 0.75rem; border-left: 2px solid var(--fx-warning); border-radius: 0 var(--fx-radius-inner) var(--fx-radius-inner) 0; background: #ffce2f0f; color: var(--fx-text); line-height: 1.5; }
 a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 .fx-h3 { display: flex; align-items: center; gap: 0.5rem; }
 .fx-dms { display: flex; flex-direction: column; margin: 0 -0.5rem 1rem; padding: 0; list-style: none; }
@@ -255,11 +257,15 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* 3rem less than the window allows: .fx's bottom padding, so the rail still fits when the list ends. */
 .sv-shell:has(> .sv-tabs) .fx-rail { top: calc(4.5rem + 1px); max-height: calc(100vh - 17.75rem - 1px); }
 .sv-shell:has(> .sv-tabs) .fx-sheet .fx-insp-head { top: calc(3.5rem + 1px); }
-.fx-insp-need:hover { background: #ffce2f1a; }
 .fx-dm-wait { box-shadow: inset 2px 0 0 var(--fx-warning); border-radius: 0 var(--fx-radius-inner) var(--fx-radius-inner) 0; }
 .fx-dm-wait .fx-dm-head { color: var(--fx-warning-text); }
 .fx-insp-need > span { display: block; }
-.fx-insp-open { margin-top: 0.375rem; font-size: 0.75rem; color: var(--fx-warning-text); }
+.fx-insp-acts { display: flex; justify-content: space-between; gap: 1rem; margin-top: 0.375rem; }
+.fx-insp-open, .fx-insp-dismiss { padding: 0; font-size: 0.75rem; cursor: pointer; }
+.fx-insp-open { color: var(--fx-warning-text); }
+.fx-insp-open:hover { text-decoration: underline; }
+.fx-insp-dismiss { color: var(--fx-text-3); }
+.fx-insp-dismiss:hover { color: var(--fx-text-2); }
 /* Grouped by branch, the heading names the branch; only pinned rows, away from their heading,
    keep it under the name. */
 /* The same four columns as a table under 920px (above), so it fits wherever those do; under 640px
@@ -339,7 +345,7 @@ a.fx-pr:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* A row's name is a block, so a name too long for its column ends in an ellipsis (title has it). */
 .fx-who-text > .fx-name { display: block; }
 /* One focus ring across the view: the row's, on every control, not the browser's faint blue. */
-.fx-group:focus-visible, .fx-seg button:focus-visible, .fx-dm:focus-visible, .fx-insp-need:focus-visible, .fx-btn:focus-visible, .fx-back:focus-visible, .fx-icon-btn:focus-visible, .fx-clear:focus-visible { outline: 2px solid #f1f1f1; outline-offset: -2px; }
+.fx-group:focus-visible, .fx-seg button:focus-visible, .fx-dm:focus-visible, .fx-insp-open:focus-visible, .fx-insp-dismiss:focus-visible, .fx-btn:focus-visible, .fx-back:focus-visible, .fx-icon-btn:focus-visible, .fx-clear:focus-visible { outline: 2px solid #f1f1f1; outline-offset: -2px; }
 /* In the details a part may itself wrap. Each part is a box whose "·" sits in its left padding, so
    a part that starts a line hides its dot in the clipped 0.9em, and its own wrapped lines start
    after the padding rather than inside the clip. */

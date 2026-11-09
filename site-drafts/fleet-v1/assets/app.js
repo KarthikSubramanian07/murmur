@@ -2396,9 +2396,45 @@ function attention(rows) {
   return out.sort((a, b) => rank[a.kind] - rank[b.kind] || b.at - a.at);
 }
 
-// Group by is remembered across reloads, since a lead tends to work one way; the state filter and
-// search start fresh.
+// Group by and the groups shut under it are remembered across reloads, since a lead tends to work
+// one way; the state filter and search start fresh.
 const FLEET_BY_KEY = NAME + ":fleet-by";
+const FLEET_SHUT_KEY = NAME + ":fleet-shut";
+function fleetShut() {
+  if (!ui.fxCollapsed) {
+    ui.fxCollapsed = new Set();
+    try {
+      for (const k of JSON.parse(localStorage.getItem(FLEET_SHUT_KEY) || "[]")) ui.fxCollapsed.add(String(k));
+    } catch {}
+  }
+  return ui.fxCollapsed;
+}
+function fleetShutSave() {
+  try {
+    localStorage.setItem(FLEET_SHUT_KEY, JSON.stringify([...fleetShut()]));
+  } catch {}
+}
+
+// Questions a lead has said nobody is waiting on (an answer the finder misread, or one given out of
+// band), by message id and when, in this browser only. Kept two days, past the one a flag lasts.
+const FLEET_DISMISSED_KEY = NAME + ":fleet-not-waiting";
+function fleetDismissed() {
+  if (!ui.fxDismissed) {
+    ui.fxDismissed = {};
+    try {
+      const all = JSON.parse(localStorage.getItem(FLEET_DISMISSED_KEY) || "{}");
+      for (const [id, at] of Object.entries(all)) if (Date.now() - at < 2 * GIVE_UP_MS) ui.fxDismissed[id] = at;
+    } catch {}
+  }
+  return ui.fxDismissed;
+}
+function fleetDismiss(msgs) {
+  const d = fleetDismissed();
+  for (const m of msgs) d[m.id] = Date.now();
+  try {
+    localStorage.setItem(FLEET_DISMISSED_KEY, JSON.stringify(d));
+  } catch {}
+}
 function fleetFilter() {
   if (!ui.fleet) {
     let by = "device";
@@ -2497,6 +2533,15 @@ function askedIn(raw) {
     .replace(/https?:\/\/[^\s<>]+/g, (u) => {
       const [, url, tail] = u.match(/^(.*?)([.,;:!?)\]'"”’]*)$/);
       return keep(link(url)) + tail;
+    })
+    // A quote that opens mid-sentence is something said, not asked: `I ran "what?" and it failed`
+    // and `You asked "which runner?" Use windows-2025.` don't end at its "?". The sentence still
+    // asks when it ends there: `Did you mean "Sure?"`. One that starts a sentence or follows a
+    // colon is the question itself: `Jun asked: "is it signed?"`.
+    .replace(/(["“])([^"“”\n]*?)(["”])/g, (all, o, inner, c, at, str) => {
+      const before = str.slice(0, at);
+      const mid = /\S/.test(before.split(/[.!?]\s+|\n/).pop()) && !/:\s*$/.test(before);
+      return mid ? o + inner.replace(/\?/g, "\uE003") + c : all;
     });
   const CLOSE = { '"': '"', "”": "“", "’": "‘", ")": "(", "]": "[", "*": "*", _: "_" };
   const clean = (x) => {
@@ -2524,7 +2569,7 @@ function askedIn(raw) {
   // zip", "the U.S. build" and "3 p.m. your time" don't.
   const found = text
     .split(/(?<=[!?][*_)\]"”’]*)\s+|(?<=\.[*_)\]"”’]*)\s+(?=[\p{Lu}\d"“‘(\[*_\uE000])|\n+/u)
-    .map((x) => x.trim())
+    .map((x) => x.trim().replace(/\uE003/g, "?"))
     .find((x) => /\?[*_)\]"”’]*$/.test(x));
   return found ? clean(found) : "";
 }
@@ -2570,7 +2615,7 @@ function fleetNeeds(rows) {
     const from = fromName(m);
     const at = when(m.at);
     // The asker may have ended since; the question still waits on a running session.
-    if (!by.has(to) || to === from || !at || now - at < NO_ANSWER_MS || now - at > GIVE_UP_MS || answeredSince(m)) continue;
+    if (!by.has(to) || to === from || !at || now - at < NO_ANSWER_MS || now - at > GIVE_UP_MS || Object.hasOwn(fleetDismissed(), m.id) || answeredSince(m)) continue;
     if (!asks.has(to)) asks.set(to, []);
     asks.get(to).push(m);
   }
@@ -2711,7 +2756,7 @@ function fleetTable(rows, needs, sel) {
   // once the filter clears (that set comes back then).
   const filtering = !!(F.q.trim() || F.state);
   if (!filtering) ui.fxCollapsedFiltered = null;
-  const collapsed = filtering ? (ui.fxCollapsedFiltered ||= new Set()) : (ui.fxCollapsed ||= new Set());
+  const collapsed = filtering ? (ui.fxCollapsedFiltered ||= new Set()) : fleetShut();
   return h(
     "section",
     // Grouped by branch, each heading names the branch, so the rows drop their Branch column.
@@ -2736,6 +2781,7 @@ function fleetTable(rows, needs, sel) {
                   "aria-expanded": shut ? "false" : "true",
                   onclick: () => {
                     shut ? collapsed.delete(F.by + ":" + k) : collapsed.add(F.by + ":" + k);
+                    if (!filtering) fleetShutSave();
                     render();
                   },
                 },
@@ -3004,7 +3050,31 @@ function fleetInspector(name, need) {
         ? h("button", { class: "fx-back", onclick: close }, "← All sessions")
         : h("button", { class: "fx-icon-btn", title: "Close", "aria-label": "Close", onclick: close }, icon("x")),
     ),
-    need && h("button", { class: "fx-insp-need", onclick: () => swOpenMessage(need.m) }, h("span", null, need.text(false)), h("span", { class: "fx-insp-open" }, "Open the conversation →")),
+    need &&
+      h(
+        "div",
+        { class: "fx-insp-need" },
+        h("span", null, need.text(false)),
+        h(
+          "div",
+          { class: "fx-insp-acts" },
+          h("button", { class: "fx-insp-open", onclick: () => swOpenMessage(need.m) }, "Open the conversation →"),
+          // For a flag that's wrong: the reply was misread, or the answer came some other way.
+          h(
+            "button",
+            {
+              class: "fx-insp-dismiss",
+              title: "Clear this flag in this browser",
+              onclick: () => {
+                fleetDismiss(need.msgs);
+                render();
+                document.querySelector(".fx-insp-head button")?.focus();
+              },
+            },
+            "Not waiting",
+          ),
+        ),
+      ),
     h("dl", { class: "fx-meta" }, meta.map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
     h("h3", { class: "fx-h3" }, "Direct conversations", h("span", { class: "fx-badge" }, direct.length > shown ? shown + " of " + direct.length : direct.length)),
     direct.length
