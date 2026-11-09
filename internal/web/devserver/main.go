@@ -85,6 +85,8 @@ func newFixtures(now time.Time) *fixtures {
 		settings: web.Settings{
 			Wake:           web.Wake{When: web.WakeWithin},
 			SessionWake:    map[string]web.Wake{"brave-heron": {When: web.WakeNever}},
+			Busy:           web.BusySubject,
+			SessionBusy:    map[string]string{"quiet-otter": web.BusyWhole},
 			DefaultMinutes: 3,
 		},
 	}
@@ -272,6 +274,11 @@ func (f *fixtures) SetSettings(ctx context.Context, s web.Settings) (web.Setting
 			return web.Settings{}, fmt.Errorf("%s is not a session on this device", name)
 		}
 	}
+	for name := range s.SessionBusy {
+		if !local[name] {
+			return web.Settings{}, fmt.Errorf("%s is not a session on this device", name)
+		}
+	}
 	s.DefaultMinutes = f.settings.DefaultMinutes
 	f.settings = copySettings(s)
 	return copySettings(f.settings), nil
@@ -282,6 +289,10 @@ func copySettings(s web.Settings) web.Settings {
 	out.SessionWake = map[string]web.Wake{}
 	for k, v := range s.SessionWake {
 		out.SessionWake[k] = v
+	}
+	out.SessionBusy = map[string]string{}
+	for k, v := range s.SessionBusy {
+		out.SessionBusy[k] = v
 	}
 	return out
 }

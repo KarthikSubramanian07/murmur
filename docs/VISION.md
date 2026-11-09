@@ -423,9 +423,9 @@ call.
   senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
   it never read what was sent while it was away for more than 10 minutes, except what is kept for a
   stopped session's inbox (above).
-- **Settings** (when a session is woken) are saved in `.git/murmur/settings.json`, replaced whole.
-  Nothing acts on them yet: waking is #25. Mutes (#27) aren't built, so the page shows none and
-  refuses to unmute.
+- **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
+  `.git/murmur/settings.json`, replaced whole; "Delivering a message as a turn" says what they do.
+  Mutes (#27) aren't built, so the page shows none and refuses to unmute.
 - **Open page, running daemon.** The page asks for its state every 3 s, 15 s in a hidden tab. A
   call that carries the token, from a page someone can see, counts as an open page for 2 minutes,
   and an open page stops the 10-minute countdown the way a session does: a daemon with no sessions
@@ -799,6 +799,17 @@ A body past the limit is cut, as in `inbox`.
     again, so a clone joined before this change has no `Stop` hook until its user does; outside T3
     a session is held back only once the daemon has seen a `Stop` from it, and until then a
     message goes in as a turn, as before.
+  - *Subject or whole message (#204).* What the hook tells a busy session is the page's busy
+    setting, for the device or for one session, beside the wake setting (Tyler, 2026-11-08).
+    "Subject", the default, is the line above. "Whole message" is the message as its turn would
+    read, a long body cut the same way, and the message is then delivered: it leaves the inbox and
+    the count, and the page and the daemon's log say it went through the hook. Subject leaves the
+    agent's focus to the agent, at the cost that it may pass over a line it needed; whole puts
+    every message in front of it mid-task, at full length, whether or not it matters to the task.
+    A message given whole counts as delivered once the daemon answers the hook, so a hook that gave
+    up waiting (3 s) just before the answer came loses it. One that was handed to T3 or the socket
+    before, and may be there already, gets the subject only. Where the hook doesn't run, the
+    setting does nothing.
   - *The count* is shown with each new message, and again only when it changes, not after every
     tool call. A fall to none isn't told: the agent read them itself.
   - *Held however long.* A message that came during a turn goes in at its end whatever its age:

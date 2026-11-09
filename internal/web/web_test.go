@@ -82,7 +82,7 @@ func newFake() *fakeSource {
 				{Name: "brave-heron", Agent: "codex", Branch: "-x"},
 			},
 		}}},
-		settings: Settings{Wake: Wake{When: WakeWithin}, DefaultMinutes: 3},
+		settings: Settings{Wake: Wake{When: WakeWithin}, Busy: BusySubject, DefaultMinutes: 3},
 	}
 }
 
@@ -280,6 +280,8 @@ func TestSettingsRoundTrip(t *testing.T) {
 			"brave-heron": {When: WakeAlways},
 			"amber-finch": {When: WakeWithin},
 		},
+		Busy:        BusyWhole,
+		SessionBusy: map[string]string{"quiet-otter": BusySubject, "brave-heron": BusyWhole},
 	}
 	body, _ := json.Marshal(want)
 	saved := decode[Settings](t, h.ok("PUT", "/api/settings", string(body)))
@@ -301,6 +303,11 @@ func TestSettingsRoundTrip(t *testing.T) {
 		`{"wake":{"when":"never"},"sessionWake":{"quiet-otter":{"when":"maybe"}}}`,
 		`{"wake":{"when":"never"},"sessionWake":{"":{"when":"never"}}}`,
 		`{"wake":{"when":"never"},"extra":true}`,
+		`{"wake":{"when":"never"},"busy":"everything"}`,
+		`{"wake":{"when":"never"},"busy":5}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"quiet-otter":""}}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"quiet-otter":"maybe"}}`,
+		`{"wake":{"when":"never"},"sessionBusy":{"":"whole"}}`,
 		`{"wake":`,
 		``,
 	} {

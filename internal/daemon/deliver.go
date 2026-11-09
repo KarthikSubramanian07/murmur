@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"sort"
 	"time"
 
@@ -131,11 +130,12 @@ type pushJob struct {
 	text     string
 }
 
-// wakeSnapshot copies the page's wake settings. setMu is taken alone, never with mu held.
+// wakeSnapshot copies the page's settings, the wake setting among them. setMu is taken alone,
+// never with mu held.
 func (d *Daemon) wakeSnapshot() pageSettings {
 	d.setMu.Lock()
 	defer d.setMu.Unlock()
-	return pageSettings{Wake: d.settings.Wake, SessionWake: maps.Clone(d.settings.SessionWake)}
+	return d.settings.clone()
 }
 
 // routeOfLocked is how a message gets into session id: what its MCP server told the daemon if it
@@ -460,9 +460,9 @@ func (d *Daemon) markAttempted(m *inMsg, v bool) error {
 	return nil
 }
 
-// finishPush records how a delivery went. A delivered message leaves the inbox, wherever it is by
-// now (a session that takes a name takes the inboxes kept for it); one that failed is the hook's
-// again, and the first failure for a session is logged.
+// finishPush records how a delivery went. A delivered message leaves the inbox (see
+// deliveredLocked); one that failed is the hook's again, and the first failure for a session is
+// logged.
 func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -490,25 +490,38 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		}
 		return
 	}
-	for id, box := range d.st.Inbox {
-		for i, m := range box {
-			if m == j.msg {
+	d.deliveredLocked(j.id, j.msg, "as a turn, through "+j.via)
+	d.saveLocked()
+	delete(d.pushWarned, j.id)
+}
+
+// delivery is a message, msg, given to session id.
+type delivery struct {
+	id  string
+	msg *inMsg
+}
+
+// deliveredLocked records that message m has gone into session id: it leaves the inbox, wherever it
+// is by now (a session that takes a name takes the inboxes kept for it), and the page's notes and
+// the log say so, and how, which ends their line. The caller saves the state. Caller holds mu.
+func (d *Daemon) deliveredLocked(id string, m *inMsg, how string) {
+	for inbox, box := range d.st.Inbox {
+		for i, o := range box {
+			if o == m {
 				if box = append(box[:i:i], box[i+1:]...); len(box) == 0 {
-					delete(d.st.Inbox, id)
+					delete(d.st.Inbox, inbox)
 				} else {
-					d.st.Inbox[id] = box
+					d.st.Inbox[inbox] = box
 				}
 				break
 			}
 		}
 	}
-	d.saveLocked()
-	delete(d.pushWarned, j.id)
-	d.pushedAt[j.id] = time.Now()
+	d.pushedAt[id] = time.Now()
 	d.noteConversationLocked() // the agent now has the message; its answer may soon follow
-	e := j.msg.Event
-	d.noteLocked(time.Now(), fmt.Sprintf("delivered %q from %s to %s as a turn, through %s", e.Subject, e.From, j.addr, j.via))
-	d.log.Printf("delivered message %s to session %s as a turn, through %s", e.ID, j.addr, j.via)
+	e, addr := m.Event, bus.Addr(d.device, id)
+	d.noteLocked(time.Now(), fmt.Sprintf("delivered %q from %s to %s %s", e.Subject, e.From, addr, how))
+	d.log.Printf("delivered message %s to session %s %s", e.ID, addr, how)
 }
 
 // rememberRouteLocked keeps where a session in T3 is, so a message for it still reaches the

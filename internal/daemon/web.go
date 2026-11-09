@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -228,10 +229,26 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 type pageSettings struct {
 	Wake        web.Wake            `json:"wake"`
 	SessionWake map[string]web.Wake `json:"sessionWake,omitempty"`
+	Busy        string              `json:"busy"`
+	SessionBusy map[string]string   `json:"sessionBusy,omitempty"`
+}
+
+// defaultSettings are what stands with no settings.json, and what one from before a setting
+// existed has for it.
+func defaultSettings() pageSettings {
+	return pageSettings{Wake: web.Wake{When: web.WakeWithin}, Busy: web.BusySubject}
+}
+
+// clone is p with maps of its own, so it can be read without setMu.
+func (p pageSettings) clone() pageSettings {
+	p.SessionWake = maps.Clone(p.SessionWake)
+	p.SessionBusy = maps.Clone(p.SessionBusy)
+	return p
 }
 
 func (p pageSettings) view() web.Settings {
-	return web.Settings{Wake: p.Wake, SessionWake: maps.Clone(p.SessionWake), DefaultMinutes: defaultWakeMinutes}
+	return web.Settings{Wake: p.Wake, SessionWake: maps.Clone(p.SessionWake), Busy: p.Busy,
+		SessionBusy: maps.Clone(p.SessionBusy), DefaultMinutes: defaultWakeMinutes}
 }
 
 func (d *Daemon) settingsPath() string { return filepath.Join(d.dir, "settings.json") }
@@ -239,12 +256,12 @@ func (d *Daemon) settingsPath() string { return filepath.Join(d.dir, "settings.j
 // loadSettings reads settings.json, or takes the defaults if there is none or it holds something
 // the page wouldn't have saved. The file is left alone then: the next save replaces it.
 func (d *Daemon) loadSettings() {
-	d.settings = pageSettings{Wake: web.Wake{When: web.WakeWithin}}
+	d.settings = defaultSettings()
 	b, err := os.ReadFile(d.settingsPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return
 	}
-	var read pageSettings
+	read := defaultSettings() // a setting the file doesn't have keeps its default
 	if err == nil {
 		if err = json.Unmarshal(b, &read); err == nil {
 			err = web.CheckSettings(read.view())
@@ -272,9 +289,13 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	if err := web.CheckSettings(set); err != nil {
 		return web.Settings{}, err
 	}
-	next := pageSettings{Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake)}
+	next := pageSettings{Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake),
+		Busy: cmp.Or(set.Busy, web.BusySubject), SessionBusy: maps.Clone(set.SessionBusy)}
 	if len(next.SessionWake) == 0 {
 		next.SessionWake = nil
+	}
+	if len(next.SessionBusy) == 0 {
+		next.SessionBusy = nil
 	}
 	d.setMu.Lock()
 	defer d.setMu.Unlock()
