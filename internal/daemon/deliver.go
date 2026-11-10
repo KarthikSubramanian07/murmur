@@ -308,8 +308,9 @@ func (d *Daemon) queuedForPushLocked(id string, m *inMsg, wake pageSettings) boo
 // is over, whatever the order in which a late hook and the run's end came. A session whose
 // connection dropped keeps its state through its grace, and one that reconnected after this
 // daemon restarted, before its hook has run here, is at work while T3 shows its thread's run going.
-// Outside T3 nothing but Stop ends a turn, so an interrupted session waits for its next prompt and
-// the Stop after it. Caller holds mu.
+// Outside T3 nothing but Stop ends a turn. Claude Code fires none when interrupted, so its session
+// waits for its next prompt and the Stop after it; Pi's extension sends an interrupted Stop. Caller
+// holds mu.
 func (d *Daemon) hookBusyLocked(id string) bool {
 	s := d.sessions[id]
 	if s == nil {

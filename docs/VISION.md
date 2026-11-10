@@ -1116,8 +1116,14 @@ A body past the limit is cut, as in `inbox`.
   takes it when it finishes, not steered in. What Murmur says is a custom message, shown in the
   session and read in the user's role, never `sendUserMessage`, which Pi treats as the user's
   typing. The extension is in every Pi session, so it runs the hook and opens the socket only in a
-  clone the user joined (its `joined.json`, read as the session starts): elsewhere a tool call
-  waits on no process of Murmur's (about 0.1 s each, Opus's review). An update doesn't run `mur
+  clone the user joined (its `joined.json`): elsewhere a tool call waits on no process of
+  Murmur's (about 0.1 s each, Opus's review). It looks for the consent as the session starts, then
+  each second and at each prompt and tool call until it is there, a few stats each time: the user
+  usually joins from inside a running session, which would otherwise get nothing until its next
+  session (the re-review's R1, reproduced with a real Pi). The socket's address and token are
+  chosen at the start and given to the MCP server, which registers only once the clone is joined;
+  a message that comes in the second before the socket opens is tried again after 2 s, and failing
+  that waits for the hook. An update doesn't run `mur
   join` again, so Pi's MCP server rewrites an extension join wrote for its own binary when the
   text is an older binary's; Pi reads extensions as a session starts, so the first session after
   an update still has the old one. Seen with Pi 1.5.0 against a stand-in model, in RPC mode and in
