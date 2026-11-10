@@ -261,9 +261,11 @@ const root = document.getElementById("root");
 let content; // the scrolling pane, kept across renders so its scroll position is too
 const held = { el: null, mark: null }; // the focused element while a render builds around it
 
-// One polite live region for the page, outside #root so that renders never rebuild it: a region
-// made anew each render would be read out every time, or never. What it says comes in a batch, a
-// moment after the change, and the region is cleared first so the same words can be said again.
+// One polite live region for the page, which renders never rebuild: a region made anew each render
+// would be read out every time, or never. What it says comes in a batch, a moment after the change,
+// the region is cleared first so the same words can be said again, and it empties a while after, so
+// moving it says nothing. It lives at the end of <body>, or inside an open aria-modal dialog, since
+// Safari with VoiceOver hides everything outside one.
 const live = h("div", { class: "sr-only", role: "status", "aria-live": "polite", "aria-atomic": "true" });
 document.body.append(live);
 let liveQueue = [];
@@ -276,7 +278,13 @@ function announce(text) {
   liveTimer = setTimeout(() => {
     live.textContent = liveQueue.join(" ");
     liveQueue = [];
+    liveTimer = setTimeout(() => (live.textContent = ""), 7000);
   }, 150);
+}
+
+function placeLive() {
+  const home = root.querySelector('[aria-modal="true"]') || document.body;
+  if (live.parentNode !== home) home.append(live);
 }
 
 // What a render shows that is marked data-announce (an error, a warning, a lost connection) is
@@ -376,6 +384,7 @@ function render() {
       ),
     );
     content = null;
+    placeLive();
     return;
   }
   const focused = root.contains(document.activeElement) ? document.activeElement : null;
@@ -442,6 +451,7 @@ function render() {
   if (sideNow) sideNow.scrollTop = side;
   restoreChatScroll(chat);
   fitComposers();
+  placeLive();
   announceShown();
   document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME;
   queueMicrotask(markOpenRead);
@@ -866,7 +876,7 @@ function versionSection() {
         h("code", null, v.install),
         h(
           "button",
-          { class: "btn btn-ghost btn-xs", title: "Copy", "aria-label": "Copy the command", "data-key": "copy-install", onclick: () => (navigator.clipboard?.writeText(v.install), announce("Copied.")) },
+          { class: "btn btn-ghost btn-xs", title: "Copy", "aria-label": "Copy the command", "data-key": "copy-install", onclick: () => copyText(v.install) },
           icon("copy"),
         ),
       ),
@@ -2256,7 +2266,7 @@ function repoMenu() {
         ),
       ),
     ),
-    m.err && h("p", { class: "tm-err" }, m.err),
+    m.err && h("p", { class: "tm-err", "data-announce": "" }, m.err),
   );
   // Placed through the CSSOM: the page's CSP refuses style attributes.
   menu.style.left = m.x + "px";
@@ -2801,6 +2811,16 @@ function clockTime(at) {
   return at ? new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "";
 }
 
+// Says Copied only once the clipboard has it: writing can fail, as when the page isn't focused.
+function copyText(text) {
+  const w = navigator.clipboard?.writeText(text);
+  if (!w) return announce("Couldn't copy.");
+  w.then(
+    () => announce("Copied."),
+    () => announce("Couldn't copy."),
+  );
+}
+
 function copyButton(text) {
   return h(
     "button",
@@ -2809,8 +2829,7 @@ function copyButton(text) {
       title: "Copy",
       "aria-label": "Copy message",
       onclick: (e) => {
-        navigator.clipboard?.writeText(text);
-        announce("Copied.");
+        copyText(text);
         const b = e.currentTarget;
         b.replaceChildren(icon("check"));
         b.classList.add("copied");
@@ -4034,6 +4053,7 @@ let last = "";
 let timer;
 let inflight = false;
 let polled = false;
+let loaded = false; // the messages have been fetched once, so what comes after is new
 let scrolledAt = 0;
 let stateAskedAt = 0; // when the state in hand was asked for
 
@@ -4050,7 +4070,8 @@ async function poll() {
   try {
     const asked = Date.now();
     const [state] = await Promise.all([api("/api/state"), fetchMessages()]);
-    const arrived = polled ? ui.messages.slice(had) : []; // the first poll brings the history
+    const arrived = loaded ? ui.messages.slice(had) : []; // the first fetch brings the history
+    loaded = true;
     // Another daemon is serving: it restarted onto an update, or a reinstall of the same version,
     // and serves this page at the same address and token. Its page may differ too, so load that.
     const was = ui.state?.version;
@@ -4144,6 +4165,7 @@ async function start() {
     arrivedAt = 0;
     last = "";
     polled = false;
+    loaded = false;
   }
   ui.view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "messages";
   render();
