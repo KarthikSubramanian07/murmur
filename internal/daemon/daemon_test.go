@@ -482,7 +482,8 @@ func TestV1ClaimsAreIgnored(t *testing.T) {
 	if len(lines) != 1 || !strings.HasSuffix(lines[0], "read on") {
 		t.Fatalf("log shows %q", lines)
 	}
-	eventually(t, "old-0001's session", func() bool { return a.seesSession("old-0001/x") })
+	// Listed, stale or not: old-0001's presence is written once, with no heartbeat after it.
+	eventually(t, "old-0001's session", func() bool { return a.listsSession("old-0001/x") })
 	if a.listsSession("old-0001/cli") {
 		t.Fatal("who lists a V1 device's CLI")
 	}

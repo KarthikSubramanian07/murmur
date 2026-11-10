@@ -247,15 +247,24 @@ func storedFor(t *testing.T, d *device, id string) bool {
 func TestStoppedInboxExpires(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
-	a, b := newDevice(t, remote), newTimedDevice(t, remote, 200*time.Millisecond, 8*time.Second)
+	const keep = 8 * time.Second
+	a, b := newDevice(t, remote), newTimedDevice(t, remote, 200*time.Millisecond, keep)
 	bob, conn := b.session("bbbbbb", "")
 	eventually(t, "presence", func() bool { return a.seesSession(bob) })
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "never read"})
 	eventually(t, "the message to be queued", func() bool { return logHas(b, "never read") })
 	conn.Close()
+	closed := time.Now()
 	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 })
 
-	holds(t, "bob's inbox kept", 2*time.Second, func() bool { return storedFor(t, b, "bbbbbb") })
+	// bob stopped after the close, so the inbox is kept at least until keep after it. Seeing the
+	// stop can come late under the tests' load, so the hold ends there, not 2 s after the sighting
+	// (#387).
+	if kept := min(2*time.Second, time.Until(closed.Add(keep))); kept > 0 {
+		holds(t, "bob's inbox kept", kept, func() bool { return storedFor(t, b, "bbbbbb") })
+	} else {
+		t.Logf("bob's stop was seen %s after the close, past the time the inbox is kept", time.Since(closed))
+	}
 	eventually(t, "bob's inbox deleted", func() bool { return !storedFor(t, b, "bbbbbb") })
 
 	if _, err := b.restartedMCP("bbbbbb", ""); err != nil {

@@ -433,6 +433,7 @@ func (s *syncBuf) String() string {
 // recipients' names, including a message between two other devices.
 func TestPageMessages(t *testing.T) {
 	t.Parallel()
+	began := time.Now()
 	remote := newRemote(t)
 	a, b, c := newDevice(t, remote), newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -501,7 +502,7 @@ func TestPageMessages(t *testing.T) {
 		for i, m := range sent {
 			got := msgs[i]
 			if got.Subject != m.subject || got.Body != m.body || got.From != m.wantFrom || got.To != m.wantTo ||
-				got.ToKind != m.wantToKind || got.ID == "" || time.Since(got.At) > time.Minute ||
+				got.ToKind != m.wantToKind || got.ID == "" || got.At.Before(began.Add(-time.Second)) || got.At.After(time.Now()) ||
 				got.FromAddr != m.fromAddr || got.ToAddr != m.toAddr {
 				t.Errorf("page %c, message %d: %+v, want %+v", 'a'+n, i+1, got, m)
 			}

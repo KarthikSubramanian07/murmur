@@ -260,17 +260,46 @@ func pollWait(d *Daemon) time.Duration {
 	return d.health.every
 }
 
+// shortestGap is the shortest time between the starts of two polls in a window: under the cap
+// only if the loop's timer took a wait under it.
+func shortestGap(d *Daemon, window time.Duration) time.Duration {
+	shortest := window
+	n, at := d.polls.Load(), time.Time{}
+	for end := time.Now().Add(window); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		if now := d.polls.Load(); now != n {
+			if !at.IsZero() && now == n+1 {
+				shortest = min(shortest, time.Since(at))
+			}
+			n, at = now, time.Now()
+		}
+	}
+	return shortest
+}
+
 // The poll slows toward the cap while a session is open and nothing is said, ignores a peer's
 // presence heartbeats and status changes, speeds up for a while after a message is received, slows
 // again, and speeds up after this device sends one.
 func TestPollFollowsTheConversation(t *testing.T) {
 	// Not parallel: it counts polls over real time, which other tests' load would skew. The counts
 	// are upper bounds, which load only lowers. That the poll speeds up is read from the wait the
-	// loop chose, not from a count: under load one poll can take longer than Poll, which held the
-	// count down and failed the test with the loop doing what it should (#387).
+	// loop chose, and from two polls coming closer together than the cap allows: a count of polls in
+	// a second needed every poll to be quick, and under load one can take longer than Poll, which
+	// failed the test with the loop doing what it should (#387). FastFor is long enough that the
+	// rest of the poll that brought a message, which comes before the wait is chosen, doesn't use
+	// it up.
 	opt := Options{Poll: testPoll, PollCap: testCap, FastFor: 5 * time.Second, QuietPoll: time.Hour}
 	d, peer, _ := rateRig(t, opt, true)
 	atCap := func() bool { return pollWait(d) == testCap }
+	fast := func(what string) {
+		t.Helper()
+		within(t, "the wait to go to Poll "+what, opt.FastFor, func() bool { return pollWait(d) == testPoll })
+		// A timer left at the cap puts polls the cap apart, give or take a late tick; with Poll,
+		// a poll comes as soon as the one before it ends, so only polls that all took most of the
+		// cap could fail this.
+		if gap := shortestGap(d, 3*time.Second); gap >= testCap*7/8 {
+			t.Errorf("%s the polls came no closer than %v apart, with a wait of %v chosen", what, gap, testPoll)
+		}
+	}
 	within(t, "the wait to double up to the cap", time.Minute, atCap) // 200, 400, 800 ms
 
 	stop := make(chan struct{})
@@ -314,7 +343,7 @@ func TestPollFollowsTheConversation(t *testing.T) {
 		defer d.mu.Unlock()
 		return len(d.st.Inbox["bbbbbb"]) == 1
 	})
-	within(t, "the wait to go to Poll after a message arrived", opt.FastFor, func() bool { return pollWait(d) == testPoll })
+	fast("after a message arrived")
 
 	// Slow again once FastFor has passed and the wait has doubled up.
 	within(t, "the wait back at the cap once the conversation went quiet", time.Minute, atCap)
@@ -328,7 +357,7 @@ func TestPollFollowsTheConversation(t *testing.T) {
 	if err := d.appendEvent(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
-	within(t, "the wait to go to Poll after a send", opt.FastFor, func() bool { return pollWait(d) == testPoll })
+	fast("after a send")
 }
 
 // With no session the poll stays at QuietPoll, a message sent from the daemon not changing that.

@@ -200,10 +200,14 @@ func TestALapsedContinuationHandsOverWhatCameMeanwhile(t *testing.T) {
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "continues the turn") })
 	// The continuation starts during this Stop, so it holds until at least hold after stopped.
 	// Whether the socket is still empty once the next message has reached b says nothing when the
-	// tests' load delays that past the hold, as it did on CI (#387); when the handoff came does.
+	// tests' load delays that past the hold, as it did on CI (#387); when the handoff came does. The
+	// check is as tight as the Stop's round trip: a hold shorter by less than that would pass.
 	stopped := time.Now()
 	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 1 {
 		t.Fatalf("the Stop gave %v", got)
+	}
+	if took := time.Since(stopped); took > time.Second {
+		t.Logf("the Stop took %s, so the check below can't tell a hold that much shorter", took)
 	}
 	a.send("aaaaaa", bob, "after the lost answer", "its body")
 	eventually(t, "the next message to reach b", func() bool { return logHas(b, "after the lost answer") })

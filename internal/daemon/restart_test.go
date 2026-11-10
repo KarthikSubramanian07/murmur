@@ -24,10 +24,10 @@ func (d *device) seesDevices(n int) bool {
 	return len(d.do(proto.Request{Op: proto.OpWho}).Devices) == n
 }
 
-// seesSession says whether d's who lists the session at addr on a device that isn't stale, which
-// is what a send needs to count it as known. A device stays listed when it goes stale, and the
-// tests' load can hold its heartbeats back past their 3 s stale limit: a send then says its
-// sessions aren't in any device's presence (#387).
+// seesSession says whether d's who lists the session at addr on a device that is fresh, which is
+// what a send needs to count it as known. A device stays listed when it goes stale, and the tests'
+// load can hold its heartbeats back past their 3 s stale limit: a send then says its sessions
+// aren't in any device's presence (#387).
 func (d *device) seesSession(addr string) bool {
 	_, listed, fresh := d.whoShows(addr)
 	return listed && fresh
@@ -42,12 +42,14 @@ func (d *device) listsSession(addr string) bool {
 }
 
 // whoShows is the session at addr in d's who: its name, whether it is listed, and whether its
-// device is fresh.
+// device is fresh. Fresh is more than not stale: d saw the device's presence change within half
+// its stale limit, so a send right after a wait that ends on it has that half in hand, where one
+// that ended on a device about to go stale would have nothing.
 func (d *device) whoShows(addr string) (name string, listed, fresh bool) {
 	for _, dv := range d.do(proto.Request{Op: proto.OpWho}).Devices {
 		for _, s := range dv.Sessions {
 			if s.Addr == addr {
-				return s.Name, true, !dv.Stale
+				return s.Name, true, !dv.Stale && time.Since(dv.LastSeen) < d.stale/2
 			}
 		}
 	}
