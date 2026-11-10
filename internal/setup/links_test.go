@@ -62,6 +62,20 @@ func TestInitLeavesADanglingLinkAndALinkIntoGitAlone(t *testing.T) {
 	}
 }
 
+// On a disk that ignores case, .GIT/config is .git/config, so a link to it is refused as well. On
+// one that doesn't, it leads nowhere and is refused as that.
+func TestInitLeavesALinkIntoGitInAnyCaseAlone(t *testing.T) {
+	dir := repo(t, map[string]string{"AGENTS.md": "# Notes\n"})
+	config := read(t, dir, ".git/config")
+	linkInRepo(t, dir, "CLAUDE.md", filepath.Join(".GIT", "config"))
+	if _, err := Init(context.Background(), dir); err == nil {
+		t.Error("init took CLAUDE.md linked to .GIT/config")
+	}
+	if got := read(t, dir, ".git/config"); got != config {
+		t.Errorf("init wrote into .git/config:\n%s", got)
+	}
+}
+
 // A config file init only cleans is passed over when a link takes it out of the repo, as Push
 // passes it over, rather than rewritten or deleted there.
 func TestInitLeavesAConfigLinkedOutOfTheRepoAlone(t *testing.T) {

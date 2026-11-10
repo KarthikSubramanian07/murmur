@@ -89,10 +89,25 @@ func inTree(top, path, name string) error {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return fmt.Errorf("%s leads to %s, outside the repo, through a symbolic link, so init leaves it alone", name, real)
 	}
-	if first, _, _ := strings.Cut(filepath.ToSlash(rel), "/"); first == ".git" {
+	if first, _, _ := strings.Cut(filepath.ToSlash(rel), "/"); isGitDir(top, first) {
 		return fmt.Errorf("%s leads to %s, inside .git, through a symbolic link, so init leaves it alone", name, real)
 	}
 	return nil
+}
+
+// isGitDir reports whether first, a name at the top of the working tree, is its .git. On a disk
+// that ignores case, as macOS's and Windows' do by default, .GIT is .git too, and on Windows a
+// short name can be; so the two are compared as files, and by name ignoring case as well.
+func isGitDir(top, first string) bool {
+	if strings.EqualFold(first, ".git") {
+		return true
+	}
+	g, err := os.Stat(filepath.Join(top, ".git"))
+	if err != nil {
+		return false
+	}
+	f, err := os.Stat(filepath.Join(top, first))
+	return err == nil && os.SameFile(f, g)
 }
 
 // writeOut makes a step's change to the file at path. A file it removes takes its directory with it
