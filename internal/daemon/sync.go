@@ -1254,9 +1254,19 @@ func (d *Daemon) appendSoon(e bus.Event) {
 		ctx, cancel := context.WithTimeout(d.bgCtx, time.Minute)
 		defer cancel()
 		if err := d.appendEvent(ctx, e); err != nil {
-			d.log.Printf("writing %q: %v", e.Line(), err)
+			d.log.Printf("writing %s: %v", logged(e), err)
 		}
 	}()
+}
+
+// logged names an event for the daemon's log by its type, ID and addresses, never by what a
+// message says: the log is sent to whoever helps debug a device, who may not be on the team.
+func logged(e bus.Event) string {
+	s := e.Type + " " + e.ID + " from " + e.From
+	if e.To != "" {
+		s += " to " + e.To
+	}
+	return s
 }
 
 func (d *Daemon) kickPresence() {
