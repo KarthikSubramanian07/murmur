@@ -141,8 +141,8 @@ treat it that way, and to bring anything sizeable to their user first.
 public, Murmur sends its address (such as `github.com/a-Fig/murmur`) to murmur.afig.dev, once for
 the whole repo. A private repo sends nothing, and nothing else is ever sent: no IDs, names,
 messages, branches, paths or anything about your machine. We use it to count how many repos and
-people use Murmur; the address is already public, so there is nothing to turn off. What the site
-then counts from those public repos, and keeps, is on its [privacy page](https://murmur.afig.dev/privacy/).
+people use Murmur; the address is already public, so there is nothing to turn off. The site's
+[privacy page](https://murmur.afig.dev/privacy/) lists what it counts from those public repos.
 
 **Murmur updates itself.** The daemon checks GitHub's releases hourly, and installs a newer `mur`
 after verifying its checksum. To turn that off:

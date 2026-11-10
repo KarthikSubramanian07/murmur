@@ -70,10 +70,11 @@ Why: to count how many repos and people use Murmur, nothing more. Murmur is new,
 active users (written 2026-11-07), and Murmur's messages travel through each team's own repo, so
 they never reach us. The address tells us where to look; the rest of the count is read from the
 public repo's own `refs/murmur/` refs and commit history, which anyone can read. From them the site
-keeps counts and unsalted hashes, never content or IP addresses, among them hashes of each device,
-its owner's git user name and the GitHub account matched to it; https://murmur.afig.dev/privacy/
-lists all it keeps. Only Murmur's maintainer, and those he gives a key to, see the counts. The code
-is `internal/publicrepo`, and `docs/VISION.md` has the design.
+keeps counts and unsalted hashes: of each device's ID, of its owner's git user name, and of the
+GitHub account matched to that owner. It keeps no content and no IP addresses.
+https://murmur.afig.dev/privacy/ lists everything it keeps. Each repo's totals show on the count's
+public run page in GitHub Actions; the rest is seen only by Murmur's maintainer and people given a
+key. The code is `internal/publicrepo`, and `docs/VISION.md` has the design.
 
 There is no setting to turn it off: the address is already public. Murmur versions before this one
 sent a daily check-in instead; the site stopped storing those on 2026-11-08.
