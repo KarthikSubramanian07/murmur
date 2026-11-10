@@ -22,6 +22,12 @@ const EPOCH = '2026-10-01';
 // Worker has 10 ms of it a request, and parsing a POST that size and building its statements
 // would take more. That was so before batches, and the Paid plan's limit is far above it.
 const BATCH = 200;
+// How long one census run can take: its job's timeout in .github/workflows/census.yml, so change
+// both together. A repo counted within this of the newest count was counted in the same run.
+const RUN = 30 * 60e3;
+// The census runs once a day, at 05:17 UTC. A scheduled run can start hours late on GitHub, so
+// the newest count is late only once it is older than this.
+const LATE = 30 * 3600e3;
 
 // /v1/census, for the census only, with the CENSUS_KEY secret as its Bearer token:
 // - GET: the listed repos, {"repos": ["github.com/Owner/Name", ...]}.
@@ -209,9 +215,11 @@ export async function repoNumbers(db, days) {
   }
   const recent = rows.filter(r => r.day >= weekFrom);
   const sumOf = (rs, k) => rs.reduce((s, r) => s + r[k], 0);
+  const last = counted.results[0]?.at ?? null;
   return {
     today, days, week: WEEK,
-    counted: counted.results[0]?.at ?? null,
+    counted: last,
+    census: health(list, last, Date.now()),
     repos: list.length,
     activeRepos: list.filter(r => r.week > 0).length,
     newRepos: list.filter(r => r.start >= weekFrom).length,
@@ -234,6 +242,29 @@ export async function repoNumbers(db, days) {
     // Per repo per day, for the charts that split by repo.
     byRepo: rows.map(r => ({ ...r, name: names.get(r.repo) ?? r.repo })),
     repoList: list.map(({ repo, ...r }) => r),
+  };
+}
+
+// Whether the census is keeping up, from when it last read each repo (repo_census.counted): its
+// last run, which is the newest count and the counts within RUN of it; how many hours ago that
+// was, and how many late, past a day, once it is older than LATE; and the repos that run didn't
+// count, the longest uncounted first, each with when it last was (null for never) and the day it
+// was listed. A repo isn't counted when it can't be read or the census skips it (census.mjs); the
+// run's page in Actions says which, and why.
+export function health(list, last, now) {
+  const at = last ? Date.parse(last) : NaN;
+  const ago = Number.isFinite(at) ? now - at : null;
+  const uncounted = Number.isFinite(at)
+    ? list.filter(r => !r.counted || Date.parse(r.counted) < at - RUN)
+    : list;
+  return {
+    last,
+    hours: ago === null ? null : Math.floor(ago / 3600e3),
+    late: ago !== null && ago > LATE ? Math.floor(ago / 3600e3) - 24 : 0,
+    repos: list.length,
+    notCounted: uncounted
+      .map(r => ({ name: r.name, counted: r.counted ?? null, listed: r.reported }))
+      .sort((a, b) => (a.counted ?? '').localeCompare(b.counted ?? '') || a.name.localeCompare(b.name)),
   };
 }
 
@@ -325,5 +356,28 @@ ${repos}
 - A count is only ever raised. Days are UTC.
 
 The check-ins of earlier versions, which are no longer stored, are at ${origin}/stats/archive/report.md. The same numbers as JSON: ${origin}/stats/data?days=N (N from 14 to 730, default 90), with the same key. This page takes \`?days=N\` too.
+
+## The census
+
+${censusReport(n.census, table, short)}
 `;
+}
+
+// The census's health, from health(), for the end of the report.
+function censusReport(h, table, short) {
+  const time = iso => `${iso.slice(0, 16).replace('T', ' ')} UTC`;
+  const n = (k, one, many = one + 's') => `${k} ${k === 1 ? one : many}`;
+  if (!h.repos) return 'It has no repos to count yet.';
+  if (!h.last) return `It hasn't counted any of the ${n(h.repos, 'repo')} yet.`;
+  const counted = h.repos - h.notCounted.length;
+  const lines = [`It last ran at ${time(h.last)}, ${n(h.hours, 'hour')} ago, and counted ${counted === h.repos ? (h.repos === 1 ? 'the 1 repo' : `all ${h.repos} repos`) : `${counted} of ${n(h.repos, 'repo')}`}.`];
+  if (h.late) lines.push(`It runs once a day, so it is **${n(h.late, 'hour')} late**.`);
+  if (h.notCounted.length) {
+    lines.push(`Not counted in that run, so their numbers are as of when each last was:
+
+${table(['Repo', 'Last counted'], h.notCounted.map(r => [`[${short(r.name)}](https://${r.name})`, r.counted ? time(r.counted) : `never; listed ${r.listed}`]))}
+
+A repo isn't counted when it can't be read, or is skipped for its time, refs or size. The census's run in Actions says which, and why: https://github.com/a-Fig/murmur/actions/workflows/census.yml.`);
+  }
+  return lines.join('\n\n');
 }
