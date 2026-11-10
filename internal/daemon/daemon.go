@@ -1107,6 +1107,10 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	tmp := path + ".tmp"
+	// Made new each time, never truncated: a file keeps the access list it was made with, and on
+	// Windows a temporary file left by a crash from before .git\murmur was protected would carry
+	// an open one onto daemon.json (see proc.Protect).
+	os.Remove(tmp)
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}

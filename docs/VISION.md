@@ -174,7 +174,11 @@ T3 thread to wake for 10 minutes exits. The token lets its holder name the progr
 to hand a message to T3, so reading the file is running code as the user. `.git/murmur` is made
 0700, and on Windows, where modes do nothing, each daemon start gives it an access list of its own
 that lets in only the user, SYSTEM and Administrators, and rewrites the files already in it
-(2026-11-09). Before that a clone outside the user's profile left it readable by every user. Any daemon that stops deletes its presence, so other devices drop it at their
+(2026-11-09). Before that a clone outside the user's profile left it readable by every user. A
+network drive, and a volume with no access lists, is left as it is: a share checks access as the
+account its server knows, and a list naming the local user could shut them out for good. So is a
+directory an elevated run made, which a later run without elevation may not change; that is only
+logged. Any daemon that stops deletes its presence, so other devices drop it at their
 next sync rather than when it goes stale.
 
 A manual upgrade replaces the binary and not the daemon already started from it, which would go on
