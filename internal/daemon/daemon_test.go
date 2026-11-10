@@ -282,11 +282,18 @@ func TestMessagesNoticesInbox(t *testing.T) {
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.session("bbbbbb", "claude-bob")
 
-	// Wait until each device sees the other's session in its presence.
+	// Wait until b's start is on its log: b pushes its presence first, and on a busy machine a
+	// heartbeat queued behind that push can come late enough for a to take b for stale. Then wait
+	// until each device sees the other's session in a presence that isn't stale, which is what the
+	// send's note goes by: who lists a stale device's sessions too.
+	mesh := "refs/murmur/mesh/" + b.self()
+	eventually(t, "bob's start on b's log", func() bool {
+		return git(t, remote, "for-each-ref", mesh) != "" && strings.Contains(busText(t, remote, b.self()), bob+" started (")
+	})
 	sees := func(d *device, addr string) bool {
 		for _, dv := range d.do(proto.Request{Op: proto.OpWho}).Devices {
 			for _, s := range dv.Sessions {
-				if s.Addr == addr {
+				if s.Addr == addr && !dv.Stale {
 					return true
 				}
 			}

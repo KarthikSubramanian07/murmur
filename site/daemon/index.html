@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>How the Murmur daemon works</title>
 <meta name="description" content="One drawing of the Murmur daemon, built part by part: why it exists, how a message becomes a commit on a side ref, how it polls, delivers, and survives.">
+<link rel="canonical" href="https://murmur.afig.dev/daemon/">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Murmur">
+<meta property="og:url" content="https://murmur.afig.dev/daemon/">
+<meta property="og:title" content="How the Murmur daemon works">
+<meta property="og:description" content="One drawing of the Murmur daemon, built part by part: why it exists, how a message becomes a commit on a side ref, how it polls, delivers, and survives.">
+<meta property="og:image" content="https://murmur.afig.dev/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="735">
+<meta property="og:image:alt" content="Two laptops: quiet-otter asks brave-heron whether it is changing the auth middleware, and the answer comes back through refs/murmur/* on GitHub in 15 seconds.">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -145,6 +156,14 @@
   .button:hover { background: var(--cream); }
   .quiet { color: var(--cream); font-size: 15px; font-weight: 500; text-underline-offset: 3px; white-space: nowrap; }
   .after { display: none; }
+  /* The foot: the same four links as at the end of every page, on the blue below the drawing. */
+  .site-foot { position: relative; z-index: 3; background: var(--blue); padding: 0 clamp(20px, 2.6vw, 40px); }
+  .site-foot nav { max-width: 1040px; margin: 0 auto; padding: 20px 0 max(28px, env(safe-area-inset-bottom)); border-top: 1px solid rgba(255, 251, 234, .22); }
+  .site-foot ul { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 0; padding: 0; list-style: none; }
+  .site-foot li + li::before { content: "\00B7"; padding: 0 12px; color: var(--cream); opacity: .55; }
+  .site-foot a { color: var(--cream); font-size: 14px; font-weight: 500; text-decoration: none; }
+  .site-foot a:hover { text-decoration: underline; text-underline-offset: 4px; }
+  .site-foot a:focus-visible { outline: 2px solid var(--cream); outline-offset: 3px; border-radius: 3px; }
 
   .progress { position: fixed; left: 0; right: 0; top: 0; height: 3px; z-index: 5; background: var(--butter); transform: scaleX(0); transform-origin: 0 0; opacity: .85; pointer-events: none; }
 
@@ -340,6 +359,17 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
     </section>
   </div>
 </main>
+
+<footer class="site-foot">
+  <nav aria-label="Site">
+    <ul>
+      <li><a href="/about/">About</a></li>
+      <li><a href="/privacy/">Privacy</a></li>
+      <li><a href="/contact/">Contact</a></li>
+      <li><a href="https://github.com/a-Fig/murmur">GitHub</a></li>
+    </ul>
+  </nav>
+</footer>
 
 <div class="after">
   <a class="button" href="https://github.com/a-Fig/murmur">Get Murmur on GitHub</a>
@@ -2667,6 +2697,10 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
     const cta = clamp((t - T.finale - .86) / .07);
     end.style.opacity = cta;
     end.style.visibility = cta <= 0 ? 'hidden' : 'visible';
+    // Stacked, the band is fixed to the foot of the screen; past the drawing's end it rides up with
+    // it, as the sticky band does on a wide screen, so the links below aren't covered.
+    const past = stacked.matches ? Math.max(0, innerHeight - track.getBoundingClientRect().bottom) : 0;
+    end.style.transform = past ? `translateY(${-past.toFixed(1)}px)` : '';
     progress.style.transform = `scaleX(${(t / N).toFixed(4)})`;
   };
   // One passage at a time: each fades in as its first chapter starts and out as its last one ends. The

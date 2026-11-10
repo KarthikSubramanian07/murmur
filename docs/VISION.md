@@ -101,6 +101,18 @@ address once; see Updating and Counting use.)
   one of those reasons again, a few times, and the look at the remote ref it takes after any failed
   push keeps a try that landed anyway from being written twice. Heartbeats are spread by 20% either
   way, so devices that started together drift apart.
+- Of the pushes a session's start sets off, the presence goes first (2026-11-10). The start on the
+  log and the assignment of a name from the pool were ready within milliseconds and took the turn
+  first; the presence, which waits 300 ms to gather a session's first changes, went last. Over
+  GitHub it began 4.05 s after the session started (median, 2026-11-09), and only the presence
+  shows the session in other devices' `who`. Now the other two wait until a presence listing the
+  session has been pushed, or has failed. A presence can carry a pool name before its assignment
+  lands, which is safe: the name is already set aside for that device, and readers take names from
+  presence (see Session names). A session that found the pool empty doesn't hold back the push
+  that gives it its name. Against a local bare remote that holds each push for 1.3 s, the presence
+  landed 1.86 s after the start instead of 4.71 s (median of 10), and the start on the log 3.45 s
+  instead of 1.53 s. With no hold, the presence landed at about the same time (0.51 s against
+  0.56 s), and the other two about 0.6 s later.
 - Bus commits carry git's empty tree, so they hold no files and fetching them brings nothing else
   along. The daemon pushes them with `--no-verify` and doesn't sign them: a `pre-push` hook that
   runs the test suite, or a signing prompt, on every message would make the bus unusable. These
@@ -757,9 +769,11 @@ in its own session.
   says how many sessions it reaches. The line above the composer says working, do not disturb,
   offline or waiting. "Working" is a guess from the session's last activity: nothing on the bus says
   a session is answering.
-- **The draft survives a rebuild.** The page rebuilds its DOM on every state change, so each
-  conversation's textarea is kept and reused, which keeps its text, caret and focus when a reply
-  arrives.
+- **The draft survives a rebuild.** The page rebuilds its DOM on every state change, but it keeps
+  the focused element and the elements it sits in, and each conversation's textarea is reused. A
+  draft keeps its text, caret and focus when a reply arrives, and a screen reader isn't read the
+  focused control again. Since 2026-11-10, status changes, errors and new messages are said once,
+  through one polite live region outside the rebuilt tree.
 
 Desktop notifications aren't built: the page's port is random, so a browser would ask permission
 again after each daemon restart. The tab's title carries the unread count instead.

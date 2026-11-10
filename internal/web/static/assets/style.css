@@ -105,6 +105,10 @@
   --scrollbar-thumb: rgb(255 255 255 / 8%);
   --scrollbar-thumb-hover: rgb(255 255 255 / 12%);
   --scrim: rgb(0 0 0 / 64%);
+  /* An edge that alone shows a control or its state (a checkbox, a field, the chosen segment), and
+   * the ring of an offline dot: 3:1 on the theme's surfaces (WCAG 1.4.11). */
+  --edge: color-mix(in oklab, var(--foreground) 42%, transparent);
+  --dot-off: color-mix(in oklab, var(--muted-foreground) 62%, transparent);
 
   /* App-chrome grain: index.css --surface-grain. */
   --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
@@ -136,8 +140,11 @@
   --popover: #24262b;
   --primary: #8ea2ff;
   --primary-foreground: #14151a; /* dark on the pale primary: white is 2.4:1 */
-  --muted-foreground: #9b9ea8;
-  --secondary-label: #8c8f99;
+  /* Greys light enough for 4.5:1 on a picked row or tab, not just the page (WCAG 1.4.3). */
+  --muted-foreground: #aeb1ba;
+  --secondary-label: #a3a6af;
+  --destructive-foreground: #ff8a8c;
+  --info-foreground: #7ab8ff;
   --message-surface: #383a42;
   --accent: rgb(255 255 255 / 5%);
   --border: rgb(255 255 255 / 6%);
@@ -147,16 +154,20 @@
   --composer: #33363c;
   --composer-edge: rgb(255 255 255 / 6%);
   --list: #25272c;
+  /* 4.5:1 and 3:1 on Dim's lighter page (WCAG 1.4.3, 1.4.11). */
+  --pr-draft: var(--muted-foreground);
+  --edge: color-mix(in oklab, var(--foreground) 50%, transparent);
+  --dot-off: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
 }
 [data-theme="dim"] [data-app-sidebar] {
   --sidebar: #1e2024;
   --sidebar-foreground: #e3e4e8;
-  --sidebar-muted-foreground: #8c8f99;
+  --sidebar-muted-foreground: #a3a6b0;
   --sidebar-row-hover: rgb(255 255 255 / 5%);
   --sidebar-row-active: rgb(255 255 255 / 9%);
   --sidebar-row-selected: rgb(255 255 255 / 9%);
   --sidebar-border: transparent;
-  --secondary-label: #8c8f99;
+  --secondary-label: #a3a6b0;
 }
 
 :root[data-theme="light"] {
@@ -169,7 +180,7 @@
   --secondary: oklch(98.5% 0 0);
   --secondary-foreground: oklch(27.4% 0.006 286.033);
   --muted: oklch(98.5% 0 0);
-  --muted-foreground: oklch(55.2% 0.016 285.938);
+  --muted-foreground: oklch(48% 0.016 285.938); /* 4.5:1 on a picked row or tab too (WCAG 1.4.3) */
   --message-surface: color-mix(in srgb, oklch(92% 0.004 286.32) 55%, oklch(96.7% 0.001 286.375));
   --accent: oklch(96.7% 0.001 286.375);
   --accent-foreground: oklch(21% 0.006 285.885);
@@ -178,10 +189,10 @@
   --border: oklch(92% 0.004 286.32);
   --input: oklch(87.1% 0.006 286.286);
   --info-foreground: oklch(48.8% 0.243 264.376);
-  --success-foreground: oklch(50.8% 0.118 165.612);
-  --warning-foreground: oklch(55.5% 0.163 48.998);
-  --pr-open: oklch(59.6% 0.145 163.225);
-  --pr-draft: oklch(55.2% 0.016 285.938);
+  --success-foreground: oklch(46% 0.118 165.612); /* 4.5:1 on its tint too (WCAG 1.4.3) */
+  --warning-foreground: oklch(47% 0.163 48.998);
+  --pr-open: oklch(50.8% 0.118 165.612);
+  --pr-draft: var(--muted-foreground);
   --row-hover: rgb(0 0 0 / 4%);
   --row-selected: rgb(0 0 0 / 6%);
   --composer: var(--white);
@@ -191,16 +202,21 @@
   --scrim: rgb(0 0 0 / 32%);
   --shadow-popover: 0 16px 40px -18px rgb(0 0 0 / 22%);
   --shadow-dialog: 0 24px 64px -24px rgb(0 0 0 / 28%);
+  /* On white, the green and amber dots a step darker, for 3:1 (WCAG 1.4.11). */
+  --success: oklch(59.6% 0.145 163.225);
+  --warning: oklch(55.5% 0.163 48.998);
+  --edge: color-mix(in oklab, var(--foreground) 55%, transparent);
+  --dot-off: var(--muted-foreground);
 }
 [data-theme="light"] [data-app-sidebar] {
   --sidebar: oklch(98.5% 0 0);
   --sidebar-foreground: oklch(21% 0.006 285.885);
-  --sidebar-muted-foreground: oklch(55.2% 0.016 285.938);
+  --sidebar-muted-foreground: oklch(48% 0.016 285.938);
   --sidebar-row-hover: rgb(0 0 0 / 4%);
   --sidebar-row-active: rgb(0 0 0 / 6%);
   --sidebar-row-selected: rgb(0 0 0 / 5%);
   --sidebar-border: oklch(92% 0.004 286.32);
-  --secondary-label: oklch(55.2% 0.016 285.938);
+  --secondary-label: oklch(48% 0.016 285.938);
 }
 
 /* Base. */
@@ -268,6 +284,41 @@ kbd {
 :focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
+}
+/* On a control filled with the primary, an inset ring in the primary wouldn't show: it goes outside. */
+.btn-primary:focus-visible,
+.composer-send:focus-visible {
+  outline-offset: 2px;
+}
+/* The skip link's target is the whole pane, which needs no ring of its own. */
+.main:focus-visible {
+  outline: none;
+}
+/* For a screen reader only: in the accessibility tree, not on the screen. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* The first thing Tab reaches, and shown only then: past the sidebar to the page. */
+.skip-link {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 70;
+  padding: 0.375rem 0.75rem;
+  border-radius: var(--control-radius);
+  background: var(--popover);
+  box-shadow: var(--shadow-popover);
+  color: var(--foreground);
+  font-weight: 500;
+  translate: 0 calc(-100% - 1rem);
+}
+.skip-link:focus-visible {
+  translate: 0 0;
 }
 .icon {
   width: 1rem;
@@ -529,11 +580,16 @@ kbd {
   background: color-mix(in oklab, var(--input) 32%, transparent);
   color: var(--foreground);
 }
+/* The choice made has an edge at 3:1 on the track, as its fill alone is close to the track's
+ * (WCAG 1.4.11). */
 .segmented button[aria-pressed="true"],
-.segmented button[aria-selected="true"] {
+.segmented button[aria-selected="true"],
+.segmented button[aria-checked="true"] {
   background: color-mix(in oklab, var(--input) 72%, transparent);
   color: var(--foreground);
-  box-shadow: var(--shadow-xs-10);
+  box-shadow:
+    var(--shadow-xs-10),
+    inset 0 0 0 1px var(--edge);
 }
 .g-tab-n {
   font-size: 0.6875rem;
@@ -556,6 +612,11 @@ kbd {
   transition:
     border-color 0.15s var(--ease),
     box-shadow 0.15s var(--ease);
+}
+/* A field with no search icon, such as a name or the minutes, is found by its edge, so the edge is
+ * 3:1 on the page (WCAG 1.4.11). */
+.field:where(:not(:has(> .icon))) {
+  border-color: var(--edge);
 }
 .field:focus-within {
   border-color: var(--ring);
@@ -622,21 +683,31 @@ textarea::placeholder {
   width: 0.375rem;
   height: 0.375rem;
 }
+/* Each state has a shape as well as a color, as Discord's do, so it never rests on color alone (WCAG
+ * 1.4.1): a filled dot is active, a half-filled one idle, one with a bar do not disturb, and a ring
+ * offline or settled. The ring's grey is 3:1 on the page (1.4.11). */
 .pres-on {
   background: var(--success);
 }
 .pres-idle {
-  background: var(--warning);
+  border: 1.5px solid var(--warning);
+  background: linear-gradient(90deg, var(--warning) 50%, transparent 50%);
 }
 .pres-dnd {
+  position: relative;
   background: var(--destructive);
 }
-.pres-off {
-  background: color-mix(in oklab, var(--muted-foreground) 45%, transparent);
+.pres-dnd::after {
+  content: "";
+  position: absolute;
+  inset: calc(50% - 0.75px) 22%;
+  border-radius: 1px;
+  background: var(--dot-ring, var(--background));
 }
+.pres-off,
 .pres-settled {
+  border: 1.5px solid var(--dot-off);
   background: transparent;
-  box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--muted-foreground) 55%, transparent);
 }
 
 /* A name's face: a neutral monogram, square for a session and round for a person, so the page's
@@ -836,6 +907,12 @@ a.g-pr:hover {
 }
 .repo-row .dot.ok {
   background: var(--success);
+}
+/* A repo whose daemon isn't running is a ring, as an offline session is, not a dimmer dot (WCAG
+ * 1.4.1, 1.4.11). */
+.repo-row .dot:not(.ok) {
+  border: 1.5px solid var(--dot-off);
+  background: transparent;
 }
 .repo-row > .icon {
   flex-shrink: 0;
@@ -1450,6 +1527,10 @@ a.g-pr:hover {
 }
 .content-chat {
   overflow: hidden;
+}
+/* A row reached by Tab stops below the sticky select bar rather than under it (WCAG 2.4.11). */
+.content:has(.g-select-bar) {
+  scroll-padding-top: 4.5rem;
 }
 
 /* =============================================================================== Pages. */
@@ -2186,7 +2267,7 @@ a.g-pr:hover {
 }
 .tf.on {
   background: color-mix(in oklab, var(--primary) 22%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 50%, transparent);
+  box-shadow: inset 0 0 0 1px var(--primary); /* 3:1 on the sidebar, WCAG 1.4.11 */
   color: var(--sidebar-foreground);
 }
 .tf-n {
@@ -2281,7 +2362,7 @@ a.g-pr:hover {
   width: 0.875rem;
   height: 0.875rem;
   border-radius: var(--radius-sm);
-  box-shadow: inset 0 0 0 1px var(--input);
+  box-shadow: inset 0 0 0 1px var(--edge); /* 3:1, WCAG 1.4.11 */
   color: var(--primary-foreground);
   font-size: 0.75rem;
   line-height: 1;
@@ -2611,12 +2692,15 @@ a.g-pr:hover {
   background: none;
   font-size: inherit;
 }
+/* Underlined, since its blue alone is only 2.4:1 against the text around it (WCAG 1.4.1). */
 .rich a {
   color: var(--info-foreground);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 50%, transparent);
+  text-underline-offset: 2px;
 }
 .rich a:hover {
-  text-decoration: underline dotted;
-  text-underline-offset: 2px;
+  text-decoration-color: currentColor;
 }
 .rich strong {
   font-weight: 600;
@@ -2717,9 +2801,10 @@ a.g-pr:hover {
   backdrop-filter: blur(12px) saturate(1.14);
   transition: box-shadow 0.15s var(--ease);
 }
+/* Its edge is where the focus shows, in the ring's color, at 3:1 on the page (WCAG 1.4.11). */
 .composer:focus-within {
   box-shadow:
-    0 0 0 1px color-mix(in oklab, var(--ring) 35%, var(--composer-edge)),
+    0 0 0 1px var(--ring),
     0 1px 2px transparent,
     inset 0 1px rgb(255 255 255 / 3%);
 }
@@ -2965,7 +3050,7 @@ a.g-pr:hover {
 }
 .g-mp-sec > span:not(.dev-dot):not(.g-mp-n) {
   font-weight: 400;
-  opacity: 0.8;
+  opacity: 0.9; /* 4.5:1 in every theme */
 }
 .g-mp-n {
   margin-left: auto;
@@ -2985,7 +3070,7 @@ a.g-pr:hover {
   background: var(--accent);
 }
 .g-mp-row.stale {
-  opacity: 0.6;
+  opacity: 0.9; /* its small grey text keeps 4.5:1 in every theme */
 }
 .g-mp-row .avatar {
   width: 1.5rem;
@@ -3543,6 +3628,10 @@ a.g-pr:hover {
   }
   .s-meta > :empty {
     display: none;
+  }
+  /* 24px tall to tap, among the row's other controls (WCAG 2.5.8). */
+  .s-meta a.g-pr {
+    min-height: 1.5rem;
   }
   .g-settled {
     grid-template-columns: auto minmax(0, 1fr) auto;

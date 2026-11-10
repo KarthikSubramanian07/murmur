@@ -6,6 +6,45 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Murmur: intra-repo agent communication</title>
 <meta name="description" content="Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.">
+<link rel="canonical" href="https://murmur.afig.dev/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Murmur">
+<meta property="og:url" content="https://murmur.afig.dev/">
+<meta property="og:title" content="Murmur: intra-repo agent communication">
+<meta property="og:description" content="Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.">
+<meta property="og:image" content="https://murmur.afig.dev/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="735">
+<meta property="og:image:alt" content="Two laptops: quiet-otter asks brave-heron whether it is changing the auth middleware, and the answer comes back through refs/murmur/* on GitHub in 15 seconds.">
+<meta name="twitter:card" content="summary_large_image">
+<!-- Who and what this is, for search engines and agents that read schema.org. The keywords are
+     phrases the page itself uses. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://murmur.afig.dev/#murmur",
+      "name": "Murmur",
+      "alternateName": "mur",
+      "description": "Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.",
+      "url": "https://murmur.afig.dev/",
+      "image": "https://murmur.afig.dev/og.jpg",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux, Windows",
+      "keywords": "agent communication, coding agents, git",
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "license": "https://github.com/a-Fig/murmur/blob/main/LICENSE",
+      "downloadUrl": "https://github.com/a-Fig/murmur/releases/latest",
+      "softwareHelp": { "@type": "CreativeWork", "url": "https://github.com/a-Fig/murmur#readme" },
+      "sameAs": ["https://github.com/a-Fig/murmur"],
+      "author": { "@type": "Person", "name": "Tyler Darisme", "url": "https://github.com/a-Fig" }
+    }
+  ]
+}
+</script>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -292,6 +331,14 @@
   #setup h2 { line-height: normal; }
   #setup .button { padding: 14px 24px; letter-spacing: normal; box-shadow: none; }
   #setup .button:hover { transform: none; }
+  /* The foot: the same four links as at the end of every page, quiet, on Setup's cream. */
+  .site-foot { background: var(--cream); padding: 0 clamp(16px, 4vw, 48px); }
+  .site-foot nav { max-width: 1040px; margin: 0 auto; padding: 20px 0 max(28px, env(safe-area-inset-bottom)); border-top: 1px solid #DDD7B8; }
+  .site-foot ul { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; padding: 0; list-style: none; }
+  .site-foot li + li::before { content: "\00B7"; padding: 0 12px; color: #3A4670; opacity: .6; }
+  .site-foot a { color: #3A4670; font-size: 14px; font-weight: 500; text-decoration: none; }
+  .site-foot a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
+  .site-foot a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; }
   @media (max-width: 720px) {
     .steps > li { grid-template-columns: 1.6em minmax(0, 1fr); }
     .do { grid-column: 2; margin-top: 6px; }
@@ -742,6 +789,17 @@ void main() {
     <p class="credit">Built by Tyler, with help from Karthik and <a href="https://github.com/a-Fig/murmur#thanks">others</a>.</p>
   </div>
 </section>
+
+<footer class="site-foot">
+  <nav aria-label="Site">
+    <ul>
+      <li><a href="/about/">About</a></li>
+      <li><a href="/privacy/">Privacy</a></li>
+      <li><a href="/contact/">Contact</a></li>
+      <li><a href="https://github.com/a-Fig/murmur">GitHub</a></li>
+    </ul>
+  </nav>
+</footer>
 
 <script>
 (() => {

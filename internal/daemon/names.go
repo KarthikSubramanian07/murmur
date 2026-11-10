@@ -589,6 +589,14 @@ func (d *Daemon) assignPending(ctx context.Context) error {
 		if w.empty() {
 			return nil
 		}
+		// After the presence of a session just started, and before pushNames reads the tip for its
+		// lease. Not when a session found the pool empty and waits on this push for its name: until
+		// it lands, a presence can only show the session as pending.
+		if len(w.wants) == 0 {
+			if err := d.awaitPresence(ctx); err != nil {
+				return err
+			}
+		}
 		err := d.pushNames(ctx, w)
 		switch {
 		case err == nil:
