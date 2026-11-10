@@ -273,7 +273,9 @@ a team key, below.
   `mur rotate` lists the people who can push to the repo with `gh` and makes a new epoch if anyone
   on the current epoch's roster is no longer among them, or if this device can read no roster for
   it; `--force` always does. Someone moved down to read access counts as gone. When nobody has left
-  and someone has joined, it writes the roster again with them on it, and makes no new key.
+  and someone has joined, it writes the roster again with them on it, and makes no new key; if a
+  teammate's device wrote a roster meanwhile, it compares again with that one first, since writing
+  over it could take off someone who has left with no new key made.
   **Someone who joined and left between two runs was never on a roster, so their leaving isn't
   seen**; only `--force` covers that until rotation runs on its own. When it should is open (Tyler,
   2026-11-10: the structure first).

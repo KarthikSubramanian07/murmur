@@ -93,6 +93,29 @@ func TestGrantGoesByTheKeysADeviceHolds(t *testing.T) {
 	if due := d.grantsDueLocked(); len(due) != 0 {
 		t.Fatalf("granted with nothing to give that the device lacks: %v", due)
 	}
+	// A key for an epoch a rewritten team ref no longer shows is still given.
+	k := bus.NewBoxKey()
+	d.teamKeys[bus.TeamID(bus.BoxPublic(k))] = k
+	if due := d.grantsDueLocked(); len(due) != 1 {
+		t.Fatalf("not granted a held key the team ref no longer shows: %v", due)
+	}
+}
+
+// A roster written without a rotation is written only over the roster it was decided against. If a
+// teammate's device has recorded someone meanwhile, writing over it would take them off with no new
+// key, and their leaving would never be seen.
+func TestRosterIsNotWrittenOverOneItWasNotComparedWith(t *testing.T) {
+	d, _ := keyRig(t)
+	ep := withEpoch(d, true)
+	r, err := bus.NewRoster(ep.ID, ep.Pub, []string{"alice", "bob"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.st.Epochs[0].Roster = &r
+	_, pushed, err := d.teamWork(t.Context(), &teamAsk{collaborators: []string{"alice", "carol"}, basis: []string{"alice"}})
+	if !errors.Is(err, errRosterMoved) || pushed {
+		t.Fatalf("pushed %v, err %v: want errRosterMoved", pushed, err)
+	}
 }
 
 // A device that is away keeps the presence it left, which lists the keys it held then. Once a grant

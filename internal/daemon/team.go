@@ -377,8 +377,10 @@ func (d *Daemon) grantsDueLocked() []string {
 			continue
 		}
 		lacks := false
-		for _, e := range d.st.Epochs {
-			if d.teamKeys[e.ID] != nil && !slices.Contains(p.pres.Holds, e.ID) {
+		// Every key held, as a grant carries them all: one for an epoch a rewritten team ref no longer
+		// shows is still history's key (Sol's review, 2026-11-10).
+		for id := range d.teamKeys {
+			if !slices.Contains(p.pres.Holds, id) {
 				lacks = true
 			}
 		}
@@ -394,7 +396,15 @@ func (d *Daemon) grantsDueLocked() []string {
 type teamAsk struct {
 	rotate        bool
 	collaborators []string
+	// basis is the roster a roster written without a rotation was decided against: nobody on it had
+	// left. If the roster is another by the time of the push, the push isn't made (errRosterMoved).
+	basis []string
 }
+
+// errRosterMoved says the current epoch's roster is no longer the one a request compared against:
+// another device wrote one, or rotated. Writing over it could take off someone who has since left
+// with no new key made, and their leaving would never be seen (Sol's review, 2026-11-10).
+var errRosterMoved = errors.New("the roster changed meanwhile")
 
 // errKeysMissing says this device can't rotate: the devices it would grant to get the keys it
 // holds, and history must stay readable to them.
@@ -426,6 +436,12 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 				d.mu.Unlock()
 				return "", false, errKeysMissing
 			}
+		}
+	}
+	if ask != nil && !rotate && ask.collaborators != nil {
+		if cur, ok := d.rosterLocked(); !ok || !slices.Equal(cur, ask.basis) {
+			d.mu.Unlock()
+			return "", false, errRosterMoved
 		}
 	}
 	rosterID, rosterPub := "", ""
@@ -550,10 +566,11 @@ func (d *Daemon) rosterLocked() ([]string, bool) {
 	return got, err == nil
 }
 
-// recordRoster writes a roster of collaborators for the current epoch, and waits for it to land.
-func (d *Daemon) recordRoster(ctx context.Context, collaborators []string) error {
+// recordRoster writes a roster of collaborators for the current epoch, in place of basis, and waits
+// for it to land. It fails with errRosterMoved if the roster is no longer basis.
+func (d *Daemon) recordRoster(ctx context.Context, collaborators, basis []string) error {
 	for attempt := 0; attempt < 3; attempt++ {
-		_, pushed, err := d.teamWork(ctx, &teamAsk{collaborators: collaborators})
+		_, pushed, err := d.teamWork(ctx, &teamAsk{collaborators: collaborators, basis: basis})
 		if err != nil {
 			return err
 		}
@@ -580,24 +597,36 @@ func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force bool)
 		slices.Sort(collab)
 		collab = slices.Compact(collab)
 	}
-	d.mu.Lock()
-	prev, known := d.rosterLocked()
-	d.mu.Unlock()
 	var gone []string
-	for _, login := range prev {
-		if !slices.Contains(collab, login) {
-			gone = append(gone, login)
+	// Decided again if the roster changes before a roster-only write is pushed: a teammate's device
+	// may have recorded someone this one never saw, who has since left.
+	for attempt := 0; ; attempt++ {
+		d.mu.Lock()
+		prev, known := d.rosterLocked()
+		d.mu.Unlock()
+		gone = nil
+		for _, login := range prev {
+			if !slices.Contains(collab, login) {
+				gone = append(gone, login)
+			}
 		}
-	}
-	switch {
-	case force:
-	case collab == nil:
-		return "", errors.New("couldn't list the repo's collaborators, so there is nothing to compare; --force makes a new team key anyway")
-	case known && len(gone) == 0:
+		if force {
+			break
+		}
+		if collab == nil {
+			return "", errors.New("couldn't list the repo's collaborators, so there is nothing to compare; --force makes a new team key anyway")
+		}
+		if !known || len(gone) > 0 {
+			break
+		}
 		if slices.Equal(prev, collab) {
 			return "Nobody has left since the team key was made, so it stays as it is.", nil
 		}
-		if err := d.recordRoster(ctx, collab); err != nil {
+		err := d.recordRoster(ctx, collab, prev)
+		if errors.Is(err, errRosterMoved) && attempt < 3 {
+			continue
+		}
+		if err != nil {
 			return "", err
 		}
 		return "Nobody has left since the team key was made, so it stays as it is. Recorded who has joined.", nil
