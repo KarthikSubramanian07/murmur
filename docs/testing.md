@@ -2,18 +2,23 @@
 
 `go test ./...` runs everything, including tests that run two devices against a local bare remote.
 A change is checked with `gofmt -l .` (empty), `go vet ./...` and `go test -race -count=1 ./...`.
-The `daemon` package is most of the time. Under `-race` on CI it took 460 s on Linux, 757 s on macOS
-and 1,389 s on Windows, before any of its tests ran in parallel (2026-11-09; #39 is about making it
-faster). Since then the tests that share nothing with the others call `t.Parallel()`, which took
-the package from 750–872 s to 585–589 s on an 8-core laptop shared with other work (2026-11-09).
+The `daemon` package is most of the time (#39 is about making it faster). Its tests that share
+nothing with the others call `t.Parallel()`. Under `-race` on CI that took the package from 464 s
+to 304 s on Linux, 798 s to 599 s on macOS and 1,500 s to 1,027 s on Windows (main at c9376fa, run
+42689370600, against #281's first run, 42699090516; 2026-11-09). Windows takes longest, so it
+decides when a pull request is green.
 
 Go runs a package's serial tests first, one at a time, and the parallel ones after them, so the
 two never overlap. A daemon test stays serial if it sets the environment (`t.Setenv` panics in a
 parallel test; `useFakeT3` calls it), replaces a package variable, writes into the `HOME` or
 `CODEX_HOME` that `TestMain` sets, or counts on timing or a port number that the other tests' load
-could upset; those last say why in a comment. As of 2026-11-09 that is 77 of 271 tests, 50 of them
-only because the stand-in `t3` is configured through the environment, which is #39's next step.
-Run one at a time, the serial tests were about 45% of the package's time.
+could upset; those last say why in a comment. As of 2026-11-09 that is 77 of 276 tests, 50 of them
+only because the stand-in `t3` is configured through the environment, which #282 is about. Run one
+at a time, the serial tests were about 45% of the package's time.
+
+A parallel test meets more load than it did alone, so a wait it took for granted may come late. A
+call's end, for one, is answered before its after-snapshot is taken: a test that commits right
+after an end looks the session up first, since a lookup waits for the ends still being judged.
 
 A package whose tests can reach Murmur's `murmur.*` git config calls `testgit.Isolate` in `TestMain`,
 so a developer's own settings don't change what they see (#262). As of 2026-11-09 those are `update`,
