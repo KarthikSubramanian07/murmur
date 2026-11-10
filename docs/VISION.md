@@ -191,12 +191,20 @@ address. Clients take the lock only shared, and only a daemon takes it exclusive
 client finds held is a daemon's; a timed retry left a window where another client's cleanup looked
 like a daemon. A client from before this takes it exclusively for a moment while stopping or
 replacing a daemon. This holds where the state directory is private to its user: it is made 0700 on Unix, and on Windows
-has whatever access the clone's location gives. A ping that proves the daemon knows the token was
+gets an access list of its own (below). A ping that proves the daemon knows the token was
 set aside: an older daemon couldn't give the proof, and a client must still talk to one to replace
 it.
 
 A daemon with no sessions, no open page (see The page for humans) and no
-T3 thread to wake for 10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
+T3 thread to wake for 10 minutes exits. The token lets its holder name the program the daemon runs
+to hand a message to T3, so reading the file is running code as the user. `.git/murmur` is made
+0700, and on Windows, where modes do nothing, each daemon start gives it an access list of its own
+that lets in only the user, SYSTEM and Administrators, and rewrites the files already in it
+(2026-11-09). Before that a clone outside the user's profile left it readable by every user. A
+network drive, and a volume with no access lists, is left as it is: a share checks access as the
+account its server knows, and a list naming the local user could shut them out for good. So is a
+directory an elevated run made, which a later run without elevation may not change; that is only
+logged. Any daemon that stops deletes its presence, so other devices drop it at their
 next sync rather than when it goes stale.
 
 A manual upgrade replaces the binary and not the daemon already started from it, which would go on

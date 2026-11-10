@@ -645,6 +645,11 @@ func Run(ctx context.Context, opt Options) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	// On every start, before daemon.json is written: a directory an older version made is
+	// tightened too. A clone whose state another user made can't be, and runs as before.
+	if err := proc.Protect(dir); err != nil {
+		opt.Log.Printf("keeping other users out of %s: %v", dir, err)
+	}
 	lock, err := proc.Lock(filepath.Join(dir, "daemon.lock"))
 	if errors.Is(err, proc.ErrLocked) {
 		return ErrRunning
@@ -1163,6 +1168,10 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	tmp := path + ".tmp"
+	// Made new each time, never truncated: a file keeps the access list it was made with, and on
+	// Windows a temporary file left by a crash from before .git\murmur was protected would carry
+	// an open one onto daemon.json (see proc.Protect).
+	os.Remove(tmp)
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
