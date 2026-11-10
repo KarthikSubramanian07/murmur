@@ -562,7 +562,8 @@ call.
   asks it, on its sessions' port with the sessions' token from its `daemon.json`, for a key
   (`OpPageKey`, protocol 10): random, good once, for a minute. The tab goes to the other page with the
   key in the fragment (`#key=`), and that page trades it at `/api/key` for its token, which the tab
-  keeps for that origin alone. `/api/key` is the one call that takes no token; it takes only JSON,
+  keeps for that origin alone. The theme (#354) goes in the fragment too: the browser keeps it per
+  page, and the other page is another page. `/api/key` is the one call that takes no token; it takes only JSON,
   which another site can't send without a preflight that nothing grants. The key left in the tab's
   history is spent. The cost: a page's token now reaches every joined clone's page on the machine,
   since that page can ask for keys to them, where before it reached its own; it still never reaches
