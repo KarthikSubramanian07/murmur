@@ -182,12 +182,12 @@ func editTOMLServer(text, exe string, spec tomlServer) (out string, changed bool
 	return out, out != text, nil
 }
 
-// tomlLineEnd reads one line of TOML that starts inside the multi-line string open (`"""` or `”'`,
-// "" for none) and returns the one still open at its end, "" for none. A line that starts inside one
-// is the string's text, not a header or a key. Comments and one-line strings are skipped as wholes,
-// so a `"""` in either opens nothing: counting the quotes on a line took a comment like
-// `# wrap prompts in """` for an opening, missed [mcp_servers.murmur] below it, and the next join
-// appended a second one, which makes Codex refuse the whole file.
+// tomlLineEnd reads one line of TOML that starts inside the multi-line string open (three double
+// quotes or three single quotes, "" for none) and returns the one still open at its end, "" for none.
+// A line that starts inside one is the string's text, not a header or a key. Comments and one-line
+// strings are skipped as wholes, so a `"""` in either opens nothing: counting the quotes on a line
+// took a comment like `# wrap prompts in """` for an opening, missed [mcp_servers.murmur] below it,
+// and the next join appended a second one, which makes Codex refuse the whole file.
 func tomlLineEnd(line, open string) string {
 	i := 0
 	if open != "" {
@@ -222,10 +222,10 @@ func tomlLineEnd(line, open string) string {
 	return ""
 }
 
-// closeMultiline finds the end of the multi-line string delim (`"""` or `”'`) in line from i, and
-// returns the index just past it, or -1 when the string goes on past the line. Up to two more quotes
-// right before the closing three belong to the string. A backslash escapes the next character in a
-// basic string, not in a literal one.
+// closeMultiline finds the end of the multi-line string delim (three double or three
+// single quotes) in line from i, and returns the index just past it, or -1 when the string goes on
+// past the line. Up to two more quotes right before the closing three belong to the string. A
+// backslash escapes the next character in a basic string, not in a literal one.
 func closeMultiline(line string, i int, delim string) int {
 	q := delim[0]
 	for i < len(line) {
