@@ -73,20 +73,13 @@ func addTOMLListItem(text, table, key, item, file string) (out string, changed b
 	}
 	lines := strings.Split(text, "\n")
 	start, end := -1, len(lines)
-	inString := ""
+	open := "" // the multi-line string the line starts in
 	var current []string
 	for i, raw := range lines {
 		line := strings.TrimRight(raw, "\r")
-		if inString != "" {
-			if strings.Count(line, inString)%2 == 1 {
-				inString = ""
-			}
+		inString := open != ""
+		if open = tomlLineEnd(line, open); inString {
 			continue
-		}
-		for _, q := range []string{`"""`, `'''`} {
-			if strings.Count(line, q)%2 == 1 {
-				inString = q
-			}
 		}
 		if path, ok := tableHeader(line); ok {
 			current = path
