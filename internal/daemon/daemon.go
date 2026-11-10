@@ -981,7 +981,8 @@ func (d *Daemon) stopping() bool {
 
 // awaitFirstSync waits until Run's first sync is over, done or not, for a request that wants what it
 // reads: a registration, as what that sync reads is the backlog, which a session shouldn't be given
-// (Run), and who, send and lookup, which on a new clone would know no other device until then. It
+// (Run); who, send and lookup, which on a new clone would know no other device until then; and the
+// page's send and name claim, which resolve names, push, and may sync on their own. It
 // waits FirstSyncLimit at most, as the sync does, and less if ctx ends first. The daemon answers
 // before that sync (#372), so a starter needn't wait for it.
 func (d *Daemon) awaitFirstSync(ctx context.Context) {
