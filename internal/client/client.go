@@ -134,11 +134,14 @@ func (c *Client) Outdated() bool {
 	return c.older
 }
 
-// replaceWait is how long replace waits for a daemon it asked to stop to let go of the clone: as long
-// as a shutdown may take (draining its work, then saying goodbye, with the lock held throughout), and
-// a little more for the request to arrive and the process to go. A caller that gives up sooner ends
-// the wait sooner. A variable, for the test.
-var replaceWait = proto.ShutdownMax + 5*time.Second
+// StopWait is how long to wait for a daemon asked to stop to let go of the clone: as long as a
+// shutdown may take (draining its work, then saying goodbye, with the lock held throughout), and a
+// little more for the request to arrive and the process to go. replace waits this long, and so does
+// `join --leave` (#91); a caller that gives up sooner ends the wait sooner.
+const StopWait = proto.ShutdownMax + 5*time.Second
+
+// replaceWait is StopWait, as a variable for the test.
+var replaceWait = StopWait
 
 // replace stops the daemon at the address c has, which is outdated, and waits until it has let go of
 // the clone, so that the daemon started next finds the lock free. Another client may be doing the
