@@ -221,18 +221,27 @@ func TestRegisterGrok(t *testing.T) {
 	write(t, path, before)
 	h := sb.defaultHome(agents[agentIndex("grok")])
 	did, fresh, err := sb.registerGrokAt(h)
-	if err != nil || !fresh || len(did) != 2 {
+	if err != nil || !fresh || len(did) != 3 {
 		t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
+	}
+	hooks := read(t, filepath.Join(sb.GrokHome, "hooks", "murmur.json"))
+	for _, want := range []string{`"PostToolUse"`, `"Stop"`, ` hook grok"`, `"timeout": 30`} {
+		if !strings.Contains(hooks, want) {
+			t.Errorf("the hook file lacks %s:\n%s", want, hooks)
+		}
+	}
+	if strings.Contains(hooks, "matcher") || strings.Contains(hooks, "UserPromptSubmit") {
+		t.Errorf("the hook file:\n%s", hooks)
 	}
 	got := read(t, path)
 	want := "# mine\n[permission]\nallow = [\"Bash(ls)\", \"MCPTool(murmur__*)\"] # kept\n\n[mcp_servers.murmur]\ncommand = " + tomlString(sb.Exe) + "\nargs = [\"mcp\", \"--agent\", \"grok\"]\n"
 	if got != want {
 		t.Errorf("config.toml:\n%s\nwant:\n%s", got, want)
 	}
-	if _, fresh, err := sb.registerGrokAt(h); err != nil || fresh {
-		t.Errorf("second: fresh=%v err=%v", fresh, err)
+	if did, fresh, err := sb.registerGrokAt(h); err != nil || fresh || len(did) != 0 {
+		t.Errorf("second: did=%q fresh=%v err=%v", did, fresh, err)
 	}
-	if r := tableRemoval(sb.Env, h); !strings.Contains(r, path) {
+	if r := grokRemoval(sb.Env, h); !strings.Contains(r, path) || !strings.Contains(r, "murmur.json") {
 		t.Errorf("removal: %q", r)
 	}
 }

@@ -53,8 +53,8 @@ For humans:
 
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
-  mur hook [--agent pi]         Claude Code's hook, and Pi's through Murmur's extension (reads the
-                                payload on stdin)
+  mur hook [AGENT]              an agent's hook: Claude Code's, or codex's, grok's, or pi's through
+                                Murmur's extension (reads the payload on stdin)
   mur daemon [--git-dir DIR]    the daemon, in the foreground
 
 Every command takes -C DIR to act on the repository at DIR.
@@ -104,13 +104,24 @@ func main() {
 	}
 }
 
-// hookAgent is the agent `mur hook` runs for, from its arguments: "" for Claude Code, or what
-// --agent names. ok is false for arguments it can't read or an agent the hook doesn't know.
+// hookAgent is the agent `mur hook` runs for, from its arguments: "" for Claude Code, or the one
+// named, as join writes it for Codex and Grok (`mur hook codex`, #225) or as Pi's extension runs it
+// (`mur hook --agent pi`, #205). ok is false for arguments it can't read or an agent the hook doesn't
+// know.
 func hookAgent(args []string) (agent string, ok bool) {
 	fs := flag.NewFlagSet(brand.Command+" hook", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	a := fs.String("agent", "", "")
-	if fs.Parse(args) != nil || fs.NArg() != 0 || !hook.KnownAgent(*a) {
+	if fs.Parse(args) != nil {
+		return "", false
+	}
+	switch {
+	case fs.NArg() == 1 && *a == "":
+		*a = fs.Arg(0)
+	case fs.NArg() != 0:
+		return "", false
+	}
+	if !hook.KnownAgent(*a) {
 		return "", false
 	}
 	return *a, true

@@ -54,9 +54,10 @@ const (
 //	   daemon whose page still takes the sessions' token (#42)
 //	8: a person's account on the page (#242): an upgraded `mur ui` replaces a daemon whose page
 //	   can't send
-//	9: the hook's Native: Pi's extension runs the hook, which names its session by Pi's own ID
-//	   (#205)
-const Protocol = 9
+//	9: the hook's Agent and Ancestors, for Codex's and Grok's hooks, and SessionView's HookOff (#225)
+//	10: the hook's Native: Pi's extension runs the hook, which names its session by Pi's own ID
+//	    (#205)
+const Protocol = 10
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -126,6 +127,14 @@ type Request struct {
 	// inbox, even where the page says to give it whole (#229). An older daemon ignores it, and gives
 	// messages whole to a hook that sends it, which prints them: no new Protocol number.
 	Whole bool `json:"whole,omitempty"`
+	// Agent is, on a hook's request, the agent it runs for where that isn't Claude Code: "codex" or
+	// "grok", from the hook's command line (#225). ClaudeSession then holds that agent's own ID for the
+	// conversation (Codex's thread ID, Grok's session ID), which its MCP server reports as the route's
+	// Native. Ancestors is the hook's process and those above it, nearest first: such an agent gives a
+	// hook no variable naming its process, as Claude Code does with CLAUDE_PID, and the agent that ran
+	// the hook is the parent of its MCP server too.
+	Agent     string `json:"agent,omitempty"`
+	Ancestors []int  `json:"ancestors,omitempty"`
 
 	// Add and Remove are the tags OpTags adds to the caller and takes from it. Tags is what OpWho
 	// searches by: a session is listed when it has every tag named, and none named after a dash
@@ -262,6 +271,10 @@ type SessionView struct {
 	You        bool      `json:"you,omitempty"`
 	// Tags is the session's tags, in order of name (#198).
 	Tags []tags.Tag `json:"tags,omitempty"`
+	// HookOff says Murmur's hook doesn't run for the session: it has called a tool of Murmur's, and
+	// the hook, which runs after every tool call, never reported (#225). It isn't told of messages
+	// while it works.
+	HookOff bool `json:"hookOff,omitempty"`
 }
 
 // SessionDetail is everything the daemon knows about one session, as `lookup` shows it. Where a

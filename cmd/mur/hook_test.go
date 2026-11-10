@@ -2,9 +2,10 @@ package main
 
 import "testing"
 
-// `mur hook` runs for Claude Code with no arguments and for Pi with --agent pi, in either spelling.
-// Anything else does nothing: run as Claude Code, another agent's hook would read CLAUDE_PID and
-// send its own session's ID as a Claude Code one.
+// `mur hook` runs for Claude Code with no arguments, for Codex and Grok named as join writes them
+// (#225), and for Pi with --agent pi as its extension runs it, in either spelling. Anything else
+// does nothing: run as Claude Code, another agent's hook would read CLAUDE_PID and send its own
+// session's ID as a Claude Code one.
 func TestHookAgent(t *testing.T) {
 	for _, c := range []struct {
 		args  []string
@@ -15,7 +16,13 @@ func TestHookAgent(t *testing.T) {
 		{[]string{"--agent", "pi"}, "pi", true},
 		{[]string{"--agent=pi"}, "pi", true},
 		{[]string{"-agent", "pi"}, "pi", true},
-		{[]string{"--agent", "codex"}, "", false},
+		{[]string{"codex"}, "codex", true},
+		{[]string{"grok"}, "grok", true},
+		{[]string{"pi"}, "pi", true},
+		{[]string{"--agent", "codex"}, "codex", true},
+		{[]string{"opencode"}, "", false},
+		{[]string{"--agent", "pi", "codex"}, "", false},
+		{[]string{"codex", "grok"}, "", false},
 		{[]string{"--agent"}, "", false},
 		{[]string{"--agent", "pi", "extra"}, "", false},
 		{[]string{"--bogus"}, "", false},
