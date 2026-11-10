@@ -117,6 +117,9 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 // commits, but none follows it, as that would take the session back to the conversation it left,
 // with that one's name, tags and holds (#231). Caller holds mu.
 func (d *Daemon) hookSessionsLocked(req proto.Request) []*session {
+	if req.Native != "" && req.ClaudeSession == "" {
+		return d.nativeSessionsLocked(req.Native) // Pi's, by its session's file (#205)
+	}
 	if req.Agent != "" {
 		return d.agentHookSessionsLocked(req)
 	}
@@ -142,6 +145,24 @@ func (d *Daemon) hookSessionsLocked(req proto.Request) []*session {
 		}
 	}
 	return ofProcess
+}
+
+// nativeSessionsLocked finds the live sessions the hook of an agent other than Claude Code speaks
+// for: those whose MCP server registered with native, the client's own ID for its conversation
+// (Pi's session file, which Murmur's extension gives both, #205). Nothing follows: a Pi session
+// that moves to another file (/new, /resume) starts its server again with the new one, a session
+// of its own. Caller holds mu.
+func (d *Daemon) nativeSessionsLocked(native string) []*session {
+	if native == "" {
+		return nil
+	}
+	var out []*session
+	for _, s := range d.sortedSessionsLocked() {
+		if s.dropped.IsZero() && s.claudeSession == "" && s.route.Native == native {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // followLocked moves s to the Claude Code session ID claude, which a hook of its process reported.
@@ -265,8 +286,9 @@ func isAgent(sessionAgent, agent string) bool {
 var toolOps = map[string]bool{proto.OpWho: true, proto.OpLookup: true, proto.OpStatus: true, proto.OpTags: true,
 	proto.OpSend: true, proto.OpInbox: true}
 
-// hookedAgents are the agents join installs Murmur's hook in (#202, #225).
-var hookedAgents = []string{"claude-code", "codex", "grok"}
+// hookedAgents are the agents Murmur's hook runs in: those join installs it in (#202, #225), and Pi,
+// whose extension join writes runs it (#205).
+var hookedAgents = []string{"claude-code", "codex", "grok", "pi"}
 
 // hookOffLocked says Murmur's hook doesn't run for session s (#225): its agent is one join installs
 // the hook in, it called one of Murmur's tools more than hookGrace ago, and no hook of it has

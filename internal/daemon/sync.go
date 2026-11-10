@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -237,7 +238,11 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	// (see readFirstContext), so that a stall there leaves the logs the time they need: the logs
 	// were fetched already, and they hold the messages. A registry missing from the listing is
 	// asked of the remote again, which can stall like any request to it.
+	readFrom := time.Now()
 	first, cancelFirst := readFirstContext(ctx, d.opt.ReadFirstLimit)
+	// The limit it had, which is less than ReadFirstLimit when the sync has little time left: the
+	// first sync's 10 s, after a slow listing and fetch, left it 2 or 3 s (#372).
+	firstEnd, _ := first.Deadline()
 	if _, ok := remote[brand.NamesRef]; !ok {
 		d.processNames(first, "") // not on the remote
 	}
@@ -274,7 +279,7 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 		return err
 	}
 	if firstErr != nil {
-		return fmt.Errorf("reading the names registry and presence took over %s: %w", d.opt.ReadFirstLimit, firstErr)
+		return fmt.Errorf("reading the names registry and presence took over %s: %w", firstEnd.Sub(readFrom).Round(100*time.Millisecond), firstErr)
 	}
 
 	d.mu.Lock()
@@ -309,8 +314,8 @@ func meshDevice(ref string) (string, bool) {
 // than half of what is left of the sync, so that a stall there leaves the logs at least as much,
 // however long the listing and fetches took, less the up to five seconds a cancelled git takes to
 // exit (see gitx.run). Half rather than a fixed reserve, since a sync's deadline isn't always a
-// minute: the one before a daemon accepts sessions has 10 s, and must read presence too, or a new
-// session could take a name a peer's presence shows.
+// minute: the first, which registrations wait for, has FirstSyncLimit, 10 s, and must read presence
+// too, or a new session could take a name a peer's presence shows.
 func readFirstContext(ctx context.Context, limit time.Duration) (context.Context, context.CancelFunc) {
 	now := time.Now()
 	end := now.Add(limit)
@@ -1054,6 +1059,11 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		d.sawPresence(dev, sha, true)
 		return
 	}
+	if n := len(pres.Sessions); n > bus.MaxSessions {
+		d.log.Printf("reading %s: it lists %d sessions, over the %d a presence may; passed over", ref, n, bus.MaxSessions)
+		d.sawPresence(dev, sha, true)
+		return
+	}
 	pres.Clean()
 	changed := time.Now()
 	if p == nil {
@@ -1336,6 +1346,19 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 		pres.Sessions = append(pres.Sessions, info)
 	}
+	room := bus.MaxSessions
+	if d.st.Person != "" {
+		room--
+	}
+	var cut int
+	pres.Sessions, cut = capSessions(pres.Sessions, room)
+	if cut != d.presenceCut {
+		if cut > 0 {
+			d.log.Printf("presence lists the %d most recently active sessions; %d more are left out, as readers take no more than %d",
+				room, cut, bus.MaxSessions)
+		}
+		d.presenceCut = cut
+	}
 	if d.st.Person != "" {
 		pres.Sessions = append(pres.Sessions, d.personInfoLocked())
 	}
@@ -1362,6 +1385,25 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	d.known[ref] = sha
 	d.mu.Unlock()
 	return nil
+}
+
+// capSessions keeps at most n of a presence's sessions, the most recently active (by their last
+// activity, else their start), in the order they came, and says how many it left out. A reader takes a
+// presence over bus.MaxSessions for one it can't read, so a device with that many would vanish from
+// every teammate's view; this way only its least active sessions do.
+func capSessions(ss []bus.SessionInfo, n int) ([]bus.SessionInfo, int) {
+	if len(ss) <= n {
+		return ss, 0
+	}
+	at := func(s bus.SessionInfo) time.Time { return cmp.Or(s.LastActive, s.Started) }
+	byActive := slices.Clone(ss)
+	slices.SortStableFunc(byActive, func(a, b bus.SessionInfo) int { return at(b).Compare(at(a)) })
+	keep := map[string]bool{}
+	for _, s := range byActive[:n] {
+		keep[s.ID] = true
+	}
+	kept := slices.DeleteFunc(slices.Clone(ss), func(s bus.SessionInfo) bool { return !keep[s.ID] })
+	return kept, len(ss) - len(kept)
 }
 
 // liveNamesLocked is the names of the sessions that are connected, as opposed to waiting out their

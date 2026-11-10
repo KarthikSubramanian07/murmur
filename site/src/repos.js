@@ -12,6 +12,16 @@ const DAY = /^\d{4}-\d\d-\d\d$/;
 const ID = /^[0-9a-f]{16}$/;
 // A repo's last 7 days, for "active".
 const WEEK = 7;
+// The first day a bus could have anything on it: Murmur began on 2026-10-26.
+const EPOCH = '2026-10-01';
+// D1's limits (developers.cloudflare.com/d1/platform/limits, updated 2026-10-30): 100 bound values a
+// statement; a whole db.batch() must finish within 30 seconds; and a Worker request may make 1,000
+// queries (50 on the Free plan), a batch counting as one. A census POST at the most invalid() takes
+// is about 6,650 statements of up to 33 rows: in batches of 200, 34 batches, plus one query to find
+// the repo, which is within even the Free plan's 50 queries. CPU is another limit: a Free plan
+// Worker has 10 ms of it a request, and parsing a POST that size and building its statements
+// would take more. That was so before batches, and the Paid plan's limit is far above it.
+const BATCH = 200;
 
 // /v1/census, for the census only, with the CENSUS_KEY secret as its Bearer token:
 // - GET: the listed repos, {"repos": ["github.com/Owner/Name", ...]}.
@@ -39,18 +49,7 @@ export async function census(request, env) {
   if (!known) return new Response('Not a listed repo.\n', { status: 422 });
 
   const db = env.DB, t = c.totals;
-  const stmts = [
-    db.prepare(
-      `INSERT INTO repo_census (repo, sessions, messages, records, first_day, last_day, counted)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-       ON CONFLICT (repo) DO UPDATE SET
-         sessions = MAX(sessions, excluded.sessions), messages = MAX(messages, excluded.messages),
-         records = MAX(records, excluded.records),
-         first_day = MIN(COALESCE(first_day, excluded.first_day), COALESCE(excluded.first_day, first_day)),
-         last_day = MAX(COALESCE(last_day, excluded.last_day), COALESCE(excluded.last_day, last_day)),
-         counted = excluded.counted`,
-    ).bind(c.repo, t.sessions, t.messages, t.records, t.first_day, t.last_day, new Date().toISOString()),
-  ];
+  const stmts = [];
   // D1 binds at most 100 values a statement, so rows go in groups: 20 days of 5 values, 33 rows of 3.
   const insert = (rows, width, sql, values) => {
     const per = Math.floor(100 / width);
@@ -80,25 +79,49 @@ export async function census(request, env) {
     `INSERT INTO contributors (repo, id, first) VALUES $ROWS
      ON CONFLICT (repo, id) DO UPDATE SET first = MIN(first, excluded.first)`,
     k => [c.repo, k.id, k.first]);
-  await db.batch(stmts);
+  stmts.push(db.prepare(
+    `INSERT INTO repo_census (repo, sessions, messages, records, first_day, last_day, counted)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT (repo) DO UPDATE SET
+       sessions = MAX(sessions, excluded.sessions), messages = MAX(messages, excluded.messages),
+       records = MAX(records, excluded.records),
+       first_day = MIN(COALESCE(first_day, excluded.first_day), COALESCE(excluded.first_day, first_day)),
+       last_day = MAX(COALESCE(last_day, excluded.last_day), COALESCE(excluded.last_day, last_day)),
+       counted = excluded.counted`,
+  ).bind(c.repo, t.sessions, t.messages, t.records, t.first_day, t.last_day, new Date().toISOString()));
+  // A batch must finish within D1's 30 seconds, and a big repo makes thousands of statements, so
+  // they go BATCH at a time. Each batch is its own transaction. Every write only raises a count or
+  // adds a row, so a POST cut short between batches leaves less written, never anything wrong, and
+  // the next day's census writes the rest. The totals go last, so `counted` moves only once
+  // everything else is in.
+  for (let i = 0; i < stmts.length; i += BATCH) await db.batch(stmts.slice(i, i + BATCH));
   return Response.json({ ok: true, days: c.days.length, devices: c.devices.length, contributors: c.contributors.length }, { headers });
 }
 
 // What is wrong with a census POST's body, or "" if nothing is.
+//
+// No day may be after tomorrow (UTC): a day in the future would keep a repo active and its people
+// new for ever. Nor may a bus day be before EPOCH, when there was no bus. A contributor's first
+// commit can be years before that. The census dates what it reads the same way (census.mjs).
+// Its tooBig() has the size limits below, to skip a repo too big for them: change both together.
 function invalid(c) {
+  const latest = addDays(new Date().toISOString().slice(0, 10), 1);
   const count = n => Number.isSafeInteger(n) && n >= 0;
-  const day = d => typeof d === 'string' && DAY.test(d) && !Number.isNaN(Date.parse(d));
+  const day = d => typeof d === 'string' && DAY.test(d) && !Number.isNaN(Date.parse(d)) && d <= latest;
+  const busDay = d => day(d) && d >= EPOCH;
   const id = v => typeof v === 'string' && ID.test(v);
   if (!c || typeof c !== 'object') return 'no object';
   if (typeof c.repo !== 'string' || !REPO.test(c.repo)) return 'repo';
   const t = c.totals;
   if (!t || !['sessions', 'messages', 'records'].every(k => count(t[k]))) return 'totals';
-  if (!(t.first_day === null || day(t.first_day)) || !(t.last_day === null || day(t.last_day))) return 'totals days';
+  if (!(t.first_day === null || busDay(t.first_day)) || !(t.last_day === null || busDay(t.last_day))) return 'totals days';
   if (!Array.isArray(c.days) || c.days.length > 3660) return 'days';
   for (const d of c.days) {
-    if (!d || !day(d.day) || !['sessions', 'messages', 'records'].every(k => count(d[k]))) return 'a day';
+    if (!d || !busDay(d.day) || !['sessions', 'messages', 'records'].every(k => count(d[k]))) return 'a day';
     if (!Array.isArray(d.devices) || d.devices.length > 1000 || !d.devices.every(id)) return "a day's devices";
   }
+  // A device on a day is a row, so without this a POST could carry 3,660,000 of them.
+  if (c.days.reduce((n, d) => n + d.devices.length, 0) > 100000) return "the days' devices";
   if (!Array.isArray(c.devices) || c.devices.length > 10000) return 'devices';
   for (const v of c.devices) {
     if (!v || !id(v.id) || !(v.person === null || id(v.person)) || !(v.account == null || id(v.account))) return 'a device';
@@ -130,10 +153,10 @@ export async function repoNumbers(db, days) {
          COALESCE(c.sessions, 0) AS sessions, COALESCE(c.messages, 0) AS messages, COALESCE(c.records, 0) AS records,
          MIN(r.first, COALESCE(c.first_day, r.first)) AS start, c.last_day AS last, c.counted,
          (SELECT COUNT(*) FROM contributors k WHERE k.repo = r.repo) AS contributors,
-         (SELECT COUNT(DISTINCT d.day) FROM device_days d WHERE d.repo = r.repo AND d.day >= ?1) AS week
+         (SELECT COUNT(DISTINCT d.day) FROM device_days d WHERE d.repo = r.repo AND d.day BETWEEN ?1 AND ?2) AS week
        FROM repos r LEFT JOIN repo_census c ON c.repo = r.repo
        ORDER BY week DESC, records DESC, r.repo`,
-    ).bind(weekFrom),
+    ).bind(weekFrom, today),
     // Per repo per day: its active devices and the people behind them, and its counts.
     db.prepare(
       `WITH dd AS (
@@ -148,15 +171,21 @@ export async function repoNumbers(db, days) {
        ORDER BY k.day, k.repo`,
     ).bind(from, today),
     // Each contributor once, however many repos they are in, by the day of their first commit to any.
-    db.prepare(`SELECT first AS day, COUNT(*) AS n FROM (SELECT MIN(first) AS first FROM contributors GROUP BY id) GROUP BY first ORDER BY first`),
+    // Nothing after today counts, here or above: the site refuses later days now, but rows from
+    // before it did can't then make a repo active, or a person new, for ever.
+    db.prepare(
+      `SELECT first AS day, COUNT(*) AS n FROM (SELECT MIN(first) AS first FROM contributors GROUP BY id)
+       WHERE first <= ?1 GROUP BY first ORDER BY first`,
+    ).bind(today),
     db.prepare(`SELECT MAX(counted) AS at FROM repo_census`),
-    // Every device, for users: who is behind it, and its first and last day on the bus.
+    // Every device, for users: who is behind it, and its first and last day on the bus, up to today
+    // as above.
     db.prepare(
       `SELECT v.repo, v.device, v.person, v.account, COALESCE(MIN(d.day), r.first) AS first, MAX(d.day) AS last
        FROM devices v JOIN repos r ON r.repo = v.repo
-         LEFT JOIN device_days d ON d.repo = v.repo AND d.device = v.device
+         LEFT JOIN device_days d ON d.repo = v.repo AND d.device = v.device AND d.day <= ?1
        GROUP BY v.repo, v.device`,
-    ),
+    ).bind(today),
   ]);
   const u = users(devs.results);
   const userFirsts = [...u.users.values()].map(x => x.first).sort();

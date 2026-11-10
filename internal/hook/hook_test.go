@@ -40,12 +40,22 @@ func fakeDaemon(t *testing.T, gitDir string, answer func(proto.Request) string) 
 			}
 			go func() {
 				defer c.Close()
-				line, err := bufio.NewReader(c).ReadBytes('\n')
+				r := bufio.NewReader(c)
+				line, err := r.ReadBytes('\n')
 				if err != nil {
 					return
 				}
 				var req proto.Request
 				json.Unmarshal(line, &req)
+				if req.Op == proto.OpPing && req.Nonce != "" { // the daemon's proof (#371)
+					b, _ := json.Marshal(proto.Response{OK: true, Protocol: proto.Protocol, Proof: proto.Proof("tok", c.LocalAddr().String(), req.Nonce)})
+					c.Write(append(b, '\n'))
+					if line, err = r.ReadBytes('\n'); err != nil {
+						return
+					}
+					req = proto.Request{}
+					json.Unmarshal(line, &req)
+				}
 				mu.Lock()
 				got = append(got, req)
 				mu.Unlock()
@@ -337,6 +347,99 @@ func TestStopKeepsTheTurnGoingWithItsMessages(t *testing.T) {
 		Body: "Are you changing it?"}
 	if want := view.Hook([]proto.MessageView{m}, nil, 0); got.Decision != "block" || got.Reason != want {
 		t.Errorf("Stop printed %+v, want block with %q", got, want)
+	}
+}
+
+// Pi's extension runs the hook with the session's file for its ID (#205): the requests name the
+// session by it, never by a Claude Code ID or process, even where Pi inherited Claude Code's
+// CLAUDE_PID, and bracket no call. What the hook prints is Claude Code's form, which the extension
+// reads.
+func TestPiHookNamesItsSessionByItsFile(t *testing.T) {
+	t.Setenv("CLAUDE_PID", "4242")
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpNotices {
+			return `{"ok":true,"self":"fake-0001/aaaaaa","unread":1,"messages":[{"id":"m1","from":"other-0001/bbbbbb","subject":"hi"}]}`
+		}
+		return `{"ok":true}`
+	})
+	const file = "/home/u/.pi/agent/sessions/a.jsonl"
+	pi := func(event string) string {
+		payload, _ := json.Marshal(map[string]string{"session_id": file, "hook_event_name": event, "cwd": repo,
+			"tool_name": "bash", "tool_use_id": "call_1", "transcript_path": file})
+		var out bytes.Buffer
+		hook.RunFor("pi", bytes.NewReader(payload), &out)
+		return out.String()
+	}
+	out := pi("PostToolUse")
+	var got struct {
+		HookSpecificOutput struct {
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil || !strings.Contains(got.HookSpecificOutput.AdditionalContext, `"hi"`) {
+		t.Fatalf("PostToolUse printed %q: %v", out, err)
+	}
+	pi("Stop")
+	var reqs []proto.Request
+	for _, r := range requests() {
+		if r.Op != proto.OpPing {
+			reqs = append(reqs, r)
+		}
+	}
+	if len(reqs) != 2 || reqs[0].Op != proto.OpNotices || reqs[1].Op != proto.OpTurnEnd {
+		t.Fatalf("requests: %+v", reqs)
+	}
+	for _, r := range reqs {
+		if r.Native != file || r.ClaudeSession != "" || r.ClientPID != 0 || r.Transcript != "" {
+			t.Errorf("%s named its session %q, Claude %q, pid %d, transcript %q", r.Op, r.Native, r.ClaudeSession, r.ClientPID, r.Transcript)
+		}
+	}
+	if !reqs[1].Continues {
+		t.Error("Pi's Stop doesn't say it can keep the work going")
+	}
+}
+
+// Pi's extension tells the hook when the work ended without a chance to go on (Escape, an error):
+// the Stop says it can't keep the work going, and prints nothing, even if a daemon gives something
+// back. Only Pi's hook reads that: Claude Code fires no Stop then.
+func TestAnInterruptedPiStopKeepsNothingGoing(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpTurnEnd {
+			return `{"ok":true,"delivered":[{"id":"m1","from":"other-0001/bbbbbb","subject":"lost if printed"}]}`
+		}
+		return `{"ok":true}`
+	})
+	stopFor := func(agent string) (string, proto.Request) {
+		payload, _ := json.Marshal(map[string]any{"session_id": "/s/a.jsonl", "hook_event_name": "Stop", "cwd": repo, "interrupted": true})
+		var out bytes.Buffer
+		hook.RunFor(agent, bytes.NewReader(payload), &out)
+		var last proto.Request
+		for _, r := range requests() {
+			if r.Op == proto.OpTurnEnd {
+				last = r
+			}
+		}
+		return out.String(), last
+	}
+	if out, r := stopFor("pi"); out != "" || r.Continues || r.Native != "/s/a.jsonl" {
+		t.Errorf("Pi's interrupted Stop printed %q, request %+v", out, r)
+	}
+	if out, r := stopFor(""); out == "" || !r.Continues {
+		t.Errorf("Claude Code's Stop printed %q, request %+v: interrupted is Pi's alone", out, r)
+	}
+}
+
+// An agent the hook doesn't know gets nothing, and the daemon isn't asked.
+func TestHookForAnUnknownAgentDoesNothing(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
+	payload, _ := json.Marshal(map[string]string{"session_id": "x", "hook_event_name": "PostToolUse", "cwd": repo})
+	var out bytes.Buffer
+	hook.RunFor("opencode", bytes.NewReader(payload), &out)
+	if out.Len() != 0 || len(requests()) != 0 {
+		t.Errorf("printed %q, asked %+v", out.String(), requests())
 	}
 }
 

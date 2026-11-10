@@ -104,7 +104,7 @@ func TestDoNotDisturbOnABusySessionHoldsEveryRouteUntilItComesOff(t *testing.T) 
 
 	// Idle and on do not disturb: no turn. The tag comes off: one turn.
 	b.tagSelf("bbbbbb", []string{"do-not-disturb"}, nil)
-	a.send("aaaaaa", bob, "second", "")
+	a.send("aaaaaa", bob, "second", "its body")
 	eventually(t, "second queued for bob", func() bool { return b.queuedFor(bob, "second") })
 	holds(t, "no turn while idle on do not disturb", time.Second, func() bool { return len(calls()) == 0 })
 	b.tagSelf("bbbbbb", nil, []string{"do-not-disturb"})

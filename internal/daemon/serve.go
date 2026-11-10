@@ -94,18 +94,22 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	r := bufio.NewReader(conn)
-	line, err := readLine(r, maxRequest)
-	if errors.Is(err, errTooLong) {
-		writeResp(conn, fail(fmt.Sprintf("bad request: over %d KB", maxRequest>>10)))
+	req, ok := readRequest(conn, r)
+	if !ok {
 		return
 	}
-	if err != nil {
-		return
-	}
-	var req proto.Request
-	if err := json.Unmarshal(line, &req); err != nil {
-		writeResp(conn, fail("bad request: "+err.Error()))
-		return
+	// A client proves the daemon before it sends anything else (#371): a ping with a nonce, and no
+	// token, which is answered with the proof that this is the daemon whose token is in
+	// daemon.json. The request it was opened for follows on the same connection, so nothing can
+	// take the port between the two. The proof tells whoever asks nothing they can use: the nonce
+	// is the client's, fresh each time, and only this listener answers at this address while it
+	// lives.
+	if req.Op == proto.OpPing && req.Nonce != "" {
+		writeResp(conn, proto.Response{OK: true, Protocol: proto.Protocol, Proof: proto.Proof(d.token, conn.LocalAddr().String(), req.Nonce)})
+		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		if req, ok = readRequest(conn, r); !ok || req.Nonce != "" {
+			return
+		}
 	}
 	if subtle.ConstantTimeCompare([]byte(req.Token), []byte(d.token)) != 1 {
 		writeResp(conn, fail("bad token"))
@@ -124,9 +128,30 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
+	if req.Op == proto.OpWho || req.Op == proto.OpSend || req.Op == proto.OpLookup {
+		d.awaitFirstSync(ctx)
+	}
 	resp := d.handle(ctx, req)
 	resp.ClaudeSession = d.claudeSessionOf(req.Session)
 	writeResp(conn, resp)
+}
+
+// readRequest reads one request line, answering one that is too long or isn't JSON with why.
+func readRequest(conn net.Conn, r *bufio.Reader) (proto.Request, bool) {
+	line, err := readLine(r, maxRequest)
+	if errors.Is(err, errTooLong) {
+		writeResp(conn, fail(fmt.Sprintf("bad request: over %d KB", maxRequest>>10)))
+		return proto.Request{}, false
+	}
+	if err != nil {
+		return proto.Request{}, false
+	}
+	var req proto.Request
+	if err := json.Unmarshal(line, &req); err != nil {
+		writeResp(conn, fail("bad request: "+err.Error()))
+		return proto.Request{}, false
+	}
+	return req, true
 }
 
 // claudeSessionOf is the Claude Code session ID held for the session id, which an MCP server
@@ -163,8 +188,17 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	if agent == "" {
 		agent = "unknown"
 	}
-	branch := branchOf(ctx, h.Cwd)
-	worktree := worktreeOf(ctx, h.Cwd)
+	// The branch and the worktree are read while the registration waits for the first sync (see
+	// awaitFirstSync), not after it: one after the other, the wait's 10 s and git's could run past
+	// the 15 s a client gives a hello (Sol's review of #377).
+	var branch, worktree string
+	read := make(chan struct{})
+	go func() {
+		defer close(read)
+		branch, worktree = branchOf(ctx, h.Cwd), worktreeOf(ctx, h.Cwd)
+	}()
+	d.awaitFirstSync(ctx)
+	<-read
 	// Resolving the branch runs git, long enough for a leave to land after handleConn's check.
 	if !d.consented() {
 		writeResp(conn, fail(ErrNoConsent.Error()+", or has left since"))
@@ -468,7 +502,8 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 // marks them told, with how many it has unread when that is news. The hook calls it after a prompt
 // or a tool call, so the session is at work (see touchHookLocked); the hook knows only Claude
 // Code's session ID, and its process: with them, the sessions of that process follow the hook to
-// the ID it reports (see hookSessionsLocked), and a hook that matches nothing gets nothing.
+// the ID it reports (see hookSessionsLocked), and a hook that matches nothing gets nothing. In Pi
+// it knows the session's file instead (nativeSessionsLocked).
 //
 // A message that would have gone in as a turn, but for the session being at work, is Held: it goes
 // in as one when the turn ends if it is still unread (#202). The count is told with each new
@@ -476,13 +511,14 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 //
 // A session the page sets to be given messages whole while busy (#204) gets each new one with its
 // body instead, which the hook shows as its turn would read: it is read then, and leaves the
-// inbox and the count. Only a hook that says it prints them (req.Whole) gets them so.
+// inbox and the count. So does any session, for a message with no body (#355). Only a hook that
+// says it prints them (req.Whole) gets them so.
 func (d *Daemon) notices(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var ids []string
-	if req.ClaudeSession != "" {
+	if hookReq(req) {
 		for _, s := range d.touchHookLocked(req) {
 			ids = append(ids, s.id)
 			if validTranscript(req.Transcript) && !req.Subagent && s.transcript != req.Transcript {
@@ -502,6 +538,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	var whole []delivery
 	var told []*session
 	unread := 0
+	room := newWholeRoom()
 	for _, id := range ids {
 		// A session in its grace, or stopped, is told of its notices once it is back.
 		if id == "" || !d.liveLocked(id) {
@@ -524,9 +561,10 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		if s := d.sessions[id]; s != nil {
 			told = append(told, s)
 		}
-		// Only the hook shows a message whole: a request without its Claude Code session isn't one,
+		// Only the hook shows a message whole: a request that names no client's session isn't one,
 		// and a hook that doesn't say it prints Read (req.Whole) would lose it (#229).
-		givesWhole := req.ClaudeSession != "" && req.Whole && wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
+		printsWhole := hookReq(req) && req.Whole
+		busyWhole := wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
 			if m.Pushing {
 				continue
@@ -534,13 +572,23 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
 				// One handed to T3 or the socket before may be there already: it gets the
 				// subject only, as after any handoff that failed, not a second whole telling.
-				if givesWhole && !m.Attempted && !m.PushFailed {
+				//
+				// A message with no body is given whole whatever the setting (#355): its notice
+				// would show all of it, and the agent, having it, wouldn't call inbox, so it
+				// would stay unread and come a second time when the turn ends.
+				//
+				// The reply has room for so much (wholeRoom): one that doesn't fit whole is told
+				// of as any other, and one whose notice doesn't fit either isn't told of yet, and
+				// waits, counted as unread, for the hook's next call.
+				if printsWhole && (busyWhole || subjectOnly(m)) && !m.Attempted && !m.PushFailed && room.take(m) {
 					whole = append(whole, delivery{id, m})
 					continue
 				}
-				m.Held = d.hookBusyLocked(id) && d.holdableLocked(id, m, wake, d.turnStartLocked(id))
-				m.Noticed = true
-				fresh = append(fresh, m)
+				if room.takeNotice(m) {
+					m.Held = d.hookBusyLocked(id) && d.holdableLocked(id, m, wake, d.turnStartLocked(id))
+					m.Noticed, m.NoticedAt = true, time.Now()
+					fresh = append(fresh, m)
+				}
 			}
 			unread++
 		}
@@ -561,8 +609,15 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	if len(fresh) > 0 || len(whole) > 0 {
 		d.saveLocked()
 	}
-	d.health.noticed(len(fresh))
-	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
+	var freshMsgs []*inMsg
+	for _, m := range fresh {
+		if !shown["notice "+m.Event.ID] {
+			shown["notice "+m.Event.ID] = true
+			freshMsgs = append(freshMsgs, m)
+		}
+	}
+	d.health.noticed(len(freshMsgs))
+	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(freshMsgs, false)}
 	if len(whole) > 0 {
 		resp.Read = d.wholeViewsLocked(wholeMsgs, whole)
 	}
@@ -577,6 +632,17 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	return resp
 }
 
+// subjectOnly says message m has no body, as its reader sees it (view.Turn): its subject is all of
+// it, and so is the hook's notice of it.
+func subjectOnly(m *inMsg) bool {
+	return strings.TrimSpace(bus.Text(m.Event.Body, bus.MaxBody)) == ""
+}
+
+// hookReq says req is from the hook, which names its session by its client's ID for it: Claude
+// Code's, or another agent's own (Native, Pi's from Murmur's extension). A request with neither
+// names the session it is from (Session), as the MCP server's do.
+func hookReq(req proto.Request) bool { return req.ClaudeSession != "" || req.Native != "" }
+
 // turnEnd is the hook at the end of a turn (Claude Code's Stop). The messages the sessions it
 // speaks for were told of while at work and haven't read, and those that came during the turn and
 // weren't told, however long it took, would go in as a turn now (#202). Where the hook can keep the
@@ -586,11 +652,12 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if req.ClaudeSession == "" || req.Subagent {
+	if !hookReq(req) || req.Subagent {
 		return proto.Response{OK: true}
 	}
 	var given []delivery
 	held := false
+	room := newWholeRoom()
 	for _, s := range d.touchHookLocked(req) {
 		first := req.Continues && !s.stopContinues
 		s.stopSeen, s.stopContinues = true, req.Continues
@@ -607,7 +674,7 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 		if !req.Continues || !d.liveLocked(s.id) || d.clearChildInboxLocked(s.id) {
 			continue
 		}
-		for _, m := range d.continueTurnLocked(s, wake) {
+		for _, m := range d.continueTurnLocked(s, wake, room) {
 			given = append(given, delivery{s.id, m})
 		}
 	}
@@ -641,7 +708,12 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	if len(req.Body) > maxBody {
 		return fail(fmt.Sprintf("not sent: the body is over %d KB, and the bus keeps everything forever", maxBody>>10))
 	}
-	if err := scrub.Check(subject, req.Body); err != nil {
+	// The body goes on the bus as readers will show it, so what the sender sent is what everyone
+	// reads, and it is cleaned before scrub looks: a key with a zero-width space in it is still a
+	// key once a reader drops the space. What was sent is checked too: dropping a format character
+	// can join a key to the next word, and AKIA…EXAMPLE<U+200B>note then ends in no word boundary.
+	body := bus.Text(req.Body, maxBody)
+	if err := scrub.Check(subject, body, req.Subject, req.Body); err != nil {
 		return fail(err.Error())
 	}
 	// A name is an address: it is turned into the session's device/session here, and that is what
@@ -722,7 +794,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		}
 	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, At: time.Now().UTC(),
-		To: to, Subject: subject, Body: req.Body}
+		To: to, Subject: subject, Body: body}
 	if bus.IsPerson(from) {
 		d.mu.Lock()
 		e.Person = d.st.Person
@@ -817,6 +889,7 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 			FromOwner: d.ownerOfLocked(e.From), FromDevice: device, To: e.To, Subject: e.Subject, At: e.At}
 		if withBody {
 			v.Body = e.Body
+			v.Told = m.NoticedAt
 		}
 		views = append(views, v)
 	}
@@ -859,7 +932,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 				continue
 			}
 			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: bus.Addr(id, s.ID), Name: s.Name,
-				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: s.Started, LastActive: peerActive(p, s),
+				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: peerStarted(p, s), LastActive: peerActive(p, s),
 				Tags: s.Tags, HookOff: s.HookOff})
 		}
 		if !filter.Empty() && len(dv.Sessions) == 0 {

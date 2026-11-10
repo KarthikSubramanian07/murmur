@@ -213,12 +213,21 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	}
 	read := map[string]string{}
 	reserved := map[string]string{} // the reservations read, name to device
+	snapshotAt := ""                // the one commit whose snapshot counts, "" for none (see below)
+	skipped := 0
 	// noteRecords reads a page of the registry's history into read and reserved.
 	noteRecords := func(commits []bus.Commit) {
 		for _, c := range commits {
 			var rec bus.NameRecord
 			if bus.Decode(c.Message, &rec) != nil {
 				continue
+			}
+			if len(rec.Used) > 0 && c.SHA != snapshotAt {
+				// A snapshot anywhere but the root of a history read from its start isn't Murmur's (one
+				// appended, or a root merged in), and could mark any number of names used, for good,
+				// on every daemon that read it.
+				rec.Used = nil
+				skipped++
 			}
 			claims := rec.Claims()
 			if name, dev, ok := rec.Reservation(); ok {
@@ -253,6 +262,7 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 		}
 	}
 	disturbed := false
+	manyRoots := false
 	if isCommit {
 		from := ""
 		if good != "" {
@@ -273,7 +283,24 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 				// NamesPeople): read again from the start, for them.
 			}
 		}
-		err := d.repo.Log(ctx, from, sha, d.maxSnapshot, func(page []bus.Commit) error {
+		// Murmur writes a snapshot only as the first commit of a new history, a repair's, which a
+		// reader always reads from the start, as it doesn't descend from what was read. It writes no
+		// merges, so its history has one root. A merge that brings in another root is damage, as a
+		// rewrite is: no snapshot in it counts, so a reader new to it would miss a repair's names,
+		// and it is read from the start and repaired. An incremental reader asks only about what is
+		// new. Found before the history is read, which needs it.
+		roots, err := d.repo.Roots(ctx, sha, from)
+		if err != nil {
+			fail(err)
+			return
+		}
+		if len(roots) > 0 && (from != "" || len(roots) > 1) {
+			d.log.Printf("the names registry has more than one root, which Murmur never writes; reading it as damaged")
+			disturbed, from, manyRoots = true, "", true
+		} else if from == "" && len(roots) == 1 {
+			snapshotAt = roots[0]
+		}
+		err = d.repo.Log(ctx, from, sha, d.maxSnapshot, func(page []bus.Commit) error {
 			noteRecords(page)
 			return nil
 		})
@@ -334,6 +361,9 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 		d.saveLocked()
 	}
 	d.mu.Unlock()
+	if skipped > 0 && !manyRoots { // a history with many roots counts none, and said so
+		d.log.Printf("the names registry has %d snapshots not at its history's root; their names weren't counted", skipped)
+	}
 	if repair && !wasRepair {
 		d.log.Printf("the names registry lost names; writing a snapshot of every name in use")
 	}
@@ -578,18 +608,17 @@ func (d *Daemon) assignPending(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// pickName chooses a random name that is not known to be in use, nor in taken.
+// pickName chooses a random name that is not known to be in use, nor in taken: after 1,000 random
+// tries, the first such from a random place in the lists (see names.Unused).
 func (d *Daemon) pickName(used map[string]string, taken map[string]bool) (string, error) {
-	for range 1000 {
-		name, err := names.Generate(d.nameSrc)
-		if err != nil {
-			return "", err
-		}
-		if _, ok := used[name]; !ok && !taken[name] {
-			return name, nil
-		}
+	name, err := names.Unused(d.nameSrc, 1000, func(name string) bool {
+		_, ok := used[name]
+		return ok || taken[name]
+	})
+	if err == nil && name == "" {
+		err = errors.New("every name is in use")
 	}
-	return "", errors.New("no unused name found")
+	return name, err
 }
 
 // pushNames pushes w to the registry as one chain of commits on the tip last read, leased on it. It

@@ -55,30 +55,40 @@ For humans:
 
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
-  mur hook [AGENT]              an agent's hook: Claude Code's, or codex or grok (reads the payload on stdin)
+  mur hook [AGENT]              an agent's hook: Claude Code's, or codex's, grok's, or pi's through
+                                Murmur's extension (reads the payload on stdin)
   mur daemon [--git-dir DIR]    the daemon, in the foreground
 
 Every command takes -C DIR to act on the repository at DIR.
 `)
 
 func main() {
-	if len(os.Args) < 2 {
+	dirs, args, err := leadingDirs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n\n%s", err, usage)
+		os.Exit(2)
+	}
+	for _, dir := range dirs {
+		if err := os.Chdir(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", brand.Command, err)
+			os.Exit(1)
+		}
+	}
+	if len(args) < 1 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
-	cmd, args := os.Args[1], os.Args[2:]
+	cmd, args := args[0], args[1:]
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	var err error
 	switch cmd {
 	case "hook":
-		// `mur hook` is Claude Code's; `mur hook codex` and `mur hook grok` are those agents' (#225).
-		agent := ""
-		if len(args) > 0 {
-			agent = args[0]
+		// Never an error: a hook that fails would fail the agent's tool call. One it can't read
+		// does nothing.
+		if agent, ok := hookAgent(args); ok {
+			hook.RunFor(agent, os.Stdin, os.Stdout)
 		}
-		hook.RunFor(agent, os.Stdin, os.Stdout)
 	case "mcp":
 		err = runMCP(ctx, args)
 	case "daemon":
@@ -104,6 +114,54 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", brand.Command, err)
 		os.Exit(1)
 	}
+}
+
+// leadingDirs takes the -C DIR options that come before the command, as git does: `mur -C DIR stop`
+// acts where `mur stop -C DIR` does (#373). Until 2026-11-10 only the second worked, and the first
+// said `unknown command "-C"`. main changes to each directory in turn, each relative to the one
+// before, as git's do, so every command takes it, the hook included, and a -C after the command is
+// then relative to it. The flag package's other spellings, --C and -C=DIR, are taken too.
+func leadingDirs(args []string) (dirs, rest []string, err error) {
+	for len(args) > 0 {
+		name, value, hasValue := strings.Cut(args[0], "=")
+		if name != "-C" && name != "--C" {
+			break
+		}
+		if !hasValue {
+			if len(args) < 2 {
+				return nil, nil, fmt.Errorf("%s needs a directory", name)
+			}
+			value, args = args[1], args[1:]
+		}
+		if value == "" {
+			return nil, nil, fmt.Errorf("%s needs a directory", name)
+		}
+		dirs, args = append(dirs, value), args[1:]
+	}
+	return dirs, args, nil
+}
+
+// hookAgent is the agent `mur hook` runs for, from its arguments: "" for Claude Code, or the one
+// named, as join writes it for Codex and Grok (`mur hook codex`, #225) or as Pi's extension runs it
+// (`mur hook --agent pi`, #205). ok is false for arguments it can't read or an agent the hook doesn't
+// know.
+func hookAgent(args []string) (agent string, ok bool) {
+	fs := flag.NewFlagSet(brand.Command+" hook", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	a := fs.String("agent", "", "")
+	if fs.Parse(args) != nil {
+		return "", false
+	}
+	switch {
+	case fs.NArg() == 1 && *a == "":
+		*a = fs.Arg(0)
+	case fs.NArg() != 0:
+		return "", false
+	}
+	if !hook.KnownAgent(*a) {
+		return "", false
+	}
+	return *a, true
 }
 
 func flags(name string) (*flag.FlagSet, *string) {

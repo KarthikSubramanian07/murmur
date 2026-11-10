@@ -191,12 +191,44 @@ address. Clients take the lock only shared, and only a daemon takes it exclusive
 client finds held is a daemon's; a timed retry left a window where another client's cleanup looked
 like a daemon. A client from before this takes it exclusively for a moment while stopping or
 replacing a daemon. This holds where the state directory is private to its user: it is made 0700 on Unix, and on Windows
-has whatever access the clone's location gives. A ping that proves the daemon knows the token was
-set aside: an older daemon couldn't give the proof, and a client must still talk to one to replace
-it.
+gets an access list of its own (below).
+
+The lock is checked when a client finds its daemon, and a client goes on using the address after
+that. A daemon that died later left its port to whoever took it, and that listener got the next
+request, the token and any outgoing message with it, and could answer with an inbox of its own
+(#371, from Sol's review before v0.3.0). So since protocol 12 (2026-11-10) every connection a client
+opens starts with a ping that carries a fresh nonce and no token, and the daemon answers with an
+HMAC of its address and the nonce keyed by its token. Only then does the request go, on the same
+connection, so nothing can take the port between the proof and the request; a separate ping first
+would have left that gap. What answers without the proof is not the daemon, and the client finds
+its daemon again (or starts one). Until it is proved, a reply is read only up to 4 KB, and a proved
+daemon's up to 64 MB, about half again a full inbox of the longest messages escaped: before, one
+that never ended was read until the deadline, however much it came to. A daemon of protocol 11 or
+older can't prove itself, and refuses the nonce's ping as a missing token. A client that may start
+daemons replaces one as it replaces any older daemon; one that may not (`mur stop`, the hook) talks
+to it unproved, as before, checking the lock before each connection. Discovery still contacts the
+listener before trying the lock, since trying the lock can turn away a daemon starting just then;
+what the listener is sent there is the nonce alone.
+
+A daemon answers, and writes daemon.json, before its first sync, not after it (2026-11-10, #372).
+That sync lists the remote, fetches and reads what changed, and may take its whole 10 s; with the
+process's own start on Windows, a first start of a new binary on Tyler's laptop took 21 s, and the
+15 s a starter waits for an answer (`mur ui`, an MCP server) ran out on a daemon that was fine.
+What the sync reads still comes first where it counts: a registration waits for it, at most those
+10 s, so what it finds is the backlog and not a new session's, and so do who, send and lookup,
+which on a new clone know no other device until then. The background loops start after it, as
+before. A stop or a leave during it ends it.
 
 A daemon with no sessions, no open page (see The page for humans) and no
-T3 thread to wake for 10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
+T3 thread to wake for 10 minutes exits. The token lets its holder name the program the daemon runs
+to hand a message to T3, so reading the file is running code as the user. `.git/murmur` is made
+0700, and on Windows, where modes do nothing, each daemon start gives it an access list of its own
+that lets in only the user, SYSTEM and Administrators, and rewrites the files already in it
+(2026-11-09). Before that a clone outside the user's profile left it readable by every user. A
+network drive, and a volume with no access lists, is left as it is: a share checks access as the
+account its server knows, and a list naming the local user could shut them out for good. So is a
+directory an elevated run made, which a later run without elevation may not change; that is only
+logged. Any daemon that stops deletes its presence, so other devices drop it at their
 next sync rather than when it goes stale.
 
 A manual upgrade replaces the binary and not the daemon already started from it, which would go on
@@ -328,7 +360,7 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   what the thing is for. The server asks again before each registration with the daemon, before
   starting one, and before forwarding a tool call, since its 2-second look can lag a leave. The
   daemon is per clone, not per working tree, so it needs only the consent: it checks at start
-  (after its first sync, which takes a while), on every request but `stop` and `ping` (which reveal
+  and again after its first sync, which takes a while, on every request but `stop` and `ping` (which reveal
   nothing, and are how a leave finds it), again in a registration after it has resolved the branch,
   before each push of its own (presence, the names registry) and before each handoff of a message
   as a turn (the one thing it does to the user's other programs, so a message that comes in by sync
@@ -416,10 +448,10 @@ since it wasn't installed). The details, and where each came from, are in the co
   after 30 minutes without one, as a stopped session is; its T3 route outlives that as any does.
 - **Delivery.** Inside T3 the existing `t3 thread send` handoff needed nothing new: an OpenCode and
   a Muse thread each took a message as a turn and answered it with `send`, nobody typing
-  (2026-11-01). Outside T3 none of the four has a way in that Murmur uses yet (OpenCode has an HTTP
-  API and plugins, Pi extensions can start a turn, Muse's session messaging isn't on Windows), so a
-  message waits in the inbox. OpenCode, Muse and Pi have no hook of Murmur's, so no notice either;
-  Grok has one (below).
+  (2026-11-01). Outside T3, OpenCode, Muse and Grok have no way in that Murmur uses yet (OpenCode
+  has an HTTP API and plugins, Muse's session messaging isn't on Windows), so a message waits in the
+  inbox. OpenCode and Muse have no hook of Murmur's, so no notice either; Grok has one (below). Pi
+  has both since 2026-11-09 (#205): see "Pi's extension" under "Delivering a message as a turn".
 - **Titles.** Inside T3 the thread's title is read as for any thread. Outside T3 none is read for
   these agents: their IDs aren't Codex threads.
 - **Tool approval.** OpenCode and Grok have a rule for it, which join writes; Muse and Pi have none.
@@ -481,7 +513,8 @@ keeps its turn going at Stop (#202) runs in Codex and Grok too, as `mur hook cod
   daemon yet would look the same: the hook speaks for none until each calls a Murmur tool, but all
   count as having a hook. The ID the MCP server learns overrides one taken from a hook (Sol's
   review, 2026-11-09, found a wrong one could otherwise take another thread's notices).
-- **Hook not running.** A session of an agent join installs the hook in (Claude Code, Codex, Grok)
+- **Hook not running.** A session of an agent the hook runs in (Claude Code, Codex, Grok, and Pi
+  through the extension join writes)
   that called one of Murmur's tools over a minute ago, with no hook of it reporting since the
   daemon started, is marked: `who` adds ", hook not running" to its line and tells a session its
   own, the page puts a badge on its card, and `send` says the recipient won't be told while it
@@ -554,8 +587,9 @@ call.
   takes it off, and a daemon adds its own as it starts, which takes in clones that joined before the
   record. Daemons finding each other was set aside: the picker has to offer a clone whose daemon
   isn't running, and start it. A clone whose folder is gone, or that left, drops off the list when
-  the record is read. A daemon counts as running when the port in its `daemon.json` accepts a connection; no
-  token is sent to find out.
+  the record is read. A daemon counts as running when what answers at the port in its
+  `daemon.json` proves it is that daemon (#371) and the clone's lock is held; no token is sent to
+  find out.
 - **The token doesn't travel with the tab.** The other page is another origin and needs its own
   token, which mustn't go in an address. So the page asks its daemon to open the clone. That daemon
   starts the other's if it isn't running (as `mur ui` would, replacing one of an older protocol) and
@@ -780,6 +814,14 @@ agents that mattered.
   when it was last seen, how many sessions it has) and its sessions are neither listed nor counted
   among the "more". The cap is in the text `who` renders, so the CLI and the MCP tool share it; the
   daemon's reply still holds every session.
+- **Held to what a device can say (2026-11-09).** Anyone who can push can make any number of device
+  refs, and date a presence as they like. So `who` lists at most 5 devices with no session listed,
+  stale or with none (`view.WhoQuiet`), and counts the rest in one line. Stale devices that still
+  have sessions come first, as their line is the one an agent acts on, then the most recently seen:
+  a device that keeps pushing is always seen recently.
+  And another device's session start is dated as its last activity is, on the reader's clock and
+  no later than the presence that lists it: a start dated ahead had ranked its sessions above every
+  other in every agent's `who`.
 - **Last active on every line**, as `active 2m ago` after the agent and branch (`lookup` keeps its
   own, longer form). A session on a daemon from before #21 has none, and its line says when it
   started instead.
@@ -1008,6 +1050,23 @@ change and a daemon that knows no names routes by it all the same.
   that records the daemon's own pushes, so it can predate the daemon's first name (#80,
   2026-10-30; the first version took it for a deletion and replaced the registry's history with a
   snapshot).
+  - *What one record can add (2026-11-09).* Since the set never shrinks, a reader bounds what it
+    takes from a single record. A snapshot counts only on the root of a history read from its start,
+    and only if that history has one root: the one place Murmur writes it, as a repair's history
+    never descends from what was read, and Murmur writes no merges. One appended is logged and
+    passed over. A merge that brings in another root, by either parent, is damage, as a rewrite is:
+    no snapshot in it counts, which would hide a real repair's names from a reader new to the
+    registry, so every reader that sees it logs it and reads the registry from the start, and one
+    that knows a name missing from it writes a repair, which replaces the merge. The names in the
+    merged-in root's snapshot never counted, so the repair doesn't bring them back. A presence
+    listing more than 200 sessions (`bus.MaxSessions`), far beyond what one device runs, is read as
+    unreadable, whole, so none of its names counts. A daemon's own presence keeps to the cap: past
+    it, it lists the most recently active sessions, and logs how many it left out. And once 1,000
+    random picks have all been in use, a daemon goes through the lists from a random place for a
+    name nobody has. Push access can still mark names used, more slowly: a registry rewritten from a
+    root of its own, which readers log and repair, and 200 names per presence. So can a daemon from
+    before this, which took a snapshot from any commit, until the team has upgraded: its next repair
+    writes what it took into a real root.
 - **Without the remote.** A session that finds no name set aside and can't get one works as
   `device/session`, with its name shown as pending, and the daemon keeps trying in the
   background, and at once when it can reach the remote again.
@@ -1089,13 +1148,14 @@ message meets them:
 A message that arrives whole (a turn, the hook's whole message, the `Stop` hook's continuation)
 is read then. If no notice told of it first, it skipped delivered: so does every message to an
 agent the hook doesn't run in, which gets no notice. One the hook's notice told of during a turn
-was delivered then, and is read later, by whichever of these comes first. Where each moment is for an agent, by route:
+was delivered then, and is read later, by whichever of these comes first; the turn that gives it
+whole then says a notice told of it, so the agent doesn't take it for a second message (#355). Where each moment is for an agent, by route:
 
 | Route | Delivered or read when | Can Murmur see it |
 |---|---|---|
 | `t3 thread send` | read when the turn carrying it starts: at once in an idle thread, after the running turn in a busy one (a busy one only where the hook doesn't run, #202) | No. The daemon sees `t3` accept the message, not the turn start; T3's database would show it (`orchestration_v2_projection_messages`), but those tables are T3's own and may change |
-| The messaging socket (Claude Code outside T3) | read when Claude Code takes it as a turn | No: the socket answers nothing |
-| The hook's notice (Claude Code) | delivered when the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt, with the sender and subject. Where the page's busy setting says whole message (#204), it is read then instead. A message told of is read later by `inbox`, by the `Stop` hook keeping the turn going with it, or as a turn handed over when the turn ends | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
+| The messaging socket (Claude Code outside T3; Pi's extension's, outside T3) | read when the client takes it as a turn | No: the socket answers nothing |
+| The hook's notice (Claude Code, and Pi through its extension) | delivered when the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt, with the sender and subject. Where the page's busy setting says whole message (#204), it is read then instead. So is a message with no body, whatever the setting: its notice would show all of it, and until 2026-11-09 it stayed unread and came again as a turn (#355). A message told of is read later by `inbox`, by the `Stop` hook keeping the turn going with it, or as a turn handed over when the turn ends | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
 | `inbox` | read when the tool's result returns to the agent | Partly: the daemon sees the messages leave in its answer, not the answer reach the agent through MCP |
 
 Nothing reports a message's state to its sender yet. Whatever does (#26, `who`, `lookup`, the web
@@ -1107,9 +1167,10 @@ hook has the session at work (see "A session at work", below):
 
 | Where the session runs | Handed over by | Starts a turn in an idle session |
 |---|---|---|
-| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing. A busy session the hook runs in (Claude Code, Codex, Grok) is not handed the message: the hook tells it | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
+| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing. A busy session the hook runs in (Claude Code, Codex, Grok, and Pi through its extension) is not handed the message: the hook tells it | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
 | Claude Code outside T3 | the session's messaging socket | Unverified: a message Murmur's code wrote to a session's socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle one has not been tried |
-| Codex, OpenCode, Muse, Pi or Grok outside T3, or any handoff that fails | the hook's notice where the hook runs (Claude Code, Codex, Grok), and `inbox` | No |
+| Pi outside T3 | the socket Murmur's extension opens in the session | Yes (2026-11-09, Pi 1.5.0 in RPC mode with a stand-in model: an idle session took a message as a turn, nobody typing) |
+| Codex, OpenCode, Muse or Grok outside T3, or any handoff that fails | the hook's notice where the hook runs (Claude Code, Codex, Grok, Pi), and `inbox` | No |
 
 What the agent reads:
 
@@ -1214,9 +1275,9 @@ A body past the limit is cut, as in `inbox`.
     older, it stays a notice, as it would have without the turn.
   - *Why not hand it to T3 as well*: T3 can't take back a queued message, so the agent could read
     it with `inbox` mid-turn and then get it again as a turn.
-  - *Where the hook doesn't run* (OpenCode, Muse and Pi in T3, as of 2026-11-08), nothing tells
-    the daemon the session is at work, and a message goes to T3 as before: without the handoff the
-    session would hear nothing at all. Codex and Grok have the hook since #225.
+  - *Where the hook doesn't run* (OpenCode and Muse in T3, as of 2026-11-09), nothing tells the
+    daemon the session is at work, and a message goes to T3 as before: without the handoff the
+    session would hear nothing at all. Codex and Grok have the hook since #225, and Pi since #205.
   - *Subagents.* A subagent's tool call carries the parent's `session_id`, with `agent_id` set
     (Claude Code 2.1.312, 2026-10-29). The hook tells it nothing, as its notice would land in the
     subagent's context, not the session's (inferred, not seen; #188), and it doesn't mark the
@@ -1289,6 +1350,41 @@ A body past the limit is cut, as in `inbox`.
   server is connected. A session inside T3 is never written to this way: the socket there is T3's.
   Claude Code wraps what arrives on the socket in a note of its own that says the message came
   from another Claude session, not the user (seen 2026-10-29), which suits Murmur's framing.
+- **Pi's extension (2026-11-09, #205).** Pi has no hooks of Claude Code's kind, so the extension
+  `mur join` writes (`extensions/murmur.ts`) brings Pi #202's delivery itself, with nothing new in
+  the daemon but a way for the hook to name a Pi session: by its file, `Native` in the hook's
+  request, as the session's MCP server registered with it. It runs `mur hook --agent pi` at Claude
+  Code's moments: as a run starts (`before_agent_start`, a prompt), after each tool call
+  (`tool_result`; the notice goes in as a message `deliverAs: "steer"`, which Pi puts after the tool
+  calls and before the next model request), and as the work ends (`agent_before_settle`, where a
+  `custom_message` entry and `continue: true` keep it going, as blocking Stop does). Pi, unlike
+  Claude Code, says when the work ended without a chance to go on: an error is the boundary's
+  `outcome`, and Escape skips `agent_before_settle` and sets `agent_settled`'s `aborted`. The hook's
+  Stop then says it was interrupted, and the daemon takes the session for idle and hands what is
+  unread over as a turn, as for a T3 turn the user stopped. It opens a socket in the session that
+  takes Claude Code's messaging-socket lines, and gives its address and token to the MCP server in
+  its environment as Claude Code does, so the daemon hands an idle Pi session a turn the way it
+  hands Claude Code one; Pi takes it with `triggerTurn`, and with `deliverAs: "followUp"` a busy one
+  takes it when it finishes, not steered in. What Murmur says is a custom message, shown in the
+  session and read in the user's role, never `sendUserMessage`, which Pi treats as the user's
+  typing. The extension is in every Pi session, so it runs the hook and opens the socket only in a
+  clone the user joined (its `joined.json`): elsewhere a tool call waits on no process of
+  Murmur's (about 0.1 s each, Opus's review). It looks for the consent as the session starts, then
+  each second and at each prompt and tool call until it is there, a few stats each time: the user
+  usually joins from inside a running session, which would otherwise get nothing until its next
+  session (the re-review's R1, reproduced with a real Pi). The socket's address and token are
+  chosen at the start and given to the MCP server, which registers only once the clone is joined;
+  a message that comes in the second before the socket opens is tried again after 2 s, and failing
+  that waits for the hook. An update doesn't run `mur
+  join` again, so Pi's MCP server rewrites an extension join wrote for its own binary when the
+  text is an older binary's; Pi reads extensions as a session starts, so the first session after
+  an update still has the old one. Seen with Pi 1.5.0 against a stand-in model, in RPC mode and in
+  its terminal UI (driven in a pty by Opus's review, then here): a notice after a tool call, the
+  message whole at the end of the work, a turn when idle, a turn right after an abort, a new socket
+  and session after `/new`, no socket in a repo not joined, and an old extension rewritten. Not
+  tried: Windows' named pipe, and Pi inside T3 (where the hook now runs too, and the socket is
+  unused). Not covered: Pi's commits aren't credited, as no call is bracketed, and a session
+  without a file (`--no-session`) gets turns and no notices.
 - **A thread that is idle (#87).** T3 stops an idle thread's provider process, and with it Murmur's
   MCP server, after about 30 minutes (seen live on 2026-10-30: both threads' sessions stopped at
   03:30, half an hour after their last turn), so the session of a thread that is idle is the normal
@@ -1522,7 +1618,8 @@ in the state dir's `latest.json`; with updates off it hears of none.
 
 The counts come from the census (#259), which reads what each reported repo shows anyone. Once a
 day a GitHub Action in this repo (`.github/workflows/census.yml`, `site/census/census.mjs`) fetches
-each repo's `refs/murmur/*` and its default branch's commits without their files, and sends the
+the commits, without their files, of each repo's device logs and presences
+(`refs/murmur/mesh/*`, `refs/murmur/presence/*`) and of its default branch, and sends the
 site counts and hashes, never content: per UTC day, the sessions started (each once, though a
 daemon that restarts announces its sessions again), the messages and all records, and a hash of
 each device that wrote anything, presence included; a hash of each device's owner, the git user name
@@ -1533,6 +1630,22 @@ presence when it stops. It runs from GitHub,
 not from the Worker, because counting needs git, and a fetch of the whole bus is one request where
 the API would need one per commit. Once the bus is encrypted (#257) a record's kind is hidden from a
 public reader, so messages stop being told from other records, and only records are counted.
+
+Each repo is counted on its own, since anyone can list one (#298). A repo that can't be read (gone
+private, or deleted) keeps the counts it had. A repo may take 3 minutes, for its git and its
+account lookups, and show 2,000 refs of devices, so that one with huge objects, 100,000 refs or a
+slow API can't hold the job past its 30 minutes. A repo over either, or too big for the site's
+limits on what it keeps, is skipped. The run warns of it but stays green: a repo skipped today is
+skipped every day until someone takes it out of D1, and a run red every day teaches people to
+ignore red. Counts the site refuses do fail the run, after every other repo has been sent. The
+census sends only what the site's limits allow, so a refusal means the two disagree, or the site
+is down, which can be fixed.
+
+A time on the bus or a branch is its writer's clock, and can say any year up to 9999. A day after
+tomorrow (UTC) is never believed, since one would keep a repo active and its people new for ever,
+and nor is a bus day before 2026-10-01, when there was no bus. A record with such a time is dated by
+its commit, or isn't counted. A commit dated in the future counts its author as of the day it is
+read. The site refuses such days, and the stats count nothing after today.
 
 `/stats` shows those repos and the counts over time; it needs a key: Tyler's, or one he gives an
 agent, which reads it as markdown at `/stats/report.md` or JSON at `/stats/data` (#150).
