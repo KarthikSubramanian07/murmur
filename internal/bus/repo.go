@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -150,7 +151,46 @@ func (r *Repo) Fetch(ctx context.Context, refs []string) error {
 //
 // Pushes skip the repo's hooks: a pre-push hook that runs the test suite on every message would
 // make the bus unusable, and these commits never reach a branch.
+//
+// A push the server refuses as busy (see busyReasons) is sent again as it was, after a second or
+// so, up to pushTries times in all. Sending the same commit again can't write anything twice: if an
+// earlier try landed after all, the next one lands on what is already there, or is refused and the
+// look that follows every failure finds the ref at sha.
 func (r *Repo) Push(ctx context.Context, sha, ref string, mode PushMode, expect string) error {
+	for try := 1; ; try++ {
+		busy, err := r.pushOnce(ctx, sha, ref, mode, expect)
+		if !busy || try == pushTries {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(busyWait(try)):
+		}
+	}
+}
+
+// pushTries is how many times Push sends a push that the server refuses as busy.
+const pushTries = 3
+
+// busyReasons are the reasons GitHub gives, now and then, for refusing a push that met another push
+// to the same repository, from the same device or another ("[remote rejected] (failed)"). They say
+// nothing about the push itself, and the same push sent a few seconds later lands. Two devices'
+// daemons, started together so that their presence heartbeats fell together, logged 17 of them in
+// 45 minutes (2026-11-09); two clients pushing to the same repository at the same moment were
+// refused 2 times in 20, and 4 s apart, never.
+var busyReasons = map[string]bool{"failed": true, "failure": true, "fatal error in commit_refs": true}
+
+// busyWait is how long Push waits after its try'th try was refused as busy: half a second to a
+// second after the first, a second to two after the second. It is random within that, so that two
+// devices refused together don't meet again.
+func busyWait(try int) time.Duration {
+	d := 500 * time.Millisecond << (try - 1)
+	return d + rand.N(d)
+}
+
+// pushOnce is one try of Push. busy says the server refused it as busy, so it may be sent again.
+func (r *Repo) pushOnce(ctx context.Context, sha, ref string, mode PushMode, expect string) (busy bool, err error) {
 	args := []string{"push", "--porcelain", "--no-verify", "--no-follow-tags", "--no-signed",
 		"--recurse-submodules=no", r.Remote}
 	switch mode {
@@ -168,7 +208,7 @@ func (r *Repo) Push(ctx context.Context, sha, ref string, mode PushMode, expect 
 		}
 	}
 	if err == nil && refused == "" {
-		return nil
+		return false, nil
 	}
 	// A failed push may still have landed: the server can update the ref and then fail to
 	// report it ("remote failed to report status"), or the connection can drop after. Calling
@@ -178,21 +218,23 @@ func (r *Repo) Push(ctx context.Context, sha, ref string, mode PushMode, expect 
 	defer cancel()
 	now, lerr := r.RemoteRef(lctx, ref)
 	if lerr == nil && now == sha {
-		return nil
+		return false, nil
 	}
 	if refused == "" {
-		return err // network, auth: nothing was decided
+		return false, err // network, auth: nothing was decided
 	}
-	if !strings.Contains(refused, "remote rejected") {
-		return ErrRejected // refused before sending: the ref had already moved
+	_, reason, rejected := strings.Cut(refused, "[remote rejected] ")
+	if !rejected {
+		return false, ErrRejected // refused before sending: the ref had already moved
 	}
 	// The server refused. When two leased pushes race, the loser can pass the client-side
 	// check and still lose on the server, which reports it as a rejection ("reference already
 	// exists", "cannot lock ref"). If the ref moved, that is what happened.
 	if mode == Lease && lerr == nil && now != expect {
-		return ErrRejected
+		return false, ErrRejected
 	}
-	return fmt.Errorf("push to %s %w: %s", ref, ErrRefused, refused)
+	reason = strings.TrimSuffix(strings.TrimPrefix(reason, "("), ")")
+	return busyReasons[reason], fmt.Errorf("push to %s %w: %s", ref, ErrRefused, refused)
 }
 
 // LocalRefs returns the local copies of bus refs.

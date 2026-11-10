@@ -1,4 +1,5 @@
-// Package testgit keeps a package's tests from reading the developer's own git config.
+// Package testgit sets up git for tests: it keeps them from reading the developer's own git config,
+// and makes a bare remote refuse pushes the way GitHub does now and then.
 package testgit
 
 import "os"
