@@ -69,6 +69,7 @@ jobs:
           out=$(gofmt -l .)
           if [ -n "$out" ]; then echo "$out"; exit 1; fi
       - run: go vet ./...
-      - run: go test -race -count=1 -timeout 50m ./...
-      # The site's Worker and the files machines read on it (site/test), with the runner's own node.
+      # The site's Worker and the files machines read on it (site/test), with the runner's own node,
+      # before the Go tests, which take most of the job.
       - run: node --test --import ./site/test/register.mjs site/test/*.test.mjs
+      - run: go test -race -count=1 -timeout 50m ./...
