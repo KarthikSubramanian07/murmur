@@ -135,17 +135,20 @@ func (e *Event) Clean() {
 }
 
 // Clean does for a presence what Event.Clean does for an event, and drops sessions whose IDs
-// Murmur wouldn't write.
+// Murmur wouldn't write. A device has one person, at one address, so only the first is kept: the
+// others would only hold names their device can't be reached by.
 func (p *Presence) Clean() {
 	p.Host = OneLine(p.Host, 64)
 	p.Owner = OneLine(p.Owner, 64)
 	var keep []SessionInfo
+	person := false
 	for _, s := range p.Sessions {
 		if ValidName(s.ID) {
 			if s.ID == PersonSession {
-				if !ValidPerson(s.Name) {
-					continue // no name, no way to tell them from a stray session
+				if !ValidPerson(s.Name) || person {
+					continue // no name, no way to tell them from a stray session; or a second person
 				}
+				person = true
 				s.Agent = AgentPerson
 			} else if !names.Valid(s.Name) {
 				s.Name = ""
