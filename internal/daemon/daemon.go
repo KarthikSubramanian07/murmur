@@ -522,6 +522,10 @@ type inMsg struct {
 	Event   bus.Event `json:"event"`
 	Arrived time.Time `json:"arrived"`
 	Noticed bool      `json:"noticed"`
+	// NoticedAt is when the hook's notice told the session of the message. The turn that gives it
+	// whole later says so, so the agent doesn't take it for a second message (#355). Zero for one
+	// noticed by a daemon from before this.
+	NoticedAt time.Time `json:"noticedAt,omitzero"`
 	// Pushing says the message is being handed over to its session as a turn, so the hook's notice
 	// and inbox leave it alone: it either arrives as the turn, and is gone from the inbox, or the
 	// handoff fails and it is theirs again. PushFailed says that handoff failed. Neither is kept
