@@ -191,6 +191,38 @@ func TestCodexNameOutsideT3(t *testing.T) {
 	}
 }
 
+// A daemon started by a session with its own Codex home has that CODEX_HOME in its environment, as
+// the server it inherits from does once join forwards the variable. A session in the default home,
+// whose server names none, is still read from ~/.codex, not from the home of whoever started the
+// daemon: a T3 thread in a provider home, then plain `codex` in a terminal (#88's review).
+func TestCodexNameWithoutAHomeIsReadFromTheDefault(t *testing.T) {
+	thread := func(dir, id, name string) {
+		db := openFixtureDB(t, filepath.Join(dir, "state_5.sqlite"))
+		if _, err := db.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT)`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO threads VALUES (?, ?)`, id, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := filepath.Join(h, ".codex") // the test's empty home, from TestMain
+	t.Cleanup(func() { os.RemoveAll(def) })
+	provider := t.TempDir()
+	thread(provider, "cx-t3", "In the provider's home")
+	thread(def, "cx-terminal", "In the default home")
+	t.Setenv("CODEX_HOME", provider) // the first session's server started this daemon
+
+	a := newDevice(t, newRemote(t))
+	inT3, _ := a.sessionRoute("aaaaaa", "", proto.Route{Native: "cx-t3", CodexHome: provider})
+	terminal, _ := a.sessionRoute("bbbbbb", "", proto.Route{Native: "cx-terminal"})
+	a.waitDoing("aaaaaa", inT3, "In the provider's home")
+	a.waitDoing("aaaaaa", terminal, "In the default home")
+}
+
 // One daemon serves every Codex session on the device, and they may not share a Codex home: each
 // is read from the home its own MCP server named.
 func TestCodexNameIsReadFromTheSessionsOwnHome(t *testing.T) {

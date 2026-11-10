@@ -166,7 +166,7 @@ type Route struct {
 	Native string `json:"native,omitempty"`
 	// CodexHome is the Codex state directory of that client (CODEX_HOME, else ~/.codex), as its MCP
 	// server sees it: one daemon serves every client on the device, and they may not share a
-	// Codex home. Empty takes the daemon's own.
+	// Codex home. Empty is Codex's default, ~/.codex, never the daemon's own CODEX_HOME.
 	CodexHome string `json:"codexHome,omitempty"`
 }
 
