@@ -53,6 +53,7 @@ func namedDaemon(t *testing.T) (d *Daemon, remote string) {
 // there. That is a registry that hasn't been made yet, not one that was deleted, and must not set
 // the registry to be repaired, which would replace its history with a snapshot (#80).
 func TestListingFromBeforeTheFirstNameIsNotALostRegistry(t *testing.T) {
+	t.Parallel()
 	d, _ := namedDaemon(t)
 	ctx := context.Background()
 	tip := d.st.NamesTip
@@ -78,6 +79,7 @@ func TestListingFromBeforeTheFirstNameIsNotALostRegistry(t *testing.T) {
 // A registry that is gone from the remote after having been read is lost, however the daemon
 // found out: the check above must not hide a real deletion.
 func TestRegistryDeletedFromTheRemoteIsStillALostRegistry(t *testing.T) {
+	t.Parallel()
 	d, remote := namedDaemon(t)
 	runGit(t, t.TempDir(), "--git-dir", remote, "update-ref", "-d", brand.NamesRef)
 
@@ -127,6 +129,7 @@ func claimsAt(t *testing.T, d *Daemon, sha string) (claims, aside map[string]str
 // work said: building on a rewound tip without the snapshot would lose names for good (Codex's
 // review of #144).
 func TestRepairFoundAfterTheWorkWasTakenIsMade(t *testing.T) {
+	t.Parallel()
 	d, remote := namedDaemon(t)
 	ctx := context.Background()
 	first := d.st.NamesTip
@@ -159,6 +162,7 @@ func TestRepairFoundAfterTheWorkWasTakenIsMade(t *testing.T) {
 // A session that takes a name from the pool is found by it at once, even after it moves to another
 // conversation before the registry has it down for the name (Codex's review of #144).
 func TestNameFromThePoolIsTheSessionsAddressAtOnce(t *testing.T) {
+	t.Parallel()
 	d, _ := namedDaemon(t)
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -179,6 +183,7 @@ func TestNameFromThePoolIsTheSessionsAddressAtOnce(t *testing.T) {
 // A repaired registry keeps the names set aside as reservations, with their devices, so a daemon
 // that joins later knows whose they are (Codex's review of #144).
 func TestRepairKeepsNamesSetAside(t *testing.T) {
+	t.Parallel()
 	d, _ := namedDaemon(t)
 	ctx := context.Background()
 	d.st.Used["quiet-otter"], d.st.Reserved["quiet-otter"] = "", "other-0001"
@@ -201,6 +206,7 @@ func TestRepairKeepsNamesSetAside(t *testing.T) {
 // reader of the whole history ignores it, so the two agree on who may assign the name (Codex's
 // review of #144).
 func TestReservationOfANameAlreadySetAsideIsIgnored(t *testing.T) {
+	t.Parallel()
 	d, _ := namedDaemon(t)
 	ctx := context.Background()
 	if err := d.pushNames(ctx, nameWork{reserve: 1}); err != nil {
@@ -236,6 +242,7 @@ func TestReservationOfANameAlreadySetAsideIsIgnored(t *testing.T) {
 // history again, as a reader starting fresh does; and an assignment from another device is then
 // refused (Codex's second review of #144).
 func TestKnownNameWithNoDeviceGainsItsReservation(t *testing.T) {
+	t.Parallel()
 	for _, whole := range []bool{false, true} {
 		d, _ := namedDaemon(t)
 		ctx := context.Background()

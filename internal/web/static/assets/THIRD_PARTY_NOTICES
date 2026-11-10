@@ -2,14 +2,16 @@ The page's assets include work from the projects below, each under its own licen
 
 ==============================================================================
 T3 Code
-https://github.com/pingdotgg/t3code (commit 783581d461dc72cdd8f78fc8abb4ad536dfc4547)
+https://github.com/pingdotgg/t3code (commit 4c8eb1dfd503fa94986c51b84532604c2abe54bb)
 
-Used in style.css: the design tokens (fonts, colors, light and dark themes, radii, spacing,
+Used in style.css: the design tokens (fonts, colors, the dark theme, radii, spacing,
 borders, shadows, the surface grain) from apps/web/src/index.css, and the looks of the
-sidebar, buttons, badges, inputs, segmented controls, status dots and grouped settings
-rows from apps/web/src/components/ui/*.tsx, components/settings/SettingsGroup.tsx,
-components/settings/settingsLayout.tsx, components/sidebar/*.tsx and
-components/ConnectionStatusDot.tsx.
+app shell, sidebar and its mobile sheet, chat header, message timeline (user and assistant
+messages, dividers, Markdown), composer, buttons, badges, kbd, inputs, segmented controls,
+status dots, dialogs, command palette, empty states and grouped settings rows from
+apps/web/src/components/ui/*.tsx, components/sidebar/*.tsx, components/chat/*.tsx,
+components/settings/*.tsx, components/CommandPalette.tsx, components/NoActiveThreadState.tsx
+and components/ConnectionStatusDot.tsx.
 ==============================================================================
 
 MIT License
