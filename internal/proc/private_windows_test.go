@@ -103,7 +103,30 @@ func TestProtectKeepsOtherUsersOut(t *testing.T) {
 			t.Errorf("%s lets every user in: %v", path, sids)
 		}
 	}
+	// GitHub's Windows runners run elevated, where the Administrators entry alone would let this
+	// read in; the checks on the list above are what show the user's own entry is there.
 	if b, err := os.ReadFile(old); err != nil || string(b) != "{}" {
 		t.Errorf("reading %s once protected: %q, %v", old, b, err)
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 2 {
+		t.Errorf("Protect's probe file left behind, or the directory unreadable: %v, %v", entries, err)
+	}
+}
+
+// A share checks access as the account its server knows, so a list naming this user's SID could
+// shut them out there: Protect leaves a network path alone, and one it can't place, and sets the
+// list on a local one.
+func TestProtectLeavesNetworkDrivesAlone(t *testing.T) {
+	if why := noACLs(t.TempDir()); why != "" {
+		t.Errorf("a local temporary directory: %s", why)
+	}
+	for _, path := range []string{`\\localhost\C$\no-such-murmur-dir\.git\murmur`, `\\no-such-host.invalid\share\repo\.git\murmur`} {
+		if why := noACLs(path); why == "" {
+			t.Errorf("%s would be given the list", path)
+		}
+	}
+	// Only a path that can't exist goes to Protect itself, so a mistake here touches nothing.
+	if err := Protect(`\\no-such-host.invalid\share\repo\.git\murmur`); err == nil {
+		t.Errorf("Protect reported it set the list on a share that doesn't exist")
 	}
 }
