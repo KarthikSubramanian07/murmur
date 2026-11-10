@@ -42,7 +42,7 @@ func TestTheStopHookKeepsTheTurnGoing(t *testing.T) {
 	b.hookNotices("claude-bob") // a prompt: the session is at work
 	a.send("aaaaaa", bob, "told", "the body of the told one")
 	eventually(t, "the notice", func() bool { return len(b.hookNotices("claude-bob").Messages) > 0 })
-	a.send("aaaaaa", bob, "untold", "")
+	a.send("aaaaaa", bob, "untold", "its body")
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "untold") })
 
 	r := b.stopHook("claude-bob")
@@ -56,7 +56,7 @@ func TestTheStopHookKeepsTheTurnGoing(t *testing.T) {
 		t.Errorf("after the Stop gave them: inbox %v, notices %v", inbox, notices)
 	}
 
-	a.send("aaaaaa", bob, "in the continued turn", "")
+	a.send("aaaaaa", bob, "in the continued turn", "its body")
 	eventually(t, "the next message to reach b", func() bool { return logHas(b, "in the continued turn") })
 	holds(t, "nothing handed to T3 while the turn goes on", time.Second, func() bool { return len(calls()) == 0 })
 	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 1 || got[0] != "in the continued turn" {
@@ -66,7 +66,7 @@ func TestTheStopHookKeepsTheTurnGoing(t *testing.T) {
 	if r := b.stopHook("claude-bob"); len(r.Read) != 0 {
 		t.Fatalf("a Stop after the last message gave %v", viewSubjects(r.Read))
 	}
-	a.send("aaaaaa", bob, "while idle", "")
+	a.send("aaaaaa", bob, "while idle", "its body")
 	eventually(t, "the idle session woken through T3", func() bool { return len(calls()) == 1 })
 }
 
@@ -82,7 +82,7 @@ func TestTheStopHookIsAWayInWithoutASocket(t *testing.T) {
 	b.hookNotices("claude-bob")
 	b.stopHook("claude-bob")
 	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob, "only way in", "")
+	a.send("aaaaaa", bob, "only way in", "its body")
 	eventually(t, "the notice", func() bool { return len(b.hookNotices("claude-bob").Messages) > 0 })
 	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 1 || got[0] != "only way in" {
 		t.Fatalf("the Stop gave %v", got)
@@ -102,7 +102,7 @@ func TestTheStopHookGivesWhatATurnWould(t *testing.T) {
 	b.hookNotices("claude-bob")
 	b.stopHook("claude-bob")
 	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob, "read mid-turn", "")
+	a.send("aaaaaa", bob, "read mid-turn", "its body")
 	eventually(t, "the notice", func() bool { return len(b.hookNotices("claude-bob").Messages) > 0 })
 	b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"})
 	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 0 {
@@ -114,7 +114,7 @@ func TestTheStopHookGivesWhatATurnWould(t *testing.T) {
 		t.Fatalf("PUT settings: %d %s", code, body)
 	}
 	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob, "never wake", "")
+	a.send("aaaaaa", bob, "never wake", "its body")
 	eventually(t, "the notice", func() bool { return len(b.hookNotices("claude-bob").Messages) > 0 })
 	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 0 {
 		t.Fatalf("the Stop gave %v under never", got)
@@ -134,7 +134,7 @@ func TestTheFirstStopGivesWhatWasToldBeforeIt(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob, "told in the first turn", "")
+	a.send("aaaaaa", bob, "told in the first turn", "its body")
 	eventually(t, "the notice", func() bool { return len(b.hookNotices("claude-bob").Messages) > 0 })
 	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 1 || got[0] != "told in the first turn" {
 		t.Fatalf("the first Stop gave %v", got)
@@ -157,7 +157,7 @@ func TestContinuationsStopAtClaudeCodesCap(t *testing.T) {
 	b.hookNotices("claude-bob")
 	for i := 0; i < 9; i++ {
 		subject := fmt.Sprintf("message %d", i+1)
-		a.send("aaaaaa", bob, subject, "")
+		a.send("aaaaaa", bob, subject, "its body")
 		eventually(t, subject+" to reach b", func() bool { return logHas(b, subject) })
 		got := viewSubjects(b.stopHook("claude-bob").Read)
 		switch {
@@ -170,7 +170,7 @@ func TestContinuationsStopAtClaudeCodesCap(t *testing.T) {
 	eventually(t, "the ninth handed over as a turn", func() bool { return len(calls()) == 1 })
 
 	b.hookNotices("claude-bob") // a new turn
-	a.send("aaaaaa", bob, "after a tool call", "")
+	a.send("aaaaaa", bob, "after a tool call", "its body")
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "after a tool call") })
 	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 1 {
 		t.Fatalf("a Stop after the count started again gave %v", got)
@@ -192,12 +192,12 @@ func TestALapsedContinuationHandsOverWhatCameMeanwhile(t *testing.T) {
 	b.hookNotices("claude-bob")
 	b.stopHook("claude-bob")
 	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob, "continues the turn", "")
+	a.send("aaaaaa", bob, "continues the turn", "its body")
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "continues the turn") })
 	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 1 {
 		t.Fatalf("the Stop gave %v", got)
 	}
-	a.send("aaaaaa", bob, "after the lost answer", "")
+	a.send("aaaaaa", bob, "after the lost answer", "its body")
 	eventually(t, "the next message to reach b", func() bool { return logHas(b, "after the lost answer") })
 	if n := len(sock.lines()); n != 0 {
 		t.Fatalf("the socket got %d lines while the continuation held", n)
@@ -222,7 +222,7 @@ func TestTheStopHookDescribesASenderOncePerConversation(t *testing.T) {
 	given := func(claude, subject string) proto.MessageView {
 		t.Helper()
 		b.hook(claude, procP) // a prompt: at work, and in this conversation
-		a.send("aaaaaa", bob, subject, "")
+		a.send("aaaaaa", bob, subject, "its body")
 		b.noticed(claude, procP, subject)
 		r := b.stopHook(claude)
 		if len(r.Read) != 1 || r.Read[0].Subject != subject {

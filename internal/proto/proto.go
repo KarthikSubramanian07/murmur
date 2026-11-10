@@ -342,6 +342,9 @@ type MessageView struct {
 	// Introduced says the session this goes to as a turn has had a turn from the same sender before,
 	// so the turn needn't say again what agent the sender is and whose machine it is on (#216).
 	Introduced bool `json:"introduced,omitempty"`
+	// Told is when the hook's notice told the session of this message, for one given whole after:
+	// its turn says so (#355). Zero for a message no notice told of.
+	Told time.Time `json:"told,omitzero"`
 }
 
 // EventView is one line of `log`.

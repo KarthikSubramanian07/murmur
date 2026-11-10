@@ -255,7 +255,9 @@ func senders(msgs []proto.MessageView) string {
 // reply and that doing so is optional. The sender's text is not wrapped or quoted: teammates'
 // agents are trusted in Murmur's model, and a message that reads as a request is meant to be acted
 // on. The sender is described (its agent, whose machine) only in the first turn the session has
-// from it (m.Introduced, #216): after that it is a name the agent has met.
+// from it (m.Introduced, #216): after that it is a name the agent has met. A message the hook's
+// notice told of earlier says so (m.Told, #355): the agent may have acted on the subject already,
+// and would otherwise take the turn for a second message.
 //
 // A person on Murmur's page (#242) reads nothing of the conversation they wrote into, so a turn from
 // one always ends by saying that what the agent writes here doesn't reach them: an agent that
@@ -290,6 +292,9 @@ func Turn(m proto.MessageView) string {
 	fmt.Fprintf(&b, " via %s", brand.Product)
 	if m.To == "*" {
 		b.WriteString(", sent to everyone")
+	}
+	if !m.Told.IsZero() {
+		fmt.Fprintf(&b, ", which a notice told you of %s", Ago(m.Told))
 	}
 	fmt.Fprintf(&b, ":\n\n%s\n", m.Subject)
 	if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
