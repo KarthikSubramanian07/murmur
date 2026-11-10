@@ -74,9 +74,11 @@ func TestAMarkerFileThatIsALinkToADeviceIsNotRead(t *testing.T) {
 			t.Error("a link to /dev/zero counts as marked")
 		}
 	})
+	// Init refuses it, as not a regular file or, where links out of the repo are refused first,
+	// as one of those; either way before reading it.
 	within(t, "init", func() {
-		if _, err := Init(context.Background(), dir); err == nil || !strings.Contains(err.Error(), "regular file") {
-			t.Errorf("init on a link to /dev/zero: %v", err)
+		if _, err := Init(context.Background(), dir); err == nil {
+			t.Error("init took a link to /dev/zero")
 		}
 	})
 }
