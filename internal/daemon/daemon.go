@@ -239,7 +239,9 @@ func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
-	return d.repo.Push(ctx, sha, ref, mode, expect)
+	err := d.repo.Push(ctx, sha, ref, mode, expect)
+	d.health.pushed(ctx, ref, err)
+	return err
 }
 
 // pushTimeout bounds one push, so a push that hangs doesn't hold up the device's others for good.
@@ -358,6 +360,8 @@ type Daemon struct {
 	threadWarned map[threadKey]bool
 
 	polls atomic.Int64 // the remote listings tried, so a test can see the rate
+
+	health health // what the page's health snapshot counts (health.go)
 
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs

@@ -96,6 +96,7 @@ func NewWithPRs(src Source, token string, prs LookupPR) *Server {
 	s.mux.HandleFunc("PUT /api/account", s.putAccount)
 	s.mux.HandleFunc("POST /api/send", s.postSend)
 	s.mux.HandleFunc("POST /api/read", s.postRead)
+	s.mux.HandleFunc("GET /api/health", s.getHealth)
 	return s
 }
 

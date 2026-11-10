@@ -122,6 +122,7 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 			wait = next
 			t.Reset(wait)
 		}
+		d.health.polling(rate, wait, d.opt.Poll)
 	sleep:
 		for {
 			select {
@@ -144,13 +145,14 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 
 // pollOnce lists the remote's bus refs and fetches and processes the ones that changed. The
 // listing is one cheap round trip; objects move only when something changed.
-func (d *Daemon) pollOnce(ctx context.Context) error {
+func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	d.polls.Add(1)
 	// A listing applied after a newer one would drop presence that has since appeared.
 	d.syncMu.Lock()
 	defer d.syncMu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
+	defer func() { d.health.synced(ctx, err) }() // before cancel, so ctx still says if its time ran out
 	listed, err := d.repo.ListRemote(ctx)
 	if err != nil {
 		return err
@@ -180,6 +182,7 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			// events don't expire, so they are read once the fetch lands (see readGivenUpTags). An
 			// earlier give-up's cursor stands, as it reaches further back.
 			d.log.Printf("giving up on the messages in the backlog of %s; skipping them", ref)
+			d.health.gaveUp()
 			_, kept := d.st.TagsFrom[ref]
 			if !kept && d.st.Processed[ref] != remote[ref] && (len(d.sessions) > 0 || d.tagsKnownLocked()) {
 				d.st.TagsFrom[ref], kept = d.st.Processed[ref], true
