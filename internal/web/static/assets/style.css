@@ -1435,6 +1435,32 @@ a.g-pr:hover {
   flex-wrap: wrap;
   gap: 0.5rem;
 }
+/* A fold of per-session rows under a device default. */
+.row-fold {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  transition: background-color 0.15s var(--ease);
+}
+.row-fold:hover {
+  background: var(--row-hover);
+}
+.row-fold-chev {
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--muted-foreground);
+  transition: transform 0.15s var(--ease);
+}
+.row-fold[aria-expanded="true"] .row-fold-chev {
+  transform: rotate(90deg);
+}
+.row-fold-meta {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
 .row-empty {
   padding: 0.75rem 1rem;
   font-size: 0.75rem;

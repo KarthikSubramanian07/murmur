@@ -3352,6 +3352,30 @@ async function saveAccount(name) {
   render();
 }
 
+// Each session's own setting, folded under the device default so a device with many sessions
+// doesn't fill the page. The fold says how many sessions there are and how many set their own.
+function perSessionFold(key, rows, set) {
+  ui.settingsOpen = ui.settingsOpen || new Set();
+  if (!rows.length) return [];
+  const open = ui.settingsOpen.has(key);
+  const head = h(
+    "button",
+    {
+      class: "row row-fold",
+      "aria-expanded": open ? "true" : "false",
+      "data-key": "fold-" + key,
+      onclick: () => {
+        open ? ui.settingsOpen.delete(key) : ui.settingsOpen.add(key);
+        render();
+      },
+    },
+    icon("chevronRight", "row-fold-chev"),
+    h("span", { class: "row-title" }, "Each session"),
+    h("span", { class: "row-fold-meta" }, plural(rows.length, "session") + (set ? " · " + set + " set" : "")),
+  );
+  return [head, ...(open ? rows : [])];
+}
+
 function themeSection() {
   return h(
     "section",
@@ -3382,6 +3406,7 @@ function settingsPage() {
     const set = ui.settings;
     const local = (ui.state?.devices || []).find((d) => d.self)?.sessions || [];
     const overrides = set.sessionWake || {};
+    const wakeOwn = local.filter((s) => overrides[s.name]).length;
     const rows = [
       settingsRow(
         "wake",
@@ -3389,7 +3414,7 @@ function settingsPage() {
         "Whether a message from another session may wake an idle session. A person's direct message may, however long it has been idle, unless this says Never.",
         wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }), false),
       ),
-      ...[...local]
+      ...perSessionFold("wake", [...local]
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((s) =>
           settingsRow(
@@ -3410,9 +3435,10 @@ function settingsPage() {
               true,
             ),
           ),
-        ),
+        ), wakeOwn),
     ];
     const busyOverrides = set.sessionBusy || {};
+    const busyOwn = local.filter((s) => busyOverrides[s.name]).length;
     const busyRows = [
       settingsRow(
         "busy",
@@ -3420,7 +3446,7 @@ function settingsPage() {
         "What a busy Claude Code session sees when a message arrives.",
         busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }), false),
       ),
-      ...[...local]
+      ...perSessionFold("busy", [...local]
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((s) =>
           settingsRow(
@@ -3439,7 +3465,7 @@ function settingsPage() {
               true,
             ),
           ),
-        ),
+        ), busyOwn),
     ];
     sections.push(
       h(
