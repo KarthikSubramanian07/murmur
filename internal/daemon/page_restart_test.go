@@ -125,6 +125,7 @@ func postRestart(addr, token string) int {
 // daemon's first, so nothing else can take it; a tab's request sent in between waits and is answered
 // by the new daemon, with the same token; and the tab sees a new daemon, which reloads it (#245).
 func TestPagePortIsNeverFreeAcrossAnUpdate(t *testing.T) {
+	t.Parallel()
 	gitDir := newClone(t, newRemote(t))
 	update := make(chan struct{})
 	first := runPage(t, gitDir, nil, update)
@@ -193,6 +194,8 @@ func TestPagePortIsNeverFreeAcrossAnUpdate(t *testing.T) {
 // Without the socket, the handoff is no good: the port may have been free, and whatever took it
 // was sent the token. The next daemon serves the page with a new token, and refuses the old one.
 func TestPageWithoutItsSocketGetsANewToken(t *testing.T) {
+	// Not parallel: it binds a port by its number after letting it go, and another test could be
+	// given that port in between.
 	gitDir := newClone(t, newRemote(t))
 	update := make(chan struct{})
 	first := runPage(t, gitDir, nil, update)
@@ -230,6 +233,8 @@ func TestPageWithoutItsSocketGetsANewToken(t *testing.T) {
 
 // A daemon that stops for any other reason lets the port go and leaves no handoff.
 func TestPagePortFreedOnAPlainStop(t *testing.T) {
+	// Not parallel: it binds a port by its number after letting it go, and another test could be
+	// given that port in between.
 	gitDir := newClone(t, newRemote(t))
 	r := runPage(t, gitDir, nil, nil)
 	info := r.info()

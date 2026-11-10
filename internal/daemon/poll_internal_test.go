@@ -8,6 +8,7 @@ import (
 // A failing poll waits twice as long each time, to at most a minute (or 20 polls where Poll is
 // short), and one that works is back to Poll at once.
 func TestNextPollBacksOffAndRecovers(t *testing.T) {
+	t.Parallel()
 	base := 3 * time.Second
 	wait := base
 	var got []time.Duration
