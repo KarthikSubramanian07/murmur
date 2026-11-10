@@ -325,10 +325,13 @@ func TestReleases(t *testing.T) {
 				}
 				return
 			}
+			// Each check reports once and then waits an hour, so the run ends at the first report. The
+			// timeout is only for a check that never reports: one second of it wasn't always enough
+			// for a check to finish under -race on a loaded machine.
 			var reports []Status
-			o.Report = func(s Status) { reports = append(reports, s) }
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
+			o.Report = func(s Status) { reports = append(reports, s); cancel() }
 			Run(ctx, o, func() { restarted = true })
 			// The page hears what each check found (#240).
 			want := map[string]Status{

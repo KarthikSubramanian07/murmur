@@ -104,8 +104,13 @@ func TestInitJoinAndLeave(t *testing.T) {
 		}
 	}
 
-	// Not for agents this machine doesn't have.
-	for _, dir := range []string{filepath.Join(b.home, ".config", "opencode"), filepath.Join(b.home, ".pi")} {
+	// Not for agents this machine doesn't have. The box's PATH is the machine's own after mur and
+	// claude, so an agent installed on the machine running the tests is found, and set up, as on a
+	// user's: only those it can't find are checked.
+	for bin, dir := range map[string]string{"opencode": filepath.Join(b.home, ".config", "opencode"), "pi": filepath.Join(b.home, ".pi")} {
+		if _, err := exec.LookPath(bin); err == nil {
+			continue
+		}
 		if exists(dir) {
 			t.Errorf("join made %s for an agent that isn't installed", dir)
 		}

@@ -72,7 +72,7 @@ func TestWithinLeavesALongIdleThreadAlone(t *testing.T) {
 	threads.set("thread-bob", t3db.State{Busy: true})
 	eventually(t, "handoff once the thread is at work", func() bool { return len(calls()) == 1 })
 	if !strings.Contains(calls()[0].Stdin, "not now") {
-		t.Errorf("the delivered turn: %q", calls()[0].Stdin)
+		t.Errorf("the turn handed over: %q", calls()[0].Stdin)
 	}
 
 	threads.set("thread-bob", t3db.State{LastRun: time.Now()})
@@ -107,7 +107,7 @@ func TestSettledThreadIsOfflineAndRefusesMessages(t *testing.T) {
 	if resp := b.trySend("cccccc", bobName, "local"); resp.OK || !strings.Contains(resp.Error, "settled") {
 		t.Errorf("a local send to a settled thread: ok %v, error %q", resp.OK, resp.Error)
 	}
-	holds(t, "nothing delivered to a settled thread", 500*time.Millisecond, func() bool { return len(calls()) == 0 })
+	holds(t, "nothing handed over to a settled thread", 500*time.Millisecond, func() bool { return len(calls()) == 0 })
 
 	threads.set("thread-bob", t3db.State{LastRun: time.Now()})
 	eventually(t, "bob to be back", func() bool { return a.seesSession(bob) })

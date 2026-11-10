@@ -146,7 +146,7 @@ func Run(stdin io.Reader, stdout io.Writer) {
 		return
 	}
 	op := bracketOp(in)
-	// Neither PreToolUse nor PostToolUseFailure delivers notices: the next PostToolUse or prompt
+	// Neither PreToolUse nor PostToolUseFailure gives notices: the next PostToolUse or prompt
 	// does, and a PreToolUse prints nothing at all.
 	wantNotices := in.Event != preTool && in.Event != postFailure
 	if !wantNotices && op == "" {
@@ -189,7 +189,7 @@ func Run(stdin io.Reader, stdout io.Writer) {
 	if !wantNotices || err != nil {
 		return
 	}
-	text := view.Hook(resp.Delivered, resp.Messages, resp.Unread)
+	text := view.Hook(resp.Read, resp.Messages, resp.Unread)
 	if text == "" {
 		return
 	}
@@ -200,7 +200,7 @@ func Run(stdin io.Reader, stdout io.Writer) {
 }
 
 // turnEnd tells the daemon the turn ended, and keeps it going with the messages the daemon gives
-// back, if any. They are delivered once the daemon answers: a hook that gave up waiting
+// back, if any. They are read once the daemon answers: a hook that gave up waiting
 // (NoticeTimeout) just before the answer came loses them, the risk #204's whole messages take too.
 func turnEnd(in input, stdout io.Writer) {
 	ctx, cancel := context.WithTimeout(context.Background(), NoticeTimeout)
@@ -215,8 +215,8 @@ func turnEnd(in input, stdout io.Writer) {
 	}
 	resp, err := c.Do(ctx, proto.Request{Op: proto.OpTurnEnd, ClaudeSession: in.SessionID, ClientPID: claudePID(),
 		Subagent: in.AgentID != "", Continues: true})
-	if err != nil || len(resp.Delivered) == 0 {
+	if err != nil || len(resp.Read) == 0 {
 		return
 	}
-	json.NewEncoder(stdout).Encode(stopOutput{Decision: "block", Reason: view.Hook(resp.Delivered, nil, 0)})
+	json.NewEncoder(stdout).Encode(stopOutput{Decision: "block", Reason: view.Hook(resp.Read, nil, 0)})
 }
