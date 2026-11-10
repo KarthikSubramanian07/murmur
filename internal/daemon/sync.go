@@ -89,8 +89,8 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 	t := time.NewTicker(d.opt.Poll)
 	defer t.Stop()
 	failing, quiet := false, false
-	// wait is until the next poll; every, when all is well; calm is where the slow phase is.
-	wait, every, calm := d.opt.Poll, d.opt.Poll, d.opt.Poll
+	// wait is until the next poll; calm is where the slow phase is.
+	wait, calm := d.opt.Poll, d.opt.Poll
 	for {
 		err := d.pollOnce(ctx)
 		if err != nil && ctx.Err() == nil {
@@ -117,8 +117,8 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 			}
 			quiet = rate.quiet
 		}
-		every, calm = rate.every, rate.calm
-		if next := nextPoll(wait, every, failing); next != wait {
+		calm = rate.calm
+		if next := nextPoll(wait, rate.every, failing); next != wait {
 			wait = next
 			t.Reset(wait)
 		}
@@ -133,7 +133,7 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 				// slower rate than that calls for, look now and from here on at the faster; if
 				// not, it is as quick as it gets. A failure's backoff is not ended by it either,
 				// unless the loop was quiet: a session that comes then is the reason to look now.
-				if d.pollEvery(calm).every >= every || failing && !quiet {
+				if d.pollEvery(calm).every >= rate.every || failing && !quiet {
 					continue sleep
 				}
 			}
@@ -675,15 +675,52 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha, listed string) {
 			return
 		}
 	}
-	commits, err := d.repo.Log(ctx, prev, sha)
+	// A page at a time, with mu let go between pages, so a long log (a device back after days away)
+	// doesn't hold up the sessions, the hook and the page while it is read. Each page moves the cursor
+	// to its last commit, so a read cut short goes on from there.
+	dev := strings.TrimPrefix(ref, brand.MeshPrefix)
+	err := d.repo.Log(ctx, prev, sha, d.maxRecord, func(commits []bus.Commit) error {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		d.applyPageLocked(func() {
+			d.readEventsLocked(ref, dev, commits, mode, tagsOnly, junked, hidden)
+			d.st.Processed[ref] = commits[len(commits)-1].SHA
+		})
+		return nil
+	})
 	if err != nil {
 		d.log.Printf("reading %s: %v", ref, err)
 		return
 	}
-	dev := strings.TrimPrefix(ref, brand.MeshPrefix)
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	delete(d.backlog, ref)
+	if _, ok := d.st.Junked[ref]; ok || d.st.Processed[ref] != sha {
+		d.st.Processed[ref] = sha
+		delete(d.st.Junked, ref)
+		d.saveLocked()
+	}
+}
+
+// applyPageLocked runs apply, which applies a page of a log, with saveLocked put off, and then saves
+// once. Caller holds mu, as it must throughout: no save is left out that someone else is owed.
+func (d *Daemon) applyPageLocked(apply func()) {
+	d.savesHeld = true
+	defer func() {
+		d.savesHeld = false
+		d.saveLocked()
+	}()
+	apply()
+}
+
+// readEventsLocked applies a page of commits read from ref, dev's log, in the mode advanceMesh read
+// it in. A commit over the size read is passed over, as any other junk is. Caller holds mu.
+func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode syncMode, tagsOnly, junked bool, hidden time.Time) {
 	for _, c := range commits {
+		if c.Oversize {
+			d.log.Printf("reading %s: commit %s is %d bytes, over the %d read; passed over", ref, c.SHA, c.Size, d.maxRecord)
+			continue
+		}
 		e, ok := logEvent(c, dev)
 		if !ok {
 			continue
@@ -714,10 +751,6 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha, listed string) {
 			}
 		}
 	}
-	d.st.Processed[ref] = sha
-	delete(d.backlog, ref)
-	delete(d.st.Junked, ref)
-	d.saveLocked()
 }
 
 // logEvent decodes commit c of dev's log, and says whether it is an event to read: a device's log
@@ -791,23 +824,31 @@ func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha, listed string) b
 			return failed(err)
 		}
 	}
-	var commits []bus.Commit
 	if ok {
-		if commits, err = d.repo.Log(ctx, from, to); err != nil {
+		// A page at a time, as advanceMesh reads, the cursor moving with each.
+		dev := strings.TrimPrefix(ref, brand.MeshPrefix)
+		err := d.repo.Log(ctx, from, to, d.maxRecord, func(commits []bus.Commit) error {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			d.applyPageLocked(func() {
+				for _, c := range commits {
+					e, ok := logEvent(c, dev)
+					if ok && e.Type == bus.Tags && !(junked && e.At.Before(hidden.Add(-time.Minute))) {
+						d.applyTagsEventLocked(e)
+					}
+				}
+				d.st.TagsFrom[ref] = commits[len(commits)-1].SHA
+			})
+			return nil
+		})
+		if err != nil {
 			return failed(err)
 		}
 	} else {
 		d.log.Printf("%s was rewritten; skipping its history rather than replaying its tags", ref)
 	}
-	dev := strings.TrimPrefix(ref, brand.MeshPrefix)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for _, c := range commits {
-		e, ok := logEvent(c, dev)
-		if ok && e.Type == bus.Tags && !(junked && e.At.Before(hidden.Add(-time.Minute))) {
-			d.applyTagsEventLocked(e)
-		}
-	}
 	delete(d.st.TagsFrom, ref)
 	delete(d.st.Junked, ref)
 	d.saveLocked()
@@ -996,7 +1037,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	if p != nil && p.sha == sha {
 		return
 	}
-	c, err := d.repo.ReadCommit(ctx, sha)
+	c, err := d.repo.ReadCommit(ctx, sha, d.maxRecord)
 	if err != nil {
 		if ctx.Err() != nil {
 			return // cut short, not unreadable: read it next time
@@ -1305,7 +1346,19 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return d.push(ctx, sha, d.presenceRef(), bus.Force, "")
+	ref := d.presenceRef()
+	if err := d.push(ctx, sha, ref, bus.Force, ""); err != nil {
+		return err
+	}
+	// Recorded as the device's other pushes are, so the next poll doesn't fetch it back:
+	// updatePeer skips this device's own presence, so the fetch would read nothing.
+	if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
+		d.log.Printf("updating local %s: %v", ref, err)
+	}
+	d.mu.Lock()
+	d.known[ref] = sha
+	d.mu.Unlock()
+	return nil
 }
 
 // liveNamesLocked is the names of the sessions that are connected, as opposed to waiting out their
