@@ -152,7 +152,7 @@ func (e Env) homes() (byAgent [][]agentHome, notes []string) {
 		dup := false
 		for j, o := range byAgent[i] {
 			if samePath(o.Dir, h.Dir) && samePath(o.JSON, h.JSON) {
-				dup = true
+				dup = dup || sameCodexKey(a, o, h)
 				if o.Bin == "" {
 					byAgent[i][j].Bin = h.Bin // the default home, with the command T3 runs it by
 				}
@@ -163,6 +163,18 @@ func (e Env) homes() (byAgent [][]agentHome, notes []string) {
 		}
 	}
 	return byAgent, notes
+}
+
+// sameCodexKey says two homes in one directory have Codex name their hook alike. Where one is
+// named by CODEX_HOME and the other is the default, through a link (T3 naming ~/.codex, which is
+// one), Codex spells each differently, and the hook is trusted under both: the second home is kept
+// for that, and registering in it again changes nothing else.
+func sameCodexKey(a agent, o, h agentHome) bool {
+	if a.driver != "codex" || o.Named == h.Named {
+		return true
+	}
+	p, q := filepath.Join(o.Dir, "hooks.json"), filepath.Join(h.Dir, "hooks.json")
+	return codexKeyPath(p, o.Named) == codexKeyPath(q, h.Named)
 }
 
 func agentIndex(driver string) int {
