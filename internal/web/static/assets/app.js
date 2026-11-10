@@ -459,9 +459,11 @@ function render() {
       root.querySelector("main")?.focus({ preventScroll: true });
     }
   }
-  // The focus was in that menu, and went with it: back to what opened it, as closing it would do.
+  // The focus was in that menu, and went with it: back to what opened it, as closing it would do,
+  // or to the page when that went too (the Tag button of a session that has gone).
   if (gone && (!document.activeElement || document.activeElement === document.body)) {
     root.querySelector(`[data-key="${CSS.escape(gone)}"]`)?.focus({ preventScroll: true });
+    if (document.activeElement === document.body) root.querySelector("main")?.focus({ preventScroll: true });
   }
   content.scrollTop = scroll;
   const sideNow = root.querySelector(".sidebar-content, .mini-scroll");
