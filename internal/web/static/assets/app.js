@@ -13,6 +13,30 @@ const VIEWS = ["sessions", "messages", "recent", "settings"];
 const TITLES = { sessions: "Sessions", messages: "Conversations", recent: "Recent", settings: "Settings" };
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
+// The page's look, chosen in Settings and kept in this browser: black like T3 Code, soft greys like
+// a chat app, or light. style.css keys each one on <html data-theme>.
+const THEME_KEY = NAME + ":theme";
+const THEMES = [
+  ["dark", "Dark"],
+  ["dim", "Dim"],
+  ["light", "Light"],
+];
+let theme = "dark";
+try {
+  const t = localStorage.getItem(THEME_KEY);
+  if (THEMES.some(([id]) => id === t)) theme = t;
+} catch {}
+document.documentElement.dataset.theme = theme;
+
+function setTheme(t) {
+  theme = t;
+  document.documentElement.dataset.theme = t;
+  try {
+    localStorage.setItem(THEME_KEY, t);
+  } catch {}
+  render();
+}
+
 const ui = {
   view: "messages",
   token: null,
@@ -554,7 +578,7 @@ function peopleGroup() {
           h(
             "button",
             { class: "side-session", "data-key": "person-" + p.name, title: "Message " + p.name, onclick: () => startChat(p.name) },
-            statusDot(p.name, p.device),
+            presence(p.name, p.device),
             h(
               "span",
               { class: "side-session-text" },
@@ -573,7 +597,7 @@ function messageButton(name) {
     "button",
     {
       class: "side-msg",
-      title: "Message " + name,
+      "data-tip": "Message",
       "aria-label": "Message " + name,
       "data-key": "msg-" + name,
       onclick: (e) => {
@@ -782,7 +806,7 @@ function hideButton(s) {
     "button",
     {
       class: "side-hide",
-      title: hidden ? "Show " + s.name + " again" : "Hide " + s.name + " until you show it again",
+      "data-tip": hidden ? "Show again" : "Hide until you show it again",
       "aria-label": hidden ? "Show " + s.name + " again" : "Hide " + s.name,
       "data-key": "hide-" + s.name,
       onclick: () => setHidden(s, !hidden),
@@ -836,7 +860,7 @@ function quietFold(d) {
                   go("messages");
                 },
               },
-              statusDot(s.name, d),
+              presence(s.name, d),
               h("span", { class: "settled-name truncate" }, s.name),
               tagChips(s, 2, true),
               h("span", { class: "settled-when" }, isHidden(s) ? "hidden" : t ? ago(t).replace(" ago", "") : ""),
@@ -1010,7 +1034,7 @@ function settledRow(r) {
         go("messages");
       },
     },
-    h("span", { class: "status-dot pres-settled", "aria-hidden": "true" }),
+    avatar(r.name),
     h("span", { class: "settled-name truncate" }, r.name),
     h("span", { class: "settled-when" }, ago(r.last).replace(" ago", "")),
   );
@@ -1039,7 +1063,7 @@ function allConversations() {
 function sideSessionBody(d, s) {
   const pr = prFor(s);
   return [
-    statusDot(s.name, d),
+    presence(s.name, d),
     h(
       "span",
       { class: "side-session-text" },
@@ -1251,7 +1275,7 @@ function settledPage(devs) {
                 go("messages");
               },
             },
-            h("span", { class: "status-dot pres-settled", "aria-hidden": "true" }),
+            avatar(r.name),
             h("span", { class: "g-settled-name truncate" }, r.name),
             h("span", { class: "g-settled-last truncate" }, r.lastMsg ? r.lastMsg.subject : ""),
             h("span", { class: "g-settled-chats" }, plural(r.peers.size, "chat")),
@@ -1294,7 +1318,7 @@ function sessionCard(d, s) {
         },
       },
       picking && h("span", { class: "g-pick" + (picked ? " on" : ""), "aria-hidden": "true" }, picked && icon("check")),
-      statusDot(s.name, d),
+      presence(s.name, d),
       h(
         "span",
         { class: "s-text" },
@@ -1350,7 +1374,13 @@ function recentPage() {
   return h(
     "div",
     { class: "g-page g-recent" },
-    list.length > 0 && h("div", { class: "g-toolbar" }, h("p", { class: "g-toolbar-meta" }, ui.messages.length > RECENT_MAX ? "Newest " + RECENT_MAX + " of " + ui.messages.length + " messages" : plural(ui.messages.length, "message") + ", newest first")),
+    // A heading at the top of the column, as on main, so the list has something to start from.
+    h(
+      "header",
+      { class: "g-page-head" },
+      h("h1", null, "Recent messages"),
+      h("p", null, ui.messages.length > RECENT_MAX ? "Newest " + RECENT_MAX + " of " + ui.messages.length : plural(ui.messages.length, "message")),
+    ),
     list.length ? h("div", { class: "g-feed" }, out) : emptyState("clock", "No messages yet", "Messages between sessions show here as this daemon reads them."),
   );
 }
@@ -1358,7 +1388,7 @@ function recentPage() {
 function recentItem(m, at) {
   const from = fromName(m);
   const c = conversationOf(m);
-  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "device" ? [icon("laptop"), host(m.to)] : toName(m);
+  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "device" ? [icon("laptop"), host(m.to)] : [avatar(toName(m)), toName(m)];
   const open = () => {
     ui.filter = null;
     ui.conversation = c.key;
@@ -1367,16 +1397,21 @@ function recentItem(m, at) {
   };
   return h(
     "article",
-    { class: "chat-msg chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" ? open() : null) },
+    { class: "chat-msg chat-msg-face chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" ? open() : null) },
+    avatar(from),
     h(
       "div",
-      { class: "chat-msg-head" },
-      h("span", { class: "chat-msg-from truncate" }, from),
-      m.fromPerson && humanTag(),
-      h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who truncate" }, to)),
-      h("span", { class: "chat-msg-time", title: messageDetail(m) }, clockTime(at)),
+      { class: "chat-msg-main" },
+      h(
+        "div",
+        { class: "chat-msg-head" },
+        h("span", { class: "chat-msg-from truncate" }, from),
+        m.fromPerson && humanTag(),
+        h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who truncate" }, to)),
+        h("span", { class: "chat-msg-time", title: messageDetail(m) }, clockTime(at)),
+      ),
+      messageText(m),
     ),
-    messageText(m),
   );
 }
 
@@ -1745,7 +1780,7 @@ function tagButton(s) {
     "button",
     {
       class: "side-tag",
-      title: "Tag " + s.name,
+      "data-tip": "Tag",
       "aria-label": "Tag " + s.name,
       "aria-haspopup": "dialog",
       "data-key": "tag-" + s.name,
@@ -2059,9 +2094,20 @@ function groupSummary(c) {
   return { rows, on };
 }
 
-// A group chat's picture is what it reaches: everyone, or one device.
+// Up to four members' faces in a square, the last showing how many more there are.
+function groupIcon(c) {
+  const { rows } = groupSummary(c);
+  const shown = rows.length > 4 ? rows.slice(0, 3) : rows.slice(0, 4);
+  return h(
+    "span",
+    { class: "g-grid g-grid-" + Math.min(rows.length, 4), "aria-hidden": "true" },
+    shown.map((r) => avatar(r.name)),
+    rows.length > 4 && h("span", { class: "avatar g-more" }, "+" + (rows.length - 3)),
+  );
+}
+
 function conversationIcon(c) {
-  if (c.kind !== "dm") return h("span", { class: "conv-ico", "aria-hidden": "true" }, icon(c.kind === "all" ? "broadcast" : "laptop"));
+  if (c.kind !== "dm") return groupIcon(c);
   if (c.pair.length === 1) return dotted(c.pair[0]);
   return h("span", { class: "avatar-pair" }, c.pair.map(dotted));
 }
@@ -2439,13 +2485,20 @@ function chatMessage(m, from, at, head) {
       h("div", { class: "chat-msg-meta" }, time, copyButton(copy)),
     );
   }
+  // Everyone else's message has its sender's face beside it, and a run of messages from one sender
+  // shows the face once.
   const via = [sender?.session.agent, sender && !sender.device.self ? host(sender.device.id) : null].filter(Boolean).join(" · ");
   return h(
     "article",
-    { class: "chat-msg" + (head ? " chat-msg-first" : ""), "data-id": m.id },
-    head && h("div", { class: "chat-msg-head" }, h("span", { class: "chat-msg-from truncate" }, from), m.fromPerson && humanTag(), via && h("span", { class: "chat-msg-via truncate" }, via), time),
-    messageText(m),
-    h("div", { class: "chat-msg-meta" }, !head && time, copyButton(copy)),
+    { class: "chat-msg chat-msg-face" + (head ? " chat-msg-first" : ""), "data-id": m.id, title: head ? null : messageDetail(m) },
+    head ? avatar(from) : h("span", { class: "avatar-gap" }),
+    h(
+      "div",
+      { class: "chat-msg-main" },
+      head && h("div", { class: "chat-msg-head" }, h("span", { class: "chat-msg-from truncate" }, from), m.fromPerson && humanTag(), via && h("span", { class: "chat-msg-via truncate" }, via), time),
+      messageText(m),
+    ),
+    h("div", { class: "msg-tools" }, copyButton(copy)),
   );
 }
 
@@ -3307,12 +3360,62 @@ async function saveAccount(name) {
   render();
 }
 
+// Each session's own setting, folded under the device default so a device with many sessions
+// doesn't fill the page. The fold says how many sessions there are and how many set their own.
+function perSessionFold(key, rows, set) {
+  ui.settingsOpen = ui.settingsOpen || new Set();
+  if (!rows.length) return [];
+  const open = ui.settingsOpen.has(key);
+  const head = h(
+    "button",
+    {
+      class: "row row-fold",
+      "aria-expanded": open ? "true" : "false",
+      "data-key": "fold-" + key,
+      onclick: () => {
+        open ? ui.settingsOpen.delete(key) : ui.settingsOpen.add(key);
+        render();
+      },
+    },
+    icon("chevronRight", "row-fold-chev"),
+    h("span", { class: "row-title" }, "Each session"),
+    h("span", { class: "row-fold-meta" }, plural(rows.length, "session") + (set ? " · " + set + " set" : "")),
+  );
+  if (open) for (const r of rows) r.classList.add("row-sub");
+  return [head, ...(open ? rows : [])];
+}
+
+function themeSection() {
+  return h(
+    "section",
+    { class: "section" },
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Appearance")),
+    h(
+      "div",
+      { class: "group" },
+      settingsRow(
+        "theme",
+        "Theme",
+        null,
+        h(
+          "div",
+          { class: "segmented", role: "radiogroup", "aria-label": "Theme" },
+          THEMES.map(([id, label]) =>
+            h("button", { role: "radio", "aria-checked": theme === id ? "true" : "false", "aria-pressed": theme === id ? "true" : "false", "data-key": "theme-" + id, onclick: () => setTheme(id) }, label),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 function settingsPage() {
-  const sections = [ui.state ? accountSection() : null];
+  const sections = [ui.state ? accountSection() : null, themeSection()];
   if (ui.settings) {
     const set = ui.settings;
     const local = (ui.state?.devices || []).find((d) => d.self)?.sessions || [];
     const overrides = set.sessionWake || {};
+    const wakeOwn = local.filter((s) => overrides[s.name]).length;
     const rows = [
       settingsRow(
         "wake",
@@ -3320,7 +3423,7 @@ function settingsPage() {
         "Whether a message from another session may wake an idle session. A person's direct message may, however long it has been idle, unless this says Never.",
         wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }), false),
       ),
-      ...[...local]
+      ...perSessionFold("wake", [...local]
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((s) =>
           settingsRow(
@@ -3341,9 +3444,10 @@ function settingsPage() {
               true,
             ),
           ),
-        ),
+        ), wakeOwn),
     ];
     const busyOverrides = set.sessionBusy || {};
+    const busyOwn = local.filter((s) => busyOverrides[s.name]).length;
     const busyRows = [
       settingsRow(
         "busy",
@@ -3351,7 +3455,7 @@ function settingsPage() {
         "What a busy session sees when a message arrives.",
         busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }), false),
       ),
-      ...[...local]
+      ...perSessionFold("busy", [...local]
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((s) =>
           settingsRow(
@@ -3370,7 +3474,7 @@ function settingsPage() {
               true,
             ),
           ),
-        ),
+        ), busyOwn),
     ];
     sections.push(
       h(
@@ -3668,5 +3772,124 @@ NARROW.addEventListener("change", () => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !e.defaultPrevented && ui.drawer && !ui.setup && !ui.picker && !ui.tagMenu) setDrawer(false);
 });
+// Tooltips, drawn by the page rather than the browser: a browser's title waits about a second and
+// can't be styled. The page's tip is only for what a person can't already read: a button that is
+// only an icon, a state dot, a time (its tip has the full date), and "+N" more tags. Rows, messages,
+// labelled buttons and badges keep the browser's title, which waits long enough not to get in the
+// way. While the page's tip shows, the title moves to data-tip-title so the browser's own doesn't
+// show too, and it comes back after, so assistive tech still reads it.
+//
+// The tip shows 150 ms after the pointer settles. Once one is showing, the next shows at once, so
+// sliding along a row of buttons reads each. Keyboard focus shows it too. The tip lives outside
+// #root, so a render doesn't take it away.
+// While an element's title is borrowed, the element points at the tip with aria-describedby, so a
+// screen reader still reads the title as its description.
+const tip = h("div", { class: "tip", role: "tooltip", id: "page-tip" });
+document.body.append(tip);
+let tipFor = null; // the element whose tip shows, or is about to
+let tipTimer = 0;
+let tipHiddenAt = 0;
+let tipShown = false;
+let pointerX = 0;
+
+function tipText(el) {
+  return el.dataset.tip || el.dataset.tipTitle || el.getAttribute("title") || "";
+}
+
+// Takes an element's title for the page's tip, and gives it back.
+function borrowTitle(el) {
+  const t = el.getAttribute("title");
+  if (t) {
+    el.dataset.tipTitle = t;
+    el.removeAttribute("title");
+  }
+  tip.textContent = tipText(el);
+  if (!el.hasAttribute("aria-describedby")) {
+    el.setAttribute("aria-describedby", tip.id);
+    el.dataset.tipDescribed = "1";
+  }
+}
+function returnTitle(el) {
+  if (el?.dataset.tipTitle) {
+    el.setAttribute("title", el.dataset.tipTitle);
+    delete el.dataset.tipTitle;
+  }
+  if (el?.dataset.tipDescribed) {
+    el.removeAttribute("aria-describedby");
+    delete el.dataset.tipDescribed;
+  }
+}
+
+function showTip(el, atPointer) {
+  clearTimeout(tipTimer);
+  if (!el.isConnected) return hideTip();
+  const text = tipText(el);
+  if (!text) return hideTip();
+  tip.textContent = text;
+  tip.classList.add("on");
+  tipShown = true;
+  const r = el.getBoundingClientRect();
+  const t = tip.getBoundingClientRect();
+  const mid = atPointer && r.width > 120 ? pointerX : r.left + r.width / 2;
+  const x = Math.max(6, Math.min(mid - t.width / 2, window.innerWidth - t.width - 6));
+  const above = r.top - t.height - 6 >= 6;
+  tip.style.left = x + "px";
+  tip.style.top = (above ? r.top - t.height - 6 : r.bottom + 6) + "px";
+  tip.dataset.side = above ? "top" : "bottom";
+}
+
+function hideTip() {
+  clearTimeout(tipTimer);
+  if (tipShown) tipHiddenAt = Date.now();
+  tipShown = false;
+  returnTitle(tipFor);
+  tipFor = null;
+  tip.classList.remove("on");
+}
+
+function queueTip(el, atPointer) {
+  if (el === tipFor) return;
+  hideTip();
+  tipFor = el;
+  borrowTitle(el);
+  if (Date.now() - tipHiddenAt < 400 || tipShown) return showTip(el, atPointer);
+  tipTimer = setTimeout(() => showTip(el, atPointer), 150);
+}
+
+// Whether an element with a title gets the page's tip (see above).
+const TIP_KINDS = ".pres, .status-dot, .dev-dot, .mini-dev, .dot, .chat-msg-time, [data-ago], .stag-more";
+function wantsTip(el) {
+  if (el.dataset.tip || el.matches(TIP_KINDS)) return true;
+  // A button with no words on it: only an icon, or only a face (the folded sidebar's sessions).
+  if (!el.matches("button, a")) return false;
+  const faces = [...el.querySelectorAll(".avatar")].map((a) => a.textContent).join("");
+  return el.textContent.trim() === faces.trim();
+}
+
+function tipTarget(node) {
+  for (let el = node?.closest?.("[data-tip], [title], [data-tip-title]"); el; el = el.parentElement?.closest("[data-tip], [title], [data-tip-title]")) {
+    if (wantsTip(el)) return el;
+  }
+  return null;
+}
+
+document.addEventListener("pointerover", (e) => {
+  if (e.pointerType === "touch") return;
+  pointerX = e.clientX;
+  const el = tipTarget(e.target);
+  el ? queueTip(el, true) : hideTip();
+});
+document.addEventListener("pointermove", (e) => (pointerX = e.clientX), { passive: true });
+document.documentElement.addEventListener("pointerleave", hideTip);
+document.addEventListener("focusin", (e) => {
+  const el = tipTarget(e.target);
+  if (el && e.target.matches(":focus-visible")) queueTip(el, false);
+});
+document.addEventListener("focusout", hideTip);
+document.addEventListener("pointerdown", hideTip, true);
+// Escape also cancels a tip that is still waiting to show.
+document.addEventListener("keydown", (e) => e.key === "Escape" && tipFor && hideTip());
+document.addEventListener("scroll", hideTip, { capture: true, passive: true });
+
 setInterval(tick, 10000);
 start();
