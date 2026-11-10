@@ -17,8 +17,10 @@ const EPOCH = '2026-10-01';
 // D1's limits (developers.cloudflare.com/d1/platform/limits, updated 2026-10-30): 100 bound values a
 // statement; a whole db.batch() must finish within 30 seconds; and a Worker request may make 1,000
 // queries (50 on the Free plan), a batch counting as one. A census POST at the most invalid() takes
-// is about 6,550 statements of up to 33 rows: in batches of 200, 33 batches, plus one query to find
-// the repo, which fits even the Free plan.
+// is about 6,650 statements of up to 33 rows: in batches of 200, 34 batches, plus one query to find
+// the repo, which is within even the Free plan's 50 queries. CPU is another limit: a Free plan
+// Worker has 10 ms of it a request, and parsing a POST that size and building its statements
+// would take more. That was so before batches, and the Paid plan's limit is far above it.
 const BATCH = 200;
 
 // /v1/census, for the census only, with the CENSUS_KEY secret as its Bearer token:

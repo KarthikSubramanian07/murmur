@@ -25,8 +25,10 @@ export function recordingD1(listed = []) {
   };
 }
 
-// D1 is SQLite, so node's own (node:sqlite, Node 22.5 and later) runs the site's SQL as D1 would,
-// on a database made from migrations/. null where node has no SQLite: tests that need it skip.
+// D1 is SQLite, so node's own runs the site's SQL as D1 would, on a database made from migrations/.
+// node:sqlite loads without a flag from Node 22.13 and 23.4 (22.5 to 22.12 need
+// --experimental-sqlite). null where it doesn't: the tests that need it skip, and node --test
+// counts them as skipped, with the reason, rather than passed.
 export async function sqliteD1() {
   let sqlite;
   try {
