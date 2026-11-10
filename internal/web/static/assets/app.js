@@ -346,7 +346,12 @@ function adopt(old, neu) {
   for (const a of [...old.attributes]) if (!neu.hasAttribute(a.name)) old.removeAttribute(a.name);
   for (const a of neu.attributes) {
     if (a.name === "style") old.style.cssText = neu.style.cssText; // the CSP takes styles only through the CSSOM
-    else if (old.getAttribute(a.name) !== a.value) old.setAttribute(a.name, a.value);
+    else if (old.getAttribute(a.name) !== a.value) {
+      // A field that has been typed in ignores its value attribute, so a render that changes it
+      // (the tag menu's field, cleared once a tag is made) sets what it shows too.
+      if (a.name === "value" && "value" in old && old.value !== a.value) old.value = a.value;
+      old.setAttribute(a.name, a.value);
+    }
   }
   for (const [type, fn] of old.listeners || []) old.removeEventListener(type, fn);
   for (const [type, fn] of neu.listeners || []) old.addEventListener(type, fn);
