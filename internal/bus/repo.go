@@ -307,8 +307,14 @@ var ErrTooLarge = errors.New("commit too large to read")
 // how far it got. A commit over max bytes isn't read: it comes with Oversize set and no message, so
 // a caller passes over it as junk and its cursor moves past it. An error from page stops the read
 // and is returned.
+//
+// Only first parents are followed. Murmur writes every log commit with one parent, so a log is a
+// chain, and a cursor at the last commit of a page then stands for everything read before it. A
+// merge, which only someone writing by hand could put in a log, would break that: with a page
+// ending on one side of it, a read resumed from there would list the other side again, and its
+// messages would be delivered twice. Followed by first parents, a merge's other side isn't read.
 func (r *Repo) Log(ctx context.Context, from, to string, max int64, page func([]Commit) error) error {
-	args := []string{"rev-list", "--reverse", to}
+	args := []string{"rev-list", "--reverse", "--first-parent", to}
 	if from != "" {
 		args = append(args, "^"+from)
 	}

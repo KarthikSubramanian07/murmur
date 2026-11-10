@@ -136,3 +136,46 @@ func TestLogStopsAtAPageError(t *testing.T) {
 		t.Errorf("Log returned %v after %d pages, want the page's error after 1", err, calls)
 	}
 }
+
+// A log with a merge in it is read along first parents, so that wherever a read stops, the last
+// commit it read stands for everything before it: a read resumed from there repeats nothing. A
+// merge's other side, which Murmur never writes, isn't read.
+func TestLogResumedPastAMergeRepeatsNothing(t *testing.T) {
+	r := logRepo(t)
+	ctx := context.Background()
+	root := chain(t, r, "", "root\n\n{}\n")[0]
+	a := chain(t, r, root, "a\n\n{}\n")[0]
+	b := chain(t, r, root, "b\n\n{}\n")[0]
+	tree, err := r.EmptyTree(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := r.Git.Run(ctx, "merge\n\n{}\n", "-c", "user.name=test", "-c", "user.email=test@example.invalid",
+		"commit-tree", "--no-gpg-sign", tree, "-p", a, "-p", b, "-F", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	merge := strings.TrimSpace(out)
+	tip := chain(t, r, merge, "after\n\n{}\n")[0]
+
+	var all []string
+	for _, p := range readLog(t, r, root, tip, bus.MaxRecord) {
+		for _, c := range p {
+			all = append(all, c.SHA)
+		}
+	}
+	if want := []string{a, merge, tip}; strings.Join(all, " ") != strings.Join(want, " ") {
+		t.Fatalf("read %v, want %v (first parents only)", all, want)
+	}
+	for i, cursor := range all {
+		var rest []string
+		for _, p := range readLog(t, r, cursor, tip, bus.MaxRecord) {
+			for _, c := range p {
+				rest = append(rest, c.SHA)
+			}
+		}
+		if strings.Join(rest, " ") != strings.Join(all[i+1:], " ") {
+			t.Errorf("resumed after %s: read %v, want %v", cursor, rest, all[i+1:])
+		}
+	}
+}
