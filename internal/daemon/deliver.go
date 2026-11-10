@@ -619,6 +619,7 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		return
 	}
 	d.kickPush() // what waited behind this message, in an inbox that took it over, may go now
+	d.health.handedOff(j.via, err)
 	if err != nil {
 		j.msg.PushFailed = true
 		if !d.pushWarned[j.id] {
@@ -742,6 +743,7 @@ func (d *Daemon) outOfInboxLocked(id string, m *inMsg, verb, how string) {
 		}
 	}
 	d.pushedAt[id] = time.Now()
+	d.health.outOfInbox(verb)
 	d.noteConversationLocked() // the client has the message for the agent; its answer may soon follow
 	e, addr := m.Event, bus.Addr(d.device, id)
 	d.noteLocked(time.Now(), fmt.Sprintf("%s %q from %s to %s %s", verb, e.Subject, e.From, addr, how))

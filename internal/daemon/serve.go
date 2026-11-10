@@ -616,6 +616,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			freshMsgs = append(freshMsgs, m)
 		}
 	}
+	d.health.noticed(len(freshMsgs))
 	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(freshMsgs, false)}
 	if len(whole) > 0 {
 		resp.Read = d.wholeViewsLocked(wholeMsgs, whole)

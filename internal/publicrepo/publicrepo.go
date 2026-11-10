@@ -138,7 +138,7 @@ func Once(ctx context.Context, o Options) (Result, error) {
 		return Waiting, nil
 	}
 	if addr == "" {
-		st.Looked = day
+		st.Looked, st.Private = day, ""
 		return NotGitHub, writeState(o.GitDir, st)
 	}
 	sha, err := repo.RemoteRef(ctx, brand.ReportedRef)
@@ -155,8 +155,15 @@ func Once(ctx context.Context, o Options) (Result, error) {
 			return Waiting, err
 		}
 		if !public {
-			st.Looked = day
+			st.Looked, st.Private = day, addr
 			return Private, writeState(o.GitDir, st)
+		}
+		if st.Private != "" {
+			// It went public. If the send below fails, the page mustn't go on calling it private.
+			st.Private = ""
+			if err := writeState(o.GitDir, st); err != nil {
+				return Waiting, err
+			}
 		}
 		if err := send(ctx, o, "github.com/"+full); err != nil {
 			return Waiting, err // not stored, so sent again at the next look
@@ -259,11 +266,36 @@ func send(ctx context.Context, o Options, addr string) error {
 	return nil
 }
 
+// Status is what has become of the report for the page (#141's health, internal/daemon): reported,
+// waiting, private, not-github or dev, with the address that is sent, or would be, and the UTC day
+// a look last found the repo private or not on GitHub. url is the remote's. It reads the state the
+// last look left and asks nothing of the network.
+func Status(gitDir, url, version string) (status, addr, looked string) {
+	if version == "" || strings.HasSuffix(version, "-dev") {
+		return "dev", "", ""
+	}
+	st, addr := readState(gitDir), Address(url)
+	switch {
+	case addr == "":
+		return "not-github", "", st.Looked
+	case st.Known == addr || st.Sent == addr:
+		return "reported", addr, ""
+	case st.Private == addr && st.Looked != "":
+		return "private", addr, st.Looked
+	}
+	// Not looked at yet, or the last look failed, or found an address other than this one (a remote
+	// that has moved), or a state from before Private was kept: nothing says it is private.
+	return "waiting", addr, ""
+}
+
 // state is what the last look left in the clone's state dir.
 type state struct {
 	Looked string `json:"looked"` // the UTC day, YYYY-MM-DD, a look last found the repo private or not on GitHub
 	Sent   string `json:"sent"`   // the address the site stored; for it, only refs/murmur/reported is left to push
 	Known  string `json:"known"`  // the address whose refs/murmur/reported this clone has seen or pushed
+	// Private is the address the look on Looked found private, "" if that look found the remote off
+	// GitHub, or a look since found it public. Status says private only for this address.
+	Private string `json:"private,omitempty"`
 }
 
 func statePath(gitDir string) string { return filepath.Join(gitDir, brand.StateDir, "publicrepo.json") }
@@ -293,7 +325,7 @@ func writeState(gitDir string, st state) error {
 // (https or ssh, with or without .git or a user name), or "" if it isn't a repo on github.com.
 func Address(url string) string {
 	parts := strings.Split(RepoKey(url), "/")
-	if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+	if len(parts) != 3 || !githubName(parts[1]) || !githubName(parts[2]) {
 		return ""
 	}
 	switch parts[0] {
@@ -301,6 +333,21 @@ func Address(url string) string {
 		return "github.com/" + parts[1] + "/" + parts[2]
 	}
 	return ""
+}
+
+// githubName says whether s could be a GitHub owner or repo name, which hold only letters, digits,
+// '-', '_' and '.'. Anything else, such as a query or fragment left on a remote's URL, which can
+// carry a token, means the address isn't one to show or send.
+func githubName(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 // RepoKey is a remote's address reduced to host and path, lowercased, so every way of writing one
