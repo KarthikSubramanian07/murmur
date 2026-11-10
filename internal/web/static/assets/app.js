@@ -357,7 +357,14 @@ function graft(parent, kids, el, twin) {
 
 // Gives a kept element its counterpart's attributes and listeners.
 function adopt(old, neu) {
-  for (const a of [...old.attributes]) if (!neu.hasAttribute(a.name)) old.removeAttribute(a.name);
+  for (const a of [...old.attributes]) {
+    if (neu.hasAttribute(a.name)) continue;
+    old.removeAttribute(a.name);
+    // A field whose render gave it a value, and now gives none, shows none: once typed in, it
+    // would go on showing what was typed (idle minutes back to inherited after a save failed). A
+    // field that never had a value attribute is a draft the render leaves alone.
+    if (a.name === "value" && "value" in old) old.value = "";
+  }
   for (const a of neu.attributes) {
     if (a.name === "style") old.style.cssText = neu.style.cssText; // the CSP takes styles only through the CSSOM
     else if (old.getAttribute(a.name) !== a.value) {
