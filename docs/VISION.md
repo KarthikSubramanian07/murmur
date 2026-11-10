@@ -1513,7 +1513,8 @@ in the state dir's `latest.json`; with updates off it hears of none.
 
 The counts come from the census (#259), which reads what each reported repo shows anyone. Once a
 day a GitHub Action in this repo (`.github/workflows/census.yml`, `site/census/census.mjs`) fetches
-each repo's `refs/murmur/*` and its default branch's commits without their files, and sends the
+the commits, without their files, of each repo's device logs and presences
+(`refs/murmur/mesh/*`, `refs/murmur/presence/*`) and of its default branch, and sends the
 site counts and hashes, never content: per UTC day, the sessions started (each once, though a
 daemon that restarts announces its sessions again), the messages and all records, and a hash of
 each device that wrote anything, presence included; a hash of each device's owner, the git user name
@@ -1524,6 +1525,22 @@ presence when it stops. It runs from GitHub,
 not from the Worker, because counting needs git, and a fetch of the whole bus is one request where
 the API would need one per commit. Once the bus is encrypted (#257) a record's kind is hidden from a
 public reader, so messages stop being told from other records, and only records are counted.
+
+Each repo is counted on its own, since anyone can list one (#298). A repo that can't be read (gone
+private, or deleted) keeps the counts it had. A repo may take 3 minutes, for its git and its
+account lookups, and show 2,000 refs of devices, so that one with huge objects, 100,000 refs or a
+slow API can't hold the job past its 30 minutes. A repo over either, or too big for the site's
+limits on what it keeps, is skipped. The run warns of it but stays green: a repo skipped today is
+skipped every day until someone takes it out of D1, and a run red every day teaches people to
+ignore red. Counts the site refuses do fail the run, after every other repo has been sent. The
+census sends only what the site's limits allow, so a refusal means the two disagree, or the site
+is down, which can be fixed.
+
+A time on the bus or a branch is its writer's clock, and can say any year up to 9999. A day after
+tomorrow (UTC) is never believed, since one would keep a repo active and its people new for ever,
+and nor is a bus day before 2026-10-01, when there was no bus. A record with such a time is dated by
+its commit, or isn't counted. A commit dated in the future counts its author as of the day it is
+read. The site refuses such days, and the stats count nothing after today.
 
 `/stats` shows those repos and the counts over time; it needs a key: Tyler's, or one he gives an
 agent, which reads it as markdown at `/stats/report.md` or JSON at `/stats/data` (#150).
