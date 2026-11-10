@@ -31,6 +31,7 @@ import (
 // its lock until it is done.
 type standIn struct {
 	protocol int
+	legacy   bool // from before proof: it refuses the proof's ping for its missing token
 	token    string
 	ln       net.Listener
 	gitDir   string
@@ -44,6 +45,17 @@ type standIn struct {
 
 func startStandIn(t *testing.T, gitDir string, protocol int) *standIn {
 	t.Helper()
+	return startStandInAs(t, gitDir, protocol, false)
+}
+
+// startLegacyStandIn is a stand-in for a daemon from before proof (protocol 11 or older).
+func startLegacyStandIn(t *testing.T, gitDir string) *standIn {
+	t.Helper()
+	return startStandInAs(t, gitDir, proto.ProofProtocol-1, true)
+}
+
+func startStandInAs(t *testing.T, gitDir string, protocol int, legacy bool) *standIn {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +65,7 @@ func startStandIn(t *testing.T, gitDir string, protocol int) *standIn {
 		ln.Close()
 		t.Fatalf("the stand-in daemon can't take the lock: %v", err)
 	}
-	d := &standIn{protocol: protocol, token: fmt.Sprintf("token-%d-%d", protocol, time.Now().UnixNano()), ln: ln, lock: lock, gitDir: gitDir}
+	d := &standIn{protocol: protocol, legacy: legacy, token: fmt.Sprintf("token-%d-%d", protocol, time.Now().UnixNano()), ln: ln, lock: lock, gitDir: gitDir}
 	b, _ := json.Marshal(proto.Info{Addr: ln.Addr().String(), Token: d.token, PID: os.Getpid()})
 	if err := os.WriteFile(filepath.Join(StateDir(gitDir), "daemon.json"), b, 0o600); err != nil {
 		t.Fatal(err)
@@ -86,9 +98,10 @@ func (d *standIn) serve(conn net.Conn) {
 	if json.Unmarshal(line, &req) != nil {
 		return
 	}
-	// The proof, from a daemon of a protocol that has it; an older one refuses the ping's missing
-	// token, as the real one does.
-	if req.Op == proto.OpPing && req.Nonce != "" && d.protocol >= proto.ProofProtocol {
+	// The proof, from a daemon of a protocol that has it, whatever number it reports, as a daemon of
+	// 12 will for a client of 13; one from before refuses the ping's missing token, as the real one
+	// does.
+	if req.Op == proto.OpPing && req.Nonce != "" && !d.legacy {
 		reply(proto.Response{OK: true, Protocol: d.protocol, Proof: proto.Proof(d.token, conn.LocalAddr().String(), req.Nonce)})
 		if line, err = r.ReadBytes('\n'); err != nil {
 			return
