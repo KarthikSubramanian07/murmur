@@ -336,6 +336,10 @@ func (d *Daemon) nameTakenByLocked() string {
 // gets it (#268). A push refused because the registry moved is tried again after reading what moved
 // it, up to nameTries times; the error says whether someone else has the name.
 func (d *Daemon) claimPersonName(ctx context.Context, name string) error {
+	// The page is served before Run's first sync. A sync of its own started first would hold syncMu
+	// for up to a minute, and Run's, which a stop can cut short, would wait for it, so the daemon
+	// couldn't stop in that time (Sol's review of #377).
+	d.awaitFirstSync(ctx)
 	d.mu.Lock()
 	read := d.namesChecked
 	d.mu.Unlock()
@@ -401,6 +405,7 @@ func (s pageSource) SetAccount(ctx context.Context, name string) (web.Account, e
 func (s pageSource) Send(ctx context.Context, to, text string) (web.Sent, error) {
 	d := s.d
 	d.pageCalled(ctx)
+	d.awaitFirstSync(ctx) // as send does for a session: the names it resolves, and its push
 	d.mu.Lock()
 	named, takenBy := d.st.Person != "", d.nameTakenByLocked()
 	d.mu.Unlock()
