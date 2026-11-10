@@ -282,6 +282,11 @@ type Presence struct {
 	// not in Sessions, and a daemon that reads this refuses to send them a message; one from
 	// before the field sees them only as gone, and the writer drops what it sends them.
 	Offline []string `json:"offline,omitempty"`
+	// Epoch is the newest team key the device had read from the team ref when it wrote this, and
+	// Holds the team keys it held then, by TeamID (#156). A teammate grants the team keys by them.
+	// Both are inside the box, so they are absent from an encrypted presence until it is opened.
+	Epoch string   `json:"epoch,omitempty"`
+	Holds []string `json:"holds,omitempty"`
 	// BoxKey is the device's public box key, which its teammates encrypt to (#156). A presence
 	// that carries one is sealed, which makes the key the device's.
 	BoxKey string `json:"boxKey,omitempty"`

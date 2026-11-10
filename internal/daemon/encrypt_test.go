@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -173,8 +174,8 @@ func TestOlderDevice(t *testing.T) {
 		t.Fatalf("broadcast: %+v", r)
 	}
 	e := lastEventOn(t, remote, a.self())
-	if e.Type != bus.Boxed || e.Box == nil || len(e.Box.Keys) != 1 || !bus.IsTeamID(e.Box.Recipients()[0]) {
-		t.Fatalf("broadcast as written, for the team key alone: %+v", e)
+	if e.Type != bus.Boxed || e.Box == nil || len(e.Box.Keys) != 2 || e.Box.Keys[a.self()] == "" || !slices.ContainsFunc(e.Box.Recipients(), bus.IsTeamID) {
+		t.Fatalf("broadcast as written, for the team key and its writer alone: %+v", e)
 	}
 	// What the older device makes of it: an event of a type it doesn't know, passed over; and a's
 	// presence, a device with no sessions.
@@ -357,8 +358,8 @@ func TestRotationLeavesOutADeviceThatCantPush(t *testing.T) {
 	if r := a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "after the rotation"}); r.Error != "" {
 		t.Fatalf("send: %+v", r)
 	}
-	if e := lastEventOn(t, remote, a.self()); e.Box == nil || e.Box.Keys[second] == "" || len(e.Box.Keys) != 1 {
-		t.Fatalf("written for %v, want %s alone", e.Box, second)
+	if e := lastEventOn(t, remote, a.self()); e.Box == nil || e.Box.Keys[second] == "" || e.Box.Keys[a.self()] == "" || len(e.Box.Keys) != 2 {
+		t.Fatalf("written for %v, want %s and its writer alone", e.Box, second)
 	}
 	if !opensLog(t, remote, a.self(), ringOf(t, b)) {
 		t.Fatal("b can't read a's log after the rotation")
@@ -379,7 +380,8 @@ func TestRotationLeavesOutADeviceThatCantPush(t *testing.T) {
 }
 
 // Without a collaborator list to compare, a rotation needs --force; with one, it happens only when
-// someone the current epoch recorded has left.
+// someone on the current epoch's roster has left. Someone who joined since is put on the roster, so
+// that their leaving is seen too.
 func TestRotateComparesCollaborators(t *testing.T) {
 	remote := newRemote(t)
 	a := newDevice(t, remote)
@@ -387,20 +389,51 @@ func TestRotateComparesCollaborators(t *testing.T) {
 	if r := a.do(proto.Request{Op: proto.OpRotate}); r.Error == "" {
 		t.Fatalf("rotated with no list: %+v", r)
 	}
-	// The first epoch recorded no list, so the first rotation with one makes a key that does.
+	// The first epoch has no roster, so the first rotation with a list makes a key that has one.
 	if r := a.do(proto.Request{Op: proto.OpRotate, Collaborators: []string{"alice", "bob"}}); r.Error != "" {
 		t.Fatalf("rotate: %+v", r)
 	}
 	eventually(t, "the second epoch", func() bool { return len(teamIDs(t, remote)) == 2 })
+	if r := a.do(proto.Request{Op: proto.OpRotate, Collaborators: []string{"bob", "alice"}}); r.Error != "" ||
+		!strings.Contains(r.Note, "Nobody has left") || strings.Contains(r.Note, "joined") {
+		t.Fatalf("the same people, listed in another order: %+v", r)
+	}
 	if r := a.do(proto.Request{Op: proto.OpRotate, Collaborators: []string{"alice", "bob", "carol"}}); r.Error != "" ||
-		!strings.Contains(r.Note, "Nobody has left") {
+		!strings.Contains(r.Note, "Nobody has left") || !strings.Contains(r.Note, "joined") {
 		t.Fatalf("rotated when nobody left: %+v", r)
 	}
-	r := a.do(proto.Request{Op: proto.OpRotate, Collaborators: []string{"alice"}})
-	if r.Error != "" || !strings.Contains(r.Note, "bob") {
-		t.Fatalf("rotate after bob left: %+v", r)
+	if n := len(teamIDs(t, remote)); n != 2 {
+		t.Fatalf("%d epochs after carol joined, want 2", n)
+	}
+	// Carol leaves again: she is on the roster, so that is seen.
+	r := a.do(proto.Request{Op: proto.OpRotate, Collaborators: []string{"alice", "bob"}})
+	if r.Error != "" || !strings.Contains(r.Note, "carol") {
+		t.Fatalf("rotate after carol left: %+v", r)
 	}
 	eventually(t, "the third epoch", func() bool { return len(teamIDs(t, remote)) == 3 })
+}
+
+// The roster is encrypted for the team key, not for the device that wrote it, so a teammate's device
+// compares against it too: `mur rotate` there doesn't make a new key when nobody has left.
+func TestRosterIsReadByEveryDevice(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	eventually(t, "the first epoch", func() bool { return len(teamIDs(t, remote)) == 1 })
+	if r := a.do(proto.Request{Op: proto.OpRotate, Collaborators: []string{"alice", "bob"}}); r.Error != "" {
+		t.Fatalf("rotate: %+v", r)
+	}
+	second := teamIDs(t, remote)[1]
+	eventually(t, "b is granted the new key", func() bool { return ringOf(t, b)[second] != nil })
+	if r := b.do(proto.Request{Op: proto.OpRotate, Collaborators: []string{"alice", "bob"}}); r.Error != "" ||
+		!strings.Contains(r.Note, "Nobody has left") {
+		t.Fatalf("b, with nobody gone: %+v", r)
+	}
+	if n := len(teamIDs(t, remote)); n != 2 {
+		t.Fatalf("%d epochs, want 2", n)
+	}
+	if r := b.do(proto.Request{Op: proto.OpRotate, Collaborators: []string{"alice"}}); r.Error != "" || !strings.Contains(r.Note, "bob") {
+		t.Fatalf("b, after bob left: %+v", r)
+	}
 }
 
 // A clone whose keys are lost while its device ID stays takes a new ID: its teammates would refuse

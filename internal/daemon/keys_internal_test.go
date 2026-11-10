@@ -8,62 +8,121 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 )
 
-// keyRig is a daemon with only what the team key's rules need: one peer, pinned, and one epoch whose
-// key this device holds.
+// keyRig is a daemon with only what the team key's rules need: one peer, pinned, with a sealed
+// presence.
 func keyRig(t *testing.T) (*Daemon, *peer) {
 	t.Helper()
 	d := &Daemon{opt: Options{StaleAfter: time.Minute, StoppedInbox: 24 * time.Hour}, device: "me-0001",
 		dir: t.TempDir(), log: log.New(io.Discard, "", 0), boxKey: bus.NewBoxKey(), peers: map[string]*peer{},
-		teamKeys: bus.Keyring{}, epochSeen: map[string]time.Time{}, teamChanged: make(chan struct{}),
-		pollWake: make(chan struct{}, 1), kick: make(chan struct{}, 1),
-		st: state{Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}}}
-	d.st.Pins["peer-0001"] = &keyPin{Sign: "s", Box: bus.BoxPublic(bus.NewBoxKey())}
-	p := &peer{pres: bus.Presence{V: bus.Version, Device: "peer-0001"}}
+		teamKeys: bus.Keyring{}, teamChanged: make(chan struct{}),
+		unknownAt: map[string]unknownKey{},
+		pollWake:  make(chan struct{}, 1), kick: make(chan struct{}, 1),
+		st: state{Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{}}}
+	at := time.Now().UTC()
+	d.st.Pins["peer-0001"] = &keyPin{Sign: "s", Box: bus.BoxPublic(bus.NewBoxKey()), At: at}
+	p := &peer{pres: bus.Presence{V: bus.Version, Device: "peer-0001", At: at}, sealed: true}
 	d.peers["peer-0001"] = p
 	return d, p
 }
 
-// withEpoch gives the rig an epoch, known since seen, and its key if held.
-func withEpoch(d *Daemon, seen time.Time, held bool) teamEpoch {
+// withEpoch gives the rig an epoch, and its key if held.
+func withEpoch(d *Daemon, held bool) teamEpoch {
 	k := bus.NewBoxKey()
 	ep := teamEpoch{ID: bus.TeamID(bus.BoxPublic(k)), Pub: bus.BoxPublic(k), By: d.device, At: time.Now().UTC()}
 	d.st.Epochs = append(d.st.Epochs, ep)
-	d.epochSeen[ep.ID] = seen
 	if held {
 		d.teamKeys[ep.ID] = k
 	}
 	return ep
 }
 
-// A device is granted the team keys once this daemon has watched it publish a sealed presence after
-// the epoch began, lately: a presence from before the epoch, or one that sat on its ref, is no proof
-// it can still push, which is what keeps a removed collaborator from a new epoch.
-func TestGrantNeedsAPresenceWatchedAfterTheEpoch(t *testing.T) {
+// A device is granted the team keys when its sealed presence names the current epoch: it was written
+// and pushed after the epoch was made, by a device that could push then. A presence that names an
+// older epoch, or none, is no such proof, which is what keeps a removed collaborator from a new
+// epoch, replaying an old presence included. How old the presence is doesn't matter, nor whether
+// this daemon saw it arrive: a device that joined while nobody was around is granted by the first key
+// holder to sync.
+func TestGrantNeedsAPresenceNamingTheCurrentEpoch(t *testing.T) {
 	d, p := keyRig(t)
-	ep := withEpoch(d, time.Now().Add(-30*time.Second), true)
-	if due := d.grantsDueLocked(); len(due) != 0 {
-		t.Fatalf("granted with no presence watched: %v", due)
+	old := withEpoch(d, true)
+	ep := withEpoch(d, true)
+	for _, named := range []string{"", old.ID} {
+		p.pres.Epoch = named
+		if due := d.grantsDueLocked(); len(due) != 0 {
+			t.Fatalf("granted on a presence naming %q: %v", named, due)
+		}
 	}
-	p.watched = time.Now().Add(-time.Minute / 2).Add(-time.Second) // before the epoch was known
-	if due := d.grantsDueLocked(); len(due) != 0 {
-		t.Fatalf("granted on a presence from before the epoch: %v", due)
-	}
-	p.watched = time.Now()
+	p.pres.Epoch = ep.ID
+	p.pres.At = time.Now().Add(-30 * 24 * time.Hour) // pushed a month ago, and away since
 	if due := d.grantsDueLocked(); len(due) != 1 || due[0] != "peer-0001" {
-		t.Fatalf("not granted on a presence after the epoch: %v", due)
+		t.Fatalf("not granted on an old presence naming the current epoch: %v", due)
 	}
-	d.st.TeamGranted["peer-0001"] = []string{ep.ID}
+	p.sealed = false
 	if due := d.grantsDueLocked(); len(due) != 0 {
-		t.Fatalf("granted twice: %v", due)
+		t.Fatalf("granted on a presence that isn't sealed: %v", due)
 	}
-	delete(d.st.TeamGranted, "peer-0001")
-	d.epochSeen[ep.ID] = time.Now().Add(-2 * time.Minute)
-	p.watched = time.Now().Add(-90 * time.Second)
+}
+
+// A grant goes by the keys a device says it holds, not by what the team ref shows it was granted: a
+// grant that didn't open, or carried a key under another's ID, leaves the device without, and it is
+// granted again. A device that holds every key this one could give it is left alone.
+func TestGrantGoesByTheKeysADeviceHolds(t *testing.T) {
+	d, p := keyRig(t)
+	old := withEpoch(d, true)
+	ep := withEpoch(d, true)
+	p.pres.Epoch = ep.ID
+	d.st.TeamGranted["peer-0001"] = []string{old.ID, ep.ID} // the ref says so
+	if due := d.grantsDueLocked(); len(due) != 1 {
+		t.Fatalf("not granted to a device the ref shows as granted, and that holds nothing: %v", due)
+	}
+	p.pres.Holds = []string{ep.ID}
+	if due := d.grantsDueLocked(); len(due) != 1 {
+		t.Fatalf("not granted to a device missing an old key: %v", due)
+	}
+	p.pres.Holds = []string{old.ID, ep.ID}
 	if due := d.grantsDueLocked(); len(due) != 0 {
-		t.Fatalf("granted on a presence older than StaleAfter: %v", due)
+		t.Fatalf("granted to a device that holds every key: %v", due)
+	}
+	// A key this device lacks itself is not one it can give.
+	delete(d.teamKeys, old.ID)
+	p.pres.Holds = []string{ep.ID}
+	if due := d.grantsDueLocked(); len(due) != 0 {
+		t.Fatalf("granted with nothing to give that the device lacks: %v", due)
+	}
+}
+
+// A device that is away keeps the presence it left, which lists the keys it held then. Once a grant
+// for it is read, it is granted again only on a presence signed later: it has run since, and still
+// lacks a key.
+func TestGrantIsNotRepeatedForADeviceThatIsAway(t *testing.T) {
+	d, p := keyRig(t)
+	ep := withEpoch(d, true)
+	p.pres.Epoch = ep.ID
+	grant, err := bus.NewGrant("peer-0001", d.st.Pins["peer-0001"].Box, d.teamKeys, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sign := bus.NewSignKey()
+	msg, err := bus.EncodeSealed(grant, grant.Subject(), sign, d.device, brand.TeamRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.applyTeamLocked(bus.Commit{SHA: "abc", Message: msg})
+	if due := d.grantsDueLocked(); len(due) != 0 {
+		t.Fatalf("granted again on the presence the grant answered: %v", due)
+	}
+	// It comes back, and its next presence still lists no key: the grant was junk to it.
+	p.pres.At = p.pres.At.Add(time.Minute)
+	if due := d.grantsDueLocked(); len(due) != 1 {
+		t.Fatalf("not granted again on a later presence that still lacks the key: %v", due)
+	}
+	p.pres.Holds = []string{ep.ID}
+	if due := d.grantsDueLocked(); len(due) != 0 {
+		t.Fatalf("granted to a device that now holds the key: %v", due)
 	}
 }
 
@@ -71,36 +130,41 @@ func TestGrantNeedsAPresenceWatchedAfterTheEpoch(t *testing.T) {
 // Murmur from before encryption has none.
 func TestGrantNeedsTheKeyAndAPin(t *testing.T) {
 	d, p := keyRig(t)
-	withEpoch(d, time.Now().Add(-time.Minute), false)
-	p.watched = time.Now()
+	p.pres.Epoch = withEpoch(d, false).ID
 	if due := d.grantsDueLocked(); len(due) != 0 {
 		t.Fatalf("granted a key this device doesn't hold: %v", due)
 	}
 	d2, p2 := keyRig(t)
-	withEpoch(d2, time.Now().Add(-time.Minute), true)
-	p2.watched = time.Now()
+	p2.pres.Epoch = withEpoch(d2, true).ID
+	if due := d2.grantsDueLocked(); len(due) != 1 {
+		t.Fatalf("the rig doesn't grant before the pin's box key is taken away: %v", due)
+	}
 	d2.st.Pins["peer-0001"].Box = ""
 	if due := d2.grantsDueLocked(); len(due) != 0 {
 		t.Fatalf("granted a device with no box key: %v", due)
 	}
 }
 
-// A record is encrypted for the current team key alone; before there is one, nothing goes out. A
-// message to a device on a Murmur from before encryption is refused.
+// A record is encrypted for the current team key, and for its writer, which reads its own log; before
+// there is a team key, nothing goes out. A message to a device on a Murmur from before encryption is
+// refused.
 func TestEncryptForTheTeamKey(t *testing.T) {
 	d, _ := keyRig(t)
 	msg := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "me-0001/aaaaaa", To: "*", Subject: "x"}
 	if _, err := d.encryptEventLocked(msg); !errors.Is(err, errNoTeamKey) {
 		t.Fatalf("encrypted with no team key: %v", err)
 	}
-	withEpoch(d, time.Now(), false)
-	ep := withEpoch(d, time.Now(), false) // a rotation: the newest is current
+	withEpoch(d, false)
+	ep := withEpoch(d, false) // a rotation: the newest is current
 	boxed, err := d.encryptEventLocked(msg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := boxed.Box.Recipients(); len(got) != 1 || got[0] != ep.ID {
-		t.Fatalf("encrypted for %v, want only %s", got, ep.ID)
+	if got := boxed.Box.Recipients(); len(got) != 2 || got[0] != d.device || got[1] != ep.ID {
+		t.Fatalf("encrypted for %v, want %s and %s", got, d.device, ep.ID)
+	}
+	if in, ok, _ := d.openEventLocked(boxed, d.device, "ref", "sha"); !ok || in.Subject != "x" {
+		t.Fatalf("a device without the team key can't read its own record: %+v", in)
 	}
 	d.peers["old-0001"] = &peer{pres: bus.Presence{V: bus.Version, Device: "old-0001"}}
 	msg.To = "old-0001/bbbbbb"
@@ -109,11 +173,13 @@ func TestEncryptForTheTeamKey(t *testing.T) {
 	}
 }
 
-// A box for an epoch this device hasn't been granted makes the log wait; one for a key the team ref
-// doesn't hold is junk, passed over; one for a key it holds opens.
+// A box for an epoch this device hasn't been granted makes the log wait, and one for a key it holds
+// opens. One for a team key the team ref doesn't show waits as well, since a rotation's records can
+// be fetched before its epoch is read, until a sync that began after has read the team ref whole;
+// then it is junk, passed over.
 func TestOpenWaitsForAGrant(t *testing.T) {
 	d, _ := keyRig(t)
-	ep := withEpoch(d, time.Now(), false)
+	ep := withEpoch(d, false)
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa", To: "*", Subject: "x", At: time.Now().UTC()}
 	boxed, err := bus.EncryptEvent(e, "peer-0001", map[string]string{ep.ID: ep.Pub})
 	if err != nil {
@@ -124,14 +190,55 @@ func TestOpenWaitsForAGrant(t *testing.T) {
 	}
 	stray := bus.NewBoxKey()
 	junk, _ := bus.EncryptEvent(e, "peer-0001", map[string]string{bus.TeamID(bus.BoxPublic(stray)): bus.BoxPublic(stray)})
+	d.syncSeq, d.teamReadSeq = 7, 7 // met in a sync that had read the team ref before fetching the log
+	if _, ok, wait := d.openEventLocked(junk, "peer-0001", "ref", "sha"); ok || !wait {
+		t.Fatalf("ok %v, wait %v: want a wait, its epoch may not be read yet", ok, wait)
+	}
+	d.syncSeq = 8 // the next sync fails to read the team ref
+	if _, ok, wait := d.openEventLocked(junk, "peer-0001", "ref", "sha"); ok || !wait {
+		t.Fatalf("ok %v, wait %v: want a wait while the team ref is unread", ok, wait)
+	}
+	d.syncSeq, d.teamReadSeq = 9, 9 // and the one after reads it, with no such key
 	if _, ok, wait := d.openEventLocked(junk, "peer-0001", "ref", "sha"); ok || wait {
 		t.Fatalf("ok %v, wait %v: want junk passed over", ok, wait)
 	}
+	// Had that sync shown the key, the record would wait for a grant, not be passed over.
+	d.syncSeq, d.teamReadSeq = 10, 10
+	if _, ok, wait := d.openEventLocked(junk, "peer-0001", "ref", "sha2"); ok || !wait {
+		t.Fatalf("ok %v, wait %v: want a wait for another record", ok, wait)
+	}
+	d.st.Epochs = append(d.st.Epochs, teamEpoch{ID: bus.TeamID(bus.BoxPublic(stray)), Pub: bus.BoxPublic(stray)})
+	d.syncSeq, d.teamReadSeq = 11, 11
+	if _, ok, wait := d.openEventLocked(junk, "peer-0001", "ref", "sha2"); ok || !wait {
+		t.Fatalf("ok %v, wait %v: want a wait for the grant", ok, wait)
+	}
 	d2, _ := keyRig(t)
-	ep2 := withEpoch(d2, time.Now(), true)
+	ep2 := withEpoch(d2, true)
 	boxed2, _ := bus.EncryptEvent(e, "peer-0001", map[string]string{ep2.ID: ep2.Pub})
 	if in, ok, _ := d2.openEventLocked(boxed2, "peer-0001", "ref", "sha"); !ok || in.Subject != "x" {
 		t.Fatalf("didn't open with the key held: %+v", in)
+	}
+}
+
+// A device that lost its team keys file while its state stayed reads the team ref again: its grants
+// are still there, and no teammate would grant again a device the ref shows as granted.
+func TestLostTeamKeysAreReadAgain(t *testing.T) {
+	d, _ := keyRig(t)
+	ep := withEpoch(d, true)
+	d.st.TeamTip, d.st.TeamGranted[d.device] = "abc", []string{ep.ID}
+	if d.rereadTeamIfKeysLostLocked(); d.st.TeamTip != "abc" {
+		t.Fatal("read again with every granted key held")
+	}
+	delete(d.teamKeys, ep.ID)
+	if d.rereadTeamIfKeysLostLocked(); d.st.TeamTip != "" {
+		t.Fatal("not read again with a granted key missing")
+	}
+	// A device still waiting for its first grant has lost nothing.
+	d2, _ := keyRig(t)
+	withEpoch(d2, false)
+	d2.st.TeamTip = "abc"
+	if d2.rereadTeamIfKeysLostLocked(); d2.st.TeamTip != "abc" {
+		t.Fatal("read again by a device that was never granted the key")
 	}
 }
 
@@ -140,6 +247,7 @@ func TestOpenWaitsForAGrant(t *testing.T) {
 // second review of #156).
 func TestOnlyALaterPresenceIsNew(t *testing.T) {
 	d, _ := keyRig(t)
+	d.st.Pins["peer-0001"].At = time.Time{} // no presence taken yet
 	t0 := time.Now().Add(-time.Minute).UTC()
 	if !d.newPresenceLocked("peer-0001", t0) {
 		t.Fatal("the first presence isn't new")

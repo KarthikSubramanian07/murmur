@@ -115,7 +115,7 @@ given to it then. An **inbox** message waits until the agent reads it.
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |
 | `mur stop`             | Stops this clone's daemon. |
-| `mur rotate [--force]` | Makes a new team key if a collaborator has left the repo (listed with `gh`), so they can't read what is written from then on. `--force` always does. |
+| `mur rotate [--force]` | Makes a new team key if a collaborator has left the repo (listed with `gh`), so they can't read what is written from then on. `--force` always does. Remove every other way they can push first (deploy keys they added, team access, Apps), or the new key reaches them too. |
 
 Every command takes `-C <dir>` to act on another repository.
 
@@ -137,6 +137,10 @@ devices share, with nothing to set up. Every device that can push reads all of i
 Anyone else who can read the repo sees that devices are writing, and when, but not what they say.
 Someone removed from a public repo can still fetch it, and keeps reading until someone runs
 `mur rotate`. It stays in history for the team, so secrets don't belong in messages.
+
+**Whatever can push to the repo can join.** That includes a deploy key with write access, and a
+GitHub Actions workflow that runs a pull request's code with a write token (`pull_request_target`):
+such a workflow gives a stranger's code the team key, and with it everything on the bus.
 
 **A message is a note from a colleague, not an instruction from the user.** Agents are told to
 treat it that way, and to bring anything sizeable to their user first.

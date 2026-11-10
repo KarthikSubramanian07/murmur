@@ -250,9 +250,11 @@ func errOldDevice(dev string) error {
 }
 
 // encryptEventLocked returns e as this device writes it: encrypted for the current team key
-// (team.go), which every device that has pushed its key since that key was made is granted. A
-// message to a device on a Murmur from before encryption, which could never read it, is refused:
-// nothing goes out in the clear. Caller holds mu.
+// (team.go), which every device that has pushed its key since that key was made is granted, and for
+// this device, which reads its own log to queue a message from one of its sessions to another, and
+// would otherwise stop at its own record until a teammate granted it the key. A message to a device
+// on a Murmur from before encryption, which could never read it, is refused: nothing goes out in
+// the clear. Caller holds mu.
 func (d *Daemon) encryptEventLocked(e bus.Event) (bus.Event, error) {
 	if e.Type == bus.Message && e.To != "" && e.To != "*" {
 		dev, _ := bus.SplitAddr(e.To)
@@ -266,27 +268,56 @@ func (d *Daemon) encryptEventLocked(e bus.Event) (bus.Event, error) {
 	if d.epochLocked() == nil {
 		return bus.Event{}, errNoTeamKey
 	}
-	return bus.EncryptEvent(e, d.device, d.teamRecipientsLocked())
+	to := d.teamRecipientsLocked()
+	to[d.device] = bus.BoxPublic(d.boxKey)
+	return bus.EncryptEvent(e, d.device, to)
+}
+
+// unknownKey is a record encrypted for a team key the team ref didn't show, and the sync it was
+// first met in.
+type unknownKey struct {
+	sha string
+	seq int64
 }
 
 // openEventLocked decrypts an event read from dev's log, if it is encrypted. ok is false for one
 // this device can't read. wait says it is encrypted for a team key that is on the team ref but not
-// yet granted to this device: the log is read no further until it is, so nothing is missed. A box
-// for a key the team ref doesn't hold is junk, and passed over. Caller holds mu.
+// yet granted to this device: the log is read no further until it is, so nothing is missed.
+//
+// A box for a team key the team ref doesn't show waits too, until a sync that began after this
+// record was first met has read the team ref whole. A rotation's first records can be fetched before
+// its epoch is read: the team ref's fetch failed in that sync, or the log's fetch went past what the
+// sync listed. Passing over them at once would lose them for good (Sol's review, 2026-11-10). If
+// that later sync still shows no such key, the box is junk, and passed over, so junk holds a log up
+// for one sync and no longer. Caller holds mu.
 func (d *Daemon) openEventLocked(e bus.Event, dev, ref, sha string) (out bus.Event, ok, wait bool) {
 	if e.Type != bus.Boxed {
 		return e, true, false
 	}
 	in, err := bus.DecryptEvent(e, dev, d.keyringLocked())
-	if err != nil {
-		if errors.Is(err, bus.ErrNotForUs) && e.Box != nil {
-			if slices.ContainsFunc(e.Box.Recipients(), d.knownEpochLocked) {
-				return bus.Event{}, false, true
-			}
-		} else {
-			d.log.Printf("%s: ignoring %s: %v", ref, short(sha), err)
-		}
+	if err == nil {
+		return in, true, false
+	}
+	if !errors.Is(err, bus.ErrNotForUs) || e.Box == nil {
+		d.log.Printf("%s: ignoring %s: %v", ref, short(sha), err)
 		return bus.Event{}, false, false
 	}
-	return in, true, false
+	to := e.Box.Recipients()
+	if slices.ContainsFunc(to, d.knownEpochLocked) {
+		delete(d.unknownAt, ref)
+		return bus.Event{}, false, true
+	}
+	if !slices.ContainsFunc(to, bus.IsTeamID) {
+		return bus.Event{}, false, false // for devices alone, and not this one
+	}
+	first, met := d.unknownAt[ref]
+	if !met || first.sha != sha {
+		first = unknownKey{sha: sha, seq: d.syncSeq}
+		d.unknownAt[ref] = first
+	}
+	if d.teamReadSeq > first.seq {
+		delete(d.unknownAt, ref)
+		return bus.Event{}, false, false
+	}
+	return bus.Event{}, false, true
 }

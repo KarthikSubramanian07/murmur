@@ -404,15 +404,20 @@ type Daemon struct {
 	refusedSHA map[string]string // the presence last refused for each device, not read again; under mu
 
 	// The team key (team.go). teamKeys is the team private keys this device holds, by TeamID;
-	// epochSeen is when this run first knew of each epoch, on the monotonic clock, which a grant
-	// waits for a presence after; teamChanged is closed and replaced when an epoch is read. Under mu.
-	// teamMu serializes the team ref's writes; teamKick wakes teamLoop.
+	// teamChanged is closed and replaced when an epoch is read. Under mu. teamMu serializes the team
+	// ref's writes; teamKick wakes teamLoop.
 	teamKeys    bus.Keyring
-	epochSeen   map[string]time.Time
 	teamChanged chan struct{}
 	teamMu      sync.Mutex
 	teamKick    chan struct{}
 	waitWarned  map[string]bool // logs already said to be waiting for the team key; under mu
+	// syncSeq counts the syncs that got a listing, and teamReadSeq is the last of them that read the
+	// team ref up to what it listed. unknownAt is, for each log stopped at a record encrypted for a
+	// team key the team ref doesn't show, that record and the sync it was first met in
+	// (openEventLocked). Under mu.
+	syncSeq     int64
+	teamReadSeq int64
+	unknownAt   map[string]unknownKey
 
 	polls atomic.Int64 // the remote listings tried, so a test can see the rate
 
@@ -542,14 +547,11 @@ type peer struct {
 	// machines' clocks.
 	listed     string
 	lastChange time.Time
-	// sealed says this run has taken a sealed presence from the device, new or not.
+	// sealed says the presence read was sealed: only such a one earns a grant of the team keys
+	// (grantsDueLocked). locked says it was encrypted for a team key this device doesn't hold yet, to
+	// read again once it does.
 	sealed bool
-	// watched is when this daemon took a new sealed presence from the device that it saw arrive, on
-	// this machine's clock: not the first it read in this run, which may have sat on the ref for any
-	// time. A grant of the team keys goes by it (teamWork). locked says the presence was encrypted
-	// for a team key this device doesn't hold yet, to read again once it does.
-	watched time.Time
-	locked  bool
+	locked bool
 }
 
 // fetchFail is a ref whose fetch failed: at which listed SHA, and when. It is fetched again on
@@ -691,10 +693,12 @@ type state struct {
 	// pass (see nextPresenceAtLocked).
 	PresenceAt time.Time `json:"presenceAt,omitzero"`
 	// The team ref as read (team.go): its tip, its epochs in order, and the team keys each device
-	// has been given, by device ID.
-	TeamTip     string              `json:"teamTip,omitempty"`
-	Epochs      []teamEpoch         `json:"epochs,omitempty"`
-	TeamGranted map[string][]string `json:"teamGranted,omitempty"`
+	// has been given, by device ID. GrantMark is, for each device a grant was read for, the time its
+	// newest presence was signed with when this daemon read the grant (grantsDueLocked).
+	TeamTip     string               `json:"teamTip,omitempty"`
+	Epochs      []teamEpoch          `json:"epochs,omitempty"`
+	TeamGranted map[string][]string  `json:"teamGranted,omitempty"`
+	GrantMark   map[string]time.Time `json:"grantMark,omitempty"`
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if
@@ -965,7 +969,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
 		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
-		epochSeen: map[string]time.Time{}, waitWarned: map[string]bool{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1),
+		waitWarned: map[string]bool{}, unknownAt: map[string]unknownKey{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1),
 	}
 	device, signKey, boxKey, err := loadIdentity(dir, opt.Log, sealedLocally(ctx, gitx.Git{Dir: opt.GitDir}))
 	if err != nil {
@@ -986,6 +990,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		return nil, err
 	}
 	d.pinSelfLocked() // nothing else runs yet
+	d.rereadTeamIfKeysLostLocked()
 	d.loadSettings()
 	d.loadPersonLog()
 	wall := now.Round(0)
@@ -1222,7 +1227,7 @@ func (d *Daemon) loadState() error {
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
 		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{},
-		Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}}
+		Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1288,13 +1293,8 @@ func (d *Daemon) loadState() error {
 	if d.st.TeamGranted == nil {
 		d.st.TeamGranted = map[string][]string{}
 	}
-	// A grant waits for a presence pushed after this run knew of the epoch: a presence read before
-	// the restart can't be told from one put back on its ref since (team.go).
-	if d.epochSeen == nil {
-		d.epochSeen = map[string]time.Time{}
-	}
-	for _, ep := range d.st.Epochs {
-		d.epochSeen[ep.ID] = time.Now()
+	if d.st.GrantMark == nil {
+		d.st.GrantMark = map[string]time.Time{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

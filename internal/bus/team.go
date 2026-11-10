@@ -22,15 +22,17 @@ import (
 
 // Team record types.
 const (
-	TeamEpoch = "epoch"
-	TeamGrant = "grant"
+	TeamEpoch  = "epoch"
+	TeamGrant  = "grant"
+	TeamRoster = "roster"
 )
 
 // TeamRecord is one record on the team ref, sealed by the device that wrote it.
 type TeamRecord struct {
 	V    int    `json:"v"`
 	Type string `json:"type"`
-	// ID is an epoch's team key, as TeamID names it; Pub its public half, base64.
+	// ID is an epoch's team key, as TeamID names it, or the one a roster is for; Pub is an epoch's
+	// public half, base64.
 	ID  string `json:"id,omitempty"`
 	Pub string `json:"pub,omitempty"`
 	// To is the device a grant is for, and IDs the team keys it carries, readable so that every
@@ -38,16 +40,16 @@ type TeamRecord struct {
 	To  string   `json:"for,omitempty"`
 	IDs []string `json:"ids,omitempty"`
 	// Box holds the private halves (teamSecret), wrapped for each device it is for: an epoch's for
-	// its writer and the devices around then, a grant's for To.
+	// its writer, a grant's for To. A roster's holds the collaborators, encrypted for team key ID.
 	Box *Box      `json:"box"`
 	At  time.Time `json:"at"`
 }
 
 // teamSecret is what a team record's box holds.
 type teamSecret struct {
-	Keys map[string]string `json:"keys"` // TeamID → private key, base64
-	// Collaborators is, in an epoch, the repo's collaborators when it was made, if the device that
-	// made it could list them: what `mur rotate` compares against.
+	Keys map[string]string `json:"keys,omitempty"` // TeamID → private key, base64
+	// Collaborators is, in a roster, the people who could push to the repo when it was written:
+	// what `mur rotate` compares against.
 	Collaborators []string `json:"collaborators,omitempty"`
 }
 
@@ -77,11 +79,11 @@ func teamAAD(r TeamRecord) []byte {
 
 // NewEpoch makes an epoch record for a new team key k, its private half wrapped for recipients
 // (device → box key).
-func NewEpoch(k *ecdh.PrivateKey, recipients map[string]string, collaborators []string, at time.Time) (TeamRecord, error) {
+func NewEpoch(k *ecdh.PrivateKey, recipients map[string]string, at time.Time) (TeamRecord, error) {
 	pub := BoxPublic(k)
 	id := TeamID(pub)
 	r := TeamRecord{V: Version, Type: TeamEpoch, ID: id, Pub: pub, At: at.UTC()}
-	plain, err := json.Marshal(teamSecret{Keys: map[string]string{id: b64.EncodeToString(k.Bytes())}, Collaborators: collaborators})
+	plain, err := json.Marshal(teamSecret{Keys: map[string]string{id: b64.EncodeToString(k.Bytes())}})
 	if err != nil {
 		return TeamRecord{}, err
 	}
@@ -116,6 +118,38 @@ func NewGrant(to, boxKey string, keys Keyring, at time.Time) (TeamRecord, error)
 	return r, nil
 }
 
+// NewRoster makes a roster record: the repo's collaborators, encrypted for the team key id, whose
+// public half is pub, so that every device granted that key reads it, whichever device wrote it. An
+// epoch can't carry the list itself, as its box is wrapped for its writer's device alone.
+func NewRoster(id, pub string, collaborators []string, at time.Time) (TeamRecord, error) {
+	r := TeamRecord{V: Version, Type: TeamRoster, ID: id, At: at.UTC()}
+	plain, err := json.Marshal(teamSecret{Collaborators: collaborators})
+	if err != nil {
+		return TeamRecord{}, err
+	}
+	if r.Box, err = SealBox(plain, teamAAD(r), map[string]string{id: pub}); err != nil {
+		return TeamRecord{}, err
+	}
+	return r, nil
+}
+
+// OpenRoster opens a roster with the team keys in keys, and returns the collaborators it lists.
+func (r TeamRecord) OpenRoster(keys Keyring) ([]string, error) {
+	k := keys[r.ID]
+	if r.Type != TeamRoster || r.Box == nil || k == nil {
+		return nil, ErrNotForUs
+	}
+	plain, err := r.Box.Open(r.ID, k, teamAAD(r))
+	if err != nil {
+		return nil, err
+	}
+	var s teamSecret
+	if json.Unmarshal(plain, &s) != nil {
+		return nil, errBadBox
+	}
+	return s.Collaborators, nil
+}
+
 // Valid says whether a team record has the form its type needs. A record that doesn't is junk, and
 // is passed over.
 func (r TeamRecord) Valid() bool {
@@ -135,14 +169,19 @@ func (r TeamRecord) Valid() bool {
 			}
 		}
 		return r.ID == "" && r.Pub == ""
+	case TeamRoster:
+		return IsTeamID(r.ID) && r.Pub == "" && r.To == "" && len(r.IDs) == 0 && len(r.Box.Keys) == 1 && r.Box.Keys[r.ID] != ""
 	}
 	return false
 }
 
 // Subject is the commit subject a team record is written with. Only what the record shows anyway.
 func (r TeamRecord) Subject() string {
-	if r.Type == TeamGrant {
+	switch r.Type {
+	case TeamGrant:
 		return "grant to " + r.To
+	case TeamRoster:
+		return "roster for " + r.ID
 	}
 	return "epoch " + r.ID
 }
@@ -150,16 +189,15 @@ func (r TeamRecord) Subject() string {
 // Open opens a team record as device dev, with its box key k, and returns the team keys it carries,
 // each checked against the ID it is given under: a key that doesn't match its ID is dropped, so a
 // grant can't hand a device a key under another key's name. With an epoch, the epoch's own key must
-// be among them, and the collaborators it recorded come back too. ErrNotForUs says the record isn't
-// for dev.
-func (r TeamRecord) Open(dev string, k *ecdh.PrivateKey) (Keyring, []string, error) {
+// be among them. ErrNotForUs says the record isn't for dev.
+func (r TeamRecord) Open(dev string, k *ecdh.PrivateKey) (Keyring, error) {
 	plain, err := r.Box.Open(dev, k, teamAAD(r))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	var s teamSecret
 	if json.Unmarshal(plain, &s) != nil {
-		return nil, nil, errBadBox
+		return nil, errBadBox
 	}
 	keys := Keyring{}
 	for id, enc := range s.Keys {
@@ -174,7 +212,7 @@ func (r TeamRecord) Open(dev string, k *ecdh.PrivateKey) (Keyring, []string, err
 		keys[id] = priv
 	}
 	if r.Type == TeamEpoch && keys[r.ID] == nil {
-		return nil, nil, errBadBox
+		return nil, errBadBox
 	}
-	return keys, s.Collaborators, nil
+	return keys, nil
 }

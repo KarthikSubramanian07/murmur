@@ -58,7 +58,9 @@ For humans:
                                 if it isn't running)
   mur stop                      stop this clone's daemon
   mur rotate [--force]          make a new team key if a collaborator has left the repo (listed with gh),
-                                so what is written from now on can't be read by them; --force always does
+                                so what is written from now on can't be read by them; --force always does.
+                                First remove every other way they can push (deploy keys they added, team
+                                access, Apps): whatever can still push is given the new key
 
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
@@ -489,8 +491,9 @@ func runRotate(ctx context.Context, args []string, out io.Writer) error {
 	return nil
 }
 
-// listCollaborators lists the GitHub logins of the collaborators of the bus's repo with gh, or says
-// why it couldn't.
+// listCollaborators lists the GitHub logins of the people who can push to the bus's repo, with gh, or
+// says why it couldn't. Only push access counts: someone moved down to read access is still a
+// collaborator to GitHub, and has left as far as the bus goes.
 func listCollaborators(ctx context.Context, gitDir string) ([]string, string) {
 	g := gitx.Git{Dir: gitDir}
 	name, err := bus.RemoteFor(ctx, g)
@@ -510,7 +513,7 @@ func listCollaborators(ctx context.Context, gitDir string) ([]string, string) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "api", "--paginate", "repos/"+strings.TrimPrefix(addr, "github.com/")+"/collaborators", "--jq", ".[].login")
+	cmd := exec.CommandContext(ctx, "gh", "api", "--paginate", "repos/"+strings.TrimPrefix(addr, "github.com/")+"/collaborators", "--jq", ".[] | select(.permissions.push) | .login")
 	b, err := cmd.Output()
 	if err != nil {
 		return nil, "gh couldn't list the collaborators (is it signed in, with access to the repo?)"
@@ -520,7 +523,7 @@ func listCollaborators(ctx context.Context, gitDir string) ([]string, string) {
 		logins = append(logins, strings.ToLower(l))
 	}
 	if len(logins) == 0 {
-		return nil, "gh listed no collaborators"
+		return nil, "gh listed no collaborators who can push"
 	}
 	return logins, ""
 }

@@ -165,6 +165,7 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 
 	var changed []string
 	d.mu.Lock()
+	d.syncSeq++
 	if d.backlog == nil {
 		// What the first listing shows is the backlog. A device that appears later is new, and
 		// its log is read normally from the start.
@@ -273,6 +274,11 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	}
 	firstErr := first.Err()
 	cancelFirst()
+	d.mu.Lock()
+	if tip, ok := remote[brand.TeamRef]; !ok || failed[brand.TeamRef] == nil && d.st.TeamTip == tip {
+		d.teamReadSeq = d.syncSeq // every epoch the listing could show has been read (openEventLocked)
+	}
+	d.mu.Unlock()
 	for _, ref := range logs {
 		d.advanceMesh(ctx, ref, remote[ref], listed[ref])
 	}
@@ -792,16 +798,10 @@ func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode sy
 	return len(commits)
 }
 
-// logEventLocked decodes commit c of dev's log, read from ref, opening it if it is encrypted, and
+// logEventWaitLocked decodes commit c of dev's log, read from ref, opening it if it is encrypted, and
 // says whether it is an event to read: one this device can open, and a device's log carries only
-// its own sessions' events. Caller holds mu.
-func (d *Daemon) logEventLocked(c bus.Commit, dev, ref string) (bus.Event, bool) {
-	e, ok, _ := d.logEventWaitLocked(c, dev, ref)
-	return e, ok
-}
-
-// logEventWaitLocked is logEventLocked, and also says whether the event is encrypted for a team key
-// this device is waiting to be granted (openEventLocked). Caller holds mu.
+// its own sessions' events. It also says whether the event is one to wait for: encrypted for a team
+// key this device may yet be granted (openEventLocked). Caller holds mu.
 func (d *Daemon) logEventWaitLocked(c bus.Commit, dev, ref string) (bus.Event, bool, bool) {
 	var e bus.Event
 	if bus.Decode(c.Message, &e) != nil {
@@ -878,20 +878,44 @@ func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha, listed string) b
 	if ok {
 		// A page at a time, as advanceMesh reads, the cursor moving with each.
 		dev := strings.TrimPrefix(ref, brand.MeshPrefix)
+		stalled := false
 		err := d.repo.Log(ctx, from, to, d.maxRecord, func(commits []bus.Commit) error {
 			d.mu.Lock()
 			defer d.mu.Unlock()
 			d.applyPageLocked(func() {
-				for _, c := range commits {
-					e, ok := d.logEventLocked(c, dev, ref)
+				for i, c := range commits {
+					if c.Oversize {
+						continue
+					}
+					e, ok, wait := d.logEventWaitLocked(c, dev, ref)
+					if wait {
+						// As readEventsLocked does: the stretch is read on from here once this device
+						// holds the key, so no tags in it are lost.
+						if i > 0 {
+							d.st.TagsFrom[ref] = commits[i-1].SHA
+						}
+						stalled = true
+						return
+					}
 					if ok && e.Type == bus.Tags && !(junked && e.At.Before(hidden.Add(-time.Minute))) {
 						d.applyTagsEventLocked(e)
 					}
 				}
 				d.st.TagsFrom[ref] = commits[len(commits)-1].SHA
 			})
+			if stalled {
+				return errStalled
+			}
 			return nil
 		})
+		if stalled {
+			// A grant, not time, is what the log waits for: it counts as read for the backlog, as in
+			// advanceMesh.
+			d.mu.Lock()
+			delete(d.backlog, ref)
+			d.mu.Unlock()
+			return false
+		}
 		if err != nil {
 			return failed(err)
 		}
@@ -1121,6 +1145,8 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		return
 	}
 	locked := false
+	// Only what was inside the box says which epoch a device has read and which keys it holds.
+	pres.Epoch, pres.Holds = "", nil
 	if pres.Box != nil {
 		open, err := bus.DecryptPresence(pres, d.keyringLocked())
 		if err != nil {
@@ -1148,18 +1174,10 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		changed = firstSight(c.Time) // no change of ours to time it by
 	}
 	d.mu.Lock()
-	var watched time.Time
-	if p != nil {
-		watched = p.watched
+	if sealed {
+		d.newPresenceLocked(dev, pres.At) // the high-water mark of its presence times
 	}
-	// Seen to arrive: a presence signed later than any other taken from the device, read while this
-	// daemon watches its ref, after a sync has finished, so not the clone's own old copy. Pushed now,
-	// by someone who can push.
-	if sealed && d.newPresenceLocked(dev, pres.At) && p != nil && p.sealed && !d.lastPollOK.IsZero() {
-		watched = time.Now()
-	}
-	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed,
-		sealed: sealed || p != nil && p.sealed, watched: watched, locked: locked}
+	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, sealed: sealed, locked: locked}
 	// A name in another device's presence is in use, whether or not the registry shows it yet.
 	seen := false
 	for _, s := range pres.Sessions {
@@ -1466,16 +1484,6 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 		case err == nil && failing:
 			d.log.Printf("presence pushed again")
 		}
-		if err == nil {
-			d.mu.Lock()
-			waiting := d.lacksTeamKeyLocked()
-			d.mu.Unlock()
-			if waiting {
-				// A teammate grants the team key on a presence it sees arrive after the epoch: push
-				// one again soon, rather than at the next heartbeat.
-				retry.Reset(min(teamWaitRepush, d.opt.Heartbeat))
-			}
-		}
 		failing = err != nil
 		d.pruneInboxes()
 	}
@@ -1548,6 +1556,11 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		pres.Sessions = append(pres.Sessions, d.personInfoLocked())
 	}
 	pres.BoxKey = bus.BoxPublic(d.boxKey)
+	// The epoch it has read and the team keys it holds: what a teammate grants by (grantsDueLocked).
+	if ep := d.epochLocked(); ep != nil {
+		pres.Epoch = ep.ID
+	}
+	pres.Holds = sortedKeys(d.teamKeys)
 	team := d.teamRecipientsLocked()
 	// This presence lists every session started so far, so what waits for one that does can go
 	// once it is pushed, or has failed: a failing remote is no reason to hold back the rest. Until
