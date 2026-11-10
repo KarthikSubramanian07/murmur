@@ -5,7 +5,7 @@
 // sessions and publishes them in presence; docs/VISION.md, "Session tags", has the reasons.
 //
 // One tag carries behaviour: do-not-disturb, set by the session or a human, keeps the session's
-// messages queued in its inbox. None is handed over as a turn or delivered by the hook until the
+// messages queued in its inbox. None is handed over as a turn or told by the hook until the
 // session reads its inbox or the tag comes off. A tag under model: names the model the session runs, and a
 // session has at most one. One is Murmur's alone: human, on a person's account (#267).
 package tags
@@ -24,8 +24,8 @@ import (
 
 const (
 	// DoNotDisturb keeps a session's messages queued in its inbox: while it has the tag none is
-	// handed over as a turn, and the hook delivers neither a notice nor the whole message. They are
-	// delivered when the session reads its inbox, or by whichever route applies once the tag comes
+	// handed over as a turn, and the hook gives neither a notice nor the whole message. They are
+	// read when the session reads its inbox, or by whichever route applies once the tag comes
 	// off.
 	DoNotDisturb = "do-not-disturb"
 	// Human marks a person's account on the page (#242), at a device's address device/human, and

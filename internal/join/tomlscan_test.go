@@ -1,0 +1,84 @@
+package join
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestTOMLLineEnd(t *testing.T) {
+	for _, tc := range []struct{ line, open, want string }{
+		{`model = "x"`, "", ""},
+		{`# wrap long prompts in """ quotes`, "", ""},
+		{`# or ''' ones`, "", ""},
+		{`developer_instructions = "prefer ''' strings"`, "", ""},
+		{`x = '"""'`, "", ""},
+		{`x = "say \"\"\" now"`, "", ""},
+		{`path = "C:\\" # a """ in a comment`, "", ""},
+		{`x = 'C:\' # a ''' in a comment`, "", ""}, // no escapes in a literal string
+		{`notes = """`, "", `"""`},
+		{`notes = '''`, "", `'''`},
+		{`notes = """with ''' inside`, "", `"""`},
+		{`notes = '''with """ inside`, "", `'''`},
+		{`w = """one line"""`, "", ""},
+		{`z = """a "quote"""""`, "", ""}, // the two quotes before the closing three are the string's
+		{`text, still`, `"""`, `"""`},
+		{`a \""" b`, `"""`, `"""`}, // an escaped quote doesn't close it
+		{`a \''' b`, `'''`, ""},    // a literal string has no escapes
+		{`end """`, `"""`, ""},
+		{`""" # done, and a """ in a comment`, `"""`, ""},
+		{`''' + '''`, `'''`, `'''`},
+		{`"""" and on`, `"""`, ""},
+	} {
+		if got := tomlLineEnd(tc.line, tc.open); got != tc.want {
+			t.Errorf("tomlLineEnd(%q, %q) = %q, want %q", tc.line, tc.open, got, tc.want)
+		}
+	}
+}
+
+// tomlBefore is text that may come before Murmur's table in a config.toml, with quotes in it that
+// open no multi-line string, or that open one and close it. Each is valid TOML (checked with
+// Python's tomllib, 2026-11-09).
+var tomlBefore = map[string]string{
+	"triple quotes in a comment":           "model = \"o5\"\n# tip: wrap long prompts in \"\"\" quotes\n",
+	"literal triple quotes in a comment":   "# or ''' ones\n",
+	"literal triple quotes in a string":    "developer_instructions = \"prefer ''' strings\"\n",
+	"triple quotes in a literal string":    "x = '\"\"\"'\n",
+	"escaped quotes in a string":           `x = "say \"\"\" now"` + "\n",
+	"an escaped backslash, then a comment": `path = "C:\\" # a """ in a comment` + "\n",
+	"an escaped quote in a multi-line one": "x = \"\"\"\na \\\"\"\" b\n\"\"\"\n",
+	"literal quotes opening a basic one":   "x = \"\"\"with '''\n\"\"\"\n",
+	"a header in a multi-line literal":     "y = '''\n[mcp_servers.murmur]\n'''\n",
+	"quotes before the closing three":      "z = \"\"\"a \"quote\"\"\"\"\"\n",
+	"a multi-line string on one line":      "w = \"\"\"one\"\"\"\n",
+}
+
+// Quotes in a comment or in a one-line string open no multi-line string, so the table join wrote
+// last time is found again, not appended a second time: TOML forbids that, and Codex then refuses
+// its whole config.
+func TestCodexEditFindsItsTablePastQuotes(t *testing.T) {
+	for name, before := range tomlBefore {
+		first, _ := edit(t, before)
+		if want := before + "\n" + tomlTable; first != want {
+			t.Errorf("%s: first edit:\n%s", name, first)
+			continue
+		}
+		second, changed, err := editTOMLServer(first, "/opt/mur", codexServer)
+		if err != nil || changed || second != first {
+			t.Errorf("%s: the second edit changed=%v err=%v:\n%s", name, changed, err, second)
+		}
+		moved, _, err := editTOMLServer(first, "/new/mur", codexServer)
+		if err != nil || strings.Count(moved, "[mcp_servers.murmur]") != strings.Count(first, "[mcp_servers.murmur]") || !strings.Contains(moved, `"/new/mur"`) {
+			t.Errorf("%s: after the binary moved (err %v):\n%s", name, err, moved)
+		}
+	}
+}
+
+// Grok's allow list is found the same way.
+func TestAddTOMLListItemFindsItsTablePastQuotes(t *testing.T) {
+	for name, before := range tomlBefore {
+		text := before + "\n[permission]\nallow = [\"x\"]\n"
+		if out, changed, err := addTOMLListItem(text, "permission", "allow", "x", "config.toml"); err != nil || changed || out != text {
+			t.Errorf("%s: changed=%v err=%v:\n%s", name, changed, err, out)
+		}
+	}
+}

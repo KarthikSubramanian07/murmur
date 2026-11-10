@@ -121,15 +121,39 @@ func noneOnBus(t *testing.T, remote string, texts ...string) {
 	}
 }
 
+// lookFor is look for a wait: ok is false while d can't resolve name yet, as a session of another
+// device is known only once its presence or the registry has reached d.
+func (d *device) lookFor(as, name string) (det *proto.SessionDetail, ok bool) {
+	d.t.Helper()
+	r := d.do(proto.Request{Op: proto.OpLookup, Session: as, Name: name})
+	return r.Lookup, r.OK && r.Lookup != nil
+}
+
 func presenceTip(t *testing.T, d *device, remote string) string {
 	t.Helper()
 	return strings.Fields(git(t, d.tree(), "ls-remote", remote, "refs/murmur/presence/"+d.self()))[0]
+}
+
+// presenceSettles waits for d's presence on the remote to stop changing, the same tip for two
+// seconds in a row, and returns that tip. A session's start and its naming each ask for a write,
+// and on a busy machine one can land seconds after the last name shows.
+func presenceSettles(t *testing.T, d *device, remote string) string {
+	t.Helper()
+	tip, since := presenceTip(t, d, remote), time.Now()
+	eventually(t, "presence to stop changing", func() bool {
+		if now := presenceTip(t, d, remote); now != tip {
+			tip, since = now, time.Now()
+		}
+		return time.Since(since) >= 2*time.Second
+	})
+	return tip
 }
 
 // A tool call that commits is credited to the session, with the branch, in lookup on its own
 // device and in the presence another device reads. The commit's SHA, the worktree and the
 // client's session ID go no further than the device.
 func TestToolCallThatCommitsIsCredited(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	wt := a.linkedTree("wt-secret-folder", "feat-1")
@@ -165,11 +189,14 @@ func TestToolCallThatCommitsIsCredited(t *testing.T) {
 		t.Errorf("committed to %v, want [feat-2 feat-1]", got)
 	}
 
-	// Another device reads it from presence, and has nothing of what stays local.
+	// Another device reads it from presence, and has nothing of what stays local. b saw alice
+	// above, but maybe not yet by her name, which comes with a later write.
+	var far *proto.SessionDetail
 	eventually(t, "the branches in presence on b", func() bool {
-		return slices.Equal(b.look("bbbbbb", name).Committed, []string{"feat-2", "feat-1"})
+		det, ok := b.lookFor("bbbbbb", name)
+		far = det
+		return ok && slices.Equal(det.Committed, []string{"feat-2", "feat-1"})
 	})
-	far := b.look("bbbbbb", name)
 	if far.Local || far.Worktree != "" || far.ClientSession != "" || len(far.Commits) != 0 {
 		t.Errorf("a session of another device shows what stays local: %+v", far)
 	}
@@ -192,6 +219,7 @@ func TestToolCallThatCommitsIsCredited(t *testing.T) {
 // A commit on a detached HEAD is credited and kept, and says so, but has no branch to add to the
 // list the others see.
 func TestDetachedCommitIsKeptWithoutABranch(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	wt := a.linkedTree("wt-detached", "feat-d")
@@ -219,6 +247,7 @@ func TestDetachedCommitIsKeptWithoutABranch(t *testing.T) {
 // call, or between two calls, and not one that session Y's call overlapped when it was in another
 // worktree.
 func TestOnlyCommitsDuringTheSessionsCallsAreCredited(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	wtX := a.linkedTree("wt-x", "feat-x")
@@ -231,6 +260,11 @@ func TestOnlyCommitsDuringTheSessionsCallsAreCredited(t *testing.T) {
 	commitFile(t, wtX, "before.txt")
 	a.callStart("claude-x", procP, "toolu_1", wtX)
 	a.callEnd("claude-x", procP, "toolu_1", wtX)
+	// The end is answered before its after-snapshot is taken. A lookup waits for that snapshot,
+	// so the next commit is made after it, as one made between calls is.
+	if got := a.look("aaaaaa", nx).Commits; len(got) != 0 {
+		t.Fatalf("commits made before the first call were credited: %+v", got)
+	}
 	commitFile(t, wtX, "between.txt")
 	a.callStart("claude-x", procP, "toolu_2", wtX)
 	a.callEnd("claude-x", procP, "toolu_2", wtX)
@@ -257,6 +291,7 @@ func TestOnlyCommitsDuringTheSessionsCallsAreCredited(t *testing.T) {
 // once. An end with no start, and a start whose end never comes, credit nothing, and a call that
 // never ends doesn't make the next one claim what came before it.
 func TestParallelCallsAndACallThatNeverEnds(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	wt := a.linkedTree("wt-p", "feat-p")
@@ -316,6 +351,7 @@ func TestParallelCallsAndACallThatNeverEnds(t *testing.T) {
 // is kept out, and only what the call made there is credited. A third worktree it never went to
 // is nobody's.
 func TestEndInAnotherWorktreeIsJudgedInBoth(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	wt1 := a.linkedTree("wt-one", "feat-one")
@@ -340,6 +376,7 @@ func TestEndInAnotherWorktreeIsJudgedInBoth(t *testing.T) {
 
 // A call in another repository, or in none, is not this daemon's to watch.
 func TestCallOutsideTheCloneIsSkipped(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	alice, _ := a.claudeSession("aaaaaa", "claude-o", procP, a.tree())
@@ -364,6 +401,11 @@ func TestCallOutsideTheCloneIsSkipped(t *testing.T) {
 // Last active moves with each hook request and each request of the session's MCP server, not with
 // the CLI's or a stranger's. It reaches another device in the next presence write, which these
 // requests don't cause.
+//
+// Serial: it shows that no write came, and a write the daemon was already making can land late
+// enough to look like one. Waiting for the names and a still tip rules out what can be waited
+// for, but a push that failed is retried 15 s later, and the parallel tests' load makes that and a
+// slow publish likelier (#369).
 func TestLastActiveMovesAndTravelsWithoutWritingPresence(t *testing.T) {
 	remote := newRemote(t)
 	slow := func(d *device) { d.beat, d.stale = time.Hour, time.Minute }
@@ -372,14 +414,15 @@ func TestLastActiveMovesAndTravelsWithoutWritingPresence(t *testing.T) {
 	alice, _ := a.claudeSession("aaaaaa", "claude-la", procP, wt)
 	helper, _ := a.session("cccccc", "claude-helper")
 	bob, _ := b.session("bbbbbb", "")
-	name := a.named(alice)
-	a.named(helper)
+	name, helperName := a.named(alice), a.named(helper)
 	b.named(bob)
-	eventually(t, "presence", func() bool { return b.seesSession(alice) && b.seesSession(helper) })
-	time.Sleep(time.Second) // let the writes that the names caused finish
+	// The writes the starts and the names caused have landed once b has both names and a's
+	// presence has stopped changing.
+	b.nameIs(alice, name)
+	b.nameIs(helper, helperName)
+	tip := presenceSettles(t, a, remote)
 
 	active := func() time.Time { return a.look("cccccc", name).LastActive }
-	tip := presenceTip(t, a, remote)
 	registered := active()
 	if registered.IsZero() {
 		t.Fatal("a registered session has no last-active time")
@@ -551,6 +594,7 @@ func TestPreToolUseWithTheDaemonDownIsSilent(t *testing.T) {
 // lookup answers for a live session here, one on another device, one the registry knows that is
 // not running (from its own device and from another), and errors for a name nobody has.
 func TestLookup(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.grace, d.keep = 300*time.Millisecond, time.Hour })
 	b := newDevice(t, remote)
@@ -686,6 +730,7 @@ func TestLookup(t *testing.T) {
 // A session's credited commits are kept after it stops and across the daemon restarting, and a
 // session that comes back within the time its inbox is kept gets them back.
 func TestCreditedCommitsSurviveAStopAndARestart(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newTimedDevice(t, remote, 200*time.Millisecond, time.Hour)
 	wt := a.linkedTree("wt-keep", "feat-keep")

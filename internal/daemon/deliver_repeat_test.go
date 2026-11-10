@@ -137,8 +137,13 @@ func TestAMessageIsNotHandedOverWhenTheMarkCannotBeSaved(t *testing.T) {
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
-	// state.json is written by way of state.json.tmp: a directory there makes every save fail.
-	if err := os.Mkdir(filepath.Join(b.gitDir, brand.StateDir, "state.json.tmp"), 0o700); err != nil {
+	// state.json is written by way of state.json.tmp: a directory there makes every save fail. A
+	// file in it keeps writeJSON's removal of a leftover tmp from taking the directory away.
+	blocker := filepath.Join(b.gitDir, brand.StateDir, "state.json.tmp")
+	if err := os.Mkdir(blocker, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(blocker, "x"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 

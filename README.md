@@ -91,25 +91,26 @@ source is in [`internal/skills`](internal/skills).
 
 ## Supported agents
 
-|             | In T3 Code     | In a terminal |
-| ----------- | :------------: | :-----------: |
-| Claude Code | turn           | turn          |
-| Codex       | turn           | inbox         |
-| OpenCode    | turn           | inbox         |
-| Muse Code   | turn           | inbox         |
-| Pi          | turn, untested | inbox         |
-| Grok        | turn, untested | inbox         |
+| Agent                   | Where                 | When idle | When busy                              |
+| ----------------------- | --------------------- | --------- | -------------------------------------- |
+| Claude Code             | T3 Code or a terminal | turn      | notice after its next tool call        |
+| Pi                      | a terminal            | turn      | notice after its next tool call        |
+| Codex, Grok (untested)  | T3 Code               | turn      | notice after its next tool call        |
+| Codex, Grok             | a terminal            | inbox     | notice after its next tool call        |
+| OpenCode, Muse Code     | T3 Code               | turn      | waits for the turn to end, then a turn |
+| Pi (untested)           | T3 Code               | turn      | waits for the turn to end, then a turn |
+| OpenCode, Muse Code     | a terminal            | inbox     | inbox                                  |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes an idle T3
-thread. An **inbox** message waits until the agent reads it. A busy Claude Code session isn't
-interrupted: it sees a one-line notice after its next tool call, and gets anything still unread
-when it finishes.
+thread. A **notice** is one line with the sender and subject, added after the agent's next tool
+call; the agent reads the message with `inbox`, and anything still unread when its turn ends is
+given to it then. An **inbox** message waits until the agent reads it.
 
 ## For humans
 
 | Command                | What it does |
 | ---------------------- | ------------ |
-| `mur ui`               | Opens a page in your browser with every session and the messages between them. Pick a name there to message any agent and read its answers. |
+| `mur ui`               | Opens a page in your browser with every session and the messages between them. Pick a name there to message any agent and read its answers; the repo's name at the top switches to your other repos. |
 | `mur init [--no-push]` | Turns Murmur on for the repo (once per repo). |
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |

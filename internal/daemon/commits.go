@@ -90,9 +90,10 @@ func (d *Daemon) sameClone(gitDir string) bool {
 // touchHookLocked finds the sessions a hook request speaks for, as notices does, and notes that
 // they are active. Caller holds mu.
 func (d *Daemon) touchHookLocked(req proto.Request) []*session {
-	sessions := d.hookSessionsLocked(req.ClaudeSession, req.ClientPID, req.Subagent)
+	sessions := d.hookSessionsLocked(req)
 	now := time.Now()
 	for _, s := range sessions {
+		s.hookSeen = true
 		// Every hook but Stop's runs while the session is at work: a prompt or a tool call. Not a
 		// subagent's, which may be working in the background after the session's turn ended.
 		// Nor does it count as the session's hook having run: a session that reconnected after a
@@ -374,4 +375,22 @@ func peerActive(p *peer, s bus.SessionInfo) time.Time {
 		return time.Time{}
 	}
 	return p.lastChange.Add(-max(p.pres.At.Sub(s.LastActive), 0))
+}
+
+// peerStarted is when a session on another device started, on this machine's clock, worked out as
+// peerActive works out the last activity, or zero if its presence doesn't say. `who` ranks a session
+// with no last activity by its start, so a start dated ahead, by a clock that runs fast or a presence
+// written to say so, would keep it above every other; it is no later than the presence that lists
+// it.
+func peerStarted(p *peer, s bus.SessionInfo) time.Time {
+	switch {
+	case s.Started.IsZero():
+		return time.Time{}
+	case p.pres.At.IsZero():
+		if s.Started.After(p.lastChange) {
+			return p.lastChange
+		}
+		return s.Started
+	}
+	return p.lastChange.Add(-max(p.pres.At.Sub(s.Started), 0))
 }

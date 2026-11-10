@@ -33,6 +33,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:0", "loopback address to listen on")
 	taken := flag.Bool("taken", false, "start with an account named maya, a name the person on maya-mbp chose first (#268)")
 	upd := flag.String("update", "none", "what the page is told of a newer release: none, auto (being installed), manual (updates off), or ready (installed, waiting for a restart)")
+	repos := flag.String("repos", "", "comma-separated repo names: each is served on a port of its own, and the page's picker switches between them (#348); the last starts stopped")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*addr)
 	if err != nil || (host != "127.0.0.1" && host != "localhost") {
@@ -60,9 +61,97 @@ func main() {
 		src.account = web.Account{Name: "maya", Addr: src.self + "/human", Taken: "maya-mbp-91c0"}
 	}
 	go src.run()
+	page := web.NewWithPRs(src, token, fixturePRs)
+	if *repos != "" {
+		serveRepos(strings.Split(*repos, ","), ln, src, page)
+	}
 	fmt.Printf("http://%s/#token=%s\n", ln.Addr(), token)
-	srv := &http.Server{Handler: web.NewWithPRs(src, token, fixturePRs), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: page, ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.Serve(ln))
+}
+
+// devRepo is one made-up clone, with a page of its own on a port of its own, as each clone's daemon
+// serves its own.
+type devRepo struct {
+	name, path string
+	addr       string
+	page       *web.Server
+	mu         sync.Mutex
+	running    bool
+}
+
+// devRepos is the picker's view from one of them.
+type devRepos struct {
+	all  []*devRepo
+	self int
+}
+
+func (r devRepos) List(ctx context.Context) ([]web.Repo, error) {
+	var out []web.Repo
+	for i, d := range r.all {
+		d.mu.Lock()
+		out = append(out, web.Repo{ID: strconv.Itoa(i), Name: d.name, Path: d.path, Running: d.running, Current: i == r.self})
+		d.mu.Unlock()
+	}
+	return out, nil
+}
+
+// Open takes a moment, and longer for a repo whose daemon has to start.
+func (r devRepos) Open(ctx context.Context, id string) (string, error) {
+	i, err := strconv.Atoi(id)
+	if err != nil || i < 0 || i >= len(r.all) {
+		return "", web.ErrNoRepo
+	}
+	d := r.all[i]
+	d.mu.Lock()
+	wait := 300 * time.Millisecond
+	if !d.running {
+		wait = 1500 * time.Millisecond
+	}
+	d.mu.Unlock()
+	select {
+	case <-time.After(wait):
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	d.mu.Lock()
+	d.running = true
+	d.mu.Unlock()
+	return "http://" + d.addr + "/#key=" + d.page.PageKey(), nil
+}
+
+// serveRepos serves a page for each name after the first, which is the page on ln, and gives them
+// all the picker. Each repo after the first has fewer devices and messages, so the switch shows.
+func serveRepos(names []string, ln net.Listener, first *fixtures, firstPage *web.Server) {
+	all := make([]*devRepo, len(names))
+	for i, name := range names {
+		name = strings.TrimSpace(name)
+		d := &devRepo{name: name, path: "~/code/" + name, running: i == 0 || i < len(names)-1}
+		src := first
+		if i == 0 {
+			d.addr, d.page = ln.Addr().String(), firstPage
+		} else {
+			l, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				log.Fatal(err)
+			}
+			src = newFixtures(time.Now())
+			src.version = first.version
+			src.devices = src.devices[:1+i%2]
+			src.messages = src.messages[len(src.messages)/(i+1):]
+			go src.run()
+			d.addr, d.page = l.Addr().String(), web.NewWithPRs(src, randomHex(16), fixturePRs)
+			srv := &http.Server{Handler: d.page, ReadHeaderTimeout: 10 * time.Second}
+			go func() { log.Fatal(srv.Serve(l)) }()
+		}
+		src.mu.Lock()
+		src.repo = name
+		src.mu.Unlock()
+		all[i] = d
+	}
+	for i, d := range all {
+		d.page.WithRepos(devRepos{all: all, self: i})
+	}
 }
 
 func randomHex(n int) string {
@@ -103,6 +192,7 @@ type fixtures struct {
 	version  web.Version
 	downTill time.Time // a restart in progress: State fails until then
 	account  web.Account
+	repo     string // the repo's name, for the picker
 }
 
 func newFixtures(now time.Time) *fixtures {
@@ -289,7 +379,7 @@ func (f *fixtures) State(ctx context.Context) (web.State, error) {
 	if time.Now().Before(f.downTill) {
 		return web.State{}, errors.New("restarting")
 	}
-	st := web.State{Device: f.self, Mutes: append([]web.Mute(nil), f.mutes...), Version: f.version, Account: f.account}
+	st := web.State{Repo: f.repo, Device: f.self, Mutes: append([]web.Mute(nil), f.mutes...), Version: f.version, Account: f.account}
 	for _, d := range f.devices {
 		d.Sessions = append([]web.Session(nil), d.Sessions...)
 		st.Devices = append(st.Devices, d)
