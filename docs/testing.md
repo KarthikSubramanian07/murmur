@@ -3,10 +3,11 @@
 `go test ./...` runs everything, including tests that run two devices against a local bare remote.
 A change is checked with `gofmt -l .` (empty), `go vet ./...` and `go test -race -count=1 ./...`.
 The `daemon` package is most of the time (#39 is about making it faster). Its tests that share
-nothing with the others call `t.Parallel()`. Under `-race` on CI that took the package from 464 s
-to 304 s on Linux, 798 s to 599 s on macOS and 1,500 s to 1,027 s on Windows (main at c9376fa, run
-42689370600, against #281's first run, 42699090516; 2026-11-09). Windows takes longest, so it
-decides when a pull request is green.
+nothing with the others call `t.Parallel()`. Under `-race` on CI that took the package from 464 s to
+304 s on Linux, 798 s to 599 s on macOS and 1,500 s to 1,027 s on Windows (2026-11-09: main at
+c9376fa, run 42689370600 in a-Fig/murmur, against the first run of the change, 42699090516 in the
+contributor's fork, whose macOS job failed one test that has since been fixed). Windows takes
+longest, so it decides when a pull request is green.
 
 Go runs a package's serial tests first, one at a time, and the parallel ones after them, so the
 two never overlap. A daemon test stays serial if it sets the environment (`t.Setenv` panics in a
