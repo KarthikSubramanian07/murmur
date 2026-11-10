@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -23,24 +24,65 @@ import (
 
 const maxBody = bus.MaxBody
 
+// maxRequest caps a request's line, which is read before its token is checked: any local process,
+// of any user, can connect, and a line read whole however long would let one fill the daemon's
+// memory (about twice what it sent; a 1 GiB line, 2 GiB of heap). The largest legal request is a
+// send, its body at most maxBody, which JSON escaping can make six times longer (`<` for `<`),
+// with a subject and a few paths beside it. A body a little over maxBody still gets the reply that
+// says why it wasn't sent.
+const maxRequest = 8 * maxBody
+
+var errTooLong = errors.New("line too long")
+
+// readLine reads a line of at most max bytes, its newline included.
+func readLine(r *bufio.Reader, max int) ([]byte, error) {
+	var line []byte
+	for {
+		part, err := r.ReadSlice('\n')
+		if len(line)+len(part) > max {
+			return nil, errTooLong
+		}
+		line = append(line, part...)
+		if err != bufio.ErrBufferFull {
+			return line, err
+		}
+	}
+}
+
 func fail(msg string) proto.Response { return proto.Response{Error: msg} }
 
 func (d *Daemon) serve(ctx context.Context, ln net.Listener) {
+	var wait time.Duration
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				continue
-			}
 			// A daemon nobody can reach would still hold the clone's lock, so no replacement
 			// could start. Exit instead; the next client starts a new one.
-			d.log.Printf("accepting connections: %v; exiting", err)
-			d.stop()
-			return
+			if errors.Is(err, net.ErrClosed) {
+				d.log.Printf("accepting connections: %v; exiting", err)
+				d.stop()
+				return
+			}
+			// Anything else passes, such as running out of file descriptors (EMFILE), which any
+			// local user can cause by holding connections open, and which once stopped the daemon.
+			// Wait and try again, as net/http's server does: 5 ms, doubling up to a second.
+			if wait == 0 {
+				d.log.Printf("accepting connections: %v; trying again", err)
+				wait = 5 * time.Millisecond
+			} else {
+				wait = min(2*wait, time.Second)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(wait):
+			}
+			continue
 		}
+		wait = 0
 		d.bg.Add(1)
 		go func() {
 			defer d.bg.Done()
@@ -53,7 +95,11 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	r := bufio.NewReader(conn)
-	line, err := r.ReadBytes('\n')
+	line, err := readLine(r, maxRequest)
+	if errors.Is(err, errTooLong) {
+		writeResp(conn, fail(fmt.Sprintf("bad request: over %d KB", maxRequest>>10)))
+		return
+	}
 	if err != nil {
 		return
 	}
@@ -408,7 +454,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 // message and again only when it changes, so it isn't repeated after every tool call.
 //
 // A session the page sets to be given messages whole while busy (#204) gets each new one with its
-// body instead, which the hook shows as its turn would read: it is delivered then, and leaves the
+// body instead, which the hook shows as its turn would read: it is read then, and leaves the
 // inbox and the count. Only a hook that says it prints them (req.Whole) gets them so.
 func (d *Daemon) notices(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
@@ -458,7 +504,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			told = append(told, s)
 		}
 		// Only the hook shows a message whole: a request without its Claude Code session isn't one,
-		// and a hook that doesn't say it prints Delivered (req.Whole) would lose it (#229).
+		// and a hook that doesn't say it prints Read (req.Whole) would lose it (#229).
 		givesWhole := req.ClaudeSession != "" && req.Whole && wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
 			if m.Pushing {
@@ -489,14 +535,14 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			shown[w.msg.Event.ID] = true
 			wholeMsgs = append(wholeMsgs, w.msg)
 		}
-		d.outOfInboxLocked(w.id, w.msg, "delivered", "through the hook")
+		d.outOfInboxLocked(w.id, w.msg, "gave", "whole through the hook")
 	}
 	if len(fresh) > 0 || len(whole) > 0 {
 		d.saveLocked()
 	}
 	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
 	if len(whole) > 0 {
-		resp.Delivered = d.wholeViewsLocked(wholeMsgs, whole)
+		resp.Read = d.wholeViewsLocked(wholeMsgs, whole)
 	}
 	changed := false
 	for _, s := range told {
@@ -512,7 +558,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 // turnEnd is the hook at the end of a turn (Claude Code's Stop). The messages the sessions it
 // speaks for were told of while at work and haven't read, and those that came during the turn and
 // weren't told, however long it took, would go in as a turn now (#202). Where the hook can keep the
-// turn going (req.Continues), they are its reply instead, delivered, and the turn goes on with them
+// turn going (req.Continues), they are its reply instead, read, and the turn goes on with them
 // (Tyler, 2026-11-08). A session with none is idle.
 func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
@@ -558,10 +604,10 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 			shown[g.msg.Event.ID] = true
 			msgs = append(msgs, g.msg)
 		}
-		d.outOfInboxLocked(g.id, g.msg, "delivered", "through the Stop hook, keeping its turn going")
+		d.outOfInboxLocked(g.id, g.msg, "gave", "whole through the Stop hook, keeping its turn going")
 	}
 	d.saveLocked()
-	return proto.Response{OK: true, Delivered: d.wholeViewsLocked(msgs, given)}
+	return proto.Response{OK: true, Read: d.wholeViewsLocked(msgs, given)}
 }
 
 func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto.Response {
@@ -634,7 +680,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		case offline:
 			return fail("not sent: " + why)
 		case known && dnd:
-			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox, and is delivered when it reads its inbox or turns do not disturb off."
+			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox until it reads its inbox or turns do not disturb off, with no notice or turn."
 		case known:
 		case dev == d.device && stopped:
 			note = at + " has stopped. The message waits for it, in case it comes back."

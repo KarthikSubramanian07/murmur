@@ -53,7 +53,7 @@ func TestHookFileThatIsALinkIsKeptThroughJoinAndLeave(t *testing.T) {
 	linkOrSkip(t, target, link)
 
 	exe := filepath.Join(t.TempDir(), "bin", "mur")
-	if _, err := installHooks(context.Background(), p, exe); err != nil {
+	if _, _, err := installHooks(context.Background(), p, exe); err != nil {
 		t.Fatal(err)
 	}
 	mustBeLink(t, link)
@@ -61,7 +61,7 @@ func TestHookFileThatIsALinkIsKeptThroughJoinAndLeave(t *testing.T) {
 		t.Errorf("the file the link points to has the hook on %v", events)
 	}
 
-	if _, err := removeHooks(context.Background(), p); err != nil {
+	if _, _, err := removeHooks(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
 	mustBeLink(t, link)

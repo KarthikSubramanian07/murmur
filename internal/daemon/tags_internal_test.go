@@ -294,6 +294,6 @@ func TestTheDaemonStaysUpForAThreadOnDoNotDisturb(t *testing.T) {
 		t.Fatal("a thread on do not disturb may be woken")
 	}
 	if !d.holdsRouteLocked(always) {
-		t.Fatal("the daemon would exit, and never read the tag's removal or deliver what waited")
+		t.Fatal("the daemon would exit, and never read the tag's removal or hand over what waited")
 	}
 }
