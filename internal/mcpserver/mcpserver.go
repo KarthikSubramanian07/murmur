@@ -24,6 +24,7 @@ import (
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
+	"github.com/a-Fig/murmur/internal/title"
 	"github.com/a-Fig/murmur/internal/view"
 )
 
@@ -856,9 +857,14 @@ func (l *link) learnNative(ctx context.Context, id string) {
 	if l.find == nil {
 		// Outside T3 the ID is for the daemon, to find the conversation's name in Codex's state.
 		// Codex starts this server with a bare environment, but join's env_vars passes on
-		// CODEX_HOME when the session has one (#88). So an unset one means the default home,
-		// which the daemon takes for a route without a home, rather than its own CODEX_HOME.
-		if home := os.Getenv("CODEX_HOME"); home != "" {
+		// CODEX_HOME when the session has one (#88). So an unset one means the default home, and
+		// the server names it: the daemon reads a route that names none, from a server older than
+		// this, in its own CODEX_HOME, as that server expects.
+		home := os.Getenv("CODEX_HOME")
+		if home == "" {
+			home = title.DefaultCodexDir()
+		}
+		if home != "" {
 			l.mu.Lock()
 			l.hello.CodexHome = home
 			l.mu.Unlock()
