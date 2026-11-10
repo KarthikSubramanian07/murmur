@@ -505,9 +505,10 @@
   const gl = cv.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, powerPreference: 'low-power' });
   if (!gl) return;
 
-  // Glint: now and then a soft diagonal band of light passes once over the glass, like a reflection
-  // sliding across it. Behind the reeds it is a refracted wash; on the reeds' left edges it is a run
-  // of bright hairlines that travels with it. Between passes the canvas is cleared and left alone.
+  // Glint: a soft diagonal band of light passes once over the glass, like a reflection sliding
+  // across it, each time the hero comes on screen. Behind the reeds it is a refracted wash; on the
+  // reeds' left edges it is a run of bright hairlines that travels with it. Between passes the
+  // canvas is cleared and left alone.
   const LIGHT = `
 uniform float uP;
 float band(float d, float c, float w) { float x = (d - c) / w; return exp(-x * x); }
@@ -534,13 +535,11 @@ vec4 light(vec2 q, vec2 s, float f) {
   const STILL_T = -1;  // reduced motion: the band held where it crosses the wordmark
   const DUR = 4.2;
   const ease = x => x < 0 ? 0 : x > 1 ? 1 : .5 * x + .5 * x * x * (3 - 2 * x);
-  const hash = n => { const x = Math.sin(n * 127.1 + 31.7) * 43758.5453; return x - Math.floor(x); };
-  // Pass n starts at start(n): the first right away, then every 7 to 9 s.
+  // The pass starts right away and is over within 3.4 s. It doesn't repeat on its own: moving
+  // content that runs longer than 5 s would need a way to pause it (WCAG 2.2.2).
   const progress = t => {
     if (t < 0) return .46;
-    let s = -.8, n = 0;
-    while (s + DUR < t) { s += 7 + 2 * hash(n++); }
-    return t < s ? -1 : ease((t - s) / DUR);
+    return t > DUR - .8 ? -1 : ease((t + .8) / DUR);
   };
   const IDLE = t => { const p = progress(t); return p <= 0 || p >= 1; };
   const SET = (gl, u, t) => { gl.uniform1f(u.uP, progress(t)); };
@@ -649,7 +648,7 @@ void main() {
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   };
-  const running = () => !lost && onScreen && !document.hidden && !still.matches;
+  const running = () => !lost && onScreen && !document.hidden && !still.matches && t < DUR;
   // If the GPU drops the context, stop drawing; the hero is then the plain glass, with no glint.
   cv.addEventListener('webglcontextlost', () => { lost = true; if (raf) cancelAnimationFrame(raf); raf = 0; });
   const frame = now => {
@@ -660,7 +659,7 @@ void main() {
     if (running()) raf = requestAnimationFrame(frame); else last = 0;
   };
   const kick = () => { if (running() && !raf) { last = 0; raf = requestAnimationFrame(frame); } };
-  new IntersectionObserver(([e]) => { onScreen = e.isIntersecting; kick(); }).observe(hero);
+  new IntersectionObserver(([e]) => { if (e.isIntersecting && !onScreen) t = T0; onScreen = e.isIntersecting; kick(); }).observe(hero);
   document.addEventListener('visibilitychange', kick);
   if (still.addEventListener) still.addEventListener('change', () => { blank = false; draw(); kick(); });
   const refresh = () => { measure(); blank = false; draw(); };
