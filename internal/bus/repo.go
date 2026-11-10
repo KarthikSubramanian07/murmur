@@ -297,18 +297,19 @@ func (r *Repo) Log(ctx context.Context, from, to string) ([]Commit, error) {
 	return commits, nil
 }
 
-// Root returns the root of sha's history, the commit in it with no parent, or "" if it has more than
-// one. Murmur writes no merges, so a history it wrote has one root; a merge pushed by hand can bring
-// in others, by either parent, and then none of them is the history's own.
-func (r *Repo) Root(ctx context.Context, sha string) (string, error) {
-	out, err := r.Git.Run(ctx, "", "rev-list", "--max-parents=0", sha, "--")
+// Roots returns the commits with no parent in sha's history that aren't in not's ("" for none).
+// Murmur writes no merges, so a history it wrote has one root, and what it adds to one it read brings
+// none; a merge pushed by hand can bring in others, by either parent.
+func (r *Repo) Roots(ctx context.Context, sha, not string) ([]string, error) {
+	args := []string{"rev-list", "--max-parents=0", sha}
+	if not != "" {
+		args = append(args, "^"+not)
+	}
+	out, err := r.Git.Run(ctx, "", append(args, "--")...)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if f := strings.Fields(out); len(f) == 1 {
-		return f[0], nil
-	}
-	return "", nil
+	return strings.Fields(out), nil
 }
 
 // ReadCommit returns one commit.

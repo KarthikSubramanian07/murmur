@@ -160,6 +160,7 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	var commits []bus.Commit
 	disturbed := false
 	snapshotAt := "" // the one commit whose snapshot counts, "" for none (see below)
+	manyRoots := false
 	if isCommit {
 		from := ""
 		if good != "" {
@@ -180,18 +181,22 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 				// NamesPeople): read again from the start, for them.
 			}
 		}
-		var err error
-		if from == "" {
-			// Murmur writes a snapshot only as the first commit of a new history, a repair's,
-			// which a reader always reads from the start, as it doesn't descend from what was read.
-			// Found before the history is read, which needs it.
-			if snapshotAt, err = d.repo.Root(ctx, sha); err != nil {
-				fail(err)
-				return
-			}
-			if snapshotAt == "" {
-				d.log.Printf("the names registry has more than one root, which Murmur never writes; no snapshot in it counts")
-			}
+		// Murmur writes a snapshot only as the first commit of a new history, a repair's, which a
+		// reader always reads from the start, as it doesn't descend from what was read. It writes no
+		// merges, so its history has one root. A merge that brings in another root is damage, as a
+		// rewrite is: no snapshot in it counts, so a reader new to it would miss a repair's names,
+		// and it is read from the start and repaired. An incremental reader asks only about what is
+		// new. Found before the history is read, which needs it.
+		roots, err := d.repo.Roots(ctx, sha, from)
+		if err != nil {
+			fail(err)
+			return
+		}
+		if len(roots) > 0 && (from != "" || len(roots) > 1) {
+			d.log.Printf("the names registry has more than one root, which Murmur never writes; reading it as damaged")
+			disturbed, from, manyRoots = true, "", true
+		} else if from == "" && len(roots) == 1 {
+			snapshotAt = roots[0]
 		}
 		if commits, err = d.repo.Log(ctx, from, sha); err != nil {
 			fail(err)
@@ -296,7 +301,7 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 		d.saveLocked()
 	}
 	d.mu.Unlock()
-	if skipped > 0 {
+	if skipped > 0 && !manyRoots { // a history with many roots counts none, and said so
 		d.log.Printf("the names registry has %d snapshots not at its history's root; their names weren't counted", skipped)
 	}
 	if repair && !wasRepair {

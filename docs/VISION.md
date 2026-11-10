@@ -849,10 +849,11 @@ change and a daemon that knows no names routes by it all the same.
     takes from a single record. A snapshot counts only on the root of a history read from its
     start, and only if that history has one root: the one place Murmur writes it, as a repair's
     history never descends from what was read, and Murmur writes no merges. One appended is logged
-    and passed over. A merge that brings in another root, by either parent, leaves no snapshot
-    counting for a reader that reads from the start, which logs it; one already reading the
-    registry reads the merge as new commits and passes over the snapshot.
-    A presence listing more than 200 sessions (`bus.MaxSessions`), far beyond what one device
+    and passed over. A merge that brings in another root, by either parent, is damage, as a
+    rewrite is: no snapshot in it counts, which would hide a real repair's names from a reader new
+    to the registry, so every reader that sees it logs it and reads the registry from the start,
+    and one that knows a name missing from it writes a repair, which replaces the merge. The
+    merged-in root's names never counted, so the repair doesn't bring them back. A presence listing more than 200 sessions (`bus.MaxSessions`), far beyond what one device
     runs, is read as unreadable, whole, so none of its names counts. A daemon's own presence keeps
     to the cap: past it, it lists the most recently active sessions, and logs how many it left
     out. And once 1,000 random picks have all been in use, a daemon goes through the lists from a

@@ -70,7 +70,9 @@ func TestASnapshotCountsOnlyOnARoot(t *testing.T) {
 		t.Errorf("the registry's tip is %s, want the commit read past, %s", d.st.NamesTip, appended)
 	}
 
-	// A root merged in comes on a fast-forward, with no rewrite to notice: it isn't the history's own.
+	// A root merged in comes on a fast-forward: it isn't the history's own, and its snapshot adds
+	// nothing. The registry is read as damaged, but nothing the daemon knows is missing from it, so no
+	// repair is needed.
 	merged := snapshot("", map[string]string{fake[1]: ""})
 	tree, err := d.repo.EmptyTree(ctx)
 	if err != nil {
@@ -88,7 +90,7 @@ func TestASnapshotCountsOnlyOnARoot(t *testing.T) {
 		t.Errorf("%s, in a snapshot on a root merged in, was taken for used", fake[1])
 	}
 	if d.st.NamesRepair || d.st.NamesTip != merge {
-		t.Errorf("the merge was taken for a rewrite (repair %v), or not read (tip %s)", d.st.NamesRepair, d.st.NamesTip)
+		t.Errorf("the merge left a repair to make (%v) with nothing missing, or wasn't read (tip %s)", d.st.NamesRepair, d.st.NamesTip)
 	}
 
 	// The other order, the new root as the merge's first parent, and both orders read from the start,
