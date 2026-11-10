@@ -270,6 +270,14 @@ type Daemon struct {
 	started time.Time
 	log     *log.Logger
 
+	// maxRecord and maxSnapshot are the largest commits read from a device's log or presence, and
+	// from the names registry (bus.MaxRecord, bus.MaxSnapshot; tests lower them).
+	maxRecord, maxSnapshot int64
+
+	// savesHeld puts off saveLocked while a page of a log is applied, under mu throughout, so the
+	// page saves state.json once and not once for each tags event in it (see applyPageLocked).
+	savesHeld bool
+
 	mu         sync.Mutex
 	sessions   map[string]*session
 	peers      map[string]*peer
@@ -792,7 +800,7 @@ func takePageHandoff(dir string) (pageHandoff, bool) {
 func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	now := time.Now()
 	d := &Daemon{
-		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), pageTok: bus.RandHex(32), started: now, lastActive: now,
+		opt: opt, dir: dir, maxRecord: bus.MaxRecord, maxSnapshot: bus.MaxSnapshot, log: opt.Log, token: bus.RandHex(32), pageTok: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
@@ -1088,8 +1096,12 @@ func (d *Daemon) loadState() error {
 	return nil
 }
 
-// saveLocked writes state.json. Caller holds mu.
+// saveLocked writes state.json, unless a page of a log is being applied (see applyPageLocked), which
+// saves once at its end. Caller holds mu.
 func (d *Daemon) saveLocked() {
+	if d.savesHeld {
+		return
+	}
 	if err := writeJSON(d.statePath(), d.st); err != nil {
 		d.log.Printf("saving state: %v", err)
 	}
