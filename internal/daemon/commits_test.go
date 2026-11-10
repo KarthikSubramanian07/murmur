@@ -234,6 +234,11 @@ func TestOnlyCommitsDuringTheSessionsCallsAreCredited(t *testing.T) {
 	commitFile(t, wtX, "before.txt")
 	a.callStart("claude-x", procP, "toolu_1", wtX)
 	a.callEnd("claude-x", procP, "toolu_1", wtX)
+	// The end is answered before its after-snapshot is taken. A lookup waits for that snapshot,
+	// so the next commit is made after it, as one made between calls is.
+	if got := a.look("aaaaaa", nx).Commits; len(got) != 0 {
+		t.Fatalf("commits made before the first call were credited: %+v", got)
+	}
 	commitFile(t, wtX, "between.txt")
 	a.callStart("claude-x", procP, "toolu_2", wtX)
 	a.callEnd("claude-x", procP, "toolu_2", wtX)
