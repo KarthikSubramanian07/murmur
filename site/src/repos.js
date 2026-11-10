@@ -63,11 +63,13 @@ export async function census(request, env) {
        sessions = MAX(sessions, excluded.sessions), messages = MAX(messages, excluded.messages),
        records = MAX(records, excluded.records)`,
     d => [c.repo, d.day, d.sessions, d.messages, d.records]);
-  // An owner once seen is kept: a daemon deletes its presence when it stops.
-  insert(c.devices, 3,
-    `INSERT INTO devices (repo, device, person) VALUES $ROWS
-     ON CONFLICT (repo, device) DO UPDATE SET person = COALESCE(excluded.person, person)`,
-    v => [c.repo, v.id, v.person]);
+  // An owner once seen is kept: a daemon deletes its presence when it stops. So is an account. A
+  // census from before #323 sends none.
+  insert(c.devices, 4,
+    `INSERT INTO devices (repo, device, person, account) VALUES $ROWS
+     ON CONFLICT (repo, device) DO UPDATE SET
+       person = COALESCE(excluded.person, person), account = COALESCE(excluded.account, account)`,
+    v => [c.repo, v.id, v.person, v.account ?? null]);
   insert(c.days.flatMap(d => d.devices.map(v => [d.day, v])), 3,
     `INSERT INTO device_days (repo, day, device) VALUES $ROWS ON CONFLICT DO NOTHING`,
     ([day, v]) => [c.repo, day, v]);
@@ -118,7 +120,9 @@ function invalid(c) {
   // A device on a day is a row, so without this a POST could carry 3,660,000 of them.
   if (c.days.reduce((n, d) => n + d.devices.length, 0) > 100000) return "the days' devices";
   if (!Array.isArray(c.devices) || c.devices.length > 10000) return 'devices';
-  for (const v of c.devices) if (!v || !id(v.id) || !(v.person === null || id(v.person))) return 'a device';
+  for (const v of c.devices) {
+    if (!v || !id(v.id) || !(v.person === null || id(v.person)) || !(v.account == null || id(v.account))) return 'a device';
+  }
   if (!Array.isArray(c.contributors) || c.contributors.length > 100000) return 'contributors';
   for (const k of c.contributors) if (!k || !id(k.id) || !day(k.first)) return 'a contributor';
   return '';
@@ -135,7 +139,7 @@ export async function repoNumbers(db, days) {
   const today = new Date().toISOString().slice(0, 10);
   const from = addDays(today, -(days - 1));
   const weekFrom = addDays(today, -(WEEK - 1));
-  const [repos, byDay, people, counted] = await db.batch([
+  const [repos, byDay, people, counted, devs] = await db.batch([
     // Each repo, with its totals and when it started: its first day on the bus, or the day it was
     // reported if the census hasn't read it yet. A device whose owner the census has never seen is
     // a person of its own. Its week is how many of the last 7 days its devices wrote anything, presence included.
@@ -171,7 +175,16 @@ export async function repoNumbers(db, days) {
        WHERE first <= ?1 GROUP BY first ORDER BY first`,
     ).bind(today),
     db.prepare(`SELECT MAX(counted) AS at FROM repo_census`),
+    // Every device, for users: who is behind it, and its first and last day on the bus.
+    db.prepare(
+      `SELECT v.repo, v.device, v.person, v.account, COALESCE(MIN(d.day), r.first) AS first, MAX(d.day) AS last
+       FROM devices v JOIN repos r ON r.repo = v.repo
+         LEFT JOIN device_days d ON d.repo = v.repo AND d.device = v.device
+       GROUP BY v.repo, v.device`,
+    ),
   ]);
+  const u = users(devs.results);
+  const userFirsts = [...u.users.values()].map(x => x.first).sort();
 
   const list = repos.results;
   const names = new Map(list.map(r => [r.repo, r.name]));
@@ -186,6 +199,7 @@ export async function repoNumbers(db, days) {
       repos: list.filter(r => r.start <= d).length,
       activeRepos: on.filter(r => r.devices > 0 || r.records > 0).length,
       contributors: firsts.filter(f => f.day <= d).reduce((s, f) => s + f.n, 0),
+      users: userFirsts.filter(f => f <= d).length,
       devices: sum('devices'), people: sum('people'), sessions: sum('sessions'), messages: sum('messages'), records: sum('records'),
     });
   }
@@ -199,6 +213,12 @@ export async function repoNumbers(db, days) {
     newRepos: list.filter(r => r.start >= weekFrom).length,
     contributors: firsts.reduce((s, f) => s + f.n, 0),
     newContributors: firsts.filter(f => f.day >= weekFrom).reduce((s, f) => s + f.n, 0),
+    users: u.users.size,
+    newUsers: userFirsts.filter(f => f >= weekFrom).length,
+    activeUsers: [...u.users.values()].filter(x => x.last && x.last >= weekFrom).length,
+    // How each user was told apart, for the page's note on what users means: matched to an account,
+    // by their git name only, or by their device only.
+    usersBy: u.by,
     devices: sumOf(list, 'devices'),
     people: sumOf(list, 'people'),
     sessions: sumOf(list, 'sessions'),
@@ -213,6 +233,37 @@ export async function repoNumbers(db, days) {
   };
 }
 
+// The people using Murmur, approximately (#323), from every device's row: { repo, device, person,
+// account, first, last }. Murmur sends nothing that names a person, so a user is the best of:
+// - the GitHub account the census matched the device's owner to (census.mjs, accounts());
+// - else the account an owner of the same git name was matched to in another repo, if exactly one;
+// - else the owner's git name; else the device itself.
+// Each counts once across repos, from its devices' first day to their last. by says how many users
+// were told apart each way.
+export function users(devices) {
+  const accountsOf = new Map(); // person -> Set of accounts
+  for (const v of devices) {
+    if (!v.person || !v.account) continue;
+    if (!accountsOf.has(v.person)) accountsOf.set(v.person, new Set());
+    accountsOf.get(v.person).add(v.account);
+  }
+  const out = new Map(); // key -> { first, last }
+  for (const v of devices) {
+    const via = accountsOf.get(v.person);
+    const account = v.account ?? (via?.size === 1 ? [...via][0] : null);
+    const key = account ? 'account:' + account : v.person ? 'person:' + v.person : `device:${v.repo}/${v.device}`;
+    const u = out.get(key);
+    if (!u) out.set(key, { first: v.first, last: v.last });
+    else {
+      if (v.first && (!u.first || v.first < u.first)) u.first = v.first;
+      if (v.last && (!u.last || v.last > u.last)) u.last = v.last;
+    }
+  }
+  const by = { account: 0, name: 0, device: 0 };
+  for (const k of out.keys()) by[k.startsWith('account:') ? 'account' : k.startsWith('person:') ? 'name' : 'device']++;
+  return { users: out, by };
+}
+
 // The numbers as markdown, for an agent: what the page shows, in tables, with what they mean.
 export function repoReport(n, origin) {
   const table = (head, rows) => [head, head.map(() => '---'), ...rows].map(r => `| ${r.join(' | ')} |`).join('\n');
@@ -221,7 +272,7 @@ export function repoReport(n, origin) {
   for (let i = n.series.length - 1; i >= 0; i -= n.week) {
     const w = n.series.slice(Math.max(0, i - n.week + 1), i + 1);
     const sum = k => w.reduce((s, d) => s + d[k], 0);
-    weeks.push([n.series[i].day, n.series[i].repos, n.series[i].contributors, sum('sessions'), sum('messages'), sum('records')]);
+    weeks.push([n.series[i].day, n.series[i].repos, n.series[i].users, n.series[i].contributors, sum('sessions'), sum('messages'), sum('records')]);
   }
   const repos = n.repoList.length
     ? table(['Repo', 'Contributors', 'Devices', 'People', 'Sessions', 'Messages', 'Bus records', 'Days active of the last 7', 'First on the bus', 'Last on the bus'],
@@ -229,10 +280,13 @@ export function repoReport(n, origin) {
     : 'None yet.';
   return `# Public repos using Murmur, ${n.today}
 
-**${n.repos} public repos** use Murmur; ${n.activeRepos} had bus activity in the last ${n.week} days, and ${n.newRepos} started in them.
+**${n.repos} public repos** use Murmur; ${n.activeRepos} had bus activity in the last ${n.week} days, and ${n.newRepos} started in them. About **${n.users} users** have run it there; ${n.activeUsers} in the last ${n.week} days.
 
 ${table(['Measure', 'Count'], [
     ['Public repos using Murmur', n.repos],
+    ['Users, approximately (see below)', n.users],
+    [`Users active in the last ${n.week} days`, n.activeUsers],
+    [`New users in the last ${n.week} days`, n.newUsers],
     [`Active repos (anything on the bus in the last ${n.week} days)`, n.activeRepos],
     ['Contributors to those repos (each person once)', n.contributors],
     [`New contributors in the last ${n.week} days`, n.newContributors],
@@ -247,9 +301,9 @@ ${table(['Measure', 'Count'], [
 
 ## By week
 
-Each week is the ${n.week} days ending on the date shown, back over the last ${n.days} days; the newest first. Repos and contributors are totals as of that day.
+Each week is the ${n.week} days ending on the date shown, back over the last ${n.days} days; the newest first. Repos, users and contributors are totals as of that day.
 
-${table(['Week ending', 'Repos', 'Contributors', 'Sessions', 'Messages', 'Bus records'], weeks)}
+${table(['Week ending', 'Repos', 'Users', 'Contributors', 'Sessions', 'Messages', 'Bus records'], weeks)}
 
 ## Repos
 
@@ -261,6 +315,7 @@ ${repos}
 
 - A **repo** is listed once one of its clones reports it: Murmur sends a public repo's address, once per repo, and nothing else.
 - Everything else is read by the census from what each repo shows anyone, once a day${n.counted ? ` (last at ${n.counted})` : ''}: its bus, \`refs/murmur/*\`, and its default branch's commits.
+- A **user** is approximate: Murmur sends nothing that names a person. The census matches the git user name each device's presence shows to a commit author of that name in the repo, and takes that author's GitHub account; each account counts once across repos. Where no commit matches, the git name counts instead, and where no name was ever seen, the device. Of ${n.users} users, ${n.usersBy.account} were matched to an account, ${n.usersBy.name} counted by git name, and ${n.usersBy.device} by device.
 - A **contributor** has committed to a repo's default branch, at any time; one person in two repos counts once. A **device** is one clone running Murmur; a **person**, one git user name among a repo's devices, as their presence shows it, so one person in two repos counts twice. A daemon deletes its presence when it stops, so a device whose owner the census never saw counts as a person of its own.
 - A **session** is an agent session, counted once on the day it started, however often its daemon restarts; a **message**, one agent's message to another. A **bus record** is anything a device wrote to its log. Once the bus is encrypted (#257), a record's kind is hidden and only records are counted.
 - A count is only ever raised. Days are UTC.

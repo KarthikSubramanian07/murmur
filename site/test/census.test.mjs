@@ -19,7 +19,7 @@ process.env.CENSUS_KEY = 'test-key';
 // The census's git, and the tests', read none of the developer's own config.
 process.env.GIT_CONFIG_GLOBAL = devNull;
 process.env.GIT_CONFIG_NOSYSTEM = '1';
-const { main, count, contributors, census: readRepo } = await import('../census/census.mjs');
+const { main, count, authors, contributors, census: readRepo } = await import('../census/census.mjs');
 
 const today = new Date().toISOString().slice(0, 10);
 const daysAgo = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
@@ -202,7 +202,7 @@ test("a commit dated after tomorrow counts its author as of today; an old one is
   commit('refs/heads/main', 'two\n', { date: '2099-01-01T00:00:00Z', who: 'Bob <bob@example.com>' });
   const tip = commit('refs/heads/main', 'three\n', { date: '2026-11-01T00:00:00Z', who: 'Ann <ann@example.com>' });
   writeFileSync(join(dir, 'FETCH_HEAD'), `${tip}\t\tbranch 'main' of test\n`);
-  assert.deepEqual(contributors(dir, { now: NOW }).map(k => k.first).sort(), ['2025-01-01', '2026-11-09']);
+  assert.deepEqual(contributors(authors(dir, { now: NOW })).map(k => k.first).sort(), ['2025-01-01', '2026-11-09']);
 });
 
 test('the site refuses a day after tomorrow, and a bus day before Murmur, but not an old first commit', async () => {
@@ -251,33 +251,37 @@ function remote(t) {
   r.commit('refs/heads/main', 'start\n', { who: 'Ann <ann@example.com>' });
   return { ...r, url: 'file://' + r.dir, at: new Date(Date.now() - 864e5).toISOString() };
 }
+// census()'s account lookup, in place of GitHub's API: no commit is linked to an account.
+const unlinked = () => async () => null;
 
-test("census() fetches a repo's bus and default branch, and only the refs it reads", t => {
+test("census() fetches a repo's bus and default branch, and only the refs it reads", async t => {
   const r = remote(t);
   r.commit('refs/murmur/mesh/dev1', event({ type: 'session.started', from: 's1', at: r.at }));
   r.commit('refs/murmur/mesh/dev1', event({ type: 'message', at: r.at }));
   r.commit('refs/murmur/presence/dev1', event({ owner: 'Ann', at: r.at }));
   // Under refs/murmur/ but not read: were it fetched, the bus would have 3 refs, more than 2.
   r.commit('refs/murmur/junk', event({ type: 'message', at: r.at }));
-  const c = readRepo('github.com/A/One', { url: r.url, maxRefs: 2 });
+  const c = await readRepo('github.com/A/One', { url: r.url, maxRefs: 2, lookup: unlinked });
   assert.equal(c.repo, 'github.com/a/one');
   const day = r.at.slice(0, 10);
   assert.deepEqual(c.totals, { sessions: 1, messages: 1, records: 2, first_day: day, last_day: day });
   assert.equal(c.devices.length, 1);
   assert.notEqual(c.devices[0].person, null);
+  // Ann's presence matches Ann's commit on main, so her device has an account.
+  assert.notEqual(c.devices[0].account, null);
   assert.equal(c.contributors.length, 1);
 });
 
-test('a repo with more refs on its bus than the census reads is skipped', t => {
+test('a repo with more refs on its bus than the census reads is skipped', async t => {
   const r = remote(t);
   for (const d of ['dev1', 'dev2', 'dev3']) r.commit(`refs/murmur/mesh/${d}`, event({ type: 'message', at: r.at }));
-  assert.throws(() => readRepo('github.com/a/one', { url: r.url, maxRefs: 2 }), { skipped: true, message: '3 refs on its bus, more than 2' });
+  await assert.rejects(readRepo('github.com/a/one', { url: r.url, maxRefs: 2, lookup: unlinked }), { skipped: true, message: '3 refs on its bus, more than 2' });
 });
 
-test('a repo that takes longer than its budget is skipped', t => {
+test('a repo that takes longer than its budget is skipped', async t => {
   const r = remote(t);
   r.commit('refs/murmur/mesh/dev1', event({ type: 'message', at: r.at }));
-  assert.throws(() => readRepo('github.com/a/one', { url: r.url, budget: 1 }), { skipped: true, message: 'took too long to count' });
+  await assert.rejects(readRepo('github.com/a/one', { url: r.url, budget: 1, lookup: unlinked }), { skipped: true, message: 'took too long to count' });
 });
 
 test('a skipped repo fails the run, after the repos after it are sent', async t => {

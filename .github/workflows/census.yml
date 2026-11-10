@@ -28,4 +28,6 @@ jobs:
       - name: Count
         env:
           CENSUS_KEY: ${{ secrets.CENSUS_KEY }}
+          # Only raises the API's rate limit, for matching device owners to accounts (#323).
+          GITHUB_TOKEN: ${{ github.token }}
         run: node site/census/census.mjs
