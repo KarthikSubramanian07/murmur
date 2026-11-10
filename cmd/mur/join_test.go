@@ -240,7 +240,7 @@ func TestJoinWhereTheRepoTracksTheHookFileStillSucceeds(t *testing.T) {
 	local := filepath.Join(b.clone, ".claude", "settings.local.json")
 	const settings = "{\n  \"permissions\": {\"allow\": [\"Bash(ls)\"]}\n}\n"
 	writeFile(t, local, settings)
-	git(t, b.clone, "add", "--", ".claude/settings.local.json")
+	git(t, b.clone, "add", "-f", "--", ".claude/settings.local.json")
 	git(t, b.clone, "commit", "-q", "-m", "settings")
 
 	out := b.mustRun(b.clone, "join")

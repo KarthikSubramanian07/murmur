@@ -14,7 +14,7 @@ import (
 func commitLink(t *testing.T, top, name, target string) {
 	t.Helper()
 	linkOrSkip(t, target, filepath.Join(top, filepath.FromSlash(name)))
-	git(t, top, "add", "--", name)
+	git(t, top, "add", "-f", "--", name)
 	git(t, top, "commit", "-q", "-m", "link")
 }
 
@@ -93,7 +93,7 @@ func TestHookFileTheRepoTracksIsNotJoinedInto(t *testing.T) {
 	p, _ := clone(t)
 	path := filepath.Join(p.Top, ".claude", "settings.local.json")
 	write(t, path, "{\n  \"permissions\": {\"allow\": [\"Bash(ls)\"]}\n}\n")
-	git(t, p.Top, "add", "--", ".claude/settings.local.json")
+	git(t, p.Top, "add", "-f", "--", ".claude/settings.local.json")
 	git(t, p.Top, "commit", "-q", "-m", "settings")
 
 	exe := filepath.Join(t.TempDir(), "bin", "mur")
