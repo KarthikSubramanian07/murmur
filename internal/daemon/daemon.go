@@ -278,6 +278,14 @@ type Daemon struct {
 	started time.Time
 	log     *log.Logger
 
+	// maxRecord and maxSnapshot are the largest commits read from a device's log or presence, and
+	// from the names registry (bus.MaxRecord, bus.MaxSnapshot; tests lower them).
+	maxRecord, maxSnapshot int64
+
+	// savesHeld puts off saveLocked while a page of a log is applied, under mu throughout, so the
+	// page saves state.json once and not once for each tags event in it (see applyPageLocked).
+	savesHeld bool
+
 	mu         sync.Mutex
 	sessions   map[string]*session
 	peers      map[string]*peer
@@ -623,6 +631,11 @@ func Run(ctx context.Context, opt Options) error {
 		return err
 	}
 	defer lock.Close()
+	// A daemon.json here now is a dead daemon's, as a live one would hold the lock. It goes at once,
+	// not when this one's is written after the first sync: until then a client would ping its
+	// address, find the lock held, and take whatever answers there for this daemon.
+	infoPath := filepath.Join(dir, "daemon.json")
+	os.Remove(infoPath)
 
 	d, err := open(ctx, opt, dir)
 	if err != nil {
@@ -667,7 +680,6 @@ func Run(ctx context.Context, opt Options) error {
 			keep.Close()
 		}
 	}()
-	infoPath := filepath.Join(dir, "daemon.json")
 	info := proto.Info{Addr: ln.Addr().String(), Token: d.token, PID: os.Getpid(), Device: d.device}
 	if pageLn != nil {
 		info.Web, info.PageToken = pageLn.Addr().String(), d.pageTok
@@ -741,6 +753,11 @@ func Run(ctx context.Context, opt Options) error {
 	case <-ctx.Done():
 	case <-d.quit:
 	}
+	// daemon.json goes before the port does. A client trusts the address in it while the lock is
+	// held, and the lock is held until the drain and the goodbye are done, which can take seconds:
+	// with the port given up first, another user's process could take it and be trusted. Sessions
+	// reconnect in that time, as their connections drop now, and find no daemon.
+	os.Remove(infoPath)
 	cancel()
 	ln.Close() // no new connections, so nothing joins bg while it drains
 	drained := make(chan struct{})
@@ -803,7 +820,7 @@ func takePageHandoff(dir string) (pageHandoff, bool) {
 func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	now := time.Now()
 	d := &Daemon{
-		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), pageTok: bus.RandHex(32), started: now, lastActive: now,
+		opt: opt, dir: dir, maxRecord: bus.MaxRecord, maxSnapshot: bus.MaxSnapshot, log: opt.Log, token: bus.RandHex(32), pageTok: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
@@ -1099,8 +1116,12 @@ func (d *Daemon) loadState() error {
 	return nil
 }
 
-// saveLocked writes state.json. Caller holds mu.
+// saveLocked writes state.json, unless a page of a log is being applied (see applyPageLocked), which
+// saves once at its end. Caller holds mu.
 func (d *Daemon) saveLocked() {
+	if d.savesHeld {
+		return
+	}
 	if err := writeJSON(d.statePath(), d.st); err != nil {
 		d.log.Printf("saving state: %v", err)
 	}

@@ -57,6 +57,32 @@ func TestDaemonWithoutConsentDoesNotStart(t *testing.T) {
 	}
 }
 
+// A daemon.json a dead daemon left goes as soon as a daemon takes the lock, before anything else it
+// does (the first sync can take seconds): while the lock is held, a client trusts what answers at the
+// address in daemon.json, and that address is no longer the dead daemon's. A daemon that then doesn't
+// start, here for want of consent, still removes it.
+func TestDaemonRemovesADeadDaemonsFile(t *testing.T) {
+	_, gitDir, joined := consentClone(t)
+	info := filepath.Join(gitDir, "murmur", "daemon.json")
+	os.MkdirAll(filepath.Dir(info), 0o700)
+	if err := os.WriteFile(info, []byte(`{"addr":"127.0.0.1:1","token":"dead"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cancel, done := runWithConsent(gitDir, joined, 50*time.Millisecond)
+	defer cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, daemon.ErrNoConsent) {
+			t.Fatalf("got %v, want ErrNoConsent", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the daemon is running in a clone that hasn't joined")
+	}
+	if _, err := os.Stat(info); err == nil {
+		t.Error("the dead daemon's daemon.json is still there")
+	}
+}
+
 // A user who leaves while their daemon runs, or is still starting, stops it: the daemon watches the
 // consent itself, so a leave needn't find it to end it.
 func TestDaemonStopsWhenTheUserLeaves(t *testing.T) {
