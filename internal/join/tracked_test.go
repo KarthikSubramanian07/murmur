@@ -115,3 +115,19 @@ func TestHookFileTheRepoTracksIsNotJoinedInto(t *testing.T) {
 		t.Errorf("after leave, the tracked file:\n%s", got)
 	}
 }
+
+// With GIT_LITERAL_PATHSPECS set, git reads a ":(icase)" pathspec as a file's name; the check must
+// still find a tracked link, or fail, never say nothing is tracked.
+func TestTrackedHookLinkIsFoundWithLiteralPathspecs(t *testing.T) {
+	p, _ := clone(t)
+	outside := filepath.Join(t.TempDir(), "settings.json")
+	commitLink(t, p.Top, ".Claude/settings.local.json", outside)
+	t.Setenv("GIT_LITERAL_PATHSPECS", "1")
+	path, _, err := trackedHookPath(context.Background(), p.Top)
+	if err == nil && path == "" {
+		t.Fatal("a tracked hook link went unseen with GIT_LITERAL_PATHSPECS set")
+	}
+	if _, _, err := installHooks(context.Background(), p, filepath.Join(t.TempDir(), "mur")); err == nil && exists(outside) {
+		t.Errorf("join wrote through the tracked link:\n%s", read(t, outside))
+	}
+}

@@ -90,10 +90,13 @@ func installHooks(ctx context.Context, p Place, exe string) (changed, notes []st
 // since git ignores only files it doesn't track.
 //
 // Names are matched ignoring case: macOS's and Windows' disks do by default, so a tracked .Claude
-// link, or .claude/Settings.Local.json, is the file join would open.
+// link, or .claude/Settings.Local.json, is the file join would open. It asks with
+// --icase-pathspecs rather than a ":(icase)" pathspec: with GIT_LITERAL_PATHSPECS set, git takes
+// the latter for a file's name and finds nothing, but refuses the former, so the check can't pass
+// by mistake.
 func trackedHookPath(ctx context.Context, top string) (path string, link bool, err error) {
 	dir, _, _ := strings.Cut(hookFile, "/") // .claude
-	out, err := gitx.RunIn(ctx, top, "ls-files", "-s", "-z", "--", ":(icase)"+dir)
+	out, err := gitx.RunIn(ctx, top, "--icase-pathspecs", "ls-files", "-s", "-z", "--", dir)
 	if err != nil {
 		return "", false, fmt.Errorf("%s: couldn't ask git whether it tracks %s: %w", top, hookFile, err)
 	}
@@ -119,7 +122,7 @@ func trackedNote(top, path string, link bool) string {
 	return fmt.Sprintf("No hook in %s: git tracks %s, and join won't put this machine's path to %s in a file a commit could take. "+
 		"Murmur's tools work there without the hook, but messages aren't shown during a turn. "+
 		"To have the hook, move what the repo needs from that file into .claude/settings.json, which is the one meant to be shared, "+
-		"and stop tracking it (`git rm --cached %s`, then commit). That commit deletes the file from each teammate's checkout when they pull it, "+
+		"and stop tracking it (`git rm --cached %s`, add it to .gitignore, then commit). That commit deletes the file from each teammate's checkout when they pull it, "+
 		"so each should copy theirs aside first and put it back after. Then run `%s join` again",
 		top, where, brand.Command, path, brand.Command)
 }
