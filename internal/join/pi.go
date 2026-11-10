@@ -49,8 +49,11 @@ import (
 // Everything Murmur says goes in as a custom message with customType "murmur", shown in the
 // session, which the model reads in the user's role but which Pi doesn't take for the user's
 // typing, as it would sendUserMessage's (#205). The extension is in every Pi session, so it runs
-// the hook and opens the socket only in a clone the user joined (its .git/murmur/joined.json, read
-// at the session's start): elsewhere a tool call doesn't wait on a process of Murmur's. Under T3
+// the hook and opens the socket only in a clone the user joined (its .git/murmur/joined.json):
+// elsewhere a tool call doesn't wait on a process of Murmur's. It looks for the consent as the
+// session starts, then each second and at each prompt and tool call until it is there, since the
+// user often joins from inside a running session; the socket's address and token are chosen at the
+// start and given to the MCP server, which registers only once the clone is joined. Under T3
 // the socket is there too, and unused: the daemon reaches a T3 session through T3
 // (internal/daemon, viaOf). An update doesn't run join again, so Pi's MCP server rewrites an
 // older extension (RefreshPi), which Pi loads from its next session. A session without a file
@@ -66,7 +69,8 @@ func piExtension(exe string) string {
 }
 
 // piTemplate is the extension, with its names left for package brand to fill in.
-const piTemplate = `// Written by ` + "`{{command}} join`" + ` ({{product}}, https://github.com/a-Fig/murmur). ` + "`{{command}} join`" + ` writes it again when {{command}} moves.
+const piTemplate = `// Written by ` + "`{{command}} join`" + ` ({{product}}, https://github.com/a-Fig/murmur). ` + "`{{command}} join`" + ` writes it again when {{command}} moves,
+// and {{command}} when it is updated, so edits here are lost; take this first line out to keep yours.
 // It registers {{product}}'s MCP server for each Pi session, with the session's file in its
 // environment: that is how {{product}} tells Pi sessions apart, and finds a session's T3 Code thread.
 // It also brings the session its messages: a notice after a tool call while it works, what it hasn't
@@ -83,7 +87,7 @@ const mur = {{exe}};
 const windows = process.platform === "win32";
 
 // joined says the user joined {{product}} in the clone that dir is in, as ` + "`{{command}} join`" + ` records it in
-// the clone's .git: outside one, the extension runs no hook and opens no socket.
+// the clone's .git: outside one, the extension runs no hook and opens no socket. A few stats, no process.
 const joined = (dir: string): boolean => {
   try {
     for (let d = resolve(dir); ; d = dirname(d)) {
@@ -116,10 +120,13 @@ const sockPath = (id: string): string => {
 
 export default function (pi: any) {
   let file = "";
+  let cwd = "";
+  // on says the session is in a joined clone: the hook runs and the socket is open.
   let on = false;
   let sock = "";
   let token = "";
   let server: any = null;
+  let watch: any = null;
   // ended says the end of the work has been told to the daemon since it last started.
   let ended = false;
   const register = () =>
@@ -174,19 +181,19 @@ export default function (pi: any) {
   };
 
   const close = () => {
+    if (watch) clearInterval(watch);
     try {
       if (server) server.close();
-      if (sock && !windows) rmSync(sock, { force: true });
+      if (server && !windows) rmSync(sock, { force: true });
     } catch {}
-    server = null;
+    watch = server = null;
+    on = false;
     sock = token = "";
   };
   // The socket takes what Claude Code's messaging socket does: a line {"type":"auth","token":...},
   // then lines {"type":"user","message":{"content":...}}. Without it, messages wait for the hook.
-  const listen = (): Promise<void> =>
+  const listen = (path: string, key: string): Promise<void> =>
     new Promise((resolve) => {
-      const path = sockPath(randomBytes(8).toString("hex"));
-      const key = randomBytes(24).toString("hex");
       const srv = createServer((conn: any) => {
         let buf = "";
         let authed = false;
@@ -220,26 +227,45 @@ export default function (pi: any) {
         } catch {}
         srv.unref();
         server = srv;
-        sock = path;
-        token = key;
         resolve();
       });
     });
 
+  // turnOn starts the hook and the socket once the session's clone is joined, which may be after the
+  // session started: the user often joins from inside it. Until then it is looked for again each
+  // second, as the MCP server looks for the consent every 2, and at each prompt and tool call.
+  const turnOn = async () => {
+    if (on || !sock || !joined(cwd)) return;
+    on = true;
+    if (watch) clearInterval(watch);
+    watch = null;
+    await listen(sock, token);
+  };
+
   pi.on("session_start", async (_event: any, ctx: any) => {
     close();
     file = String(ctx?.sessionManager?.getSessionFile?.() ?? "");
-    on = joined(String(ctx?.cwd ?? process.cwd()));
-    if (on) await listen();
+    cwd = String(ctx?.cwd ?? process.cwd());
+    // Chosen now and given to the MCP server, which registers once the clone is joined: a message
+    // that comes before the socket opens waits for the hook.
+    sock = sockPath(randomBytes(8).toString("hex"));
+    token = randomBytes(24).toString("hex");
+    await turnOn();
+    if (!on) {
+      watch = setInterval(turnOn, 1000);
+      watch.unref();
+    }
     register();
   });
   pi.on("session_shutdown", () => close());
   pi.on("before_agent_start", async (_event: any, ctx: any) => {
     ended = false;
+    await turnOn();
     const text = notice(await hook("UserPromptSubmit", ctx));
     if (text) return { message: said(text) };
   });
   pi.on("tool_result", async (_event: any, ctx: any) => {
+    await turnOn();
     const text = notice(await hook("PostToolUse", ctx));
     if (text) pi.sendMessage(said(text), { deliverAs: "steer" });
   });

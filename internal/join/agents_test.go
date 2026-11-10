@@ -124,11 +124,25 @@ func TestRegisterPi(t *testing.T) {
 		`deliverAs: "steer"`, `triggerTurn: true, deliverAs: "followUp"`, `continue: true`, `customType: "murmur"`,
 		`"session_shutdown"`, `rec?.token !== key`,
 		// Only in a clone the user joined (its consent file), and an interrupted end told as one.
-		`"murmur", "joined.json"`, `if (on) await listen()`, `if (!on || !file) return resolve(null)`,
+		`"murmur", "joined.json"`, `if (!on || !file) return resolve(null)`,
 		`"agent_settled"`, `event?.aborted`, `{ interrupted: true }`, `event === "Stop" ? undefined : ctx?.signal`,
-		`Buffer.byteLength(p) <= 100`} {
+		`Buffer.byteLength(p) <= 100`,
+		// A session that was running when its user joined turns on then (the late join): the socket's
+		// address is chosen as it starts and given to the MCP server, and the consent is looked for
+		// again each second until it is there.
+		`sock = sockPath(`, `watch = setInterval(turnOn, 1000)`, `if (on || !sock || !joined(cwd)) return`,
+		`await listen(sock, token)`, `edits here are lost`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the extension lacks %s:\n%s", want, got)
+		}
+	}
+	// It is also looked for at each prompt and tool call, before the hook would run.
+	for _, event := range []string{`"before_agent_start"`, `"tool_result"`} {
+		_, handler, _ := strings.Cut(got, `pi.on(`+event)
+		handler, _, _ = strings.Cut(handler, "\n  });")
+		look, hook := strings.Index(handler, "await turnOn();"), strings.Index(handler, "await hook(")
+		if look < 0 || hook < 0 || look > hook {
+			t.Errorf("%s doesn't look for the consent before it runs the hook:\n%s", event, handler)
 		}
 	}
 	// The user's own words are never forged: nothing Murmur says goes in as the user's message.
