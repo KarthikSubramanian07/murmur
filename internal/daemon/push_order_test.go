@@ -34,8 +34,12 @@ func TestPushesNeverOverlap(t *testing.T) {
 		name := a.named(addr)
 		eventually(t, "the registry to have "+name, func() bool { return readRegistry(t, remote).holdsNames(name) })
 	}
+	// The log's ref can still be missing here: a session's start waits for its presence, so the
+	// registry can hold every name before the first start is pushed, and busText fails on a ref the
+	// remote doesn't have.
+	mesh := "refs/murmur/mesh/" + dev
 	eventually(t, "the sessions' starts on the bus", func() bool {
-		return strings.Count(busText(t, remote, dev), " started (") == 3
+		return git(t, remote, "for-each-ref", mesh) != "" && strings.Count(busText(t, remote, dev), " started (") == 3
 	})
 	if b, err := os.ReadFile(filepath.Join(remote, "overlaps")); err == nil {
 		t.Fatalf("%d pushes arrived while another was being received", strings.Count(string(b), "overlap"))
