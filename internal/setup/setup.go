@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,7 @@ func Init(ctx context.Context, dir string) ([]string, error) {
 	var changed []string
 	for _, s := range steps {
 		path := filepath.Join(top, filepath.FromSlash(s.name))
-		b, err := os.ReadFile(path)
+		b, err := readRepoFile(path)
 		exists := err == nil
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			if s.optional {
@@ -129,11 +130,47 @@ func Marked(top string) bool { return markedTree(top) || markedUpstream(top) }
 // markedTree reports whether the working tree at top has the marker in either file.
 func markedTree(top string) bool {
 	for _, name := range markerFiles {
-		if b, err := os.ReadFile(filepath.Join(top, name)); err == nil && bytes.Contains(b, []byte(markStart)) {
+		if b, err := readRepoFile(filepath.Join(top, name)); err == nil && bytes.Contains(b, []byte(markStart)) {
 			return true
 		}
 	}
 	return false
+}
+
+// maxRepoFile is the most readRepoFile reads. Codex reads only the first 32 KiB of an AGENTS.md by
+// default; 4 MiB is over a hundred times that, so no file an agent really reads comes near it, and
+// reading one every 2 seconds is still cheap.
+const maxRepoFile = 4 << 20
+
+// readRepoFile reads a file of the working tree for the marker check and for init: a regular file,
+// or a link to one (CLAUDE.md is often a link to AGENTS.md), of at most maxRepoFile. The tree holds
+// whatever a commit put there, someone else's pull request included, and every session's MCP server
+// reads the marker files every 2 seconds: a link to /dev/zero would be read until memory ran out,
+// /dev/stdin would swallow the server's own requests, and a terminal or a pipe would block it.
+func readRepoFile(path string) ([]byte, error) {
+	if fi, err := os.Stat(path); err != nil {
+		return nil, err
+	} else if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s isn't a regular file", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil {
+		return nil, err
+	} else if !fi.Mode().IsRegular() { // replaced between the two looks
+		return nil, fmt.Errorf("%s isn't a regular file", path)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxRepoFile+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxRepoFile {
+		return nil, fmt.Errorf("%s is over %d MiB, more than any file an agent reads", path, maxRepoFile>>20)
+	}
+	return b, nil
 }
 
 // upstreamRecheck is how long markedUpstream's answer for a working tree stands. The MCP server asks
