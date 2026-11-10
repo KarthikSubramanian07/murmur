@@ -54,22 +54,21 @@
       <section class="fact">
         <div class="label"><h2>What this site keeps</h2></div>
         <div class="body">
-          <p>For each public repo, the site keeps its address and the day it first came, once GitHub confirms the repo is public. It keeps no content and no IP addresses.</p>
-          <p>Once a day, a GitHub Action in Murmur's repo reads what each of those repos shows anyone: its <code>refs/murmur/</code> refs and its default branch's commit history. From them the site keeps counts and hashes.</p>
+          <p>A count of how many repos and people use Murmur. It is made from public repos only, and only from what each one already shows anyone. A private repo is never read.</p>
+          <p>For each public repo, the site keeps its address and the day it first came. Once a day, a GitHub Action in Murmur's repo reads the repo's <code>refs/murmur/</code> refs and its default branch's commit history, and counts:</p>
           <ul>
-            <li><strong>For each repo:</strong> its total sessions, messages and records, its first and last day of use, and when it was last read.</li>
-            <li><strong>For each day:</strong> how many sessions started, messages were sent and records were written.</li>
-            <li><strong>For each device:</strong> a hash of its ID, a hash of its owner's git user name, and the days it was active.</li>
-            <li><strong>For a device whose owner's name matches a commit author's:</strong> a hash of that author's GitHub login, or of their commit email or name when no login is found.</li>
-            <li><strong>For each person who has committed to the default branch, bots aside:</strong> the day of their first commit, and a hash of their commit email. The hash is of their login for a GitHub no-reply address, and of their name when there is no email.</li>
+            <li>how many sessions started, messages were sent and records were written each day;</li>
+            <li>how many devices there are, and the days each was active;</li>
+            <li>how many people there are: the devices' owners, and those who have committed to the default branch, with the day of their first commit.</li>
           </ul>
-          <p>Each hash is a shortened SHA-256 with no secret key, so anyone who already knows a login, email or name can compute its hash. The site deletes none of this, and a count is never lowered.</p>
+          <p>The site keeps no names, emails, messages, code or IP addresses. To count each device and each person once, it keeps a short hash in place of a device's ID, and in place of a person's git user name, GitHub login or commit email.</p>
+          <p>A hash can't be read back into a name or an email. It has no secret key, so someone who already knows a name or an email could compute its hash and look for it.</p>
         </div>
       </section>
       <section class="fact">
-        <div class="label"><h2>Who can see it</h2></div>
+        <div class="label"><h2>Who can see the count</h2></div>
         <div class="body">
-          <p>Each repo's totals appear on the census's run page in GitHub Actions, which is public. The daily counts and the hashes are on a stats page that only Murmur's maintainer, and people given a key, can open.</p>
+          <p>Each repo's totals show on the census's run page in GitHub Actions, which is public. The daily counts and the hashes are on a stats page that only Murmur's maintainer, and people given a key, can open. The site keeps the count as history and deletes none of it.</p>
         </div>
       </section>
       <section class="fact">
