@@ -502,18 +502,17 @@ func (d *Daemon) assignPending(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// pickName chooses a random name that is not known to be in use, nor in taken.
+// pickName chooses a random name that is not known to be in use, nor in taken: after 1,000 random
+// tries, the first such from a random place in the lists (see names.Unused).
 func (d *Daemon) pickName(used map[string]string, taken map[string]bool) (string, error) {
-	for range 1000 {
-		name, err := names.Generate(d.nameSrc)
-		if err != nil {
-			return "", err
-		}
-		if _, ok := used[name]; !ok && !taken[name] {
-			return name, nil
-		}
+	name, err := names.Unused(d.nameSrc, 1000, func(name string) bool {
+		_, ok := used[name]
+		return ok || taken[name]
+	})
+	if err == nil && name == "" {
+		err = errors.New("every name is in use")
 	}
-	return "", errors.New("no unused name found")
+	return name, err
 }
 
 // pushNames pushes w to the registry as one chain of commits on the tip last read, leased on it. It
