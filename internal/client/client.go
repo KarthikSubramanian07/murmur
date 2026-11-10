@@ -328,13 +328,10 @@ func Stop(ctx context.Context, gitDir string) (bool, error) {
 	if err != nil {
 		return true, err
 	}
-	// The daemon removes daemon.json as it goes, and holds the clone's files until then.
-	info := filepath.Join(StateDir(gitDir), "daemon.json")
-	for end := time.Now().Add(10 * time.Second); time.Now().Before(end) && ctx.Err() == nil; time.Sleep(50 * time.Millisecond) {
-		if _, err := os.Stat(info); err != nil {
-			break
-		}
-	}
+	// The daemon removes daemon.json as soon as it begins to stop, and holds the clone's lock, and
+	// files, until it has gone. A daemon still there after this wait is left to finish: it takes no
+	// more requests.
+	WaitGone(ctx, gitDir, 10*time.Second)
 	return true, nil
 }
 

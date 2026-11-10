@@ -734,6 +734,11 @@ func Run(ctx context.Context, opt Options) error {
 	case <-ctx.Done():
 	case <-d.quit:
 	}
+	// daemon.json goes before the port does. A client trusts the address in it while the lock is
+	// held, and the lock is held until the drain and the goodbye are done, which can take seconds:
+	// with the port given up first, another user's process could take it and be trusted. Sessions
+	// reconnect in that time, as their connections drop now, and find no daemon.
+	os.Remove(infoPath)
 	cancel()
 	ln.Close() // no new connections, so nothing joins bg while it drains
 	drained := make(chan struct{})
