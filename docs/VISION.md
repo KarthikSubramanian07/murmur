@@ -517,14 +517,17 @@ in its own session.
 - **A name on a message or in a presence is only a claim** (2026-11-09). Any device can write a
   message that says it is from `tyler`, or a presence that says its person is. A daemon gives a name
   to the first device whose presence it sees with it, as for session names, and only a registry
-  claim moves it. A sync reads the registry before the presences, so a claim is known first. A
-  message's name is never recorded, since one device could send a thousand, each with another name.
-  It is shown only if the sender holds the name, by a claim or in its live presence, and isn't
-  someone else's; otherwise the message is from its address. A presence counts only its first
-  person. Once the registry has been read, only a claim or a live presence makes a name taken on the
-  page. While another live presence says a person's name, every turn from it says which device sent
-  it; the mark goes when that presence does. The cost: a person on a daemon from before #272, with no
-  claim, who re-clones keeps resolving to the old device until their new daemon claims the name.
+  claim moves it. A sync reads the registry and the presences before the logs (#304), so a claim is
+  known before any message, including a person's first one after choosing their name. A message's
+  name is never recorded, since one device could send a thousand, each with another name. It is
+  shown only if the sender holds the name, by a claim or in its live presence, and isn't someone
+  else's; otherwise the message is from its address. A presence counts only its first person. Once
+  the registry has been read, only a claim or a live presence makes a name taken on the page. While
+  another live presence says a person's name, every turn from it says which device sent it; the mark
+  goes when that presence does. The cost: a person on a daemon from before #272, with no claim, who
+  re-clones keeps resolving to the old device until they choose the name on a daemon from #272 on,
+  which claims it. Until then, messages to the name go to the old device, and theirs show from their
+  address.
 - **A person's direct message wakes a session past the "Within" window**, because they are waiting
   for an answer. It doesn't wake past Never or do not disturb, which a person also chose. A broadcast
   from a person wakes nothing extra: one sentence shouldn't wake every idle session on the mesh. The

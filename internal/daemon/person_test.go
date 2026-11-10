@@ -699,6 +699,36 @@ func TestAnotherDeviceCantSpeakAsAPerson(t *testing.T) {
 	b.page().choose("linus")
 }
 
+// A person who chooses a name and sends at once is named in the turn their message becomes. A reader
+// that polls slowly finds the claim, the presence that first lists the person and the message in
+// one listing, and a turn is built once, when its message is read: so a sync reads the registry and
+// presences before the logs (#304), and the message's name is known to be theirs by then.
+func TestAPersonsFirstMessageNamesThem(t *testing.T) {
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	a := newDevice(t, remote)
+	b := newDeviceWith(t, remote, func(d *device) { d.poll, d.stale = 4*time.Second, time.Minute })
+	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	bobName := b.named(bob)
+	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
+	pa := a.page()
+	pa.choose("grace")
+	pa.sendText(bobName, "first words")
+	var turn string
+	eventually(t, "the turn", func() bool {
+		for _, c := range calls() {
+			if strings.Contains(c.Stdin, "first words") {
+				turn = c.Stdin
+				return true
+			}
+		}
+		return false
+	})
+	if !strings.Contains(turn, "Message from grace [human]") {
+		t.Errorf("the turn from a person who just chose a name:\n%s", turn)
+	}
+}
+
 // A person's account is tagged human wherever it is listed, on their device and on another, and no
 // session can take the tag or have it read off the bus (#267).
 func TestAPersonIsTaggedHuman(t *testing.T) {
