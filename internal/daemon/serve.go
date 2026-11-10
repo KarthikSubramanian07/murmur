@@ -640,7 +640,12 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	if len(req.Body) > maxBody {
 		return fail(fmt.Sprintf("not sent: the body is over %d KB, and the bus keeps everything forever", maxBody>>10))
 	}
-	if err := scrub.Check(subject, req.Body); err != nil {
+	// The body goes on the bus as readers will show it, so what the sender sent is what everyone
+	// reads, and it is cleaned before scrub looks: a key with a zero-width space in it is still a
+	// key once a reader drops the space. What was sent is checked too: dropping a format character
+	// can join a key to the next word, and AKIA…EXAMPLE<U+200B>note then ends in no word boundary.
+	body := bus.Text(req.Body, maxBody)
+	if err := scrub.Check(subject, body, req.Subject, req.Body); err != nil {
 		return fail(err.Error())
 	}
 	// A name is an address: it is turned into the session's device/session here, and that is what
@@ -721,7 +726,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		}
 	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, At: time.Now().UTC(),
-		To: to, Subject: subject, Body: req.Body}
+		To: to, Subject: subject, Body: body}
 	if bus.IsPerson(from) {
 		d.mu.Lock()
 		e.Person = d.st.Person
