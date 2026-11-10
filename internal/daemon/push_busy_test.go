@@ -33,7 +33,7 @@ func TestSendOutlastsABusyRefusal(t *testing.T) {
 		t.Fatalf("bob's inbox: %q, want the message once", got)
 	}
 	// Each commit's subject line, "<from> -> <to>: <subject>", is in its message once.
-	if n := strings.Count(busText(t, remote, a.self()), " -> "+bob+": auth middleware?\n"); n != 1 {
+	if n := strings.Count(busText(t, remote, a), " -> "+bob+": auth middleware?\n"); n != 1 {
 		t.Fatalf("the message is on the log %d times", n)
 	}
 }

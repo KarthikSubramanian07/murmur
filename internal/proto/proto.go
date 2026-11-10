@@ -71,9 +71,9 @@ const (
 //	    token is checked, and the connection then takes one more request. A client sends nothing
 //	    else to a listener until it has proved itself, so a daemon of 11 or less is replaced where
 //	    the client may, and otherwise trusted only while it holds the clone's lock.
-//	13: OpRotate, and a bus encrypted for a team key (#156): a daemon of 12 or less writes in the
-//	    clear, so an upgraded mur replaces it where it may
-const Protocol = 13
+//	14: OpRotate, and a bus encrypted for a team key (#156): a daemon of 13 or less writes in the
+//	    clear, so an upgraded mur replaces it where it may. 13 is left for #395, open on 2026-11-10.
+const Protocol = 14
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
