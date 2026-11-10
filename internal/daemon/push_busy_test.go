@@ -10,9 +10,8 @@ import (
 )
 
 // GitHub now and then refuses a push as busy, "[remote rejected] (failed)", when it meets another
-// push to the same repository; two devices whose heartbeats fell together were refused at most of
-// them (2026-11-09). A message whose push is refused that way is sent again, so the send works
-// and the message arrives once, written to the log once.
+// push to the same repository. A message whose push is refused that way is sent again, so the send
+// works and the message arrives once, written to the log once.
 func TestSendOutlastsABusyRefusal(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)

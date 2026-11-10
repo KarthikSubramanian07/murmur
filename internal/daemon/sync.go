@@ -1299,9 +1299,8 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 }
 
 // jittered is d give or take up to a fifth, at random. Each heartbeat waits that long, so devices
-// whose daemons started together drift apart rather than push at the same moment every beat:
-// GitHub refuses now and then a push that meets another (see bus.Push), and two devices started
-// within a second of each other were refused at most of their beats (2026-11-09).
+// whose daemons started together drift apart rather than push at the same moment every beat, which
+// GitHub refuses now and then (see "Git is the transport" in docs/VISION.md).
 func jittered(d time.Duration) time.Duration {
 	return d - d/5 + rand.N(2*(d/5)+1)
 }

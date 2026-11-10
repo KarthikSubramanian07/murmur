@@ -94,15 +94,13 @@ address once; see Updating and Counting use.)
   it, so a `send` made while presence is being pushed waits about a second more.
 - Pushes from different devices still meet on GitHub, and it refuses them the same way. Two
   devices whose daemons started within a second of each other, so that their heartbeats fell
-  together, logged 17 presence pushes refused with `(failed)` in 45 minutes (2026-11-09), taking
-  turns; two clients pushing to the same repository at the same moment were refused 2 times in 20
-  (`(failed)`, `(fatal error in commit_refs)`), and 4 s apart, never. A refused message failed the
-  agent's `send`. So a push refused for one of those reasons is sent again, as it was, after half a
-  second to a second and then a second to two, three tries in all (2026-11-10). The same commit
-  sent again can't be written twice: after any failed push the daemon looks at the remote ref, and
-  one that landed anyway counts as sent. Lease refusals aren't among these reasons and keep their
-  own handling. Each heartbeat also waits 2 minutes give or take 20%, at random, so devices that
-  started together drift apart.
+  together, logged 17 presence pushes refused with `(failed)` in 45 minutes, taking turns, and one
+  with `(failure)` (2026-11-09). Two clients pushing to the same repository at the same moment were
+  refused 2 times in 20 (`(failed)`, `(fatal error in commit_refs)`), and 4 s apart, never. A
+  refused message failed the agent's `send`. Since 2026-11-10 `bus.Push` sends a push refused for
+  one of those reasons again, a few times, and the look at the remote ref it takes after any failed
+  push keeps a try that landed anyway from being written twice. Heartbeats are spread by 20% either
+  way, so devices that started together drift apart.
 - Bus commits carry git's empty tree, so they hold no files and fetching them brings nothing else
   along. The daemon pushes them with `--no-verify` and doesn't sign them: a `pre-push` hook that
   runs the test suite, or a signing prompt, on every message would make the bus unusable. These
