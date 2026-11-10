@@ -210,6 +210,15 @@ to it unproved, as before, checking the lock before each connection. Discovery s
 listener before trying the lock, since trying the lock can turn away a daemon starting just then;
 what the listener is sent there is the nonce alone.
 
+A daemon answers, and writes daemon.json, before its first sync, not after it (2026-11-10, #372).
+That sync lists the remote, fetches and reads what changed, and may take its whole 10 s; with the
+process's own start on Windows, a first start of a new binary on Tyler's laptop took 21 s, and the
+15 s a starter waits for an answer (`mur ui`, an MCP server) ran out on a daemon that was fine.
+What the sync reads still comes first where it counts: a registration waits for it, at most those
+10 s, so what it finds is the backlog and not a new session's, and so do who, send and lookup,
+which on a new clone know no other device until then. The background loops start after it, as
+before. A stop or a leave during it ends it.
+
 A daemon with no sessions, no open page (see The page for humans) and no
 T3 thread to wake for 10 minutes exits. The token lets its holder name the program the daemon runs
 to hand a message to T3, so reading the file is running code as the user. `.git/murmur` is made
@@ -351,7 +360,7 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   what the thing is for. The server asks again before each registration with the daemon, before
   starting one, and before forwarding a tool call, since its 2-second look can lag a leave. The
   daemon is per clone, not per working tree, so it needs only the consent: it checks at start
-  (after its first sync, which takes a while), on every request but `stop` and `ping` (which reveal
+  and again after its first sync, which takes a while, on every request but `stop` and `ping` (which reveal
   nothing, and are how a leave finds it), again in a registration after it has resolved the branch,
   before each push of its own (presence, the names registry) and before each handoff of a message
   as a turn (the one thing it does to the user's other programs, so a message that comes in by sync

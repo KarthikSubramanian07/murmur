@@ -308,6 +308,13 @@ func (s pageSource) SetTags(ctx context.Context, addr string, add, remove []stri
 	if !known {
 		return fmt.Errorf("%s isn't in its device's presence", addr)
 	}
+	// The page is served before Run's first sync. This append reads its own log under advMu, which
+	// Run's sync, the one a stop cuts short, would then wait for; it waits for that sync instead, as
+	// the page's send does (Sol's review of #377).
+	d.awaitFirstSync(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Tags, From: bus.Addr(d.device, proto.CLISession),
 		At: time.Now().UTC(), To: addr, Add: add, Remove: remove}
 	return d.appendEvent(ctx, e)

@@ -128,6 +128,9 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
+	if req.Op == proto.OpWho || req.Op == proto.OpSend || req.Op == proto.OpLookup {
+		d.awaitFirstSync(ctx)
+	}
 	resp := d.handle(ctx, req)
 	resp.ClaudeSession = d.claudeSessionOf(req.Session)
 	writeResp(conn, resp)
@@ -185,8 +188,17 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	if agent == "" {
 		agent = "unknown"
 	}
-	branch := branchOf(ctx, h.Cwd)
-	worktree := worktreeOf(ctx, h.Cwd)
+	// The branch and the worktree are read while the registration waits for the first sync (see
+	// awaitFirstSync), not after it: one after the other, the wait's 10 s and git's could run past
+	// the 15 s a client gives a hello (Sol's review of #377).
+	var branch, worktree string
+	read := make(chan struct{})
+	go func() {
+		defer close(read)
+		branch, worktree = branchOf(ctx, h.Cwd), worktreeOf(ctx, h.Cwd)
+	}()
+	d.awaitFirstSync(ctx)
+	<-read
 	// Resolving the branch runs git, long enough for a leave to land after handleConn's check.
 	if !d.consented() {
 		writeResp(conn, fail(ErrNoConsent.Error()+", or has left since"))
