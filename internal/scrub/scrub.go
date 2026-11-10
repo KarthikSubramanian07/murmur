@@ -21,9 +21,11 @@ type pattern struct {
 	secret func(m []string) bool
 }
 
-// at starts a key that begins with a fixed prefix: the start of the text or any character but a
-// letter or a digit. `\b` would miss a key right after an underscore (`my_sk-ant-…`), since an
-// underscore is a word character.
+// at starts a key whose prefix no identifier has (`sk-ant-`, `ghp_`, `ya29.`): the start of the
+// text or any character but a letter or a digit. `\b` would miss such a key right after an
+// underscore (`my_sk-ant-…`), since an underscore is a word character. A prefix an identifier can
+// end in keeps `\b`: `load_hf_AutoModelFor…` isn't a Hugging Face token, nor
+// `ZONE_ASIAPACIFICSOUTHEAST` an AWS key.
 const at = `(?:^|[^A-Za-z0-9])`
 
 // patterns are tried in order and the first match names the error, so a more specific kind has
@@ -33,17 +35,20 @@ const at = `(?:^|[^A-Za-z0-9])`
 // same way the Anthropic pattern already does.
 var patterns = []pattern{
 	{name: "a private key", re: regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----`)}, // PEM, and PGP's BLOCK
-	{name: "an AWS access key", re: regexp.MustCompile(at + `(AKIA|ASIA)[0-9A-Z]{16}\b`)},
+	{name: "an AWS access key", re: regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`)},
 	{name: "a GitHub token", re: regexp.MustCompile(at + `(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}|` + at + `github_pat_[A-Za-z0-9_]{50,}`)},
 	{name: "a GitLab personal access token", re: regexp.MustCompile(at + `glpat-[A-Za-z0-9_-]{20,}`)},
-	{name: "an npm token", re: regexp.MustCompile(at + `npm_[A-Za-z0-9]{36}`)},
-	{name: "a Hugging Face token", re: regexp.MustCompile(at + `hf_[A-Za-z]{34,}`)},
+	{name: "an npm token", re: regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36}`)},
+	{name: "a Hugging Face token", re: regexp.MustCompile(`\bhf_[A-Za-z]{34,}`)},
 	{name: "an Anthropic API key", re: regexp.MustCompile(at + `sk-ant-[A-Za-z0-9_-]{20,}`)},
 	{name: "an OpenRouter API key", re: regexp.MustCompile(at + `sk-or-v1-[0-9a-fA-F]{64}`)},
-	{name: "an OpenAI-style API key", re: regexp.MustCompile(at + `sk-(proj-|svcacct-)?[A-Za-z0-9_-]{32,}`)},
+	{name: "an OpenAI-style API key", re: regexp.MustCompile(at + `sk-(proj|svcacct)-[A-Za-z0-9_-]{32,}|\bsk-[A-Za-z0-9_-]{32,}`)},
 	{name: "a Stripe key", re: regexp.MustCompile(at + `[rs]k_(live|test)_[A-Za-z0-9]{20,}`)},
 	{name: "a Slack token", re: regexp.MustCompile(at + `xox[abposr]-[A-Za-z0-9-]{10,}`)},
-	{name: "a Slack webhook URL", re: regexp.MustCompile(`hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]{16,}`)},
+	// Slack's own docs, and many .env.example files, show T00000000/B00000000/XXXX…; a real
+	// webhook's last part is random, letters and digits both.
+	{name: "a Slack webhook URL", re: regexp.MustCompile(`hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/([A-Za-z0-9]{16,})`),
+		secret: func(m []string) bool { return lettersAndDigits(m[1]) }},
 	{name: "a Google API key", re: regexp.MustCompile(at + `AIza[0-9A-Za-z_-]{35}`)},
 	{name: "a Google OAuth token", re: regexp.MustCompile(at + `ya29\.[0-9A-Za-z_-]{20,}`)},
 	{name: "an Azure storage account key", re: regexp.MustCompile(`AccountKey=[A-Za-z0-9+/]{40,}`)},
@@ -54,12 +59,15 @@ var patterns = []pattern{
 		secret: func(m []string) bool { return lettersAndDigits(m[1]) }},
 	{name: "a password in a URL", re: regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^\s:/@]+:[^\s@/]{3,}@`)},
 	// A password with a slash in it, which the pattern above stops at. A port and a path
-	// (`localhost:5173/@vite/client`) has the same shape, so the part before the slash mustn't be
-	// a number, the part before the @ mustn't end a path, and the password has to mix letters and
-	// digits.
-	{name: "a password in a URL", re: regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^\s:/@]+:([^\s@/]+)(/[^\s@]*)@[A-Za-z0-9]`),
+	// (`localhost:5173/@vite/client`) has the same shape, so what follows the last colon before the
+	// slash mustn't be a number (an IPv6 host has colons of its own: `[::1]:8000/…`), the part
+	// before the @ mustn't end a path, the password has to mix letters and digits, and an image
+	// digest (`…@sha256:…`) isn't a host.
+	{name: "a password in a URL", re: regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^\s:/@]+:([^\s@/]+)(/[^\s@]*)@([A-Za-z0-9]+)`),
 		secret: func(m []string) bool {
-			return strings.Trim(m[1], "0123456789") != "" && !strings.HasSuffix(m[2], "/") && lettersAndDigits(m[1]+m[2])
+			port := m[1][strings.LastIndexByte(m[1], ':')+1:]
+			return strings.Trim(port, "0123456789") != "" && !strings.HasSuffix(m[2], "/") &&
+				lettersAndDigits(m[1]+m[2]) && m[3] != "sha256" && m[3] != "sha512"
 		}},
 }
 
@@ -101,9 +109,10 @@ func blocked(what string) error {
 // a placeholder: long, token-shaped, and mixing letters with digits. A password's own punctuation,
 // ! @ #, counts as token-shaped. & * % don't: they run a value into the next parameter of a query
 // string (token_type=bearer&expires_in=3600), mask a key (sk-****1234), or name a Windows
-// variable (%API_KEY%).
+// variable (%API_KEY%). With @ and # in, an email address (PASSWORD_RESET_FROM=noreply2026@…) and a
+// hex color (TOKEN_COLOR=#a1b2c3) would read as passwords, so those two shapes pass.
 func looksSecret(v string) bool {
-	if len(v) < 12 {
+	if len(v) < 12 || emailOrColor.MatchString(v) {
 		return false
 	}
 	for _, r := range v {
@@ -113,6 +122,8 @@ func looksSecret(v string) bool {
 	}
 	return lettersAndDigits(v)
 }
+
+var emailOrColor = regexp.MustCompile(`^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$|^#[0-9A-Fa-f]+$`)
 
 // lettersAndDigits reports whether s has both, as a key does and a word or a placeholder doesn't.
 func lettersAndDigits(s string) bool {

@@ -19,7 +19,7 @@ func TestBlocksMoreShapes(t *testing.T) {
 		{"https://bob:" + "pa/ss1234" + "@db.example.com/app", "a password in a URL"},
 		{"my_sk-ant-" + "api03-abcdefghijklmnopqrstuvwxyz", "an Anthropic API key"},
 		{"key_ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789AB", "a GitHub token"},
-		{"creds_AKIA" + "IOSFODNN7EXAMPLE", "an AWS access key"},
+		{"cfg_sk-proj-" + "abcdefghijklmnopqrstuvwxyz0123456789", "an OpenAI-style API key"},
 		{"DB_PASSWORD=" + "Sup3rS3cretPass!", "a credential assignment"},
 		{"PASSWORD='" + "h4ck@th3#planet9" + "'", "a credential assignment"},
 	} {
@@ -57,6 +57,15 @@ func TestPassesNearMisses(t *testing.T) {
 		"PASSWORD=correcthorsebatterystaple", // no digit: as before, a word or a placeholder
 		"use_hf_tokenizer_from_pretrained_model_name",
 		"risk-" + "abcdefghijklmnopqrstuvwxyz0123456789",
+		// Found in review (2026-11-09).
+		"SLACK_WEBHOOK_URL=https://hooks.slack.com/" + "services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX", // Slack's docs
+		"PASSWORD_RESET_FROM=noreply2026@example.com",
+		"TOKEN_COLOR=#a1b2c3d4e5f6",
+		"self.load_hf_AutoModelForSequenceClassificationXyz()",
+		"ZONE_ASIAPACIFICSOUTHEAST = 3",
+		"task_sk-" + "abcdefghijklmnopqrstuvwxyz0123456789",
+		"http://[::1]:8000/users/alice1@example.com",
+		"docker pull docker://ghcr.io:v1/img@sha256:0123abcd",
 	} {
 		if err := Check(s); err != nil {
 			t.Errorf("blocked %q: %v", s, err)
