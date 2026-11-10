@@ -62,9 +62,9 @@ address once; see Updating and Counting use.)
   pushed at the same instant three times, and each time exactly one push landed. Session names
   work this way too, on `refs/murmur/names` (see Session names).
 - Presence is separate: `refs/murmur/presence/<deviceId>`, force-pushed with the device's current
-  state when it changes and on a heartbeat every 2 minutes. Heartbeats would otherwise flood the
-  event log. A presence unchanged for 6 minutes is stale: its device's sessions may not get what
-  is sent to them, and `who` and `send` say so.
+  state when it changes and on a heartbeat about every 2 minutes. Heartbeats would otherwise flood
+  the event log. A presence unchanged for 6 minutes is stale: its device's sessions may not get
+  what is sent to them, and `who` and `send` say so.
 - A reader measures staleness from when it saw a presence change, on its own monotonic clock, and
   only up to its own last successful sync, so a reader that was itself asleep or offline doesn't
   take everyone else for gone. Only a presence it has never seen change is dated by the writer's
@@ -72,7 +72,7 @@ address once; see Updating and Counting use.)
   started sees every device's ref as new, so dating them from now showed devices dead for hours
   as alive for the first 6 minutes, which is when a new session is most likely to ask `who`
   (seen live, 2026-10-30). A writer whose clock runs more than 6 minutes slow looks stale until
-  its next heartbeat, at most 2 minutes, when the reader sees the presence change and times it
+  its next heartbeat, at most 2.4 minutes, when the reader sees the presence change and times it
   itself.
 - Custom refs, not branches, so CI and preview deploys don't fire on every message, and
   `git clone` / `git pull` never fetch them. git-bug uses `refs/bugs/*` on GitHub the same way.
@@ -91,8 +91,16 @@ address once; see Updating and Counting use.)
   such moment in five with the network up, and none came while presence was pushed alone on its
   heartbeat, over several hours. That is inferred from the timing, not reproduced against GitHub; a
   bare repo on disk takes concurrent pushes without complaint. Now a push waits for the one before
-  it, so a `send` made while presence is being pushed waits about a second more. Pushes from
-  different devices can still meet on GitHub; a refused one is retried as before.
+  it, so a `send` made while presence is being pushed waits about a second more.
+- Pushes from different devices still meet on GitHub, and it refuses them the same way. Two
+  devices whose daemons started within a second of each other, so that their heartbeats fell
+  together, logged 17 presence pushes refused with `(failed)` in 45 minutes, taking turns, and one
+  with `(failure)` (2026-11-09). Two clients pushing to the same repository at the same moment were
+  refused 2 times in 20 (`(failed)`, `(fatal error in commit_refs)`), and 4 s apart, never. A
+  refused message failed the agent's `send`. Since 2026-11-10 `bus.Push` sends a push refused for
+  one of those reasons again, a few times, and the look at the remote ref it takes after any failed
+  push keeps a try that landed anyway from being written twice. Heartbeats are spread by 20% either
+  way, so devices that started together drift apart.
 - Of the pushes a session's start sets off, the presence goes first (2026-11-10). The start on the
   log and the assignment of a name from the pool were ready within milliseconds and took the turn
   first; the presence, which waits 300 ms to gather a session's first changes, went last. Over

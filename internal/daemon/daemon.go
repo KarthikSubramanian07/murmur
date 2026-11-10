@@ -39,7 +39,7 @@ type Options struct {
 	// daemon that is only waiting to wake a T3 thread (see Idle) needn't look as often as one with
 	// an agent working; it is never faster than Poll.
 	QuietPoll  time.Duration
-	Heartbeat  time.Duration // how often to re-push presence when nothing changed; 2 min
+	Heartbeat  time.Duration // how often to re-push presence when nothing changed, give or take a fifth; 2 min
 	StaleAfter time.Duration // presence unchanged this long means the device is gone; 6 min
 	// FetchLimit is how long one fetch may take within a sync: 15 s. A ref that runs past it on its
 	// own is set aside; SlowFetchLimit is how long its fetch may then take, outside the syncs: 10 min.
@@ -242,6 +242,8 @@ var ErrNoConsent = errors.New("this clone hasn't joined " + brand.Product)
 // each from its own goroutine, and a session starting or stopping set off two or three pushes in
 // the same second; GitHub then refused one of them now and then with "[remote rejected] (failed)",
 // which is not a lease refusal and cost a retry (see "Git is the transport" in docs/VISION.md).
+// Pushes from other devices still meet this device's on GitHub; bus.Push sends a push refused that
+// way again, within this device's turn.
 func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, expect string) error {
 	if !d.takePush(ctx) {
 		return ctx.Err()
