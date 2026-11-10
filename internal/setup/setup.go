@@ -64,6 +64,12 @@ func Init(ctx context.Context, dir string) ([]string, error) {
 // when nothing else is in that, as .claude is when it held only the settings init cleaned.
 func writeOut(top, path string, e edited) error {
 	if !e.remove {
+		// Init reads every file it edits through readRepoFile, and so does the marker check. A file
+		// that the edit took past what that reads would no longer count as marked, so init would
+		// report success on a repo that doesn't say it uses Murmur.
+		if len(e.data) > maxRepoFile {
+			return fmt.Errorf("the file would be over %d MiB, more than %s reads", maxRepoFile>>20, brand.Command)
+		}
 		if err := os.WriteFile(path, e.data, 0o644); err != nil {
 			return fmt.Errorf("couldn't rewrite the file: %w", err)
 		}

@@ -98,3 +98,21 @@ func TestAMarkerFileOverTheLimitIsNotRead(t *testing.T) {
 		t.Errorf("init changed a file over the limit (%v)", err)
 	}
 }
+
+// A file just under the limit is read, but the section would take it over, after which the marker
+// check wouldn't read it: init stops rather than report a repo marked that isn't (Sol's review).
+func TestInitDoesNotTakeAMarkerFileOverTheLimit(t *testing.T) {
+	full := strings.Repeat(strings.Repeat("x", 63)+"\n", maxRepoFile/64)
+	dir := repo(t, map[string]string{"AGENTS.md": full, "CLAUDE.md": full})
+	if _, err := Init(context.Background(), dir); err == nil || !strings.Contains(err.Error(), "MiB") {
+		t.Errorf("init on files at the limit: %v", err)
+	}
+	for _, name := range markerFiles {
+		if got := read(t, dir, name); got != full {
+			t.Errorf("init changed %s, %d bytes now", name, len(got))
+		}
+	}
+	if markedTree(dir) {
+		t.Error("marked, with no marker")
+	}
+}
