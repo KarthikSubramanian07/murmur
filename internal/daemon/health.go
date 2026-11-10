@@ -56,11 +56,18 @@ const (
 	refKinds
 )
 
+// kindOf is the kind of ref by its exact shape: a device's log or presence is the prefix and one
+// name. A ref below one, such as presence/<device>/x, is junk that clearOwnJunk deletes, and its
+// delete counts as other, not as a push of the device's presence.
 func kindOf(ref string) int {
+	device := func(prefix string) bool {
+		name, ok := strings.CutPrefix(ref, prefix)
+		return ok && name != "" && !strings.Contains(name, "/")
+	}
 	switch {
-	case strings.HasPrefix(ref, brand.MeshPrefix):
+	case device(brand.MeshPrefix):
 		return refMesh
-	case strings.HasPrefix(ref, brand.PresencePrefix):
+	case device(brand.PresencePrefix):
 		return refPresence
 	case ref == brand.NamesRef:
 		return refNames

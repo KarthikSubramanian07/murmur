@@ -100,3 +100,23 @@ func TestHealthIgnoresCancelled(t *testing.T) {
 		t.Errorf("after a sync that worked: %d in a row since %v, last error %v, %d syncs", h.failures, h.failingSince, h.syncErr, h.syncs)
 	}
 }
+
+// A push is counted by the ref's exact shape, so the deletes of the junk refs that block the bus's
+// own (clearOwnJunk) count as other, not as pushes of the device's log or presence.
+func TestPushKindIsTheRefsExactShape(t *testing.T) {
+	for ref, want := range map[string]int{
+		"refs/murmur/mesh/dev1":       refMesh,
+		"refs/murmur/presence/dev1":   refPresence,
+		"refs/murmur/names":           refNames,
+		"refs/murmur/mesh/dev1/x":     refOther,
+		"refs/murmur/presence/dev1/x": refOther,
+		"refs/murmur/names/x":         refOther,
+		"refs/murmur/mesh":            refOther,
+		"refs/murmur/presence":        refOther,
+		"refs/murmur/presence/":       refOther,
+	} {
+		if got := kindOf(ref); got != want {
+			t.Errorf("kindOf(%q) = %s, want %s", ref, kindNames[got], kindNames[want])
+		}
+	}
+}
