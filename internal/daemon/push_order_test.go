@@ -92,3 +92,39 @@ func TestSessionStartPushesPresenceFirst(t *testing.T) {
 		t.Fatalf("pushes arrived in the order %v; want %s first, then %s and the registry", got, presence, mesh)
 	}
 }
+
+// A presence push that fails still lets the rest of a session's start go: its start on the log and
+// its name's assignment wait for the presence to have been tried, not for it to have landed. A gate
+// opened only by a push that landed would leave the assigner waiting for good, with the pool
+// never filled again, and drop every line appendSoon writes. The remote's pre-receive hook here
+// refuses every presence push.
+func TestARefusedPresenceDoesNotHoldBackTheStartOrTheName(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.pool, d.beat = 2, time.Hour })
+	dev := a.self()
+	mesh := "refs/murmur/mesh/" + dev
+	eventually(t, "the device's presence and its names set aside", func() bool {
+		return len(readRegistry(t, remote).records) >= 2 && git(t, remote, "for-each-ref", "refs/murmur/presence/"+dev) != ""
+	})
+	script := "#!/bin/sh\n" +
+		"while read old new ref; do case \"$ref\" in refs/murmur/presence/*) exit 1;; esac; done\n" +
+		"exit 0\n"
+	if err := os.WriteFile(filepath.Join(remote, "hooks", "pre-receive"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	addr, _ := a.session("aaaaaa", "claude-a")
+	name := a.named(addr)
+	eventually(t, "the session's start on its log and "+name+" in the registry", func() bool {
+		if git(t, remote, "for-each-ref", mesh) == "" || !strings.Contains(busText(t, remote, dev), " started (") {
+			return false
+		}
+		for _, rec := range readRegistry(t, remote).records {
+			if rec.Name == name && rec.Session == "aaaaaa" {
+				return true
+			}
+		}
+		return false
+	})
+}
