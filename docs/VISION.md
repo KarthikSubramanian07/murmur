@@ -170,7 +170,11 @@ reconnect within 30 seconds of its start, and for sessions stopped within the 24
 
 Sessions reach the daemon over loopback TCP, on a random port written with a random token to
 `.git/murmur/daemon.json`. A daemon with no sessions, no open page (see The page for humans) and no
-T3 thread to wake for 10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
+T3 thread to wake for 10 minutes exits. The token lets its holder name the program the daemon runs
+to hand a message to T3, so reading the file is running code as the user. `.git/murmur` is made
+0700, and on Windows, where modes do nothing, each daemon start gives it an access list of its own
+that lets in only the user, SYSTEM and Administrators, and rewrites the files already in it
+(2026-11-09). Before that a clone outside the user's profile left it readable by every user. Any daemon that stops deletes its presence, so other devices drop it at their
 next sync rather than when it goes stale.
 
 A manual upgrade replaces the binary and not the daemon already started from it, which would go on

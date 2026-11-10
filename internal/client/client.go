@@ -225,6 +225,7 @@ func StartDaemon(exe, gitDir string, page *os.File, flags ...string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	proc.Protect(dir) // before the log is made in it; the daemon tries again, and logs a failure
 	logPath := filepath.Join(dir, "daemon.log")
 	// WMI cannot inherit logf and adds its path as --log. Open the forwarded
 	// log destination so that fallback preserves a custom --log too.

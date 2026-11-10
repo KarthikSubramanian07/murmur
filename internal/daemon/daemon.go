@@ -604,6 +604,11 @@ func Run(ctx context.Context, opt Options) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	// On every start, before daemon.json is written: a directory an older version made is
+	// tightened too. A clone whose state another user made can't be, and runs as before.
+	if err := proc.Protect(dir); err != nil {
+		opt.Log.Printf("keeping other users out of %s: %v", dir, err)
+	}
 	lock, err := proc.Lock(filepath.Join(dir, "daemon.lock"))
 	if errors.Is(err, proc.ErrLocked) {
 		return ErrRunning
