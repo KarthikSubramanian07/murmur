@@ -1105,19 +1105,28 @@ A body past the limit is cut, as in `inbox`.
   Code's moments: as a run starts (`before_agent_start`, a prompt), after each tool call
   (`tool_result`; the notice goes in as a message `deliverAs: "steer"`, which Pi puts after the tool
   calls and before the next model request), and as the work ends (`agent_before_settle`, where a
-  `custom_message` entry and `continue: true` keep it going, as blocking Stop does). It opens a
-  socket in the session that takes Claude Code's messaging-socket lines, and gives its address and
-  token to the MCP server in its environment as Claude Code does, so the daemon hands an idle Pi
-  session a turn the way it hands Claude Code one; Pi takes it with `triggerTurn`, and with
-  `deliverAs: "followUp"` a busy one takes it when it finishes, not steered in. What Murmur says is
-  a custom message, shown in the session and read in the user's role, never `sendUserMessage`, which
-  Pi treats as the user's typing. Seen with Pi 1.5.0 in RPC mode against a stand-in model: a notice
-  after a tool call, the message whole at the end of the work, a turn when idle, and a new socket
-  and session after `/new`. Not tried: Pi's terminal UI, Windows' named pipe, Pi inside T3 (where
-  the hook now runs too, and the socket is unused). Not covered: Pi's commits aren't credited, as
-  no call is bracketed; a session without a file (`--no-session`) gets turns and no notices; and an
-  error that ends the work skips the Stop, so the session stays at work until its next prompt, as an
-  interrupted Claude Code session does outside T3.
+  `custom_message` entry and `continue: true` keep it going, as blocking Stop does). Pi, unlike
+  Claude Code, says when the work ended without a chance to go on: an error is the boundary's
+  `outcome`, and Escape skips `agent_before_settle` and sets `agent_settled`'s `aborted`. The hook's
+  Stop then says it was interrupted, and the daemon takes the session for idle and hands what is
+  unread over as a turn, as for a T3 turn the user stopped. It opens a socket in the session that
+  takes Claude Code's messaging-socket lines, and gives its address and token to the MCP server in
+  its environment as Claude Code does, so the daemon hands an idle Pi session a turn the way it
+  hands Claude Code one; Pi takes it with `triggerTurn`, and with `deliverAs: "followUp"` a busy one
+  takes it when it finishes, not steered in. What Murmur says is a custom message, shown in the
+  session and read in the user's role, never `sendUserMessage`, which Pi treats as the user's
+  typing. The extension is in every Pi session, so it runs the hook and opens the socket only in a
+  clone the user joined (its `joined.json`, read as the session starts): elsewhere a tool call
+  waits on no process of Murmur's (about 0.1 s each, Opus's review). An update doesn't run `mur
+  join` again, so Pi's MCP server rewrites an extension join wrote for its own binary when the
+  text is an older binary's; Pi reads extensions as a session starts, so the first session after
+  an update still has the old one. Seen with Pi 1.5.0 against a stand-in model, in RPC mode and in
+  its terminal UI (driven in a pty by Opus's review, then here): a notice after a tool call, the
+  message whole at the end of the work, a turn when idle, a turn right after an abort, a new socket
+  and session after `/new`, no socket in a repo not joined, and an old extension rewritten. Not
+  tried: Windows' named pipe, and Pi inside T3 (where the hook now runs too, and the socket is
+  unused). Not covered: Pi's commits aren't credited, as no call is bracketed, and a session
+  without a file (`--no-session`) gets turns and no notices.
 - **A thread that is idle (#87).** T3 stops an idle thread's provider process, and with it Murmur's
   MCP server, after about 30 minutes (seen live on 2026-10-30: both threads' sessions stopped at
   03:30, half an hour after their last turn), so the session of a thread that is idle is the normal

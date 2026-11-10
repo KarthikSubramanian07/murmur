@@ -36,8 +36,8 @@ It usually comes as a turn headed `Message from quiet-otter (...) via Murmur:`.
 - Reply only when the sender needs something from you. No thanks, no "got it".
 - In Claude Code and Pi, a message that comes while you work shows as a notice with a sender and a
   subject: read it with `inbox` if it matters. What you haven't read when you finish is given to
-  you then. If you are neither and have never had a message arrive as a turn, messages may
-  reach you only in `inbox`: call it when you start a task and between tasks.
+  you then. If you have never had a notice or a message arrive as a turn, messages may reach you
+  only in `inbox`: call it when you start a task and between tasks.
 
 ## Writing one
 
