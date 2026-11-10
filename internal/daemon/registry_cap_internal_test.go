@@ -39,7 +39,7 @@ func freshNames(t *testing.T, seed byte, n int) []string {
 func TestASnapshotCountsOnlyOnARoot(t *testing.T) {
 	d, _ := namedDaemon(t)
 	ctx := context.Background()
-	fake := freshNames(t, 91, 2)
+	fake := freshNames(t, 91, 3)
 	snapshot := func(parent string, used map[string]string) string {
 		t.Helper()
 		rec := bus.NameRecord{V: bus.Version, At: time.Now().UTC(), Used: used}
@@ -89,6 +89,29 @@ func TestASnapshotCountsOnlyOnARoot(t *testing.T) {
 	}
 	if d.st.NamesRepair || d.st.NamesTip != merge {
 		t.Errorf("the merge was taken for a rewrite (repair %v), or not read (tip %s)", d.st.NamesRepair, d.st.NamesTip)
+	}
+
+	// The other order, the new root as the merge's first parent, and both orders read from the start,
+	// as a device new to the registry reads them: a history with two roots has no snapshot that counts.
+	first := snapshot("", map[string]string{fake[2]: ""})
+	reversed := strings.TrimSpace(runGit(t, t.TempDir(), "--git-dir", d.opt.GitDir, "-c", "user.name=t", "-c", "user.email=t@example.com",
+		"commit-tree", tree, "-p", first, "-p", merge, "-m", "merge"))
+	for _, tip := range []string{reversed, merge} {
+		if err := d.repo.UpdateLocal(ctx, brand.NamesRef, tip); err != nil {
+			t.Fatal(err)
+		}
+		d.advMu.Lock()
+		d.st.NamesGood, d.st.NamesTip, d.namesChecked = "", "", false // as if never read
+		d.processNames(ctx, tip)
+		d.advMu.Unlock()
+		for _, name := range fake[1:] {
+			if _, ok := d.st.Used[name]; ok {
+				t.Errorf("%s, in a snapshot on a root merged in, was taken for used by a reader from the start", name)
+			}
+		}
+		if d.st.NamesTip != tip {
+			t.Errorf("the registry with two roots wasn't read: tip %s, want %s", d.st.NamesTip, tip)
+		}
 	}
 
 	root := snapshot("", map[string]string{fake[0]: ""})

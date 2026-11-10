@@ -181,17 +181,21 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 			}
 		}
 		var err error
-		if commits, err = d.repo.Log(ctx, from, sha); err != nil {
-			fail(err)
-			return
-		}
 		if from == "" {
 			// Murmur writes a snapshot only as the first commit of a new history, a repair's,
 			// which a reader always reads from the start, as it doesn't descend from what was read.
+			// Found before the history is read, which needs it.
 			if snapshotAt, err = d.repo.Root(ctx, sha); err != nil {
 				fail(err)
 				return
 			}
+			if snapshotAt == "" {
+				d.log.Printf("the names registry has more than one root, which Murmur never writes; no snapshot in it counts")
+			}
+		}
+		if commits, err = d.repo.Log(ctx, from, sha); err != nil {
+			fail(err)
+			return
 		}
 	} else {
 		// Junk, or the registry gone after having been read.

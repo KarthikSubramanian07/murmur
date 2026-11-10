@@ -847,8 +847,11 @@ change and a daemon that knows no names routes by it all the same.
   snapshot).
   - *What one record can add (2026-11-09).* Since the set never shrinks, a reader bounds what it
     takes from a single record. A snapshot counts only on the root of a history read from its
-    start, found along first parents: the one place Murmur writes it, as a repair's history never
-    descends from what was read. One appended, or on a root merged in, is logged and passed over.
+    start, and only if that history has one root: the one place Murmur writes it, as a repair's
+    history never descends from what was read, and Murmur writes no merges. One appended is logged
+    and passed over. A merge that brings in another root, by either parent, leaves no snapshot
+    counting for a reader that reads from the start, which logs it; one already reading the
+    registry reads the merge as new commits and passes over the snapshot.
     A presence listing more than 200 sessions (`bus.MaxSessions`), far beyond what one device
     runs, is read as unreadable, whole, so none of its names counts. A daemon's own presence keeps
     to the cap: past it, it lists the most recently active sessions, and logs how many it left
