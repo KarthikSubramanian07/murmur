@@ -184,6 +184,9 @@ func (e Env) registerOpenCodeAt(ctx context.Context, h agentHome) (did []string,
 			return nil, false, fmt.Errorf("%s: %w", other, err)
 		}
 		if oed.out != otext {
+			if err := parses(oed.out); err != nil {
+				return nil, false, fmt.Errorf("%s: %w", other, err)
+			}
 			if err := writeAtomic(other, []byte(oed.out), 0o644); err != nil {
 				return nil, false, fmt.Errorf("%s: %w", other, err)
 			}
@@ -197,6 +200,9 @@ func (e Env) registerOpenCodeAt(ctx context.Context, h agentHome) (did []string,
 	}
 	if ed.out == text {
 		return otherDid, len(otherDid) > 0, nil
+	}
+	if err := parses(ed.out); err != nil {
+		return nil, false, fmt.Errorf("%s: %w, so the server wasn't added", path, err)
 	}
 	if err := writeAtomic(path, []byte(ed.out), 0o644); err != nil {
 		return nil, false, fmt.Errorf("%s: %w", path, err)
@@ -234,6 +240,15 @@ func readOpenCode(path string) (string, error) {
 		return "", fmt.Errorf("%s: %w", path, err)
 	}
 	return string(b), nil
+}
+
+// parses checks an edit's result before it is written: the editors keep every other byte, and a
+// slip there would leave a config OpenCode can't load at all.
+func parses(text string) error {
+	if _, _, err := jsonedit.GetIn(text, nil); err != nil {
+		return fmt.Errorf("an edit would leave it unreadable (%w), so it was left alone", err)
+	}
+	return nil
 }
 
 // openCodeEdit is what editOpenCode did to a file's text.

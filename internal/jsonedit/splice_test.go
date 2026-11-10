@@ -203,3 +203,30 @@ func TestSetLastIn(t *testing.T) {
 		t.Error("a permission that isn't an object: no error")
 	}
 }
+
+// Taking out the last member keeps the newline that ends a // comment on the line before it, which
+// would otherwise swallow the closing brace (Sol's review of #396).
+func TestDeleteInKeepsALineCommentClosed(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		{"{\"model\":\"x/y\", // keep\n \"permission\":{\"murmur_*\":\"allow\"}}", "{\"model\":\"x/y\" // keep\n}"},
+		{"{\n  \"model\": \"x/y\", // keep\n  \"permission\": {}\n}\n", "{\n  \"model\": \"x/y\" // keep\n}\n"},
+	} {
+		got, changed, err := DeleteIn(tc.src, []string{"permission"})
+		if err != nil || !changed || got != tc.want {
+			t.Errorf("%q:\ngot  %q (%v, %v)\nwant %q", tc.src, got, changed, err, tc.want)
+		}
+		if _, err := parseText(got); err != nil {
+			t.Errorf("%q: left %q, which doesn't parse: %v", tc.src, got, err)
+		}
+	}
+}
+
+// A trailing comma with a comment after it is still JSONC's trailing comma: the rule matches.
+func TestRemoveInWithACommentAfterATrailingComma(t *testing.T) {
+	rule := map[string]any{"action": "murmur_*", "resource": "*", "effect": "allow"}
+	src := `{"permissions":[{"action":"murmur_*","resource":"*","effect":"allow", /* note */}]}`
+	got, changed, err := RemoveIn(src, []string{"permissions"}, rule)
+	if err != nil || !changed || got != `{"permissions":[]}` {
+		t.Errorf("got %q (%v, %v)", got, changed, err)
+	}
+}

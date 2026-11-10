@@ -247,11 +247,10 @@ func stripJSONC(text string) string {
 			i += 2 + end + 1
 			b.WriteByte(' ')
 		case c == ',':
-			j := i + 1
-			for j < len(text) && strings.IndexByte(" \t\r\n", text[j]) >= 0 {
-				j++
-			}
-			if j < len(text) && (text[j] == '}' || text[j] == ']') {
+			// A trailing comma, with space or comments before the bracket, goes.
+			sc := &scanner{s: text, pos: i + 1}
+			_ = sc.space()
+			if j := sc.pos; j < len(text) && (text[j] == '}' || text[j] == ']') {
 				continue
 			}
 			b.WriteByte(c)
@@ -670,11 +669,17 @@ func cut(text string, n node, i int) string {
 		return text[:start] + text[end:]
 	}
 	if _, own := lineIndent(text, start); own {
-		if nl := strings.LastIndexByte(text[:start], '\n'); nl > n.start {
-			start = nl
-			if text[start-1] == '\r' {
-				start--
-			}
+		// Its line goes from its start, and with the newline that ends it if nothing else is on it.
+		// Never the newline before it, which may end a // comment on the line above.
+		start = strings.LastIndexByte(text[:start], '\n') + 1
+		rest := end
+		for rest < len(text) && (text[rest] == ' ' || text[rest] == '\t') {
+			rest++
+		}
+		if strings.HasPrefix(text[rest:], "\r\n") {
+			end = rest + 2
+		} else if strings.HasPrefix(text[rest:], "\n") {
+			end = rest + 1
 		}
 	} else {
 		for start > n.start+1 && (text[start-1] == ' ' || text[start-1] == '\t') {

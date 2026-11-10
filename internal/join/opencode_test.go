@@ -305,3 +305,20 @@ func TestRegisterOpenCodeRefusesWhatIsNotAFile(t *testing.T) {
 		t.Errorf("%s changed: %v", path, err)
 	}
 }
+
+// The file read first loses an emptied "permission" after a // comment and stays readable (Sol's
+// review of #396).
+func TestRegisterOpenCodeV2KeepsTheOtherFileReadable(t *testing.T) {
+	sb := newSandbox(t, false)
+	withAgents(sb)
+	withOpenCode(t, sb, "opencode v2.2.0")
+	jsonPath := filepath.Join(sb.OpenCodeDir, "opencode.json")
+	write(t, jsonPath, "{\"model\":\"x/y\", // keep\n \"permission\":{\"murmur_*\":\"allow\"}}")
+	write(t, filepath.Join(sb.OpenCodeDir, "opencode.jsonc"), "{}")
+	if _, _, err := sb.registerOpenCodeAt(context.Background(), openCodeHome(sb)); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, jsonPath); got != "{\"model\":\"x/y\" // keep\n}" {
+		t.Errorf("opencode.json: %q", got)
+	}
+}
