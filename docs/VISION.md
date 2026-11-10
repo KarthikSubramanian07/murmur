@@ -620,7 +620,9 @@ agents that mattered.
   daemon's reply still holds every session.
 - **Held to what a device can say (2026-11-09).** Anyone who can push can make any number of device
   refs, and date a presence as they like. So `who` lists at most 5 devices with no session listed,
-  stale or with none (`view.WhoQuiet`), those seen most recently, and counts the rest in one line.
+  stale or with none (`view.WhoQuiet`), and counts the rest in one line. Stale devices that still
+  have sessions come first, as their line is the one an agent acts on, then the most recently seen:
+  a device that keeps pushing is always seen recently.
   And another device's session start is dated as its last activity is, on the reader's clock and
   no later than the presence that lists it: a start dated ahead had ranked its sessions above every
   other in every agent's `who`.

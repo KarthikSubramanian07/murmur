@@ -45,8 +45,11 @@ const WhoLimit = 20
 // they are counted in one line.
 const WhoQuiet = 5
 
-// quiet picks, of the devices with no session to list, the WhoQuiet seen most recently, which `who`
-// lists. The result says, for each device, whether it is one of those it leaves out.
+// quiet picks, of the devices with no session to list, the WhoQuiet that `who` lists: stale devices
+// that still have sessions first, whose line says messages may not reach them, then the rest, each
+// group most recently seen first. Seen is when a presence last moved, which anyone who can push can
+// keep fresh, so empty devices can't push a teammate's stale line out. The result says, for each
+// device, whether it is one of those it leaves out.
 func quiet(devices []proto.Device) []bool {
 	var idle []int
 	for i, d := range devices {
@@ -54,7 +57,13 @@ func quiet(devices []proto.Device) []bool {
 			idle = append(idle, i)
 		}
 	}
-	sort.SliceStable(idle, func(a, b int) bool { return devices[idle[a]].LastSeen.After(devices[idle[b]].LastSeen) })
+	sort.SliceStable(idle, func(a, b int) bool {
+		da, db := devices[idle[a]], devices[idle[b]]
+		if sa, sb := da.Stale && len(da.Sessions) > 0, db.Stale && len(db.Sessions) > 0; sa != sb {
+			return sa
+		}
+		return da.LastSeen.After(db.LastSeen)
+	})
 	out := make([]bool, len(devices))
 	for _, i := range idle[min(len(idle), WhoQuiet):] {
 		out[i] = true
