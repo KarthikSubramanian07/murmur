@@ -64,8 +64,11 @@
     width: auto;
     max-width: calc(100vw - 2 * clamp(20px, 2.6vw, 40px));
     opacity: 0;
-    visibility: hidden;
+    pointer-events: none;
   }
+  /* A passage or the closing band out of view is see-through, not hidden: a screen reader reads every
+     passage in order, and Tab still reaches the links, which show while they have focus. */
+  html.js:not(.static) .note:focus-within, html.js:not(.static) .end:focus-within { opacity: 1 !important; pointer-events: auto !important; }
   .note pre {
     margin-top: 11px;
     padding: 10px 12px;
@@ -2666,7 +2669,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
   const clip = t => {
     const cta = clamp((t - T.finale - .86) / .07);
     end.style.opacity = cta;
-    end.style.visibility = cta <= 0 ? 'hidden' : 'visible';
+    end.style.pointerEvents = cta <= 0 ? 'none' : '';
     progress.style.transform = `scaleX(${(t / N).toFixed(4)})`;
   };
   // One passage at a time: each fades in as its first chapter starts and out as its last one ends. The
@@ -2680,7 +2683,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
   const fade = t => passages.forEach(p => {
     const o = p.a === 0 ? 1 - clamp((t - .78) / .2) : clamp((t - p.a) / .1) * clamp((p.b - t) / .08);
     p.n.style.opacity = o.toFixed(3);
-    p.n.style.visibility = o > .002 ? 'visible' : 'hidden';
+    p.n.style.pointerEvents = o > .002 ? 'auto' : 'none';
   });
   const draw = t => { scene.paint(Math.min(t, N - 1e-4)); clip(t); fade(t); };
   function tick(now) {
