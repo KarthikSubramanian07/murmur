@@ -131,6 +131,18 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 		b, _ := json.Marshal(resp)
 		conn.Write(append(b, '\n'))
 	}
+	if req.Op == proto.OpPing && req.Nonce != "" { // the daemon's proof (#371)
+		reply(proto.Response{OK: true, Protocol: proto.Protocol, Proof: proto.Proof("tok", conn.LocalAddr().String(), req.Nonce)})
+		if line, err = r.ReadBytes('\n'); err != nil {
+			conn.Close()
+			return
+		}
+		req = proto.Request{}
+		if json.Unmarshal(line, &req) != nil {
+			conn.Close()
+			return
+		}
+	}
 	if req.Op == proto.OpHello {
 		f.mu.Lock()
 		f.hellos = append(f.hellos, *req.Hello)

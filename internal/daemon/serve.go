@@ -94,18 +94,22 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	r := bufio.NewReader(conn)
-	line, err := readLine(r, maxRequest)
-	if errors.Is(err, errTooLong) {
-		writeResp(conn, fail(fmt.Sprintf("bad request: over %d KB", maxRequest>>10)))
+	req, ok := readRequest(conn, r)
+	if !ok {
 		return
 	}
-	if err != nil {
-		return
-	}
-	var req proto.Request
-	if err := json.Unmarshal(line, &req); err != nil {
-		writeResp(conn, fail("bad request: "+err.Error()))
-		return
+	// A client proves the daemon before it sends anything else (#371): a ping with a nonce, and no
+	// token, which is answered with the proof that this is the daemon whose token is in
+	// daemon.json. The request it was opened for follows on the same connection, so nothing can
+	// take the port between the two. The proof tells whoever asks nothing they can use: the nonce
+	// is the client's, fresh each time, and only this listener answers at this address while it
+	// lives.
+	if req.Op == proto.OpPing && req.Nonce != "" {
+		writeResp(conn, proto.Response{OK: true, Protocol: proto.Protocol, Proof: proto.Proof(d.token, conn.LocalAddr().String(), req.Nonce)})
+		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		if req, ok = readRequest(conn, r); !ok || req.Nonce != "" {
+			return
+		}
 	}
 	if subtle.ConstantTimeCompare([]byte(req.Token), []byte(d.token)) != 1 {
 		writeResp(conn, fail("bad token"))
@@ -127,6 +131,24 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 	resp := d.handle(ctx, req)
 	resp.ClaudeSession = d.claudeSessionOf(req.Session)
 	writeResp(conn, resp)
+}
+
+// readRequest reads one request line, answering one that is too long or isn't JSON with why.
+func readRequest(conn net.Conn, r *bufio.Reader) (proto.Request, bool) {
+	line, err := readLine(r, maxRequest)
+	if errors.Is(err, errTooLong) {
+		writeResp(conn, fail(fmt.Sprintf("bad request: over %d KB", maxRequest>>10)))
+		return proto.Request{}, false
+	}
+	if err != nil {
+		return proto.Request{}, false
+	}
+	var req proto.Request
+	if err := json.Unmarshal(line, &req); err != nil {
+		writeResp(conn, fail("bad request: "+err.Error()))
+		return proto.Request{}, false
+	}
+	return req, true
 }
 
 // claudeSessionOf is the Claude Code session ID held for the session id, which an MCP server
