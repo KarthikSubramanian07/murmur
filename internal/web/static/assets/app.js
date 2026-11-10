@@ -3780,7 +3780,9 @@ document.addEventListener("keydown", (e) => {
 // The tip shows 150 ms after the pointer settles. Once one is showing, the next shows at once, so
 // sliding along a row of buttons reads each. Keyboard focus shows it too. The tip lives outside
 // #root, so a render doesn't take it away.
-const tip = h("div", { class: "tip", role: "tooltip", "aria-hidden": "true" });
+// While an element's title is borrowed, the element points at the tip with aria-describedby, so a
+// screen reader still reads the title as its description.
+const tip = h("div", { class: "tip", role: "tooltip", id: "page-tip" });
 document.body.append(tip);
 let tipFor = null; // the element whose tip shows, or is about to
 let tipTimer = 0;
@@ -3799,11 +3801,20 @@ function borrowTitle(el) {
     el.dataset.tipTitle = t;
     el.removeAttribute("title");
   }
+  tip.textContent = tipText(el);
+  if (!el.hasAttribute("aria-describedby")) {
+    el.setAttribute("aria-describedby", tip.id);
+    el.dataset.tipDescribed = "1";
+  }
 }
 function returnTitle(el) {
   if (el?.dataset.tipTitle) {
     el.setAttribute("title", el.dataset.tipTitle);
     delete el.dataset.tipTitle;
+  }
+  if (el?.dataset.tipDescribed) {
+    el.removeAttribute("aria-describedby");
+    delete el.dataset.tipDescribed;
   }
 }
 
@@ -3874,7 +3885,8 @@ document.addEventListener("focusin", (e) => {
 });
 document.addEventListener("focusout", hideTip);
 document.addEventListener("pointerdown", hideTip, true);
-document.addEventListener("keydown", (e) => e.key === "Escape" && tipShown && hideTip());
+// Escape also cancels a tip that is still waiting to show.
+document.addEventListener("keydown", (e) => e.key === "Escape" && tipFor && hideTip());
 document.addEventListener("scroll", hideTip, { capture: true, passive: true });
 
 setInterval(tick, 10000);
