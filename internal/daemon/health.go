@@ -45,6 +45,9 @@ type health struct {
 	// (urlRead) so the page's polling seldom runs git.
 	remoteURL string
 	urlRead   time.Time
+	// urlMu lets one request at a time read the URL, so requests that find it stale together run
+	// git once between them. It is taken without mu, which git never runs under.
+	urlMu sync.Mutex
 }
 
 // The kinds of ref this device pushes to, which the counts are kept by.
@@ -326,13 +329,20 @@ func refHealth(ref string, f fetchFail) web.RefHealth {
 
 // remote is the remote's URL, read again once it is a minute old. No lock is held while git runs.
 func (h *health) remote(ctx context.Context, repo *bus.Repo) string {
-	h.mu.Lock()
-	url, read := h.remoteURL, h.urlRead
-	h.mu.Unlock()
-	if !read.IsZero() && time.Since(read) < time.Minute {
+	fresh := func() (string, bool) {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.remoteURL, !h.urlRead.IsZero() && time.Since(h.urlRead) < time.Minute
+	}
+	if url, ok := fresh(); ok {
 		return url
 	}
-	url = repo.Config(ctx, "remote."+repo.Remote+".url")
+	h.urlMu.Lock()
+	defer h.urlMu.Unlock()
+	if url, ok := fresh(); ok {
+		return url // another request read it while this one waited
+	}
+	url := repo.Config(ctx, "remote."+repo.Remote+".url")
 	if ctx.Err() != nil {
 		return url // a read cut short says nothing of the URL; the next call reads it again
 	}
