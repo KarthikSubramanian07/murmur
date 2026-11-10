@@ -26,6 +26,13 @@ only collaborators can push, so only they can join and send (#72), but anyone ca
 An encrypted mode for teams that want it private is #156. Public repos were on the list below
 until Tyler took them off on 2026-11-03.
 
+Also for agents that do not share a repo for their work (Tyler, 2026-11-10, #404). The mesh lives on
+one repo's remote, but nothing needs the agents to work in that repo: a team can keep a repo just
+for Murmur, clone it on each machine, and have each session join that clone from wherever it works,
+with `mur join -C` (see "A session that started outside the repo" below). The design should keep
+this case in mind; what still assumes the agents share a repo (the branch `who` shows, commit
+credit, the busy notice for Claude Code, a new session having to join again) is #405.
+
 Not for: large teams, long-lived projects, or anyone whose agents should not take
 input from teammates' agents. These limits are deliberate. Each one keeps the design simple, and
 lifting one would change it.

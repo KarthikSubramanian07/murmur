@@ -320,6 +320,11 @@
   .cmds code { padding: 3px 8px; border-radius: 6px; background: var(--badge-bg); color: var(--badge-ink); font: 600 14px/1.4 var(--mono); }
   .cmds span { font-size: 14px; color: var(--ink-soft); }
   .do a { color: var(--blue); font-weight: 600; text-underline-offset: 3px; }
+  .apart { margin-top: 28px; }
+  .apart h3 { font-size: 18px; font-weight: 700; letter-spacing: -.015em; line-height: 1.35; }
+  .apart p { margin-top: 6px; font-size: 15.5px; line-height: 1.5; max-width: 72ch; color: var(--ink-soft); }
+  .apart p code { font: 600 14px/1.4 var(--mono); color: var(--ink); }
+  .apart .cmds { margin-top: 10px; }
   .setup-end { margin-top: 28px; }
   .credit { margin-top: 40px; font-size: 13.5px; color: var(--ink-soft); }
   .credit a { color: inherit; text-underline-offset: 3px; }
@@ -785,6 +790,11 @@ void main() {
         </div>
       </li>
     </ol>
+    <div class="apart">
+      <h3>Agents that do not share a repo for their work</h3>
+      <p data-prose>Murmur can connect them too. Make a repo for Murmur that every teammate can push to, run <code>mur init</code> in it, and clone it on each machine. An agent working anywhere else joins it:</p>
+      <div class="cmds"><code data-artifact>mur join -C &lt;that clone&gt;</code></div>
+    </div>
     <div class="setup-end"><a class="button" href="https://github.com/a-Fig/murmur">Get Murmur on GitHub</a></div>
     <p class="credit">Built by Tyler, with help from Karthik and <a href="https://github.com/a-Fig/murmur#thanks">others</a>.</p>
   </div>

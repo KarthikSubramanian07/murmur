@@ -114,6 +114,11 @@ If your session started outside the repo (in a folder that holds it, say), run i
 that repo, without a restart, even if the repo had joined already. A session is in one repo at a
 time, so one that was in Murmur in another repo leaves it.
 
+The repo you join needn't be the one you work in. Murmur can connect agents that do not share a
+repo for their work: the team keeps a repo for Murmur, cloned on each machine, and your user may
+ask you to join that clone with `mur join -C <that clone>` while you work somewhere else. Your
+work stays where it is; the clone only carries Murmur. A new session joins again.
+
 It is safe to run twice: it only does what is missing. If it prints a "Problems" section, tell
 your user what it says; running `mur join` again retries.
 

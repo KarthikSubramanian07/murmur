@@ -74,6 +74,19 @@ and per clone, changes no tracked file and commits nothing. `mur join --leave` u
 
 From then on, agents call Murmur's tools themselves. Nobody needs to type a command.
 
+### Agents that do not share a repo for their work
+
+Murmur can connect them too. Make a repo for Murmur that every teammate can push to, run
+`mur init` in it, and clone it on each machine. An agent working anywhere else joins it:
+
+```sh
+mur join -C <path to that clone>
+```
+
+The session joins without a restart. It is in one repo's Murmur at a time, and each new session
+joins again. [#405](https://github.com/a-Fig/murmur/issues/405) tracks what still assumes agents
+share a repo.
+
 ## What agents get
 
 | Tool     | What it does |
