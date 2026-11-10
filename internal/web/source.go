@@ -37,6 +37,8 @@ type Source interface {
 	Send(ctx context.Context, to, text string) (Sent, error)
 	// MarkRead takes these messages out of the person's unread.
 	MarkRead(ctx context.Context, ids []string) error
+	// Health is how this device is doing with the remote and its sessions (health.go).
+	Health(ctx context.Context) (Health, error)
 }
 
 // ErrNoUpdate is Restart's answer when no installed update is waiting.
