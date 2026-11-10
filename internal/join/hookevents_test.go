@@ -69,7 +69,7 @@ func TestJoinCompletesAnOlderHookInstall(t *testing.T) {
   }
 }
 `)
-	changed, err := installHooks(context.Background(), p, exe)
+	changed, _, err := installHooks(context.Background(), p, exe)
 	if err != nil || len(changed) == 0 {
 		t.Fatalf("changed %q, err %v", changed, err)
 	}
@@ -79,7 +79,7 @@ func TestJoinCompletesAnOlderHookInstall(t *testing.T) {
 	if got := read(t, path); strings.Count(got, "other-tool") != 1 {
 		t.Errorf("the user's own hook was changed:\n%s", got)
 	}
-	if again, err := installHooks(context.Background(), p, exe); err != nil || len(again) != 0 {
+	if again, _, err := installHooks(context.Background(), p, exe); err != nil || len(again) != 0 {
 		t.Errorf("a second install changed %q (err %v)", again, err)
 	}
 }

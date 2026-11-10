@@ -293,7 +293,7 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 	ctx := context.Background()
 	write(t, filepath.Join(other, ".claude", "settings.local.json"), "{\n  \"permissions\": {\"allow\": [\"Bash(ls)\"]}\n}\n")
 
-	changed, err := installHooks(ctx, p, exe)
+	changed, _, err := installHooks(ctx, p, exe)
 	if err != nil || len(changed) != 2 {
 		t.Fatalf("changed %q, err %v", changed, err)
 	}
@@ -312,7 +312,7 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 	if status, _ := exec.Command("git", "-C", p.Top, "status", "--porcelain", "--", ".claude").Output(); strings.Contains(string(status), "settings.local.json") {
 		t.Errorf("the hook file would be committed:\n%s", status)
 	}
-	if again, err := installHooks(ctx, p, exe); err != nil || len(again) != 0 {
+	if again, _, err := installHooks(ctx, p, exe); err != nil || len(again) != 0 {
 		t.Errorf("a second install changed %q (err %v)", again, err)
 	}
 	if n := strings.Count(read(t, filepath.Join(p.GitDir, "info", "exclude")), "settings.local.json"); n != 1 {
@@ -320,7 +320,7 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 	}
 
 	// The binary moved: the hook names the new path and there is still one of it.
-	if _, err := installHooks(ctx, p, `/new/mur`); err != nil {
+	if _, _, err := installHooks(ctx, p, `/new/mur`); err != nil {
 		t.Fatal(err)
 	}
 	got := read(t, filepath.Join(p.Top, ".claude", "settings.local.json"))
@@ -328,7 +328,7 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 		t.Errorf("after the binary moved:\n%s", got)
 	}
 
-	removed, err := removeHooks(ctx, p)
+	removed, _, err := removeHooks(ctx, p)
 	if err != nil || len(removed) != 2 {
 		t.Fatalf("removed %q, err %v", removed, err)
 	}

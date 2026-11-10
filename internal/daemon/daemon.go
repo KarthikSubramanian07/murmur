@@ -43,6 +43,11 @@ type Options struct {
 	// FetchLimit is how long one fetch may take within a sync: 15 s. A ref that runs past it on its
 	// own is set aside; SlowFetchLimit is how long its fetch may then take, outside the syncs: 10 min.
 	FetchLimit, SlowFetchLimit time.Duration
+	// ReadFirstLimit is how long a sync may take over the names registry and every presence, which
+	// it reads before the logs: 15 s, and never more than half of what is left of the sync.
+	// A registry read that stalls (the check of one missing from the listing asks the remote again)
+	// then can't use up the time the logs it fetched need.
+	ReadFirstLimit time.Duration
 	// PollCap is the slowest the poll gets while a session is live and nothing is happening: 15 s.
 	// FastFor is how long after a conversation moves (this device sends a message, or queues one
 	// for a session here or hands one over to it, or a session starts) the poll stays at Poll: 3 min (#93).
@@ -134,6 +139,9 @@ func (o *Options) defaults() {
 	}
 	if o.SlowFetchLimit == 0 {
 		o.SlowFetchLimit = 10 * time.Minute
+	}
+	if o.ReadFirstLimit == 0 {
+		o.ReadFirstLimit = 15 * time.Second
 	}
 	if o.FastFor == 0 {
 		o.FastFor = 3 * time.Minute
