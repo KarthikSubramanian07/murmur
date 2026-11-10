@@ -443,6 +443,17 @@ func recordLatest(gitDir, tag string) {
 	}
 }
 
+// Checked is when a daemon of the clone last learned from GitHub which release is the latest, zero
+// if none has: the time latest.json was written. A check that failed, or found no release, doesn't
+// write it.
+func Checked(gitDir string) time.Time {
+	fi, err := os.Stat(latestPath(gitDir))
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
+}
+
 // Newer returns the latest release the clone's daemon last saw, if it is newer than version, else "".
 func Newer(gitDir, version string) string {
 	var l latest
