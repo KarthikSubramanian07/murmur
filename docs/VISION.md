@@ -582,7 +582,9 @@ call.
 - **The browser is handed a file, not the address** (2026-11-09, #220). Other users of the machine
   can read a program's arguments (on Linux, any of them), and the address carries the token. So
   `mur ui` writes `open-page.html` into the state directory, which only the user can open, readable
-  by the user alone, and hands its path to `open`, `xdg-open` or `rundll32`; the file sends the
+  by the user alone (on Windows, but for the state directory's exceptions: a network drive, or a
+  volume that keeps no access lists, is left as it is; see `proc.Protect`, and `daemon.json` there
+  holds the same token), and hands its path to `open`, `xdg-open` or `rundll32`; the file sends the
   browser on to the address. Jupyter does the same. The file is replaced on each `mur ui` and not
   deleted: its token dies with the page, and `daemon.json` beside it holds the same one meanwhile. A
   browser that can't read the file has the printed address: a snap browser on Ubuntu can't for a
