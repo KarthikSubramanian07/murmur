@@ -132,12 +132,19 @@ func (r *Repo) RemoteRef(ctx context.Context, ref string) (string, error) {
 // Fetch copies the given remote refs to the same names locally. The local copies are a cache
 // for reading history; what the daemon has processed is tracked separately, so a fetch that
 // lands late and rewinds a local copy does no harm.
+//
+// It offers the server only the bus commits it has (--negotiation-tip), as no bus commit has a
+// branch's commit in its history. By default git offers every local ref, and for a presence
+// commit, which has no parent, the server finds nothing in common, so the clone lists the user's
+// whole history a batch per request (VISION, "Speed"). A clone with no bus refs yet offers
+// nothing, which git warns of on stderr and fetches anyway.
 func (r *Repo) Fetch(ctx context.Context, refs []string) error {
 	if len(refs) == 0 {
 		return nil
 	}
 	args := []string{"-c", "gc.auto=0", "-c", "maintenance.auto=false", "fetch", "--quiet",
-		"--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", r.Remote}
+		"--no-tags", "--no-write-fetch-head", "--no-recurse-submodules",
+		"--negotiation-tip=" + brand.RefRoot + "*", r.Remote}
 	for _, ref := range refs {
 		args = append(args, "+"+ref+":"+ref)
 	}

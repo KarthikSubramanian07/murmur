@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -130,4 +131,101 @@ func TestNewCommitConcurrently(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+// A fetch tells the server only of the bus commits the clone has, never of the user's own
+// history, which no bus commit shares. A presence commit has no parent, so the server finds
+// nothing in common with it, and a clone offering its branches would list every commit on them,
+// a round trip for each batch.
+func TestFetchOffersOnlyBusCommits(t *testing.T) {
+	root := t.TempDir()
+	remote, local, peer := filepath.Join(root, "remote.git"), filepath.Join(root, "local.git"), filepath.Join(root, "peer.git")
+	for _, d := range []string{remote, local, peer} {
+		if out, err := exec.Command("git", "init", "-q", "--bare", d).CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v: %s", err, out)
+		}
+	}
+	// The user's own history: 100 commits the remote has never seen, written in one process.
+	var stream strings.Builder
+	for i := 1; i <= 100; i++ {
+		msg := fmt.Sprintf("work %d", i)
+		fmt.Fprintf(&stream, "commit refs/heads/main\ncommitter u <u@example.invalid> %d +0000\ndata %d\n%s\n",
+			1700000000+i, len(msg), msg)
+	}
+	imp := exec.Command("git", "--git-dir="+local, "fast-import", "--quiet")
+	imp.Stdin = strings.NewReader(stream.String())
+	if out, err := imp.CombinedOutput(); err != nil {
+		t.Fatalf("git fast-import: %v: %s", err, out)
+	}
+	out, err := exec.Command("git", "--git-dir="+local, "rev-list", "refs/heads/main").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine := map[string]bool{}
+	for _, sha := range strings.Fields(string(out)) {
+		mine[sha] = true
+	}
+	if len(mine) != 100 {
+		t.Fatalf("the user's branch has %d commits, want 100", len(mine))
+	}
+
+	ctx := context.Background()
+	trace := filepath.Join(root, "packets")
+	r := &bus.Repo{Git: gitx.Git{Dir: local, Env: []string{"GIT_TRACE_PACKET=" + trace}}, Remote: remote}
+	p := &bus.Repo{Git: gitx.Git{Dir: peer}, Remote: remote, Name: "peer", Email: "peer@example.invalid"}
+	push := func(ref, msg string, mode bus.PushMode) string {
+		t.Helper()
+		sha, err := p.NewCommit(ctx, "", msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Push(ctx, sha, ref, mode, ""); err != nil {
+			t.Fatal(err)
+		}
+		return sha
+	}
+	// fetch fetches ref and counts the commits it offered the server: the user's, and the others.
+	fetch := func(ref, want string) (user, other int) {
+		t.Helper()
+		os.Remove(trace)
+		if err := r.Fetch(ctx, []string{ref}); err != nil {
+			t.Fatalf("fetch %s: %v", ref, err)
+		}
+		if got, err := r.Git.Run(ctx, "", "rev-parse", ref); err != nil || strings.TrimSpace(got) != want {
+			t.Fatalf("after the fetch %s is %q (%v), want %s", ref, got, err, want)
+		}
+		packets, err := os.ReadFile(trace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(packets), "\n") {
+			_, sha, ok := strings.Cut(line, "fetch> have ")
+			switch {
+			case !ok:
+			case mine[strings.TrimSpace(sha)]:
+				user++
+			default:
+				other++
+			}
+		}
+		return user, other
+	}
+	presence, mesh := brand.PresencePrefix+"peer", brand.MeshPrefix+"peer"
+
+	// A clone with no bus refs yet offers nothing.
+	sha := push(presence, "presence 1", bus.Force)
+	if user, other := fetch(presence, sha); user+other != 0 {
+		t.Errorf("a clone with no bus refs offered %d of the user's commits and %d others, want none", user, other)
+	}
+	// One that has some offers those, and still none of the user's.
+	sha = push(mesh, "a log", bus.FastForward)
+	fetch(mesh, sha)
+	sha = push(presence, "presence 2", bus.Force)
+	user, other := fetch(presence, sha)
+	if user != 0 {
+		t.Errorf("fetching a presence commit offered %d of the user's commits, want none", user)
+	}
+	if other == 0 {
+		t.Error("fetching a presence commit offered none of the clone's bus commits")
+	}
 }
