@@ -174,17 +174,20 @@ func (c *Client) replace(ctx context.Context) error {
 
 // found reports whether daemon.json names a running daemon, and if so makes it the one c talks to.
 // Something must answer a ping at its address while the clone's lock is held. A daemon takes the
-// lock before it writes daemon.json and lets it go only after removing the file, so a daemon.json
-// beside a free lock is stale: its daemon died without removing it (a panic, SIGKILL, the OOM
-// killer, a power cut), and whatever answers at its port isn't that daemon. On a machine with other
-// users it can be one of their processes, which would be sent the sessions' hellos and requests,
-// and could answer them with messages of its own. Their processes can't take the lock, which is in
-// the user's own state directory (0700).
+// lock before it writes daemon.json, and removes the file before it gives up its port and long
+// before it lets the lock go, so a daemon.json beside a free lock is stale: its daemon died without
+// removing it (a panic, SIGKILL, the OOM killer, a power cut), and whatever answers at its port
+// isn't that daemon. On a machine with other users it can be one of their processes, which would be
+// sent the sessions' hellos and requests, and could answer them with messages of its own. Another
+// user can't hold the lock where the state directory is private to its user: on Unix it is made
+// 0700, and on Windows it has whatever access the clone's location gives.
 //
 // The lock is tried only after something answered, as holding it for a moment can turn away a
-// daemon starting just then. daemon.json is read again after it: a daemon that starts beside a stale
-// daemon.json removes it once it holds the lock, so a client that read the stale one just before
-// doesn't take it for the new daemon's.
+// daemon starting just then. Others hold it for a moment too (another client here, WaitGone,
+// replace), so a lock found held is tried once more a moment later before it is believed. Then
+// daemon.json is read again: a daemon that starts beside a stale daemon.json removes it once it
+// holds the lock, so a client that read the stale one just before doesn't take it for the new
+// daemon's.
 //
 // When none is found, c forgets the daemon it had. That one is gone, and a long-running client (the
 // MCP server) would otherwise go on sending its requests to the address while a new daemon starts.
@@ -195,6 +198,10 @@ func (c *Client) found(ctx context.Context) bool {
 	c.mu.Unlock()
 	return ok
 }
+
+// lockRetry is how long found waits to try a held lock again: longer than anyone but a daemon holds
+// it, which is a few system calls.
+const lockRetry = 25 * time.Millisecond
 
 // running is found's check: the daemon daemon.json names, and its protocol number, if it is running.
 func (c *Client) running(ctx context.Context) (proto.Info, int, bool) {
@@ -207,14 +214,24 @@ func (c *Client) running(ctx context.Context) (proto.Info, int, bool) {
 		return proto.Info{}, 0, false
 	}
 	dir := StateDir(c.GitDir)
-	l, err := proc.Lock(filepath.Join(dir, "daemon.lock"))
-	if err == nil {
-		os.Remove(filepath.Join(dir, "daemon.json")) // stale, and no daemon can start to write one while this is held
-		l.Close()
-		return proto.Info{}, 0, false
-	}
-	if !errors.Is(err, proc.ErrLocked) {
-		return proto.Info{}, 0, false
+	for try := 0; ; try++ {
+		l, err := proc.Lock(filepath.Join(dir, "daemon.lock"))
+		if err == nil {
+			os.Remove(filepath.Join(dir, "daemon.json")) // stale, and no daemon can start to write one while this is held
+			l.Close()
+			return proto.Info{}, 0, false
+		}
+		if !errors.Is(err, proc.ErrLocked) {
+			return proto.Info{}, 0, false
+		}
+		if try == 1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return proto.Info{}, 0, false
+		case <-time.After(lockRetry):
+		}
 	}
 	if again, ok := c.load(); !ok || again != info {
 		return proto.Info{}, 0, false

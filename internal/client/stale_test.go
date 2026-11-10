@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
@@ -25,6 +26,7 @@ type impostor struct {
 
 	mu    sync.Mutex
 	other []string
+	pings chan struct{} // a value for each ping, while there is room
 }
 
 func listenImpostor(t *testing.T, addr string) *impostor {
@@ -34,7 +36,7 @@ func listenImpostor(t *testing.T, addr string) *impostor {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	m := &impostor{ln: ln}
+	m := &impostor{ln: ln, pings: make(chan struct{}, 16)}
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -49,7 +51,12 @@ func listenImpostor(t *testing.T, addr string) *impostor {
 				}
 				var req proto.Request
 				json.Unmarshal(line, &req)
-				if req.Op != proto.OpPing {
+				if req.Op == proto.OpPing {
+					select {
+					case m.pings <- struct{}{}:
+					default:
+					}
+				} else {
 					m.mu.Lock()
 					m.other = append(m.other, req.Op)
 					m.mu.Unlock()
@@ -166,5 +173,25 @@ func TestAClientForgetsADaemonThatDied(t *testing.T) {
 	}
 	if got := m.requests(); len(got) > 0 {
 		t.Errorf("the listener at the dead daemon's address was sent %v", got)
+	}
+}
+
+// A lock held only for a moment, by another client checking the same file or by WaitGone, doesn't
+// make a stale daemon.json look live: the client tries the lock again before believing it.
+func TestAMomentaryLockDoesNotMakeAStaleFileLive(t *testing.T) {
+	gitDir := stateOnly(t)
+	m := listenImpostor(t, "127.0.0.1:0")
+	leaveStale(t, gitDir, m.ln.Addr().String())
+	held, err := proc.Lock(filepath.Join(StateDir(gitDir), "daemon.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		<-m.pings
+		time.Sleep(5 * time.Millisecond) // the client tries the lock now, and again after lockRetry
+		held.Close()
+	}()
+	if _, err := Connect(context.Background(), gitDir, false); !errors.Is(err, ErrNoDaemon) {
+		t.Fatalf("connect: %v, want ErrNoDaemon", err)
 	}
 }
