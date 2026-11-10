@@ -259,6 +259,26 @@ func send(ctx context.Context, o Options, addr string) error {
 	return nil
 }
 
+// Status is what has become of the report for the page (#141's health, internal/daemon): reported,
+// waiting, private, not-github or dev, with the address that is sent, or would be, and the UTC day
+// a look last found the repo private or not on GitHub. url is the remote's. It reads the state the
+// last look left and asks nothing of the network.
+func Status(gitDir, url, version string) (status, addr, looked string) {
+	if version == "" || strings.HasSuffix(version, "-dev") {
+		return "dev", "", ""
+	}
+	st, addr := readState(gitDir), Address(url)
+	switch {
+	case addr == "":
+		return "not-github", "", st.Looked
+	case st.Known == addr || st.Sent == addr:
+		return "reported", addr, ""
+	case st.Looked != "":
+		return "private", addr, st.Looked
+	}
+	return "waiting", addr, ""
+}
+
 // state is what the last look left in the clone's state dir.
 type state struct {
 	Looked string `json:"looked"` // the UTC day, YYYY-MM-DD, a look last found the repo private or not on GitHub
