@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Every page of murmur.afig.dev a search engine or an agent should find. A lastmod is the day
-     the page last changed: for /setup, /join and /use, the day docs/agents/<page>.md did, since
-     the Worker serves those from the repo. site/test/files.test.mjs checks the format. -->
+     the page last changed. /setup, /join and /use have none: the Worker serves them from
+     docs/agents/ on main, so they change without this file. site/test/files.test.mjs checks it. -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://murmur.afig.dev/</loc>
@@ -25,14 +25,11 @@
   </url>
   <url>
     <loc>https://murmur.afig.dev/setup</loc>
-    <lastmod>2026-11-08</lastmod>
   </url>
   <url>
     <loc>https://murmur.afig.dev/join</loc>
-    <lastmod>2026-11-08</lastmod>
   </url>
   <url>
     <loc>https://murmur.afig.dev/use</loc>
-    <lastmod>2026-11-09</lastmod>
   </url>
 </urlset>

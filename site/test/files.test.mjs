@@ -37,6 +37,10 @@ test('the sitemap follows the sitemaps.org protocol and lists pages that exist',
     seen.add(loc);
     assert.ok(!/[&<>"']/.test(loc), `${loc} needs escaping`);
     assert.ok(existsSync(source(loc)), `${loc} has no page`);
+    if (/^https:\/\/murmur\.afig\.dev\/(setup|join|use)$/.test(loc)) {
+      assert.equal(lastmod, undefined, `${loc} changes with docs/agents, so it has no lastmod`);
+      continue;
+    }
     assert.match(lastmod ?? '', /^\d{4}-\d{2}-\d{2}$/, `${loc}'s lastmod`);
     assert.ok(!Number.isNaN(Date.parse(lastmod)) && lastmod <= today, `${loc}'s lastmod ${lastmod}`);
   }
@@ -130,18 +134,19 @@ test('the home page\'s JSON-LD parses, says what Murmur is, and uses words the p
   const [ld] = blocks;
   assert.equal(ld['@context'], 'https://schema.org');
   const byType = Object.fromEntries(ld['@graph'].map(n => [n['@type'], n]));
-  const app = byType.SoftwareApplication, org = byType.Organization;
-  assert.ok(app && org);
+  const app = byType.SoftwareApplication;
+  assert.ok(app);
+  // An open-source project kept by one person: no organization is invented for it.
+  assert.equal(byType.Organization, undefined);
+  assert.equal(app.author['@type'], 'Person');
   for (const key of ['name', 'description', 'url', 'applicationCategory', 'operatingSystem', 'offers', 'keywords']) assert.ok(app[key], key);
   assert.equal(app.name, 'Murmur');
   assert.equal(app.url, `${SITE}/`);
-  assert.equal(app.publisher['@id'], org['@id']);
-  assert.ok(existsSync(source(app.image)) && existsSync(source(org.logo)));
+  assert.ok(existsSync(source(app.image)));
   assert.equal(app.description, /<meta name="description" content="([^"]+)">/.exec(html)[1]);
   // Search engines and agents take these as the product's terms, so each must be on the page.
   const text = html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<[^>]+>/g, ' ').toLowerCase();
   for (const word of app.keywords.split(',').map(w => w.trim())) assert.ok(text.includes(word.toLowerCase()), `keyword ${word} isn't on the page`);
-  assert.ok(org.contactPoint.url.startsWith('https://github.com/a-Fig/murmur'));
 });
 
 test('llms.txt follows llmstxt.org and says when to use Murmur', () => {
@@ -171,6 +176,7 @@ test('llms.txt follows llmstxt.org and says when to use Murmur', () => {
   }
 });
 
-test('the tests are not published with the site', () => {
-  assert.ok(read('.assetsignore').split('\n').includes('test'));
+test('the tests and package.json are not published with the site', () => {
+  const ignored = read('.assetsignore').split('\n');
+  assert.ok(ignored.includes('test') && ignored.includes('package.json'));
 });
