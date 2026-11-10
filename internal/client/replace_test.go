@@ -39,6 +39,7 @@ type standIn struct {
 	lock      *proc.Held
 	ops       []string
 	stopAfter time.Duration
+	bigReply  int // if set, an inbox's reply is about this long
 }
 
 func startStandIn(t *testing.T, gitDir string, protocol int) *standIn {
@@ -72,20 +73,42 @@ func startStandIn(t *testing.T, gitDir string, protocol int) *standIn {
 
 func (d *standIn) serve(conn net.Conn) {
 	defer conn.Close()
-	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	r := bufio.NewReader(conn)
+	reply := func(r proto.Response) {
+		b, _ := json.Marshal(r)
+		conn.Write(append(b, '\n'))
+	}
+	line, err := r.ReadBytes('\n')
 	if err != nil {
 		return
 	}
 	var req proto.Request
-	if json.Unmarshal(line, &req) != nil || req.Token != d.token {
+	if json.Unmarshal(line, &req) != nil {
+		return
+	}
+	// The proof, from a daemon of a protocol that has it; an older one refuses the ping's missing
+	// token, as the real one does.
+	if req.Op == proto.OpPing && req.Nonce != "" && d.protocol >= proto.ProofProtocol {
+		reply(proto.Response{OK: true, Protocol: d.protocol, Proof: proto.Proof(d.token, conn.LocalAddr().String(), req.Nonce)})
+		if line, err = r.ReadBytes('\n'); err != nil {
+			return
+		}
+		req = proto.Request{}
+		if json.Unmarshal(line, &req) != nil {
+			return
+		}
+	}
+	if req.Token != d.token {
+		reply(proto.Response{Error: "bad token"})
 		return
 	}
 	d.mu.Lock()
 	d.ops = append(d.ops, req.Op)
+	big := d.bigReply
 	d.mu.Unlock()
-	reply := func(r proto.Response) {
-		b, _ := json.Marshal(r)
-		conn.Write(append(b, '\n'))
+	if big > 0 && req.Op == proto.OpInbox {
+		reply(proto.Response{OK: true, Self: strings.Repeat("x", big)})
+		return
 	}
 	switch req.Op {
 	case proto.OpPing:
@@ -268,7 +291,7 @@ func TestAnOlderDaemonThatStaysIsAnError(t *testing.T) {
 		t.Error("a daemon was started while the older one holds the lock")
 		return nil
 	}
-	if !c.load() || c.ping(context.Background()) != nil || !c.Outdated() {
+	if !c.found(context.Background()) || !c.Outdated() {
 		t.Fatal("the stand-in isn't found as an older daemon")
 	}
 	old.ln.Close() // it keeps the lock and its file, and answers nothing

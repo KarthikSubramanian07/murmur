@@ -57,8 +57,13 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
   # or printing request headers.
   api=https://api.github.com/repos/$repo/releases
   if [ -n "$tag" ]; then api=$api/tags/$tag; else api=$api/latest; fi
-  curl -q -fsS --retry 2 -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' \
-    -o "$tmp/release.json" "$api" ||
+  # api_curl ARGS...: curl with the token's header read from stdin (-H @-, curl 7.55 and later),
+  # since any local user can read a command line (ps, /proc/<pid>/cmdline). printf is a shell
+  # builtin, so no process gets the token as an argument.
+  api_curl() {
+    printf 'Authorization: Bearer %s\n' "$GITHUB_TOKEN" | curl -q -H @- "$@"
+  }
+  api_curl -fsS --retry 2 -H 'Accept: application/vnd.github+json' -o "$tmp/release.json" "$api" ||
     die "could not read the release at $api (is the token valid, with access to $repo, and does the release exist? 'latest' skips prereleases; pin one with MURMUR_VERSION. To download without a token, unset GITHUB_TOKEN)."
   fetch() {
     # Asset objects list "url" (ending /releases/assets/<id>) before "name". Splitting on commas
@@ -73,7 +78,7 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
       }')
     [ -n "$id" ] || die "the release has no asset named $1."
     # The answer is either the file itself (200) or a redirect to it (3xx).
-    reply=$(curl -q -fsS --retry 2 -o "$tmp/$1" -w '%{http_code} %{redirect_url}' -H "Authorization: Bearer $GITHUB_TOKEN" \
+    reply=$(api_curl -fsS --retry 2 -o "$tmp/$1" -w '%{http_code} %{redirect_url}' \
       -H 'Accept: application/octet-stream' "https://api.github.com/repos/$repo/releases/assets/$id") ||
       die "could not start the download of $1."
     code=${reply%% *}

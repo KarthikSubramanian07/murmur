@@ -152,6 +152,7 @@ func TestSessionInT3IsNotWrittenToItsSocket(t *testing.T) {
 // The socket belongs to a running session: once its MCP server is gone, so is its token, and a
 // message sent then is not written to it.
 func TestMessagingSocketNeedsTheSessionToBeRunning(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	sock := useFakeSocket(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
@@ -171,6 +172,7 @@ func TestMessagingSocketNeedsTheSessionToBeRunning(t *testing.T) {
 // Where the socket can't be written, the message is the hook's notice after one more try, and the
 // log says so once, without the socket's address, its token or the message.
 func TestFailedSocketHandoffFallsBackToTheNotice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	dir, err := os.MkdirTemp("", "murs")
 	if err != nil {

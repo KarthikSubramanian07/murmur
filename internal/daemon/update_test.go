@@ -15,6 +15,7 @@ import (
 )
 
 func TestUpdateWaitsForHandoffs(t *testing.T) {
+	// Not parallel: the restart has a second to come, which other tests' load could use up.
 	d := &Daemon{pushing: map[string]bool{"session": true}, quit: make(chan struct{})}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -46,6 +47,7 @@ func TestUpdateWaitsForHandoffs(t *testing.T) {
 }
 
 func TestUpdateWaitsForOpenPage(t *testing.T) {
+	// Not parallel: the restart has seconds to come, which other tests' load could use up.
 	d := &Daemon{opt: Options{PageOpen: time.Hour}, lastPage: time.Now(),
 		pushing: map[string]bool{}, quit: make(chan struct{})}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -89,6 +91,7 @@ func TestUpdateWaitsForOpenPage(t *testing.T) {
 
 // An open page holds an installed update back, until the page asks for the restart (#240).
 func TestPageAsksForRestart(t *testing.T) {
+	// Not parallel: the restart has seconds to come, which other tests' load could use up.
 	d := &Daemon{opt: Options{PageOpen: time.Hour}, lastPage: time.Now(), started: time.Now(),
 		pushing: map[string]bool{}, quit: make(chan struct{})}
 	src := pageSource{d}
@@ -139,6 +142,7 @@ func TestPageAsksForRestart(t *testing.T) {
 // A daemon restarting onto an update leaves the page's address and token to the next one, which
 // serves the page there, so the open tab reconnects (#240), if it has the page's socket (#255).
 func TestPageHandoff(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, ok := takePageHandoff(dir); ok {
 		t.Fatal("handoff from nowhere")
@@ -181,6 +185,8 @@ func pageDaemon(tok string) *Daemon {
 // The page's socket outlives its listener while the daemon holds it, so a restart can hand it on
 // with the port never free (#255).
 func TestPageSocketHeld(t *testing.T) {
+	// Not parallel: it binds a port by its number after letting it go, and another test could be
+	// given that port in between.
 	ln, keep, err := pageDaemon("new").listenPage(nil, pageHandoff{}, false)
 	if err != nil {
 		t.Fatal(err)
@@ -217,6 +223,8 @@ func TestPageSocketHeld(t *testing.T) {
 // closed, and the page is bound afresh and keeps the new token. The fresh port may be the same
 // number, which the system is free to hand out again once the inherited socket is closed.
 func TestPageSocketNotUsedWithoutItsHandoff(t *testing.T) {
+	// Not parallel: it binds a port by its number after letting it go, and another test could be
+	// given that port in between.
 	for _, tc := range []struct {
 		name   string
 		h      pageHandoff

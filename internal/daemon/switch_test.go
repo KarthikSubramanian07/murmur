@@ -112,6 +112,7 @@ const (
 // follows: it shows another name to everyone, notices for B reach it, and a /resume back to A
 // brings A's name back, with nothing but presence telling the others.
 func TestSwitchFollowsTheHooksClaudeID(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	sender, _ := a.session("aaaaaa", "claude-sender")
@@ -155,6 +156,7 @@ func TestSwitchFollowsTheHooksClaudeID(t *testing.T) {
 // a name that is never used again; the session then follows to the conversation that matters, which
 // is a new one (a new name, as #20 assigns) or one named in an earlier run, whose name it gets back.
 func TestSwitchAfterAThrowawayStart(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
 
@@ -186,6 +188,7 @@ func TestSwitchAfterAThrowawayStart(t *testing.T) {
 // found by its Claude ID, whatever PID a hook has, and never moved. Taken from the issue9-haiku
 // build's TestHookWithNoMatchMovesNothing, with the server's half added.
 func TestWithoutPIDsNothingMoves(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newDevice(t, remote)
 	old, _, _ := b.sessionPID("bbbbbb", "claude-old-server", 0)
@@ -217,6 +220,7 @@ func TestWithoutPIDsNothingMoves(t *testing.T) {
 // A hook's ID and PID that match no session change nothing, and a PID never moves a session that
 // belongs to another process.
 func TestSwitchNeverTakesAnotherSession(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	sender, _ := a.session("aaaaaa", "claude-sender")
@@ -264,6 +268,7 @@ func TestSwitchNeverTakesAnotherSession(t *testing.T) {
 // its environment still has. The session keeps the new ID and its name, which the reply says so the
 // server can use it from then on; a server of another process has no such claim and is taken as it says.
 func TestReconnectAfterASwitchKeepsTheLiveID(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newTimedDevice(t, remote, 10*time.Second, 0)
 	bob, conn, _ := b.sessionPID("bbbbbb", "claude-a", procP)
@@ -305,6 +310,7 @@ func TestReconnectAfterASwitchKeepsTheLiveID(t *testing.T) {
 // ID still in its environment. The daemon's ID for a session of the same process stands, though no
 // hook has spoken since the restart.
 func TestStaleTakeoverAfterADaemonRestartKeepsTheLiveID(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newTimedDevice(t, remote, 10*time.Second, 0)
 	bob, _, _ := b.sessionPID("bbbbbb", "claude-a", procP)
@@ -332,6 +338,7 @@ func TestStaleTakeoverAfterADaemonRestartKeepsTheLiveID(t *testing.T) {
 // make: both move to the conversation the hook reports, and since a name is an address the two do
 // not share one.
 func TestTwoServersInOneProcessSwitchTogether(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	first, _, _ := b.sessionPID("bbbbbb", "claude-a", procP)
@@ -360,6 +367,7 @@ func TestTwoServersInOneProcessSwitchTogether(t *testing.T) {
 // which is the same session with the same inbox, and the sender is told it is called something
 // else now. A send to the new name has no such note.
 func TestSendToAnOldNameReachesTheSession(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	sender, _ := a.session("aaaaaa", "claude-sender")
@@ -395,6 +403,7 @@ func TestSendToAnOldNameReachesTheSession(t *testing.T) {
 // the registry has the name down for. When that session stops too, a send by name must not go to
 // the first session's inbox, which is dead; it goes to the one that holds the name now.
 func TestNameOfAResumedConversationFindsTheSessionThatHoldsIt(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
@@ -436,6 +445,7 @@ func TestNameOfAResumedConversationFindsTheSessionThatHoldsIt(t *testing.T) {
 // conversation's name, and a message for the session the registry has it down for (its address, or
 // its name once the holder has gone) is the holder's.
 func TestMessageForARetiredIDGoesToTheHolder(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
@@ -469,6 +479,7 @@ func TestMessageForARetiredIDGoesToTheHolder(t *testing.T) {
 // session opened on something else follows a hook to X. Whichever takes X's name takes what was
 // kept for it.
 func TestTheSessionThatTakesANameTakesWhatWasKeptForIt(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
@@ -519,6 +530,7 @@ func TestTheSessionThatTakesANameTakesWhatWasKeptForIt(t *testing.T) {
 // whose inbox the next session to take X takes, and not to the first, which keeps what it has for
 // Y. (From another device the message carries only the first's address, and stays there.)
 func TestSendToANameHereGoesToItsLastHolder(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
 
@@ -556,6 +568,7 @@ func TestSendToANameHereGoesToItsLastHolder(t *testing.T) {
 // B takes A's key and name under another ID, B drops, and A's server comes back: A holds the name
 // again, so once B stops, a message for B is A's.
 func TestTakeoverInTheGraceHoldsTheNameAgain(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newTimedDevice(t, remote, 10*time.Second, 0)
 	dropped := func(what string) {
@@ -619,6 +632,7 @@ func (d *device) resumedAs(id, claude string, pid int) []string {
 // inbox: the second, the last to hold X, is called Y now, and the third holds Y. The next session to
 // take X takes both messages.
 func TestSendToANameIsForwardedOnceFromAnyDevice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
@@ -651,6 +665,7 @@ func TestSendToANameIsForwardedOnceFromAnyDevice(t *testing.T) {
 // now restarts its server in its grace: taking Y again, it takes what was kept for Y, and nothing
 // sent for X may be among it. That waits for the next session to take X.
 func TestTakingANameAgainTakesNothingForAnother(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newTimedDevice(t, remote, 5*time.Second, 0)
 	first, second, nameX, nameY, conn2 := movedOn(t, b)
@@ -682,6 +697,7 @@ func TestTakingANameAgainTakesNothingForAnother(t *testing.T) {
 // from this device or another, is not its. It waits in X's first session's kept inbox, for the next
 // session to take X.
 func TestSendToANameSkipsARunningHolderThatMovedOn(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
@@ -707,6 +723,7 @@ func TestSendToANameSkipsARunningHolderThatMovedOn(t *testing.T) {
 // A send to X here waits for X, not with the holder, whose kept inbox goes to the next session to
 // take Y.
 func TestSendToANameSkipsAStoppedHolderThatMovedOn(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
 	_, second, nameX, nameY, conn2 := movedOn(t, b)
@@ -766,6 +783,7 @@ func TestHookRunDrivesASwitch(t *testing.T) {
 // hooks are the session's, for what it commits, but the session doesn't follow them back: it keeps
 // the new conversation's name, and the do-not-disturb that conversation set.
 func TestASubagentsOldClaudeIDMovesNothing(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newDevice(t, remote)
 	bob, _, _ := b.sessionPID("bbbbbb", "claude-a", procP)

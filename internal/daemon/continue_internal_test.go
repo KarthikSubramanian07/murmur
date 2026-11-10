@@ -13,6 +13,7 @@ import (
 // ContinueHold, outside T3: its answer may have been lost, and the agent stopped. A hook of the
 // session's in that time confirms it.
 func TestALostContinuationLapses(t *testing.T) {
+	t.Parallel()
 	d := &Daemon{opt: Options{ContinueHold: time.Minute}, dir: t.TempDir(), log: log.New(io.Discard, "", 0), device: "here-0001", started: time.Now(),
 		sessions: map[string]*session{}, threadRead: map[threadKey]time.Time{},
 		st: state{Inbox: map[string][]*inMsg{}}}
@@ -42,6 +43,7 @@ func TestALostContinuationLapses(t *testing.T) {
 // A lapse ends the turn only of a session outside T3, by its route: a T3 session whose thread
 // hasn't been read (the reads failing) keeps its turn, which the database ends once a read works.
 func TestALapseLeavesATurnInT3ToTheDatabase(t *testing.T) {
+	t.Parallel()
 	d := &Daemon{opt: Options{ContinueHold: time.Minute}, dir: t.TempDir(), log: log.New(io.Discard, "", 0), device: "here-0001",
 		started: time.Now(), sessions: map[string]*session{}, threadRead: map[threadKey]time.Time{},
 		st: state{Inbox: map[string][]*inMsg{}}, pushKick: make(chan struct{}, 1)}

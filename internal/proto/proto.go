@@ -5,6 +5,9 @@
 package proto
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/tags"
@@ -33,6 +36,9 @@ const (
 	// and didn't read keeps the turn going, where the hook can do that (Continues), and the session
 	// is idle otherwise (#202).
 	OpTurnEnd = "turnend"
+	// OpPageKey asks for a one-time key to the daemon's page, which another clone's daemon gives
+	// its own page so the tab can move to this one's (#348).
+	OpPageKey = "pagekey"
 )
 
 // Protocol is the version of this protocol that the daemon speaks, reported in its ping reply. A
@@ -46,15 +52,38 @@ const (
 //	   reports and the Codex thread ID in the route (#66)
 //	3: OpTurnEnd, OpNotices's Unread and Subagent: a session the hook runs in gets notices while it
 //	   is at work, and turns only when it isn't (#202)
-//	4: OpNotices's Delivered: a busy session may be given its messages whole by the hook (#204)
-//	5: OpTurnEnd's Continues and Delivered: the Stop hook keeps the turn going with the messages
+//	4: OpNotices's Read (on the wire, "delivered"): a busy session may be given its messages whole by the hook (#204)
+//	5: OpTurnEnd's Continues and Read: the Stop hook keeps the turn going with the messages
 //	   that would have gone in as a turn after it (#202)
 //	6: session tags: OpTags, and who's search by tags (#198)
 //	7: the page's own token, pageToken in daemon.json, so that an upgraded `mur ui` replaces a
 //	   daemon whose page still takes the sessions' token (#42)
 //	8: a person's account on the page (#242): an upgraded `mur ui` replaces a daemon whose page
 //	   can't send
-const Protocol = 8
+//	9: the hook's Agent and Ancestors, for Codex's and Grok's hooks, and SessionView's HookOff (#225)
+//	10: OpPageKey, so another clone's page can switch to this one's (#348)
+//	11: the hook's Native: Pi's extension runs the hook, which names its session by Pi's own ID
+//	    (#205)
+//	12: the daemon's proof (#371): a ping that carries a nonce is answered with Proof, before any
+//	    token is checked, and the connection then takes one more request. A client sends nothing
+//	    else to a listener until it has proved itself, so a daemon of 11 or less is replaced where
+//	    the client may, and otherwise trusted only while it holds the clone's lock.
+const Protocol = 12
+
+// ProofProtocol is the first protocol whose daemon proves itself (Proof).
+const ProofProtocol = 12
+
+// Proof is what the daemon whose token is token, listening at addr, answers to a ping carrying
+// nonce: an HMAC of the address and the nonce, keyed by the token. Only that daemon and the clients
+// that read its daemon.json have the token, and the client's nonce is fresh, so a reply that carries
+// it comes from the daemon: not from another user's process that took the port of a daemon that died
+// (#371), which would otherwise be sent the session's requests and could answer them. The address is
+// in it so that a proof made at one listener can't be passed off at another.
+func Proof(token, addr, nonce string) string {
+	mac := hmac.New(sha256.New, []byte(token))
+	mac.Write([]byte("daemon proof v1\x00" + addr + "\x00" + nonce))
+	return hex.EncodeToString(mac.Sum(nil))
+}
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -65,6 +94,10 @@ const (
 	GoodbyeTimeout = 15 * time.Second
 	ShutdownMax    = DrainTimeout + GoodbyeTimeout
 )
+
+// ErrRestarting is OpPageKey's refusal from a daemon that has begun restarting onto an update: the
+// caller asks the next daemon.
+const ErrRestarting = "restarting onto an update; ask the next daemon"
 
 // CLISession is the session ID of requests from the command line. It is always registered on its
 // device, so a human can send and read an inbox without an agent.
@@ -90,6 +123,9 @@ type Request struct {
 	Token   string `json:"token"`
 	Op      string `json:"op"`
 	Session string `json:"session,omitempty"` // the caller; "" is the CLI
+	// Nonce, on a ping, asks the daemon for its Proof of it. Such a ping carries no token: it is
+	// what the client sends before it knows what it is talking to.
+	Nonce string `json:"nonce,omitempty"`
 
 	Hello *Hello `json:"hello,omitempty"`
 
@@ -101,6 +137,10 @@ type Request struct {
 
 	// ClaudeSession finds the session for the hook, which only knows Claude Code's ID for it.
 	ClaudeSession string `json:"claudeSession,omitempty"`
+	// Native finds the session for a hook of another agent instead, by the client's own ID for its
+	// conversation, the one its MCP server registered with (Hello's Native): for Pi, the session's
+	// file, which Murmur's Pi extension gives the hook (#205). ClaudeSession is empty then.
+	Native string `json:"native,omitempty"`
 	// ClientPID is the hook's CLAUDE_PID, the Claude Code process it runs under: with
 	// ClaudeSession, it tells the daemon which sessions that process's conversation has moved to
 	// a new Claude ID. 0 if the hook has none.
@@ -113,13 +153,21 @@ type Request struct {
 	// so OpNotices answers with nothing (#188).
 	Subagent bool `json:"subagent,omitempty"`
 	// Continues says, on OpTurnEnd, that the hook can keep the turn going with messages (Claude
-	// Code's Stop hook, by blocking the stop): the reply's Delivered is what it should give.
+	// Code's Stop hook, by blocking the stop): the reply's Read is what it should give.
 	Continues bool `json:"continues,omitempty"`
-	// Whole says, on OpNotices, that the hook prints the reply's Delivered. A hook from before it
+	// Whole says, on OpNotices, that the hook prints the reply's Read. A hook from before it
 	// prints only Messages, so the daemon gives it a message's subject, and keeps the message in the
 	// inbox, even where the page says to give it whole (#229). An older daemon ignores it, and gives
 	// messages whole to a hook that sends it, which prints them: no new Protocol number.
 	Whole bool `json:"whole,omitempty"`
+	// Agent is, on a hook's request, the agent it runs for where that isn't Claude Code: "codex" or
+	// "grok", from the hook's command line (#225). ClaudeSession then holds that agent's own ID for the
+	// conversation (Codex's thread ID, Grok's session ID), which its MCP server reports as the route's
+	// Native. Ancestors is the hook's process and those above it, nearest first: such an agent gives a
+	// hook no variable naming its process, as Claude Code does with CLAUDE_PID, and the agent that ran
+	// the hook is the parent of its MCP server too.
+	Agent     string `json:"agent,omitempty"`
+	Ancestors []int  `json:"ancestors,omitempty"`
 
 	// Add and Remove are the tags OpTags adds to the caller and takes from it. Tags is what OpWho
 	// searches by: a session is listed when it has every tag named, and none named after a dash
@@ -166,7 +214,8 @@ type Route struct {
 	Native string `json:"native,omitempty"`
 	// CodexHome is the Codex state directory of that client (CODEX_HOME, else ~/.codex), as its MCP
 	// server sees it: one daemon serves every client on the device, and they may not share a
-	// Codex home. Empty takes the daemon's own.
+	// Codex home. A server names one, ~/.codex where it has no CODEX_HOME; only a server from before
+	// #88 leaves it empty, and the daemon then takes its own CODEX_HOME, else ~/.codex.
 	CodexHome string `json:"codexHome,omitempty"`
 }
 
@@ -191,8 +240,10 @@ type Response struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
 	// Protocol is the daemon's protocol number (Protocol), in the reply to a ping.
-	Protocol int    `json:"protocol,omitempty"`
-	Self     string `json:"self,omitempty"` // the caller's address
+	Protocol int `json:"protocol,omitempty"`
+	// Proof is the reply to a ping's Nonce: Proof(token, addr, nonce).
+	Proof string `json:"proof,omitempty"`
+	Self  string `json:"self,omitempty"` // the caller's address
 	// Name is the caller's name, and NamePending says it has none yet: the session works, and is
 	// addressed as Self until the name lands.
 	Name        string `json:"name,omitempty"`
@@ -210,11 +261,13 @@ type Response struct {
 	// Unread is, in an OpNotices reply, how many messages the session has unread, set when there
 	// are new ones to tell or the number changed since the hook last said it; 0 otherwise.
 	Unread int `json:"unread,omitempty"`
-	// Delivered is, in an OpNotices reply, the new messages the page's setting gives the session
-	// whole while it is busy (#204), and in an OpTurnEnd reply, the messages that keep its turn
-	// going (#202), with their bodies. The hook shows each as its turn would read; they are
-	// delivered, and gone from the inbox.
-	Delivered []MessageView `json:"delivered,omitempty"`
+	// Read is, in an OpNotices reply, the new messages the page's setting gives the session whole
+	// while it is busy (#204), and in an OpTurnEnd reply, the messages that keep its turn going
+	// (#202), with their bodies. The hook shows each as its turn would read; they are read, and
+	// gone from the inbox. Its JSON name is "delivered", the word for this before #325 changed what
+	// delivered means (2026-11-09): a hook installed earlier keeps running until its user runs
+	// `mur join` again, and reads the field by that name.
+	Read []MessageView `json:"delivered,omitempty"`
 
 	Lookup *SessionDetail `json:"lookup,omitempty"`
 
@@ -222,6 +275,9 @@ type Response struct {
 	// caller's tags after an OpTags.
 	Filter string     `json:"filter,omitempty"`
 	Tags   []tags.Tag `json:"tags,omitempty"`
+
+	// PageKey is OpPageKey's key: the page trades it once, within a minute, for its token.
+	PageKey string `json:"pageKey,omitempty"`
 }
 
 // Device is one device as `who` shows it.
@@ -253,6 +309,10 @@ type SessionView struct {
 	You        bool      `json:"you,omitempty"`
 	// Tags is the session's tags, in order of name (#198).
 	Tags []tags.Tag `json:"tags,omitempty"`
+	// HookOff says Murmur's hook doesn't run for the session: it has called a tool of Murmur's, and
+	// the hook, which runs after every tool call, never reported (#225). It isn't told of messages
+	// while it works.
+	HookOff bool `json:"hookOff,omitempty"`
 }
 
 // SessionDetail is everything the daemon knows about one session, as `lookup` shows it. Where a
@@ -317,15 +377,21 @@ type MessageView struct {
 	FromAgent  string `json:"fromAgent,omitempty"`
 	FromBranch string `json:"fromBranch,omitempty"`
 	// FromOwner is the sender's person: the git user name on its device, where known.
-	FromOwner string    `json:"fromOwner,omitempty"`
-	To        string    `json:"to"` // the address the message was sent to, whatever it was sent by
-	ToName    string    `json:"toName,omitempty"`
-	Subject   string    `json:"subject"`
-	Body      string    `json:"body,omitempty"`
-	At        time.Time `json:"at"`
+	FromOwner string `json:"fromOwner,omitempty"`
+	// FromDevice is the sender's device, set when another device's live presence says the sender's
+	// name too, so a turn says which one sent it; a name says nothing of who is behind it.
+	FromDevice string    `json:"fromDevice,omitempty"`
+	To         string    `json:"to"` // the address the message was sent to, whatever it was sent by
+	ToName     string    `json:"toName,omitempty"`
+	Subject    string    `json:"subject"`
+	Body       string    `json:"body,omitempty"`
+	At         time.Time `json:"at"`
 	// Introduced says the session this goes to as a turn has had a turn from the same sender before,
 	// so the turn needn't say again what agent the sender is and whose machine it is on (#216).
 	Introduced bool `json:"introduced,omitempty"`
+	// Told is when the hook's notice told the session of this message, for one given whole after:
+	// its turn says so (#355). Zero for a message no notice told of.
+	Told time.Time `json:"told,omitzero"`
 }
 
 // EventView is one line of `log`.

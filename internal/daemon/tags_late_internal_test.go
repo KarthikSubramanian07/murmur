@@ -12,6 +12,7 @@ import (
 // be fetched, and a human on this device's page then puts it back. When the fetch lands, the older
 // change doesn't take it off again.
 func TestATagChangeReadLateLeavesANewerOne(t *testing.T) {
+	t.Parallel()
 	r := newGiveUpRig(t)
 	r.bobKnown()
 	r.bobHas("do-not-disturb")
@@ -40,6 +41,7 @@ func TestATagChangeReadLateLeavesANewerOne(t *testing.T) {
 // clock since corrected. It can't make the page ignore a click, and a click on another tag doesn't
 // take on its date, which would hold off every change from another device to that tag until then.
 func TestAMarkFromTheFutureHoldsNothingOff(t *testing.T) {
+	t.Parallel()
 	r := newGiveUpRig(t)
 	r.bobKnown()
 	r.bobHas("do-not-disturb")
@@ -80,6 +82,7 @@ func TestAMarkFromTheFutureHoldsNothingOff(t *testing.T) {
 // for good. Otherwise the mark goes on refusing what was sent over a minute before it is read, since
 // its date is capped afresh, at a later now, each time.
 func TestARefusedChangeStillCapsAMarkFromTheFuture(t *testing.T) {
+	t.Parallel()
 	r := newGiveUpRig(t)
 	r.bobKnown()
 	r.bobHas("do-not-disturb")
@@ -101,6 +104,7 @@ func TestARefusedChangeStillCapsAMarkFromTheFuture(t *testing.T) {
 // A tags event dated in the future, by a clock ahead or a forged commit, is taken as sent now, so it
 // can't hold off every later change until that time comes.
 func TestATagChangeFromTheFutureCountsAsNow(t *testing.T) {
+	t.Parallel()
 	r := newGiveUpRig(t)
 	r.bobKnown()
 	r.bobHas("do-not-disturb")

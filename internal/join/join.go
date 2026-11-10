@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/publicrepo"
 )
 
@@ -24,6 +26,8 @@ type Env struct {
 	ClaudeDir  string // Claude Code's config directory, where its settings.json is
 	ClaudeJSON string // the file Claude Code keeps user-scope MCP servers in
 	CodexHome  string // Codex's home, where its config.toml is
+	// CodexHomeDefault says CODEX_HOME is unset, so CodexHome is ~/.codex.
+	CodexHomeDefault bool
 	// The other agents' configuration directories, each "" for an agent join leaves alone (a test
 	// that isn't about it).
 	OpenCodeDir string // OpenCode's, with its opencode.json
@@ -37,6 +41,9 @@ type Env struct {
 	// Version is mur's, for reporting a public repo (internal/publicrepo); "", as tests leave it,
 	// reports nothing.
 	Version string
+	// Progress is where a leave says it is still waiting for the daemon to stop, before the report;
+	// nil, as most tests leave it, says nothing.
+	Progress io.Writer
 }
 
 // EnvFromProcess is the environment of the running process.
@@ -59,7 +66,7 @@ func EnvFromProcess() (Env, error) {
 		e.ClaudeDir, e.ClaudeJSON = filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json")
 	}
 	if e.CodexHome = os.Getenv("CODEX_HOME"); e.CodexHome == "" {
-		e.CodexHome = filepath.Join(home, ".codex")
+		e.CodexHome, e.CodexHomeDefault = filepath.Join(home, ".codex"), true
 	}
 	// OpenCode and Muse follow XDG on every OS: ~/.config, not %APPDATA%, on Windows too.
 	config := os.Getenv("XDG_CONFIG_HOME")
@@ -67,13 +74,7 @@ func EnvFromProcess() (Env, error) {
 		config = filepath.Join(home, ".config")
 	}
 	e.OpenCodeDir, e.MuseDir = filepath.Join(config, "opencode"), filepath.Join(config, "muse")
-	// Pi reads a leading ~ in PI_CODING_AGENT_DIR as the home directory (Codex's review of #136).
-	if e.PiDir = os.Getenv("PI_CODING_AGENT_DIR"); strings.HasPrefix(e.PiDir, "~") {
-		e.PiDir = expandHome(e.PiDir, home)
-	}
-	if e.PiDir == "" {
-		e.PiDir = filepath.Join(home, ".pi", "agent")
-	}
+	e.PiDir = piDir(os.Getenv, home)
 	if e.GrokHome = os.Getenv("GROK_HOME"); e.GrokHome == "" {
 		e.GrokHome = filepath.Join(home, ".grok")
 	}
@@ -183,7 +184,8 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 
 	// Per repo: the hook that shows incoming messages, in every working tree of the clone.
-	trees, err := installHooks(ctx, p, e.Exe)
+	trees, hookNotes, err := installHooks(ctx, p, e.Exe)
+	r.Notes = append(r.Notes, hookNotes...)
 	for _, t := range trees {
 		r.Did = append(r.Did, "Installed the hook in "+filepath.Join(t, filepath.FromSlash(hookFile))+" (not committed)")
 	}
@@ -197,6 +199,16 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		problem("recording that you joined", consentErr)
 	} else if news {
 		r.Did = append(r.Did, "Recorded that you joined "+brand.Product+" in this clone ("+p.consentPath()+")")
+	}
+	// On the record of this machine's clones, for the page's repo picker (#348). The daemon adds
+	// its clone too as it starts; this is for one that doesn't start.
+	if consentErr == nil {
+		if dir, err := clones.DefaultDir(); err == nil {
+			err = clones.Add(dir, clones.Clone{GitDir: p.GitDir, Name: clones.NameIn(ctx, p.GitDir)})
+			if err != nil {
+				r.Notes = append(r.Notes, "This clone isn't on the record of this machine's clones, so another repo's page can't switch to it until its daemon starts: "+err.Error())
+			}
+		}
 	}
 	// A daemon left running by an older mur answers, but can't do what this one does (hand a message
 	// over as a turn, for one): it is replaced, which Connect does for a client that may start daemons.
@@ -260,20 +272,34 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	} else if had {
 		r.Did = append(r.Did, "Removed the record that you joined "+brand.Product+" in this clone")
 	}
-	trees, err := removeHooks(ctx, p)
+	if dir, err := clones.DefaultDir(); err == nil {
+		if err := clones.Remove(dir, p.GitDir); err != nil {
+			problem("taking this clone off the record of this machine's clones", err)
+		}
+	}
+	trees, notes, err := removeHooks(ctx, p)
+	r.Notes = append(r.Notes, notes...)
 	for _, t := range trees {
 		r.Did = append(r.Did, "Removed the hook from "+filepath.Join(t, filepath.FromSlash(hookFile)))
 	}
 	if err != nil {
 		problem("hook", err)
 	}
+	// A daemon asked to stop holds the clone's lock until it has finished its work and said goodbye,
+	// which may take client.StopWait, and so may one still starting, which sees the consent gone
+	// within a second and stops the same way. The lock is waited for that long from when the stop
+	// was asked, so a daemon only taking its time isn't reported as a problem (#91). A long wait is
+	// said out loud, so that the leave doesn't sit silent for half a minute.
+	end := time.Now().Add(leaveWait)
+	waited := sayIfSlow(e.Progress, leaveQuiet, fmt.Sprintf("Waiting for this clone's daemon to stop: it finishes what it is doing first, which can take up to %d seconds.\n", int(leaveWait/time.Second)))
 	stopped, stopErr := client.Stop(ctx, p.GitDir)
 	if stopErr != nil {
 		problem("stopping the daemon", stopErr)
 	}
 	// A daemon that is still starting has no daemon.json to stop; it sees the consent gone and exits
 	// by itself, which is waited for here so a leave doesn't return while one is about to publish.
-	starting, err := client.WaitGone(ctx, p.GitDir, 20*time.Second)
+	starting, err := waitGone(ctx, p.GitDir, time.Until(end))
+	waited()
 	if err != nil {
 		problem("waiting for the daemon to exit", fmt.Errorf("%w; it has no consent left and refuses requests, and stops by itself", err))
 	}
@@ -296,6 +322,36 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 		return r, errors.New("not everything worked; see above")
 	}
 	return r, nil
+}
+
+// How long a leave waits for the daemon to let go of the clone, how long it waits before saying so,
+// and the wait itself. Variables, for the tests: the wait's, so that a test acts once the leave is
+// waiting rather than after a guessed time, which the git commands before it can outlast.
+var (
+	leaveWait  = client.StopWait
+	leaveQuiet = 5 * time.Second
+	waitGone   = client.WaitGone
+)
+
+// sayIfSlow writes line to w unless the function it returns is called within d. That function
+// returns only once nothing more will be written. A nil w says nothing.
+func sayIfSlow(w io.Writer, d time.Duration, line string) func() {
+	if w == nil {
+		return func() {}
+	}
+	done, said := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(said)
+		select {
+		case <-done:
+		case <-time.After(d):
+			io.WriteString(w, line)
+		}
+	}()
+	return func() {
+		close(done)
+		<-said
+	}
 }
 
 // othersAdvice is what to tell about the agents other than Claude Code and Codex that Murmur was
