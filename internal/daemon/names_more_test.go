@@ -149,6 +149,7 @@ func noNameTwice(t *testing.T, reg registry) {
 // twice. A loser that didn't take in what it fetched before trying again would take it a second
 // time, on top of the winner's commit.
 func TestThreeDevicesRaceForOneName(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	x := draws(t, 21, 1)[0]
 	g := newGate(3)
@@ -199,6 +200,8 @@ func TestThreeDevicesRaceForOneName(t *testing.T) {
 // the session stopped and started again, under another ID with the same client session, and
 // across a daemon restart. None of it takes a second name from the registry.
 func TestNameFollowsTheKeyThroughEveryReturn(t *testing.T) {
+	// Not parallel: the reconnect inside the 2-second grace has to come before the grace ends,
+	// and other tests' load could make it late.
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.grace, d.keep = 2*time.Second, time.Hour })
 	b := newDevice(t, remote)
@@ -252,6 +255,7 @@ func TestNameFollowsTheKeyThroughEveryReturn(t *testing.T) {
 // Different keys get different names, and so do two MCP servers live at once in one client
 // session: they share a key but not an address. Each keeps its own name when it reconnects.
 func TestTwoServersOfOneSessionDoNotShareAName(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	const key = "claude-shared-0001"
@@ -307,6 +311,7 @@ func TestTwoServersOfOneSessionDoNotShareAName(t *testing.T) {
 // the daemon that read them writes a root commit holding every name, and a daemon that joins later
 // and would pick them first learns they are taken.
 func TestRewoundRegistryFreesNoName(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.names, d.grace = seededNames(31), 300*time.Millisecond })
 	var taken []string
@@ -318,7 +323,7 @@ func TestRewoundRegistryFreesNoName(t *testing.T) {
 	}
 	// The second session stops, so its name lives on only in history.
 	conns[1].Close()
-	eventually(t, "the second session stopped", func() bool { return !a.seesSession(a.self() + "/aaaaa2") })
+	eventually(t, "the second session stopped", func() bool { return !a.listsSession(a.self() + "/aaaaa2") })
 
 	work, shas := registryCommits(t, remote)
 	if len(shas) != 3 {
@@ -339,6 +344,7 @@ func TestRewoundRegistryFreesNoName(t *testing.T) {
 // damaged history for the repair it was waiting to make. Otherwise a name it saw is gone from the
 // registry for good, and a daemon joining later takes it.
 func TestRepairSurvivesACommitBeforeIt(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.names, d.grace = seededNames(41), 300*time.Millisecond })
 	first, _ := a.session("aaaaa1", "claude-first")
@@ -346,7 +352,7 @@ func TestRepairSurvivesACommitBeforeIt(t *testing.T) {
 	second, conn := a.session("aaaaa2", "claude-second")
 	n2 := a.named(second)
 	conn.Close()
-	eventually(t, "the second session stopped", func() bool { return !a.seesSession(second) })
+	eventually(t, "the second session stopped", func() bool { return !a.listsSession(second) })
 
 	a.pushOffline(remote, true)
 	work, shas := registryCommits(t, remote)
@@ -383,6 +389,7 @@ func TestRepairSurvivesACommitBeforeIt(t *testing.T) {
 // one seen only in another device's presence: the next write is a root commit holding every name,
 // and a daemon that joins once that presence is gone learns them from it.
 func TestGarbageRegistryTip(t *testing.T) {
+	t.Parallel()
 	garbage := map[string]func(t *testing.T, remote string){
 		"blob": func(t *testing.T, remote string) {
 			work, _ := junkTree(t)
@@ -413,7 +420,7 @@ func TestGarbageRegistryTip(t *testing.T) {
 
 			work, _ := junkTree(t)
 			git(t, work, "push", "-q", remote, ":refs/murmur/presence/peer-0001")
-			eventually(t, "the peer gone from a", func() bool { return !a.seesSession("peer-0001/x") })
+			eventually(t, "the peer gone from a", func() bool { return !a.listsSession("peer-0001/x") })
 			b := newDeviceWith(t, remote, func(d *device) {
 				d.names = offering(seededNames(51), p) // would pick the peer's, then a's
 			})
@@ -430,6 +437,7 @@ func TestGarbageRegistryTip(t *testing.T) {
 // while that peer couldn't push), is used: a daemon joining then, whose source keeps offering that
 // name, takes another, and writes it into the registry it rebuilds.
 func TestNameOnlyInPresenceIsUsed(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	pick := draws(t, 61, 1)[0]
 	b := newDeviceWith(t, remote, func(d *device) { d.names = seededNames(61) })
@@ -466,6 +474,7 @@ func TestNameOnlyInPresenceIsUsed(t *testing.T) {
 // back, with no hello to prompt it: not only when a retry delay that grew while the remote was out
 // of reach runs out.
 func TestPendingNameLandsSoonAfterTheRemoteIsBack(t *testing.T) {
+	// Not parallel: it times how soon the name lands, which other tests' load would stretch.
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.retry = 15 * time.Second })
 	b := newDevice(t, remote)
@@ -497,6 +506,7 @@ func TestPendingNameLandsSoonAfterTheRemoteIsBack(t *testing.T) {
 // the session came back under another ID. Every other form of address still works, an unknown name
 // is an error that names it, and on the bus a message is only ever addressed.
 func TestSendByNameAcrossDevices(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	b := newDevice(t, remote)
@@ -507,9 +517,9 @@ func TestSendByNameAcrossDevices(t *testing.T) {
 	cleo, cleoConn := c.session("cccccc", "claude-cleo")
 	carl, _ := c.session("cccccd", "claude-carl")
 	_, annaN, bobN, cleoN, carlN := a.named(alice), a.named(anna), b.named(bob), c.named(cleo), c.named(carl)
-	eventually(t, "a to show every name", func() bool {
-		return a.nameOf(bob) == bobN && a.nameOf(cleo) == cleoN && a.nameOf(carl) == carlN
-	})
+	a.nameIs(bob, bobN)
+	a.nameIs(cleo, cleoN)
+	a.nameIs(carl, carlN)
 
 	send := func(to, subject string) proto.Response {
 		t.Helper()
@@ -559,7 +569,7 @@ func TestSendByNameAcrossDevices(t *testing.T) {
 	// Cleo stops and comes back under another ID; her name follows her there, and so does what she
 	// hadn't read (#37): the device's and everyone's messages from above.
 	cleoConn.Close()
-	eventually(t, "cleo stopped", func() bool { return !a.seesSession(cleo) })
+	eventually(t, "cleo stopped", func() bool { return !a.listsSession(cleo) })
 	cleo2, _ := c.session("ccccce", "claude-cleo")
 	if got := c.nameOf(cleo2); got != cleoN {
 		t.Fatalf("cleo is back as %q, was %q", got, cleoN)
@@ -594,6 +604,7 @@ func sorted(s []string) []string {
 // or any object a fetch of refs/murmur/* brings, whatever the session does, including a second
 // server in the same client session, a stop and return, a daemon restart and a registry repair.
 func TestClientSessionIDIsNeverOnTheBus(t *testing.T) {
+	t.Parallel()
 	const secret = "zq-secret-claude-session-0000-1111"
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.grace, d.keep = 300*time.Millisecond, time.Hour })
@@ -636,6 +647,7 @@ func TestClientSessionIDIsNeverOnTheBus(t *testing.T) {
 // the name with it, and a peer sending to the name reaches the live session, not the one about to
 // stop, whose inbox nobody would read.
 func TestNameMovesToTheLiveSessionInTheGrace(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote) // the default grace, 60 s: the old session outlasts the test
 	b := newDevice(t, remote)
@@ -658,4 +670,27 @@ func TestNameMovesToTheLiveSessionInTheGrace(t *testing.T) {
 	if got := inboxOf(a, "aaaaab"); len(got) != 1 || got[0] != "by name" {
 		t.Fatalf("the live session's inbox: %q", got)
 	}
+}
+
+// A registry rewound while its daemon was stopped is repaired when it starts, even when that is the
+// first start since the daemon kept people's claims (#268), which reads the registry again from its
+// start: that read mustn't hide the damage.
+func TestAnUpgradedDaemonStillRepairsARewoundRegistry(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.names, d.grace = seededNames(53), 300*time.Millisecond })
+	var taken []string
+	for i := range 3 {
+		addr, _ := a.session("aaaaa"+string(rune('1'+i)), "claude-upgrade-"+string(rune('1'+i)))
+		taken = append(taken, a.named(addr))
+	}
+	a.stop()
+	work, shas := registryCommits(t, remote)
+	if len(shas) != 3 {
+		t.Fatalf("the registry has %d commits, want 3", len(shas))
+	}
+	git(t, work, "push", "-q", "--force", remote, shas[0]+":refs/murmur/names")
+	setState(t, a, "namesPeople", false) // as a daemon from before left it
+	a.start()
+	eventually(t, "a root snapshot of every name", func() bool { return tipIsSnapshot(t, remote, taken...) })
 }

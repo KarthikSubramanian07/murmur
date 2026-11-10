@@ -23,7 +23,7 @@ func TestDaemonWithAThreadToWakeStaysUpAndHandsOver(t *testing.T) {
 	bob, conn := b.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 	conn.Close()
-	eventually(t, "bob to stop", func() bool { return busLines(b, bob, "stopped") == 1 && !a.seesSession(bob) })
+	eventually(t, "bob to stop", func() bool { return busLines(b, bob, "stopped") == 1 && !a.listsSession(bob) })
 
 	holds(t, "the daemon up long after the idle time", 4*time.Second, func() bool { return !b.exited() })
 	a.send("aaaaaa", bob, "wake up", "someone wrote")
@@ -38,6 +38,7 @@ func TestDaemonWithAThreadToWakeStaysUpAndHandsOver(t *testing.T) {
 // session had no T3 route, which is the case for Claude Code outside T3, whose messaging socket
 // dies with the session.
 func TestDaemonWithNothingToWakeStillExits(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newDeviceWith(t, remote, func(d *device) { d.idle, d.grace, d.keep = time.Second, 300*time.Millisecond, time.Hour })
 	_, conn := b.session("bbbbbb", "")
@@ -65,6 +66,7 @@ func TestDaemonLeavesOnceTheThreadIsNoLongerKept(t *testing.T) {
 // A daemon with no session looks at the remote less often, and a session that comes makes it look
 // at once and at the usual rate. QuietPoll here is an hour, so a poll that happens is the session's.
 func TestPollSlowsWithoutASessionAndQuickensWhenOneComes(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	var out syncBuf
@@ -72,7 +74,7 @@ func TestPollSlowsWithoutASessionAndQuickensWhenOneComes(t *testing.T) {
 	eventually(t, "b to slow its poll", func() bool { return strings.Count(out.String(), "no session is live") == 1 })
 
 	carol, _ := a.session("cccccc", "") // appears after b's last look
-	holds(t, "b not looking at the remote", 2500*time.Millisecond, func() bool { return !b.seesSession(carol) })
+	holds(t, "b not looking at the remote", 2500*time.Millisecond, func() bool { return !b.listsSession(carol) })
 
 	_, conn := b.session("bbbbbb", "")
 	eventually(t, "b to see carol once it has a session", func() bool { return b.seesSession(carol) })

@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/join/jointest"
+	"github.com/a-Fig/murmur/internal/testgit"
 )
 
 // These tests run mur as a user would: a copy of the test binary named mur behaves as the mur
@@ -27,7 +29,15 @@ func TestMain(m *testing.M) {
 		main()
 		return
 	}
+	testgit.Isolate()
+	// Joins and daemons record their clones here, not in the real user's config directory.
+	record, err := os.MkdirTemp("", "murmur-clones-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv(clones.DirEnv, record)
 	code := m.Run()
+	os.RemoveAll(record)
 	if binDir != "" {
 		os.RemoveAll(binDir)
 	}
@@ -154,7 +164,7 @@ func (b *box) env() []string {
 		// Where T3 Code and the other agents keep their settings: join reads and writes those too.
 		"T3CODE_HOME": true, "PI_CODING_AGENT_DIR": true, "GROK_HOME": true,
 		// Which session ran the command, and where sessions are found (internal/here).
-		"CLAUDE_PID": true, brand.SessionsDirEnv: true}
+		"CLAUDE_PID": true, brand.SessionsDirEnv: true, clones.DirEnv: true}
 	var env []string
 	for _, kv := range os.Environ() {
 		if k, _, _ := strings.Cut(kv, "="); !drop[strings.ToUpper(k)] && !drop[k] {
@@ -165,6 +175,7 @@ func (b *box) env() []string {
 		"HOME="+b.home, "USERPROFILE="+b.home,
 		"CLAUDE_CONFIG_DIR="+b.claudeDir, "CODEX_HOME="+b.codexHome,
 		jointest.LogEnv+"="+b.log, brand.SessionsDirEnv+"="+filepath.Join(b.root, "sessions"),
+		clones.DirEnv+"="+filepath.Join(b.root, "clones"),
 		"PATH="+filepath.Dir(b.mur)+string(os.PathListSeparator)+os.Getenv("PATH"),
 		// init commits as the user, and this home has no git config to say who that is.
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",

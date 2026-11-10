@@ -76,6 +76,7 @@ func forgedMessage(from, to, subject string, at time.Time) bus.Event {
 // before the session stopped, to a session that isn't kept, or later than the inbox is kept, is
 // still skipped.
 func TestKeptInboxCatchesUpAfterALongOutage(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
 	bdev := b.self()
@@ -151,6 +152,7 @@ func TestKeptInboxCatchesUpAfterALongOutage(t *testing.T) {
 // A first start has no stopped sessions and queues nothing from the history on the bus, for a
 // session registering at once or later.
 func TestFirstStartStillSkipsAllHistory(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "history"})

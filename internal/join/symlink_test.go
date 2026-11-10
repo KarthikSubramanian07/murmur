@@ -9,12 +9,20 @@ import (
 	"testing"
 )
 
+// linkOrSkip makes a symbolic link, and skips the test where links can't be made: on Windows that
+// takes a privilege or Developer Mode. GitHub's runners can make them, Windows' included, and there
+// a failure fails the test rather than skip it: CI is where join's handling of links, nested ones
+// in .claude among them, is shown to hold on Windows, and a skip there would hide that it wasn't
+// (#371).
 func linkOrSkip(t *testing.T, target, link string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, link); err != nil {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatalf("making a symbolic link on CI: %v", err)
+		}
 		t.Skipf("no symbolic links here: %v", err)
 	}
 }
@@ -53,7 +61,7 @@ func TestHookFileThatIsALinkIsKeptThroughJoinAndLeave(t *testing.T) {
 	linkOrSkip(t, target, link)
 
 	exe := filepath.Join(t.TempDir(), "bin", "mur")
-	if _, err := installHooks(context.Background(), p, exe); err != nil {
+	if _, _, err := installHooks(context.Background(), p, exe); err != nil {
 		t.Fatal(err)
 	}
 	mustBeLink(t, link)
@@ -61,7 +69,7 @@ func TestHookFileThatIsALinkIsKeptThroughJoinAndLeave(t *testing.T) {
 		t.Errorf("the file the link points to has the hook on %v", events)
 	}
 
-	if _, err := removeHooks(context.Background(), p); err != nil {
+	if _, _, err := removeHooks(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
 	mustBeLink(t, link)
@@ -93,5 +101,11 @@ func TestRegisterCodexFollowsDotDotThroughALink(t *testing.T) {
 	}
 	if got := read(t, filepath.Join(sb.CodexHome, "settings.toml")); strings.Contains(got, "mcp_servers") {
 		t.Errorf("the file next to the link was written:\n%s", got)
+	}
+	// The hook's trust goes in the same file, once per hook, in the one spelling of the home Codex
+	// uses (CI's temporary directory on Windows has a short name, RUNNER~1).
+	got := read(t, filepath.Join(sb.root, "dotfiles", "settings.toml"))
+	if n := strings.Count(got, "[hooks.state."); n != 3 || !strings.Contains(got, codexKeyPath(filepath.Join(sb.CodexHome, "hooks.json"), true)+":stop:0:0") {
+		t.Errorf("%d trust entries:\n%s", n, got)
 	}
 }

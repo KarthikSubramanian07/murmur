@@ -170,6 +170,7 @@ func (d *device) worktreeSession(id, agent, cwd string) string {
 // The page shows this device and the others it knows, each with its sessions: a session here has
 // its worktree's folder, never a path, and one on another device has none.
 func TestPageStateShowsBothDevices(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 
@@ -263,6 +264,7 @@ func TestPageStateShowsBothDevices(t *testing.T) {
 // A device whose presence stops changing is shown as unreachable, as `who` shows it stale, and
 // its last-seen time stops with it.
 func TestPageStateMarksStaleDevice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	bob, _ := b.session("bbbbbb", "")
@@ -291,6 +293,7 @@ func TestPageStateMarksStaleDevice(t *testing.T) {
 // host. The daemon's own token, which sessions use, is not the page's (#42): the address reaches
 // the browser's history and extensions, and the daemon's token lets its holder send as this device.
 func TestPageNeedsTheToken(t *testing.T) {
+	t.Parallel()
 	d := newDevice(t, newRemote(t))
 	pg := d.page()
 	info := d.infoFile(t)
@@ -353,6 +356,7 @@ func (d *device) infoFile(t *testing.T) proto.Info {
 
 // The page serves loopback only, on a port of its own.
 func TestPageIsOnLoopbackOnItsOwnPort(t *testing.T) {
+	t.Parallel()
 	d := newDevice(t, newRemote(t))
 	info := d.infoFile(t)
 	host, port, err := net.SplitHostPort(info.Web)
@@ -370,6 +374,7 @@ func TestPageIsOnLoopbackOnItsOwnPort(t *testing.T) {
 // A page that can't be served costs the page and nothing else: the daemon runs, sessions work,
 // and the log says why.
 func TestPageNotServedDaemonRuns(t *testing.T) {
+	t.Parallel()
 	taken, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -427,6 +432,8 @@ func (s *syncBuf) String() string {
 // Messages between devices are on every device's page, oldest first, with the senders' and
 // recipients' names, including a message between two other devices.
 func TestPageMessages(t *testing.T) {
+	t.Parallel()
+	began := time.Now()
 	remote := newRemote(t)
 	a, b, c := newDevice(t, remote), newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -495,7 +502,7 @@ func TestPageMessages(t *testing.T) {
 		for i, m := range sent {
 			got := msgs[i]
 			if got.Subject != m.subject || got.Body != m.body || got.From != m.wantFrom || got.To != m.wantTo ||
-				got.ToKind != m.wantToKind || got.ID == "" || time.Since(got.At) > time.Minute ||
+				got.ToKind != m.wantToKind || got.ID == "" || got.At.Before(began.Add(-time.Second)) || got.At.After(time.Now()) ||
 				got.FromAddr != m.fromAddr || got.ToAddr != m.toAddr {
 				t.Errorf("page %c, message %d: %+v, want %+v", 'a'+n, i+1, got, m)
 			}
@@ -525,6 +532,7 @@ func TestPageMessages(t *testing.T) {
 // The cursor keeps its meaning when the oldest messages have been dropped: it names the last
 // message seen, not a place in the list.
 func TestPageMessageCursorAcrossTheRingWrapping(t *testing.T) {
+	t.Parallel()
 	d := newDeviceWith(t, newRemote(t), func(d *device) { d.pageMsgs = 3 })
 	pg := d.page()
 	send := func(subjects ...string) {
@@ -565,6 +573,7 @@ func TestPageMessageCursorAcrossTheRingWrapping(t *testing.T) {
 // Settings start at the defaults, survive a restart, and are refused when the page's own check
 // refuses them.
 func TestPageSettingsPersist(t *testing.T) {
+	t.Parallel()
 	d := newDevice(t, newRemote(t))
 	pg := d.page()
 	def := web.Settings{Wake: web.Wake{When: web.WakeWithin}, Busy: web.BusySubject, DefaultMinutes: 3}
@@ -663,6 +672,7 @@ func TestPageSettingsPersist(t *testing.T) {
 
 // There are no mutes yet, and unmuting says so.
 func TestPageUnmuteIsNotBuilt(t *testing.T) {
+	t.Parallel()
 	d := newDevice(t, newRemote(t))
 	pg := d.page()
 	code, body := pg.call("POST", "/api/unmute", pg.token, `{"by":"quiet-otter","muted":"brave-heron"}`)
@@ -686,6 +696,8 @@ func (d *device) exited() bool {
 // Nor does a page in a tab nobody can see: it goes on polling for as long as the browser runs, and
 // a tab forgotten in the background would keep the daemon, and its polling of GitHub, up for good.
 func TestOpenPageKeepsDaemonUp(t *testing.T) {
+	// Not parallel: its calls must come more often than the page counts as open, and the other
+	// daemons must exit inside its window; other tests' load would stretch both.
 	const idle, open = 3 * time.Second, 2 * time.Second
 	remote := newRemote(t)
 	timed := func(d *device) { d.idle, d.pageOpen = idle, open }
@@ -730,6 +742,7 @@ func TestOpenPageKeepsDaemonUp(t *testing.T) {
 
 // Sessions keep the daemon up as before, with or without the page.
 func TestSessionKeepsDaemonUpWithPage(t *testing.T) {
+	t.Parallel()
 	d := newDeviceWith(t, newRemote(t), func(d *device) { d.idle, d.pageOpen = time.Second, 500*time.Millisecond })
 	d.session("aaaaaa", "")
 	holds(t, "the daemon running with a session", 4*time.Second, func() bool { return !d.exited() })
@@ -739,6 +752,7 @@ func TestSessionKeepsDaemonUpWithPage(t *testing.T) {
 // before it started, but queues what was sent since for the sessions registered meanwhile. The
 // page shows those messages too, and not the history.
 func TestPageMessagesAfterAFailedFirstSync(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	pushEvent(t, remote, "refs/murmur/mesh/old-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
@@ -777,6 +791,7 @@ func TestPageMessagesAfterAFailedFirstSync(t *testing.T) {
 // session tags, so it stays private: not in the log, not readable by other users in daemon.json,
 // and not sent on as a Referer by anything the page links to.
 func TestPageTokenStaysPrivate(t *testing.T) {
+	t.Parallel()
 	var out syncBuf
 	d := newDeviceWith(t, newRemote(t), func(d *device) { d.logTo = &out })
 	pg := d.page()

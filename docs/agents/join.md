@@ -33,9 +33,12 @@ joining does:
   (`mcp__murmur` in Claude Code's allowed permissions; `default_tools_approval_mode = "approve"` in
   Codex; a `murmur_*` allow rule in OpenCode; `MCPTool(murmur__*)` in Grok); Muse and Pi have none,
   and ask in T3 unless the thread runs in full-access mode. For Pi it is a small extension file of
-  Murmur's in Pi's extensions folder. Two short skills on using Murmur well go into the skills
-  folder of Claude Code, Codex, OpenCode and Pi. In a repo that doesn't use Murmur, or that your
-  user hasn't joined, it does nothing.
+  Murmur's in Pi's extensions folder, which in a joined repo also brings messages into the
+  session. Two short skills on using Murmur well go into the skills folder of Claude Code, Codex,
+  OpenCode and Pi. In Codex and Grok, Murmur also adds a hook, for every project: a command the
+  agent runs after each tool call and when it finishes, so a busy session is told when a message
+  comes. In Codex, join also marks the hook as approved, so Codex runs it without asking. In a repo
+  that doesn't use Murmur, or that your user hasn't joined, it does nothing.
 - In every worktree of this clone, a hook goes into .claude/settings.local.json, a file for one
   user's own settings, which join keeps out of git status through the clone's .git/info/exclude.
   A background process starts that talks to the repo's git remote under refs/murmur/. No tracked
@@ -45,9 +48,9 @@ joining does:
 - If this repo is public, Murmur sends its address to murmur.afig.dev, once for the whole repo.
   That is the only thing Murmur ever sends us, and a private repo sends nothing at all; the section
   below says exactly how. Tell your user this in so many words, not as a passing mention.
-- Joining can be undone in this repo with `mur join --leave`. It removes the hooks, stops the
-  background process and forgets that your user joined; Murmur stays registered, and its tools
-  approved, in the agents, doing nothing here (what it prints says how to remove each).
+- Joining can be undone in this repo with `mur join --leave`. It removes this clone's hooks, stops the
+  background process and forgets that your user joined; Murmur stays registered, with its tools
+  approved and its Codex and Grok hooks, in the agents, doing nothing here (what it prints says how to remove each).
 
 ### What murmur.afig.dev receives, and why
 
@@ -66,9 +69,14 @@ background process asks GitHub again once a day, so a repo made public later is 
 Why: to count how many repos and people use Murmur, nothing more. Murmur is new, our goal is 100
 active users (written 2026-11-07), and Murmur's messages travel through each team's own repo, so
 they never reach us. The address tells us where to look; the rest of the count is read from the
-public repo's own `refs/murmur/` refs, which anyone can read. The site keeps one row per repo (its
-address and the day it came) and no IP addresses. Only Murmur's maintainer sees the counts. The
-code is `internal/publicrepo`, and `docs/VISION.md` has the design.
+public repo's own `refs/murmur/` refs and commit history, which anyone can read. From them the site
+keeps counts: sessions, messages, devices and people, by day. It keeps no names, emails, messages,
+code or IP addresses. To count each device and person once, it keeps a short unsalted hash in place
+of a device's ID, its owner's git user name, and the GitHub account matched to that owner. A private
+repo is never read. https://murmur.afig.dev/privacy/ lists everything the site keeps. Each repo's
+totals show on the count's public run page in GitHub Actions; the rest is seen only by Murmur's
+maintainer and people given a key. The code is `internal/publicrepo`, and `docs/VISION.md` has the
+design.
 
 There is no setting to turn it off: the address is already public. Murmur versions before this one
 sent a daily check-in instead; the site stopped storing those on 2026-11-08.

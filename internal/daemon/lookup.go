@@ -10,6 +10,7 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // lookup (#21) gathers what the daemon knows about one session: what presence shows of anyone's,
@@ -116,6 +117,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 			det.LastActive, det.Worktree, det.ClientSession = s.lastActive, s.worktree, s.claudeSession
 		} else if sess == bus.PersonSession && d.st.Person != "" {
 			det.Name, det.Agent, det.Started, det.LastActive = d.st.Person, bus.AgentPerson, d.st.PersonSince, d.lastPage
+			det.Tags = tags.Person()
 			det.Running, det.Reachable = true, true
 		} else {
 			det.Name = d.st.SessionNames[sess]
@@ -139,7 +141,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 			if s.ID != sess {
 				continue
 			}
-			det.Name, det.Agent, det.Branch, det.Doing, det.Started = s.Name, s.Agent, s.Branch, s.Doing, s.Started
+			det.Name, det.Agent, det.Branch, det.Doing, det.Started = s.Name, s.Agent, s.Branch, s.Doing, peerStarted(p, s)
 			det.Committed, det.LastActive, det.Tags = s.Committed, peerActive(p, s), s.Tags
 			det.Running, det.Reachable = true, !det.Stale
 		}
@@ -148,8 +150,9 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 	if det.Name == "" {
 		det.Name = cmp.Or(byAddr[addr], d.personNameOfLocked(addr))
 	}
-	if det.Agent == "" && bus.IsPerson(addr) {
-		det.Agent = bus.AgentPerson
+	if bus.IsPerson(addr) {
+		// From the address, so a person whose daemon has gone, known only by name, has it too.
+		det.Agent, det.Tags = cmp.Or(det.Agent, bus.AgentPerson), tags.Person()
 	}
 	det.Messages = d.messagesOfLocked(addr, det.Name, byAddr, limit)
 	return det

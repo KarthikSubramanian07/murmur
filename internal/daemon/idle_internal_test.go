@@ -26,6 +26,7 @@ func idleDaemon(stoppedFor map[string]time.Duration) *Daemon {
 // that went down with a daemon rather than stopping, and a thread the page says never to wake do
 // not.
 func TestHoldsRouteLocked(t *testing.T) {
+	t.Parallel()
 	always := pageSettings{}
 	never := pageSettings{Wake: web.Wake{When: web.WakeNever}}
 	neverButOne := pageSettings{Wake: web.Wake{When: web.WakeNever},
@@ -65,6 +66,7 @@ func TestHoldsRouteLocked(t *testing.T) {
 // The poll is QuietPoll while no session is live and no page is open, never faster than Poll; with
 // one, Poll, or slower while nothing is said (see poll_rate_internal_test.go).
 func TestPollBase(t *testing.T) {
+	t.Parallel()
 	d := idleDaemon(nil)
 	d.opt.PollCap = 15 * time.Second
 	if got := d.pollEvery(3 * time.Second).every; got != 30*time.Second {

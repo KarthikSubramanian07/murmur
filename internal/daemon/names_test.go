@@ -212,6 +212,7 @@ func busText(t *testing.T, remote string, d *device) string {
 // Two devices that pick the same name at the same moment can't both have it: the leased push of
 // one lands, the other is refused, reads what it missed and picks again.
 func TestSimultaneousAssignmentsCannotShareAName(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	g := newGate(2)
 	ra := &countedReader{r: seededNames(1), gate: g}
@@ -250,6 +251,7 @@ func TestSimultaneousAssignmentsCannotShareAName(t *testing.T) {
 // A daemon joining later reads the whole history, not only the tip: a name taken in any commit is
 // taken, and what it picks next is a name nobody has.
 func TestLateJoinerSkipsEveryUsedName(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newNamedDevice(t, remote, seededNames(3))
 	var used []string
@@ -272,6 +274,7 @@ func TestLateJoinerSkipsEveryUsedName(t *testing.T) {
 // Different keys get different names, and a session with no client session ID is named by its
 // own ID.
 func TestDifferentKeysGetDifferentNames(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	var addrs []string
@@ -296,6 +299,7 @@ func TestDifferentKeysGetDifferentNames(t *testing.T) {
 // changing, and across the daemon restarting, which needs no registry to remember it. Nothing of
 // the client's own session ID goes on the bus.
 func TestSameKeyKeepsItsName(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, conn := a.session("aaaaaa", "claude-alice-session-0001")
@@ -351,6 +355,7 @@ func TestSameKeyKeepsItsName(t *testing.T) {
 // A session that stops and comes back is the same session with the same name, and a message sent
 // to the name while it was away waits for it.
 func TestNameSurvivesAStop(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, time.Second, 0)
 	alice, _ := a.session("aaaaaa", "claude-alice")
@@ -359,7 +364,7 @@ func TestNameSurvivesAStop(t *testing.T) {
 	eventually(t, "a to show bob's name", func() bool { return a.nameOf(bob) == bn })
 
 	conn.Close()
-	eventually(t, "bob gone from a", func() bool { return !a.seesSession(bob) })
+	eventually(t, "bob gone from a", func() bool { return !a.listsSession(bob) })
 	// Not in presence, but his name still says who he is.
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bn, Subject: "while you were away"})
 	if r.Error != "" || r.Messages[0].To != bob {
@@ -383,6 +388,7 @@ func TestNameSurvivesAStop(t *testing.T) {
 // read it keep every name they have seen, and write a new root with a snapshot of all of them, so
 // that a daemon joining later, which would have picked the first name again, learns it is taken.
 func TestDamagedRegistryFreesNoName(t *testing.T) {
+	t.Parallel()
 	damage := map[string]func(t *testing.T, remote string){
 		"junk over it": func(t *testing.T, remote string) {
 			work, tree := junkTree(t)
@@ -444,6 +450,7 @@ func TestDamagedRegistryFreesNoName(t *testing.T) {
 // Junk at the registry's tip before anyone has a name is built over, not stopped on: the first
 // name is a new root, leased on the junk.
 func TestFirstNameOverJunkRegistry(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	work, tree := junkTree(t)
 	git(t, work, "push", "-q", remote, tree+":refs/murmur/names")
@@ -458,6 +465,7 @@ func TestFirstNameOverJunkRegistry(t *testing.T) {
 // A ref under the registry's name keeps the registry off the remote, as one under a device's name
 // does its presence. Nothing Murmur writes is there, so daemons delete it.
 func TestRefUnderTheRegistryIsDeleted(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	work, tree := junkTree(t)
 	git(t, work, "push", "-q", remote, tree+":refs/murmur/names/x")
@@ -469,6 +477,7 @@ func TestRefUnderTheRegistryIsDeleted(t *testing.T) {
 
 // A name seen in another device's presence is in use, whether or not the registry shows it.
 func TestNamesInPresenceAreUsed(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	taken := nthName(t, 5, 1)
 	at := time.Now().UTC().Format(time.RFC3339Nano)
@@ -486,6 +495,7 @@ func TestNamesInPresenceAreUsed(t *testing.T) {
 // Without a reachable remote a session works, addressed as device/session, with its name pending;
 // the name is taken in the background when the remote is back.
 func TestNameIsPendingUntilItLands(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	a.offline(remote, true)
@@ -518,13 +528,15 @@ func TestNameIsPendingUntilItLands(t *testing.T) {
 // daemon that doesn't know names queues it all the same; and the recipient sees who sent it by
 // name.
 func TestSendByName(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "claude-alice")
 	bob, _ := b.session("bbbbbb", "claude-bob")
 	cleo, _ := b.session("cccccc", "claude-cleo")
 	an, bn, cn := a.named(alice), b.named(bob), b.named(cleo)
-	eventually(t, "a to show their names", func() bool { return a.nameOf(bob) == bn && a.nameOf(cleo) == cn })
+	a.nameIs(bob, bn)
+	a.nameIs(cleo, cn)
 
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bn, Subject: "by name", Body: "the body"})
 	if r.Error != "" || r.Note != "" || len(r.Messages) != 1 || r.Messages[0].To != bob || r.Messages[0].ToName != bn {
@@ -582,13 +594,14 @@ func TestSendByName(t *testing.T) {
 
 // A name nobody has is an error that says so, and every other form of address still works.
 func TestUnknownNameErrorsAndOtherAddressesWork(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "claude-alice")
 	bob, _ := b.session("bbbbbb", "claude-bob")
 	a.named(alice)
 	bn := b.named(bob)
-	eventually(t, "a to show bob's name", func() bool { return a.nameOf(bob) == bn })
+	a.nameIs(bob, bn)
 
 	unknown := nthName(t, 424242, 1)
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: unknown, Subject: "to nobody"})
@@ -621,6 +634,7 @@ func TestUnknownNameErrorsAndOtherAddressesWork(t *testing.T) {
 // A daemon without names publishes none and doesn't read the registry. Its sessions show without
 // a name, and are reached and heard from at device/session as before.
 func TestV1PeerWithoutNamesStillWorks(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote, time.Minute)
 	alice, _ := a.session("aaaaaa", "claude-alice")

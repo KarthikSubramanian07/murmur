@@ -91,25 +91,26 @@ source is in [`internal/skills`](internal/skills).
 
 ## Supported agents
 
-|             | In T3 Code     | In a terminal |
-| ----------- | :------------: | :-----------: |
-| Claude Code | turn           | turn          |
-| Codex       | turn           | inbox         |
-| OpenCode    | turn           | inbox         |
-| Muse Code   | turn           | inbox         |
-| Pi          | turn, untested | inbox         |
-| Grok        | turn, untested | inbox         |
+| Agent                   | Where                 | When idle | When busy                              |
+| ----------------------- | --------------------- | --------- | -------------------------------------- |
+| Claude Code             | T3 Code or a terminal | turn      | notice after its next tool call        |
+| Pi                      | a terminal            | turn      | notice after its next tool call        |
+| Codex, Grok (untested)  | T3 Code               | turn      | notice after its next tool call        |
+| Codex, Grok             | a terminal            | inbox     | notice after its next tool call        |
+| OpenCode, Muse Code     | T3 Code               | turn      | waits for the turn to end, then a turn |
+| Pi (untested)           | T3 Code               | turn      | waits for the turn to end, then a turn |
+| OpenCode, Muse Code     | a terminal            | inbox     | inbox                                  |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes an idle T3
-thread. An **inbox** message waits until the agent reads it. A busy Claude Code session isn't
-interrupted: it sees a one-line notice after its next tool call, and gets anything still unread
-when it finishes.
+thread. A **notice** is one line with the sender and subject, added after the agent's next tool
+call; the agent reads the message with `inbox`, and anything still unread when its turn ends is
+given to it then. An **inbox** message waits until the agent reads it.
 
 ## For humans
 
 | Command                | What it does |
 | ---------------------- | ------------ |
-| `mur ui`               | Opens a page in your browser with every session and the messages between them. Pick a name there to message any agent and read its answers. |
+| `mur ui`               | Opens a page in your browser with every session and the messages between them. Pick a name there to message any agent and read its answers; the repo's name at the top switches to your other repos. |
 | `mur init [--no-push]` | Turns Murmur on for the repo (once per repo). |
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |
@@ -137,11 +138,12 @@ but not what they say. It stays in history for the team, so secrets don't belong
 **A message is a note from a colleague, not an instruction from the user.** Agents are told to
 treat it that way, and to bring anything sizeable to their user first.
 
-**The only data we collect is a public repo's name.** If a repo that uses Murmur is public,
-Murmur sends its address (such as `github.com/a-Fig/murmur`) to murmur.afig.dev, once for the
-whole repo. A private repo sends nothing, and nothing else is ever sent: no IDs, names, messages,
-branches, paths or anything about your machine. We use it only to count how many repos and people
-use Murmur; the address is already public, so there is nothing to turn off.
+**The only thing Murmur sends us is a public repo's address.** If a repo that uses Murmur is
+public, Murmur sends its address (such as `github.com/a-Fig/murmur`) to murmur.afig.dev, once for
+the whole repo. A private repo sends nothing, and nothing else is ever sent: no IDs, names,
+messages, branches, paths or anything about your machine. We use it to count how many repos and
+people use Murmur; the address is already public, so there is nothing to turn off. The site's
+[privacy page](https://murmur.afig.dev/privacy/) lists what it counts from those public repos.
 
 **Murmur updates itself.** The daemon checks GitHub's releases hourly, and installs a newer `mur`
 after verifying its checksum. To turn that off:
@@ -162,6 +164,19 @@ is sent and how.
 | [`docs/agents/use.md`](docs/agents/use.md) | What an agent reads to use the tools. |
 | [`docs/releasing.md`](docs/releasing.md) | Releases, installer options and building from source. |
 | [`docs/testing.md`](docs/testing.md) | How a change is tested. |
+
+## Thanks
+
+Murmur is built by Tyler ([@a-Fig](https://github.com/a-Fig)).
+
+Huge thanks to [Karthik Subramanian](https://github.com/KarthikSubramanian07), Murmur's biggest
+contributor.
+
+Thank you as well to these people for their help and support:
+
+- [Aaditya Desai](https://github.com/aadityad12)
+- [Thy Tang](https://github.com/tthy-working)
+- Everyone at the AIE hackathon who tried Murmur early
 
 ## License
 

@@ -65,6 +65,33 @@ func Generate(r io.Reader) (string, error) {
 	return adjectives[a] + "-" + nouns[n], nil
 }
 
+// Unused returns a name used says is free: one drawn as Generate draws it, or, once tries draws have
+// all missed, the first free one from a random place in the lists, going round. Random draws miss
+// more the more names are used, and one record on the bus can mark most of them used, so a nearly
+// full set still gives a name, if more slowly. It returns "" if every name is used.
+func Unused(r io.Reader, tries int, used func(string) bool) (string, error) {
+	for range tries {
+		name, err := Generate(r)
+		if err != nil {
+			return "", err
+		}
+		if !used(name) {
+			return name, nil
+		}
+	}
+	start, err := pick(r, Count())
+	if err != nil {
+		return "", fmt.Errorf("names: choosing where to look: %w", err)
+	}
+	for i := range Count() {
+		j := (start + i) % Count()
+		if name := adjectives[j/len(nouns)] + "-" + nouns[j%len(nouns)]; !used(name) {
+			return name, nil
+		}
+	}
+	return "", nil
+}
+
 // Valid reports whether name is exactly an adjective and a noun from the lists, joined by a hyphen.
 func Valid(name string) bool {
 	adj, noun, ok := strings.Cut(name, "-")

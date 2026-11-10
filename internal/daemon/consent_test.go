@@ -38,6 +38,7 @@ func runWithConsent(gitDir string, joined *atomic.Bool, poll time.Duration) (can
 // A daemon starts only for a user who joined in the clone, and leaves nothing behind otherwise: no
 // daemon.json to find, and nothing on the remote.
 func TestDaemonWithoutConsentDoesNotStart(t *testing.T) {
+	t.Parallel()
 	remote, gitDir, joined := consentClone(t)
 	cancel, done := runWithConsent(gitDir, joined, 50*time.Millisecond)
 	defer cancel()
@@ -57,9 +58,36 @@ func TestDaemonWithoutConsentDoesNotStart(t *testing.T) {
 	}
 }
 
+// A daemon.json a dead daemon left goes as soon as a daemon takes the lock, before anything else it
+// does (the first sync can take seconds): while the lock is held, a client trusts what answers at the
+// address in daemon.json, and that address is no longer the dead daemon's. A daemon that then doesn't
+// start, here for want of consent, still removes it.
+func TestDaemonRemovesADeadDaemonsFile(t *testing.T) {
+	_, gitDir, joined := consentClone(t)
+	info := filepath.Join(gitDir, "murmur", "daemon.json")
+	os.MkdirAll(filepath.Dir(info), 0o700)
+	if err := os.WriteFile(info, []byte(`{"addr":"127.0.0.1:1","token":"dead"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cancel, done := runWithConsent(gitDir, joined, 50*time.Millisecond)
+	defer cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, daemon.ErrNoConsent) {
+			t.Fatalf("got %v, want ErrNoConsent", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the daemon is running in a clone that hasn't joined")
+	}
+	if _, err := os.Stat(info); err == nil {
+		t.Error("the dead daemon's daemon.json is still there")
+	}
+}
+
 // A user who leaves while their daemon runs, or is still starting, stops it: the daemon watches the
 // consent itself, so a leave needn't find it to end it.
 func TestDaemonStopsWhenTheUserLeaves(t *testing.T) {
+	t.Parallel()
 	_, gitDir, joined := consentClone(t)
 	joined.Store(true)
 	cancel, done := runWithConsent(gitDir, joined, 50*time.Millisecond)
@@ -90,6 +118,7 @@ func TestDaemonStopsWhenTheUserLeaves(t *testing.T) {
 
 // Between the user leaving and the daemon noticing, it takes no registration and answers no request.
 func TestDaemonRefusesRequestsOnceTheUserHasLeft(t *testing.T) {
+	t.Parallel()
 	_, gitDir, joined := consentClone(t)
 	joined.Store(true)
 	cancel, done := runWithConsent(gitDir, joined, time.Hour) // the watch never fires: only the checks on requests
@@ -100,6 +129,13 @@ func TestDaemonRefusesRequestsOnceTheUserHasLeft(t *testing.T) {
 		c, err = client.Connect(context.Background(), gitDir, false)
 		return err == nil
 	})
+	// The daemon answers before its first sync (#372), and a user found gone once that sync ends
+	// stops it there and then, as the consent loop would. Under test are the checks on requests
+	// for a user who leaves after that, so the user leaves only once it has passed: who waits for
+	// it, and the daemon decides before it lets who go on.
+	if resp, err := c.Do(context.Background(), proto.Request{Op: proto.OpWho}); err != nil || resp.Error != "" {
+		t.Fatalf("who while joined: %v %q", err, resp.Error)
+	}
 
 	joined.Store(false)
 	ctx := context.Background()
@@ -138,6 +174,7 @@ func TestDaemonRefusesRequestsOnceTheUserHasLeft(t *testing.T) {
 // asks for consent in this test: no session registers, no message is delivered, and the watcher's
 // poll is an hour.
 func TestDaemonPublishesNothingOnceTheUserHasLeft(t *testing.T) {
+	t.Parallel()
 	remote, gitDir, joined := consentClone(t)
 	joined.Store(true)
 	var refused atomic.Bool // a consent check has answered that the user left

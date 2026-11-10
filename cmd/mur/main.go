@@ -21,13 +21,17 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/daemon"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/join"
+	"github.com/a-Fig/murmur/internal/logfile"
 	"github.com/a-Fig/murmur/internal/mcpserver"
+	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/publicrepo"
 	"github.com/a-Fig/murmur/internal/setup"
 	"github.com/a-Fig/murmur/internal/update"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 var version = "0.1.0-dev"
@@ -52,25 +56,40 @@ For humans:
 
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
-  mur hook                      Claude Code hook (reads the hook payload on stdin)
+  mur hook [AGENT]              an agent's hook: Claude Code's, or codex's, grok's, or pi's through
+                                Murmur's extension (reads the payload on stdin)
   mur daemon [--git-dir DIR]    the daemon, in the foreground
 
 Every command takes -C DIR to act on the repository at DIR.
 `)
 
 func main() {
-	if len(os.Args) < 2 {
+	dirs, args, err := leadingDirs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n\n%s", err, usage)
+		os.Exit(2)
+	}
+	for _, dir := range dirs {
+		if err := os.Chdir(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", brand.Command, err)
+			os.Exit(1)
+		}
+	}
+	if len(args) < 1 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
-	cmd, args := os.Args[1], os.Args[2:]
+	cmd, args := args[0], args[1:]
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	var err error
 	switch cmd {
 	case "hook":
-		hook.Run(os.Stdin, os.Stdout)
+		// Never an error: a hook that fails would fail the agent's tool call. One it can't read
+		// does nothing.
+		if agent, ok := hookAgent(args); ok {
+			hook.RunFor(agent, os.Stdin, os.Stdout)
+		}
 	case "mcp":
 		err = runMCP(ctx, args)
 	case "daemon":
@@ -98,6 +117,54 @@ func main() {
 	}
 }
 
+// leadingDirs takes the -C DIR options that come before the command, as git does: `mur -C DIR stop`
+// acts where `mur stop -C DIR` does (#373). Until 2026-11-10 only the second worked, and the first
+// said `unknown command "-C"`. main changes to each directory in turn, each relative to the one
+// before, as git's do, so every command takes it, the hook included, and a -C after the command is
+// then relative to it. The flag package's other spellings, --C and -C=DIR, are taken too.
+func leadingDirs(args []string) (dirs, rest []string, err error) {
+	for len(args) > 0 {
+		name, value, hasValue := strings.Cut(args[0], "=")
+		if name != "-C" && name != "--C" {
+			break
+		}
+		if !hasValue {
+			if len(args) < 2 {
+				return nil, nil, fmt.Errorf("%s needs a directory", name)
+			}
+			value, args = args[1], args[1:]
+		}
+		if value == "" {
+			return nil, nil, fmt.Errorf("%s needs a directory", name)
+		}
+		dirs, args = append(dirs, value), args[1:]
+	}
+	return dirs, args, nil
+}
+
+// hookAgent is the agent `mur hook` runs for, from its arguments: "" for Claude Code, or the one
+// named, as join writes it for Codex and Grok (`mur hook codex`, #225) or as Pi's extension runs it
+// (`mur hook --agent pi`, #205). ok is false for arguments it can't read or an agent the hook doesn't
+// know.
+func hookAgent(args []string) (agent string, ok bool) {
+	fs := flag.NewFlagSet(brand.Command+" hook", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	a := fs.String("agent", "", "")
+	if fs.Parse(args) != nil {
+		return "", false
+	}
+	switch {
+	case fs.NArg() == 1 && *a == "":
+		*a = fs.Arg(0)
+	case fs.NArg() != 0:
+		return "", false
+	}
+	if !hook.KnownAgent(*a) {
+		return "", false
+	}
+	return *a, true
+}
+
 func flags(name string) (*flag.FlagSet, *string) {
 	fs := flag.NewFlagSet(brand.Command+" "+name, flag.ExitOnError)
 	dir := fs.String("C", ".", "act on the repository at this directory")
@@ -120,7 +187,16 @@ func runDaemon(ctx context.Context, args []string) error {
 	return runDaemonWith(ctx, args, daemon.Run, client.StartDaemon)
 }
 
-func runDaemonWith(ctx context.Context, args []string, run func(context.Context, daemon.Options) error, start func(string, string, ...string) error) error {
+func runDaemonWith(ctx context.Context, args []string, run func(context.Context, daemon.Options) error, start func(exe, gitDir string, page *os.File, flags ...string) error) error {
+	// A daemon that restarted onto an update may have handed this one the page's socket (#255).
+	// It is taken first, so that it is closed however this returns, and no child of this process
+	// is told of it.
+	page := proc.Inherited(brand.PageListenerEnv, "page")
+	defer func() {
+		if page != nil {
+			page.Close()
+		}
+	}()
 	// The updater has to know the binary this process came from. It starts only after the daemon's
 	// first sync, and a reinstall in that time must not pass for this binary, so this comes first.
 	exe, exeErr := os.Executable()
@@ -168,9 +244,30 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 	if !join.Joined(*gitDir) {
 		return fmt.Errorf("this clone hasn't joined %s, so its daemon won't run (`%s join` joins, after asking the user)", brand.Product, brand.Command)
 	}
-	logger := log.New(os.Stderr, "", log.LstdFlags)
+	// The log is kept under a size while the daemon runs, and credentials in URLs out of it, so
+	// that it can be sent to whoever helps debug this device.
+	logs := *logPath
+	if logs == "" {
+		logs = filepath.Join(client.StateDir(*gitDir), "daemon.log") // where StartDaemon points stderr
+	}
+	out := logfile.New(os.Stderr, logs, logfile.Max)
+	log.SetOutput(out)
+	logger := log.New(out, "", log.LstdFlags)
 	releases := newReleaseWatch(version, *gitDir)
-	err := run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle,
+	inherited := page
+	page = nil // Run takes it
+	// The record of this machine's clones, for the page's repo picker (#348). Without it the page
+	// shows only its own repo.
+	var record string
+	var repos web.Repos
+	if d, err := clones.DefaultDir(); err != nil {
+		logger.Printf("no record of this machine's clones, so the page can't switch repos: %v", err)
+	} else {
+		record = d
+		repos = clones.Picker{Dir: d, Self: *gitDir, Joined: join.Joined}
+	}
+	err := run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle, PageListener: inherited,
+		Clones: record, Repos: repos,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
 			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report}, restart)
@@ -180,10 +277,16 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 			publicrepo.Run(ctx, publicrepo.Options{Version: version, GitDir: *gitDir, Log: logger})
 		}})
 	if errors.Is(err, daemon.ErrUpdated) {
+		// The page's socket, held open by Run, is closed here once the new daemon has its own
+		// hold on it, or has failed to start.
+		var up *daemon.Updated
+		if errors.As(err, &up) {
+			page = up.Page
+		}
 		if exeErr != nil {
 			return exeErr
 		}
-		return start(exe, *gitDir, restartFlags...)
+		return start(exe, *gitDir, page, restartFlags...)
 	}
 	if errors.Is(err, daemon.ErrRunning) {
 		return nil // another client started one first; that one serves
@@ -332,6 +435,7 @@ func runJoin(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	env.Version = version
+	env.Progress = os.Stderr // a line while a leave waits for the daemon; stdout is the report
 	do := join.Join
 	if *leave {
 		do = join.Leave

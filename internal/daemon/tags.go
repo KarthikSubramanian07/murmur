@@ -55,7 +55,7 @@ func (d *Daemon) adoptTagsLocked(s *session) {
 }
 
 // dndLocked says session id on this device is on do not disturb: its messages stay queued in its
-// inbox, none is handed over as a turn, and the hook delivers none (see wakesLocked and notices). A session that
+// inbox, none is handed over as a turn, and the hook tells of none (see wakesLocked and notices). A session that
 // isn't registered at the moment goes by the tags kept for its name. Caller holds mu.
 func (d *Daemon) dndLocked(id string) bool {
 	if s := d.sessions[id]; s != nil {
@@ -211,31 +211,34 @@ func (d *Daemon) humanTagsLocked(id string, add, remove []string, by string, at 
 	if key == "" {
 		return fmt.Errorf("session %s isn't known here", bus.Addr(d.device, id))
 	}
-	var self []string
-	var human map[string]tags.Mark
-	if st := d.st.Tags[key]; st != nil {
-		self, human = st.Self, st.Human
-	}
 	wasDND := d.dndLocked(id)
-	next := tags.State{Self: self, Human: cloneMarks(human)}
-	if err := next.SetHuman(tags.Base(self, d.derivedTagsLocked(id)), add, remove, by, at); err != nil {
+	// Nothing is later than now, whatever a clock ahead or a forged commit says. So a change dated
+	// later can't hold off the next, and a click on this device's page, dated now, is the newest.
+	now := time.Now().UTC()
+	if at.After(now) {
+		at = now
+	}
+	next := d.st.Tags[key].Clone()
+	next.CapTimes(now)
+	capped := next.Clone()
+	if err := next.SetHuman(tags.Base(next.Self, d.derivedTagsLocked(id)), add, remove, by, at); err != nil {
 		return err
 	}
-	d.putTagStateLocked(key, &next)
+	if next.SameChoices(capped) {
+		// Kept all the same: a date capped only for now would go on refusing changes, as it is capped
+		// afresh, at a later now, each time.
+		d.putTagStateLocked(key, next)
+		d.log.Printf("%s's change to the tags of session %s, from %s, is older than a human's later choice; not applied: %s",
+			by, bus.Addr(d.device, id), at.Format(time.RFC3339), tagChange(add, remove))
+		return nil
+	}
+	d.putTagStateLocked(key, next)
 	d.kickPresence()
 	if wasDND && !d.dndLocked(id) {
 		d.releaseLocked(key)
 	}
 	d.log.Printf("%s changed the tags of session %s: %s", by, bus.Addr(d.device, id), tagChange(add, remove))
 	return nil
-}
-
-func cloneMarks(m map[string]tags.Mark) map[string]tags.Mark {
-	out := make(map[string]tags.Mark, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
 }
 
 func tagChange(add, remove []string) string {
@@ -304,6 +307,13 @@ func (s pageSource) SetTags(ctx context.Context, addr string, add, remove []stri
 	d.mu.Unlock()
 	if !known {
 		return fmt.Errorf("%s isn't in its device's presence", addr)
+	}
+	// The page is served before Run's first sync. This append reads its own log under advMu, which
+	// Run's sync, the one a stop cuts short, would then wait for; it waits for that sync instead, as
+	// the page's send does (Sol's review of #377).
+	d.awaitFirstSync(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Tags, From: bus.Addr(d.device, proto.CLISession),
 		At: time.Now().UTC(), To: addr, Add: add, Remove: remove}

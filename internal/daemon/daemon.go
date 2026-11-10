@@ -24,6 +24,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
@@ -45,6 +46,15 @@ type Options struct {
 	// FetchLimit is how long one fetch may take within a sync: 15 s. A ref that runs past it on its
 	// own is set aside; SlowFetchLimit is how long its fetch may then take, outside the syncs: 10 min.
 	FetchLimit, SlowFetchLimit time.Duration
+	// ReadFirstLimit is how long a sync may take over the names registry and every presence, which
+	// it reads before the logs: 15 s, and never more than half of what is left of the sync.
+	// A registry read that stalls (the check of one missing from the listing asks the remote again)
+	// then can't use up the time the logs it fetched need.
+	ReadFirstLimit time.Duration
+	// FirstSyncLimit is how long the daemon's first sync may take before the background loops start
+	// and a later sync tries again: 10 s. The daemon answers before it, but a registration and the
+	// requests that want what it reads (who, send, lookup) wait for it, as long as this at most (#372).
+	FirstSyncLimit time.Duration
 	// PollCap is the slowest the poll gets while a session is live and nothing is happening: 15 s.
 	// FastFor is how long after a conversation moves (this device sends a message, or queues one
 	// for a session here or hands one over to it, or a session starts) the poll stays at Poll: 3 min (#93).
@@ -82,6 +92,9 @@ type Options struct {
 	// A host other than 127.0.0.1 is refused: off loopback anyone on the network could reach the
 	// page, and on another loopback address the page's Host check would refuse every request.
 	PageAddr string
+	// PageListener is the page's listening socket, inherited from a daemon that restarted onto an
+	// update (#255). Run takes it, and closes it if it doesn't serve the page on it.
+	PageListener *os.File
 	// PageOpen is how recently a page someone can see must have called its API to count as open,
 	// which keeps the daemon running like a session does: 2 min. A hidden tab's calls don't count.
 	PageOpen time.Duration
@@ -114,6 +127,12 @@ type Options struct {
 	// page (#240). The daemon adds whether an installed update is waiting. The page calls for
 	// it every few seconds, so it must not reach the network.
 	Version func() web.Version
+	// Clones, if set, is the user's record of this machine's joined clones (internal/clones): the
+	// daemon adds its clone there as it starts, so a clone that joined before the record existed
+	// is on it too. Tests leave it unset.
+	Clones string
+	// Repos, if set, lets the page list this machine's clones and switch to another's page (#348).
+	Repos web.Repos
 }
 
 const defaultPageAddr = "127.0.0.1:0"
@@ -133,6 +152,12 @@ func (o *Options) defaults() {
 	}
 	if o.SlowFetchLimit == 0 {
 		o.SlowFetchLimit = 10 * time.Minute
+	}
+	if o.ReadFirstLimit == 0 {
+		o.ReadFirstLimit = 15 * time.Second
+	}
+	if o.FirstSyncLimit == 0 {
+		o.FirstSyncLimit = 10 * time.Second
 	}
 	if o.FastFor == 0 {
 		o.FastFor = 3 * time.Minute
@@ -193,6 +218,15 @@ func (o *Options) defaults() {
 // ErrUpdated means a verified binary is installed and Run released the clone lock; the caller can restart it.
 var ErrUpdated = errors.New("daemon binary updated")
 
+// Updated is the ErrUpdated Run returns when it served the page: Page holds the page's listening
+// socket open, for the new daemon to inherit, and the caller closes it once that has started. The
+// port stays bound from one daemon to the next, so nothing else can take it in between and be sent
+// what an open tab sends there (#255).
+type Updated struct{ Page *os.File }
+
+func (*Updated) Error() string { return ErrUpdated.Error() }
+func (*Updated) Unwrap() error { return ErrUpdated }
+
 // ErrRunning means another daemon already holds this clone's lock.
 var ErrRunning = errors.New("a daemon is already running for this clone")
 
@@ -221,7 +255,9 @@ func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
-	return d.repo.Push(ctx, sha, ref, mode, expect)
+	err := d.repo.Push(ctx, sha, ref, mode, expect)
+	d.health.pushed(ctx, ref, err)
+	return err
 }
 
 // pushTimeout bounds one push, so a push that hangs doesn't hold up the device's others for good.
@@ -259,11 +295,22 @@ type Daemon struct {
 	owner   string
 	token   string // the sessions' secret, in daemon.json
 	pageTok string // the page's secret (#42): the address carries it, so it opens the page, not the sessions' port
-	// pagePrev is the address the daemon this one replaced served the page on, when it restarted
-	// onto an update: this one serves the page there, with its token, so an open tab carries on.
-	pagePrev string
-	started  time.Time
-	log      *log.Logger
+	// repoName is the repository's name from its remote's address, which the page's repo picker
+	// shows.
+	repoName string
+	// page is the page's server, nil until it is made and when the page isn't served. OpPageKey
+	// asks it for a key.
+	page    atomic.Pointer[web.Server]
+	started time.Time
+	log     *log.Logger
+
+	// maxRecord and maxSnapshot are the largest commits read from a device's log or presence, and
+	// from the names registry (bus.MaxRecord, bus.MaxSnapshot; tests lower them).
+	maxRecord, maxSnapshot int64
+
+	// savesHeld puts off saveLocked while a page of a log is applied, under mu throughout, so the
+	// page saves state.json once and not once for each tags event in it (see applyPageLocked).
+	savesHeld bool
 
 	mu         sync.Mutex
 	sessions   map[string]*session
@@ -292,6 +339,19 @@ type Daemon struct {
 	// namesChecked says the registry has been looked at since this daemon started, even if its
 	// tip is the one state.json recorded.
 	namesChecked bool
+	// presenceCut is how many sessions the last presence left out to keep to bus.MaxSessions (see
+	// capSessions), so that is logged when it changes, not on every heartbeat.
+	presenceCut int
+	// presenceFirst, when not nil, is closed once a presence listing the sessions started since it
+	// was made has been pushed or has failed. A session's start on the log and its name's
+	// assignment wait for it, so the push that shows the session goes first (see awaitPresence).
+	presenceFirst chan struct{}
+	// presenceSending is presenceFirst once a presence has taken it, until that presence has been
+	// pushed or has failed.
+	presenceSending chan struct{}
+	// personClashes is the people's names a second device's presence has said since this daemon
+	// started, logged once each (see notePersonLocked).
+	personClashes map[string]bool
 	// lastPage is when a page someone can see last called its API, zero if none has. msgs is the
 	// page's messages, oldest first, msgSeq the number of the newest and msgIDs the IDs in msgs.
 	lastPage time.Time
@@ -348,6 +408,8 @@ type Daemon struct {
 
 	polls atomic.Int64 // the remote listings tried, so a test can see the rate
 
+	health health // what the page's health snapshot counts (health.go)
+
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
 	writeMu sync.Mutex // serializes appends to this device's log
@@ -371,6 +433,10 @@ type Daemon struct {
 	// have; bgCtx is cancelled when the daemon starts shutting down.
 	bg    sync.WaitGroup
 	bgCtx context.Context
+
+	// firstSync is closed once Run's first sync is over, done or not (see awaitFirstSync). Nil for
+	// a daemon Run didn't start, which has no first sync to wait for.
+	firstSync chan struct{}
 }
 
 type session struct {
@@ -420,6 +486,13 @@ type session struct {
 	hooked, stopSeen, stopContinues bool
 	busyAt, turnStart, continuedAt  time.Time
 	toldUnread, continuations       int
+	// hookSeen says a hook of the session has reported, a subagent's included; toolCalled is when
+	// the session first called one of Murmur's tools (see hookOffLocked, #225). hookNative is the
+	// conversation's own ID as a hook of an agent other than Claude Code reported it, for a session
+	// whose MCP server hasn't learned it (see agentHookSessionsLocked).
+	hookSeen   bool
+	toolCalled time.Time
+	hookNative string
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its
@@ -482,6 +555,9 @@ type fetchFail struct {
 	landed bool
 }
 
+// fetchRetry is how long after its failure a ref that failed to fetch is tried again on its own.
+const fetchRetry = time.Minute
+
 // staleTempAge is how long a temporary download has gone unwritten before it is taken for one a
 // stopped git left behind (see clearStaleTemp).
 const staleTempAge = 10 * time.Minute
@@ -490,6 +566,10 @@ type inMsg struct {
 	Event   bus.Event `json:"event"`
 	Arrived time.Time `json:"arrived"`
 	Noticed bool      `json:"noticed"`
+	// NoticedAt is when the hook's notice told the session of the message. The turn that gives it
+	// whole later says so, so the agent doesn't take it for a second message (#355). Zero for one
+	// noticed by a daemon from before this.
+	NoticedAt time.Time `json:"noticedAt,omitzero"`
 	// Pushing says the message is being handed over to its session as a turn, so the hook's notice
 	// and inbox leave it alone: it either arrives as the turn, and is gone from the inbox, or the
 	// handoff fails and it is theirs again. PushFailed says that handoff failed. Neither is kept
@@ -532,11 +612,18 @@ type state struct {
 	LastSync time.Time `json:"lastSync"`
 
 	// Person is the name this device's human chose on the page, "" until they do, and PersonSince
-	// is when (#242). People is the address of every person's name this daemon has seen, in presence
-	// or on a message. It only grows, so a person's earlier name still reaches them.
+	// is when (#242). People is the address of every person's name this daemon has seen in a presence
+	// or the registry: the first address seen with it, unless the registry gives the name to another
+	// (see notePersonLocked). A message's name never goes in it. It only grows, so a person's earlier
+	// name still reaches them.
 	Person      string            `json:"person,omitempty"`
 	PersonSince time.Time         `json:"personSince,omitzero"`
 	People      map[string]string `json:"people,omitempty"`
+	// PersonClaims is every person's name in the names registry, to the address that claimed it
+	// first (#268). It only grows, as Used does, and a name in it is that person's: a name chosen
+	// elsewhere at the same time is refused, and one held from before the registry had people is
+	// asked to change.
+	PersonClaims map[string]string `json:"personClaims,omitempty"`
 	// PersonLogged is the last message in the person's log when this was saved. Anything after it
 	// in the log was written by a daemon that stopped before it could save, so their inbox doesn't
 	// have it yet.
@@ -560,6 +647,11 @@ type state struct {
 	NamesTip    string `json:"namesTip,omitempty"`
 	NamesGood   string `json:"namesGood,omitempty"`
 	NamesRepair bool   `json:"namesRepair,omitempty"`
+	// NamesPeople says the registry was read from its start by a daemon that keeps people's claims
+	// (#268). One from before read their claims and passed over them, so reading on from its
+	// NamesGood would leave them unread for good: without this, the next read starts from the
+	// beginning. NamesGood stays as it was, as it also shows whether the registry was rewritten.
+	NamesPeople bool `json:"namesPeople,omitempty"`
 	// NamePool is the names the registry has set aside for this device that no session has taken
 	// yet, oldest first. NameBinds is each name a session took from the pool whose assignment to it
 	// isn't in the registry yet, with the session's ID. Reserved is each name the registry has set
@@ -602,9 +694,21 @@ type t3Route struct {
 // Run runs a daemon until ctx is done, it is told to stop, or it has been idle too long.
 func Run(ctx context.Context, opt Options) error {
 	opt.defaults()
+	inherited := opt.PageListener
+	opt.PageListener = nil
+	defer func() {
+		if inherited != nil {
+			inherited.Close()
+		}
+	}()
 	dir := filepath.Join(opt.GitDir, brand.StateDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
+	}
+	// On every start, before daemon.json is written: a directory an older version made is
+	// tightened too. A clone whose state another user made can't be, and runs as before.
+	if err := proc.Protect(dir); err != nil {
+		opt.Log.Printf("keeping other users out of %s: %v", dir, err)
 	}
 	lock, err := proc.Lock(filepath.Join(dir, "daemon.lock"))
 	if errors.Is(err, proc.ErrLocked) {
@@ -614,6 +718,11 @@ func Run(ctx context.Context, opt Options) error {
 		return err
 	}
 	defer lock.Close()
+	// A daemon.json here now is a dead daemon's, as a live one would hold the lock. It goes at once,
+	// not when this one's is written: until then a client would ping its address, find the lock
+	// held, and take whatever answers there for this daemon.
+	infoPath := filepath.Join(dir, "daemon.json")
+	os.Remove(infoPath)
 
 	d, err := open(ctx, opt, dir)
 	if err != nil {
@@ -623,110 +732,146 @@ func Run(ctx context.Context, opt Options) error {
 		return ErrNoConsent
 	}
 	clearStaleTemp(d.opt.GitDir, d.log) // a daemon stopped mid-fetch leaves no one else to do it
-	// Sync once before accepting sessions, so whatever this sync finds was sent before any of
-	// them registered: it is the backlog, and nothing a new session should get.
-	sctx, scancel := context.WithTimeout(ctx, 10*time.Second)
-	if err := d.pollOnce(sctx); err != nil {
-		d.log.Printf("first sync failed; retrying in the background: %v", err)
-	}
-	scancel()
-	// The sync can take seconds, long enough for a leave to have come and gone without finding a
-	// daemon.json to stop.
-	if !d.consented() {
-		return ErrNoConsent
-	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
 	}
 	defer ln.Close()
-	// A daemon that restarted onto an update left the page's address and token for this one. Only
-	// a daemon free to choose its page's port takes them.
-	if h, ok := takePageHandoff(dir); ok && d.opt.PageAddr == defaultPageAddr {
-		d.pageTok, d.pagePrev = h.Token, h.Web
-	}
+	// A daemon that restarted onto an update handed this one the page's socket, and left the page's
+	// address and token beside it. The handoff is taken whether or not it is used: one left lying
+	// about would be no good to a later daemon, which has no socket to go with it.
+	h, handed := takePageHandoff(dir)
 	// A page that can't be served costs the page, not the daemon: sessions don't need it.
-	pageLn, err := d.listenPage()
+	pageLn, keep, err := d.listenPage(inherited, h, handed)
+	inherited = nil
 	if err != nil {
 		d.log.Printf("the page for humans isn't served: %v", err)
 	}
 	if pageLn != nil {
 		defer pageLn.Close()
 	}
-	infoPath := filepath.Join(dir, "daemon.json")
+	defer func() {
+		if keep != nil {
+			keep.Close()
+		}
+	}()
 	info := proto.Info{Addr: ln.Addr().String(), Token: d.token, PID: os.Getpid(), Device: d.device}
 	if pageLn != nil {
 		info.Web, info.PageToken = pageLn.Addr().String(), d.pageTok
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	d.bgCtx = ctx
+	d.firstSync = make(chan struct{})
+	if pageLn != nil {
+		d.servePage(ctx, pageLn) // first, so a page key asked for at once finds the page
+	}
+	go d.serve(ctx, ln)
+	// The daemon answers, and daemon.json says where, before its first sync rather than after it
+	// (#372). That sync takes seconds, and on a slow link or a loaded machine it ran past the 15 s a
+	// client that starts a daemon waits for it to answer: `mur ui` then said the daemon didn't come
+	// up when it had. What wants the sync waits for it instead (see awaitFirstSync).
 	if err := writeJSON(infoPath, info); err != nil {
 		return err
 	}
 	defer os.Remove(infoPath)
-	d.mu.Lock()
-	d.lastActive = time.Now() // the first sync may have taken a while; the idle time starts here
-	d.mu.Unlock()
 	d.log.Printf("device %s, remote %q, listening on %s", d.device, d.repo.Remote, info.Addr)
 	if info.Web != "" {
 		d.log.Printf("page for humans on %s", info.Web)
 	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	d.bgCtx = ctx
-	go d.serve(ctx, ln)
-	if pageLn != nil {
-		d.servePage(ctx, pageLn)
-	}
-	// Tracked, as the syncs it runs start background work of their own (clearOwnJunk).
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		d.pollLoop(ctx)
-	}()
-	// The presence loop is drained like other background work: a push still in flight when
-	// the goodbye deletes presence could otherwise land after it and bring the device back.
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		d.presenceLoop(ctx)
-	}()
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		d.nameLoop(ctx)
-	}()
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		d.pushLoop(ctx)
-	}()
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		d.titleLoop(ctx)
-	}()
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		d.threadLoop(ctx)
-	}()
-	if opt.Idle > 0 {
-		go d.idleLoop(ctx)
-	}
 	if opt.Consent != nil {
 		go d.consentLoop(ctx)
 	}
-	if opt.Report != nil {
-		go opt.Report(ctx)
+
+	if d.opt.Clones != "" {
+		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName}); err != nil {
+			d.log.Printf("this clone isn't on the record of this machine's clones, so other clones' pages can't switch to it: %v", err)
+		}
 	}
-	if opt.Update != nil {
+
+	// Sync once before sessions register (they wait for it), so whatever this sync finds was sent
+	// before any of them registered: it is the backlog, and nothing a new session should get. A stop
+	// asked for meanwhile cuts it short.
+	sctx, scancel := context.WithTimeout(ctx, d.opt.FirstSyncLimit)
+	go func() {
+		select {
+		case <-d.quit:
+		case <-sctx.Done():
+		}
+		scancel()
+	}()
+	if err := d.pollOnce(sctx); err != nil && !d.stopping() {
+		d.log.Printf("first sync failed; retrying in the background: %v", err)
+	}
+	scancel()
+	// The sync can take seconds, long enough for a leave to have come and gone. The consent loop
+	// would stop the daemon soon, but nothing should start for a user who has left. Decided before
+	// what waits for the sync goes on: since the daemon answers before it (#372), a client can have
+	// found it and the user left meanwhile, and a request that waited for the sync must find the
+	// daemon as this leaves it, stopping or not, not see it stop a moment later.
+	noConsent := !d.stopping() && !d.consented()
+	if noConsent {
+		d.stop()
+	}
+	close(d.firstSync)
+	d.mu.Lock()
+	d.lastActive = time.Now() // the first sync may have taken a while; the idle time starts here
+	d.mu.Unlock()
+
+	if !d.stopping() {
+		// Tracked, as the syncs it runs start background work of their own (clearOwnJunk).
 		d.bg.Add(1)
-		go func() { defer d.bg.Done(); opt.Update(ctx, func() { d.restartWhenIdle(ctx) }) }()
+		go func() {
+			defer d.bg.Done()
+			d.pollLoop(ctx)
+		}()
+		// The presence loop is drained like other background work: a push still in flight when
+		// the goodbye deletes presence could otherwise land after it and bring the device back.
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
+			d.presenceLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
+			d.nameLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
+			d.pushLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
+			d.titleLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
+			d.threadLoop(ctx)
+		}()
+		if opt.Idle > 0 {
+			go d.idleLoop(ctx)
+		}
+		if opt.Report != nil {
+			go opt.Report(ctx)
+		}
+		if opt.Update != nil {
+			d.bg.Add(1)
+			go func() { defer d.bg.Done(); opt.Update(ctx, func() { d.restartWhenIdle(ctx) }) }()
+		}
 	}
 	select {
 	case <-ctx.Done():
 	case <-d.quit:
 	}
+	// daemon.json goes before the port does. A client trusts the address in it while the lock is
+	// held, and the lock is held until the drain and the goodbye are done, which can take seconds:
+	// with the port given up first, another user's process could take it and be trusted. Sessions
+	// reconnect in that time, as their connections drop now, and find no daemon.
+	os.Remove(infoPath)
 	cancel()
 	ln.Close() // no new connections, so nothing joins bg while it drains
 	drained := make(chan struct{})
@@ -741,18 +886,28 @@ func Run(ctx context.Context, opt Options) error {
 	updated := d.updating
 	d.mu.Unlock()
 	if updated {
-		if info.Web != "" {
+		// The page's server has stopped, but keep still holds its socket, which the next daemon
+		// inherits: a tab's requests wait in the socket's queue until that daemon answers them.
+		if keep != nil {
 			if err := writeJSON(filepath.Join(dir, pageHandoffFile), pageHandoff{Web: info.Web, Token: info.PageToken}); err != nil {
 				d.log.Printf("the page won't carry over the restart: %v", err)
+				return ErrUpdated
 			}
+			page := keep
+			keep = nil
+			return &Updated{Page: page}
 		}
 		return ErrUpdated
+	}
+	if noConsent {
+		return ErrNoConsent
 	}
 	return nil
 }
 
 // pageHandoffFile is where a daemon restarting onto an update leaves the page's address and token
-// for the daemon that replaces it, so a tab open on the page reconnects to the new one (#240).
+// for the daemon that replaces it, so a tab open on the page reconnects to the new one (#240). The
+// new daemon takes them only with the page's socket, inherited (#255).
 const pageHandoffFile = "page.json"
 
 // pageHandoffAge is how old a handoff may be and still be taken up: a restart takes seconds.
@@ -782,7 +937,7 @@ func takePageHandoff(dir string) (pageHandoff, bool) {
 func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	now := time.Now()
 	d := &Daemon{
-		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), pageTok: bus.RandHex(32), started: now, lastActive: now,
+		opt: opt, dir: dir, maxRecord: bus.MaxRecord, maxSnapshot: bus.MaxSnapshot, log: opt.Log, token: bus.RandHex(32), pageTok: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
@@ -803,6 +958,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		return nil, err
 	}
 	d.owner = d.repo.Config(ctx, "user.name")
+	d.repoName = clones.NameOf(d.repo.Config(ctx, "remote."+d.repo.Remote+".url"))
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}
@@ -859,6 +1015,40 @@ func (d *Daemon) presenceRef() string { return brand.PresencePrefix + d.device }
 
 // stop asks Run to return.
 func (d *Daemon) stop() { d.quitOnce.Do(func() { close(d.quit) }) }
+
+// stopping reports whether the daemon has been told to stop.
+func (d *Daemon) stopping() bool {
+	select {
+	case <-d.quit:
+		return true
+	default:
+		return false
+	}
+}
+
+// awaitFirstSync waits until Run's first sync is over, done or not, for a request that wants what it
+// reads: a registration, as what that sync reads is the backlog, which a session shouldn't be given
+// (Run); who, send and lookup, which on a new clone would know no other device until then; and the
+// page's send and name claim, which resolve names, push, and may sync on their own. It
+// waits FirstSyncLimit at most, as the sync does, and less if ctx ends first. The daemon answers
+// before that sync (#372), so a starter needn't wait for it.
+func (d *Daemon) awaitFirstSync(ctx context.Context) {
+	if d.firstSync == nil {
+		return
+	}
+	select {
+	case <-d.firstSync:
+		return
+	default:
+	}
+	t := time.NewTimer(d.opt.FirstSyncLimit)
+	defer t.Stop()
+	select {
+	case <-d.firstSync:
+	case <-ctx.Done():
+	case <-t.C:
+	}
+}
 
 // goodbye deletes this device's presence, so other devices drop it at their next sync instead of
 // finding it stale six minutes later.
@@ -1008,7 +1198,8 @@ func (d *Daemon) loadState() error {
 		TagsFrom: map[string]string{}, Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
-		Tags: map[string]*tags.State{}, People: map[string]string{}, Pins: map[string]*keyPin{}}
+		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{},
+		Pins: map[string]*keyPin{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1062,6 +1253,9 @@ func (d *Daemon) loadState() error {
 	if d.st.Tags == nil {
 		d.st.Tags = map[string]*tags.State{}
 	}
+	if d.st.PersonClaims == nil {
+		d.st.PersonClaims = map[string]string{}
+	}
 	if d.st.People == nil {
 		d.st.People = map[string]string{}
 	}
@@ -1080,8 +1274,12 @@ func (d *Daemon) loadState() error {
 	return nil
 }
 
-// saveLocked writes state.json. Caller holds mu.
+// saveLocked writes state.json, unless a page of a log is being applied (see applyPageLocked), which
+// saves once at its end. Caller holds mu.
 func (d *Daemon) saveLocked() {
+	if d.savesHeld {
+		return
+	}
 	if err := writeJSON(d.statePath(), d.st); err != nil {
 		d.log.Printf("saving state: %v", err)
 	}
@@ -1094,6 +1292,10 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	tmp := path + ".tmp"
+	// Made new each time, never truncated: a file keeps the access list it was made with, and on
+	// Windows a temporary file left by a crash from before .git\murmur was protected would carry
+	// an open one onto daemon.json (see proc.Protect).
+	os.Remove(tmp)
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
@@ -1129,7 +1331,9 @@ func (d *Daemon) restartWhenIdle(ctx context.Context) {
 			return
 		}
 		d.updateReady = true
-		if len(d.pushing) == 0 && (d.restartAsked || !d.pageOpenLocked(time.Now())) {
+		// A page key handed out for a tab on its way here (#348) dies with this daemon's page server:
+		// the restart waits out its minute, so the tab isn't turned away.
+		if len(d.pushing) == 0 && (d.restartAsked || !d.pageOpenLocked(time.Now())) && !d.pageKeysOut() {
 			d.updating = true
 			d.mu.Unlock()
 			d.stop()

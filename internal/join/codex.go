@@ -26,7 +26,7 @@ type tomlServer struct {
 	approve bool     // default_tools_approval_mode = "approve"
 }
 
-var codexServer = tomlServer{file: "config.toml", args: codexArgs, envVars: []string{t3CLIEnv}, approve: true}
+var codexServer = tomlServer{file: "config.toml", args: codexArgs, envVars: []string{t3CLIEnv, codexHomeEnv}, approve: true}
 
 // t3CLIEnv is the variable that says a session runs inside T3 Code, and where its command line is.
 // Codex starts an MCP server with a bare environment and passes on only the variables the table
@@ -34,9 +34,16 @@ var codexServer = tomlServer{file: "config.toml", args: codexArgs, envVars: []st
 // to wake the thread with a message (docs/VISION.md, "Delivering a message as a turn").
 const t3CLIEnv = "T3CODE_CLI_PATH"
 
+// codexHomeEnv is the Codex home of a session whose home isn't ~/.codex. The server passes it to the
+// daemon, which reads a Codex thread's name from that home outside T3; without it the daemon reads
+// its own home, which may be another (docs/VISION.md, "Session names"). Codex leaves out a name
+// its own environment doesn't have (create_env_for_mcp_server in codex-rs/rmcp-client, read
+// 2026-11-09), so a session in ~/.codex is started as before.
+const codexHomeEnv = "CODEX_HOME"
+
 // editCodexConfig returns config.toml's text with Murmur's server in it. changed is false, and out
 // is text, when the table already says what join would write; a user's own env_vars is kept, with
-// T3CODE_CLI_PATH added to it if it lacks that. It refuses (an error) a file whose Murmur
+// the names join forwards added to it if it lacks them. It refuses (an error) a file whose Murmur
 // entry is written in a form it doesn't edit: two definitions of one table make the file invalid,
 // and Codex then fails to load any of its config.
 func editCodexConfig(text, exe string) (out string, changed bool, err error) {
@@ -51,20 +58,13 @@ func editTOMLServer(text, exe string, spec tomlServer) (out string, changed bool
 	}
 	lines := strings.Split(text, "\n") // a CRLF file keeps its \r on each line, which isn't touched
 	start, end := -1, len(lines)
-	inString := ""
+	open := ""         // the multi-line string the line starts in
 	var table []string // the table the line is in; none before the first header
 	for i, raw := range lines {
 		line := strings.TrimRight(raw, "\r")
-		if inString != "" {
-			if strings.Count(line, inString)%2 == 1 {
-				inString = ""
-			}
+		inString := open != ""
+		if open = tomlLineEnd(line, open); inString {
 			continue
-		}
-		for _, q := range []string{`"""`, `'''`} {
-			if strings.Count(line, q)%2 == 1 {
-				inString = q
-			}
 		}
 		if path, ok := tableHeader(line); ok {
 			table = path
@@ -145,7 +145,7 @@ func editTOMLServer(text, exe string, spec tomlServer) (out string, changed bool
 			found[key] = true
 			items, after, ok := stringListRest(val)
 			if !singleLine(val) || !ok || (after != "" && after[0] != '#') {
-				return "", false, fmt.Errorf("%s has env_vars of the %s server in a form join doesn't edit (several lines, or not a list of names): add %q to it by hand", spec.file, brand.MCPServer, strings.Join(spec.envVars, `", "`))
+				return "", false, fmt.Errorf("%s has env_vars of the %s server in a form join doesn't edit (several lines, or not a list of names): add %s to it by hand", spec.file, brand.MCPServer, joinQuoted(spec.envVars))
 			}
 			var missing []string
 			for _, v := range spec.envVars {
@@ -187,6 +187,72 @@ func editTOMLServer(text, exe string, spec tomlServer) (out string, changed bool
 	rebuilt := append(append(append([]string(nil), lines[:start+1]...), block...), lines[end:]...)
 	out = strings.Join(rebuilt, "\n")
 	return out, out != text, nil
+}
+
+// tomlLineEnd reads one line of TOML that starts inside the multi-line string open (three double
+// quotes or three single quotes, "" for none) and returns the one still open at its end, "" for none.
+// A line that starts inside one is the string's text, not a header or a key. Comments and one-line
+// strings are skipped as wholes, so a `"""` in either opens nothing: counting the quotes on a line
+// took a comment like `# wrap prompts in """` for an opening, missed [mcp_servers.murmur] below it,
+// and the next join appended a second one, which makes Codex refuse the whole file.
+func tomlLineEnd(line, open string) string {
+	i := 0
+	if open != "" {
+		if i = closeMultiline(line, 0, open); i < 0 {
+			return open
+		}
+	}
+	for i < len(line) {
+		switch c := line[i]; c {
+		case '#':
+			return ""
+		case '"', '\'':
+			q := string(c)
+			if strings.HasPrefix(line[i:], q+q+q) {
+				if i = closeMultiline(line, i+3, q+q+q); i < 0 {
+					return q + q + q
+				}
+				continue
+			}
+			j := i + 1
+			for j < len(line) && line[j] != c {
+				if c == '"' && line[j] == '\\' {
+					j++ // an escape, in a basic string only
+				}
+				j++
+			}
+			i = j + 1
+		default:
+			i++
+		}
+	}
+	return ""
+}
+
+// closeMultiline finds the end of the multi-line string delim (three double or three
+// single quotes) in line from i, and returns the index just past it, or -1 when the string goes on
+// past the line. Up to two more quotes right before the closing three belong to the string. A
+// backslash escapes the next character in a basic string, not in a literal one.
+func closeMultiline(line string, i int, delim string) int {
+	q := delim[0]
+	for i < len(line) {
+		switch {
+		case q == '"' && line[i] == '\\':
+			i += 2
+		case line[i] == q:
+			n := 0
+			for i+n < len(line) && line[i+n] == q {
+				n++
+			}
+			if n >= 3 {
+				return i + min(n, 5)
+			}
+			i += n
+		default:
+			i++
+		}
+	}
+	return -1
 }
 
 // tableHeader parses a line that is a table header, [a.b] or [[a.b]], into its key path. Only a

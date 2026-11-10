@@ -39,6 +39,7 @@ func rateDaemon() *Daemon {
 
 // With a session open and nothing said, the wait doubles from Poll to PollCap and stays there.
 func TestPollEveryBacksOffToTheCap(t *testing.T) {
+	t.Parallel()
 	d := rateDaemon()
 	calm := d.opt.Poll
 	var got []time.Duration
@@ -62,6 +63,7 @@ func TestPollEveryBacksOffToTheCap(t *testing.T) {
 
 // What moves a conversation sets the poll to Poll for FastFor, and the wait doubles again after.
 func TestPollEveryIsFastAroundAConversation(t *testing.T) {
+	t.Parallel()
 	d := rateDaemon()
 	d.mu.Lock()
 	d.noteConversationLocked()
@@ -79,6 +81,7 @@ func TestPollEveryIsFastAroundAConversation(t *testing.T) {
 
 // Quiet mode is as it was: QuietPoll, whatever was said lately.
 func TestPollEveryQuietIsUnchanged(t *testing.T) {
+	t.Parallel()
 	d := rateDaemon()
 	delete(d.sessions, "bbbbbb")
 	d.mu.Lock()
@@ -92,6 +95,7 @@ func TestPollEveryQuietIsUnchanged(t *testing.T) {
 // The moves that count: a session starting, and a message queued in the inbox of a session
 // here, or handed over to it as a turn. Not one for a session on another device, or for the CLI.
 func TestWhatMovesAConversation(t *testing.T) {
+	t.Parallel()
 	msg := func(to string) bus.Event {
 		return bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa", To: to,
 			Subject: "hi", At: time.Now()}
@@ -123,6 +127,7 @@ func TestWhatMovesAConversation(t *testing.T) {
 
 // A message handed over to a session as a turn moves it; one whose handoff failed does not.
 func TestHandoffMovesTheConversation(t *testing.T) {
+	t.Parallel()
 	d, _, _ := rateRig(t, rateOptions(), false)
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa", To: d.device + "/bbbbbb", Subject: "hi"}
 	job := func() *pushJob {
@@ -248,14 +253,54 @@ func within(t *testing.T, what string, d time.Duration, ok func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+// pollWait is the wait pollLoop chose after its last poll, as it tells the health snapshot.
+func pollWait(d *Daemon) time.Duration {
+	d.health.mu.Lock()
+	defer d.health.mu.Unlock()
+	return d.health.every
+}
+
+// shortestGap is the shortest time between the starts of two polls in a window: under the cap
+// only if the loop's timer took a wait under it.
+func shortestGap(d *Daemon, window time.Duration) time.Duration {
+	shortest := window
+	n, at := d.polls.Load(), time.Time{}
+	for end := time.Now().Add(window); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		if now := d.polls.Load(); now != n {
+			if !at.IsZero() && now == n+1 {
+				shortest = min(shortest, time.Since(at))
+			}
+			n, at = now, time.Now()
+		}
+	}
+	return shortest
+}
+
 // The poll slows toward the cap while a session is open and nothing is said, ignores a peer's
 // presence heartbeats and status changes, speeds up for a while after a message is received, slows
 // again, and speeds up after this device sends one.
 func TestPollFollowsTheConversation(t *testing.T) {
-	opt := Options{Poll: testPoll, PollCap: testCap, FastFor: 1500 * time.Millisecond, QuietPoll: time.Hour}
+	// Not parallel: it counts polls over real time, which other tests' load would skew. The counts
+	// are upper bounds, which load only lowers. That the poll speeds up is read from the wait the
+	// loop chose, and from two polls coming closer together than the cap allows: a count of polls in
+	// a second needed every poll to be quick, and under load one can take longer than Poll, which
+	// failed the test with the loop doing what it should (#387). FastFor is long enough that the
+	// rest of the poll that brought a message, which comes before the wait is chosen, doesn't use
+	// it up.
+	opt := Options{Poll: testPoll, PollCap: testCap, FastFor: 5 * time.Second, QuietPoll: time.Hour}
 	d, peer, _ := rateRig(t, opt, true)
-	settle := 2 * time.Second // 200, 400, 800 ms of waits, with the polls themselves
-	time.Sleep(settle)
+	atCap := func() bool { return pollWait(d) == testCap }
+	fast := func(what string) {
+		t.Helper()
+		within(t, "the wait to go to Poll "+what, opt.FastFor, func() bool { return pollWait(d) == testPoll })
+		// A timer left at the cap puts polls the cap apart, give or take a late tick; with Poll,
+		// a poll comes as soon as the one before it ends, so only polls that all took most of the
+		// cap could fail this.
+		if gap := shortestGap(d, 3*time.Second); gap >= testCap*7/8 {
+			t.Errorf("%s the polls came no closer than %v apart, with a wait of %v chosen", what, gap, testPoll)
+		}
+	}
+	within(t, "the wait to double up to the cap", time.Minute, atCap) // 200, 400, 800 ms
 
 	stop := make(chan struct{})
 	done := make(chan struct{})
@@ -270,7 +315,14 @@ func TestPollFollowsTheConversation(t *testing.T) {
 			}
 		}
 	}()
-	slow := pollsPerSecond(d, 2400*time.Millisecond)
+	before := d.polls.Load()
+	window := 2400 * time.Millisecond
+	for end := time.Now().Add(window); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+		if w := pollWait(d); w != testCap {
+			t.Fatalf("with a peer's heartbeats and nothing said, the wait went to %v from the cap", w)
+		}
+	}
+	slow := float64(d.polls.Load()-before) / window.Seconds()
 	close(stop)
 	<-done
 	d.mu.Lock()
@@ -283,20 +335,19 @@ func TestPollFollowsTheConversation(t *testing.T) {
 		t.Errorf("polled %.1f times a second with nothing said, want about 1 (a wait of up to %v)", slow, testCap)
 	}
 
-	// A message for the session: faster for FastFor.
+	// A message for the session: Poll for FastFor. Past FastFor the wait doubles from Poll, so it
+	// is Poll again only if a message made it so.
 	peerSays(t, peer, "", d.device+"/bbbbbb")
-	within(t, "the message to arrive", 10*time.Second, func() bool {
+	within(t, "the message to arrive", time.Minute, func() bool {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		return len(d.st.Inbox["bbbbbb"]) == 1
 	})
-	if fast := pollsPerSecond(d, time.Second); fast < 2.5*slow {
-		t.Errorf("after a message arrived the poll was %.1f a second, against %.1f before; want at least 2.5 times that", fast, slow)
-	}
+	fast("after a message arrived")
 
 	// Slow again once FastFor has passed and the wait has doubled up.
-	time.Sleep(opt.FastFor + settle)
-	if again := pollsPerSecond(d, 2400*time.Millisecond); again > 2.5 {
+	within(t, "the wait back at the cap once the conversation went quiet", time.Minute, atCap)
+	if again := pollsPerSecond(d, window); again > 2.5 {
 		t.Errorf("polled %.1f times a second once the conversation went quiet, want about 1", again)
 	}
 
@@ -306,13 +357,12 @@ func TestPollFollowsTheConversation(t *testing.T) {
 	if err := d.appendEvent(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
-	if fast := pollsPerSecond(d, time.Second); fast < 2.5*slow {
-		t.Errorf("after a send the poll was %.1f a second, against %.1f before; want at least 2.5 times that", fast, slow)
-	}
+	fast("after a send")
 }
 
 // With no session the poll stays at QuietPoll, a message sent from the daemon not changing that.
 func TestPollQuietStaysQuiet(t *testing.T) {
+	// Not parallel: it counts polls over real time, which other tests' load would skew.
 	opt := Options{Poll: testPoll, PollCap: testCap, FastFor: time.Minute, QuietPoll: time.Second}
 	d, _, _ := rateRig(t, opt, true)
 	d.mu.Lock()
@@ -331,6 +381,7 @@ func TestPollQuietStaysQuiet(t *testing.T) {
 
 // A poll that fails waits longer each time, even while the conversation is fresh.
 func TestPollFailureStillBacksOff(t *testing.T) {
+	// Not parallel: it counts polls over real time, which other tests' load would skew.
 	opt := Options{Poll: testPoll, PollCap: testCap, FastFor: time.Minute, QuietPoll: time.Hour}
 	d, _, clone := rateRig(t, opt, true)
 	d.mu.Lock()
@@ -347,6 +398,7 @@ func TestPollFailureStillBacksOff(t *testing.T) {
 // A conversation that moves while a failing poll waits doesn't end the wait: the remote is down or
 // limiting, and the faster rate is for when it answers.
 func TestConversationDuringAFailureKeepsTheBackoff(t *testing.T) {
+	// Not parallel: it counts polls over real time, which other tests' load would skew.
 	opt := Options{Poll: testPoll, PollCap: testCap, FastFor: time.Minute, QuietPoll: time.Hour}
 	d, _, clone := rateRig(t, opt, true)
 	d.mu.Lock()
@@ -370,6 +422,7 @@ func TestConversationDuringAFailureKeepsTheBackoff(t *testing.T) {
 // Messages kept for a conversation that reach its live session when it takes the name move the
 // conversation too, as one received does.
 func TestAdoptingAKeptInboxMovesTheConversation(t *testing.T) {
+	t.Parallel()
 	d := rateDaemon()
 	d.opt.StoppedInbox = time.Hour
 	d.st.SessionNames = map[string]string{"aaaaaa": "quiet-otter"}

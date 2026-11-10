@@ -31,7 +31,9 @@ import (
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:0", "loopback address to listen on")
+	taken := flag.Bool("taken", false, "start with an account named maya, a name the person on maya-mbp chose first (#268)")
 	upd := flag.String("update", "none", "what the page is told of a newer release: none, auto (being installed), manual (updates off), or ready (installed, waiting for a restart)")
+	repos := flag.String("repos", "", "comma-separated repo names: each is served on a port of its own, and the page's picker switches between them (#348); the last starts stopped")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*addr)
 	if err != nil || (host != "127.0.0.1" && host != "localhost") {
@@ -55,10 +57,101 @@ func main() {
 	default:
 		log.Fatalf("-update must be none, auto, manual or ready")
 	}
+	if *taken {
+		src.account = web.Account{Name: "maya", Addr: src.self + "/human", Taken: "maya-mbp-91c0"}
+	}
 	go src.run()
+	page := web.NewWithPRs(src, token, fixturePRs)
+	if *repos != "" {
+		serveRepos(strings.Split(*repos, ","), ln, src, page)
+	}
 	fmt.Printf("http://%s/#token=%s\n", ln.Addr(), token)
-	srv := &http.Server{Handler: web.NewWithPRs(src, token, fixturePRs), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: page, ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.Serve(ln))
+}
+
+// devRepo is one made-up clone, with a page of its own on a port of its own, as each clone's daemon
+// serves its own.
+type devRepo struct {
+	name, path string
+	addr       string
+	page       *web.Server
+	mu         sync.Mutex
+	running    bool
+}
+
+// devRepos is the picker's view from one of them.
+type devRepos struct {
+	all  []*devRepo
+	self int
+}
+
+func (r devRepos) List(ctx context.Context) ([]web.Repo, error) {
+	var out []web.Repo
+	for i, d := range r.all {
+		d.mu.Lock()
+		out = append(out, web.Repo{ID: strconv.Itoa(i), Name: d.name, Path: d.path, Running: d.running, Current: i == r.self})
+		d.mu.Unlock()
+	}
+	return out, nil
+}
+
+// Open takes a moment, and longer for a repo whose daemon has to start.
+func (r devRepos) Open(ctx context.Context, id string) (string, error) {
+	i, err := strconv.Atoi(id)
+	if err != nil || i < 0 || i >= len(r.all) {
+		return "", web.ErrNoRepo
+	}
+	d := r.all[i]
+	d.mu.Lock()
+	wait := 300 * time.Millisecond
+	if !d.running {
+		wait = 1500 * time.Millisecond
+	}
+	d.mu.Unlock()
+	select {
+	case <-time.After(wait):
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	d.mu.Lock()
+	d.running = true
+	d.mu.Unlock()
+	return "http://" + d.addr + "/#key=" + d.page.PageKey(), nil
+}
+
+// serveRepos serves a page for each name after the first, which is the page on ln, and gives them
+// all the picker. Each repo after the first has fewer devices and messages, so the switch shows.
+func serveRepos(names []string, ln net.Listener, first *fixtures, firstPage *web.Server) {
+	all := make([]*devRepo, len(names))
+	for i, name := range names {
+		name = strings.TrimSpace(name)
+		d := &devRepo{name: name, path: "~/code/" + name, running: i == 0 || i < len(names)-1}
+		src := first
+		if i == 0 {
+			d.addr, d.page = ln.Addr().String(), firstPage
+		} else {
+			l, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				log.Fatal(err)
+			}
+			src = newFixtures(time.Now())
+			src.version = first.version
+			src.devices = src.devices[:1+i%2]
+			src.messages = src.messages[len(src.messages)/(i+1):]
+			go src.run()
+			d.addr, d.page = l.Addr().String(), web.NewWithPRs(src, randomHex(16), fixturePRs)
+			srv := &http.Server{Handler: d.page, ReadHeaderTimeout: 10 * time.Second}
+			go func() { log.Fatal(srv.Serve(l)) }()
+		}
+		src.mu.Lock()
+		src.repo = name
+		src.mu.Unlock()
+		all[i] = d
+	}
+	for i, d := range all {
+		d.page.WithRepos(devRepos{all: all, self: i})
+	}
 }
 
 func randomHex(n int) string {
@@ -99,6 +192,7 @@ type fixtures struct {
 	version  web.Version
 	downTill time.Time // a restart in progress: State fails until then
 	account  web.Account
+	repo     string // the repo's name, for the picker
 }
 
 func newFixtures(now time.Time) *fixtures {
@@ -164,7 +258,8 @@ func newFixtures(now time.Time) *fixtures {
 		},
 	}
 	// Another person has an account already, so the page's list of people has someone in it.
-	f.devices[1].Person = &web.Person{Name: "maya", Addr: "maya-mbp-91c0/human", LastActive: ago(40 * time.Second)}
+	f.devices[1].Person = &web.Person{Name: "maya", Addr: "maya-mbp-91c0/human", LastActive: ago(40 * time.Second),
+		Tags: tags.Person()}
 	// Every session has an address, device/session, as the daemon's do.
 	for di := range f.devices {
 		for si := range f.devices[di].Sessions {
@@ -201,6 +296,13 @@ func newFixtures(now time.Time) *fixtures {
 		"Claims are gone from proto.SessionView on my branch. Don't build on Claims.")
 	msg(4*time.Minute, "mellow-yak", "solar-wren", web.ToSession, "Receipts can say \"idle 12 min\"",
 		"If your wake-up check knows the idle time, receipts (#26) can carry it back to the sender. Want me to read it from the session, or will you hand it over?")
+	// A person's conversation with an agent, as another device's person had it.
+	f.messages = append(f.messages,
+		web.Message{ID: randomHex(6), From: "maya", FromAddr: "maya-mbp-91c0/human", FromPerson: true, To: "solar-wren",
+			ToKind: web.ToSession, Subject: "Can you look at the flaky wake-up test before you go?", At: ago(3 * time.Minute)},
+		web.Message{ID: randomHex(6), From: "solar-wren", To: "maya", ToAddr: "maya-mbp-91c0/human", ToPerson: true,
+			ToKind: web.ToSession, Subject: "Re: Can you look at the flaky wake-up test before you go?",
+			Body: "Yes. It's the 50 ms idle check racing the heartbeat; I'll send you the fix.", At: ago(2 * time.Minute)})
 	msg(90*time.Second, "solar-wren", "mellow-yak", web.ToSession, "Re: Receipts can say \"idle 12 min\"",
 		"I'll hand it over: the daemon will keep lastTurnEnded per session.")
 	f.mutes = []web.Mute{
@@ -277,7 +379,7 @@ func (f *fixtures) State(ctx context.Context) (web.State, error) {
 	if time.Now().Before(f.downTill) {
 		return web.State{}, errors.New("restarting")
 	}
-	st := web.State{Device: f.self, Mutes: append([]web.Mute(nil), f.mutes...), Version: f.version, Account: f.account}
+	st := web.State{Repo: f.repo, Device: f.self, Mutes: append([]web.Mute(nil), f.mutes...), Version: f.version, Account: f.account}
 	for _, d := range f.devices {
 		d.Sessions = append([]web.Session(nil), d.Sessions...)
 		st.Devices = append(st.Devices, d)
@@ -310,10 +412,10 @@ func (f *fixtures) SetAccount(ctx context.Context, name string) (web.Account, er
 	if name == "maya" {
 		return web.Account{}, errors.New("maya is taken, by the person on maya-mbp-91c0.")
 	}
-	f.account.Name, f.account.Addr, f.account.Suggested = name, f.self+"/human", ""
+	f.account.Name, f.account.Addr, f.account.Suggested, f.account.Taken = name, f.self+"/human", "", ""
 	for i := range f.devices {
 		if f.devices[i].Self {
-			f.devices[i].Person = &web.Person{Name: name, Addr: f.account.Addr, LastActive: time.Now()}
+			f.devices[i].Person = &web.Person{Name: name, Addr: f.account.Addr, LastActive: time.Now(), Tags: tags.Person()}
 		}
 	}
 	return f.account, nil
@@ -322,6 +424,12 @@ func (f *fixtures) SetAccount(ctx context.Context, name string) (web.Account, er
 // Send takes as long as a push does, refuses what scrub would, and has the session answer a few
 // seconds later, as an agent does, going active first so the page can show it working.
 func (f *fixtures) Send(ctx context.Context, to, text string) (web.Sent, error) {
+	f.mu.Lock()
+	takenBy := f.account.Taken
+	f.mu.Unlock()
+	if takenBy != "" {
+		return web.Sent{}, fmt.Errorf("the person on %s has your name; choose another before you send", takenBy)
+	}
 	select {
 	case <-time.After(700 * time.Millisecond):
 	case <-ctx.Done():

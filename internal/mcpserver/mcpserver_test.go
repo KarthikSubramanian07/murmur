@@ -22,6 +22,7 @@ import (
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/join"
+	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/setup"
 )
@@ -91,6 +92,13 @@ func (f *fakeDaemon) serveAt(t *testing.T, gitDir string) string {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// It holds the clone's lock, as a daemon does: a client takes a daemon.json beside a free lock
+	// for a dead daemon's.
+	lock, err := proc.Lock(filepath.Join(dir, "daemon.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lock.Close() })
 	info, _ := json.Marshal(proto.Info{Addr: ln.Addr().String(), Token: "tok"})
 	if err := os.WriteFile(filepath.Join(dir, "daemon.json"), info, 0o600); err != nil {
 		t.Fatal(err)
@@ -122,6 +130,18 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 	reply := func(resp proto.Response) {
 		b, _ := json.Marshal(resp)
 		conn.Write(append(b, '\n'))
+	}
+	if req.Op == proto.OpPing && req.Nonce != "" { // the daemon's proof (#371)
+		reply(proto.Response{OK: true, Protocol: proto.Protocol, Proof: proto.Proof("tok", conn.LocalAddr().String(), req.Nonce)})
+		if line, err = r.ReadBytes('\n'); err != nil {
+			conn.Close()
+			return
+		}
+		req = proto.Request{}
+		if json.Unmarshal(line, &req) != nil {
+			conn.Close()
+			return
+		}
 	}
 	if req.Op == proto.OpHello {
 		f.mu.Lock()

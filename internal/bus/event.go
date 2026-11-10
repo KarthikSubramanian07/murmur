@@ -148,7 +148,8 @@ func (e *Event) Clean() {
 }
 
 // Clean does for a presence what Event.Clean does for an event, and drops sessions whose IDs
-// Murmur wouldn't write.
+// Murmur wouldn't write. A device has one person, at one address, so only the first is kept: the
+// others would only hold names their device can't be reached by.
 func (p *Presence) Clean() {
 	for name, id := range p.Names {
 		if !names.Valid(name) || !ValidName(id) {
@@ -158,12 +159,14 @@ func (p *Presence) Clean() {
 	p.Host = OneLine(p.Host, 64)
 	p.Owner = OneLine(p.Owner, 64)
 	var keep []SessionInfo
+	person := false
 	for _, s := range p.Sessions {
 		if ValidName(s.ID) {
 			if s.ID == PersonSession {
-				if !ValidPerson(s.Name) {
-					continue // no name, no way to tell them from a stray session
+				if !ValidPerson(s.Name) || person {
+					continue // no name, no way to tell them from a stray session; or a second person
 				}
+				person = true
 				s.Agent = AgentPerson
 			} else if !names.Valid(s.Name) {
 				s.Name = ""
@@ -173,6 +176,9 @@ func (p *Presence) Clean() {
 			s.Doing = OneLine(s.Doing, 120)
 			s.Committed = cleanBranches(s.Committed)
 			s.Tags = tags.CleanRead(s.Tags)
+			if s.ID == PersonSession {
+				s.Tags = tags.Person() // by the address, whatever the presence says (#267)
+			}
 			keep = append(keep, s)
 		}
 	}
@@ -306,10 +312,18 @@ type SessionInfo struct {
 	// Tags is the session's tags as its device decided them, each with where it came from (#198).
 	// A daemon from before tags ignores them.
 	Tags []tags.Tag `json:"tags,omitempty"`
+	// HookOff says Murmur's hook doesn't run for the session (proto.SessionView.HookOff, #225). A
+	// daemon from before it ignores it.
+	HookOff bool `json:"hookOff,omitempty"`
 }
 
 // MaxCommitted caps SessionInfo.Committed.
 const MaxCommitted = 5
+
+// MaxSessions caps the sessions a presence read from the bus may list. Murmur's lists what one
+// device runs, far fewer. A reader takes each session name in a presence as used, for good, so one
+// that lists more isn't cut to the cap but read as unreadable, whole.
+const MaxSessions = 200
 
 // Encode renders a record as a commit message: a readable subject line, a blank line, then
 // the JSON that readers actually parse.
@@ -334,8 +348,10 @@ func Decode(msg string, v any) error {
 const MaxBody = 32 << 10
 
 // OneLine collapses whitespace, line breaks of every kind included, turns other control
-// characters (a terminal escape, say) into spaces, and cuts s to at most max runes.
+// characters (a terminal escape, say) into spaces, drops invisible format characters (see
+// dropFormat), and cuts s to at most max runes.
 func OneLine(s string, max int) string {
+	s = dropFormat(s)
 	s = strings.Join(strings.FieldsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " ")
 	if r := []rune(s); len(r) > max {
 		s = string(r[:max-1]) + "…"
@@ -344,9 +360,10 @@ func OneLine(s string, max int) string {
 }
 
 // Text keeps a text's lines but writes every kind of line break as "\n", turns other control
-// characters but tabs into spaces, and cuts it to at most max bytes. Whoever shows it line by line
-// then sees the same lines everyone else does.
+// characters but tabs into spaces, drops invisible format characters (see dropFormat), and cuts it
+// to at most max bytes. Whoever shows it line by line then sees the same lines everyone else does.
 func Text(s string, max int) string {
+	s = dropFormat(s)
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.Map(func(r rune) rune {
 		switch {
@@ -363,6 +380,54 @@ func Text(s string, max int) string {
 		s = strings.ToValidUTF8(s[:max], "")
 	}
 	return s
+}
+
+// dropFormat removes Unicode format characters (category Cf), which take no space on screen: bidi
+// overrides and isolates, which make a terminal or a page show text in another order than it
+// reads; zero-width spaces, word joiners and byte-order marks; the soft hyphen; and the tag block
+// (U+E0000 to U+E007F), which spells out text a model reads and no terminal or page shows. All of
+// it reaches agents' context, so text from the bus could otherwise say one thing to the person
+// watching a session and another to its agent.
+//
+// The zero-width joiner and non-joiner stay where each joins two visible characters outside ASCII:
+// the joiner is how emoji such as a family or a woman at a laptop are made, and both shape words in
+// Persian and the Indic scripts. No emoji sequence or script has one next to an ASCII character, so
+// one there is dropped, and a key can't hide from scrub behind it. So is one in a run of them, or
+// next to a space or another format character.
+//
+// What that costs: flags spelled with tag characters (England's, Scotland's) lose their tags and
+// show as a black flag; the direction marks (U+200E, U+200F, U+061C), which mixed Hebrew or Arabic
+// and Latin text sometimes needs to show in the right order, are dropped; so are the Arabic number
+// signs (U+0600 to U+0605); and a Malayalam chillu in the old encoding, a virama and a joiner at the
+// end of a word, loses its joiner.
+//
+// Other invisible characters aren't format characters and still pass: runs of variation selectors,
+// the combining grapheme joiner (U+034F) and the Hangul fillers.
+func dropFormat(s string) string {
+	if !strings.ContainsFunc(s, isFormat) {
+		return s
+	}
+	rs := []rune(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	for i, r := range rs {
+		if !isFormat(r) {
+			b.WriteRune(r)
+			continue
+		}
+		if (r == '\u200c' || r == '\u200d') && i > 0 && i+1 < len(rs) && joinable(rs[i-1]) && joinable(rs[i+1]) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func isFormat(r rune) bool { return unicode.Is(unicode.Cf, r) }
+
+// joinable says whether r is a visible character outside ASCII that a joiner may stand next to: a
+// letter, a mark (a vowel sign, an emoji's variation selector), a digit or a symbol (an emoji).
+func joinable(r rune) bool {
+	return r > unicode.MaxASCII && unicode.In(r, unicode.L, unicode.M, unicode.N, unicode.S)
 }
 
 // Addr joins a device and a session into an address.

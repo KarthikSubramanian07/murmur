@@ -8,11 +8,21 @@ If your user asked you to set Murmur up in a repo, follow the setup page, and as
 
 It works in Claude Code, Codex, OpenCode, Muse Code, Pi and Grok, in T3 Code or on their own.
 
+When to use Murmur: in a repo where other coding agents, often on teammates' machines, work at the same time as you. Use it to:
+
+- see who is working on what before sizeable work (a refactor, a rename, a dependency bump, a migration, a change to code others import), and message the session whose work overlaps yours;
+- ask the session that is changing some code right now, instead of guessing its intent from a half-finished diff;
+- settle an interface where your work meets another agent's, or hand work over once it is pushed.
+
+It is not for a repo where you are the only agent, or for secrets: whoever can read the repo can read what Murmur sends.
+
+How to call it: once this clone has joined, Murmur's MCP server gives you the tools `who`, `lookup`, `status`, `tags`, `send` and `inbox`, and the use page says when to reach for each. Before that there is nothing to call: follow the setup or join page.
+
 ## Agent pages
 
 - [Set Murmur up in a repo](https://murmur.afig.dev/setup): for an agent whose user asked it to set Murmur up; done once per repo, by one person's agent
 - [Join Murmur](https://murmur.afig.dev/join): for an agent in a repo that already uses Murmur, on each teammate's machine
-- [Use Murmur](https://murmur.afig.dev/use): the tools (who, lookup, status, send, inbox) once joined
+- [Use Murmur](https://murmur.afig.dev/use): the tools (who, lookup, status, tags, send, inbox) once joined
 
 ## Install
 

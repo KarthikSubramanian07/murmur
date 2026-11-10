@@ -37,6 +37,8 @@ type Source interface {
 	Send(ctx context.Context, to, text string) (Sent, error)
 	// MarkRead takes these messages out of the person's unread.
 	MarkRead(ctx context.Context, ids []string) error
+	// Health is how this device is doing with the remote and its sessions (health.go).
+	Health(ctx context.Context) (Health, error)
 }
 
 // ErrNoUpdate is Restart's answer when no installed update is waiting.
@@ -44,6 +46,8 @@ var ErrNoUpdate = errors.New("no update is waiting to be restarted onto")
 
 // State is what the page's sessions view and mute list show.
 type State struct {
+	// Repo is the name of the repository this page is a clone of, as the repo picker shows it.
+	Repo    string   `json:"repo,omitempty"`
 	Device  string   `json:"device"` // this device's ID
 	Devices []Device `json:"devices"`
 	Mutes   []Mute   `json:"mutes"`
@@ -79,13 +83,17 @@ type Account struct {
 	Suggested string `json:"suggested,omitempty"`
 	// Unread is the IDs of the messages sent to them that they haven't opened.
 	Unread []string `json:"unread,omitempty"`
+	// Taken is the device whose person claimed this name first, "" if nobody else did (#268): a
+	// name chosen before people's names were claimed. They are asked to choose another.
+	Taken string `json:"taken,omitempty"`
 }
 
 // Person is a person on a device.
 type Person struct {
-	Name       string    `json:"name"`
-	Addr       string    `json:"addr"`
-	LastActive time.Time `json:"lastActive,omitzero"` // when a page someone could see last called its daemon
+	Name       string     `json:"name"`
+	Addr       string     `json:"addr"`
+	LastActive time.Time  `json:"lastActive,omitzero"` // when a page someone could see last called its daemon
+	Tags       []tags.Tag `json:"tags,omitempty"`      // human, always (#267)
 }
 
 // Sent is what became of a message a person sent.
@@ -128,6 +136,9 @@ type Session struct {
 	// Tags is the session's tags, in order of name, each with where it came from: the session,
 	// derived by its daemon, or a human (#198).
 	Tags []tags.Tag `json:"tags,omitempty"`
+	// HookOff says Murmur's hook doesn't run for the session, so it isn't told of messages while
+	// it works (#225).
+	HookOff bool `json:"hookOff,omitempty"`
 }
 
 // Message is one message between sessions.
@@ -156,7 +167,7 @@ const (
 	ToAll     = "all"
 )
 
-// Mute is one session's mute of another: the muted session's messages to it are not delivered.
+// Mute is one session's mute of another: the muted session's messages never reach it.
 type Mute struct {
 	By    string    `json:"by"`
 	Muted string    `json:"muted"`
@@ -199,7 +210,7 @@ const (
 
 // Busy values. With BusySubject the hook shows the sender and subject, and the agent reads the
 // body with inbox; with BusyWhole it shows the message as it would go in as a turn, and the
-// message is delivered.
+// message is read. A message with no body is shown the second way under either (#355).
 const (
 	BusySubject = "subject"
 	BusyWhole   = "whole"

@@ -13,6 +13,30 @@ const VIEWS = ["sessions", "messages", "recent", "settings"];
 const TITLES = { sessions: "Sessions", messages: "Conversations", recent: "Recent", settings: "Settings" };
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
+// The page's look, chosen in Settings and kept in this browser: black like T3 Code, soft greys like
+// a chat app, or light. style.css keys each one on <html data-theme>.
+const THEME_KEY = NAME + ":theme";
+const THEMES = [
+  ["dark", "Dark"],
+  ["dim", "Dim"],
+  ["light", "Light"],
+];
+let theme = "dark";
+try {
+  const t = localStorage.getItem(THEME_KEY);
+  if (THEMES.some(([id]) => id === t)) theme = t;
+} catch {}
+document.documentElement.dataset.theme = theme;
+
+function setTheme(t) {
+  theme = t;
+  document.documentElement.dataset.theme = t;
+  try {
+    localStorage.setItem(THEME_KEY, t);
+  } catch {}
+  render();
+}
+
 const ui = {
   view: "messages",
   token: null,
@@ -31,6 +55,11 @@ const ui = {
   muting: new Set(),
   tagging: new Set(), // the sessions whose tags are being changed, by their row key
   tagInput: null, // the row key of the session whose tag field is open
+  tagFilter: null, // a tag: the session lists show only the sessions with it
+  tagMenu: null, // { addrs, x, top or bottom, q, err }: the tag menu, open on those sessions
+  selecting: false, // All sessions picks sessions, to tag them together
+  selected: new Set(), // their addresses
+  madeTags: new Set(), // tags made here, offered in the menu even once no session has them
   restarting: 0, // when the restart onto an installed update was asked for
   reloadDue: false, // a new daemon is serving, and this page should load its page when it can
   // A person's account (#242).
@@ -44,6 +73,8 @@ const ui = {
   reading: null, // the conversation someone was last seen looking at, null if nobody is looking
   newMark: null, // the open conversation's first unread message: { key, id }
   armed: null, // the group chat whose next send goes: its key
+  repoMenu: null, // the repo picker, open: { x, top, repos, opening, err } (#348)
+  drawer: false, // on a phone, whether the sidebar's drawer is open
 };
 
 class AuthError extends Error {
@@ -71,6 +102,31 @@ function takeToken() {
   return sessionStorage.getItem(TOKEN_KEY);
 }
 
+// A page opened from another repo's page (#348) arrives with a one-time key, not the token, and
+// trades it with its own daemon for the token. The key is spent either way, so it leaves the
+// address bar first. If the trade fails, the tab keeps whatever token it already had here.
+async function takeKey() {
+  const parts = location.hash.slice(1).split("&");
+  const k = parts.find((p) => p.startsWith("key="));
+  if (!k) return;
+  const view = parts.find((p) => VIEWS.includes(p)) || "messages";
+  history.replaceState(null, "", location.pathname + location.search + "#" + view);
+  // The theme comes along: this browser keeps it per page, and each repo's page is a page of its own.
+  const t = parts.find((p) => p.startsWith("theme="))?.slice(6);
+  if (THEMES.some(([id]) => id === t) && t !== theme) {
+    theme = t;
+    document.documentElement.dataset.theme = t;
+    try {
+      localStorage.setItem(THEME_KEY, t);
+    } catch {}
+  }
+  try {
+    const res = await fetch("/api/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: k.slice(4) }), cache: "no-store" });
+    const got = res.ok ? await res.json() : null;
+    if (got?.token) sessionStorage.setItem(TOKEN_KEY, got.token);
+  } catch {}
+}
+
 async function api(path, init = {}) {
   const token = ui.token;
   const headers = { Authorization: "Bearer " + token };
@@ -93,12 +149,16 @@ function h(tag, props, ...kids) {
   for (const [k, v] of Object.entries(props || {})) {
     if (v == null || v === false) continue;
     if (k === "class") el.className = v;
-    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
-    else el.setAttribute(k, v === true ? "" : String(v));
+    else if (k.startsWith("on")) {
+      el.addEventListener(k.slice(2), v);
+      (el.listeners ||= []).push([k.slice(2), v]); // for graft, which moves them to the node kept
+    } else el.setAttribute(k, v === true ? "" : String(v));
   }
   for (const kid of kids.flat(Infinity)) {
     if (kid == null || kid === false || kid === "") continue;
-    el.append(kid instanceof Node ? kid : String(kid));
+    // The focused node, if it outlasts renders (a composer), stays in the page; a mark takes its
+    // place in the new tree, for graft.
+    el.append(kid === held.el ? held.mark : kid instanceof Node ? kid : String(kid));
   }
   return el;
 }
@@ -199,6 +259,125 @@ function plural(n, word) {
 
 const root = document.getElementById("root");
 let content; // the scrolling pane, kept across renders so its scroll position is too
+const held = { el: null, mark: null }; // the focused element while a render builds around it
+
+// One polite live region for the page, which renders never rebuild: a region made anew each render
+// would be read out every time, or never. What it says comes in a batch, a moment after the change,
+// the region is cleared first so the same words can be said again, and it empties a while after, so
+// moving it says nothing. It lives at the end of <body>, or inside an open aria-modal dialog, since
+// Safari with VoiceOver hides everything outside one.
+const live = h("div", { class: "sr-only", role: "status", "aria-live": "polite", "aria-atomic": "true" });
+document.body.append(live);
+let liveQueue = [];
+let liveTimer = 0;
+function announce(text) {
+  if (!text) return;
+  if (!liveQueue.length) live.textContent = "";
+  liveQueue.push(text);
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(() => {
+    live.textContent = liveQueue.join(" ");
+    liveQueue = [];
+    liveTimer = setTimeout(() => (live.textContent = ""), 7000);
+  }, 150);
+}
+
+function placeLive() {
+  const home = root.querySelector('[aria-modal="true"]') || document.body;
+  if (live.parentNode !== home) home.append(live);
+}
+
+// What a render shows that is marked data-announce (an error, a warning, a lost connection) is
+// said once, when it first shows, rather than each time a poll rebuilds it.
+let announced = new Set();
+function announceShown() {
+  const now = new Set();
+  for (const el of root.querySelectorAll("[data-announce]")) {
+    const text = el.dataset.announce || el.textContent;
+    now.add(text);
+    if (!announced.has(text)) announce(text);
+  }
+  announced = now;
+}
+
+// A render builds the page anew. The focused element is kept, with the elements it sits in, and
+// everything around them is replaced: moved or rebuilt, it would lose focus, and a screen reader
+// would read it out again on every poll. Its counterpart in the new tree is the element with its
+// data-key, or else its place among the focusable elements of its message. A match by place counts
+// only if the message holds as many of them as before and the counterpart is the same kind of
+// control with the same name, so a poll can never move the focus to a different control.
+function twinOf(el, kids) {
+  if (held.mark.parentNode) return held.mark;
+  const find = (sel) => {
+    for (const k of kids) {
+      if (k.matches(sel)) return k;
+      const f = k.querySelector(sel);
+      if (f) return f;
+    }
+    return null;
+  };
+  const by = (n) => (n.dataset.key ? `[data-key="${CSS.escape(n.dataset.key)}"]` : n.dataset.id ? `[data-id="${CSS.escape(n.dataset.id)}"]` : n.dataset.cid ? `[data-cid="${CSS.escape(n.dataset.cid)}"]` : null);
+  if (by(el)) return find(by(el));
+  const anchor = el.parentElement?.closest("[data-id], [data-cid]");
+  if (!anchor) return null;
+  const focusable = (n) => [...n.querySelectorAll("button, a[href], input, textarea, [tabindex]")];
+  const was = focusable(anchor);
+  const twinAnchor = find(by(anchor));
+  const now = twinAnchor ? focusable(twinAnchor) : [];
+  const twin = now.length === was.length ? now[was.indexOf(el)] : null;
+  const same = (a, b) => a.tagName === b.tagName && a.className === b.className && a.getAttribute("aria-label") === b.getAttribute("aria-label") && a.getAttribute("href") === b.getAttribute("href") && a.textContent === b.textContent;
+  return twin && same(el, twin) ? twin : null;
+}
+
+function graft(parent, kids, el, twin) {
+  const chain = [];
+  for (let n = el; n && n !== parent; n = n.parentNode) chain.unshift(n);
+  const twins = [];
+  for (let n = twin; n; n = n.parentNode) {
+    twins.unshift(n);
+    if (kids.includes(n)) break;
+  }
+  if (chain.length !== twins.length || !kids.includes(twins[0])) return false;
+  if (chain.some((n, i) => twins[i] !== held.mark && n.tagName !== twins[i].tagName)) return false;
+  let list = kids;
+  for (let i = 0; i < chain.length; i++) {
+    const keep = chain[i];
+    const at = list.indexOf(twins[i]);
+    for (const n of [...parent.childNodes]) if (n !== keep) n.remove();
+    keep.before(...list.slice(0, at));
+    keep.after(...list.slice(at + 1));
+    if (twins[i] === held.mark) break; // the element itself, which outlasts renders
+    adopt(keep, twins[i]);
+    if (i === chain.length - 1) keep.replaceChildren(...twins[i].childNodes);
+    else list = [...twins[i].childNodes];
+    parent = keep;
+  }
+  return true;
+}
+
+// Gives a kept element its counterpart's attributes and listeners.
+function adopt(old, neu) {
+  for (const a of [...old.attributes]) {
+    if (neu.hasAttribute(a.name)) continue;
+    old.removeAttribute(a.name);
+    // A field whose render gave it a value, and now gives none, shows none: once typed in, it
+    // would go on showing what was typed (idle minutes back to inherited after a save failed). A
+    // field that never had a value attribute is a draft the render leaves alone.
+    if (a.name === "value" && "value" in old) old.value = "";
+  }
+  for (const a of neu.attributes) {
+    if (a.name === "style") old.style.cssText = neu.style.cssText; // the CSP takes styles only through the CSSOM
+    else if (old.getAttribute(a.name) !== a.value) {
+      // A field that has been typed in ignores its value attribute, so a render that changes it
+      // (the tag menu's field, cleared once a tag is made) sets what it shows too.
+      if (a.name === "value" && old.getAttribute("value") !== a.value && "value" in old && old.value !== a.value) old.value = a.value;
+      old.setAttribute(a.name, a.value);
+    }
+  }
+  for (const [type, fn] of old.listeners || []) old.removeEventListener(type, fn);
+  for (const [type, fn] of neu.listeners || []) old.addEventListener(type, fn);
+  old.listeners = neu.listeners;
+}
 
 function render() {
   if (ui.conn === "denied" || !ui.token) {
@@ -206,33 +385,93 @@ function render() {
       h(
         "div",
         { class: "gate" },
+        h("img", { class: "gate-mark", src: "/assets/favicon.svg", alt: "" }),
         h("p", { class: "gate-title" }, NAME),
-        h("p", { class: "gate-line" }, "Open the page again from its link."),
+        h("p", { class: "gate-line" }, "This page needs its link again. Run " + COMMAND + " ui to open it."),
       ),
     );
     content = null;
+    placeLive();
     return;
   }
+  const focused = root.contains(document.activeElement) ? document.activeElement : null;
   const keep = document.activeElement?.dataset?.key;
   const caret = caretOf(document.activeElement);
   const scroll = content ? content.scrollTop : 0;
   const chat = chatScroll();
   const side = root.querySelector(".sidebar-content, .mini-scroll")?.scrollTop || 0;
-  if (!content) content = h("div", { class: "content" });
-  const inner = page(); // before the top bar, which counts what this settles
-  content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
-  content.replaceChildren(inner);
-  root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)), ui.setup && setupDialog(), ui.picker && pickerDialog());
+  // With the focus in the pane, the new pane is built apart, and graft keeps the old one.
+  if (!content || content.contains(focused)) content = h("div", { class: "content" });
+  held.el = focused;
+  held.mark = focused && h("span");
+  let kids;
+  let gone = null; // the key of what opened a tag menu that closed itself
+  try {
+    const inner = page(); // before the top bar, which counts what this settles
+    content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
+    content.replaceChildren(inner);
+    // On a phone the sidebar is a drawer over the page, opened from the top bar. A dialog, the tag
+    // menu or the repo menu holds the keyboard: the page behind it is inert until it closes.
+    const drawer = NARROW.matches && ui.drawer;
+    // A tag menu whose sessions have all gone closes here, before the page is made inert for it.
+    if (ui.tagMenu && !ui.tagMenu.addrs.some(sessionByAddr)) {
+      gone = ui.tagMenu.from;
+      ui.tagMenu = null;
+    }
+    const modal = !!(ui.setup || ui.picker || ui.tagMenu || ui.repoMenu);
+    kids = [
+      h(
+        "div",
+        { class: "app" + (drawer ? " drawer-open" : ""), inert: modal ? true : null },
+        // Past the sidebar's many rows to the page, for the keyboard (WCAG 2.4.1).
+        !NARROW.matches && h("button", { class: "skip-link", "data-key": "skip", onclick: () => root.querySelector("main")?.focus() }, "Skip to content"),
+        sidebar(),
+        drawer && h("div", { class: "drawer-scrim", "aria-hidden": "true", onclick: () => setDrawer(false) }),
+        h(
+          "main",
+          { class: "main", tabindex: -1, "data-key": "main", inert: drawer ? true : null },
+          showTopbar() ? topbar() : h("h1", { class: "sr-only" }, viewTitle()),
+          content,
+        ),
+      ),
+      ui.setup && setupDialog(),
+      ui.picker && pickerDialog(),
+      ui.tagMenu && tagMenu(),
+      ui.repoMenu && repoMenu(),
+    ].filter(Boolean);
+  } finally {
+    held.el = null;
+  }
+  const twin = focused && twinOf(focused, kids);
+  if (twin && graft(root, kids, focused, twin)) {
+    content = root.querySelector(".content") || content;
+  } else {
+    // The page changed around it too much to keep it: put the focus back on its counterpart if
+    // its key finds one, or else on the pane it was in, rather than on some other control.
+    if (twin && twin === held.mark) held.mark.replaceWith(focused);
+    const inMain = !!focused?.closest("main");
+    root.replaceChildren(...kids);
+    const el = keep ? root.querySelector(`[data-key="${CSS.escape(keep)}"]`) : null;
+    if (el?.isConnected) {
+      el.focus({ preventScroll: true });
+      restoreCaret(el, caret);
+    } else if (focused && inMain) {
+      root.querySelector("main")?.focus({ preventScroll: true });
+    }
+  }
+  // The focus was in that menu, and went with it: back to what opened it, as closing it would do,
+  // or to the page when that went too (the Tag button of a session that has gone).
+  if (gone && (!document.activeElement || document.activeElement === document.body)) {
+    root.querySelector(`[data-key="${CSS.escape(gone)}"]`)?.focus({ preventScroll: true });
+    if (document.activeElement === document.body) root.querySelector("main")?.focus({ preventScroll: true });
+  }
   content.scrollTop = scroll;
   const sideNow = root.querySelector(".sidebar-content, .mini-scroll");
   if (sideNow) sideNow.scrollTop = side;
   restoreChatScroll(chat);
-  if (keep) {
-    const el = root.querySelector(`[data-key="${CSS.escape(keep)}"]`);
-    el?.focus({ preventScroll: true });
-    restoreCaret(el, caret);
-  }
   fitComposers();
+  placeLive();
+  announceShown();
   document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME;
   queueMicrotask(markOpenRead);
 }
@@ -252,31 +491,20 @@ function restoreCaret(el, caret) {
   } catch {}
 }
 
-function navButton(view, iconName, count) {
+// A row in the sidebar's nav, as T3 Code's: an icon, a label, and a count or badge at the end.
+function navRow(key, iconName, label, current, onclick, end) {
   return h(
-    "li",
-    null,
-    h(
-      "button",
-      {
-        class: "menu-button",
-        "aria-current": ui.view === view ? "page" : null,
-        "data-key": "nav-" + view,
-        onclick: () => {
-          ui.filter = null;
-          go(view);
-        },
-      },
-      icon(iconName),
-      h("span", { class: "label" }, TITLES[view]),
-      count != null && h("span", { class: "menu-count" }, count),
-    ),
+    "button",
+    { class: "menu-button", "aria-current": current ? "page" : null, "data-key": key, onclick },
+    icon(iconName),
+    h("span", { class: "label" }, label),
+    end,
   );
 }
 
-// The sidebar is the sessions themselves, under their devices: every session, every conversation
-// and the newest messages at the top, Settings at the foot. It folds to a strip of faces, and
-// remembers that.
+// The sidebar is the sessions themselves, under their devices, as T3 Code's are threads under their
+// projects: your messages, every session, every conversation and the newest messages at the top,
+// Settings at the foot. It folds to a strip of faces, and remembers that. On a phone it is a drawer.
 const MINI_KEY = NAME + ":sidebar-mini";
 let mini = false;
 try {
@@ -288,6 +516,20 @@ function setMini(v) {
     localStorage.setItem(MINI_KEY, v ? "1" : "0");
   } catch {}
   render();
+}
+
+function setDrawer(open) {
+  ui.drawer = open;
+  render();
+  if (open) root.querySelector(".sidebar .menu-button")?.focus({ preventScroll: true });
+  else root.querySelector('[data-key="open-sidebar"]')?.focus({ preventScroll: true });
+}
+
+// Picking a session shows its conversations.
+function pickSession(key) {
+  ui.filter = key;
+  ui.conversation = null;
+  go("messages");
 }
 
 function miniSidebar() {
@@ -302,37 +544,53 @@ function miniSidebar() {
     "aside",
     { class: "sidebar mini", "data-app-sidebar": true, "aria-label": NAME },
     h("button", { class: "mini-btn mini-open", title: "Show the sidebar", "aria-label": "Show the sidebar", "data-key": "mini-open", onclick: () => setMini(false) }, icon("panel")),
+    connBadge(true),
     h(
       "div",
       { class: "mini-scroll" },
       miniYou(),
-      top("sessions", "users", "All sessions", ui.view === "sessions"),
-      top("messages", "message", "All conversations", ui.view === "messages" && !ui.filter),
-      top("recent", "clock", "Recent messages", ui.view === "recent"),
-      devices().map((d) => [
-        h("div", { class: "mini-dev", title: (d.self ? "This device" : d.owner || d.id) + " · " + liveSessions(d).length }, deviceDot(d)),
-        liveSessions(d).map((s) => {
-          const key = s.addr || s.name;
-          return h(
-            "button",
-            {
-              class: "mini-face" + (ui.view === "messages" && ui.filter === key ? " current" : ""),
-              title: s.name + (s.doing ? ": " + s.doing : ""),
-              "aria-label": s.name,
-              "data-key": "mini-s-" + s.name,
-              onclick: () => {
-                ui.filter = key;
-                ui.conversation = null;
-                go("messages");
-              },
+      top("sessions", "users", "Sessions", ui.view === "sessions"),
+      top("messages", "message", "Conversations", ui.view === "messages" && !ui.filter),
+      top("recent", "clock", "Recent", ui.view === "recent"),
+      ui.tagFilter &&
+        h(
+          "button",
+          {
+            class: "mini-btn current",
+            title: "Tagged " + ui.tagFilter + ": show every session",
+            "aria-label": "Tagged " + ui.tagFilter + ": show every session",
+            "data-key": "mini-tag",
+            onclick: () => {
+              ui.tagFilter = null;
+              render();
             },
-            presence(s.name, d),
-          );
-        }),
-      ]),
+          },
+          icon("tag"),
+        ),
+      devices().map((d) => {
+        const live = shownSessions(liveSessions(d));
+        if (ui.tagFilter && !live.length) return null;
+        return [
+          h("div", { class: "mini-dev", title: deviceLabel(d) + " · " + plural(live.length, "session") }, deviceDot(d)),
+          live.map((s) => {
+            const key = s.addr || s.name;
+            return h(
+              "button",
+              {
+                class: "mini-face" + (ui.view === "messages" && ui.filter === key ? " current" : ""),
+                title: s.name + (s.doing ? ": " + s.doing : ""),
+                "aria-label": s.name,
+                "data-key": "mini-s-" + s.name,
+                onclick: () => pickSession(key),
+              },
+              presence(s.name, d),
+            );
+          }),
+        ];
+      }),
     ),
     miniUpdate(),
-    h("button", { class: "mini-btn mini-foot" + (ui.view === "settings" ? " current" : ""), title: "Settings", "aria-label": "Settings", onclick: () => go("settings") }, icon("settings")),
+    h("button", { class: "mini-btn mini-foot" + (ui.view === "settings" ? " current" : ""), title: "Settings", "aria-label": "Settings", "data-key": "mini-settings", onclick: () => go("settings") }, icon("settings")),
   );
 }
 
@@ -346,121 +604,156 @@ function miniYou() {
   );
 }
 
+// Whether the page can reach its daemon. Nothing shows while it can.
+function connBadge(small) {
+  if (ui.conn !== "down" || ui.restarting) return null;
+  const tip = "Can't reach the daemon. The page keeps trying; " + COMMAND + " ui starts it again.";
+  return small
+    ? h("span", { class: "mini-conn", role: "img", title: tip, "aria-label": "Disconnected", "data-announce": tip }, h("span", { class: "dot warn" }))
+    : h("span", { class: "conn-badge", title: tip, "data-announce": tip }, h("span", { class: "dot warn" }), "Disconnected");
+}
+
 function sidebar() {
-  if (mini) return miniSidebar();
+  if (mini && !NARROW.matches) return miniSidebar();
   const devs = devices();
+  const allCount = allConversations().length;
+  const live = devs.reduce((n, d) => n + liveSessions(d).length, 0);
   return h(
     "aside",
-    { class: "sidebar", "data-app-sidebar": true, "aria-label": NAME },
+    { class: "sidebar", "data-app-sidebar": true, "aria-label": NAME, id: "sidebar" },
     h(
       "div",
       { class: "sidebar-header" },
-      h("span", { class: "brand" }, NAME),
-      h("button", { class: "fold-btn", title: "Hide the sidebar", "aria-label": "Hide the sidebar", "data-key": "fold", onclick: () => setMini(true) }, icon("panel")),
+      h("img", { class: "brand-mark", src: "/assets/favicon.svg", alt: "" }),
+      repoButton(),
+      connBadge(false),
+      NARROW.matches
+        ? h("button", { class: "icon-btn", title: "Close", "aria-label": "Close the sidebar", "data-key": "close-sidebar", onclick: () => setDrawer(false) }, icon("panel"))
+        : h("button", { class: "icon-btn", title: "Hide the sidebar", "aria-label": "Hide the sidebar", "data-key": "fold", onclick: () => setMini(true) }, icon("panel")),
     ),
     h(
       "div",
       { class: "sidebar-content" },
       h(
-        "div",
-        { class: "sidebar-group g-top" },
+        "nav",
+        { class: "sidebar-group g-top", "aria-label": "Views" },
         yourRow(),
-        topRow("sessions", "users", "All sessions", allSessionsSub()),
-        allButton(),
-        topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")),
+        navRow("top-sessions", "users", "Sessions", ui.view === "sessions", () => ((ui.filter = null), go("sessions")), h("span", { class: "menu-count" }, live)),
+        navRow("all", "message", "Conversations", ui.view === "messages" && !ui.filter, () => ((ui.filter = null), (ui.conversation = null), go("messages")), h("span", { class: "menu-count" }, allCount)),
+        navRow("top-recent", "clock", "Recent", ui.view === "recent", () => ((ui.filter = null), go("recent"))),
       ),
-      ui.notice && h("button", { class: "side-notice", title: "Dismiss", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
+      ui.notice && h("button", { class: "side-notice", title: "Dismiss", "data-key": "notice", "data-announce": "", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
       peopleGroup(),
-      devs.map((d) =>
-        h(
-          "div",
-          { class: "sidebar-group dev-group" },
-          h(
-            "div",
-            {
-              class: "device-link" + (d.reachable ? "" : " stale"),
-              title: d.reachable ? d.id : d.id + ", last seen " + ago(when(d.lastSeen) || 0),
-            },
-            icon("laptop"),
-            h("span", { class: "label" }, deviceDot(d), deviceLabel(d), h("span", { class: "dev-host" }, host(d.id))),
-            d.self ? h("span", { class: "dev-you" }, "you") : !d.reachable && h("span", { class: "dev-you" }, "offline"),
-            h("span", { class: "menu-count" }, liveSessions(d).length),
-          ),
-          liveSessions(d).length > 0 &&
-            h(
-              "ul",
-              { class: "sidebar-menu side-sessions" },
-              liveSessions(d).map((s) => {
-                const key = s.addr || s.name;
-                return h(
-                  "li",
-                  { class: "side-li" },
-                  h(
-                    "button",
-                    {
-                      class: "side-session",
-                      "aria-current": ui.view === "messages" && ui.filter === key ? "page" : null,
-                      "data-key": "ss-" + s.name,
-                      title: s.doing || s.name,
-                      onclick: () => {
-                        ui.filter = key;
-                        ui.conversation = null;
-                        go("messages");
-                      },
-                    },
-                    ...sideSessionBody(d, s),
-                  ),
-                  messageButton(s.name),
-                  s.addr && hideButton(s),
-                );
-              }),
-            ),
-          quietFold(d),
-          settledFold(d.id),
-        ),
-      ),
+      tagsGroup(),
+      devs.map((d) => deviceGroup(d)),
     ),
     sidebarFoot(),
   );
 }
 
-// The foot says who you are here, once you are someone.
+// A device, like a project in T3 Code's sidebar: a header that folds it, then its sessions. A tag
+// filter (#270) leaves out the sessions without the tag, and a device left with none.
+function deviceGroup(d) {
+  ui.closedDevices = ui.closedDevices || new Set();
+  const closed = ui.closedDevices.has(d.id);
+  const live = shownSessions(liveSessions(d));
+  if (ui.tagFilter && !live.length && !shownSessions(quietSessions(d)).length) return null;
+  return h(
+    "div",
+    { class: "sidebar-group dev-group" + (d.reachable ? "" : " stale") },
+    h(
+      "button",
+      {
+        class: "device-link",
+        "aria-expanded": closed ? "false" : "true",
+        "data-key": "dev-" + d.id,
+        title: d.reachable ? d.id : d.id + ", last seen " + ago(when(d.lastSeen) || 0),
+        onclick: () => {
+          closed ? ui.closedDevices.delete(d.id) : ui.closedDevices.add(d.id);
+          render();
+        },
+      },
+      icon("chevronRight", "dev-chev"),
+      h("span", { class: "label" }, h("span", { class: "dev-name truncate" }, deviceLabel(d)), h("span", { class: "dev-host truncate" }, host(d.id))),
+      d.self ? h("span", { class: "dev-you" }, "you") : !d.reachable && h("span", { class: "dev-you" }, "offline"),
+      h("span", { class: "menu-count" }, live.length),
+    ),
+    !closed && [
+      live.length > 0 &&
+        h(
+          "ul",
+          { class: "sidebar-menu side-sessions" },
+          live.map((s) => {
+            const key = s.addr || s.name;
+            return h(
+              "li",
+              { class: "side-li" },
+              h(
+                "button",
+                {
+                  class: "side-session",
+                  "aria-current": ui.view === "messages" && ui.filter === key ? "page" : null,
+                  "data-key": "ss-" + s.name,
+                  title: [s.name, s.doing, s.branch && "on " + s.branch, tagsOf(s).names.join(", ")].filter(Boolean).join(" · "),
+                  onclick: () => pickSession(key),
+                },
+                ...sideSessionBody(d, s),
+              ),
+              h("span", { class: "side-actions" }, s.addr && tagButton(s), messageButton(s.name), s.addr && hideButton(s)),
+            );
+          }),
+        ),
+      quietFold(d),
+      !ui.tagFilter && settledFold(d.id),
+    ],
+  );
+}
+
+// The foot says who you are here, once you are someone, and carries the update notice.
 function sidebarFoot() {
   const a = me();
-  if (!a) return h("div", { class: "sidebar-foot" }, h("ul", { class: "sidebar-menu" }, updateItem(), navButton("settings", "settings", null)));
   const update = updateItem();
   return h(
     "div",
     { class: "sidebar-foot" },
-    update && h("ul", { class: "sidebar-menu" }, update),
-    h(
-      "div",
-      { class: "foot-account" },
-      h(
-        "button",
-        { class: "account-chip", title: "Your account", "data-key": "account-chip", onclick: () => go("settings") },
-        avatar(a.name),
-        h("span", { class: "account-name truncate" }, a.name),
-      ),
-      h("button", { class: "foot-settings", title: "Settings", "aria-label": "Settings", "aria-current": ui.view === "settings" ? "page" : null, "data-key": "nav-settings", onclick: () => go("settings") }, icon("settings")),
-    ),
+    update,
+    a
+      ? h(
+          "div",
+          { class: "foot-account" },
+          h(
+            "button",
+            { class: "account-chip", title: "Your account", "data-key": "account-chip", onclick: () => go("settings") },
+            avatar(a.name),
+            h("span", { class: "account-name truncate" }, a.name),
+          ),
+          h("button", { class: "icon-btn", title: "Settings", "aria-label": "Settings", "aria-current": ui.view === "settings" ? "page" : null, "data-key": "nav-settings", onclick: () => go("settings") }, icon("settings")),
+        )
+      : navRow("nav-settings", "settings", "Settings", ui.view === "settings", () => go("settings")),
   );
 }
 
 // Your messages, at the top of the sidebar, with what is unread. With no account yet, it is where
-// you get one.
+// you get one; with a name someone else claimed first (#268), where you choose another.
 function yourRow() {
-  const a = me();
   const n = unreadCount();
-  const count = a ? yourConversationCount() : 0;
-  const sub = !ui.state ? "" : !a ? "Talk to your agents" : n ? n + " unread" : count ? plural(count, "conversation") : "No messages yet";
-  return h(
-    "button",
-    { class: "all-convs top-you", "aria-current": isMyFilter() ? "page" : null, "data-key": "top-you", onclick: openYours },
-    h("span", { class: "all-ico ico-you" }, icon("user")),
-    h("span", { class: "all-text" }, h("span", { class: "all-title" }, "Your messages"), h("span", { class: "all-sub" }, sub)),
-    n > 0 && h("span", { class: "unread-badge" }, n),
+  const taken = !!me()?.taken;
+  return navRow(
+    "top-you",
+    "user",
+    "Your messages",
+    isMyFilter(),
+    openYours,
+    taken
+      ? h("span", { class: "name-taken", title: "Someone else chose your name first. Choose a new one to send again." }, "New name")
+      : n > 0 && h("span", { class: "unread-badge", "aria-label": n + " unread" }, n),
   );
+}
+
+// The human tag (#267): a person's account has it, worked out from the address, and nothing else
+// does. It looks like the session tags it sits among, and can't be taken off.
+function humanTag() {
+  return h("span", { class: "badge tag badge-outline tag-human", title: "A person, not an agent. " + NAME + " gives this tag to every person's account, and only to one." }, "human");
 }
 
 function peopleGroup() {
@@ -469,7 +762,7 @@ function peopleGroup() {
   return h(
     "div",
     { class: "sidebar-group dev-group" },
-    h("div", { class: "device-link" }, h("span", { class: "label" }, "People"), h("span", { class: "menu-count" }, others.length)),
+    h("div", { class: "group-label" }, h("span", { class: "label" }, "People"), h("span", { class: "menu-count" }, others.length)),
     h(
       "ul",
       { class: "sidebar-menu side-sessions" },
@@ -484,7 +777,7 @@ function peopleGroup() {
             h(
               "span",
               { class: "side-session-text" },
-              h("span", { class: "side-session-name truncate" }, p.name),
+              h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate" }, p.name), humanTag()),
               h("span", { class: "side-session-doing truncate" }, personOnline(p) ? "On " + NAME + " now" : deviceLabel(p.device)),
             ),
           ),
@@ -499,7 +792,7 @@ function messageButton(name) {
     "button",
     {
       class: "side-msg",
-      title: "Message " + name,
+      "data-tip": "Message",
       "aria-label": "Message " + name,
       "data-key": "msg-" + name,
       onclick: (e) => {
@@ -544,13 +837,9 @@ function updateItem() {
   if (!info) return null;
   const cls = "menu-button update update-" + info.kind;
   const kids = [updateIcon(info), h("span", { class: "label" }, info.text)];
-  return h(
-    "li",
-    null,
-    info.act
-      ? h("button", { class: cls, title: info.title, "data-key": "update", onclick: info.act }, kids)
-      : h("div", { class: cls, title: info.title, role: "status" }, kids),
-  );
+  return info.act
+    ? h("button", { class: cls, title: info.title, "data-key": "update", onclick: info.act }, kids)
+    : h("div", { class: cls, title: info.title, "data-announce": info.text + ". " + info.title }, kids);
 }
 
 function miniUpdate() {
@@ -606,7 +895,7 @@ function versionSection() {
         h("code", null, v.install),
         h(
           "button",
-          { class: "btn btn-ghost btn-xs", title: "Copy", "aria-label": "Copy the command", "data-key": "copy-install", onclick: () => navigator.clipboard?.writeText(v.install) },
+          { class: "btn btn-ghost btn-xs", title: "Copy", "aria-label": "Copy the command", "data-key": "copy-install", onclick: () => copyText(v.install) },
           icon("copy"),
         ),
       ),
@@ -712,7 +1001,7 @@ function hideButton(s) {
     "button",
     {
       class: "side-hide",
-      title: hidden ? "Show " + s.name + " again" : "Hide " + s.name + " until you show it again",
+      "data-tip": hidden ? "Show again" : "Hide until you show it again",
       "aria-label": hidden ? "Show " + s.name + " again" : "Hide " + s.name,
       "data-key": "hide-" + s.name,
       onclick: () => setHidden(s, !hidden),
@@ -723,7 +1012,7 @@ function hideButton(s) {
 
 // Each device's quiet sessions, folded under its live ones.
 function quietFold(d) {
-  const rows = quietSessions(d);
+  const rows = shownSessions(quietSessions(d));
   if (!rows.length) return null;
   ui.openQuiet = ui.openQuiet || new Set();
   const open = ui.openQuiet.has(d.id);
@@ -768,8 +1057,10 @@ function quietFold(d) {
               },
               presence(s.name, d),
               h("span", { class: "settled-name truncate" }, s.name),
+              tagChips(s, 2, true),
               h("span", { class: "settled-when" }, isHidden(s) ? "hidden" : t ? ago(t).replace(" ago", "") : ""),
             ),
+            s.addr && tagButton(s),
             isHidden(s) && hideButton(s),
           );
         }),
@@ -800,6 +1091,31 @@ function deviceDot(d, cls = "") {
   return h("span", { class: ("dev-dot pres-" + st + " " + cls).trim(), title: DEVICE_WORDS[st] });
 }
 
+// A state on its own, where a row has no room for a face: T3 Code's thread status dot.
+function statusDot(name, d) {
+  const p = findPerson(name);
+  const f = p ? null : findSession(name);
+  const st = p ? (personOnline(p) ? "on" : "off") : sessionState(f ? f.device : d, f ? f.session : null);
+  const tip = p ? PERSON_TIPS[st] : STATE_TIPS[st];
+  return h("span", { class: "status-dot pres-" + st, title: tip, role: "img", "aria-label": p ? tip : STATE_WORDS[st] });
+}
+
+// A pull request for a branch, as gh found it, with a link to it when it is on GitHub.
+function prFor(s) {
+  const prs = ui.state?.prs || {};
+  return s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
+}
+
+function prBadge(pr, link, key) {
+  const label = (pr.draft ? "Draft pull request #" : "Pull request #") + pr.number;
+  const kids = [icon(pr.draft ? "prDraft" : "pr"), "#" + pr.number];
+  const cls = "g-pr" + (pr.draft ? " draft" : "");
+  if (link && typeof pr.url === "string" && pr.url.startsWith("https://github.com/")) {
+    return h("a", { class: cls, href: pr.url, target: "_blank", rel: "noopener noreferrer", title: label + " on GitHub", "data-key": key, onclick: (e) => e.stopPropagation() }, kids);
+  }
+  return h("span", { class: cls, title: label }, kids);
+}
+
 function presence(name, d) {
   const p = findPerson(name);
   if (p) {
@@ -809,24 +1125,6 @@ function presence(name, d) {
   const f = findSession(name);
   const st = sessionState(f ? f.device : d, f ? f.session : null);
   return h("span", { class: "pres-wrap" }, avatar(name), h("span", { class: "pres pres-" + st, title: STATE_TIPS[st] }));
-}
-
-// The sidebar's top rows: a picture, a title and a count under it.
-function topRow(view, iconName, title, sub) {
-  return h(
-    "button",
-    {
-      class: "all-convs top-" + view,
-      "aria-current": ui.view === view ? "page" : null,
-      "data-key": "top-" + view,
-      onclick: () => {
-        ui.filter = null;
-        go(view);
-      },
-    },
-    h("span", { class: "all-ico" }, icon(iconName)),
-    h("span", { class: "all-text" }, h("span", { class: "all-title" }, title), h("span", { class: "all-sub" }, sub)),
-  );
 }
 
 // Settled sessions: stopped, or settled in T3, so their device leaves them out of presence (#189).
@@ -937,13 +1235,6 @@ function settledRow(r) {
   );
 }
 
-// All sessions' count: those running, and those settled if there are any, else the devices.
-function allSessionsSub() {
-  const settled = settledSessions().length;
-  const live = devices().reduce((n, d) => n + liveSessions(d).length, 0);
-  return plural(live, "session") + " · " + (settled ? settled + " settled" : plural(devices().length, "device"));
-}
-
 // Who a device belongs to, for its heading; its host name goes beside it.
 function deviceLabel(d) {
   return d.self ? "This device" : d.owner || d.id;
@@ -954,27 +1245,6 @@ function host(id) {
   return String(id).replace(/-[0-9a-f]{4}$/, "");
 }
 
-// Every conversation, between the sidebar's other two top rows.
-function allButton() {
-  const all = ui.view === "messages" && !ui.filter;
-  const count = allConversations().length;
-  return h(
-    "button",
-    {
-      class: "all-convs",
-      "aria-current": all ? "page" : null,
-      "data-key": "all",
-      onclick: () => {
-        ui.filter = null;
-        ui.conversation = null;
-        go("messages");
-      },
-    },
-    h("span", { class: "all-ico" }, icon("message")),
-    h("span", { class: "all-text" }, h("span", { class: "all-title" }, "All conversations"), h("span", { class: "all-sub" }, plural(count, "conversation"))),
-  );
-}
-
 function allConversations() {
   const keep = ui.filter;
   ui.filter = null;
@@ -983,25 +1253,19 @@ function allConversations() {
   return list;
 }
 
-// A session in the sidebar: its face and state, what it's doing, and its branch and pull request.
+// A session in the sidebar, like a thread in T3 Code's: its state, its name and tags over what it's
+// doing, and its pull request.
 function sideSessionBody(d, s) {
-  const prs = ui.state?.prs || {};
-  const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
+  const pr = prFor(s);
   return [
     presence(s.name, d),
     h(
       "span",
       { class: "side-session-text" },
-      h("span", { class: "side-session-name truncate" }, s.name),
+      h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate" }, s.name), tagChips(s, 2, true)),
       h("span", { class: "side-session-doing truncate" }, s.doing || s.agent || ""),
-      (s.branch || pr) &&
-        h(
-          "span",
-          { class: "g-meta" },
-          s.branch && h("span", { class: "g-branch truncate" }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
-          pr && h("span", { class: "g-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number),
-        ),
     ),
+    pr && prBadge(pr, false),
   ];
 }
 
@@ -1013,83 +1277,154 @@ function stateWord(d, s) {
   return STATE_WORDS[st];
 }
 
-// Every session, as cards under its device; tabs show the quiet and the settled ones.
+// Every session, in a group under its device as T3 Code's settings rows are; tabs show the quiet and
+// the settled ones, and Select picks sessions to tag together (#270).
 function sessionsPage() {
-  if (!ui.state) return h("div", { class: "page" });
+  if (!ui.state) return h("div", { class: "g-page" });
   const devs = devices();
-  const total = devs.reduce((n, d) => n + liveSessions(d).length, 0);
-  const quiet = devs.reduce((n, d) => n + quietSessions(d).length, 0);
+  const total = devs.reduce((n, d) => n + shownSessions(liveSessions(d)).length, 0);
+  const quiet = devs.reduce((n, d) => n + shownSessions(quietSessions(d)).length, 0);
   const tab = ui.sessTab || "running";
+  // What a selection can hold: the sessions in front of the person, so a filter or a tab leaves
+  // none picked out of sight.
+  const pickable = tab === "settled" ? [] : devs.flatMap((d) => shownSessions(tab === "quiet" ? quietSessions(d) : liveSessions(d))).filter((s) => s.addr);
+  const inView = new Set(pickable.map((s) => s.addr));
+  for (const a of ui.selected) if (!inView.has(a)) ui.selected.delete(a);
+  if (tab === "settled") ui.selecting = false;
+  const sub = ui.tagFilter ? plural(total, "session") + " tagged " + ui.tagFilter : plural(total, "session") + " running on " + plural(devs.length, "device");
   return h(
     "div",
     { class: "g-page" },
     h(
-      "header",
-      { class: "g-page-head g-page-head-row" },
-      h("div", null, h("h1", null, "All sessions"), h("p", null, plural(total, "session") + " running on " + plural(devs.length, "device"))),
+      "div",
+      { class: "g-toolbar" },
+      h("p", { class: "g-toolbar-meta" }, sub),
       h(
         "div",
-        { class: "g-tabs", role: "tablist" },
-        [
-          ["running", "Running", total],
-          ["quiet", "Quiet", quiet],
-          ["settled", "Settled", settledSessions().length],
-        ].map(([id, label, n]) =>
+        { class: "g-head-tools" },
+        tab !== "settled" &&
           h(
             "button",
             {
-              role: "tab",
-              "aria-selected": tab === id ? "true" : "false",
-              "data-key": "tab-" + id,
+              class: "btn btn-outline btn-xs g-select-btn",
+              "aria-pressed": ui.selecting ? "true" : "false",
+              "data-key": "select",
               onclick: () => {
-                ui.sessTab = id;
+                ui.selecting = !ui.selecting;
+                ui.selected.clear();
                 render();
               },
             },
-            label,
-            h("span", { class: "g-tab-n" }, n),
+            ui.selecting ? "Done" : "Select",
+          ),
+        h(
+          "div",
+          { class: "segmented", role: "tablist", "aria-label": "Which sessions" },
+          [
+            ["running", "Running", total],
+            ["quiet", "Quiet", quiet],
+            ["settled", "Settled", ui.tagFilter ? 0 : settledSessions().length],
+          ].map(([id, label, n]) =>
+            h(
+              "button",
+              {
+                role: "tab",
+                "aria-selected": tab === id ? "true" : "false",
+                "data-key": "tab-" + id,
+                onclick: () => {
+                  ui.sessTab = id;
+                  render();
+                },
+              },
+              label,
+              h("span", { class: "g-tab-n" }, n),
+            ),
           ),
         ),
       ),
     ),
-    tab === "settled" ? settledPage(devs) : tab === "quiet" ? quietPage(devs) : devs.map((d) =>
-      h(
-        "section",
-        { class: "g-dev" },
-        h(
-          "h2",
-          { class: "g-dev-head" },
-          deviceDot(d),
-          h("span", null, d.self ? "This device" : d.owner || d.id),
-          h("span", { class: "g-dev-host" }, host(d.id)),
-          h("span", { class: "g-dev-n" }, d.reachable ? plural(liveSessions(d).length, "session") : "Offline · seen " + ago(when(d.lastSeen) || 0)),
-        ),
-        liveSessions(d).length === 0
-          ? h("p", { class: "g-none" }, "No sessions")
-          : h("div", { class: "g-cards" }, liveSessions(d).map((s) => sessionCard(d, s))),
-      ),
+    ui.selecting && selectBar(pickable),
+    tab === "settled"
+      ? ui.tagFilter
+        ? emptyState("tag", "No settled session is tagged " + ui.tagFilter, null)
+        : settledPage(devs)
+      : tab === "quiet"
+        ? quietPage(devs)
+        : devs.map((d) => {
+            const live = shownSessions(liveSessions(d));
+            if (ui.tagFilter && !live.length) return null;
+            return deviceSection(
+              d,
+              d.reachable ? plural(live.length, "session") : "Offline · seen " + ago(when(d.lastSeen) || 0),
+              live.length === 0 ? h("div", { class: "row-empty" }, "No sessions") : live.map((s) => sessionCard(d, s)),
+            );
+          }),
+    ui.tagFilter && tab === "running" && total === 0 && emptyState("tag", "No running session is tagged " + ui.tagFilter, null),
+  );
+}
+
+function deviceSection(d, aside, rows) {
+  return h(
+    "section",
+    { class: "section g-dev" },
+    h(
+      "div",
+      { class: "section-head" },
+      d && deviceDot(d),
+      h("h2", { class: "section-title" }, d ? deviceLabel(d) : "Unknown device"),
+      d && h("span", { class: "g-dev-host" }, host(d.id)),
+      h("span", { class: "section-aside" }, aside),
     ),
+    h("div", { class: "group" }, rows),
+  );
+}
+
+// Picking sessions on All sessions, to tag them together: how many, and the tag menu for them.
+function selectBar(pickable) {
+  const n = ui.selected.size;
+  const all = n > 0 && n === pickable.length;
+  return h(
+    "div",
+    { class: "g-select-bar" },
+    h("span", { class: "g-select-n" }, n + " selected"),
+    h(
+      "button",
+      {
+        class: "btn btn-outline btn-xs",
+        disabled: n === 0,
+        "data-key": "select-tag",
+        onclick: (e) => openTagMenu([...ui.selected], e.currentTarget),
+      },
+      icon("tag"),
+      "Tag",
+    ),
+    pickable.length > 0 &&
+      h(
+        "button",
+        {
+          class: "btn btn-ghost btn-xs",
+          "data-key": "select-all",
+          onclick: () => {
+            ui.selected = all ? new Set() : new Set(pickable.map((s) => s.addr));
+            render();
+          },
+        },
+        all ? "Select none" : "Select all",
+      ),
   );
 }
 
 function quietPage(devs) {
-  const withQuiet = devs.filter((d) => quietSessions(d).length > 0);
-  if (!withQuiet.length) return h("p", { class: "g-none" }, "No quiet sessions.");
-  return withQuiet.map((d) =>
-    h(
-      "section",
-      { class: "g-dev" },
-      h(
-        "h2",
-        { class: "g-dev-head" },
-        deviceDot(d),
-        h("span", null, deviceLabel(d)),
-        h("span", { class: "g-dev-host" }, host(d.id)),
-        h("span", { class: "g-dev-n" }, quietSessions(d).length + " quiet"),
-      ),
-      h("div", { class: "g-cards" }, quietSessions(d).map((s) => sessionCard(d, s))),
-    ),
-  );
+  const withQuiet = devs.filter((d) => shownSessions(quietSessions(d)).length > 0);
+  if (!withQuiet.length) {
+    return ui.tagFilter
+      ? emptyState("tag", "No quiet session is tagged " + ui.tagFilter, null)
+      : emptyState("users", "No quiet sessions", "A session idle for a day, or one someone hid, waits here.");
+  }
+  return withQuiet.map((d) => {
+    const rows = shownSessions(quietSessions(d));
+    return deviceSection(d, rows.length + " quiet", rows.map((s) => sessionCard(d, s)));
+  });
 }
 
 function settledPage(devs) {
@@ -1100,110 +1435,119 @@ function settledPage(devs) {
     if (!byDev.has(r.device)) byDev.set(r.device, []);
     byDev.get(r.device).push(r);
   }
-  const label = (id) => {
-    const d = devs.find((x) => x.id === id);
-    return d ? (d.self ? "This device" : d.owner || id) : id || "Unknown device";
-  };
   return [
-    h(
-      "label",
-      { class: "g-search g-search-wide" },
-      icon("search"),
-      h("input", {
-        type: "search",
-        placeholder: "Search settled sessions",
-        "data-key": "sq",
-        value: ui.sq || null,
-        oninput: (e) => {
-          ui.sq = e.target.value;
-          render();
-        },
-      }),
-    ),
-    [...byDev].map(([id, rows]) =>
+    settledSessions().length > 0 &&
       h(
-        "section",
-        { class: "g-dev" },
-        h("h2", { class: "g-dev-head" }, h("span", null, label(id)), h("span", { class: "g-dev-host" }, host(id)), h("span", { class: "g-dev-n" }, plural(rows.length, "settled session"))),
-        h(
-          "div",
-          { class: "g-settled-list" },
-          rows.map((r) =>
-            h(
-              "button",
-              {
-                class: "g-settled",
-                onclick: () => {
-                  ui.filter = r.addr || r.name;
-                  ui.conversation = null;
-                  go("messages");
-                },
+        "label",
+        { class: "field g-search g-search-wide" },
+        icon("search"),
+        h("input", {
+          type: "search",
+          placeholder: "Search settled sessions",
+          "aria-label": "Search settled sessions",
+          "data-key": "sq",
+          value: ui.sq || null,
+          oninput: (e) => {
+            ui.sq = e.target.value;
+            render();
+          },
+        }),
+      ),
+    [...byDev].map(([id, rows]) => {
+      const d = devs.find((x) => x.id === id);
+      const sec = deviceSection(
+        d,
+        plural(rows.length, "settled session"),
+        rows.map((r) =>
+          h(
+            "button",
+            {
+              class: "g-settled",
+              "data-key": "gs-" + r.name,
+              onclick: () => {
+                ui.filter = r.addr || r.name;
+                ui.conversation = null;
+                go("messages");
               },
-              avatar(r.name),
-              h("span", { class: "g-settled-name truncate" }, r.name),
-              h("span", { class: "g-settled-last truncate" }, r.lastMsg ? r.lastMsg.subject : ""),
-              h("span", { class: "g-settled-chats" }, plural(r.peers.size, "chat")),
-              h("span", { class: "g-settled-when" }, ago(r.last)),
-            ),
+            },
+            avatar(r.name),
+            h("span", { class: "g-settled-name truncate" }, r.name),
+            h("span", { class: "g-settled-last truncate" }, r.lastMsg ? r.lastMsg.subject : ""),
+            h("span", { class: "g-settled-chats" }, plural(r.peers.size, "chat")),
+            h("span", { class: "g-settled-when" }, ago(r.last)),
           ),
         ),
-      ),
-    ),
-    all.length === 0 && h("p", { class: "g-none" }, q ? "Nothing matches." : "No settled sessions."),
+      );
+      if (!d) sec.querySelector(".section-title").textContent = id ? host(id) : "Unknown device";
+      return sec;
+    }),
+    all.length === 0 && (q ? h("p", { class: "g-none" }, "Nothing matches.") : emptyState("clock", "No settled sessions", "A session that stopped shows here while its messages are still on the page.")),
   ];
 }
 
+// A session as a row: its state, name and model over what it's doing, then its tags, branch, pull
+// request and how many conversations it has, and a way to message it. While picking, the row picks
+// its session rather than opening it.
 function sessionCard(d, s) {
-  const prs = ui.state.prs || {};
-  const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
+  const pr = prFor(s);
   const keep = ui.filter;
   ui.filter = s.addr || s.name;
   const convs = conversations().filter((c) => c.kind === "dm").length;
   ui.filter = keep;
-  const st = stateWord(d, s);
-  const card = h(
-    "button",
-    {
-      class: "g-card" + (d.reachable ? "" : " stale"),
-      "data-key": "card-" + s.name,
-      onclick: () => {
-        ui.filter = s.addr || s.name;
-        ui.conversation = null;
-        go("messages");
-      },
-    },
-    h(
-      "span",
-      { class: "g-card-top" },
-      presence(s.name, d),
-      h("span", { class: "g-card-id" }, h("span", { class: "g-card-name truncate" }, s.name), h("span", { class: "g-card-agent truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · "))),
-      st && h("span", { class: "g-state g-state-" + sessionState(d, s) }, st),
-    ),
-    h("span", { class: "g-card-doing" + (s.doing ? "" : " none") }, s.doing || "No status set"),
-    h(
-      "span",
-      { class: "g-card-foot" },
-      s.branch && h("span", { class: "g-branch truncate" }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
-      pr && h("span", { class: "g-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number),
-      h("span", { class: "g-card-chats" }, plural(convs, "chat")),
-    ),
-  );
+  const picking = ui.selecting && !!s.addr;
+  const picked = picking && ui.selected.has(s.addr);
   return h(
     "div",
-    { class: "g-card-wrap" },
-    card,
+    { class: "s-row" + (d.reachable ? "" : " stale") + (picking ? " picking" : "") + (picked ? " picked" : "") },
     h(
       "button",
       {
-        class: "g-card-msg btn btn-outline btn-xs",
-        "aria-label": "Message " + s.name,
-        "data-key": "card-msg-" + s.name,
-        onclick: () => startChat(s.name),
+        class: "s-main",
+        "data-key": "card-" + s.name,
+        title: picking ? (picked ? "Unpick " : "Pick ") + s.name : "Show " + s.name + "'s conversations",
+        "aria-pressed": picking ? (picked ? "true" : "false") : null,
+        onclick: () => {
+          if (!picking) return pickSession(s.addr || s.name);
+          picked ? ui.selected.delete(s.addr) : ui.selected.add(s.addr);
+          render();
+        },
       },
-      icon("message"),
-      "Message",
+      picking && h("span", { class: "g-pick" + (picked ? " on" : ""), "aria-hidden": "true" }, picked && icon("check")),
+      presence(s.name, d),
+      h(
+        "span",
+        { class: "s-text" },
+        h(
+          "span",
+          { class: "s-line name-line" },
+          h("span", { class: "s-name truncate" }, s.name),
+          h("span", { class: "s-agent truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · ")),
+          tagChips(s, 3, true),
+        ),
+        h("span", { class: "s-doing truncate" + (s.doing ? "" : " none") }, s.doing || "No status set"),
+      ),
+    ),
+    h(
+      "span",
+      { class: "s-meta" },
+      h("span", { class: "s-col-branch" }, s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch))),
+      h("span", { class: "s-col-pr" }, pr && prBadge(pr, true, "pr-row-" + s.name)),
+      // The hook never reported after a tool call, so the session isn't told of messages while it works (#225).
+      s.hookOff && h("span", { class: "badge badge-warning", title: "Isn't told of messages while it works" }, "hook not running"),
+      h("span", { class: "s-chats" }, plural(convs, "chat")),
+      h("span", { class: "s-col-state" }, h("span", { class: "g-state g-state-" + sessionState(d, s) }, stateWord(d, s))),
+      h(
+        "span",
+        { class: "s-col-act" },
+        !picking && h("button", { class: "btn btn-outline btn-xs", "aria-label": "Message " + s.name, "data-key": "card-msg-" + s.name, onclick: () => startChat(s.name) }, icon("message"), h("span", { class: "btn-label" }, "Message")),
+      ),
     ),
   );
+}
+
+// A view with nothing to show, as T3 Code's empty state: a small icon, a line, and what would fill it.
+function emptyState(iconName, title, line) {
+  return h("div", { class: "empty" }, h("span", { class: "empty-ico" }, icon(iconName)), h("p", { class: "empty-title" }, title), line && h("p", { class: "empty-line" }, line));
 }
 
 // Recent: the newest messages first, as many as a render can build quickly. One opens its
@@ -1220,25 +1564,26 @@ function recentPage() {
       out.push(h("div", { class: "chat-day" }, h("span", null, dayLabel(at))));
       day = d;
     }
-    out.push(recentItem(m, at));
+    out.push(openable(recentItem(m, at), m, at));
   }
   return h(
     "div",
     { class: "g-page g-recent" },
+    // A heading at the top of the column, as on main, so the list has something to start from.
     h(
       "header",
       { class: "g-page-head" },
       h("h1", null, "Recent messages"),
       h("p", null, ui.messages.length > RECENT_MAX ? "Newest " + RECENT_MAX + " of " + ui.messages.length : plural(ui.messages.length, "message")),
     ),
-    list.length ? h("div", { class: "g-feed" }, out) : h("p", { class: "g-none" }, "No messages yet"),
+    list.length ? h("div", { class: "g-feed" }, out) : emptyState("clock", "No messages yet", "Messages between sessions show here as this daemon reads them."),
   );
 }
 
 function recentItem(m, at) {
   const from = fromName(m);
   const c = conversationOf(m);
-  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "device" ? [icon("laptop"), m.to] : [avatar(toName(m)), toName(m)];
+  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "device" ? [icon("laptop"), host(m.to)] : [avatar(toName(m)), toName(m)];
   const open = () => {
     ui.filter = null;
     ui.conversation = c.key;
@@ -1247,7 +1592,7 @@ function recentItem(m, at) {
   };
   return h(
     "article",
-    { class: "chat-msg chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" ? open() : null) },
+    { class: "chat-msg chat-msg-face chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" ? open() : null) },
     avatar(from),
     h(
       "div",
@@ -1256,12 +1601,30 @@ function recentItem(m, at) {
         "div",
         { class: "chat-msg-head" },
         h("span", { class: "chat-msg-from truncate" }, from),
-        h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who" }, to)),
-        h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
+        m.fromPerson && humanTag(),
+        h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who truncate" }, to)),
+        h("span", { class: "chat-msg-time", title: messageDetail(m) }, clockTime(at)),
       ),
       messageText(m),
     ),
   );
+}
+
+// A Recent item is a button onto its conversation. Its name is what it shows, in the order it shows
+// it (WCAG 2.5.3), Space works as well as Enter, and a link in its text is left to the conversation
+// it opens, since a button can't hold another control.
+function openable(el, m, at) {
+  const to = m.toKind === "all" ? "Everyone" : m.toKind === "device" ? host(m.to) : toName(m);
+  el.setAttribute("aria-label", fromName(m) + " to " + to + ", " + clockTime(at) + ": " + (m.subject || ""));
+  const space = (e) => {
+    if (e.key !== " ") return;
+    e.preventDefault();
+    e.currentTarget.click();
+  };
+  el.addEventListener("keydown", space);
+  el.listeners.push(["keydown", space]);
+  for (const a of el.querySelectorAll("a")) a.tabIndex = -1;
+  return el;
 }
 
 // Everyone reaches every session in the repo; a device's chat reaches every session on it. Anyone
@@ -1293,6 +1656,7 @@ function membersButton(c) {
       {
         class: "g-members",
         "aria-expanded": ui.membersOpen ? "true" : "false",
+        "aria-controls": ui.membersOpen ? "members-panel" : null,
         "data-key": "members",
         onclick: (e) => {
           e.stopPropagation();
@@ -1317,7 +1681,8 @@ function membersPanel(c, rows) {
   }
   return h(
     "div",
-    { class: "g-members-panel", role: "dialog", "aria-label": "Members", onclick: (e) => e.stopPropagation() },
+    // A disclosure: the list follows its button, and Escape folds it back onto the button.
+    { class: "g-members-panel", id: "members-panel", role: "group", "aria-label": "Members", onclick: (e) => e.stopPropagation() },
     h("div", { class: "g-mp-head" }, c.kind === "all" ? "Everyone in this repo" : "Every session on " + host(c.title)),
     [...groups].map(([title, g]) => [
       h("div", { class: "g-mp-sec" }, g.d && deviceDot(g.d), title, g.host && h("span", null, g.host), h("span", { class: "g-mp-n" }, g.rows.length)),
@@ -1326,6 +1691,7 @@ function membersPanel(c, rows) {
           "button",
           {
             class: "g-mp-row" + (r.d && !r.d.reachable ? " stale" : ""),
+            "data-key": "mp-" + r.name,
             onclick: () => {
               ui.membersOpen = false;
               if (r.person) return startChat(r.name);
@@ -1336,7 +1702,7 @@ function membersPanel(c, rows) {
             },
           },
           r.d ? presence(r.name, r.d) : avatar(r.name),
-          h("span", { class: "g-mp-text" }, h("span", { class: "g-mp-name truncate" }, r.name), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || r.s.agent || "" : "Not running")),
+          h("span", { class: "g-mp-text" }, h("span", { class: "name-line" }, h("span", { class: "g-mp-name truncate" }, r.name), r.person && humanTag()), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || r.s.agent || "" : "Not running")),
           r.posted > 0 && h("span", { class: "g-mp-posted" }, r.posted === 1 ? "1 post" : r.posted + " posts"),
         ),
       ),
@@ -1349,50 +1715,54 @@ document.addEventListener("click", () => {
     render();
   }
 });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && ui.membersOpen && !e.defaultPrevented) {
+    e.preventDefault();
+    ui.membersOpen = false;
+    render();
+    root.querySelector('[data-key="members"]')?.focus();
+  }
+});
+
+// The main pane's header, as T3 Code's: slim, with the view's title. A conversation's pane has a
+// header of its own, so on a wide page Conversations has none here, and on a phone an open
+// conversation's header, with its way back, stands in for it.
+function showTopbar() {
+  if (ui.view !== "messages") return true;
+  return NARROW.matches && !content?.querySelector(".chat-open");
+}
+
+function viewTitle() {
+  if (ui.view !== "messages") return TITLES[ui.view];
+  if (isMyFilter()) return "Your messages";
+  return ui.filter ? nameOf(ui.filter, ui.filter) : TITLES.messages;
+}
 
 function topbar() {
-  let meta = null;
-  if (ui.conn === "down" && !ui.restarting) {
-    meta = h("span", { class: "device-state" }, h("span", { class: "dot warn" }), "Disconnected");
-  }
-  // On a phone the sidebar, which carries the update notice, isn't shown: a dot on Settings, whose
-  // Version section has the same action, stands for it.
+  // On a phone the sidebar, which carries unread messages and the update notice, is behind this
+  // button, so a dot on it stands for them.
   const update = updateInfo();
+  const flag = unreadCount() > 0 || !!update;
   return h(
     "header",
     { class: "topbar" },
-    h("span", { class: "topbar-brand brand" }, NAME),
-    h("h1", null, TITLES[ui.view]),
-    h(
-      "div",
-      { class: "mobile-nav segmented", role: "group", "aria-label": "Views" },
+    NARROW.matches &&
       h(
         "button",
-        { "aria-pressed": isMyFilter() ? "true" : "false", "data-key": "m-you", "aria-label": unreadCount() ? "You, " + unreadCount() + " unread" : "You", onclick: openYours },
-        "You",
-        unreadCount() > 0 && h("span", { class: "m-unread" }, unreadCount()),
+        {
+          class: "icon-btn topbar-menu",
+          title: "Show the sidebar",
+          "aria-label": "Show the sidebar" + (unreadCount() ? ", " + unreadCount() + " unread" : "") + (update ? ", " + update.text : ""),
+          "aria-controls": "sidebar",
+          "aria-expanded": ui.drawer ? "true" : "false",
+          "data-key": "open-sidebar",
+          onclick: () => setDrawer(true),
+        },
+        icon("panel"),
+        flag && h("span", { class: "nav-dot" + (unreadCount() ? "" : " update-" + update.kind) }),
       ),
-      VIEWS.map((v) =>
-        h(
-          "button",
-          {
-            "aria-pressed": ui.view === v && !(v === "messages" && isMyFilter()) ? "true" : "false",
-            "data-key": "m-" + v,
-            title: v === "settings" && update ? update.text : null,
-            onclick: () => {
-              if (v === "messages") {
-                ui.filter = null;
-                ui.conversation = null;
-              }
-              go(v);
-            },
-          },
-          v === "messages" ? "All" : TITLES[v],
-          v === "settings" && update && h("span", { class: "nav-dot update-" + update.kind, "aria-label": update.text }),
-        ),
-      ),
-    ),
-    meta && h("div", { class: "topbar-meta" }, meta),
+    h("h1", { class: "truncate" }, viewTitle()),
+    NARROW.matches && connBadge(false),
   );
 }
 
@@ -1457,7 +1827,7 @@ function tagsLine(s) {
           },
           "+ Tag",
         ),
-    ui.rowErrors[key] && h("span", { class: "row-error" }, ui.rowErrors[key]),
+    ui.rowErrors[key] && h("span", { class: "row-error", "data-announce": "" }, ui.rowErrors[key]),
   );
 }
 
@@ -1507,6 +1877,486 @@ async function changeTags(addr, key, add, remove) {
   poll();
 }
 
+// Tags on the session lists (#270): on each row and card, in the sidebar's Tags group, which
+// filters every list of sessions to one tag, and in the tag menu, which puts tags on one session
+// or on several picked on All sessions, and makes new ones. Tags with a meaning of their own show
+// as that meaning instead: a model: tag beside the agent, do-not-disturb as the red dot, hidden as
+// the quiet fold, human on a person (#267).
+const OWN_MEANING = new Set([HIDDEN, "do-not-disturb", "human"]);
+
+function sortsBy(name) {
+  return typeof name === "string" && !name.startsWith("model:") && !OWN_MEANING.has(name);
+}
+
+// internal/tags's rule, so the menu can say so before asking.
+function validTag(name) {
+  return name.length <= 40 && /^[a-z0-9][a-z0-9._:\/-]*$/.test(name) && name !== "model:";
+}
+
+// A change this page asked for, by address and then tag, until the state it polls agrees: another
+// device's sessions carry it only once that device has read the change, and until then the chip
+// shows as waiting. A wish stands until its request is done (done, the time) and a state asked for
+// after that agrees: an older state can't, since it may not hold an earlier change still on its way
+// (#271's review). Two minutes after its request is done the state wins, so a device that never
+// applies it (one from before tags, or one that is down) doesn't leave a chip that isn't there.
+const tagWanted = new Map();
+const TAG_WAIT_MS = 2 * 60000;
+
+// A session's tags as the lists show them: { names, waiting }.
+function tagsOf(s) {
+  const have = new Set((s.tags || []).filter((t) => t && typeof t.name === "string").map((t) => t.name));
+  const waiting = new Set();
+  const w = s.addr && tagWanted.get(s.addr);
+  if (w) {
+    for (const [name, x] of w) {
+      if (x.done && ((have.has(name) === x.on && stateAskedAt > x.done) || Date.now() - x.done > TAG_WAIT_MS)) {
+        w.delete(name);
+        continue;
+      }
+      x.on ? have.add(name) : have.delete(name);
+      waiting.add(name);
+    }
+    if (!w.size) tagWanted.delete(s.addr);
+  }
+  return { names: [...have].filter(sortsBy).sort(), waiting };
+}
+
+function hasTag(s, name) {
+  return tagsOf(s).names.includes(name);
+}
+
+function shownSessions(list) {
+  return ui.tagFilter ? list.filter((s) => hasTag(s, ui.tagFilter)) : list;
+}
+
+function sessionByAddr(addr) {
+  for (const d of ui.state?.devices || []) for (const s of d.sessions || []) if (s.addr === addr) return s;
+  return null;
+}
+
+// Every tag on a running session, with how many sessions have it.
+function tagCounts() {
+  const counts = new Map();
+  for (const d of ui.state?.devices || []) {
+    for (const s of d.sessions || []) for (const n of tagsOf(s).names) counts.set(n, (counts.get(n) || 0) + 1);
+  }
+  return counts;
+}
+
+// A session's tags as small chips, the one the lists are filtered by first; past max, a count of
+// the rest. In a sidebar row they share a line with the branch, and those that don't fit drop off
+// whole, so the line's tooltip names them all.
+function tagChips(s, max = Infinity, line = false) {
+  const { names, waiting } = tagsOf(s);
+  if (!names.length) return null;
+  if (ui.tagFilter && names.includes(ui.tagFilter)) names.sort((a, b) => (b === ui.tagFilter) - (a === ui.tagFilter));
+  const shown = names.slice(0, max);
+  return h(
+    "span",
+    { class: "stags", title: line ? names.join(", ") : null },
+    shown.map((n) =>
+      h("span", { class: "stag" + (n === ui.tagFilter ? " on" : "") + (waiting.has(n) ? " waiting" : ""), title: waiting.has(n) ? n + ": waiting for its device" : n }, n),
+    ),
+    names.length > shown.length && h("span", { class: "stag-more", title: names.slice(max).join(", ") }, "+" + (names.length - shown.length)),
+  );
+}
+
+// The sidebar's Tags: one chip per tag in use, which filters the lists to it.
+function tagsGroup() {
+  const counts = tagCounts();
+  if (ui.tagFilter && !counts.has(ui.tagFilter)) ui.tagFilter = null;
+  if (!counts.size) return null;
+  return h(
+    "div",
+    { class: "sidebar-group dev-group" },
+    h("div", { class: "group-label" }, h("span", { class: "label" }, "Tags"), h("span", { class: "menu-count" }, counts.size)),
+    h(
+      "div",
+      { class: "tag-filter" },
+      [...counts]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([n, c]) => {
+          const on = ui.tagFilter === n;
+          return h(
+            "button",
+            {
+              class: "tf" + (on ? " on" : ""),
+              "aria-pressed": on ? "true" : "false",
+              title: on ? "Show every session" : "Show only sessions tagged " + n,
+              "data-key": "tf-" + n,
+              onclick: () => {
+                ui.tagFilter = on ? null : n;
+                render();
+              },
+            },
+            h("span", { class: "tf-name" }, n),
+            h("span", { class: "tf-n" }, c),
+          );
+        }),
+    ),
+  );
+}
+
+// On a sidebar row, beside Message and Hide.
+function tagButton(s) {
+  return h(
+    "button",
+    {
+      class: "side-tag",
+      "data-tip": "Tag",
+      "aria-label": "Tag " + s.name,
+      "aria-haspopup": "dialog",
+      "data-key": "tag-" + s.name,
+      onclick: (e) => {
+        e.stopPropagation();
+        openTagMenu([s.addr], e.currentTarget);
+      },
+    },
+    icon("tag"),
+  );
+}
+
+function openTagMenu(addrs, anchor) {
+  const r = anchor.getBoundingClientRect();
+  // Below the button, or above it when there is more room there than the menu's 20rem.
+  const up = window.innerHeight - r.bottom < 340 && r.top > window.innerHeight - r.bottom;
+  ui.tagMenu = { addrs, x: Math.max(8, Math.min(r.left, window.innerWidth - 264)), top: up ? null : r.bottom + 4, bottom: up ? window.innerHeight - r.top + 4 : null, q: "", err: "", known: new Set(), from: anchor.dataset.key };
+  render();
+  root.querySelector('[data-key="tagmenu-q"]')?.focus();
+}
+
+// Closing the menu gives the focus back to the button that opened it.
+function closeTagMenu() {
+  const from = ui.tagMenu?.from;
+  ui.tagMenu = null;
+  render();
+  if (from) root.querySelector(`[data-key="${CSS.escape(from)}"]`)?.focus();
+}
+
+// The tag menu: each tag in use, checked when every session it is open on has it, and a field that
+// finds one or makes a new one. A click puts the tag on all of them, or takes it off all of them.
+function tagMenu() {
+  const m = ui.tagMenu;
+  const targets = m.addrs.map(sessionByAddr).filter(Boolean);
+  if (!targets.length) {
+    ui.tagMenu = null;
+    return null;
+  }
+  const close = closeTagMenu;
+  const q = m.q.trim().toLowerCase();
+  // A tag stays listed until the menu closes, so taking it off its last session doesn't take the
+  // row from under the pointer.
+  for (const n of tagCounts().keys()) m.known.add(n);
+  for (const n of ui.madeTags) m.known.add(n);
+  const known = m.known;
+  const rows = [...known].filter((n) => !q || n.includes(q)).sort();
+  const make = q && !known.has(q);
+  const toggle = (n) => {
+    const on = !targets.every((s) => hasTag(s, n));
+    tagSessions(targets, n, on);
+  };
+  const create = () => {
+    if (!validTag(q)) {
+      m.err = "Lowercase letters, digits and . _ : / -, up to 40";
+      return render();
+    }
+    // These have their own controls (Hide, the conversation header, the session's model), and the
+    // menu, which lists only tags to sort by, couldn't show them as on to take them off again.
+    if (!sortsBy(q)) {
+      m.err = q + " has a meaning of its own; set it under the session's name";
+      return render();
+    }
+    ui.madeTags.add(q); // sortsBy(q) holds, from above
+    m.q = "";
+    tagSessions(targets, q, true);
+  };
+  // Placed through the CSSOM: the page's CSP refuses style attributes.
+  const menu = h(
+    "div",
+    { class: "tag-menu", role: "dialog", "aria-modal": "true", "aria-label": "Tags for " + (targets.length === 1 ? targets[0].name : targets.length + " sessions") },
+    h("div", { class: "tag-menu-head" }, targets.length === 1 ? targets[0].name : targets.length + " sessions"),
+    h(
+      "label",
+      { class: "tag-menu-q" },
+      icon("search"),
+      h("input", {
+        type: "text",
+        value: m.q,
+        placeholder: "Find or make a tag",
+        autocomplete: "off",
+        spellcheck: "false",
+        "aria-label": "Find or make a tag",
+        "data-key": "tagmenu-q",
+        oninput: (e) => {
+          m.q = e.target.value;
+          m.err = "";
+          render();
+        },
+        onkeydown: (e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          if (make) create();
+          else if (rows.includes(q)) toggle(q);
+          else if (rows.length === 1) toggle(rows[0]);
+        },
+      }),
+    ),
+    h(
+      "div",
+      { class: "tag-menu-list" },
+      rows.map((n) => {
+        const have = targets.filter((s) => hasTag(s, n)).length;
+        const all = have === targets.length;
+        return h(
+          "button",
+          {
+            class: "tag-menu-row",
+            role: "checkbox", // in a dialog with a search field, not a menu: Tab moves between them
+            "aria-checked": all ? "true" : have ? "mixed" : "false",
+            "data-key": "tm-" + n,
+            onclick: () => toggle(n),
+          },
+          h("span", { class: "tm-box" + (all ? " on" : have ? " some" : "") }, all && icon("check")),
+          h("span", { class: "tm-name truncate" }, n),
+          targets.length > 1 && have > 0 && !all && h("span", { class: "tm-n" }, have + " of " + targets.length),
+        );
+      }),
+      make &&
+        h(
+          "button",
+          { class: "tag-menu-row tm-make", "data-key": "tm-make", onclick: create },
+          h("span", { class: "tm-box tm-plus" }, "+"),
+          h("span", { class: "tm-name truncate" }, "Make “" + q + "”"),
+        ),
+      !rows.length && !make && h("p", { class: "tm-none" }, "No tags yet"),
+    ),
+    m.err && h("p", { class: "tm-err", "data-announce": "" }, m.err),
+  );
+  menu.style.left = m.x + "px";
+  if (m.top != null) menu.style.top = m.top + "px";
+  else menu.style.bottom = m.bottom + "px";
+  return h(
+    "div",
+    {
+      class: "menu-scrim",
+      onclick: (e) => {
+        if (e.target === e.currentTarget) close();
+      },
+      onkeydown: (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          close();
+        }
+      },
+    },
+    menu,
+  );
+}
+
+// The repo picker (#348): this machine's clones that joined, each served by its own daemon. Picking
+// one moves this tab to that repo's page, whose daemon is started if it isn't running.
+function repoButton() {
+  const name = ui.state ? ui.state.repo || NAME : ""; // nothing until the state says, rather than a name that changes
+  return h(
+    "button",
+    {
+      class: "repo-btn",
+      "aria-haspopup": "menu",
+      "aria-expanded": ui.repoMenu ? "true" : "false",
+      title: "Switch repo",
+      "data-key": "repo",
+      onclick: (e) => {
+        if (ui.repoMenu) return closeRepoMenu();
+        const r = e.currentTarget.getBoundingClientRect();
+        ui.repoMenu = { x: r.left, top: r.bottom + 4, repos: null, opening: null, err: "" };
+        render();
+        focusRepoMenu();
+        loadRepos();
+      },
+    },
+    h("span", { class: "repo-name truncate" }, name),
+    icon("chevronDown"),
+  );
+}
+
+// The menu holds the keyboard while it is open (the page behind it is inert): the focus goes to its
+// current repo, the arrow keys move it, and closing it gives it back to the button.
+function closeRepoMenu() {
+  ui.repoMenu = null;
+  render();
+  root.querySelector('[data-key="repo"]')?.focus();
+}
+
+function focusRepoMenu() {
+  if (!root.querySelector(".repo-menu")?.contains(document.activeElement)) {
+    (root.querySelector(".repo-row.current") || root.querySelector(".repo-row"))?.focus();
+  }
+}
+
+async function loadRepos() {
+  const m = ui.repoMenu;
+  try {
+    const r = await api("/api/repos");
+    if (ui.repoMenu !== m) return;
+    m.repos = r.repos || [];
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    if (ui.repoMenu !== m) return;
+    m.repos = [];
+    m.err = e.message;
+  }
+  render();
+  focusRepoMenu();
+}
+
+async function openRepo(r) {
+  const m = ui.repoMenu;
+  if (r.current) return closeRepoMenu();
+  if (m.opening) return;
+  // The drafts live in this page only, and the other repo's page is another page.
+  if (hasUnsent()) {
+    m.err = "Send or clear your draft first";
+    return render();
+  }
+  m.opening = r.id;
+  m.err = "";
+  render();
+  try {
+    const { url } = await api("/api/repos/open", { method: "POST", body: JSON.stringify({ id: r.id }) });
+    // Starting a daemon can take a while, and the picker may have been closed and a draft begun.
+    if (ui.repoMenu !== m || hasUnsent()) {
+      if (ui.repoMenu === m) {
+        m.opening = null;
+        m.err = "Send or clear your draft first";
+        render();
+      }
+      return;
+    }
+    location.assign(url + "&theme=" + theme);
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    if (ui.repoMenu !== m) return;
+    m.opening = null;
+    m.err = e.message;
+    if (/isn't joined/.test(e.message)) m.repos = (m.repos || []).filter((x) => x.id !== r.id);
+    render();
+  }
+}
+
+function repoMenu() {
+  const m = ui.repoMenu;
+  const repos = m.repos || [{ id: "", name: ui.state?.repo || NAME, current: true, running: true }];
+  // A path tells two clones of one repo apart; one alone goes by its name.
+  const named = new Map();
+  for (const r of repos) named.set(r.name, (named.get(r.name) || 0) + 1);
+  const menu = h(
+    "div",
+    {
+      class: "tag-menu repo-menu",
+      role: "menu",
+      "aria-label": "Repos",
+      onkeydown: (e) => {
+        const rows = [...e.currentTarget.querySelectorAll(".repo-row:not(:disabled)")];
+        const at = rows.indexOf(document.activeElement);
+        const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: rows.length - 1 }[e.key];
+        if (to == null || !rows.length) return;
+        e.preventDefault();
+        rows[(to + rows.length) % rows.length].focus();
+      },
+    },
+    h(
+      "div",
+      { class: "tag-menu-list" },
+      repos.map((r) =>
+        h(
+          "button",
+          {
+            class: "tag-menu-row repo-row" + (r.current ? " current" : ""),
+            role: "menuitemradio",
+            "aria-checked": r.current ? "true" : "false",
+            title: r.path || null,
+            "data-key": "repo-" + r.id,
+            disabled: !!m.opening && m.opening !== r.id,
+            onclick: () => openRepo(r),
+          },
+          h("span", { class: "dot" + (r.running ? " ok" : ""), role: "img", "aria-label": r.running ? "Running" : "Not running" }),
+          h("span", { class: "repo-row-text" }, h("span", { class: "tm-name truncate" }, r.name), named.get(r.name) > 1 && r.path && h("span", { class: "repo-path truncate" }, r.path)),
+          m.opening === r.id ? icon("rotateCw", "spin") : r.current && icon("check"),
+        ),
+      ),
+    ),
+    m.err && h("p", { class: "tm-err", "data-announce": "" }, m.err),
+  );
+  // Placed through the CSSOM: the page's CSP refuses style attributes.
+  menu.style.left = m.x + "px";
+  menu.style.top = m.top + "px";
+  return h(
+    "div",
+    {
+      class: "menu-scrim",
+      onclick: (e) => {
+        if (e.target === e.currentTarget) closeRepoMenu();
+      },
+    },
+    menu,
+  );
+}
+
+// Puts a tag on, or takes it off, each of the sessions that needs the change: one request each,
+// to the session's own device. The lists show the change at once, as waiting until it lands.
+// A session's changes go one after another, in the order they were clicked: the daemon times a
+// change when it gets it, so two in flight at once could land the other way round.
+const tagQueues = new Map();
+
+function queueTagChange(addr, fn) {
+  const run = (tagQueues.get(addr) || Promise.resolve()).then(fn);
+  const tail = run.catch(() => {});
+  tagQueues.set(addr, tail);
+  tail.then(() => {
+    if (tagQueues.get(addr) === tail) tagQueues.delete(addr);
+  });
+  return run;
+}
+
+async function tagSessions(targets, name, on) {
+  const todo = targets.filter((s) => hasTag(s, name) !== on);
+  const wishes = new Map();
+  for (const s of todo) {
+    if (!tagWanted.has(s.addr)) tagWanted.set(s.addr, new Map());
+    const wish = { on, done: 0 };
+    tagWanted.get(s.addr).set(name, wish);
+    wishes.set(s.addr, wish);
+  }
+  if (ui.tagMenu) ui.tagMenu.err = "";
+  render();
+  const failed = [];
+  let denied = null;
+  await Promise.all(
+    todo.map(async (s) => {
+      try {
+        await queueTagChange(s.addr, () =>
+          api("/api/tags", { method: "POST", body: JSON.stringify({ addr: s.addr, add: on ? [name] : [], remove: on ? [] : [name] }) }),
+        );
+        wishes.get(s.addr).done = Date.now();
+      } catch (e) {
+        // A later click on the same tag has its own wish; only this one's is dropped.
+        const w = tagWanted.get(s.addr);
+        if (w?.get(name) === wishes.get(s.addr)) w.delete(name);
+        if (e instanceof AuthError) denied = e;
+        else failed.push({ s, msg: e.message });
+      }
+    }),
+  );
+  if (denied) return deny(denied.token);
+  if (failed.length) {
+    const msg = "Couldn't " + (on ? "tag " : "untag ") + failed.map((f) => f.s.name).join(", ") + ": " + failed[0].msg;
+    if (ui.tagMenu) ui.tagMenu.err = msg;
+    else ui.notice = msg;
+  }
+  render();
+  poll();
+}
+
 // Messages.
 
 // A session's messages: those it sent, and those it was sent, to it, its device or everyone. The
@@ -1536,10 +2386,6 @@ function myMessages() {
   const groups = new Set();
   for (const m of ui.messages) if (m.toKind !== "session" && fromName(m) === mine) groups.add(conversationOf(m).key);
   return ui.messages.filter((m) => (m.toKind === "session" ? fromName(m) === mine || toName(m) === mine : groups.has(conversationOf(m).key)));
-}
-
-function noMessages() {
-  return ui.filter ? "No messages with " + nameOf(ui.filter, ui.filter) : "No messages";
 }
 
 // Who sent a message and when, as far as the page knows.
@@ -1664,7 +2510,7 @@ function conversationsPage() {
     { class: "page chat-page" },
     // A picked session keeps its header, and so its tags, before it has any messages.
     list.length === 0 && !ui.filter
-      ? h("div", { class: "blank" }, noMessages())
+      ? emptyState("message", "No conversations yet", "Messages between sessions show here as this daemon reads them.")
       : h(
           "div",
           { class: "chat" + (open ? " chat-open" : "") },
@@ -1719,6 +2565,14 @@ function conversationList(list) {
               f && h("button", { class: "btn btn-outline btn-xs g-head-msg", "data-key": "head-msg", onclick: () => startChat(name) }, icon("message"), "Message"),
             ),
             f && f.session.doing && h("p", { class: "g-head-doing" }, f.session.doing),
+            f &&
+              h(
+                "p",
+                { class: "g-head-meta" },
+                h("span", { class: "truncate" }, [f.session.agent, modelOf(f.session)].filter(Boolean).join(" · ")),
+                f.session.branch && h("span", { class: "g-branch", title: "Branch " + f.session.branch }, icon("branch"), h("span", { class: "truncate" }, f.session.branch)),
+                prFor(f.session) && prBadge(prFor(f.session), true, "pr-head-" + f.session.name),
+              ),
             f && tagsLine(f.session),
             !f && h("p", { class: "g-head-doing" }, "Settled · " + ago(settledSessions().find((r) => r.name === name)?.last || 0)),
           ]
@@ -1726,11 +2580,12 @@ function conversationList(list) {
     ),
     h(
       "label",
-      { class: "g-search" },
+      { class: "field g-search" },
       icon("search"),
       h("input", {
         type: "search",
         placeholder: "Search conversations",
+        "aria-label": "Search conversations",
         "data-key": "cq",
         value: ui.cq || null,
         oninput: (e) => {
@@ -1741,7 +2596,7 @@ function conversationList(list) {
     ),
     h(
       "div",
-      { class: "g-tabs g-kinds", role: "tablist", "aria-label": "Which conversations" },
+      { class: "segmented g-kinds", role: "tablist", "aria-label": "Which conversations" },
       [
         ["all", "All"],
         ["dm", "Direct"],
@@ -1837,12 +2692,14 @@ function conversationPane(c) {
   const gs = c.kind !== "dm" ? groupSummary(c) : null;
   const op = o && findPerson(o);
   const about = gs
-    ? [groupHost(c), plural(gs.rows.length, "member"), gs.on + " active"].filter(Boolean).join(" · ")
+    ? [groupHost(c), gs.on + " active"].filter(Boolean).join(" · ")
     : o
       ? isPerson(o)
         ? op
-          ? "Person · " + (personOnline(op) ? "on " + NAME + " now" : deviceLabel(op.device))
-          : "Person"
+          ? personOnline(op)
+            ? "On " + NAME + " now"
+            : deviceLabel(op.device)
+          : ""
         : of
           ? of.session.doing || of.session.agent || ""
           : "Not running"
@@ -1872,9 +2729,11 @@ function conversationPane(c) {
         "div",
         { class: "chat-head-text" },
         h("h2", { class: "chat-title truncate", title: c.title }, gs ? groupName(c) : o || c.title),
-        about && h("div", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
+        o && isPerson(o) && humanTag(),
+        of && h("span", { class: "g-state g-state-" + sessionState(of.device, of.session) }, stateWord(of.device, of.session)),
+        about && h("span", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
       ),
-      of && h("span", { class: "g-state g-state-" + sessionState(of.device, of.session) }, stateWord(of.device, of.session)),
+      of && prFor(of.session) && prBadge(prFor(of.session), true, "pr-chat-" + of.session.name),
       c.kind !== "dm" && membersButton(c),
     ),
     h("div", { class: "chat-thread", "data-conversation": c.key }, c.messages.length || pendingIn(c).length ? chatMessages(c) : chatIntro(o)),
@@ -1945,23 +2804,17 @@ function pendingMessage(item, head) {
   const failed = item.status === "failed";
   return h(
     "article",
-    { class: "chat-msg" + (head ? " chat-msg-first" : "") + (failed ? " chat-msg-failed" : " chat-msg-sending"), "data-cid": item.cid },
-    head ? avatar(myName()) : h("span", { class: "avatar-gap" }),
-    h(
-      "div",
-      { class: "chat-msg-main" },
-      head && h("div", { class: "chat-msg-head" }, h("span", { class: "chat-msg-from chat-msg-you truncate" }, myName()), h("span", { class: "chat-msg-via" }, "you")),
-      h("div", { class: "chat-msg-body rich" }, rich(item.text)),
-      failed
-        ? h(
-            "div",
-            { class: "msg-failed", role: "alert" },
-            h("span", { class: "msg-failed-why" }, item.error),
-            h("button", { class: "msg-action", "data-key": "retry-" + item.cid, onclick: () => deliver(item) }, icon("retry"), "Try again"),
-            h("button", { class: "msg-action", "data-key": "edit-" + item.cid, onclick: () => editFailed(item) }, icon("pencil"), "Edit"),
-          )
-        : item.status === "sending" && h("div", { class: "msg-sending" }, "Sending…"),
-    ),
+    { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : "") + (failed ? " chat-msg-failed" : " chat-msg-sending"), "data-cid": item.cid },
+    h("div", { class: "chat-bubble rich" }, rich(item.text)),
+    failed
+      ? h(
+          "div",
+          { class: "msg-failed" },
+          h("span", { class: "msg-failed-why", "data-announce": /^not sent/i.test(item.error) ? item.error : "Not sent: " + item.error }, item.error),
+          h("button", { class: "btn btn-ghost btn-xs", "data-key": "retry-" + item.cid, onclick: () => deliver(item) }, icon("retry"), "Try again"),
+          h("button", { class: "btn btn-ghost btn-xs", "data-key": "edit-" + item.cid, onclick: () => editFailed(item) }, icon("pencil"), "Edit"),
+        )
+      : item.status === "sending" && h("div", { class: "chat-msg-meta msg-sending" }, "Sending…"),
   );
 }
 
@@ -1973,42 +2826,66 @@ function dayLabel(t) {
   return new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
 }
 
+function clockTime(at) {
+  return at ? new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "";
+}
+
+// Says Copied only once the clipboard has it: writing can fail, as when the page isn't focused.
+function copyText(text) {
+  const w = navigator.clipboard?.writeText(text);
+  if (!w) return announce("Couldn't copy.");
+  w.then(
+    () => announce("Copied."),
+    () => announce("Couldn't copy."),
+  );
+}
+
+function copyButton(text) {
+  return h(
+    "button",
+    {
+      class: "btn btn-ghost btn-icon-xs",
+      title: "Copy",
+      "aria-label": "Copy message",
+      onclick: (e) => {
+        copyText(text);
+        const b = e.currentTarget;
+        b.replaceChildren(icon("check"));
+        b.classList.add("copied");
+        setTimeout(() => (b.replaceChildren(icon("copy")), b.classList.remove("copied")), 1200);
+      },
+    },
+    icon("copy"),
+  );
+}
+
 function chatMessage(m, from, at, head) {
   const sender = findSession(from);
   const mine = from === myName();
   const copy = m.fromPerson ? personText(m) : (m.subject ? m.subject + "\n\n" : "") + (m.body || "");
+  const time = h("span", { class: "chat-msg-time", title: messageDetail(m) }, clockTime(at));
+  if (mine) {
+    return h(
+      "article",
+      { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : ""), "data-id": m.id },
+      h("div", { class: "chat-bubble rich" }, rich(personText(m))),
+      h("div", { class: "chat-msg-meta" }, time, copyButton(copy)),
+    );
+  }
+  // Everyone else's message has its sender's face beside it, and a run of messages from one sender
+  // shows the face once.
+  const via = [sender?.session.agent, sender && !sender.device.self ? host(sender.device.id) : null].filter(Boolean).join(" · ");
   return h(
     "article",
-    { class: "chat-msg" + (head ? " chat-msg-first" : ""), "data-id": m.id, title: head ? null : messageDetail(m) },
+    { class: "chat-msg chat-msg-face" + (head ? " chat-msg-first" : ""), "data-id": m.id, title: head ? null : messageDetail(m) },
     head ? avatar(from) : h("span", { class: "avatar-gap" }),
     h(
       "div",
       { class: "chat-msg-main" },
-      head &&
-        h(
-          "div",
-          { class: "chat-msg-head" },
-          h("span", { class: "chat-msg-from truncate" + (mine ? " chat-msg-you" : "") }, from),
-          mine && h("span", { class: "chat-msg-via" }, "you"),
-          !mine && m.fromPerson && h("span", { class: "chat-msg-via" }, "person"),
-          sender && h("span", { class: "chat-msg-via truncate" }, [sender.session.agent, sender.device.self ? null : sender.device.id].filter(Boolean).join(" · ")),
-          h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
-        ),
+      head && h("div", { class: "chat-msg-head" }, h("span", { class: "chat-msg-from truncate" }, from), m.fromPerson && humanTag(), via && h("span", { class: "chat-msg-via truncate" }, via), time),
       messageText(m),
     ),
-    h(
-      "div",
-      { class: "msg-tools" },
-      h(
-        "button",
-        {
-          title: "Copy",
-          "aria-label": "Copy message",
-          onclick: () => navigator.clipboard?.writeText(copy),
-        },
-        icon("copy"),
-      ),
-    ),
+    h("div", { class: "msg-tools" }, copyButton(copy)),
   );
 }
 
@@ -2196,7 +3073,8 @@ function startChat(name) {
 }
 
 function askForName(then) {
-  ui.setup = { name: ui.state?.account?.suggested || "", error: "", busy: false, then };
+  const a = ui.state?.account;
+  ui.setup = { name: (a?.taken && a.name) || a?.suggested || "", error: "", busy: false, then, from: document.activeElement?.dataset?.key || null };
   render();
   const field = root.querySelector('[data-key="setup-name"]');
   field?.focus();
@@ -2210,12 +3088,15 @@ async function submitName() {
   setup.error = "";
   render();
   try {
+    const was = myName();
     const account = await api("/api/account", { method: "PUT", body: JSON.stringify({ name: setup.name.trim() }) });
     ui.state.account = { ...ui.state.account, ...account };
+    moveToName(was, account.name); // asked for a new name, they may have drafts under the old one
     ui.setup = null;
     poll();
     setup.then?.();
     render();
+    refocus(setup.from);
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
     setup.busy = false;
@@ -2223,6 +3104,11 @@ async function submitName() {
     render();
     root.querySelector('[data-key="setup-name"]')?.focus();
   }
+}
+
+// A dialog that closes gives the focus back to what opened it, unless what it did moved it on.
+function refocus(key) {
+  if (key && !root.contains(document.activeElement)) root.querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus();
 }
 
 function dialog(label, close, ...kids) {
@@ -2246,15 +3132,23 @@ function dialog(label, close, ...kids) {
 
 function setupDialog() {
   const s = ui.setup;
+  const taken = me()?.taken || "";
   const close = () => {
     ui.setup = null;
     render();
+    refocus(s.from);
   };
   return dialog(
-    "Choose your name",
+    taken ? "Choose a new name" : "Choose your name",
     close,
-    h("h2", { class: "dialog-title" }, "Choose your name"),
-    h("p", { class: "dialog-line" }, "Agents see it, and send to it."),
+    h("h2", { class: "dialog-title" }, taken ? "Choose a new name" : "Choose your name"),
+    h(
+      "p",
+      { class: "dialog-line" },
+      taken
+        ? "The person on " + taken + " chose " + me().name + " first, so messages to that name go to them. Pick another; what was sent to you before still reaches you."
+        : "Agents see it, and send to it.",
+    ),
     h(
       "form",
       {
@@ -2276,11 +3170,12 @@ function setupDialog() {
             value: s.name,
             maxlength: 32,
             placeholder: "ada-lovelace",
-            autocomplete: "off",
+            autocomplete: "nickname",
             autocapitalize: "none",
             spellcheck: "false",
             "aria-label": "Your name",
             "aria-invalid": s.error ? "true" : null,
+            "aria-describedby": s.error ? "setup-error" : null,
             "data-key": "setup-name",
             oninput: (e) => {
               s.name = e.target.value.toLowerCase().replace(/[\s_]+/g, "-");
@@ -2289,16 +3184,18 @@ function setupDialog() {
               root.querySelector(".setup-face")?.replaceChildren(faceOf(s.name));
               root.querySelector(".dialog-error")?.remove();
               root.querySelector(".setup-field")?.classList.remove("field-bad");
+              e.target.removeAttribute("aria-invalid");
+              e.target.removeAttribute("aria-describedby");
             },
           }),
         ),
       ),
-      s.error && h("p", { class: "dialog-error", role: "alert" }, s.error),
+      s.error && h("p", { class: "dialog-error", id: "setup-error", role: "alert" }, s.error),
       h(
         "div",
         { class: "dialog-actions" },
-        h("button", { type: "button", class: "btn btn-ghost", onclick: close }, "Cancel"),
-        h("button", { type: "submit", class: "btn btn-primary", disabled: s.busy }, s.busy ? "Saving…" : "Continue"),
+        h("button", { type: "button", class: "btn btn-ghost", "data-key": "setup-cancel", onclick: close }, "Cancel"),
+        h("button", { type: "submit", class: "btn btn-primary", "data-key": "setup-continue", disabled: s.busy }, s.busy ? "Saving…" : "Continue"),
       ),
     ),
   );
@@ -2330,12 +3227,21 @@ function matches(r, q) {
   return [r.name, r.line, r.s?.branch, r.s?.agent, r.d.owner, r.d.id].some((x) => (x || "").toLowerCase().includes(q));
 }
 
-function personRow(r, cur, onclick) {
+// In the new-message list a row is an option of its combobox, picked with the arrow keys while the
+// focus stays in the field; elsewhere it is a plain button.
+function personRow(r, cur, onclick, option) {
   return h(
     "button",
-    { class: "pick-row" + (cur ? " current" : ""), role: "option", "aria-selected": cur ? "true" : "false", "data-pick": r.name, onclick },
+    option
+      ? { class: "pick-row" + (cur ? " current" : ""), role: "option", id: "pick-" + r.name, tabindex: -1, "aria-selected": cur ? "true" : "false", "data-pick": r.name, onclick }
+      : { class: "pick-row", "data-pick": r.name, "data-key": "start-" + r.name, onclick },
     presence(r.name, r.d),
-    h("span", { class: "pick-text" }, h("span", { class: "pick-name truncate" }, r.name), h("span", { class: "pick-line truncate" }, r.line)),
+    h(
+      "span",
+      { class: "pick-text" },
+      h("span", { class: "name-line" }, h("span", { class: "pick-name truncate" }, r.name), r.person && humanTag()),
+      h("span", { class: "pick-line truncate" }, r.line),
+    ),
     h("span", { class: "pick-where truncate" }, r.person ? "" : r.d.self ? "This device" : r.d.owner || host(r.d.id)),
   );
 }
@@ -2346,7 +3252,7 @@ function newMessageButton() {
 
 function openPicker() {
   if (!me()) return askForName(openPicker);
-  ui.picker = { q: "", index: 0 };
+  ui.picker = { q: "", index: 0, from: document.activeElement?.dataset?.key || null };
   render();
   root.querySelector('[data-key="picker-q"]')?.focus();
 }
@@ -2356,6 +3262,7 @@ function pickerDialog() {
   const close = () => {
     ui.picker = null;
     render();
+    if (p.from) root.querySelector(`[data-key="${CSS.escape(p.from)}"]`)?.focus();
   };
   const q = p.q.trim().toLowerCase();
   const rows = reachable().filter((r) => matches(r, q));
@@ -2375,6 +3282,9 @@ function pickerDialog() {
         spellcheck: "false",
         role: "combobox",
         "aria-expanded": "true",
+        "aria-controls": "pick-list",
+        "aria-autocomplete": "list",
+        "aria-activedescendant": rows[p.index] ? "pick-" + rows[p.index].name : null,
         "aria-label": "Who to message",
         "data-key": "picker-q",
         oninput: (e) => {
@@ -2397,8 +3307,8 @@ function pickerDialog() {
     ),
     h(
       "div",
-      { class: "pick-list", role: "listbox", "aria-label": "Sessions and people" },
-      rows.length ? rows.map((r, i) => personRow(r, i === p.index, () => startChat(r.name))) : h("p", { class: "pick-none" }, "Nobody matches."),
+      { class: "pick-list", id: "pick-list", tabindex: -1, role: rows.length ? "listbox" : null, "aria-label": rows.length ? "Sessions and people" : null },
+      rows.length ? rows.map((r, i) => personRow(r, i === p.index, () => startChat(r.name), true)) : h("p", { class: "pick-none", "data-announce": "" }, "Nobody matches."),
     ),
   );
 }
@@ -2487,13 +3397,18 @@ function targetOf(c) {
 function paneFoot(c) {
   const target = targetOf(c);
   if (target) return composer(c, target);
-  if (c.kind !== "dm") return h("div", { class: "pane-foot" }, h("button", { class: "btn btn-outline", "data-key": "foot-name", onclick: () => askForName(render) }, "Choose a name to write here"));
+  if (c.kind !== "dm") return h("div", { class: "pane-foot" }, h("div", { class: "pane-foot-card" }, h("span", { class: "pane-foot-note" }, "Choose a name to write to " + (c.kind === "all" ? "everyone" : groupName(c).replace(/^This device$/, "this device")) + "."), h("button", { class: "btn btn-outline btn-sm", "data-key": "foot-name", onclick: () => askForName(render) }, "Choose a name")));
   const running = c.pair.filter((n) => findSession(n) || findPerson(n));
   if (!running.length) return null;
   return h(
     "div",
     { class: "pane-foot" },
-    running.map((n) => h("button", { class: "btn btn-outline", "data-key": "foot-" + n, onclick: () => startChat(n) }, icon("message"), "Message " + n)),
+    h(
+      "div",
+      { class: "pane-foot-card" },
+      h("span", { class: "pane-foot-note" }, "Only " + c.pair.join(" and ") + " write here."),
+      running.map((n) => h("button", { class: "btn btn-outline btn-sm", "data-key": "foot-" + n, onclick: () => startChat(n) }, icon("message"), "Message " + n)),
+    ),
   );
 }
 
@@ -2505,21 +3420,35 @@ function composer(c, target) {
     if (ui.armed === key) {
       ui.armed = null;
       root.querySelector(".composer-warn")?.remove();
+      root.querySelector(".composer-armed")?.classList.remove("composer-armed");
+      const hint = root.querySelector(".composer-hint");
+      if (hint?.lastChild) hint.lastChild.textContent = " to send";
     }
     const btn = root.querySelector(".composer-send");
     if (btn) btn.disabled = !el.value.trim();
   });
   el.placeholder = "Message " + target.label;
   el.setAttribute("aria-label", "Message " + target.label);
+  const armed = ui.armed === key;
+  const who =
+    c.kind === "dm"
+      ? [statusDot(target.to), h("span", { class: "truncate" }, target.to)]
+      : [icon(c.kind === "all" ? "broadcast" : "laptop"), h("span", { class: "truncate" }, c.kind === "all" ? "Everyone" : target.label), h("span", { class: "composer-chip-n" }, plural(target.count, "session"))];
   return h(
     "div",
     { class: "composer-wrap" },
-    ui.armed === key && h("p", { class: "composer-warn", role: "alert" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
     h(
       "div",
-      { class: "composer" },
+      { class: "composer" + (armed ? " composer-armed" : "") },
+      armed && h("p", { class: "composer-warn", "data-announce": "" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
       el,
-      h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim(), "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),
+      h(
+        "div",
+        { class: "composer-bar" },
+        h("button", { class: "composer-chip", title: "Message someone else", "aria-label": "To " + (c.kind === "dm" ? target.to : (c.kind === "all" ? "Everyone" : target.label) + " " + plural(target.count, "session")) + ". Message someone else", "data-key": "composer-to", onclick: openPicker }, ...who, icon("chevronDown", "composer-chip-chev")),
+        !NARROW.matches && h("span", { class: "composer-hint", "aria-hidden": "true" }, h("kbd", null, "Enter"), armed ? " again to send" : " to send"),
+        h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim(), "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),
+      ),
     ),
   );
 }
@@ -2553,6 +3482,7 @@ async function deliver(item) {
     if (sent.note) ui.notes.set(item.key, { id: sent.id, text: sent.note });
     else ui.notes.delete(item.key);
     item.status = "sent";
+    announce("Sent.");
     clearTimeout(timer);
     timer = setTimeout(poll, 100); // what was sent is among the messages by now
   } catch (e) {
@@ -2746,10 +3676,11 @@ function settingsRow(key, title, description, control, extraClass = "") {
     h(
       "div",
       { class: "row-grid " + extraClass },
-      h("div", null, h("div", { class: "row-title" }, title), description && h("p", { class: "row-description" }, description)),
-      h("div", { class: "row-control" }, control),
+      h("div", null, h("div", { class: "row-title", id: "row-" + key }, title), description && h("p", { class: "row-description" }, description)),
+      // Named by the row's title, so each of a column of Always, Within and Never says whose it is.
+      h("div", { class: "row-control", role: control ? "group" : null, "aria-labelledby": control ? "row-" + key : null }, control),
     ),
-    ui.rowErrors[key] && h("p", { class: "row-error" }, ui.rowErrors[key]),
+    ui.rowErrors[key] && h("p", { class: "row-error", "data-announce": "" }, ui.rowErrors[key]),
   );
 }
 
@@ -2763,7 +3694,7 @@ function accountSection() {
     h(
       "div",
       { class: "group" },
-      settingsRow("account", "Your name", "Agents see it, and send to it.", [
+      settingsRow("account", "Your name", a?.taken ? "The person on " + a.taken + " chose this name first. Choose another; until you do, you can't send." : "Agents see it, and send to it.", [
         h(
           "span",
           { class: "field account-field" },
@@ -2771,9 +3702,10 @@ function accountSection() {
             type: "text",
             value,
             maxlength: 32,
-            autocomplete: "off",
+            autocomplete: "nickname",
             spellcheck: "false",
             "aria-label": "Your name",
+            "aria-invalid": ui.rowErrors.account ? "true" : null,
             "data-key": "account-name",
             oninput: (e) => {
               ui.accountDraft = e.target.value;
@@ -2835,12 +3767,82 @@ async function saveAccount(name) {
   render();
 }
 
+// Each session's own setting, folded under the device default so a device with many sessions
+// doesn't fill the page. The fold says how many sessions there are and how many set their own.
+function perSessionFold(key, rows, set) {
+  ui.settingsOpen = ui.settingsOpen || new Set();
+  if (!rows.length) return [];
+  const open = ui.settingsOpen.has(key);
+  const head = h(
+    "button",
+    {
+      class: "row row-fold",
+      "aria-expanded": open ? "true" : "false",
+      "data-key": "fold-" + key,
+      onclick: () => {
+        open ? ui.settingsOpen.delete(key) : ui.settingsOpen.add(key);
+        render();
+      },
+    },
+    icon("chevronRight", "row-fold-chev"),
+    h("span", { class: "row-title" }, "Each session"),
+    h("span", { class: "row-fold-meta" }, plural(rows.length, "session") + (set ? " · " + set + " set" : "")),
+  );
+  if (open) for (const r of rows) r.classList.add("row-sub");
+  return [head, ...(open ? rows : [])];
+}
+
+function themeSection() {
+  return h(
+    "section",
+    { class: "section" },
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Appearance")),
+    h(
+      "div",
+      { class: "group" },
+      settingsRow(
+        "theme",
+        "Theme",
+        null,
+        h(
+          "div",
+          { class: "segmented", role: "radiogroup", "aria-label": "Theme" },
+          THEMES.map(([id, label]) =>
+            // A radio group: one Tab stop, the arrow keys move the choice (WCAG 4.1.2).
+            h(
+              "button",
+              {
+                role: "radio",
+                "aria-checked": theme === id ? "true" : "false",
+                tabindex: theme === id ? 0 : -1,
+                "data-key": "theme-" + id,
+                onclick: () => setTheme(id),
+                onkeydown: (e) => {
+                  const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+                  if (!step) return;
+                  e.preventDefault();
+                  const i = THEMES.findIndex(([t]) => t === theme);
+                  const next = THEMES[(i + step + THEMES.length) % THEMES.length][0];
+                  setTheme(next);
+                  root.querySelector(`[data-key="theme-${next}"]`)?.focus();
+                },
+              },
+              label,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 function settingsPage() {
-  const sections = [ui.state ? accountSection() : null];
+  const sections = [ui.state ? accountSection() : null, themeSection()];
   if (ui.settings) {
     const set = ui.settings;
     const local = (ui.state?.devices || []).find((d) => d.self)?.sessions || [];
     const overrides = set.sessionWake || {};
+    const wakeOwn = local.filter((s) => overrides[s.name]).length;
     const rows = [
       settingsRow(
         "wake",
@@ -2848,7 +3850,7 @@ function settingsPage() {
         "Whether a message from another session may wake an idle session. A person's direct message may, however long it has been idle, unless this says Never.",
         wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }), false),
       ),
-      ...[...local]
+      ...perSessionFold("wake", [...local]
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((s) =>
           settingsRow(
@@ -2869,17 +3871,18 @@ function settingsPage() {
               true,
             ),
           ),
-        ),
+        ), wakeOwn),
     ];
     const busyOverrides = set.sessionBusy || {};
+    const busyOwn = local.filter((s) => busyOverrides[s.name]).length;
     const busyRows = [
       settingsRow(
         "busy",
         "Device default",
-        "What a busy Claude Code session sees when a message arrives.",
+        "What a busy session sees when a message arrives.",
         busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }), false),
       ),
-      ...[...local]
+      ...perSessionFold("busy", [...local]
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((s) =>
           settingsRow(
@@ -2898,7 +3901,7 @@ function settingsPage() {
               true,
             ),
           ),
-        ),
+        ), busyOwn),
     ];
     sections.push(
       h(
@@ -2912,7 +3915,7 @@ function settingsPage() {
         { class: "section" },
         h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Busy sessions")),
         h("div", { class: "group" }, busyRows),
-        ui.settingsError && h("p", { class: "row-error section-head" }, ui.settingsError),
+        ui.settingsError && h("p", { class: "row-error section-head", "data-announce": "" }, ui.settingsError),
       ),
     );
   }
@@ -2982,6 +3985,7 @@ async function unmute(m, key) {
 // Navigation and polling.
 
 function go(view) {
+  ui.drawer = false; // going somewhere from the phone's drawer closes it
   if (location.hash !== "#" + view) location.hash = view;
   else setView(view);
 }
@@ -3068,7 +4072,10 @@ let last = "";
 let timer;
 let inflight = false;
 let polled = false;
+let loaded = false; // the messages have been fetched once, so what comes after is new
+let heldIds = null; // see poll
 let scrolledAt = 0;
+let stateAskedAt = 0; // when the state in hand was asked for
 
 function hasUnsent() {
   return ui.outbox.length > 0 || [...composers.values()].some((el) => el.value.trim());
@@ -3078,8 +4085,16 @@ async function poll() {
   if (inflight) return;
   inflight = true;
   clearTimeout(timer);
+  const wasConn = ui.conn;
+  // The messages in hand before any not yet announced. A poll that brings messages but not the
+  // state fails before it announces them, so this outlasts it, and the next poll still does.
+  if (!heldIds) heldIds = new Set(ui.messages.map((m) => m.id));
   try {
+    const asked = Date.now();
     const [state] = await Promise.all([api("/api/state"), fetchMessages()]);
+    const arrived = loaded ? ui.messages.filter((m) => !heldIds.has(m.id)) : []; // the first fetch brings the history
+    heldIds = null;
+    loaded = true;
     // Another daemon is serving: it restarted onto an update, or a reinstall of the same version,
     // and serves this page at the same address and token. Its page may differ too, so load that.
     const was = ui.state?.version;
@@ -3104,10 +4119,19 @@ async function poll() {
       }
     }
     ui.state = state;
+    stateAskedAt = asked;
+    // Someone else claimed this name first (#268): ask for another, once per page, unless something
+    // is already being asked.
+    if (state.account?.taken && !ui.takenAsked && !ui.setup && !ui.picker && !ui.tagMenu) {
+      ui.takenAsked = true;
+      setTimeout(() => askForName(null), 0);
+    }
     trimMessages();
     for (const id of ui.readLocal) if (!state.account?.unread?.includes(id)) ui.readLocal.delete(id);
     ui.outbox = ui.outbox.filter((item) => !(item.id && ui.ids.has(item.id)));
     ui.conn = "ok";
+    announceArrivals(arrived);
+    if (wasConn === "down") announce("Connected to the daemon again.");
   } catch (e) {
     inflight = false;
     if (e instanceof AuthError) return deny(e.token);
@@ -3134,12 +4158,25 @@ async function poll() {
   timer = setTimeout(poll, document.hidden ? HIDDEN_POLL_MS : first ? 1200 : POLL_MS);
 }
 
+// New messages are read out, politely: those to the person, and those in the conversation open in
+// front of them. Agents talking among themselves anywhere else would be a flood, so they aren't.
+function announceArrivals(list) {
+  if (document.hidden) return;
+  const unread = new Set(ui.state?.account?.unread || []);
+  const open = ui.view === "messages" && ui.conversation;
+  const say = list.filter((m) => fromName(m) !== myName() && (unread.has(m.id) || (open && conversationOf(m).key === ui.conversation)));
+  if (!say.length) return;
+  const m = say[say.length - 1];
+  announce(say.length === 1 ? "New message from " + fromName(m) + ": " + m.subject : say.length + " new messages, the newest from " + fromName(m) + ": " + m.subject);
+}
+
 // A fresh link pasted into a tab already showing the page changes only the fragment, so the
 // page takes the new token here and starts over with it.
-function start() {
+async function start() {
+  await takeKey();
   const token = takeToken();
   if (token !== ui.token) {
-    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0, draftTo: null, restored: null, outbox: [], setup: null, picker: null, newMark: null, armed: null });
+    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0, draftTo: null, restored: null, outbox: [], setup: null, picker: null, newMark: null, armed: null, repoMenu: null });
     ui.ids = new Set();
     ui.notes = new Map();
     ui.readLocal = new Set();
@@ -3149,8 +4186,10 @@ function start() {
     for (const key of [...minuteEdits.keys()]) cancelMinutes(key);
     confirmed = null;
     arrivedAt = 0;
+    heldIds = null;
     last = "";
     polled = false;
+    loaded = false;
   }
   ui.view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "messages";
   render();
@@ -3159,8 +4198,18 @@ function start() {
   poll();
 }
 
+// Escape closes the tag menu wherever the focus is, even on the page's body.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && ui.tagMenu && !e.defaultPrevented) {
+    e.preventDefault(); // this Escape was the menu's; the phone's drawer under it stays open
+    closeTagMenu();
+  } else if (e.key === "Escape" && ui.repoMenu && !e.defaultPrevented) {
+    e.preventDefault(); // the drawer under it stays open, as under the tag menu
+    closeRepoMenu();
+  }
+});
 window.addEventListener("hashchange", () => {
-  if (location.hash.includes("token=")) start();
+  if (location.hash.includes("token=") || location.hash.includes("key=")) start();
   else setView(location.hash.slice(1));
 });
 document.addEventListener("visibilitychange", () => {
@@ -3171,6 +4220,134 @@ window.addEventListener("focus", () => {
 });
 window.addEventListener("blur", markOpenRead); // nobody is looking now, so what comes next is new
 document.addEventListener("scroll", () => (scrolledAt = Date.now()), { capture: true, passive: true });
-NARROW.addEventListener("change", render);
+NARROW.addEventListener("change", () => {
+  if (!NARROW.matches) ui.drawer = false;
+  render();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !e.defaultPrevented && ui.drawer && !ui.setup && !ui.picker && !ui.tagMenu) setDrawer(false);
+});
+// Tooltips, drawn by the page rather than the browser: a browser's title waits about a second and
+// can't be styled. The page's tip is only for what a person can't already read: a button that is
+// only an icon, a state dot, a time (its tip has the full date), and "+N" more tags. Rows, messages,
+// labelled buttons and badges keep the browser's title, which waits long enough not to get in the
+// way. While the page's tip shows, the title moves to data-tip-title so the browser's own doesn't
+// show too, and it comes back after, so assistive tech still reads it.
+//
+// The tip shows 150 ms after the pointer settles. Once one is showing, the next shows at once, so
+// sliding along a row of buttons reads each. Keyboard focus shows it too. The tip lives outside
+// #root, so a render doesn't take it away.
+// While an element's title is borrowed, the element points at the tip with aria-describedby, so a
+// screen reader still reads the title as its description.
+// It is a tooltip only while it shows: an empty one would be a tooltip with no name (WCAG 4.1.2).
+const tip = h("div", { class: "tip", id: "page-tip" });
+document.body.append(tip);
+let tipFor = null; // the element whose tip shows, or is about to
+let tipTimer = 0;
+let tipHiddenAt = 0;
+let tipShown = false;
+let pointerX = 0;
+
+function tipText(el) {
+  return el.dataset.tip || el.dataset.tipTitle || el.getAttribute("title") || "";
+}
+
+// Takes an element's title for the page's tip, and gives it back.
+function borrowTitle(el) {
+  const t = el.getAttribute("title");
+  if (t) {
+    el.dataset.tipTitle = t;
+    el.removeAttribute("title");
+  }
+  tip.textContent = tipText(el);
+  if (!el.hasAttribute("aria-describedby")) {
+    el.setAttribute("aria-describedby", tip.id);
+    el.dataset.tipDescribed = "1";
+  }
+}
+function returnTitle(el) {
+  if (el?.dataset.tipTitle) {
+    el.setAttribute("title", el.dataset.tipTitle);
+    delete el.dataset.tipTitle;
+  }
+  if (el?.dataset.tipDescribed) {
+    el.removeAttribute("aria-describedby");
+    delete el.dataset.tipDescribed;
+  }
+}
+
+function showTip(el, atPointer) {
+  clearTimeout(tipTimer);
+  if (!el.isConnected) return hideTip();
+  const text = tipText(el);
+  if (!text) return hideTip();
+  tip.textContent = text;
+  tip.setAttribute("role", "tooltip");
+  tip.classList.add("on");
+  tipShown = true;
+  const r = el.getBoundingClientRect();
+  const t = tip.getBoundingClientRect();
+  const mid = atPointer && r.width > 120 ? pointerX : r.left + r.width / 2;
+  const x = Math.max(6, Math.min(mid - t.width / 2, window.innerWidth - t.width - 6));
+  const above = r.top - t.height - 6 >= 6;
+  tip.style.left = x + "px";
+  tip.style.top = (above ? r.top - t.height - 6 : r.bottom + 6) + "px";
+  tip.dataset.side = above ? "top" : "bottom";
+}
+
+function hideTip() {
+  clearTimeout(tipTimer);
+  if (tipShown) tipHiddenAt = Date.now();
+  tipShown = false;
+  returnTitle(tipFor);
+  tipFor = null;
+  tip.classList.remove("on");
+  tip.removeAttribute("role");
+}
+
+function queueTip(el, atPointer) {
+  if (el === tipFor) return;
+  hideTip();
+  tipFor = el;
+  borrowTitle(el);
+  if (Date.now() - tipHiddenAt < 400 || tipShown) return showTip(el, atPointer);
+  tipTimer = setTimeout(() => showTip(el, atPointer), 150);
+}
+
+// Whether an element with a title gets the page's tip (see above).
+const TIP_KINDS = ".pres, .status-dot, .dev-dot, .mini-dev, .dot, .chat-msg-time, [data-ago], .stag-more";
+function wantsTip(el) {
+  if (el.dataset.tip || el.matches(TIP_KINDS)) return true;
+  // A button with no words on it: only an icon, or only a face (the folded sidebar's sessions).
+  if (!el.matches("button, a")) return false;
+  const faces = [...el.querySelectorAll(".avatar")].map((a) => a.textContent).join("");
+  return el.textContent.trim() === faces.trim();
+}
+
+function tipTarget(node) {
+  for (let el = node?.closest?.("[data-tip], [title], [data-tip-title]"); el; el = el.parentElement?.closest("[data-tip], [title], [data-tip-title]")) {
+    if (wantsTip(el)) return el;
+  }
+  return null;
+}
+
+document.addEventListener("pointerover", (e) => {
+  if (e.pointerType === "touch") return;
+  pointerX = e.clientX;
+  const el = tipTarget(e.target);
+  el ? queueTip(el, true) : hideTip();
+});
+document.addEventListener("pointermove", (e) => (pointerX = e.clientX), { passive: true });
+document.documentElement.addEventListener("pointerleave", hideTip);
+document.addEventListener("focusin", (e) => {
+  const el = tipTarget(e.target);
+  if (el && e.target.matches(":focus-visible")) queueTip(el, false);
+});
+document.addEventListener("focusout", hideTip);
+document.addEventListener("pointerdown", hideTip, true);
+// Escape also cancels a tip that is still waiting to show.
+document.addEventListener("keydown", (e) => e.key === "Escape" && tipFor && hideTip());
+document.addEventListener("scroll", hideTip, { capture: true, passive: true });
+
 setInterval(tick, 10000);
 start();

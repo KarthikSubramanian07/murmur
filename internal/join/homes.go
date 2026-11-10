@@ -18,6 +18,9 @@ type agentHome struct {
 	JSON  string // for Claude Code, the file it keeps user-scope MCP servers in
 	Label string // what the report calls it: "Claude Code", or with T3's name for the instance
 	Bin   string // the agent's command as T3 runs it, for an agent that isn't on PATH
+	// Named says a variable names Dir (CODEX_HOME) rather than Dir being the agent's default, which
+	// Codex spells differently in its hooks' trust keys (codexKeyPath).
+	Named bool
 }
 
 // agent is one of the coding agents join registers the server with.
@@ -38,7 +41,7 @@ var agents = []agent{
 	{driver: "claudeAgent", label: "Claude Code", t3Var: "CLAUDE_CONFIG_DIR", register: Env.registerClaudeAt, removal: Env.claudeRemoval},
 	{driver: "codex", label: "Codex", t3Var: "CODEX_HOME",
 		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerCodexAt(h) },
-		removal:  tableRemoval},
+		removal:  codexRemoval},
 	{driver: "opencode", label: "OpenCode", t3Var: "XDG_CONFIG_HOME", sub: "opencode",
 		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerOpenCodeAt(h) },
 		removal:  openCodeRemoval},
@@ -50,7 +53,7 @@ var agents = []agent{
 		removal:  piRemoval},
 	{driver: "grok", label: "Grok", t3Var: "GROK_HOME",
 		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerGrokAt(h) },
-		removal:  tableRemoval},
+		removal:  grokRemoval},
 }
 
 // defaultHome is an agent's configuration as this process's environment says, "" Dir where the
@@ -61,7 +64,7 @@ func (e Env) defaultHome(a agent) agentHome {
 	case "claudeAgent":
 		h.Dir, h.JSON = e.ClaudeDir, e.ClaudeJSON
 	case "codex":
-		h.Dir = e.CodexHome
+		h.Dir, h.Named = e.CodexHome, !e.CodexHomeDefault
 	case "opencode":
 		h.Dir = e.OpenCodeDir
 	case "muse":
@@ -82,7 +85,7 @@ func (e Env) t3Home(a agent, in t3Instance) (agentHome, bool) {
 	case dir != "" && a.sub != "":
 		h.Dir = filepath.Join(dir, a.sub)
 	case dir != "":
-		h.Dir = dir
+		h.Dir, h.Named = dir, true
 	case a.driver == "claudeAgent" || a.driver == "codex":
 		// T3 runs these with no variable of their own in the user's default, whatever the agent
 		// running join has: this one may be another account's.
@@ -149,7 +152,7 @@ func (e Env) homes() (byAgent [][]agentHome, notes []string) {
 		dup := false
 		for j, o := range byAgent[i] {
 			if samePath(o.Dir, h.Dir) && samePath(o.JSON, h.JSON) {
-				dup = true
+				dup = dup || sameCodexKey(a, o, h)
 				if o.Bin == "" {
 					byAgent[i][j].Bin = h.Bin // the default home, with the command T3 runs it by
 				}
@@ -160,6 +163,18 @@ func (e Env) homes() (byAgent [][]agentHome, notes []string) {
 		}
 	}
 	return byAgent, notes
+}
+
+// sameCodexKey says two homes in one directory have Codex name their hook alike. Where one is
+// named by CODEX_HOME and the other is the default, through a link (T3 naming ~/.codex, which is
+// one), Codex spells each differently, and the hook is trusted under both: the second home is kept
+// for that, and registering in it again changes nothing else.
+func sameCodexKey(a agent, o, h agentHome) bool {
+	if a.driver != "codex" || o.Named == h.Named {
+		return true
+	}
+	p, q := filepath.Join(o.Dir, "hooks.json"), filepath.Join(h.Dir, "hooks.json")
+	return codexKeyPath(p, o.Named) == codexKeyPath(q, h.Named)
 }
 
 func agentIndex(driver string) int {
@@ -218,7 +233,37 @@ func (e Env) removal() string {
 	return strings.Join(steps, "; ")
 }
 
-// tableRemoval is the removal for an agent with a config.toml: Codex, Grok.
+// codexRemoval is the removal for Codex: the server, and the hook (codexhook.go).
+func codexRemoval(e Env, h agentHome) string {
+	steps := []string{tableRemoval(e, h)}
+	path := filepath.Join(h.Dir, "hooks.json")
+	if hasMurmurCodexHook(path) {
+		steps = append(steps, "delete the hooks named "+hookName+" (statusMessage) from "+path)
+	}
+	return joinSteps(steps)
+}
+
+// grokRemoval is the removal for Grok: the server, and the hook's file (grokhook.go).
+func grokRemoval(e Env, h agentHome) string {
+	steps := []string{tableRemoval(e, h)}
+	if path := filepath.Join(h.Dir, "hooks", grokHookFile); fileExists(path) {
+		steps = append(steps, "delete "+path)
+	}
+	return joinSteps(steps)
+}
+
+// joinSteps joins the steps that aren't "".
+func joinSteps(steps []string) string {
+	var out []string
+	for _, s := range steps {
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return strings.Join(out, ", and ")
+}
+
+// tableRemoval is the removal of the server for an agent with a config.toml: Codex, Grok.
 func tableRemoval(_ Env, h agentHome) string {
 	path := filepath.Join(h.Dir, "config.toml")
 	if b, err := os.ReadFile(path); err != nil || !strings.Contains(string(b), "[mcp_servers."+brand.MCPServer+"]") {

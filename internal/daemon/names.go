@@ -81,6 +81,72 @@ func (d *Daemon) noteNameLocked(name, addr string) bool {
 	return true
 }
 
+// notePersonClaimLocked records that a person's name is claimed by addr. The first claim read
+// stands: a later one, here or from a registry rewritten since, changes nothing. It reports whether
+// anything changed. Caller holds mu.
+func (d *Daemon) notePersonClaimLocked(name, addr string) bool {
+	if d.st.PersonClaims[name] != "" || addr == "" {
+		return false
+	}
+	d.st.PersonClaims[name] = addr
+	d.st.People[name] = addr
+	return true
+}
+
+// notePersonLocked records that the person at addr goes by name, as their device's presence says.
+// The first address seen with a name keeps it, as for a session's name (noteNameLocked), and only
+// a claim in the registry, which stands over any sighting, gives it to another. A message's name
+// never comes here: one device can send any number of messages, each saying another name, and
+// would hold them all. A sync reads the registry before the presences, so a claim is known before
+// any presence says the name. It reports whether anything changed. Caller holds mu.
+func (d *Daemon) notePersonLocked(name, addr string) bool {
+	cur, ok := d.st.People[name]
+	switch {
+	case !ok:
+		d.st.People[name] = addr
+		return true
+	case cur == addr || d.personClashes[name]:
+		return false
+	}
+	if d.personClashes == nil {
+		d.personClashes = map[string]bool{}
+	}
+	d.personClashes[name] = true // logged once: a presence is read on each of its heartbeats
+	d.log.Printf("%s says its person is %s, which is the name of the person at %s; that one keeps it", addr, name, cur)
+	return false
+}
+
+// livePersonLocked is the name the live presence of the device at addr gives its person, "" if
+// there is none or it is stale. Caller holds mu.
+func (d *Daemon) livePersonLocked(addr string) string {
+	dev, _ := bus.SplitAddr(addr)
+	if dev == d.device {
+		return d.st.Person
+	}
+	p := d.peers[dev]
+	if p == nil || d.staleLocked(p) {
+		return ""
+	}
+	for _, s := range p.pres.Sessions {
+		if s.ID == bus.PersonSession {
+			return s.Name
+		}
+	}
+	return ""
+}
+
+// nameOnOthersLocked says a live presence of a device other than addr's says its person is name.
+// Caller holds mu.
+func (d *Daemon) nameOnOthersLocked(name, addr string) bool {
+	dev, _ := bus.SplitAddr(addr)
+	for other := range d.peers {
+		if other != dev && d.livePersonLocked(bus.Addr(other, bus.PersonSession)) == name {
+			return true
+		}
+	}
+	return dev != d.device && d.st.Person == name
+}
+
 // processNames reads the registry's tip into the set of used names. sha is the tip on the remote
 // and already fetched, "" if the listing didn't show the ref (which it checks again, if this
 // daemon has read the registry before). Caller holds advMu.
@@ -92,7 +158,7 @@ func (d *Daemon) noteNameLocked(name, addr string) bool {
 // waiting for a session to need a name, if the registry is missing any.
 func (d *Daemon) processNames(ctx context.Context, sha string) {
 	d.mu.Lock()
-	tip, good, checked := d.st.NamesTip, d.st.NamesGood, d.namesChecked
+	tip, good, checked, peopleRead := d.st.NamesTip, d.st.NamesGood, d.namesChecked, d.st.NamesPeople
 	d.mu.Unlock()
 	if checked && tip == sha {
 		return
@@ -145,8 +211,58 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 		}
 		isCommit = ok
 	}
-	var commits []bus.Commit
+	read := map[string]string{}
+	reserved := map[string]string{} // the reservations read, name to device
+	snapshotAt := ""                // the one commit whose snapshot counts, "" for none (see below)
+	skipped := 0
+	// noteRecords reads a page of the registry's history into read and reserved.
+	noteRecords := func(commits []bus.Commit) {
+		for _, c := range commits {
+			var rec bus.NameRecord
+			if bus.Decode(c.Message, &rec) != nil {
+				continue
+			}
+			if len(rec.Used) > 0 && c.SHA != snapshotAt {
+				// A snapshot anywhere but the root of a history read from its start isn't Murmur's (one
+				// appended, or a root merged in), and could mark any number of names used, for good,
+				// on every daemon that read it.
+				rec.Used = nil
+				skipped++
+			}
+			claims := rec.Claims()
+			if name, dev, ok := rec.Reservation(); ok {
+				// The first reservation of a name gives it its device; a later one counts for nothing,
+				// nor does one of a name a session already has. What was learned before this read
+				// counts as read, so a daemon that reads only what is new agrees with one that reads
+				// the whole history. A name known with no session and no device (from a snapshot
+				// that kept no devices) still gains one, as it would for a reader starting fresh.
+				_, owned := reserved[name]
+				if _, ok := reservedBefore[name]; ok {
+					owned = true
+				}
+				if !owned && read[name] == "" && usedBefore[name] == "" {
+					reserved[name] = dev
+				}
+			} else if rec.Session != "" {
+				// The assignment of a name set aside: only the device it was set aside for can give
+				// it to a session.
+				owner, ok := reserved[rec.Name]
+				if !ok {
+					owner, ok = reservedBefore[rec.Name]
+				}
+				if _, has := claims[rec.Name]; has && ok && owner != rec.Device {
+					claims[rec.Name] = ""
+				}
+			}
+			for name, addr := range claims {
+				if cur, ok := read[name]; !ok || cur == "" {
+					read[name] = addr
+				}
+			}
+		}
+	}
 	disturbed := false
+	manyRoots := false
 	if isCommit {
 		from := ""
 		if good != "" {
@@ -157,14 +273,38 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 				fail(err)
 				return
 			}
-			if desc {
-				from = good
-			} else {
+			switch {
+			case !desc:
 				disturbed = true
+			case peopleRead:
+				from = good
+			default:
+				// Not damaged, but read by a daemon that passed over people's claims (see
+				// NamesPeople): read again from the start, for them.
 			}
 		}
-		var err error
-		if commits, err = d.repo.Log(ctx, from, sha); err != nil {
+		// Murmur writes a snapshot only as the first commit of a new history, a repair's, which a
+		// reader always reads from the start, as it doesn't descend from what was read. It writes no
+		// merges, so its history has one root. A merge that brings in another root is damage, as a
+		// rewrite is: no snapshot in it counts, so a reader new to it would miss a repair's names,
+		// and it is read from the start and repaired. An incremental reader asks only about what is
+		// new. Found before the history is read, which needs it.
+		roots, err := d.repo.Roots(ctx, sha, from)
+		if err != nil {
+			fail(err)
+			return
+		}
+		if len(roots) > 0 && (from != "" || len(roots) > 1) {
+			d.log.Printf("the names registry has more than one root, which Murmur never writes; reading it as damaged")
+			disturbed, from, manyRoots = true, "", true
+		} else if from == "" && len(roots) == 1 {
+			snapshotAt = roots[0]
+		}
+		err = d.repo.Log(ctx, from, sha, d.maxSnapshot, func(page []bus.Commit) error {
+			noteRecords(page)
+			return nil
+		})
+		if err != nil {
 			fail(err)
 			return
 		}
@@ -172,50 +312,16 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 		// Junk, or the registry gone after having been read.
 		disturbed = sha != "" || good != ""
 	}
-	read := map[string]string{}
-	reserved := map[string]string{} // the reservations read, name to device
-	for _, c := range commits {
-		var rec bus.NameRecord
-		if bus.Decode(c.Message, &rec) != nil {
-			continue
-		}
-		claims := rec.Claims()
-		if name, dev, ok := rec.Reservation(); ok {
-			// The first reservation of a name gives it its device; a later one counts for nothing,
-			// nor does one of a name a session already has. What was learned before this read
-			// counts as read, so a daemon that reads only what is new agrees with one that reads
-			// the whole history. A name known with no session and no device (from a snapshot
-			// that kept no devices) still gains one, as it would for a reader starting fresh.
-			_, owned := reserved[name]
-			if _, ok := reservedBefore[name]; ok {
-				owned = true
-			}
-			if !owned && read[name] == "" && usedBefore[name] == "" {
-				reserved[name] = dev
-			}
-		} else if rec.Session != "" {
-			// The assignment of a name set aside: only the device it was set aside for can give
-			// it to a session.
-			owner, ok := reserved[rec.Name]
-			if !ok {
-				owner, ok = reservedBefore[rec.Name]
-			}
-			if _, has := claims[rec.Name]; has && ok && owner != rec.Device {
-				claims[rec.Name] = ""
-			}
-		}
-		for name, addr := range claims {
-			if cur, ok := read[name]; !ok || cur == "" {
-				read[name] = addr
-			}
-		}
-	}
 
 	d.mu.Lock()
 	wasRepair := d.st.NamesRepair
 	changed := d.st.NamesTip != sha
 	for name, addr := range read {
-		if d.noteNameLocked(name, addr) {
+		if bus.ValidPerson(name) {
+			if d.notePersonClaimLocked(name, addr) {
+				changed = true
+			}
+		} else if d.noteNameLocked(name, addr) {
 			changed = true
 		}
 	}
@@ -227,30 +333,41 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	d.st.NamesTip = sha
 	if isCommit {
 		d.st.NamesGood = sha
+		// Read in full here, or from what was: either way, by a daemon that keeps people's claims.
+		changed = changed || !d.st.NamesPeople
+		d.st.NamesPeople = true
 	}
 	if disturbed {
 		// Only a history read from its start shows whether the registry holds every name. A
 		// read of what was added on top of a damaged one can't, so a repair still to be made
 		// stays to be made.
 		d.st.NamesRepair = false
-		for name := range d.st.Used {
-			if _, ok := read[name]; !ok {
-				d.st.NamesRepair = true
-				break
+		for _, known := range []map[string]string{d.st.Used, d.st.PersonClaims} {
+			for name := range known {
+				if _, ok := read[name]; !ok {
+					d.st.NamesRepair = true
+					break
+				}
 			}
 		}
 	}
 	repair := d.st.NamesRepair
 	changed = changed || repair != wasRepair
+	// The claim of a name from before people were in the registry waits for this first read (see
+	// nextNames), and nothing else would wake the assigner for it.
+	claim := !checked && len(d.unclaimedPersonNamesLocked()) > 0
 	d.namesChecked = true
 	if changed {
 		d.saveLocked()
 	}
 	d.mu.Unlock()
+	if skipped > 0 && !manyRoots { // a history with many roots counts none, and said so
+		d.log.Printf("the names registry has %d snapshots not at its history's root; their names weren't counted", skipped)
+	}
 	if repair && !wasRepair {
 		d.log.Printf("the names registry lost names; writing a snapshot of every name in use")
 	}
-	if repair {
+	if repair || claim {
 		d.kickNames()
 	}
 }
@@ -368,10 +485,34 @@ type nameWork struct {
 	wants   []wanted
 	reserve int
 	repair  bool
+	person  []string // this device's person's names, to claim for them (#268)
 }
 
 func (w nameWork) empty() bool {
-	return len(w.binds) == 0 && len(w.wants) == 0 && w.reserve == 0 && !w.repair
+	return len(w.binds) == 0 && len(w.wants) == 0 && w.reserve == 0 && !w.repair && len(w.person) == 0
+}
+
+// unclaimedPersonNamesLocked is this device's person's names that nobody has claimed in the
+// registry: their name, and the names they had before people were in the registry, which People
+// keeps for them here. #272 claims a name when it is chosen, and a renamed person keeps their old
+// one; a name left from a rename before #272 was never claimed, and once the registry is read only a
+// claim or a live presence holds a name (nameTakenLocked), so without a claim of its own another
+// person could choose it, and messages to it would reach them. Caller holds mu.
+func (d *Daemon) unclaimedPersonNamesLocked() []string {
+	if d.st.Person == "" {
+		return nil
+	}
+	var out []string
+	if d.st.PersonClaims[d.st.Person] == "" {
+		out = append(out, d.st.Person)
+	}
+	me := d.personAddr()
+	for _, name := range sortedKeys(d.st.People) {
+		if name != d.st.Person && d.st.People[name] == me && d.st.PersonClaims[name] == "" && bus.ValidPerson(name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // nameForKeyLocked is the name for a session of key, id: the name the key has, else the oldest in
@@ -429,6 +570,11 @@ func (d *Daemon) nextNames() nameWork {
 		w.reserve = d.opt.NamePool - len(d.st.NamePool)
 	}
 	w.repair = d.st.NamesRepair
+	if d.namesChecked {
+		// Names from before people were in the registry. Only once the registry is read: until
+		// then, a claim made before this one isn't known to be there.
+		w.person = d.unclaimedPersonNamesLocked()
+	}
 	return w
 }
 
@@ -442,6 +588,14 @@ func (d *Daemon) assignPending(ctx context.Context) error {
 		w := d.nextNames()
 		if w.empty() {
 			return nil
+		}
+		// After the presence of a session just started, and before pushNames reads the tip for its
+		// lease. Not when a session found the pool empty and waits on this push for its name: until
+		// it lands, a presence can only show the session as pending.
+		if len(w.wants) == 0 {
+			if err := d.awaitPresence(ctx); err != nil {
+				return err
+			}
 		}
 		err := d.pushNames(ctx, w)
 		switch {
@@ -462,18 +616,17 @@ func (d *Daemon) assignPending(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// pickName chooses a random name that is not known to be in use, nor in taken.
+// pickName chooses a random name that is not known to be in use, nor in taken: after 1,000 random
+// tries, the first such from a random place in the lists (see names.Unused).
 func (d *Daemon) pickName(used map[string]string, taken map[string]bool) (string, error) {
-	for range 1000 {
-		name, err := names.Generate(d.nameSrc)
-		if err != nil {
-			return "", err
-		}
-		if _, ok := used[name]; !ok && !taken[name] {
-			return name, nil
-		}
+	name, err := names.Unused(d.nameSrc, 1000, func(name string) bool {
+		_, ok := used[name]
+		return ok || taken[name]
+	})
+	if err == nil && name == "" {
+		err = errors.New("every name is in use")
 	}
-	return "", errors.New("no unused name found")
+	return name, err
 }
 
 // pushNames pushes w to the registry as one chain of commits on the tip last read, leased on it. It
@@ -488,6 +641,7 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 	d.mu.Lock()
 	tip, repair := d.st.NamesTip, d.st.NamesRepair
 	used := maps.Clone(d.st.Used)
+	people := maps.Clone(d.st.PersonClaims)
 	aside := map[string]string{} // names set aside that no session is known to have, to their device
 	for name, dev := range d.st.Reserved {
 		if used[name] == "" {
@@ -528,6 +682,13 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		reserved = append(reserved, name)
 		recs = append(recs, rec(name, ""))
 	}
+	var person []string
+	for _, name := range w.person {
+		if people[name] == "" { // else claimed already: by this person, or first by someone else, who keeps it
+			person = append(person, name)
+			recs = append(recs, rec(name, bus.PersonSession))
+		}
+	}
 	parent := tip
 	if parent != "" {
 		ok, err := d.repo.IsCommit(ctx, parent)
@@ -549,6 +710,9 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		recs = append(again, recs...)
 		if len(recs) == 0 {
 			recs = append(recs, bus.NameRecord{V: bus.Version, At: at}) // a repair on its own
+		}
+		for name, addr := range people {
+			used[name] = addr // a person's claim survives a repair, as a session's name does
 		}
 		parent, recs[0].Used = "", used
 	}
@@ -578,8 +742,13 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 	defer d.mu.Unlock()
 	d.known[brand.NamesRef] = sha
 	if d.st.NamesTip == tip {
-		// Nothing newer was read meanwhile; this chain, on a tip that was read in full, is read.
-		d.st.NamesTip, d.st.NamesGood, d.st.NamesRepair = sha, sha, false
+		// Nothing newer was read meanwhile; this chain, on a tip that was read in full, is read. A
+		// tip not yet read by a daemon that keeps people's claims isn't (see NamesPeople), unless
+		// this chain is a new root, which holds every name itself.
+		d.st.NamesTip, d.st.NamesRepair = sha, false
+		if d.st.NamesPeople || parent == "" {
+			d.st.NamesGood, d.st.NamesPeople = sha, true
+		}
 	}
 	for _, b := range w.binds {
 		d.noteNameLocked(b.name, bus.Addr(d.device, b.id))
@@ -604,6 +773,10 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 			}
 		}
 		d.log.Printf("session %s is named %s", addr, name)
+	}
+	for _, name := range person {
+		d.notePersonClaimLocked(name, d.personAddr())
+		d.noteLocked(at, rec(name, bus.PersonSession).Subject())
 	}
 	for _, name := range reserved {
 		d.noteNameLocked(name, "")

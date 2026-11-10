@@ -15,6 +15,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/testgit"
 )
 
 // Tests of handing a message over to a session as a turn (#57). `t3` is a stand-in: the test
@@ -42,6 +43,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("HOME", home)
 	os.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	os.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	testgit.Isolate() // HOME keeps out ~/.gitconfig, but not the system's, or a GIT_CONFIG_GLOBAL set already
 	code := m.Run()
 	os.RemoveAll(home)
 	os.Exit(code)
@@ -78,7 +80,8 @@ func fakeT3(path string) int {
 }
 
 // useFakeT3 points T3CODE_CLI_PATH-style routes at the stand-in. It returns the path to put in a
-// route as T3CLI, and what the stand-in has been asked so far.
+// route as T3CLI, and what the stand-in has been asked so far. It tells the stand-in where to
+// write through the environment, so a test that uses it can't call t.Parallel (#39).
 func useFakeT3(t *testing.T) (exe string, calls func() []t3Call) {
 	t.Helper()
 	exe, err := os.Executable()
@@ -356,7 +359,7 @@ func TestMessageForAStoppedT3SessionStillReachesItsThread(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	conn.Close()
-	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.seesSession(bob) })
+	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.listsSession(bob) })
 	a.send("aaaaaa", bob, "while you were away", "wake up")
 	eventually(t, "the handoff", func() bool { return len(calls()) == 1 })
 	if c := calls()[0]; strings.Join(c.Args, " ") != "thread send thread-bob -" || !strings.Contains(c.Stdin, "wake up") {

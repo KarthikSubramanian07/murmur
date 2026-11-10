@@ -24,18 +24,20 @@ import (
 //     message as its next turn, nothing is interrupted, and it works for a thread whose MCP server
 //     T3 has stopped (idle threads lose theirs after 30 minutes), which is the thread most worth
 //     waking;
-//   - in Claude Code outside T3, the session's messaging socket (package msgsock).
+//   - in Claude Code outside T3, the session's messaging socket (package msgsock), and in Pi
+//     outside T3 the socket Murmur's extension opens in the session, which speaks the same lines.
 //
-// A session Murmur's hook runs in (Claude Code) is not given a turn while it is at work (#202): T3
-// would queue it behind the running turn, and nothing could take it back, so the agent could read
-// it with `inbox` and then get it again as a turn. The hook tells it of the message after its next
-// tool call instead, and what it hasn't read when the turn ends keeps the turn going: the Stop
-// hook gives it to the agent (continueTurnLocked). A turn that ends without Stop, one the user
-// interrupted in T3, has it handed over as a turn instead.
+// A session Murmur's hook runs in (Claude Code, and Pi through its extension) is not given a turn
+// while it is at work (#202): T3 would queue it behind the running turn, and nothing could take it
+// back, so the agent could read it with `inbox` and then get it again as a turn. The hook tells it
+// of the message after its next tool call instead, and what it hasn't read when the turn ends keeps
+// the turn going: the Stop hook gives it to the agent (continueTurnLocked). A turn that ends without
+// Stop, one the user interrupted in T3, has it handed over as a turn instead, and so does one whose
+// Stop can't keep it going (Pi's after Escape or an error).
 //
-// Handing a message over is not delivering it: it is delivered when it reaches the agent's
-// context, when the turn carrying it starts, which the daemon doesn't see (docs/VISION.md,
-// `What "delivered" means`, #187). A message handed over is removed from the inbox, as the
+// Handing a message over is not the agent having it: it is read (it arrives whole, so it skips
+// delivered) when the turn carrying it starts, which the daemon doesn't see (docs/VISION.md,
+// `What "delivered" and "read" mean`, #325). A message handed over is removed from the inbox, as the
 // client holds it now: neither the hook nor `inbox` shows it again. docs/VISION.md ("Delivering a message as a turn") has the reasons.
 
 const (
@@ -306,8 +308,9 @@ func (d *Daemon) queuedForPushLocked(id string, m *inMsg, wake pageSettings) boo
 // is over, whatever the order in which a late hook and the run's end came. A session whose
 // connection dropped keeps its state through its grace, and one that reconnected after this
 // daemon restarted, before its hook has run here, is at work while T3 shows its thread's run going.
-// Outside T3 nothing but Stop ends a turn, so an interrupted session waits for its next prompt and
-// the Stop after it. Caller holds mu.
+// Outside T3 nothing but Stop ends a turn. Claude Code fires none when interrupted, so its session
+// waits for its next prompt and the Stop after it; Pi's extension sends an interrupted Stop. Caller
+// holds mu.
 func (d *Daemon) hookBusyLocked(id string) bool {
 	s := d.sessions[id]
 	if s == nil {
@@ -374,17 +377,36 @@ func (d *Daemon) endTurnLocked(s *session, wake pageSettings) {
 // None are taken once Claude Code would refuse the continuation (stopBlockCap): it would end the
 // turn with them gone. They are then handed over as a turn, as after a turn that ends without Stop.
 // None are taken from a session on do not disturb (#198) either: wayInLocked finds no way in for it.
-func (d *Daemon) continueTurnLocked(s *session, wake pageSettings) []*inMsg {
+//
+// The reply carries them whole, so they are taken, oldest first, only while they fit room (see
+// wholeRoom); the rest stay in the inbox for the turn's next end. After the first that doesn't fit,
+// only a message the reply already carries is taken: one for everyone, given to another session
+// the hook speaks for, would otherwise stay here and be given again (Sol's review of #376). A
+// session left with messages the reply had no room for goes on with the turn all the same, as it
+// does: it is the same agent, and the reply has the others' (the reply carries something, since
+// any one message fits an empty room). Otherwise its messages would be handed to T3 while the
+// agent is at work, and its count of continuations would fall behind Claude Code's.
+func (d *Daemon) continueTurnLocked(s *session, wake pageSettings, room *wholeRoom) []*inMsg {
 	if s.continuations >= stopBlockCap || !d.wayInLocked(s.id, wake) {
 		return nil
 	}
 	var out []*inMsg
+	waiting, full := false, false
 	for _, m := range d.st.Inbox[s.id] {
-		if pushable(m) {
-			out = append(out, m)
+		if !pushable(m) {
+			continue
 		}
+		waiting = true
+		if full && !room.has(m) {
+			continue
+		}
+		if !room.take(m) {
+			full = true
+			continue
+		}
+		out = append(out, m)
 	}
-	if len(out) > 0 {
+	if waiting {
 		now := time.Now()
 		s.busyAt, s.turnStart, s.continuedAt = now, now, now
 		s.continuations++
@@ -597,6 +619,7 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		return
 	}
 	d.kickPush() // what waited behind this message, in an inbox that took it over, may go now
+	d.health.handedOff(j.via, err)
 	if err != nil {
 		j.msg.PushFailed = true
 		if !d.pushWarned[j.id] {
@@ -610,6 +633,49 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.introduceLocked(j.key, j.msg.Event.From)
 	d.saveLocked()
 	delete(d.pushWarned, j.id)
+}
+
+// maxWholeReply is how much of one reply to the hook its messages may take, whole or as notices. A
+// client reads at most 64 MB of a reply (#371), and the hook's speaks for every session of its
+// agent's process, each with an inbox of up to maxInbox messages, which the daemon takes out of the
+// inbox, or marks told, before it replies: a reply the client then refused would lose them. Half
+// the client's limit leaves room for the rest of the reply. A variable for the test.
+var maxWholeReply = 32 << 20
+
+// wholeRoom is what is left of one reply's maxWholeReply. A message for everyone is in each inbox
+// the hook speaks for and is in the reply once, so it is counted once.
+type wholeRoom struct {
+	left  int
+	taken map[string]bool
+}
+
+func newWholeRoom() *wholeRoom { return &wholeRoom{left: maxWholeReply, taken: map[string]bool{}} }
+
+// has says the reply already carries message m whole.
+func (r *wholeRoom) has(m *inMsg) bool { return r.taken["whole "+m.Event.ID] }
+
+// take reports whether message m fits in what is left whole, and if so counts it, at its longest:
+// every character escaped six times over (`<` is `<`), and a kilobyte for the rest of its
+// view. One the reply already carries whole costs nothing more.
+func (r *wholeRoom) take(m *inMsg) bool {
+	return r.fit("whole "+m.Event.ID, 6*(len(m.Event.Body)+len(m.Event.Subject))+1<<10)
+}
+
+// takeNotice is take for a notice of message m, which has its subject and not its body.
+func (r *wholeRoom) takeNotice(m *inMsg) bool {
+	return r.fit("notice "+m.Event.ID, 6*len(m.Event.Subject)+1<<10)
+}
+
+func (r *wholeRoom) fit(key string, cost int) bool {
+	if r.taken[key] {
+		return true
+	}
+	if cost > r.left {
+		return false
+	}
+	r.left -= cost
+	r.taken[key] = true
+	return true
 }
 
 // delivery is a message, msg, given to session id.
@@ -660,9 +726,9 @@ func (d *Daemon) wholeViewsLocked(msgs []*inMsg, given []delivery) []proto.Messa
 
 // outOfInboxLocked records that message m has gone to session id: it leaves the inbox, wherever it
 // is by now (a session that takes a name takes the inboxes kept for it), and the page's notes and
-// the log say so. verb is "handed" for a handoff to the session's client, which delivers it when
-// the turn carrying it starts, and "delivered" for the hook's whole message, which is in the
-// agent's context (#187); how ends the line. The caller saves the state. Caller holds mu.
+// the log say so. verb is "handed" for a handoff to the session's client, where the agent reads it
+// when the turn carrying it starts, and "gave" for the hook's whole message, which is read: it is
+// in the agent's context (#325); how ends the line. The caller saves the state. Caller holds mu.
 func (d *Daemon) outOfInboxLocked(id string, m *inMsg, verb, how string) {
 	for inbox, box := range d.st.Inbox {
 		for i, o := range box {
@@ -677,11 +743,12 @@ func (d *Daemon) outOfInboxLocked(id string, m *inMsg, verb, how string) {
 		}
 	}
 	d.pushedAt[id] = time.Now()
+	d.health.outOfInbox(verb)
 	d.noteConversationLocked() // the client has the message for the agent; its answer may soon follow
 	e, addr := m.Event, bus.Addr(d.device, id)
 	d.noteLocked(time.Now(), fmt.Sprintf("%s %q from %s to %s %s", verb, e.Subject, e.From, addr, how))
 	if verb == "handed" {
-		how += "; it is delivered when that turn starts"
+		how += "; it is read when that turn starts"
 	}
 	d.log.Printf("%s message %s to session %s %s", verb, e.ID, addr, how)
 }

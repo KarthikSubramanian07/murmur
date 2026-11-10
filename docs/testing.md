@@ -1,10 +1,36 @@
 # Testing
 
-`go test ./...` runs everything, including tests that run two devices against a local bare remote.
+`go test ./...` runs every Go test, including those that run two devices against a local bare remote.
 A change is checked with `gofmt -l .` (empty), `go vet ./...` and `go test -race -count=1 ./...`.
-The `daemon` package is most of the time. Under `-race` it took 10–16 minutes on a laptop shared
-with other agents' test runs, and about 12 on the first CI runner (2026-10-29; #39 is about making it
-faster).
+The site has its own tests, of its Worker and of the files machines read on it (sitemap,
+robots.txt, llms.txt, the pages' metadata): `node --test --import ./site/test/register.mjs
+site/test/*.test.mjs`, with Node 20.6 or later and nothing to install. `test-linux` runs them.
+The `daemon` package is most of the time (#39 is about making it faster). Its tests that share
+nothing with the others call `t.Parallel()`. Under `-race` on CI that took the package from 464 s to
+304 s on Linux, 798 s to 599 s on macOS and 1,500 s to 1,027 s on Windows (2026-11-09: main at
+c9376fa, run 42689370600 in a-Fig/murmur, against the first run of the change, 42699090516 in the
+contributor's fork, whose macOS job failed one test that has since been fixed). Windows takes
+longest, so it decides when a pull request is green.
+
+Go runs a package's serial tests first, one at a time, and the parallel ones after them, so the
+two never overlap. A daemon test stays serial if it sets the environment (`t.Setenv` panics in a
+parallel test; `useFakeT3` calls it), replaces a package variable, writes into the `HOME` or
+`CODEX_HOME` that `TestMain` sets, or counts on timing or a port number that the other tests' load
+could upset; those last say why in a comment. As of 2026-11-09 that is 77 of 276 tests, 50 of them
+only because the stand-in `t3` is configured through the environment, which #282 is about. Run one
+at a time, the serial tests were about 45% of the package's time.
+
+A parallel test meets more load than it did alone, so a wait it took for granted may come late. A
+call's end, for one, is answered before its after-snapshot is taken: a test that commits right
+after an end looks the session up first, since a lookup waits for the ends still being judged. And
+a heartbeat can come later than the tests' 3 s stale limit: `who` still lists a stale device, but a
+send to its sessions says nobody may read it. `seesSession` and `nameIs` wait for the device to be
+fresh as well as listed, and `listsSession` is for waiting until a session is gone (#387).
+
+A package whose tests can reach Murmur's `murmur.*` git config calls `testgit.Isolate` in `TestMain`,
+so a developer's own settings don't change what they see (#262). As of 2026-11-09 those are `update`,
+`publicrepo`, `setup`, `daemon` and `cmd/mur`; the others that reach it passed with all three keys
+set.
 
 ## On every pull request
 
