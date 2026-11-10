@@ -187,7 +187,8 @@ func TestALapsedContinuationHandsOverWhatCameMeanwhile(t *testing.T) {
 	remote := newRemote(t)
 	sock := useFakeSocket(t)
 	a := newDevice(t, remote)
-	b := newDeviceWith(t, remote, func(d *device) { d.continueHold = 8 * time.Second })
+	const hold = 8 * time.Second
+	b := newDeviceWith(t, remote, func(d *device) { d.continueHold = hold })
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{MsgSocket: sock.path, MsgToken: "tok-bob"})
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
@@ -197,15 +198,26 @@ func TestALapsedContinuationHandsOverWhatCameMeanwhile(t *testing.T) {
 	b.hookNotices("claude-bob")
 	a.send("aaaaaa", bob, "continues the turn", "its body")
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "continues the turn") })
+	// The continuation starts during this Stop, so it holds until at least hold after stopped.
+	// Whether the socket is still empty once the next message has reached b says nothing when the
+	// tests' load delays that past the hold, as it did on CI (#387); when the handoff came does. The
+	// check is as tight as the Stop's round trip: a hold shorter by less than that would pass.
+	stopped := time.Now()
 	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 1 {
 		t.Fatalf("the Stop gave %v", got)
 	}
+	if took := time.Since(stopped); took > time.Second {
+		t.Logf("the Stop took %s, so the check below can't tell a hold that much shorter", took)
+	}
 	a.send("aaaaaa", bob, "after the lost answer", "its body")
 	eventually(t, "the next message to reach b", func() bool { return logHas(b, "after the lost answer") })
-	if n := len(sock.lines()); n != 0 {
-		t.Fatalf("the socket got %d lines while the continuation held", n)
+	if late := time.Since(stopped); late >= hold {
+		t.Logf("the message reached b %s after the Stop, once the continuation had lapsed", late)
 	}
 	eventually(t, "the handoff once the continuation lapsed", func() bool { return len(sock.lines()) >= 2 })
+	if at := sock.firstAt().Sub(stopped); at < hold {
+		t.Fatalf("the socket got the handoff %s after the Stop, while the %s continuation held", at, hold)
+	}
 	if turn := socketTurn(t, sock.lines(), "tok-bob"); !strings.Contains(turn, "after the lost answer") {
 		t.Errorf("the turn: %q", turn)
 	}

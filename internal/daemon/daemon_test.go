@@ -482,8 +482,9 @@ func TestV1ClaimsAreIgnored(t *testing.T) {
 	if len(lines) != 1 || !strings.HasSuffix(lines[0], "read on") {
 		t.Fatalf("log shows %q", lines)
 	}
-	eventually(t, "old-0001's session", func() bool { return a.seesSession("old-0001/x") })
-	if a.seesSession("old-0001/cli") {
+	// Listed, stale or not: old-0001's presence is written once, with no heartbeat after it.
+	eventually(t, "old-0001's session", func() bool { return a.listsSession("old-0001/x") })
+	if a.listsSession("old-0001/cli") {
 		t.Fatal("who lists a V1 device's CLI")
 	}
 	if refs := git(t, filepath.Dir(a.gitDir), "for-each-ref", "refs/murmur/claims"); refs != "" {
@@ -626,7 +627,7 @@ func TestJunkRefsStopNothing(t *testing.T) {
 	// under that name would clash with it if a fetched it.
 	bdev := b.self()
 	b.stop()
-	eventually(t, "the goodbye", func() bool { return !a.seesSession(bob) })
+	eventually(t, "the goodbye", func() bool { return !a.listsSession(bob) })
 	git(t, work, "push", "-q", remote, tree+":refs/murmur/presence/"+bdev+"/x")
 	if r := a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "during the restart"}); r.Error != "" {
 		t.Fatalf("send after the clashing ref: %s", r.Error)
@@ -818,7 +819,7 @@ func TestUnfetchablePresenceStillCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.Remove(lock)
-	holds(t, "b fresh on a", 10*time.Second, func() bool { return a.fresh(bdev) && a.seesSession(bob) })
+	holds(t, "b fresh on a", 10*time.Second, func() bool { return a.fresh(bdev) && a.listsSession(bob) })
 
 	b.offline(remote, true)
 	eventually(t, "b stale on a", func() bool { return !a.fresh(bdev) })

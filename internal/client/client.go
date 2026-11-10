@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -185,7 +186,10 @@ var replaceWait = StopWait
 // the clone, so that the daemon started next finds the lock free. Another client may be doing the
 // same: if the daemon.json that appears isn't the old one's, the work is done.
 func (c *Client) replace(ctx context.Context) error {
-	old := c.current()
+	old, legacy := c.target()
+	if legacy {
+		return olderDaemon(old) // a stop would hand its token to whatever answers (see errOlderDaemon)
+	}
 	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	c.roundTrip(sctx, proto.Request{Op: proto.OpStop}) // by the old address and token, never a newer daemon's
 	cancel()
@@ -215,8 +219,9 @@ func (c *Client) replace(ctx context.Context) error {
 
 // found reports whether daemon.json names a running daemon, and if so makes it the one c talks to.
 // What answers at its address must prove it has the token daemon.json names (proto.Proof), and the
-// clone's lock must be held. The proof is enough by itself; the lock is all a daemon from before it
-// (protocol 11 and older) has to show, and was how #312 first told a daemon from an impostor. A daemon takes the
+// clone's lock must be held. The proof is enough by itself; a daemon from before it (protocol 11 and
+// older) has only the lock to show, which #312 first told a daemon from an impostor by, and which
+// is enough to say that one is there (see errOlderDaemon), not to talk to it. A daemon takes the
 // lock before it writes daemon.json, and removes the file before it gives up its port and long
 // before it lets the lock go, so a daemon.json beside a free lock is stale: its daemon died without
 // removing it (a panic, SIGKILL, the OOM killer, a power cut), and whatever answers at its port
@@ -277,23 +282,6 @@ func (c *Client) running(ctx context.Context) (info proto.Info, protocol int, le
 	return info, protocol, legacy, true
 }
 
-// held reports whether a daemon holds the clone's lock and daemon.json still names info: all that a
-// daemon from before proof can show, checked before each connection to one. It narrows, and can't
-// close, the window in which such a daemon dies and another process takes its port; a client that
-// may start daemons replaces one of these as soon as it finds it.
-func (c *Client) held(info proto.Info) bool {
-	l, err := proc.LockShared(filepath.Join(StateDir(c.GitDir), "daemon.lock"))
-	if err == nil {
-		l.Close()
-		return false
-	}
-	if !errors.Is(err, proc.ErrLocked) {
-		return false
-	}
-	again, ok := c.load()
-	return ok && again == info
-}
-
 // load reads daemon.json.
 func (c *Client) load() (proto.Info, bool) {
 	b, err := os.ReadFile(filepath.Join(StateDir(c.GitDir), "daemon.json"))
@@ -333,6 +321,35 @@ var errNotDaemon = errors.New("what answers at the daemon's address couldn't pro
 // errLegacy is a refusal of the proof's ping for its missing token: what a daemon from before
 // proof answers, and what anything else can answer too.
 var errLegacy = errors.New("the daemon is from before proof")
+
+// errOlderDaemon is what a client says of a daemon from before proof (protocol 11 or older), which
+// it sends nothing at all: no request, no hello, and no stop, since every one of them carries the
+// token, and nothing can show that a connection is to that daemon.
+//
+// Its lock and daemon.json can't, even checked once the connection is made: they show that the
+// daemon lives, not that it listens. One from before 2026-11-09 (07a1ecba) closes its port as it
+// begins to stop, and keeps both while it drains its work and says goodbye, so another process can
+// take the port meanwhile (Sol's review of #389). Sent a request, it would have the session's
+// messages, and could answer with text the hook puts in the agent's context. Sent a stop, it would
+// have the token, which is also what proves a daemon (proto.Proof): it could then prove itself to
+// the next client, which would find the old daemon's lock and daemon.json beside it, until the old
+// daemon finished stopping (Sol's second review of #389).
+//
+// So a client can neither stop nor replace one of these. It says how to end it, by its process ID
+// in daemon.json, or that it ends on its own once it has had no sessions for a while; the daemon
+// started after it is current.
+var errOlderDaemon = errors.New("the daemon running for this clone is from an older version of " + brand.Product +
+	" and can't prove it is the daemon, so it is sent nothing, not even a stop, which would hand over its token")
+
+// olderDaemon is errOlderDaemon for the daemon info names, with what to do about it.
+func olderDaemon(info proto.Info) error {
+	end := fmt.Sprintf("kill %d", info.PID)
+	if runtime.GOOS == "windows" {
+		end = fmt.Sprintf("taskkill /PID %d", info.PID)
+	}
+	return fmt.Errorf("%w. End it (process %d: `%s`), or wait until it exits on its own, 10 minutes after its last session; the next %s command that may start a daemon then starts a current one",
+		errOlderDaemon, info.PID, end, brand.Command)
+}
 
 // errTooLong is a reply longer than a client reads.
 var errTooLong = errors.New("the daemon's reply is too long")
@@ -557,18 +574,19 @@ func open(ctx context.Context, addr string) (conn net.Conn, stop func() bool, er
 // written, after which the daemon may have acted on it.
 func (c *Client) roundTrip(ctx context.Context, req proto.Request) (resp proto.Response, sent bool, err error) {
 	info, legacy := c.target()
-	if legacy && !c.held(info) {
-		return proto.Response{}, false, errNotDaemon
-	}
-	return exchange(ctx, info, legacy, req)
+	return c.exchange(ctx, info, legacy, req)
 }
 
 // exchange is roundTrip with the daemon info names. Each connection proves the daemon before the
 // request goes, on that connection, so a request never reaches whatever took the port of a daemon
-// that died since it was found (#371); only one from before proof (legacy) is sent to unproved.
-func exchange(ctx context.Context, info proto.Info, legacy bool, req proto.Request) (resp proto.Response, sent bool, err error) {
+// that died since it was found (#371). One from before proof (legacy) can't prove itself, and is
+// sent nothing (see errOlderDaemon).
+func (c *Client) exchange(ctx context.Context, info proto.Info, legacy bool, req proto.Request) (resp proto.Response, sent bool, err error) {
 	if info.Addr == "" {
 		return proto.Response{}, false, ErrNoDaemon
+	}
+	if legacy {
+		return proto.Response{}, false, olderDaemon(info)
 	}
 	conn, stop, err := open(ctx, info.Addr)
 	if err != nil {
@@ -580,13 +598,11 @@ func exchange(ctx context.Context, info proto.Info, legacy bool, req proto.Reque
 		return proto.Response{}, false, ctx.Err()
 	}
 	r := bufio.NewReader(conn)
-	if !legacy {
-		if _, err := prove(conn, r, info); err != nil {
-			if ctx.Err() != nil {
-				err = ctx.Err()
-			}
-			return proto.Response{}, false, err
+	if _, err := prove(conn, r, info); err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
 		}
+		return proto.Response{}, false, err
 	}
 	req.Token = info.Token
 	if err := writeLine(conn, req); err != nil {
@@ -608,10 +624,11 @@ func exchange(ctx context.Context, info proto.Info, legacy bool, req proto.Reque
 	return resp, true, nil
 }
 
-// openSession opens a connection to the daemon info names, for a hello, proving it first.
+// openSession opens a connection to the daemon info names, for a hello, proving it first. A daemon
+// from before proof is sent no hello (see errOlderDaemon).
 func (c *Client) openSession(ctx context.Context, info proto.Info, legacy bool) (net.Conn, *bufio.Reader, error) {
-	if legacy && !c.held(info) {
-		return nil, nil, errNotDaemon
+	if legacy {
+		return nil, nil, olderDaemon(info)
 	}
 	conn, err := dial(ctx, info.Addr)
 	if err != nil {
@@ -619,11 +636,9 @@ func (c *Client) openSession(ctx context.Context, info proto.Info, legacy bool) 
 	}
 	conn.SetDeadline(time.Now().Add(15 * time.Second))
 	r := bufio.NewReader(conn)
-	if !legacy {
-		if _, err := prove(conn, r, info); err != nil {
-			conn.Close()
-			return nil, nil, err
-		}
+	if _, err := prove(conn, r, info); err != nil {
+		conn.Close()
+		return nil, nil, err
 	}
 	return conn, r, nil
 }

@@ -359,7 +359,7 @@ func TestMessageForAStoppedT3SessionStillReachesItsThread(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	conn.Close()
-	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.seesSession(bob) })
+	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.listsSession(bob) })
 	a.send("aaaaaa", bob, "while you were away", "wake up")
 	eventually(t, "the handoff", func() bool { return len(calls()) == 1 })
 	if c := calls()[0]; strings.Join(c.Args, " ") != "thread send thread-bob -" || !strings.Contains(c.Stdin, "wake up") {

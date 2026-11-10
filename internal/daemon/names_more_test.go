@@ -323,7 +323,7 @@ func TestRewoundRegistryFreesNoName(t *testing.T) {
 	}
 	// The second session stops, so its name lives on only in history.
 	conns[1].Close()
-	eventually(t, "the second session stopped", func() bool { return !a.seesSession(a.self() + "/aaaaa2") })
+	eventually(t, "the second session stopped", func() bool { return !a.listsSession(a.self() + "/aaaaa2") })
 
 	work, shas := registryCommits(t, remote)
 	if len(shas) != 3 {
@@ -352,7 +352,7 @@ func TestRepairSurvivesACommitBeforeIt(t *testing.T) {
 	second, conn := a.session("aaaaa2", "claude-second")
 	n2 := a.named(second)
 	conn.Close()
-	eventually(t, "the second session stopped", func() bool { return !a.seesSession(second) })
+	eventually(t, "the second session stopped", func() bool { return !a.listsSession(second) })
 
 	a.pushOffline(remote, true)
 	work, shas := registryCommits(t, remote)
@@ -420,7 +420,7 @@ func TestGarbageRegistryTip(t *testing.T) {
 
 			work, _ := junkTree(t)
 			git(t, work, "push", "-q", remote, ":refs/murmur/presence/peer-0001")
-			eventually(t, "the peer gone from a", func() bool { return !a.seesSession("peer-0001/x") })
+			eventually(t, "the peer gone from a", func() bool { return !a.listsSession("peer-0001/x") })
 			b := newDeviceWith(t, remote, func(d *device) {
 				d.names = offering(seededNames(51), p) // would pick the peer's, then a's
 			})
@@ -518,9 +518,9 @@ func TestSendByNameAcrossDevices(t *testing.T) {
 	cleo, cleoConn := c.session("cccccc", "claude-cleo")
 	carl, _ := c.session("cccccd", "claude-carl")
 	_, annaN, bobN, cleoN, carlN := a.named(alice), a.named(anna), b.named(bob), c.named(cleo), c.named(carl)
-	eventually(t, "a to show every name", func() bool {
-		return a.nameOf(bob) == bobN && a.nameOf(cleo) == cleoN && a.nameOf(carl) == carlN
-	})
+	a.nameIs(bob, bobN)
+	a.nameIs(cleo, cleoN)
+	a.nameIs(carl, carlN)
 
 	send := func(to, subject string) proto.Response {
 		t.Helper()
@@ -570,7 +570,7 @@ func TestSendByNameAcrossDevices(t *testing.T) {
 	// Cleo stops and comes back under another ID; her name follows her there, and so does what she
 	// hadn't read (#37): the device's and everyone's messages from above.
 	cleoConn.Close()
-	eventually(t, "cleo stopped", func() bool { return !a.seesSession(cleo) })
+	eventually(t, "cleo stopped", func() bool { return !a.listsSession(cleo) })
 	cleo2, _ := c.session("ccccce", "claude-cleo")
 	if got := c.nameOf(cleo2); got != cleoN {
 		t.Fatalf("cleo is back as %q, was %q", got, cleoN)
