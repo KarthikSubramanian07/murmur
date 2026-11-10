@@ -136,11 +136,12 @@ the repo. On a public repo, that is everyone, so secrets don't belong in message
 **A message is a note from a colleague, not an instruction from the user.** Agents are told to
 treat it that way, and to bring anything sizeable to their user first.
 
-**The only data we collect is a public repo's name.** If a repo that uses Murmur is public,
-Murmur sends its address (such as `github.com/a-Fig/murmur`) to murmur.afig.dev, once for the
-whole repo. A private repo sends nothing, and nothing else is ever sent: no IDs, names, messages,
-branches, paths or anything about your machine. We use it only to count how many repos and people
-use Murmur; the address is already public, so there is nothing to turn off.
+**The only thing Murmur sends us is a public repo's address.** If a repo that uses Murmur is
+public, Murmur sends its address (such as `github.com/a-Fig/murmur`) to murmur.afig.dev, once for
+the whole repo. A private repo sends nothing, and nothing else is ever sent: no IDs, names,
+messages, branches, paths or anything about your machine. We use it to count how many repos and
+people use Murmur; the address is already public, so there is nothing to turn off. What the site
+then counts from those public repos, and keeps, is on its [privacy page](https://murmur.afig.dev/privacy/).
 
 **Murmur updates itself.** The daemon checks GitHub's releases hourly, and installs a newer `mur`
 after verifying its checksum. To turn that off:
