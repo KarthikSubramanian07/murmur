@@ -68,8 +68,10 @@
     pointer-events: none;
   }
   /* A passage or the closing band out of view is see-through, not hidden: a screen reader reads every
-     passage in order, and Tab still reaches the links, which show while they have focus. */
-  html.js:not(.static) .note:focus-within, html.js:not(.static) .end:focus-within { opacity: 1 !important; pointer-events: auto !important; }
+     passage in order, and Tab still reaches the links. One holding focus shows at once while the page is
+     headed for its place in the story (.held, set by the script); once the reader scrolls elsewhere it
+     fades with the rest, rather than staying painted over a later passage. */
+  html.js:not(.static) .note.held, html.js:not(.static) .end.held { opacity: 1 !important; pointer-events: auto !important; }
   .note pre {
     margin-top: 11px;
     padding: 10px 12px;
@@ -2676,8 +2678,12 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
   // The camera follows a smoothed copy of t, so a mouse wheel's steps don't read as jumps. It is
   // only display smoothing: where it settles is exactly what scroll position says.
   let shown = 0, target = 0, last = 0, running = false;
+  const ctaAt = t => clamp((t - T.finale - .86) / .07);
+  // el holds focus and the scroll is headed for where it shows.
+  const hold = (el, headed) => el.classList.toggle('held', headed && el.contains(document.activeElement));
   const clip = t => {
-    const cta = clamp((t - T.finale - .86) / .07);
+    const cta = ctaAt(t);
+    hold(end, ctaAt(target) > 0);
     end.style.opacity = cta;
     end.style.pointerEvents = cta <= 0 ? 'none' : '';
     progress.style.transform = `scaleX(${(t / N).toFixed(4)})`;
@@ -2690,8 +2696,10 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
     if (notes.length === ids.length && ids.length > 1) return notes.map((n, i) => ({ n, a: T[ids[i]], b: T[ids[i]] + 1 }));
     return notes.map(n => ({ n, a: T[ids[0]], b: T[ids[ids.length - 1]] + 1 }));
   });
+  const shows = (p, t) => p.a === 0 ? 1 - clamp((t - .78) / .2) : clamp((t - p.a) / .1) * clamp((p.b - t) / .08);
   const fade = t => passages.forEach(p => {
-    const o = p.a === 0 ? 1 - clamp((t - .78) / .2) : clamp((t - p.a) / .1) * clamp((p.b - t) / .08);
+    const o = shows(p, t);
+    hold(p.n, shows(p, target) > .002);
     p.n.style.opacity = o.toFixed(3);
     p.n.style.pointerEvents = o > .002 ? 'auto' : 'none';
   });
@@ -2726,7 +2734,9 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
   document.getElementById('notes').addEventListener('focusin', e => {
     const ch = e.target.closest('.ch');
     if (ch) ch.scrollIntoView({ block: ch.dataset.id === 'finale' ? 'end' : 'start' });
+    onScroll(); // so the passage or band holding focus is marked .held as the scroll heads for it
   });
+  document.getElementById('notes').addEventListener('focusout', () => setTimeout(() => { clip(shown); fade(shown); }));
   addEventListener('resize', setup);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(setup);
   setup();
