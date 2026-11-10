@@ -95,10 +95,14 @@ func (d *device) nameHeld(addr string, not ...string) string {
 	return name
 }
 
-// nameIs waits for d's who to show the session at addr under exactly this name.
+// nameIs waits for d's who to show the session at addr under exactly this name, on a device that
+// isn't stale, as seesSession does.
 func (d *device) nameIs(addr, want string) {
 	d.t.Helper()
-	eventually(d.t, addr+" to be called "+want, func() bool { return d.nameOf(addr) == want })
+	eventually(d.t, addr+" to be called "+want, func() bool {
+		name, _, fresh := d.whoShows(addr)
+		return name == want && fresh
+	})
 }
 
 const (
@@ -422,7 +426,7 @@ func TestNameOfAResumedConversationFindsTheSessionThatHoldsIt(t *testing.T) {
 	conn2.Close()
 	eventually(t, "the second to stop", func() bool { return busLines(b, second, "stopped") == 1 })
 	// The sender no longer sees either in presence, so it has only the registry's word for the name.
-	eventually(t, "presence to empty", func() bool { return !a.seesSession(first) && !a.seesSession(second) })
+	eventually(t, "presence to empty", func() bool { return !a.listsSession(first) && !a.listsSession(second) })
 
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "to a resumed conversation"})
 	if r.Error != "" {
@@ -497,7 +501,7 @@ func TestTheSessionThatTakesANameTakesWhatWasKeptForIt(t *testing.T) {
 	b.nameIs(second, nameX)
 	conn2.Close()
 	eventually(t, "the second to stop", func() bool { return busLines(b, second, "stopped") == 1 })
-	eventually(t, "presence to empty", func() bool { return !a.seesSession(first) && !a.seesSession(second) })
+	eventually(t, "presence to empty", func() bool { return !a.listsSession(first) && !a.listsSession(second) })
 
 	a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "while X was gone"})
 	eventually(t, "the message to be queued", func() bool { return logHas(b, "while X was gone") })
@@ -644,7 +648,7 @@ func TestSendToANameIsForwardedOnceFromAnyDevice(t *testing.T) {
 	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y", ClientPID: procR})
 	b.nameIs(third, nameY)
 	eventually(t, "presence", func() bool {
-		return !a.seesSession(first) && !a.seesSession(second) && a.nameOf(third) == nameY
+		return !a.listsSession(first) && !a.listsSession(second) && a.nameOf(third) == nameY
 	})
 
 	there := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "from another device"})
@@ -703,7 +707,7 @@ func TestSendToANameSkipsARunningHolderThatMovedOn(t *testing.T) {
 	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
 	a.session("aaaaaa", "claude-sender")
 	first, second, nameX, nameY, _ := movedOn(t, b)
-	eventually(t, "presence", func() bool { return !a.seesSession(first) && a.nameOf(second) == nameY })
+	eventually(t, "presence", func() bool { return !a.listsSession(first) && a.nameOf(second) == nameY })
 
 	here := b.do(proto.Request{Op: proto.OpSend, To: nameX, Subject: "from this device"})
 	there := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "from another device"})

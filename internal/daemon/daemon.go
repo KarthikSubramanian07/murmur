@@ -771,16 +771,19 @@ func Run(ctx context.Context, opt Options) error {
 		d.log.Printf("first sync failed; retrying in the background: %v", err)
 	}
 	scancel()
-	close(d.firstSync)
-	d.mu.Lock()
-	d.lastActive = time.Now() // the first sync may have taken a while; the idle time starts here
-	d.mu.Unlock()
 	// The sync can take seconds, long enough for a leave to have come and gone. The consent loop
-	// would stop the daemon soon, but nothing should start for a user who has left.
+	// would stop the daemon soon, but nothing should start for a user who has left. Decided before
+	// what waits for the sync goes on: since the daemon answers before it (#372), a client can have
+	// found it and the user left meanwhile, and a request that waited for the sync must find the
+	// daemon as this leaves it, stopping or not, not see it stop a moment later.
 	noConsent := !d.stopping() && !d.consented()
 	if noConsent {
 		d.stop()
 	}
+	close(d.firstSync)
+	d.mu.Lock()
+	d.lastActive = time.Now() // the first sync may have taken a while; the idle time starts here
+	d.mu.Unlock()
 
 	if !d.stopping() {
 		// Tracked, as the syncs it runs start background work of their own (clearOwnJunk).

@@ -76,13 +76,13 @@ func TestReconnectInGraceKeepsSession(t *testing.T) {
 
 	conn.Close()
 	holds(t, "bob in presence while his connection is down", time.Second, func() bool {
-		return a.seesSession(bob) && b.seesSession(bob)
+		return a.listsSession(bob) && b.listsSession(bob)
 	})
 	if _, err := b.restartedMCP("bbbbbb", "claude-bob"); err != nil {
 		t.Fatalf("the same session registering again: %v", err)
 	}
 	holds(t, "bob in presence past the first grace", 3*time.Second, func() bool {
-		return a.seesSession(bob) && b.seesSession(bob)
+		return a.listsSession(bob) && b.listsSession(bob)
 	})
 
 	if got := meshTip(t, b, remote, b.self()); got != tip {
@@ -114,14 +114,14 @@ func TestGraceRunsOut(t *testing.T) {
 	conn.Close()
 	dropped := time.Now()
 	holds(t, "bob in presence and not stopped, inside the grace", time.Second, func() bool {
-		return a.seesSession(bob) && busLines(b, bob, "stopped") == 0
+		return a.listsSession(bob) && busLines(b, bob, "stopped") == 0
 	})
 	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 })
 	if time.Since(dropped) < 2*time.Second {
 		t.Fatalf("stopped %s after the drop, inside the grace", time.Since(dropped))
 	}
-	eventually(t, "bob gone from a", func() bool { return !a.seesSession(bob) })
-	if b.seesSession(bob) {
+	eventually(t, "bob gone from a", func() bool { return !a.listsSession(bob) })
+	if b.listsSession(bob) {
 		t.Fatal("bob is still in b's presence")
 	}
 }
@@ -171,7 +171,7 @@ func TestStoppedSessionComesBackToItsInbox(t *testing.T) {
 	eventually(t, "the message to be queued", func() bool { return logHas(b, "before it stopped") })
 
 	conn.Close()
-	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.seesSession(bob) })
+	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.listsSession(bob) })
 	if r := a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "while it was stopped"}); r.Error != "" {
 		t.Fatalf("send to a stopped session: %+v", r)
 	}
@@ -202,7 +202,7 @@ func TestStoppedInboxSurvivesDaemonRestart(t *testing.T) {
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "before it stopped"})
 	eventually(t, "the message to be queued", func() bool { return logHas(b, "before it stopped") })
 	conn.Close()
-	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.seesSession(bob) })
+	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.listsSession(bob) })
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "while it was stopped"})
 	eventually(t, "the message to be queued", func() bool { return logHas(b, "while it was stopped") })
 
@@ -247,15 +247,24 @@ func storedFor(t *testing.T, d *device, id string) bool {
 func TestStoppedInboxExpires(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
-	a, b := newDevice(t, remote), newTimedDevice(t, remote, 200*time.Millisecond, 8*time.Second)
+	const keep = 8 * time.Second
+	a, b := newDevice(t, remote), newTimedDevice(t, remote, 200*time.Millisecond, keep)
 	bob, conn := b.session("bbbbbb", "")
 	eventually(t, "presence", func() bool { return a.seesSession(bob) })
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "never read"})
 	eventually(t, "the message to be queued", func() bool { return logHas(b, "never read") })
 	conn.Close()
+	closed := time.Now()
 	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 })
 
-	holds(t, "bob's inbox kept", 2*time.Second, func() bool { return storedFor(t, b, "bbbbbb") })
+	// bob stopped after the close, so the inbox is kept at least until keep after it. Seeing the
+	// stop can come late under the tests' load, so the hold ends there, not 2 s after the sighting
+	// (#387).
+	if kept := min(2*time.Second, time.Until(closed.Add(keep))); kept > 0 {
+		holds(t, "bob's inbox kept", kept, func() bool { return storedFor(t, b, "bbbbbb") })
+	} else {
+		t.Logf("bob's stop was seen %s after the close, past the time the inbox is kept", time.Since(closed))
+	}
 	eventually(t, "bob's inbox deleted", func() bool { return !storedFor(t, b, "bbbbbb") })
 
 	if _, err := b.restartedMCP("bbbbbb", ""); err != nil {
