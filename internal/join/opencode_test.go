@@ -322,3 +322,32 @@ func TestRegisterOpenCodeV2KeepsTheOtherFileReadable(t *testing.T) {
 		t.Errorf("opencode.json: %q", got)
 	}
 }
+
+// OpenCode 1 merges "permission" keeping a key where the file read first has it: a "murmur_*" in
+// opencode.json would stay ahead of its "*", whatever opencode.jsonc says, so it goes from there
+// (Sol's second review of #396).
+func TestRegisterOpenCodeV1TakesTheRuleOutOfTheFileReadFirst(t *testing.T) {
+	sb := newSandbox(t, false)
+	withAgents(sb)
+	withOpenCode(t, sb, "1.19.5")
+	jsonPath, jsoncPath := filepath.Join(sb.OpenCodeDir, "opencode.json"), filepath.Join(sb.OpenCodeDir, "opencode.jsonc")
+	write(t, jsonPath, `{"permission": {"murmur_*": "allow", "*": "deny"}}`)
+	write(t, jsoncPath, "{}")
+	if _, _, err := sb.registerOpenCodeAt(context.Background(), openCodeHome(sb)); err != nil {
+		t.Fatal(err)
+	}
+	if got := value(t, read(t, jsonPath), "permission"); got != `{"*":"deny"}` {
+		t.Errorf("opencode.json's permission: %s", got)
+	}
+	if got := value(t, read(t, jsoncPath), "permission"); got != `{"murmur_*":"allow"}` {
+		t.Errorf("opencode.jsonc's permission: %s", got)
+	}
+	// A "permission" in it that held only Murmur's key goes too.
+	write(t, jsonPath, `{"model": "x/y", "permission": {"murmur_*": "allow"}}`)
+	if _, _, err := sb.registerOpenCodeAt(context.Background(), openCodeHome(sb)); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, jsonPath); value(t, got, "permission") != "" || value(t, got, "model") != `"x/y"` {
+		t.Errorf("opencode.json:\n%s", got)
+	}
+}

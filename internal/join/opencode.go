@@ -196,6 +196,9 @@ func (e Env) registerOpenCodeAt(ctx context.Context, h agentHome) (did []string,
 			if oed.set {
 				otherDid = append(otherDid, h.Label+": made the "+brand.MCPServer+" server in "+other+" the same as in "+path)
 			}
+			if oed.ruleOut {
+				otherDid = append(otherDid, h.Label+": took "+brand.Product+"'s permission rule out of "+other+", so that the one in "+path+" comes last")
+			}
 		}
 	}
 	if ed.out == text {
@@ -257,6 +260,7 @@ type openCodeEdit struct {
 	set     bool // the server's entry added or changed
 	moved   bool // an entry of the other shape taken out
 	allowed bool // the allow rule added, or moved last
+	ruleOut bool // version 1's rule taken out of the file read first
 }
 
 // editOpenCode puts Murmur's entries in text in shape, and takes out any of the other shape's.
@@ -306,6 +310,21 @@ func editOpenCode(text string, shape openCodeShape, entry *jsonedit.Object, main
 		ed.moved = ed.moved || did
 	}
 	if !main {
+		// OpenCode 1 merges "permission" keeping each key where the file read first has it, so a
+		// "murmur_*" there would stay ahead of a "*" after it, wherever join puts its own: it goes
+		// (Sol's second review of #396; OpenCode's config.ts and remeda's mergeDeep, 1.19.5).
+		if !shape.v2() {
+			for _, s := range []step{
+				func(t string) (string, bool, error) { return jsonedit.DeleteIn(t, openCodeV1Rule) },
+				func(t string) (string, bool, error) { return deleteIfEmpty(t, []string{"permission"}) },
+			} {
+				var did bool
+				if ed.out, did, err = s(ed.out); err != nil {
+					return ed, err
+				}
+				ed.ruleOut = ed.ruleOut || did
+			}
+		}
 		return ed, nil
 	}
 	if shape.v2() {
