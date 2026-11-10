@@ -93,7 +93,7 @@ func TestSettledThreadIsOfflineAndRefusesMessages(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	threads.set("thread-bob", t3db.State{Settled: true, LastRun: time.Now()})
-	eventually(t, "bob to go offline", func() bool { return !a.seesSession(bob) })
+	eventually(t, "bob to go offline", func() bool { return !a.listsSession(bob) })
 	resp := a.trySend("aaaaaa", bobName, "anyone there?")
 	if resp.OK || !strings.Contains(resp.Error, "settled") {
 		t.Errorf("a send to a settled thread: ok %v, error %q", resp.OK, resp.Error)
@@ -128,10 +128,17 @@ func TestDelegateIsReachedThroughItsParent(t *testing.T) {
 	boss, _ := b.sessionRoute("bbbbbb", "claude-boss", proto.Route{T3CLI: exe, T3Thread: "thread-boss"})
 	helper, _ := b.sessionRoute("cccccc", "claude-helper", proto.Route{T3CLI: exe, T3Thread: "thread-helper"})
 	bossName, helperName := b.named(boss), b.named(helper)
-	eventually(t, "presence", func() bool { return a.seesSession(boss) && b.seesSession(alice) })
+	// Both devices know the helper by name before its thread is read, so that its leaving their
+	// who is the thread's state arriving: a that never saw it would leave it out already, and
+	// would refuse a send to its name as one nobody has (#387).
+	a.nameIs(boss, bossName)
+	a.nameIs(helper, helperName)
+	eventually(t, "presence", func() bool { return b.seesSession(alice) })
 
 	threads.set("thread-helper", t3db.State{Parent: "thread-boss", LastRun: time.Now()})
-	eventually(t, "the delegate to leave a's who", func() bool { return a.seesSession(boss) && !a.seesSession(helper) })
+	eventually(t, "the delegate to leave both devices' who", func() bool {
+		return a.seesSession(boss) && !a.listsSession(helper) && !b.listsSession(helper)
+	})
 	if resp := a.trySend("aaaaaa", helperName, "for the helper"); resp.OK || !strings.Contains(resp.Error, "delegate") {
 		t.Errorf("a send to the delegate from another device: ok %v, error %q", resp.OK, resp.Error)
 	}

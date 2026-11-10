@@ -163,6 +163,19 @@ is sent and how.
 | [`docs/releasing.md`](docs/releasing.md) | Releases, installer options and building from source. |
 | [`docs/testing.md`](docs/testing.md) | How a change is tested. |
 
+## Thanks
+
+Murmur is built by Tyler ([@a-Fig](https://github.com/a-Fig)).
+
+Huge thanks to [Karthik Subramanian](https://github.com/KarthikSubramanian07), Murmur's biggest
+contributor.
+
+Thank you as well to these people for their help and support:
+
+- [Aaditya Desai](https://github.com/aadityad12)
+- [Thy Tang](https://github.com/tthy-working)
+- Everyone at the AIE hackathon who tried Murmur early
+
 ## License
 
 [MIT](LICENSE)
