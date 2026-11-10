@@ -3373,6 +3373,7 @@ function perSessionFold(key, rows, set) {
     h("span", { class: "row-title" }, "Each session"),
     h("span", { class: "row-fold-meta" }, plural(rows.length, "session") + (set ? " · " + set + " set" : "")),
   );
+  if (open) for (const r of rows) r.classList.add("row-sub");
   return [head, ...(open ? rows : [])];
 }
 

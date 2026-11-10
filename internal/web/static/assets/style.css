@@ -1456,6 +1456,10 @@ a.g-pr:hover {
 .row-fold[aria-expanded="true"] .row-fold-chev {
   transform: rotate(90deg);
 }
+/* The fold's rows start under its title, past the chevron. */
+.row.row-sub {
+  padding-left: 2.375rem;
+}
 .row-fold-meta {
   margin-left: auto;
   font-size: 0.75rem;
