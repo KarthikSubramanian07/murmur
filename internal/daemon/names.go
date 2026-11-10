@@ -159,6 +159,7 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	}
 	var commits []bus.Commit
 	disturbed := false
+	snapshotAt := "" // the one commit whose snapshot counts, "" for none (see below)
 	if isCommit {
 		from := ""
 		if good != "" {
@@ -184,22 +185,32 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 			fail(err)
 			return
 		}
+		if from == "" {
+			// Murmur writes a snapshot only as the first commit of a new history, a repair's,
+			// which a reader always reads from the start, as it doesn't descend from what was read.
+			if snapshotAt, err = d.repo.Root(ctx, sha); err != nil {
+				fail(err)
+				return
+			}
+		}
 	} else {
 		// Junk, or the registry gone after having been read.
 		disturbed = sha != "" || good != ""
 	}
 	read := map[string]string{}
 	reserved := map[string]string{} // the reservations read, name to device
+	skipped := 0
 	for _, c := range commits {
 		var rec bus.NameRecord
 		if bus.Decode(c.Message, &rec) != nil {
 			continue
 		}
-		if !c.Root {
-			// Murmur writes a snapshot only on a new root, the repair's first commit. One anywhere
-			// else isn't Murmur's, and could mark any number of names used, for good, on every
-			// daemon that read it.
+		if len(rec.Used) > 0 && c.SHA != snapshotAt {
+			// A snapshot anywhere but the root of a history read from its start isn't Murmur's (one
+			// appended, or a root merged in), and could mark any number of names used, for good,
+			// on every daemon that read it.
 			rec.Used = nil
+			skipped++
 		}
 		claims := rec.Claims()
 		if name, dev, ok := rec.Reservation(); ok {
@@ -281,6 +292,9 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 		d.saveLocked()
 	}
 	d.mu.Unlock()
+	if skipped > 0 {
+		d.log.Printf("the names registry has %d snapshots not at its history's root; their names weren't counted", skipped)
+	}
 	if repair && !wasRepair {
 		d.log.Printf("the names registry lost names; writing a snapshot of every name in use")
 	}

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"math/rand/v2"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,6 +68,27 @@ func TestASnapshotCountsOnlyOnARoot(t *testing.T) {
 	}
 	if d.st.NamesTip != appended {
 		t.Errorf("the registry's tip is %s, want the commit read past, %s", d.st.NamesTip, appended)
+	}
+
+	// A root merged in comes on a fast-forward, with no rewrite to notice: it isn't the history's own.
+	merged := snapshot("", map[string]string{fake[1]: ""})
+	tree, err := d.repo.EmptyTree(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merge := strings.TrimSpace(runGit(t, t.TempDir(), "--git-dir", d.opt.GitDir, "-c", "user.name=t", "-c", "user.email=t@example.com",
+		"commit-tree", tree, "-p", appended, "-p", merged, "-m", "merge"))
+	if err := d.repo.UpdateLocal(ctx, brand.NamesRef, merge); err != nil {
+		t.Fatal(err)
+	}
+	d.advMu.Lock()
+	d.processNames(ctx, merge)
+	d.advMu.Unlock()
+	if _, ok := d.st.Used[fake[1]]; ok {
+		t.Errorf("%s, in a snapshot on a root merged in, was taken for used", fake[1])
+	}
+	if d.st.NamesRepair || d.st.NamesTip != merge {
+		t.Errorf("the merge was taken for a rewrite (repair %v), or not read (tip %s)", d.st.NamesRepair, d.st.NamesTip)
 	}
 
 	root := snapshot("", map[string]string{fake[0]: ""})

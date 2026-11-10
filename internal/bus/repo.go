@@ -28,7 +28,6 @@ type Commit struct {
 	SHA     string
 	Time    time.Time // committer time, the writer's clock
 	Message string
-	Root    bool // it has no parent (Log alone says)
 }
 
 // PushMode chooses how a push may move the remote ref.
@@ -277,7 +276,7 @@ const (
 // Log returns the commits after from (exclusive; "" for the start) up to to, oldest first.
 func (r *Repo) Log(ctx context.Context, from, to string) ([]Commit, error) {
 	args := []string{"log", "--no-show-signature", "--no-color", "--reverse",
-		"--format=%H%x00%P%x00%ct%x00%B%x1e", to}
+		"--format=%H%x00%ct%x00%B%x1e", to}
 	if from != "" {
 		args = append(args, "^"+from)
 	}
@@ -288,14 +287,28 @@ func (r *Repo) Log(ctx context.Context, from, to string) ([]Commit, error) {
 	var commits []Commit
 	for _, rec := range strings.Split(out, recordSep) {
 		rec = strings.TrimLeft(rec, "\r\n")
-		parts := strings.SplitN(rec, fieldSep, 4)
-		if len(parts) != 4 {
+		parts := strings.SplitN(rec, fieldSep, 3)
+		if len(parts) != 3 {
 			continue
 		}
-		secs, _ := strconv.ParseInt(parts[2], 10, 64)
-		commits = append(commits, Commit{SHA: parts[0], Root: parts[1] == "", Time: time.Unix(secs, 0), Message: parts[3]})
+		secs, _ := strconv.ParseInt(parts[1], 10, 64)
+		commits = append(commits, Commit{SHA: parts[0], Time: time.Unix(secs, 0), Message: parts[2]})
 	}
 	return commits, nil
+}
+
+// Root returns the root of sha's history: the commit with no parent that following first parents
+// from sha ends at. Murmur writes no merges, so on what it writes that is the history's one root; a
+// merge pushed by hand can bring others in, but not this one.
+func (r *Repo) Root(ctx context.Context, sha string) (string, error) {
+	out, err := r.Git.Run(ctx, "", "rev-list", "--first-parent", "--max-parents=0", sha, "--")
+	if err != nil {
+		return "", err
+	}
+	if f := strings.Fields(out); len(f) == 1 {
+		return f[0], nil
+	}
+	return "", fmt.Errorf("no single root for %s", sha)
 }
 
 // ReadCommit returns one commit.
