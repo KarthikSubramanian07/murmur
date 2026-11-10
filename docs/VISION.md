@@ -1260,14 +1260,18 @@ A development build (`-dev`) never updates itself. Versions before this updater 
 install to acquire it.
 
 The daemon downloads the `mur-<os>-<arch>[.exe]` asset and that release's `SHA256SUMS`, verifies
-SHA-256, and stages a closed, synced executable beside the running binary's resolved symlink
-target. Unix renames it atomically over the old file. Windows renames the running exe to a unique
-backup, installs the staged file, and restores the backup if installation fails. Backups still
-held by processes are cleaned on a later daemon start. A lock beside the executable serializes
-clones sharing an install; a daemon whose executable has already been replaced restarts onto it.
-Identity is checked again after downloading so a manual reinstall during the download is left alone.
-An unwritable install (for example, a package manager's) is logged once and left alone until
-restart. Successful updates log the old and new versions in the daemon log.
+SHA-256, and stages a closed, synced executable beside the running binary's resolved symlink target.
+The downloads never leave https (2026-11-09): a redirect from https to plain http, or an asset URL
+that isn't https, fails the check, since whoever could serve the binary over plain http could serve
+its checksum too. Hosts aren't limited, because GitHub has moved its asset host before and a daemon
+refusing the next one could never update past it. Unix renames it atomically over the old file.
+Windows renames the running exe to a unique backup, installs the staged file, and restores the
+backup if installation fails. Backups still held by processes are cleaned on a later daemon start. A
+lock beside the executable serializes clones sharing an install; a daemon whose executable has
+already been replaced restarts onto it. Identity is checked again after downloading so a manual
+reinstall during the download is left alone. An unwritable install (for example, a package
+manager's) is logged once and left alone until restart. Successful updates log the old and new
+versions in the daemon log.
 
 After installation, the daemon waits until no message handoff is in flight and no page counts as
 open, or until the page asks for the restart (#240). It then blocks new handoffs and shuts down
