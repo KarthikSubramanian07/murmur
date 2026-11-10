@@ -480,9 +480,14 @@ function render() {
   stackChart($('c-messages'), $('l-messages'), dayList, d.byRepo, 'messages', 'Messages', colors);
   stackChart($('c-devices'), $('l-devices'), dayList, d.byRepo, 'devices', 'Devices', colors);
   repoTable($('t-repos'), d.repoList, colors);
-  const counted = d.counted ? new Date(d.counted).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'not yet';
+  const when = iso => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const counted = d.counted ? when(d.counted) : 'not yet';
+  // Said only when the census is behind: late, or some repos weren't read in its last run.
+  const h = d.census;
+  const behind = (h?.late ? `The census is ${plural(h.late, 'hour')} late. ` : '') +
+    (h?.last && h.notCounted.length ? `Not read then: ${h.notCounted.map(r => `${short(r.name)} (${r.counted ? 'last ' + when(r.counted) : 'never'})`).join(', ')}. ` : '');
   $('footer').textContent = 'A repo is listed once one of its clones reports it: Murmur sends a public repo’s address, once per repo, and nothing else. ' +
-    `Everything else is read once a day from what each repo shows anyone, its bus and its commits; last read ${counted}. ` +
+    `Everything else is read once a day from what each repo shows anyone, its bus and its commits; last read ${counted}. ` + behind +
     'A user is estimated: hover the asterisk. A device is one clone running Murmur; a person, one git user name among a repo’s devices. Once the bus is encrypted, messages can’t be told from other records. Days are UTC. ' +
     'For an agent, the same numbers are at /stats/report.md (markdown) and /stats/data (JSON).';
 }
