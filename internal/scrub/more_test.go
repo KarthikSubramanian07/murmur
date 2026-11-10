@@ -65,6 +65,8 @@ func TestPassesNearMisses(t *testing.T) {
 		"ZONE_ASIAPACIFICSOUTHEAST = 3",
 		"task_sk-" + "abcdefghijklmnopqrstuvwxyz0123456789",
 		"http://[::1]:8000/users/alice1@example.com",
+		"http://[::1]/users/alice1@example.com", // found in Sol's review of #318
+		"https://[2001:db8::1]/users/bob2@example.com",
 		"docker pull docker://ghcr.io:v1/img@sha256:0123abcd",
 	} {
 		if err := Check(s); err != nil {

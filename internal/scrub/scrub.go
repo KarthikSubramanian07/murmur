@@ -60,10 +60,11 @@ var patterns = []pattern{
 	{name: "a password in a URL", re: regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^\s:/@]+:[^\s@/]{3,}@`)},
 	// A password with a slash in it, which the pattern above stops at. A port and a path
 	// (`localhost:5173/@vite/client`) has the same shape, so what follows the last colon before the
-	// slash mustn't be a number (an IPv6 host has colons of its own: `[::1]:8000/…`), the part
-	// before the @ mustn't end a path, the password has to mix letters and digits, and an image
-	// digest (`…@sha256:…`) isn't a host.
-	{name: "a password in a URL", re: regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^\s:/@]+:([^\s@/]+)(/[^\s@]*)@([A-Za-z0-9]+)`),
+	// slash mustn't be a number, the part before the @ mustn't end a path, the password has to mix
+	// letters and digits, and an image digest (`…@sha256:…`) isn't a host. A user name never starts
+	// with `[`, as an IPv6 host does, with colons of its own: neither `[::1]/…` nor `[::1]:8000/…`
+	// is a user and a password.
+	{name: "a password in a URL", re: regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^\s:/@\[]+:([^\s@/]+)(/[^\s@]*)@([A-Za-z0-9]+)`),
 		secret: func(m []string) bool {
 			port := m[1][strings.LastIndexByte(m[1], ':')+1:]
 			return strings.Trim(port, "0123456789") != "" && !strings.HasSuffix(m[2], "/") &&
