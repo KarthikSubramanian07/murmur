@@ -73,6 +73,7 @@ func TestTheStopHookKeepsTheTurnGoing(t *testing.T) {
 // Outside T3 with no messaging socket, the Stop hook is the one way in: what came during the turn
 // is given at its end, where before it waited in the inbox.
 func TestTheStopHookIsAWayInWithoutASocket(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -127,6 +128,7 @@ func TestTheStopHookGivesWhatATurnWould(t *testing.T) {
 // A message the session was told of before its first Stop, when there was no known way in, is
 // given at that Stop: the Stop is the way in.
 func TestTheFirstStopGivesWhatWasToldBeforeIt(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -181,6 +183,7 @@ func TestContinuationsStopAtClaudeCodesCap(t *testing.T) {
 // answer may have been lost, and the agent stopped. A message that came meanwhile then goes in by
 // the session's socket, with nothing else to wake the daemon for it.
 func TestALapsedContinuationHandsOverWhatCameMeanwhile(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	sock := useFakeSocket(t)
 	a := newDevice(t, remote)
@@ -212,6 +215,7 @@ func TestALapsedContinuationHandsOverWhatCameMeanwhile(t *testing.T) {
 // keeps the session's ID but starts a conversation that has seen nothing, so it is described again
 // there; a /resume goes back to a conversation that has met it.
 func TestTheStopHookDescribesASenderOncePerConversation(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
