@@ -812,16 +812,21 @@ void main() {
   const status = document.getElementById('copied');
   const copies = [...document.querySelectorAll('.copy')];
   const words = copies.map(b => b.querySelector('[aria-hidden]'));
-  let timer = 0;
+  let timer = 0, press = 0;
   const reset = () => { words.forEach(w => { w.textContent = 'Copy'; }); status.textContent = ''; };
   copies.forEach((b, i) => {
     b.hidden = false;
     const what = b.querySelector('.vh').textContent.replace(/^Copy /, '');
     b.addEventListener('click', async () => {
+      const mine = ++press;
       clearTimeout(timer);
       reset();
-      try { await navigator.clipboard.writeText(b.previousElementSibling.textContent); words[i].textContent = 'Copied'; status.textContent = `Copied ${what}.`; }
-      catch { words[i].textContent = 'Select it'; status.textContent = `Couldn't reach the clipboard: select ${what} and copy it.`; }
+      let ok = true;
+      try { await navigator.clipboard.writeText(b.previousElementSibling.textContent); } catch { ok = false; }
+      if (mine !== press) return; // a later press, settled or not, owns the word, the status and the timer
+      clearTimeout(timer);
+      words[i].textContent = ok ? 'Copied' : 'Select it';
+      status.textContent = ok ? `Copied ${what}.` : `Couldn't reach the clipboard: select ${what} and copy it.`;
       timer = setTimeout(reset, 1400);
     });
   });
