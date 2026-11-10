@@ -692,9 +692,11 @@ in its own session.
   says how many sessions it reaches. The line above the composer says working, do not disturb,
   offline or waiting. "Working" is a guess from the session's last activity: nothing on the bus says
   a session is answering.
-- **The draft survives a rebuild.** The page rebuilds its DOM on every state change, so each
-  conversation's textarea is kept and reused, which keeps its text, caret and focus when a reply
-  arrives.
+- **The draft survives a rebuild.** The page rebuilds its DOM on every state change, but it keeps
+  the focused element and the elements it sits in, and each conversation's textarea is reused. A
+  draft keeps its text, caret and focus when a reply arrives, and a screen reader isn't read the
+  focused control again. Since 2026-11-10, status changes, errors and new messages are said once,
+  through one polite live region outside the rebuilt tree.
 
 Desktop notifications aren't built: the page's port is random, so a browser would ask permission
 again after each daemon restart. The tab's title carries the unread count instead.
