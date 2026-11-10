@@ -12,6 +12,7 @@ import (
 // hook here records any push that arrives while another is being received, and holds each for a
 // second, so that pushes made together would meet in it.
 func TestPushesNeverOverlap(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	script := "#!/bin/sh\n" +
 		"if ! mkdir \"$GIT_DIR/inpush\" 2>/dev/null; then echo overlap >> \"$GIT_DIR/overlaps\"; fi\n" +

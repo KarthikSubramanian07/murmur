@@ -274,6 +274,7 @@ func dumpGoroutines(t *testing.T) {
 }
 
 func TestMessagesNoticesInbox(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -350,6 +351,7 @@ func TestMessagesNoticesInbox(t *testing.T) {
 }
 
 func TestHistoryIsNotReplayed(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "sent before b existed"})
@@ -367,6 +369,7 @@ func TestHistoryIsNotReplayed(t *testing.T) {
 }
 
 func TestBusNeverTouchesWorkingTree(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	work := filepath.Dir(a.gitDir)
@@ -424,6 +427,7 @@ func pushMessage(t *testing.T, remote, ref, msg string) {
 // Nothing on the bus can speak as Murmur itself: a log under that name is ignored, so no message
 // reads as the tool's own words rather than another agent's.
 func TestLogUnderToolsNameIsIgnored(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -447,6 +451,7 @@ func TestLogUnderToolsNameIsIgnored(t *testing.T) {
 // which it leaves unfetched, and as events of kinds it doesn't know, which a reader passes over
 // to read on. Their presence lists their CLI, which who leaves out.
 func TestV1ClaimsAreIgnored(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	at := time.Now().UTC().Format(time.RFC3339Nano)
@@ -487,6 +492,7 @@ func TestV1ClaimsAreIgnored(t *testing.T) {
 // A state.json written by V1 still loads. V1 also kept notes about claims in inboxes, as from
 // Murmur itself: those are dropped, and the rest of the inbox is kept.
 func TestV1StateLoads(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	dev := a.self()
@@ -526,6 +532,7 @@ func TestV1StateLoads(t *testing.T) {
 // What is read from the bus is held to what Murmur writes: an event with an address Murmur wouldn't
 // write is dropped, and text can't carry lines that pass for Murmur's own.
 func TestForgedBusTextIsHeldToMurmurs(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -581,6 +588,7 @@ func TestForgedBusTextIsHeldToMurmurs(t *testing.T) {
 // and a ref clashing with a device's old presence are passed over. Messages still get through, and
 // the backlog still empties, so a restart still catches up.
 func TestJunkRefsStopNothing(t *testing.T) {
+	t.Parallel()
 	remote, reftable := reftableRemote(t)
 	work, tree := junkTree(t)
 	git(t, work, "push", "-q", remote, tree+":refs/murmur/presence/junk-0001", tree+":refs/murmur/mesh/junk-0002")
@@ -630,6 +638,7 @@ func TestJunkRefsStopNothing(t *testing.T) {
 // Junk forced over a device's log doesn't stop it: the next message builds over the junk, and
 // readers take it as the next one after the last they read.
 func TestJunkOverALog(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	bob, _ := b.session("bbbbbb", "")
@@ -704,6 +713,7 @@ func inboxOf(d *device, sess string) []string {
 // stays history when the owner writes over the junk: what is new is queued as from any log,
 // to the CLI too, and the history isn't.
 func TestHistoryUnderJunkIsNotReplayed(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	work, tree, tip := histUnderJunk(t, remote)
 	c := newDevice(t, remote) // its first sync finds the junk
@@ -720,6 +730,7 @@ func TestHistoryUnderJunkIsNotReplayed(t *testing.T) {
 // The same across a restart: the owner writes over the junk while the device is down, and a
 // session that reconnects gets only what is new.
 func TestHistoryUnderJunkStaysHistoryAcrossRestart(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	work, tree, tip := histUnderJunk(t, remote)
 	c := newDevice(t, remote)
@@ -737,6 +748,7 @@ func TestHistoryUnderJunkStaysHistoryAcrossRestart(t *testing.T) {
 // Junk a restart finds over a log this device had already read hides nothing it hadn't seen: the
 // owner's next message is queued as usual, to the CLI too.
 func TestFreshMessageOverJunkAfterRestart(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	ref := "refs/murmur/mesh/hist-0001"
 	pushEvent(t, remote, ref, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "hist-0001/x",
@@ -760,6 +772,7 @@ func TestFreshMessageOverJunkAfterRestart(t *testing.T) {
 // A ref Murmur never writes, at a name every device's refs clash with (presence or mesh itself),
 // would keep every device's presence or log off the remote. Daemons delete it.
 func TestBlockingRefsAreDeleted(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	work, tree := junkTree(t)
 	git(t, work, "push", "-q", remote, tree+":refs/murmur/presence", tree+":refs/murmur/mesh")
@@ -787,6 +800,8 @@ func (d *device) fresh(dev string) bool {
 // A presence whose fetch keeps failing (here, a lock another git holds on the local copy) still
 // shows its device alive while the listing shows it moving, and stale once it stops.
 func TestUnfetchablePresenceStillCounts(t *testing.T) {
+	// Not parallel: b must stay fresh on a for seconds, and other tests' load can hold one of its
+	// heartbeats back for the 3 seconds that make it stale.
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	bob, _ := b.session("bbbbbb", "")

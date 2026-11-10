@@ -441,6 +441,22 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 		return proto.Response{OK: true, Self: from, Events: append([]proto.EventView(nil), events...)}
 
+	case proto.OpPageKey:
+		// Another clone's daemon asks, to send its page's tab here (#348). It has the sessions'
+		// token, from this clone's daemon.json, so it could do more than this already.
+		page := d.page.Load()
+		if page == nil {
+			return fail("this daemon isn't serving the page")
+		}
+		// Under mu, as the restart onto an update decides, so no key is made after it has looked
+		// for keys still out: the next daemon's page wouldn't know it (Sol's review, 2026-11-09).
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if d.updating {
+			return fail(proto.ErrRestarting)
+		}
+		return proto.Response{OK: true, PageKey: page.PageKey()}
+
 	case proto.OpStop:
 		d.log.Printf("stop requested")
 		d.stop()
