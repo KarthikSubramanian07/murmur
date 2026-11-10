@@ -68,11 +68,13 @@ type PushesHealth struct {
 // again; one it refused for a reason of its own (Refused, "[remote rejected]") or that decided
 // nothing (Failed: the network, credentials, a timeout) is the trouble #141 found.
 type PushHealth struct {
-	Pushed       int64        `json:"pushed"`
-	LeaseRefused int64        `json:"leaseRefused"`
-	Refused      int64        `json:"refused"`
-	Failed       int64        `json:"failed"`
-	LastError    *HealthError `json:"lastError,omitempty"`
+	Pushed       int64 `json:"pushed"`
+	LeaseRefused int64 `json:"leaseRefused"`
+	Refused      int64 `json:"refused"`
+	Failed       int64 `json:"failed"`
+	// LastError is the last push that was refused by the server or failed. A lease refusal doesn't
+	// replace it.
+	LastError *HealthError `json:"lastError,omitempty"`
 }
 
 // FetchHealth is the refs a sync couldn't bring, and the backlogs given up on.

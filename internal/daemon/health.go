@@ -117,7 +117,10 @@ func (h *health) pushed(ctx context.Context, ref string, err error) {
 		p.Pushed++
 		return
 	case errors.Is(err, bus.ErrRejected):
+		// Another device wrote first, which the bus is built for: counted, but it doesn't hide the
+		// last failure that is trouble.
 		p.LeaseRefused++
+		return
 	case errors.Is(err, bus.ErrRefused):
 		p.Refused++
 	default:

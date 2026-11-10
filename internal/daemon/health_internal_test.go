@@ -136,3 +136,17 @@ func TestRefHealthSaysWhenItIsTriedAgain(t *testing.T) {
 		t.Errorf("a ref to try at the next sync: %+v", got)
 	}
 }
+
+// A refusal because the ref moved is counted, and leaves the ref's last error as it was: on the
+// names registry it is routine, and would hide the server's refusal that is the trouble.
+func TestALeaseRefusalKeepsTheLastError(t *testing.T) {
+	var h health
+	ctx := context.Background()
+	h.pushed(ctx, "refs/murmur/names", fmt.Errorf("push to refs/murmur/names %w: !\tx\t[remote rejected] (failed)", bus.ErrRefused))
+	refused := h.pushes[refNames].LastError
+	h.pushed(ctx, "refs/murmur/names", bus.ErrRejected)
+	p := h.pushes[refNames]
+	if p.LeaseRefused != 1 || p.Refused != 1 || p.LastError != refused || refused == nil {
+		t.Errorf("after a server refusal and a lease refusal: %+v, last error %+v", p, p.LastError)
+	}
+}
