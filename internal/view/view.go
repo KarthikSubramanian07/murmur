@@ -40,6 +40,37 @@ func note(b *strings.Builder, r proto.Response) {
 // with pages that every agent that asks has to read; the rest are one `lookup` away.
 const WhoLimit = 20
 
+// WhoQuiet is the most devices `who` lists that have no session listed: stale ones, and live ones
+// with none. Each is a line, and anyone who can push can make any number of device refs, so past it
+// they are counted in one line.
+const WhoQuiet = 5
+
+// quiet picks, of the devices with no session to list, the WhoQuiet that `who` lists: stale devices
+// that still have sessions first, whose line says messages may not reach them, then the rest, each
+// group most recently seen first. Seen is when a presence last moved, which anyone who can push can
+// keep fresh, so empty devices can't push a teammate's stale line out. The result says, for each
+// device, whether it is one of those it leaves out.
+func quiet(devices []proto.Device) []bool {
+	var idle []int
+	for i, d := range devices {
+		if !d.Self && (d.Stale || len(d.Sessions) == 0) {
+			idle = append(idle, i)
+		}
+	}
+	sort.SliceStable(idle, func(a, b int) bool {
+		da, db := devices[idle[a]], devices[idle[b]]
+		if sa, sb := da.Stale && len(da.Sessions) > 0, db.Stale && len(db.Sessions) > 0; sa != sb {
+			return sa
+		}
+		return da.LastSeen.After(db.LastSeen)
+	})
+	out := make([]bool, len(devices))
+	for _, i := range idle[min(len(idle), WhoQuiet):] {
+		out[i] = true
+	}
+	return out
+}
+
 // activeAt is when a session was last active, else when it started: what `who` orders by.
 func activeAt(s proto.SessionView) time.Time {
 	if !s.LastActive.IsZero() {
@@ -84,8 +115,8 @@ func shown(devices []proto.Device) [][]bool {
 }
 
 // Who renders the team's devices and sessions: each device with the sessions listed on it, most
-// recently active first, at most WhoLimit in all; a stale device in one line; then how many more
-// there are.
+// recently active first, at most WhoLimit in all; a stale device in one line, and at most WhoQuiet
+// devices stale or with no sessions; then how many more there are of each.
 func Who(r proto.Response) string {
 	var b strings.Builder
 	switch {
@@ -108,8 +139,13 @@ func Who(r proto.Response) string {
 		}
 	}
 	listed := shown(r.Devices)
-	hidden := 0
+	left := quiet(r.Devices)
+	hidden, quietHidden := 0, 0
 	for i, d := range r.Devices {
+		if left[i] {
+			quietHidden++
+			continue
+		}
 		who := d.Host
 		if d.Owner != "" {
 			who = d.Owner + " on " + d.Host
@@ -179,6 +215,11 @@ func Who(r proto.Response) string {
 	}
 	if hidden > 0 {
 		fmt.Fprintf(&b, "\nand %d more, less recently active; use lookup with a session's name to see one\n", hidden)
+	}
+	if quietHidden == 1 {
+		b.WriteString("\nand 1 more device, stale or with no sessions\n")
+	} else if quietHidden > 1 {
+		fmt.Fprintf(&b, "\nand %d more devices, stale or with no sessions\n", quietHidden)
 	}
 	note(&b, r)
 	return b.String()
