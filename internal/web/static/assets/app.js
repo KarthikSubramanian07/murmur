@@ -3771,15 +3771,15 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !e.defaultPrevented && ui.drawer && !ui.setup && !ui.picker && !ui.tagMenu) setDrawer(false);
 });
 // Tooltips, drawn by the page rather than the browser: a browser's title waits about a second and
-// can't be styled. Any element with a title, or a data-tip, gets one. While the tip shows, the
-// title moves to data-tip-title so the browser's own doesn't show too, and it comes back after, so
-// assistive tech still reads it.
+// can't be styled. The page's tip is only for what a person can't already read: a button that is
+// only an icon, a state dot, a time (its tip has the full date), and "+N" more tags. Rows, messages,
+// labelled buttons and badges keep the browser's title, which waits long enough not to get in the
+// way. While the page's tip shows, the title moves to data-tip-title so the browser's own doesn't
+// show too, and it comes back after, so assistive tech still reads it.
 //
-// A small control's tip shows 150 ms after the pointer settles on it; a row or a message, which the
-// pointer crosses on its way elsewhere, waits 600 ms. Once a tip is showing, the next one shows at
-// once, so sliding along a row of buttons reads each. Keyboard focus shows it too. A wide element's
-// tip sits over the pointer rather than its middle. The tip lives outside #root, so a render doesn't
-// take it away.
+// The tip shows 150 ms after the pointer settles. Once one is showing, the next shows at once, so
+// sliding along a row of buttons reads each. Keyboard focus shows it too. The tip lives outside
+// #root, so a render doesn't take it away.
 const tip = h("div", { class: "tip", role: "tooltip", "aria-hidden": "true" });
 document.body.append(tip);
 let tipFor = null; // the element whose tip shows, or is about to
@@ -3840,22 +3840,36 @@ function queueTip(el, atPointer) {
   tipFor = el;
   borrowTitle(el);
   if (Date.now() - tipHiddenAt < 400 || tipShown) return showTip(el, atPointer);
-  const r = el.getBoundingClientRect();
-  const small = r.width <= 64 && r.height <= 48;
-  tipTimer = setTimeout(() => showTip(el, atPointer), small ? 150 : 600);
+  tipTimer = setTimeout(() => showTip(el, atPointer), 150);
 }
 
-const TIPPED = "[data-tip], [title], [data-tip-title]";
+// Whether an element with a title gets the page's tip (see above).
+const TIP_KINDS = ".pres, .status-dot, .dev-dot, .mini-dev, .dot, .chat-msg-time, [data-ago], .stag-more";
+function wantsTip(el) {
+  if (el.dataset.tip || el.matches(TIP_KINDS)) return true;
+  // A button with no words on it: only an icon, or only a face (the folded sidebar's sessions).
+  if (!el.matches("button, a")) return false;
+  const faces = [...el.querySelectorAll(".avatar")].map((a) => a.textContent).join("");
+  return el.textContent.trim() === faces.trim();
+}
+
+function tipTarget(node) {
+  for (let el = node?.closest?.("[data-tip], [title], [data-tip-title]"); el; el = el.parentElement?.closest("[data-tip], [title], [data-tip-title]")) {
+    if (wantsTip(el)) return el;
+  }
+  return null;
+}
+
 document.addEventListener("pointerover", (e) => {
   if (e.pointerType === "touch") return;
   pointerX = e.clientX;
-  const el = e.target.closest?.(TIPPED);
+  const el = tipTarget(e.target);
   el ? queueTip(el, true) : hideTip();
 });
 document.addEventListener("pointermove", (e) => (pointerX = e.clientX), { passive: true });
 document.documentElement.addEventListener("pointerleave", hideTip);
 document.addEventListener("focusin", (e) => {
-  const el = e.target.closest?.(TIPPED);
+  const el = tipTarget(e.target);
   if (el && e.target.matches(":focus-visible")) queueTip(el, false);
 });
 document.addEventListener("focusout", hideTip);
