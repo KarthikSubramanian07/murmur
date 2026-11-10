@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { timingSafeEqual } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { devNull, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { census as handle, repoNumbers } from '../src/repos.js';
 import { recordingD1, sqliteD1 } from './d1.mjs';
@@ -16,8 +16,12 @@ crypto.subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
 
 process.env.CENSUS_SITE = 'https://census.invalid';
 process.env.CENSUS_KEY = 'test-key';
-// The census's git, and the tests', read none of the developer's own config.
-process.env.GIT_CONFIG_GLOBAL = devNull;
+// The census's git, and the tests', read none of the developer's own config. An empty file, not
+// os.devNull: Git for Windows can't open NUL's device path ("unable to access").
+const gitHome = mkdtempSync(join(tmpdir(), 'census-git-'));
+writeFileSync(join(gitHome, 'config'), '');
+process.on('exit', () => rmSync(gitHome, { recursive: true, force: true }));
+process.env.GIT_CONFIG_GLOBAL = join(gitHome, 'config');
 process.env.GIT_CONFIG_NOSYSTEM = '1';
 const { main, count, authors, contributors, apiLookup, tooBig, census: readRepo } = await import('../census/census.mjs');
 
