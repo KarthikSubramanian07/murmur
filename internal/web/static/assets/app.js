@@ -405,6 +405,7 @@ function render() {
   held.el = focused;
   held.mark = focused && h("span");
   let kids;
+  let gone = null; // the key of what opened a tag menu that closed itself
   try {
     const inner = page(); // before the top bar, which counts what this settles
     content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
@@ -412,6 +413,11 @@ function render() {
     // On a phone the sidebar is a drawer over the page, opened from the top bar. A dialog, the tag
     // menu or the repo menu holds the keyboard: the page behind it is inert until it closes.
     const drawer = NARROW.matches && ui.drawer;
+    // A tag menu whose sessions have all gone closes here, before the page is made inert for it.
+    if (ui.tagMenu && !ui.tagMenu.addrs.some(sessionByAddr)) {
+      gone = ui.tagMenu.from;
+      ui.tagMenu = null;
+    }
     const modal = !!(ui.setup || ui.picker || ui.tagMenu || ui.repoMenu);
     kids = [
       h(
@@ -452,6 +458,10 @@ function render() {
     } else if (focused && inMain) {
       root.querySelector("main")?.focus({ preventScroll: true });
     }
+  }
+  // The focus was in that menu, and went with it: back to what opened it, as closing it would do.
+  if (gone && (!document.activeElement || document.activeElement === document.body)) {
+    root.querySelector(`[data-key="${CSS.escape(gone)}"]`)?.focus({ preventScroll: true });
   }
   content.scrollTop = scroll;
   const sideNow = root.querySelector(".sidebar-content, .mini-scroll");
