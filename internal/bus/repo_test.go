@@ -173,9 +173,9 @@ func TestFetchOffersOnlyBusCommits(t *testing.T) {
 	trace := filepath.Join(root, "packets")
 	r := &bus.Repo{Git: gitx.Git{Dir: local, Env: []string{"GIT_TRACE_PACKET=" + trace}}, Remote: remote}
 	p := &bus.Repo{Git: gitx.Git{Dir: peer}, Remote: remote, Name: "peer", Email: "peer@example.invalid"}
-	push := func(ref, msg string, mode bus.PushMode) string {
+	push := func(ref, parent, msg string, mode bus.PushMode) string {
 		t.Helper()
-		sha, err := p.NewCommit(ctx, "", msg)
+		sha, err := p.NewCommit(ctx, parent, msg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -184,8 +184,9 @@ func TestFetchOffersOnlyBusCommits(t *testing.T) {
 		}
 		return sha
 	}
-	// fetch fetches ref and counts the commits it offered the server: the user's, and the others.
-	fetch := func(ref, want string) (user, other int) {
+	// fetch fetches ref and returns the commits it offered the server: how many of the user's,
+	// and which others.
+	fetch := func(ref, want string) (user int, other map[string]bool) {
 		t.Helper()
 		os.Remove(trace)
 		if err := r.Fetch(ctx, []string{ref}); err != nil {
@@ -198,14 +199,16 @@ func TestFetchOffersOnlyBusCommits(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		other = map[string]bool{}
 		for _, line := range strings.Split(string(packets), "\n") {
 			_, sha, ok := strings.Cut(line, "fetch> have ")
+			sha = strings.TrimSpace(sha)
 			switch {
 			case !ok:
-			case mine[strings.TrimSpace(sha)]:
+			case mine[sha]:
 				user++
 			default:
-				other++
+				other[sha] = true
 			}
 		}
 		return user, other
@@ -213,19 +216,29 @@ func TestFetchOffersOnlyBusCommits(t *testing.T) {
 	presence, mesh := brand.PresencePrefix+"peer", brand.MeshPrefix+"peer"
 
 	// A clone with no bus refs yet offers nothing.
-	sha := push(presence, "presence 1", bus.Force)
-	if user, other := fetch(presence, sha); user+other != 0 {
-		t.Errorf("a clone with no bus refs offered %d of the user's commits and %d others, want none", user, other)
+	sha := push(presence, "", "presence 1", bus.Force)
+	if user, other := fetch(presence, sha); user+len(other) != 0 {
+		t.Errorf("a clone with no bus refs offered %d of the user's commits and %d others, want none", user, len(other))
 	}
 	// One that has some offers those, and still none of the user's.
-	sha = push(mesh, "a log", bus.FastForward)
-	fetch(mesh, sha)
-	sha = push(presence, "presence 2", bus.Force)
+	first := push(mesh, "", "a log", bus.FastForward)
+	fetch(mesh, first)
+	sha = push(presence, "", "presence 2", bus.Force)
 	user, other := fetch(presence, sha)
 	if user != 0 {
 		t.Errorf("fetching a presence commit offered %d of the user's commits, want none", user)
 	}
-	if other == 0 {
+	if len(other) == 0 {
 		t.Error("fetching a presence commit offered none of the clone's bus commits")
+	}
+	// A log's next commit: the clone offers its copy of the log, so the server sends only what is
+	// new rather than the whole log again.
+	sha = push(mesh, first, "the log goes on", bus.FastForward)
+	user, other = fetch(mesh, sha)
+	if user != 0 {
+		t.Errorf("fetching a log's next commit offered %d of the user's commits, want none", user)
+	}
+	if !other[first] {
+		t.Errorf("fetching a log's next commit offered %v, not the clone's copy of the log, %s", other, first)
 	}
 }
