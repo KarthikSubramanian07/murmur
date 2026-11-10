@@ -286,6 +286,11 @@ type SessionInfo struct {
 // MaxCommitted caps SessionInfo.Committed.
 const MaxCommitted = 5
 
+// MaxSessions caps the sessions a presence read from the bus may list. Murmur's lists what one
+// device runs, far fewer. A reader takes each session name in a presence as used, for good, so one
+// that lists more isn't cut to the cap but read as unreadable, whole.
+const MaxSessions = 200
+
 // Encode renders a record as a commit message: a readable subject line, a blank line, then
 // the JSON that readers actually parse.
 func Encode(v any, subject string) (string, error) {
