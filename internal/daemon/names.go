@@ -89,7 +89,30 @@ func (d *Daemon) notePersonClaimLocked(name, addr string) bool {
 		return false
 	}
 	d.st.PersonClaims[name] = addr
+	if cur, ok := d.st.People[name]; ok && cur != addr {
+		d.st.PeopleOnMany[name] = true // seen elsewhere before the claim was read
+	}
 	d.st.People[name] = addr
+	return true
+}
+
+// notePersonLocked records that the person at addr goes by name, as their device's presence or a
+// message of theirs says. The first address seen with a name keeps it, as for a session's name
+// (noteNameLocked), and only a claim in the registry, which stands over any sighting, gives it to
+// another. Anyone with push access can write a presence or a message that says any name, so a
+// name seen on a second device is marked instead, and the turns from it say which device sent them
+// (see personSenderLocked). It reports whether anything changed. Caller holds mu.
+func (d *Daemon) notePersonLocked(name, addr string) bool {
+	cur, ok := d.st.People[name]
+	switch {
+	case !ok:
+		d.st.People[name] = addr
+		return true
+	case cur == addr || d.st.PeopleOnMany[name]:
+		return false
+	}
+	d.st.PeopleOnMany[name] = true
+	d.log.Printf("%s says its person is %s, which is the name of the person at %s; that one keeps it", addr, name, cur)
 	return true
 }
 

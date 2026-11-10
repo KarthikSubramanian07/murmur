@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"bufio"
-	"cmp"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -727,8 +726,10 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 			name = byAddr[e.From]
 		}
 		if bus.IsPerson(e.From) {
-			// A person's device may be gone from presence: the message says who sent it.
-			agent, name = bus.AgentPerson, cmp.Or(e.Person, name, d.personNameOfLocked(e.From))
+			// A person's device may be gone from presence: the message says who sent it, if that
+			// name is theirs.
+			agent = bus.AgentPerson
+			name, _ = d.personSenderLocked(e)
 		}
 		v := proto.MessageView{ID: e.ID, From: e.From, FromName: name, FromAgent: agent, FromBranch: branch,
 			FromOwner: d.ownerOfLocked(e.From), To: e.To, Subject: e.Subject, At: e.At}
