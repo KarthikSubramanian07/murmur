@@ -9,12 +9,20 @@ import (
 	"testing"
 )
 
+// linkOrSkip makes a symbolic link, and skips the test where links can't be made: on Windows that
+// takes a privilege or Developer Mode. GitHub's runners can make them, Windows' included, and there
+// a failure fails the test rather than skip it: CI is where join's handling of links, nested ones
+// in .claude among them, is shown to hold on Windows, and a skip there would hide that it wasn't
+// (#371).
 func linkOrSkip(t *testing.T, target, link string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, link); err != nil {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatalf("making a symbolic link on CI: %v", err)
+		}
 		t.Skipf("no symbolic links here: %v", err)
 	}
 }
