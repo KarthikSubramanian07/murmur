@@ -739,9 +739,9 @@ func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode sy
 			d.applyTagsEventLocked(e)
 		}
 		if e.Type == bus.Message {
-			if e.Person != "" {
-				d.st.People[e.Person] = e.From
-			}
+			// The name a message carries is shown only if it is its sender's (personSenderLocked),
+			// and never recorded: see notePersonLocked.
+			//
 			// A skip passes over history, but a ref read in one only after sessions registered
 			// (the first sync failed) also holds what was sent since this daemon started, which
 			// is new to it: by the sender's clock, with the minute queueLocked allows. What a
@@ -1068,9 +1068,9 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	seen := false
 	for _, s := range pres.Sessions {
 		if s.ID == bus.PersonSession {
-			// A person's name stays out of the registry, which holds session names for good.
-			if addr := bus.Addr(dev, s.ID); d.st.People[s.Name] != addr {
-				d.st.People[s.Name], seen = addr, true
+			// A person's name is claimed in the registry under its own key (PersonClaims), not Used.
+			if d.notePersonLocked(s.Name, bus.Addr(dev, s.ID)) {
+				seen = true
 			}
 			continue
 		}

@@ -329,6 +329,9 @@ type Daemon struct {
 	// presenceCut is how many sessions the last presence left out to keep to bus.MaxSessions (see
 	// capSessions), so that is logged when it changes, not on every heartbeat.
 	presenceCut int
+	// personClashes is the people's names a second device's presence has said since this daemon
+	// started, logged once each (see notePersonLocked).
+	personClashes map[string]bool
 	// lastPage is when a page someone can see last called its API, zero if none has. msgs is the
 	// page's messages, oldest first, msgSeq the number of the newest and msgIDs the IDs in msgs.
 	lastPage time.Time
@@ -559,8 +562,10 @@ type state struct {
 	LastSync time.Time `json:"lastSync"`
 
 	// Person is the name this device's human chose on the page, "" until they do, and PersonSince
-	// is when (#242). People is the address of every person's name this daemon has seen, in presence
-	// or on a message. It only grows, so a person's earlier name still reaches them.
+	// is when (#242). People is the address of every person's name this daemon has seen in a presence
+	// or the registry: the first address seen with it, unless the registry gives the name to another
+	// (see notePersonLocked). A message's name never goes in it. It only grows, so a person's earlier
+	// name still reaches them.
 	Person      string            `json:"person,omitempty"`
 	PersonSince time.Time         `json:"personSince,omitzero"`
 	People      map[string]string `json:"people,omitempty"`
