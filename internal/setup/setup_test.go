@@ -134,11 +134,11 @@ func TestTheAgentPagesExistAndSayWhatTheSectionPromises(t *testing.T) {
 	}
 }
 
-// The page on using Murmur quotes the turn a delivered message becomes. An agent that reads the
+// The page on using Murmur quotes the turn a message arrives as. An agent that reads the
 // quote and then meets a header worded differently has no way to tell Murmur's turn from a user's,
 // so the quote is the turn view.Turn renders, word for word, and this fails if either one is
 // reworded.
-func TestTheUsePageQuotesTheDeliveredTurnWordForWord(t *testing.T) {
+func TestTheUsePageQuotesTheTurnWordForWord(t *testing.T) {
 	rel := brand.UseDoc[strings.Index(brand.UseDoc, "/main/")+len("/main/"):]
 	b, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(rel)))
 	if err != nil {
@@ -155,7 +155,7 @@ func TestTheUsePageQuotesTheDeliveredTurnWordForWord(t *testing.T) {
 		quoted = append(quoted, line)
 	}
 	if want := strings.Join(quoted, "\n"); !strings.Contains(use, want) {
-		t.Errorf("the page on using Murmur doesn't quote the delivered turn; it should contain:\n%s", want)
+		t.Errorf("the page on using Murmur doesn't quote the turn; it should contain:\n%s", want)
 	}
 	// A message to everyone is the one variation in the header, and the page says so.
 	everyone := view.Turn(proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", To: "*", Subject: "x"})
