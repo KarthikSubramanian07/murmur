@@ -28,6 +28,10 @@ type Commit struct {
 	SHA     string
 	Time    time.Time // committer time, the writer's clock
 	Message string
+	Size    int64 // the commit object's, headers and all
+	// Oversize is a commit over the limit it was read with: it was left unread, so it has no Time
+	// or Message.
+	Oversize bool
 }
 
 // PushMode chooses how a push may move the remote ref.
@@ -49,6 +53,8 @@ type Repo struct {
 	// Name and Email sign bus commits as the device, so no commit-tree depends on the user's
 	// git identity being configured.
 	Name, Email string
+	// Page is how many commits Log hands over at a time; zero is LogPage.
+	Page int
 
 	treeMu    sync.Mutex // the daemon's goroutines all write through one Repo
 	emptyTree string
@@ -273,43 +279,158 @@ const (
 	fieldSep  = "\x00"
 )
 
-// Log returns the commits after from (exclusive; "" for the start) up to to, oldest first.
-func (r *Repo) Log(ctx context.Context, from, to string) ([]Commit, error) {
-	args := []string{"log", "--no-show-signature", "--no-color", "--reverse",
-		"--format=%H%x00%ct%x00%B%x1e", to}
+// MaxRecord and MaxSnapshot bound the commits a reader reads: from a device's log or presence, and
+// from the names registry. Git stores a commit compressed, so a fetch that is quick can still bring
+// a message of any size, and reading one whole, as git hands it over, can run a reader out of
+// memory: a 64 MB message packed to 64 KB, and reading it took 448 MB (2026-11-09). A larger commit
+// isn't read, and is passed over as junk is. Neither limit comes near what Murmur writes. An event's
+// body is held to MaxBody, which JSON escapes to six times that at most, and a presence lists one
+// device's sessions. A registry snapshot lists every name its writer has seen, about 45 bytes each,
+// so MaxSnapshot holds some 700,000 of the 1.25 million names there are.
+const (
+	MaxRecord   = 1 << 20
+	MaxSnapshot = 32 << 20
+)
+
+// LogPage is how many commits Log hands over at a time, unless Repo.Page says otherwise. A page
+// also ends once it holds pageBytes, or after one commit that alone is more.
+const (
+	LogPage   = 500
+	pageBytes = 8 << 20
+)
+
+// ErrTooLarge is a commit over the limit it was read with.
+var ErrTooLarge = errors.New("commit too large to read")
+
+// Log reads the commits after from (exclusive; "" for the start) up to to, oldest first, and calls
+// page with them a page at a time, so a caller can let go of what it holds between pages and note
+// how far it got. A commit over max bytes isn't read: it comes with Oversize set and no message, so
+// a caller passes over it as junk and its cursor moves past it. An error from page stops the read
+// and is returned.
+func (r *Repo) Log(ctx context.Context, from, to string, max int64, page func([]Commit) error) error {
+	args := []string{"rev-list", "--reverse", to}
 	if from != "" {
 		args = append(args, "^"+from)
 	}
 	out, err := r.Git.Run(ctx, "", append(args, "--")...)
 	if err != nil {
+		return err
+	}
+	shas := strings.Fields(out)
+	n := r.Page
+	if n <= 0 {
+		n = LogPage
+	}
+	for len(shas) > 0 {
+		batch := shas[:min(n, len(shas))]
+		sizes, err := r.sizes(ctx, batch)
+		if err != nil {
+			return err
+		}
+		for len(batch) > 0 {
+			end, bytes := 0, int64(0)
+			for ; end < len(batch); end++ {
+				if s := sizes[batch[end]]; s <= max {
+					if end > 0 && bytes+s > pageBytes {
+						break
+					}
+					bytes += s
+				}
+			}
+			commits, err := r.readCommits(ctx, batch[:end], sizes, max)
+			if err != nil {
+				return err
+			}
+			if err := page(commits); err != nil {
+				return err
+			}
+			shas, batch = shas[end:], batch[end:]
+		}
+	}
+	return nil
+}
+
+// sizes asks git how large each commit is, without reading it.
+func (r *Repo) sizes(ctx context.Context, shas []string) (map[string]int64, error) {
+	out, err := r.Git.Run(ctx, strings.Join(shas, "\n")+"\n", "cat-file",
+		"--batch-check=%(objectname) %(objecttype) %(objectsize)")
+	if err != nil {
 		return nil, err
 	}
-	var commits []Commit
-	for _, rec := range strings.Split(out, recordSep) {
-		rec = strings.TrimLeft(rec, "\r\n")
-		parts := strings.SplitN(rec, fieldSep, 3)
-		if len(parts) != 3 {
-			continue
+	sizes := make(map[string]int64, len(shas))
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 3 || f[1] != "commit" {
+			return nil, fmt.Errorf("not a commit here: %q", line)
 		}
-		secs, _ := strconv.ParseInt(parts[1], 10, 64)
-		commits = append(commits, Commit{SHA: parts[0], Time: time.Unix(secs, 0), Message: parts[2]})
+		size, err := strconv.ParseInt(f[2], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("reading a commit's size: %q", line)
+		}
+		sizes[f[0]] = size
+	}
+	for _, sha := range shas {
+		if _, ok := sizes[sha]; !ok {
+			return nil, fmt.Errorf("no size for commit %s", sha)
+		}
+	}
+	return sizes, nil
+}
+
+// readCommits reads the commits named, in order, but for those over max, which come back marked.
+func (r *Repo) readCommits(ctx context.Context, shas []string, sizes map[string]int64, max int64) ([]Commit, error) {
+	var small []string
+	for _, sha := range shas {
+		if sizes[sha] <= max {
+			small = append(small, sha)
+		}
+	}
+	read := map[string]Commit{}
+	if len(small) > 0 {
+		out, err := r.Git.Run(ctx, strings.Join(small, "\n")+"\n", "log", "--stdin", "--no-walk=unsorted",
+			"--no-show-signature", "--no-color", "--format=%H%x00%ct%x00%B%x1e", "--")
+		if err != nil {
+			return nil, err
+		}
+		for _, rec := range strings.Split(out, recordSep) {
+			rec = strings.TrimLeft(rec, "\r\n")
+			parts := strings.SplitN(rec, fieldSep, 3)
+			if len(parts) != 3 {
+				continue
+			}
+			secs, _ := strconv.ParseInt(parts[1], 10, 64)
+			read[parts[0]] = Commit{SHA: parts[0], Time: time.Unix(secs, 0), Message: parts[2]}
+		}
+	}
+	commits := make([]Commit, 0, len(shas))
+	for _, sha := range shas {
+		c, ok := read[sha]
+		switch {
+		case sizes[sha] > max:
+			c = Commit{SHA: sha, Oversize: true}
+		case !ok:
+			return nil, fmt.Errorf("unreadable commit %s", sha)
+		}
+		c.Size = sizes[sha]
+		commits = append(commits, c)
 	}
 	return commits, nil
 }
 
-// ReadCommit returns one commit.
-func (r *Repo) ReadCommit(ctx context.Context, sha string) (Commit, error) {
-	out, err := r.Git.Run(ctx, "", "log", "-1", "--no-show-signature", "--no-color",
-		"--format=%H%x00%ct%x00%B", sha, "--")
+// ReadCommit returns one commit, or ErrTooLarge, without reading it, if it is over max bytes.
+func (r *Repo) ReadCommit(ctx context.Context, sha string, max int64) (Commit, error) {
+	sizes, err := r.sizes(ctx, []string{sha})
 	if err != nil {
 		return Commit{}, err
 	}
-	parts := strings.SplitN(out, fieldSep, 3)
-	if len(parts) != 3 {
-		return Commit{}, fmt.Errorf("unreadable commit %s", sha)
+	if size := sizes[sha]; size > max {
+		return Commit{}, fmt.Errorf("%w: %s is %d bytes, over %d", ErrTooLarge, sha, size, max)
 	}
-	secs, _ := strconv.ParseInt(parts[1], 10, 64)
-	return Commit{SHA: parts[0], Time: time.Unix(secs, 0), Message: parts[2]}, nil
+	commits, err := r.readCommits(ctx, []string{sha}, sizes, max)
+	if err != nil {
+		return Commit{}, err
+	}
+	return commits[0], nil
 }
 
 // RemoteFor names the remote a clone's bus lives on: the one `git config murmur.remote` names,

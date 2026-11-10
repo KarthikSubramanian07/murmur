@@ -157,7 +157,47 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 		}
 		isCommit = ok
 	}
-	var commits []bus.Commit
+	read := map[string]string{}
+	reserved := map[string]string{} // the reservations read, name to device
+	// noteRecords reads a page of the registry's history into read and reserved.
+	noteRecords := func(commits []bus.Commit) {
+		for _, c := range commits {
+			var rec bus.NameRecord
+			if bus.Decode(c.Message, &rec) != nil {
+				continue
+			}
+			claims := rec.Claims()
+			if name, dev, ok := rec.Reservation(); ok {
+				// The first reservation of a name gives it its device; a later one counts for nothing,
+				// nor does one of a name a session already has. What was learned before this read
+				// counts as read, so a daemon that reads only what is new agrees with one that reads
+				// the whole history. A name known with no session and no device (from a snapshot
+				// that kept no devices) still gains one, as it would for a reader starting fresh.
+				_, owned := reserved[name]
+				if _, ok := reservedBefore[name]; ok {
+					owned = true
+				}
+				if !owned && read[name] == "" && usedBefore[name] == "" {
+					reserved[name] = dev
+				}
+			} else if rec.Session != "" {
+				// The assignment of a name set aside: only the device it was set aside for can give
+				// it to a session.
+				owner, ok := reserved[rec.Name]
+				if !ok {
+					owner, ok = reservedBefore[rec.Name]
+				}
+				if _, has := claims[rec.Name]; has && ok && owner != rec.Device {
+					claims[rec.Name] = ""
+				}
+			}
+			for name, addr := range claims {
+				if cur, ok := read[name]; !ok || cur == "" {
+					read[name] = addr
+				}
+			}
+		}
+	}
 	disturbed := false
 	if isCommit {
 		from := ""
@@ -179,52 +219,17 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 				// NamesPeople): read again from the start, for them.
 			}
 		}
-		var err error
-		if commits, err = d.repo.Log(ctx, from, sha); err != nil {
+		err := d.repo.Log(ctx, from, sha, d.maxSnapshot, func(page []bus.Commit) error {
+			noteRecords(page)
+			return nil
+		})
+		if err != nil {
 			fail(err)
 			return
 		}
 	} else {
 		// Junk, or the registry gone after having been read.
 		disturbed = sha != "" || good != ""
-	}
-	read := map[string]string{}
-	reserved := map[string]string{} // the reservations read, name to device
-	for _, c := range commits {
-		var rec bus.NameRecord
-		if bus.Decode(c.Message, &rec) != nil {
-			continue
-		}
-		claims := rec.Claims()
-		if name, dev, ok := rec.Reservation(); ok {
-			// The first reservation of a name gives it its device; a later one counts for nothing,
-			// nor does one of a name a session already has. What was learned before this read
-			// counts as read, so a daemon that reads only what is new agrees with one that reads
-			// the whole history. A name known with no session and no device (from a snapshot
-			// that kept no devices) still gains one, as it would for a reader starting fresh.
-			_, owned := reserved[name]
-			if _, ok := reservedBefore[name]; ok {
-				owned = true
-			}
-			if !owned && read[name] == "" && usedBefore[name] == "" {
-				reserved[name] = dev
-			}
-		} else if rec.Session != "" {
-			// The assignment of a name set aside: only the device it was set aside for can give
-			// it to a session.
-			owner, ok := reserved[rec.Name]
-			if !ok {
-				owner, ok = reservedBefore[rec.Name]
-			}
-			if _, has := claims[rec.Name]; has && ok && owner != rec.Device {
-				claims[rec.Name] = ""
-			}
-		}
-		for name, addr := range claims {
-			if cur, ok := read[name]; !ok || cur == "" {
-				read[name] = addr
-			}
-		}
 	}
 
 	d.mu.Lock()
