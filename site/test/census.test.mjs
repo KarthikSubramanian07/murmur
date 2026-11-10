@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { timingSafeEqual } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { census as handle, repoNumbers } from '../src/repos.js';
@@ -23,7 +23,10 @@ writeFileSync(join(gitHome, 'config'), '');
 process.on('exit', () => rmSync(gitHome, { recursive: true, force: true }));
 process.env.GIT_CONFIG_GLOBAL = join(gitHome, 'config');
 process.env.GIT_CONFIG_NOSYSTEM = '1';
-const { main, count, authors, contributors, apiLookup, tooBig, census: readRepo } = await import('../census/census.mjs');
+// Run in Actions, the tests' runs would write to the job's own summary. The tests that read one set
+// their own.
+delete process.env.GITHUB_STEP_SUMMARY;
+const { main, count, authors, contributors, apiLookup, tooBig, summaryHead, summaryRow, census: readRepo } = await import('../census/census.mjs');
 
 const today = new Date().toISOString().slice(0, 10);
 const daysAgo = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
@@ -381,3 +384,99 @@ test('a repo too big for the site is skipped, and nothing is sent for it', async
   assert.deepEqual(sent(db), ['github.com/a/one']);
   assert.deepEqual(said.error, ['github.com/b/two: skipped: 1001 devices on one day, more than the site takes (1000)']);
 });
+
+// A file for $GITHUB_STEP_SUMMARY, as Actions gives a step, for this test only.
+function stepSummary(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'census-summary-'));
+  const file = join(dir, 'summary.md');
+  writeFileSync(file, '');
+  process.env.GITHUB_STEP_SUMMARY = file;
+  t.after(() => {
+    delete process.env.GITHUB_STEP_SUMMARY;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  return () => readFileSync(file, 'utf8');
+}
+
+test("the run's summary has a row for each repo, its counts or why it has none, and the totals sent", async t => {
+  const names = ['github.com/a/one', 'github.com/b/two', 'github.com/c/gone', 'github.com/d/four'];
+  site(t, recordingD1(names));
+  const read = name => {
+    if (name.endsWith('gone')) throw Object.assign(new Error('git failed'), { stderr: 'remote: Repository not found.\n' });
+    if (name.endsWith('four')) return { ...counts(name), contributors: many(3) };
+    return tooSlow(name);
+  };
+  const written = stepSummary(t);
+  await main(names, { read });
+  const lines = written().split('\n');
+  assert.match(lines[0], /^## Census, \d{4}-\d\d-\d\d \d\d:\d\d UTC$/);
+  assert.deepEqual(lines.slice(1), [
+    '',
+    '4 repos to count.',
+    '',
+    '| Repo | Result | Devices | People | Matched to an account | Sessions | Messages | Records | Contributors | Days |',
+    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+    '| [a/one](https://github.com/a/one) | sent | 1 | 1 | 0 | 1 | 2 | 3 | 0 | 1 |',
+    '| [b/two](https://github.com/b/two) | skipped: took too long to count |  |  |  |  |  |  |  |  |',
+    '| [c/gone](https://github.com/c/gone) | not read: remote: Repository not found. |  |  |  |  |  |  |  |  |',
+    '| [d/four](https://github.com/d/four) | sent | 1 | 1 | 0 | 1 | 2 | 3 | 3 | 1 |',
+    '| **Total** | 2 sent | 2 | 2 | 0 | 2 | 4 | 6 | 3 | 2 |',
+    '',
+    '4 repos: 2 sent, 1 skipped, 1 not read.',
+    '',
+  ]);
+});
+
+test("each repo's row is in the summary as soon as it is done, so a run cut off keeps what it did", async t => {
+  const names = ['github.com/a/one', 'github.com/b/two', 'github.com/c/three'];
+  site(t, recordingD1(names));
+  const written = stepSummary(t);
+  // What the summary held as each repo was started. The third never finishes, as when the job is
+  // cancelled at its timeout while a repo is read.
+  const seen = [];
+  let stuck;
+  const reached = new Promise(resolve => (stuck = resolve));
+  const read = name => {
+    seen.push(written());
+    if (name.endsWith('three')) return stuck(), new Promise(() => {});
+    return tooSlow(name);
+  };
+  main(names, { read });
+  await reached;
+  assert.match(seen[0], /\n3 repos to count\.\n\n\| Repo \|.*\n\| --- \|.*\n$/);
+  assert.match(seen[1], /\n\| \[a\/one\]\(https:\/\/github\.com\/a\/one\) \| sent \| 1 \|.*\n$/);
+  assert.match(seen[2], /\n\| \[b\/two\]\(https:\/\/github\.com\/b\/two\) \| skipped: took too long to count \|.*\n$/);
+  assert.doesNotMatch(seen[2], /Total/);
+});
+
+test("a run that fails for a repo the site refused still writes its summary, with the site's answer", async t => {
+  const names = ['github.com/a/one', 'github.com/b/two'];
+  site(t, recordingD1(names));
+  const early = [{ day: '2026-09-30', sessions: 0, messages: 1, records: 1, devices: [ID] }];
+  const written = stepSummary(t);
+  await assert.rejects(main(names, { read: name => counts(name, name.endsWith('two') ? { days: early } : {}) }), /1 of 2 repos counted but not sent/);
+  const out = written();
+  assert.ok(out.endsWith('\n2 repos: 1 sent, 1 not sent.\n'), out);
+  assert.ok(out.includes('| [b/two](https://github.com/b/two) | not sent: /v1/census: 400 Not counts: totals days. | 1 | 1 | 0 | 1 | 2 | 3 | 0 | 1 |'), out);
+  assert.ok(out.includes('| **Total** | 1 sent | 1 | 1 | 0 | 1 | 2 | 3 | 0 | 1 |'), out);
+});
+
+test('a dry run says in its summary that it counted and sent nothing', async t => {
+  const db = recordingD1(['github.com/a/one']);
+  site(t, db);
+  const written = stepSummary(t);
+  await main(['--dry', 'github.com/a/one'], { read: name => counts(name) });
+  const out = written();
+  assert.ok(out.includes('| [a/one](https://github.com/a/one) | counted: not sent (--dry) | 1 | 1 | 0 | 1 | 2 | 3 | 0 | 1 |\n'), out);
+  assert.ok(out.endsWith('| **Total** | 1 counted | 1 | 1 | 0 | 1 | 2 | 3 | 0 | 1 |\n\n1 repo: 1 counted.\n'), out);
+  assert.equal(db.batches.length, 0);
+});
+
+test("a reason in the summary stays on its line and in its cell, whatever git or the site said", () => {
+  assert.equal(summaryRow({ name: 'github.com/a/one', kind: 'not read', why: 'fatal: one\n| two | <img src=x> [link](https://x) `code` **bold**' }),
+    '| [a/one](https://github.com/a/one) | not read: fatal: one \\| two \\| \\<img src=x\\> \\[link\\](https://x) \\`code\\` \\*\\*bold\\*\\* |  |  |  |  |  |  |  |  |\n');
+  assert.equal(summaryHead(0, new Date(NOW)), '## Census, 2026-11-09 12:00 UTC\n\nNo repos listed.\n');
+  // A name GitHub allows can still hold what Markdown reads: __demo__ would show as bold demo.
+  assert.ok(summaryRow({ name: 'github.com/a/__demo__', kind: 'skipped', why: 'x' }).startsWith('| [a/\\_\\_demo\\_\\_](https://github.com/a/__demo__) |'));
+});
+

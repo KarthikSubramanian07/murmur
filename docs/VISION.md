@@ -263,6 +263,19 @@ daemon refuses its route (an older one that couldn't be replaced) works, with it
 notices, and its MCP server logs that once, to its standard error, so that whoever wonders finds
 why. Raise the number with any change to a request or a reply that an older daemon can't serve.
 
+The daemon's log, `.git/murmur/daemon.log`, is its only record of what it did, so it is what a
+teammate is asked to send when their device misbehaves, maybe to someone off the team. So it can be
+shared: it names events by type, ID and address, never by what a message says, and each line the
+daemon's loggers write passes through `internal/logfile`, which takes the user and password, the
+query and the fragment out of any URL, and cuts a line at 64 KB, with a note of how much it cut (a
+starter's own lines and a panic's trace go to the file directly). It does name the clone's paths.
+Past 4 MB it moves to `daemon.log.old` when a daemon starts, and while it runs it is copied there and
+emptied, since Windows can't rename an open file. If the copy fails it is emptied anyway, with a
+line saying so; if emptying fails, the lines that don't fit are dropped, and it is tried again a
+minute later. A daemon whose log was moved under it, as a later start does past 4 MB, stops moving it and writes on to the moved file. Until
+2026-11-09 it moved only at a start, so a daemon kept up for days by an open page grew it without
+limit.
+
 ### Joining a repo
 
 Decided 2026-10-29 (#55), built the same day. Tyler's requirement: setup should feel like magic,
@@ -1663,6 +1676,14 @@ skipped every day until someone takes it out of D1, and a run red every day teac
 ignore red. Counts the site refuses do fail the run, after every other repo has been sent. The
 census sends only what the site's limits allow, so a refusal means the two disagree, or the site
 is down, which can be fixed.
+
+A green run can still leave repos uncounted, so the stats say so, from `repo_census.counted`, which
+the site already keeps: `/stats/report.md` ends with when the census last ran, and, once that is
+over 30 hours ago, that it hasn't run for that long; then the repos that run didn't count, each
+with when it last was. A repo listed since that run's day and not yet counted is new, not missed,
+since anyone can list one and most days someone does (`/stats/data` has the same, and the page's
+footer leads with it only when something is behind). Each run's page in Actions has a table of
+every repo, a row written as each is done, so a run cut off at its timeout keeps what it did.
 
 A time on the bus or a branch is its writer's clock, and can say any year up to 9999. A day after
 tomorrow (UTC) is never believed, since one would keep a repo active and its people new for ever,

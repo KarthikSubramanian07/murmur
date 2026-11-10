@@ -1259,7 +1259,7 @@ func (d *Daemon) appendSoon(e bus.Event) {
 			err = d.appendEvent(ctx, e)
 		}
 		if err != nil {
-			d.log.Printf("writing %q: %v", e.Line(), err)
+			d.log.Printf("writing %s: %v", logged(e), err)
 		}
 	}()
 }
@@ -1302,6 +1302,16 @@ func (d *Daemon) presenceSent(gate chan struct{}) {
 	}
 	d.mu.Unlock()
 	close(gate)
+}
+
+// logged names an event for the daemon's log by its type, ID and addresses, never by what a
+// message says: the log is sent to whoever helps debug a device, who may not be on the team.
+func logged(e bus.Event) string {
+	s := e.Type + " " + e.ID + " from " + e.From
+	if e.To != "" {
+		s += " to " + e.To
+	}
+	return s
 }
 
 func (d *Daemon) kickPresence() {
