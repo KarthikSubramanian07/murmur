@@ -34,8 +34,11 @@ joining does:
   Codex; a `murmur_*` allow rule in OpenCode; `MCPTool(murmur__*)` in Grok); Muse and Pi have none,
   and ask in T3 unless the thread runs in full-access mode. For Pi it is a small extension file of
   Murmur's in Pi's extensions folder. Two short skills on using Murmur well go into the skills
-  folder of Claude Code, Codex, OpenCode and Pi. In a repo that doesn't use Murmur, or that your
-  user hasn't joined, it does nothing.
+  folder of Claude Code, Codex, OpenCode and Pi. In Codex and Grok, Murmur also adds a hook, for
+  every project: a command the agent runs after each tool call and when it finishes, so a busy
+  session is told when a message comes. In Codex, join also marks the hook as approved, so Codex
+  runs it without asking. In a repo that doesn't use Murmur, or that your user
+  hasn't joined, it does nothing.
 - In every worktree of this clone, a hook goes into .claude/settings.local.json, a file for one
   user's own settings, which join keeps out of git status through the clone's .git/info/exclude.
   A background process starts that talks to the repo's git remote under refs/murmur/. No tracked
@@ -45,9 +48,9 @@ joining does:
 - If this repo is public, Murmur sends its address to murmur.afig.dev, once for the whole repo.
   That is the only thing Murmur ever sends us, and a private repo sends nothing at all; the section
   below says exactly how. Tell your user this in so many words, not as a passing mention.
-- Joining can be undone in this repo with `mur join --leave`. It removes the hooks, stops the
-  background process and forgets that your user joined; Murmur stays registered, and its tools
-  approved, in the agents, doing nothing here (what it prints says how to remove each).
+- Joining can be undone in this repo with `mur join --leave`. It removes this clone's hooks, stops the
+  background process and forgets that your user joined; Murmur stays registered, with its tools
+  approved and its Codex and Grok hooks, in the agents, doing nothing here (what it prints says how to remove each).
 
 ### What murmur.afig.dev receives, and why
 
