@@ -24,9 +24,10 @@ import (
 type impostor struct {
 	ln net.Listener
 
-	mu    sync.Mutex
-	other []string
-	pings chan struct{} // a value for each ping, while there is room
+	mu     sync.Mutex
+	other  []string
+	tokens []string      // the tokens it was sent
+	pings  chan struct{} // a value for each ping, while there is room
 }
 
 func listenImpostor(t *testing.T, addr string) *impostor {
@@ -51,6 +52,11 @@ func listenImpostor(t *testing.T, addr string) *impostor {
 				}
 				var req proto.Request
 				json.Unmarshal(line, &req)
+				if req.Token != "" {
+					m.mu.Lock()
+					m.tokens = append(m.tokens, req.Token)
+					m.mu.Unlock()
+				}
 				if req.Op == proto.OpPing {
 					select {
 					case m.pings <- struct{}{}:
