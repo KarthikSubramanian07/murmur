@@ -6,3 +6,4 @@ migrations
 census
 .dev.vars
 test
+package.json

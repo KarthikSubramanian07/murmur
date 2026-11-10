@@ -1,0 +1,131 @@
+// The files machines read on murmur.afig.dev: the sitemap, robots.txt, llms.txt, and the pages'
+// metadata and JSON-LD. Each is checked against its format and against the files it points at.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+
+const SITE = 'https://murmur.afig.dev';
+const root = fileURLToPath(new URL('..', import.meta.url)); // site/
+const read = path => readFileSync(join(root, path), 'utf8');
+
+// Where a URL on the site comes from: a static file, or an agent page the Worker serves from
+// docs/agents/ (src/worker.js).
+function source(url) {
+  assert.ok(url.startsWith(SITE + '/'), `${url} is not on ${SITE}`);
+  const path = url.slice(SITE.length);
+  const page = /^\/(setup|join|use)$/.exec(path)?.[1];
+  if (page) return join(root, '..', 'docs', 'agents', `${page}.md`);
+  return join(root, path.endsWith('/') ? path + 'index.html' : path);
+}
+
+test('the sitemap follows the sitemaps.org protocol and lists pages that exist', () => {
+  const xml = read('sitemap.xml');
+  assert.match(xml, /^<\?xml version="1\.0" encoding="UTF-8"\?>\n/);
+  assert.match(xml, /<urlset xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9">/);
+  assert.ok(Buffer.byteLength(xml) < 50 * 1024 * 1024);
+  const urls = [...xml.matchAll(/<url>([\s\S]*?)<\/url>/g)].map(m => m[1]);
+  assert.ok(urls.length > 0 && urls.length <= 50000);
+  const today = new Date().toISOString().slice(0, 10);
+  const seen = new Set();
+  for (const u of urls) {
+    const loc = /<loc>([^<]+)<\/loc>/.exec(u)?.[1];
+    const lastmod = /<lastmod>([^<]+)<\/lastmod>/.exec(u)?.[1];
+    assert.ok(loc, 'a url without a loc');
+    assert.ok(!seen.has(loc), `${loc} listed twice`);
+    seen.add(loc);
+    assert.ok(!/[&<>"']/.test(loc), `${loc} needs escaping`);
+    assert.ok(existsSync(source(loc)), `${loc} has no page`);
+    if (/^https:\/\/murmur\.afig\.dev\/(setup|join|use)$/.test(loc)) {
+      assert.equal(lastmod, undefined, `${loc} changes with docs/agents, so it has no lastmod`);
+      continue;
+    }
+    assert.match(lastmod ?? '', /^\d{4}-\d{2}-\d{2}$/, `${loc}'s lastmod`);
+    assert.ok(!Number.isNaN(Date.parse(lastmod)) && lastmod <= today, `${loc}'s lastmod ${lastmod}`);
+  }
+  for (const page of ['/', '/daemon/', '/setup', '/join', '/use']) assert.ok(seen.has(SITE + page), `${page} missing`);
+});
+
+test('robots.txt allows crawling and names the sitemap', () => {
+  const robots = read('robots.txt');
+  assert.match(robots, /^User-agent: \*$/m);
+  assert.match(robots, /^Sitemap: https:\/\/murmur\.afig\.dev\/sitemap\.xml$/m);
+  assert.doesNotMatch(robots, /^Disallow: \/\s*$/m);
+});
+
+// The <head> metadata both pages share, and the og:image they point at.
+function checkMeta(html, canonical) {
+  assert.match(html, /<html lang="en">/);
+  assert.ok(html.includes(`<link rel="canonical" href="${canonical}">`), 'canonical');
+  assert.ok(html.includes(`<meta property="og:url" content="${canonical}">`), 'og:url');
+  assert.match(html, /<meta property="og:type" content="(website|article)">/);
+  assert.match(html, /<meta property="og:title" content="[^"]+">/);
+  assert.match(html, /<meta property="og:description" content="[^"]+">/);
+  const image = /<meta property="og:image" content="([^"]+)">/.exec(html)?.[1];
+  assert.ok(image, 'og:image');
+  assert.ok(existsSync(source(image)), `${image} doesn't exist`);
+  assert.match(html, /<meta name="twitter:card" content="summary_large_image">/);
+}
+
+test('the home page has its canonical URL, language and Open Graph tags', () => {
+  checkMeta(read('index.html'), `${SITE}/`);
+});
+
+test('the daemon page has its canonical URL, language and Open Graph tags', () => {
+  checkMeta(read('daemon/index.html'), `${SITE}/daemon/`);
+});
+
+test('the home page\'s JSON-LD parses, says what Murmur is, and uses words the page uses', () => {
+  const html = read('index.html');
+  const blocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map(m => JSON.parse(m[1]));
+  assert.equal(blocks.length, 1);
+  const [ld] = blocks;
+  assert.equal(ld['@context'], 'https://schema.org');
+  const byType = Object.fromEntries(ld['@graph'].map(n => [n['@type'], n]));
+  const app = byType.SoftwareApplication;
+  assert.ok(app);
+  // An open-source project kept by one person: no organization is invented for it.
+  assert.equal(byType.Organization, undefined);
+  assert.equal(app.author['@type'], 'Person');
+  for (const key of ['name', 'description', 'url', 'applicationCategory', 'operatingSystem', 'offers', 'keywords']) assert.ok(app[key], key);
+  assert.equal(app.name, 'Murmur');
+  assert.equal(app.url, `${SITE}/`);
+  assert.ok(existsSync(source(app.image)));
+  assert.equal(app.description, /<meta name="description" content="([^"]+)">/.exec(html)[1]);
+  // Search engines and agents take these as the product's terms, so each must be on the page.
+  const text = html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<[^>]+>/g, ' ').toLowerCase();
+  for (const word of app.keywords.split(',').map(w => w.trim())) assert.ok(text.includes(word.toLowerCase()), `keyword ${word} isn't on the page`);
+});
+
+test('llms.txt follows llmstxt.org and says when to use Murmur', () => {
+  const txt = read('llms.txt');
+  const lines = txt.split('\n');
+  assert.match(lines[0], /^# Murmur$/);
+  assert.match(lines.find((l, i) => i > 0 && l.trim()) ?? '', /^> /, 'a blockquote summary after the title');
+  assert.ok(!/^#{3,} /m.test(txt), 'only H1 and H2 headings');
+  assert.equal((txt.match(/^# /gm) || []).length, 1, 'one H1');
+  // Before the first H2, any markdown but headings; after it, each section is a list of links.
+  const sections = txt.split(/^## /m).slice(1);
+  assert.ok(sections.length > 0);
+  for (const section of sections) {
+    const [, ...body] = section.split('\n');
+    for (const line of body.filter(l => l.trim())) {
+      assert.match(line, /^- \[[^\]]+\]\(https:\/\/[^)\s]+\)(: .+)?$/, `not a link list item: ${line}`);
+    }
+  }
+  const intro = txt.split(/^## /m)[0];
+  assert.match(intro, /When to use Murmur/);
+  assert.match(intro, /How to call it/);
+  // The tools it names are the ones the use page documents.
+  const use = readFileSync(join(root, '..', 'docs', 'agents', 'use.md'), 'utf8');
+  for (const tool of ['who', 'lookup', 'status', 'tags', 'send', 'inbox']) {
+    assert.ok(intro.includes('`' + tool + '`'), `llms.txt doesn't name ${tool}`);
+    assert.ok(use.includes('`' + tool + '`'), `use.md doesn't document ${tool}`);
+  }
+});
+
+test('the tests and package.json are not published with the site', () => {
+  const ignored = read('.assetsignore').split('\n');
+  assert.ok(ignored.includes('test') && ignored.includes('package.json'));
+});
