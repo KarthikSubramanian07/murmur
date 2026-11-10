@@ -287,17 +287,31 @@ test('a repo that takes longer than its budget is skipped', async t => {
   await assert.rejects(readRepo('github.com/a/one', { url: r.url, budget: 1, lookup: unlinked }), { skipped: true, message: 'took too long to count' });
 });
 
-test('a skipped repo fails the run, after the repos after it are sent', async t => {
+const tooSlow = name => {
+  if (name.endsWith('two')) throw Object.assign(new Error('took too long to count'), { skipped: true });
+  return counts(name);
+};
+
+test('a skipped repo is logged and warned of, and leaves the run green', async t => {
   const names = ['github.com/a/one', 'github.com/b/two', 'github.com/c/three'];
   const db = recordingD1(names);
   const said = site(t, db);
-  const read = name => {
-    if (name.endsWith('two')) throw Object.assign(new Error('took too long to count'), { skipped: true });
-    return counts(name);
-  };
-  await assert.rejects(main(names, { read }), { message: '1 of 3 repos skipped: github.com/b/two' });
+  const was = process.env.GITHUB_ACTIONS;
+  process.env.GITHUB_ACTIONS = 'true';
+  t.after(() => (was === undefined ? delete process.env.GITHUB_ACTIONS : (process.env.GITHUB_ACTIONS = was)));
+  await main(names, { read: tooSlow });
   assert.deepEqual(sent(db), ['github.com/a/one', 'github.com/c/three']);
   assert.deepEqual(said.error, ['github.com/b/two: skipped: took too long to count']);
+  assert.ok(said.log.includes('::warning title=census::github.com/b/two skipped: took too long to count'), said.log.join('\n'));
+});
+
+test('a run in which every repo is skipped or unreadable fails', async t => {
+  site(t, recordingD1(['github.com/b/two', 'github.com/d/gone']));
+  const read = name => {
+    if (name.endsWith('gone')) throw new Error('git failed');
+    return tooSlow(name);
+  };
+  await assert.rejects(main(['github.com/b/two', 'github.com/d/gone'], { read }), { message: 'no repo could be counted' });
 });
 
 // GitHub's API, never answering: each request waits until it is aborted.
@@ -359,7 +373,7 @@ test('a repo too big for the site is skipped, and nothing is sent for it', async
   const db = recordingD1(names);
   const said = site(t, db);
   const read = name => (name.endsWith('two') ? { ...oversized['devices on one day'], repo: name } : counts(name));
-  await assert.rejects(main(names, { read }), { message: '1 of 2 repos skipped: github.com/b/two' });
+  await main(names, { read });
   assert.deepEqual(sent(db), ['github.com/a/one']);
   assert.deepEqual(said.error, ['github.com/b/two: skipped: 1001 devices on one day, more than the site takes (1000)']);
 });

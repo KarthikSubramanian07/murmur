@@ -308,10 +308,16 @@ async function call(path, init = {}) {
 // Counts each repo and sends its counts, one repo at a time. `read` is census, but for the tests.
 //
 // What goes wrong with one repo is that repo's alone: the census goes on to the next, so a repo the
-// site refuses can't leave every repo after it uncounted. A repo that can't be read, because it
-// has gone private or been deleted, keeps the counts it had, and the job still succeeds. A repo
-// skipped for what it would cost (BUDGET, MAX_REFS), and counts the site refused, fail the job once
-// every repo has had its turn, so the run shows in red in Actions.
+// site refuses can't leave every repo after it uncounted.
+// - A repo that can't be read, because it has gone private or been deleted, keeps the counts it had.
+// - A repo skipped for what it would cost (BUDGET, MAX_REFS) or for its size (tooBig) is logged,
+//   and warned of in Actions, but leaves the run green. Anyone can list a repo (#298), and one
+//   skipped today is skipped every day, until someone removes it from D1. A run red every day for
+//   that would teach whoever reads it to ignore red.
+// - Counts the site refuses, or that never reach it, fail the run once every repo has had its turn.
+//   The census sends only what the site's limits allow, so a refusal means the two disagree, or
+//   the site is down: something to fix.
+// - So does a run in which no repo could be counted at all.
 export async function main(args, { read = census } = {}) {
   const dry = args.includes('--dry');
   let names = args.filter(a => !a.startsWith('--'));
@@ -328,6 +334,9 @@ export async function main(args, { read = census } = {}) {
     } catch (err) {
       if (err.skipped) {
         console.error(`${name}: skipped: ${err.message}`);
+        // An annotation on the run's page. The name passed REPO and the reason is the census's own,
+        // so neither can carry a workflow command of its own.
+        if (process.env.GITHUB_ACTIONS === 'true') console.log(`::warning title=census::${name} skipped: ${err.message}`);
         skipped.push(name);
         continue;
       }
@@ -352,12 +361,8 @@ export async function main(args, { read = census } = {}) {
     }
     console.log(line);
   }
-  const failed = [
-    skipped.length && `${skipped.length} of ${names.length} repos skipped: ${skipped.join(', ')}`,
-    unsent.length && `${unsent.length} of ${names.length} repos counted but not sent: ${unsent.join(', ')}`,
-  ].filter(Boolean);
-  if (failed.length) throw new Error(failed.join('; '));
-  if (unread === names.length && names.length) throw new Error('no repo could be counted');
+  if (unsent.length) throw new Error(`${unsent.length} of ${names.length} repos counted but not sent: ${unsent.join(', ')}`);
+  if (unread + skipped.length === names.length && names.length) throw new Error('no repo could be counted');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

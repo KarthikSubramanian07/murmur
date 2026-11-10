@@ -1339,9 +1339,12 @@ public reader, so messages stop being told from other records, and only records 
 Each repo is counted on its own, since anyone can list one (#298). A repo that can't be read (gone
 private, or deleted) keeps the counts it had. A repo may take 3 minutes, for its git and its
 account lookups, and show 2,000 refs of devices, so that one with huge objects, 100,000 refs or a
-slow API can't hold the job past its 30 minutes. One over either, or whose counts the site refuses, is skipped, and the day's run fails
-after every other repo has been sent, so it shows in Actions without leaving the repos after it,
-alphabetically, uncounted.
+slow API can't hold the job past its 30 minutes. A repo over either, or too big for the site's
+limits on what it keeps, is skipped. The run warns of it but stays green: a repo skipped today is
+skipped every day until someone takes it out of D1, and a run red every day teaches people to
+ignore red. Counts the site refuses do fail the run, after every other repo has been sent. The
+census sends only what the site's limits allow, so a refusal means the two disagree, or the site
+is down, which can be fixed.
 
 A time on the bus or a branch is its writer's clock, and can say any year up to 9999. A day after
 tomorrow (UTC) is never believed, since one would keep a repo active and its people new for ever,
