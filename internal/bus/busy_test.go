@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -49,7 +50,8 @@ func TestPushSendsBusyRefusalsAgain(t *testing.T) {
 			}
 			refused := testgit.RefusePushes(t, remote, brand.RefRoot, reason, 1, false)
 			if err := r.Push(ctx, next, ref, mode, first); err != nil {
-				t.Fatalf("(%s), mode %d: %v", reason, mode, err)
+				t.Errorf("(%s), mode %d: %v", reason, mode, err)
+				continue
 			}
 			if n := refused(); n != 1 {
 				t.Fatalf("(%s), mode %d: the remote refused %d pushes, want the 1 it was set to", reason, mode, n)
@@ -77,8 +79,15 @@ func TestPushGivesUpOnRefusals(t *testing.T) {
 		}
 		refused := testgit.RefusePushes(t, remote, brand.RefRoot, c.reason, 100, false)
 		err = r.Push(ctx, sha, brand.RefRoot+"busy", bus.Force, "")
-		if !errors.Is(err, bus.ErrRefused) || errors.Is(err, bus.ErrRejected) {
-			t.Errorf("(%s): %v, want ErrRefused", c.reason, err)
+		if err == nil {
+			t.Errorf("(%s): the push landed on a remote refusing it", c.reason)
+			continue
+		}
+		if !errors.Is(err, bus.ErrRefused) || errors.Is(err, bus.ErrRejected) || !strings.Contains(err.Error(), "("+c.reason+")") {
+			t.Errorf("(%s): %v, want ErrRefused with the server's reason", c.reason, err)
+		}
+		if tried := strings.Contains(err.Error(), "(3 tries)"); tried != (c.tries == 3) {
+			t.Errorf("(%s): %v; says it was tried 3 times: %v", c.reason, err, tried)
 		}
 		if n := refused(); n != c.tries {
 			t.Errorf("(%s): sent %d times, want %d", c.reason, n, c.tries)
@@ -86,25 +95,32 @@ func TestPushGivesUpOnRefusals(t *testing.T) {
 	}
 }
 
-// A push the server took but called failed has landed: it isn't sent again, and nothing is written
-// twice.
+// A push the server took but called refused has landed, whatever the reason given and the push's
+// mode: Push says it was sent and doesn't send it again, so nothing is written twice. For a log
+// push (FastForward), calling it refused would fail the agent's send, and the agent would send the
+// message again.
 func TestPushRefusedButLandedIsNotSentAgain(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	remote, r := pushPair(t)
-	sha, err := r.NewCommit(ctx, "", "a commit")
-	if err != nil {
-		t.Fatal(err)
-	}
-	refused := testgit.RefusePushes(t, remote, brand.RefRoot, "failed", 100, true)
-	ref := brand.RefRoot + "busy"
-	if err := r.Push(ctx, sha, ref, bus.Lease, ""); err != nil {
-		t.Fatal(err)
-	}
-	if n := refused(); n != 1 {
-		t.Fatalf("sent %d times, want once", n)
-	}
-	if now, err := r.RemoteRef(ctx, ref); err != nil || now != sha {
-		t.Fatalf("the remote holds %s (%v), want %s", now, err, sha)
+	for _, reason := range []string{"failed", "protected by a rule"} {
+		for _, mode := range []bus.PushMode{bus.FastForward, bus.Force, bus.Lease} {
+			remote, r := pushPair(t)
+			sha, err := r.NewCommit(ctx, "", "a commit")
+			if err != nil {
+				t.Fatal(err)
+			}
+			refused := testgit.RefusePushes(t, remote, brand.RefRoot, reason, 100, true)
+			ref := brand.RefRoot + "busy"
+			if err := r.Push(ctx, sha, ref, mode, ""); err != nil {
+				t.Errorf("(%s), mode %d: %v", reason, mode, err)
+				continue
+			}
+			if n := refused(); n != 1 {
+				t.Fatalf("(%s), mode %d: sent %d times, want once", reason, mode, n)
+			}
+			if now, err := r.RemoteRef(ctx, ref); err != nil || now != sha {
+				t.Fatalf("(%s), mode %d: the remote holds %s (%v), want %s", reason, mode, now, err, sha)
+			}
+		}
 	}
 }

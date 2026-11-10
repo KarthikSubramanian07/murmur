@@ -159,12 +159,15 @@ func (r *Repo) Fetch(ctx context.Context, refs []string) error {
 func (r *Repo) Push(ctx context.Context, sha, ref string, mode PushMode, expect string) error {
 	for try := 1; ; try++ {
 		busy, err := r.pushOnce(ctx, sha, ref, mode, expect)
-		if !busy || try == pushTries {
+		switch {
+		case !busy:
 			return err
+		case try == pushTries:
+			return fmt.Errorf("%w (%d tries)", err, try)
 		}
 		select {
 		case <-ctx.Done():
-			return err
+			return fmt.Errorf("%w, waiting to try again a push refused as busy: %v", ctx.Err(), err)
 		case <-time.After(busyWait(try)):
 		}
 	}
@@ -175,10 +178,8 @@ const pushTries = 3
 
 // busyReasons are the reasons GitHub gives, now and then, for refusing a push that met another push
 // to the same repository, from the same device or another ("[remote rejected] (failed)"). They say
-// nothing about the push itself, and the same push sent a few seconds later lands. Two devices'
-// daemons, started together so that their presence heartbeats fell together, logged 17 of them in
-// 45 minutes (2026-11-09); two clients pushing to the same repository at the same moment were
-// refused 2 times in 20, and 4 s apart, never.
+// nothing about the push itself, and the same push sent a moment later lands. What was seen, and
+// when, is under "Git is the transport" in docs/VISION.md.
 var busyReasons = map[string]bool{"failed": true, "failure": true, "fatal error in commit_refs": true}
 
 // busyWait is how long Push waits after its try'th try was refused as busy: half a second to a
@@ -223,7 +224,7 @@ func (r *Repo) pushOnce(ctx context.Context, sha, ref string, mode PushMode, exp
 	if refused == "" {
 		return false, err // network, auth: nothing was decided
 	}
-	_, reason, rejected := strings.Cut(refused, "[remote rejected] ")
+	_, reason, rejected := strings.Cut(refused, "[remote rejected]")
 	if !rejected {
 		return false, ErrRejected // refused before sending: the ref had already moved
 	}
@@ -233,7 +234,7 @@ func (r *Repo) pushOnce(ctx context.Context, sha, ref string, mode PushMode, exp
 	if mode == Lease && lerr == nil && now != expect {
 		return false, ErrRejected
 	}
-	reason = strings.TrimSuffix(strings.TrimPrefix(reason, "("), ")")
+	reason = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(reason), "("), ")")
 	return busyReasons[reason], fmt.Errorf("push to %s %w: %s", ref, ErrRefused, refused)
 }
 
