@@ -81,6 +81,39 @@ func (c *Client) PageURL() (string, error) {
 	return "http://" + info.Web + "/#token=" + token, nil
 }
 
+// PageKeyURL is an address that opens the page once, for another clone's page to send its tab to
+// (#348): a one-time key in the fragment, which the page trades for its token, so the token itself
+// never travels in an address.
+func (c *Client) PageKeyURL(ctx context.Context) (string, error) {
+	resp, err := c.Do(ctx, proto.Request{Op: proto.OpPageKey})
+	if err == nil && !resp.OK {
+		err = errors.New(resp.Error)
+	}
+	if err != nil {
+		return "", err
+	}
+	info := c.current() // the daemon that answered: Do reloads it if it had to reconnect
+	if info.Web == "" || resp.PageKey == "" {
+		return "", ErrNoPage
+	}
+	return "http://" + info.Web + "/#key=" + resp.PageKey, nil
+}
+
+// Running reports whether a daemon answers for gitDir, without starting one or sending it the
+// token: only its port is tried.
+func Running(ctx context.Context, gitDir string) bool {
+	c := &Client{GitDir: gitDir}
+	if !c.load() {
+		return false
+	}
+	conn, err := dial(ctx, c.current().Addr)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // Connect finds the daemon for gitDir, starting one if spawn is set and none answers.
 func Connect(ctx context.Context, gitDir string, spawn bool) (*Client, error) {
 	c := &Client{GitDir: gitDir, Spawn: spawn}

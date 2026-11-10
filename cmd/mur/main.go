@@ -21,6 +21,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/daemon"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/join"
@@ -29,6 +30,7 @@ import (
 	"github.com/a-Fig/murmur/internal/publicrepo"
 	"github.com/a-Fig/murmur/internal/setup"
 	"github.com/a-Fig/murmur/internal/update"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 var version = "0.1.0-dev"
@@ -182,7 +184,18 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 	releases := newReleaseWatch(version, *gitDir)
 	inherited := page
 	page = nil // Run takes it
+	// The record of this machine's clones, for the page's repo picker (#348). Without it the page
+	// shows only its own repo.
+	var record string
+	var repos web.Repos
+	if d, err := clones.DefaultDir(); err != nil {
+		logger.Printf("no record of this machine's clones, so the page can't switch repos: %v", err)
+	} else {
+		record = d
+		repos = clones.Picker{Dir: d, Self: *gitDir, Joined: join.Joined}
+	}
 	err := run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle, PageListener: inherited,
+		Clones: record, Repos: repos,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
 			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report}, restart)

@@ -441,6 +441,30 @@ call.
   and prints the address. The page's token is in the address's fragment (`#token=`), which a browser
   keeps from the server; the page reads it and sends it with each request. `mur ui --no-open`
   prints the address and opens nothing.
+- **Switching repos** (2026-11-09, #348). The sidebar's header names the repo, and opens this
+  machine's other clones that joined; picking one moves the tab to that clone's page. Each clone's
+  daemon serves its own page, on its own port with its own token, and none knows the others, so
+  they are written down: a per-user record, `clones` in the user's config directory, one file per
+  clone so that writers never need a lock (`internal/clones`). `mur join` adds a clone, `mur leave`
+  takes it off, and a daemon adds its own as it starts, which takes in clones that joined before the
+  record. Daemons finding each other was set aside: the picker has to offer a clone whose daemon
+  isn't running, and start it. A clone whose folder is gone, or that left, drops off when the record
+  is read. A daemon counts as running when the port in its `daemon.json` accepts a connection; no
+  token is sent to find out.
+- **The token doesn't travel with the tab.** The other page is another origin and needs its own
+  token, which mustn't go in an address. So the page asks its daemon to open the clone. That daemon
+  starts the other's if it isn't running (as `mur ui` would, replacing one of an older protocol) and
+  asks it, on its sessions' port with the sessions' token from its `daemon.json`, for a key
+  (`OpPageKey`, protocol 9): random, good once, for a minute. The tab goes to the other page with the
+  key in the fragment (`#key=`), and that page trades it at `/api/key` for its token, which the tab
+  keeps for that origin alone. `/api/key` is the one call that takes no token; it takes only JSON,
+  which another site can't send without a preflight that nothing grants. The key left in the tab's
+  history is spent. The cost: a page's token now reaches every joined clone's page on the machine,
+  since that page can ask for keys to them, where before it reached its own; it still never reaches
+  a sessions' port. A draft in a composer has to be sent or cleared first, as it lives only in the
+  page. #303 (Karthik's draft, a private file that opens the page rather than the address) fits:
+  `mur ui` could put a key in that file in place of the token, so the file would hold nothing that
+  lasts.
 - **What it shows.** Every device the daemon knows, this one first, with each session's name,
   agent, branch, what it is doing, when it started and when it was last active (#21), and the
   branches it has committed to when there are three or fewer. Whether a device is reachable, and

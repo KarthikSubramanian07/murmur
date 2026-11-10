@@ -389,6 +389,15 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 		return proto.Response{OK: true, Self: from, Events: append([]proto.EventView(nil), events...)}
 
+	case proto.OpPageKey:
+		// Another clone's daemon asks, to send its page's tab here (#348). It has the sessions'
+		// token, from this clone's daemon.json, so it could do more than this already.
+		page := d.page.Load()
+		if page == nil {
+			return fail("this daemon isn't serving the page")
+		}
+		return proto.Response{OK: true, PageKey: page.PageKey()}
+
 	case proto.OpStop:
 		d.log.Printf("stop requested")
 		d.stop()

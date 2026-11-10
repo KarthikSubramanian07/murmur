@@ -33,6 +33,9 @@ const (
 	// and didn't read keeps the turn going, where the hook can do that (Continues), and the session
 	// is idle otherwise (#202).
 	OpTurnEnd = "turnend"
+	// OpPageKey asks for a one-time key to the daemon's page, which another clone's daemon gives
+	// its own page so the tab can move to this one's (#348).
+	OpPageKey = "pagekey"
 )
 
 // Protocol is the version of this protocol that the daemon speaks, reported in its ping reply. A
@@ -54,7 +57,8 @@ const (
 //	   daemon whose page still takes the sessions' token (#42)
 //	8: a person's account on the page (#242): an upgraded `mur ui` replaces a daemon whose page
 //	   can't send
-const Protocol = 8
+//	9: OpPageKey, so another clone's page can switch to this one's (#348)
+const Protocol = 9
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -224,6 +228,9 @@ type Response struct {
 	// caller's tags after an OpTags.
 	Filter string     `json:"filter,omitempty"`
 	Tags   []tags.Tag `json:"tags,omitempty"`
+
+	// PageKey is OpPageKey's key: the page trades it once, within a minute, for its token.
+	PageKey string `json:"pageKey,omitempty"`
 }
 
 // Device is one device as `who` shows it.

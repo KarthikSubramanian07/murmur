@@ -1,0 +1,92 @@
+package clones
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/web"
+)
+
+// Picker is the record as the page's repo picker sees it, from the daemon of one clone (Self).
+type Picker struct {
+	Dir  string // the record's directory
+	Self string // this daemon's git dir
+	// Joined says whether the user is still in Murmur in a clone (join.Joined).
+	Joined func(gitDir string) bool
+}
+
+var _ web.Repos = Picker{}
+
+// runningWait is how long a clone's daemon has to accept a connection to count as running.
+const runningWait = 500 * time.Millisecond
+
+// List is every clone on the record. Its daemon put this one there as it started.
+func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
+	list, err := List(p.Dir, p.Joined)
+	if err != nil {
+		return nil, err
+	}
+	self := ID(p.Self)
+	out := make([]web.Repo, len(list))
+	var wg sync.WaitGroup
+	for i, c := range list {
+		out[i] = web.Repo{ID: c.ID(), Name: c.Label(), Path: shortPath(c.Top()), Current: c.ID() == self}
+		if out[i].Current {
+			out[i].Running = true
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rctx, cancel := context.WithTimeout(ctx, runningWait)
+			defer cancel()
+			out[i].Running = client.Running(rctx, c.GitDir)
+		}()
+	}
+	wg.Wait()
+	return out, nil
+}
+
+// shortPath is path with the home directory as ~, which is how two clones of one repo are told
+// apart on the page.
+func shortPath(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if rel, err := filepath.Rel(home, path); err == nil && rel != "." && !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel) {
+		return "~" + string(filepath.Separator) + rel
+	}
+	return path
+}
+
+// Open starts the clone's daemon if it isn't running, as `mur ui` does, and asks it for its page's
+// address with a one-time key. Only a clone on the record, still there and still joined, is opened:
+// the page names it by ID, never by path.
+func (p Picker) Open(ctx context.Context, id string) (string, error) {
+	list, err := List(p.Dir, p.Joined)
+	if err != nil {
+		return "", err
+	}
+	for _, c := range list {
+		if c.ID() != id {
+			continue
+		}
+		cl, err := client.Connect(ctx, c.GitDir, true)
+		if err != nil {
+			return "", err
+		}
+		u, err := cl.PageKeyURL(ctx)
+		if errors.Is(err, client.ErrNoPage) {
+			return "", errors.New(c.Label() + "'s daemon isn't serving its page; its daemon.log says why")
+		}
+		return u, err
+	}
+	return "", web.ErrNoRepo
+}

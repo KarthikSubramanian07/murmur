@@ -128,6 +128,10 @@ func (d *Daemon) keepable(ln net.Listener) (net.Listener, *os.File) {
 // servePage serves the page on ln until ctx is done.
 func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
 	page := web.New(pageSource{d}, d.pageTok, repoDir(d.opt.GitDir))
+	if d.opt.Repos != nil {
+		page.WithRepos(d.opt.Repos)
+	}
+	d.page.Store(page)
 	srv := &http.Server{
 		Handler:           page,
 		ReadHeaderTimeout: 10 * time.Second,
@@ -204,7 +208,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 			Committed: d.committedLocked(ss.id), Doing: ss.shownDoing(), Worktree: ss.worktree, Started: ss.started,
 			LastActive: ss.lastActive, Tags: d.tagsOfLocked(ss)})
 	}
-	st := web.State{Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked()}
+	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked()}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Reachable: !d.staleLocked(p),

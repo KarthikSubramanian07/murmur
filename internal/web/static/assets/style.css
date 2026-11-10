@@ -3457,9 +3457,67 @@ code {
   align-items: center;
   gap: 0.375rem;
 }
-.dark .sidebar-header .brand {
+/* The repo picker (#348): the current repo's name, which opens this machine's other repos. */
+.repo-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
   flex: 1;
-  padding-left: var(--sidebar-row-content-inset);
+  min-width: 0;
+  height: 2rem;
+  margin-right: auto;
+  padding: 0 0.5rem 0 var(--sidebar-row-content-inset);
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #f0f1f3;
+  text-align: left;
+}
+.repo-btn:hover,
+.repo-btn[aria-expanded="true"] {
+  background: rgb(255 255 255 / 6%);
+}
+.repo-btn .repo-name {
+  min-width: 0;
+}
+.repo-btn .icon {
+  flex-shrink: 0;
+  width: 0.875rem;
+  height: 0.875rem;
+  color: #8c8f99;
+}
+.repo-menu {
+  width: 16.5rem;
+  z-index: 61;
+}
+.repo-menu .tag-menu-list {
+  padding: 0.25rem;
+}
+.repo-row {
+  min-height: 2rem;
+}
+.repo-row:disabled {
+  opacity: 0.5;
+}
+.repo-row.current {
+  color: #f0f1f3;
+}
+.repo-row .icon {
+  flex-shrink: 0;
+  width: 0.875rem;
+  height: 0.875rem;
+  color: #8c8f99;
+}
+.repo-row-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.repo-path {
+  font-size: 0.6875rem;
+  color: #7b7e88;
 }
 
 /* on a phone: the sidebar gives way to the top bar's views, and the conversation list and an open

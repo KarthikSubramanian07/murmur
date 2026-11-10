@@ -49,6 +49,7 @@ const ui = {
   reading: null, // the conversation someone was last seen looking at, null if nobody is looking
   newMark: null, // the open conversation's first unread message: { key, id }
   armed: null, // the group chat whose next send goes: its key
+  repoMenu: null, // the repo picker, open: { x, top, repos, opening, err } (#348)
 };
 
 class AuthError extends Error {
@@ -74,6 +75,22 @@ function takeToken() {
     history.replaceState(null, "", location.pathname + location.search + "#" + view);
   }
   return sessionStorage.getItem(TOKEN_KEY);
+}
+
+// A page opened from another repo's page (#348) arrives with a one-time key, not the token, and
+// trades it with its own daemon for the token. The key is spent either way, so it leaves the
+// address bar first. If the trade fails, the tab keeps whatever token it already had here.
+async function takeKey() {
+  const parts = location.hash.slice(1).split("&");
+  const k = parts.find((p) => p.startsWith("key="));
+  if (!k) return;
+  const view = parts.find((p) => VIEWS.includes(p)) || "messages";
+  history.replaceState(null, "", location.pathname + location.search + "#" + view);
+  try {
+    const res = await fetch("/api/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: k.slice(4) }), cache: "no-store" });
+    const got = res.ok ? await res.json() : null;
+    if (got?.token) sessionStorage.setItem(TOKEN_KEY, got.token);
+  } catch {}
 }
 
 async function api(path, init = {}) {
@@ -227,7 +244,7 @@ function render() {
   const inner = page(); // before the top bar, which counts what this settles
   content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
   content.replaceChildren(inner);
-  root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)), ui.setup && setupDialog(), ui.picker && pickerDialog(), ui.tagMenu && tagMenu());
+  root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)), ui.setup && setupDialog(), ui.picker && pickerDialog(), ui.tagMenu && tagMenu(), ui.repoMenu && repoMenu());
   content.scrollTop = scroll;
   const sideNow = root.querySelector(".sidebar-content, .mini-scroll");
   if (sideNow) sideNow.scrollTop = side;
@@ -379,7 +396,7 @@ function sidebar() {
     h(
       "div",
       { class: "sidebar-header" },
-      h("span", { class: "brand" }, NAME),
+      repoButton(),
       h("button", { class: "fold-btn", title: "Hide the sidebar", "aria-label": "Hide the sidebar", "data-key": "fold", onclick: () => setMini(true) }, icon("panel")),
     ),
     h(
@@ -1890,6 +1907,123 @@ function tagMenu() {
           e.preventDefault();
           close();
         }
+      },
+    },
+    menu,
+  );
+}
+
+// The repo picker (#348): this machine's clones that joined, each served by its own daemon. Picking
+// one moves this tab to that repo's page, whose daemon is started if it isn't running.
+function repoButton() {
+  const name = ui.state ? ui.state.repo || NAME : ""; // nothing until the state says, rather than a name that changes
+  return h(
+    "button",
+    {
+      class: "repo-btn",
+      "aria-haspopup": "menu",
+      "aria-expanded": ui.repoMenu ? "true" : "false",
+      title: "Switch repo",
+      "data-key": "repo",
+      onclick: (e) => {
+        if (ui.repoMenu) return closeRepoMenu();
+        const r = e.currentTarget.getBoundingClientRect();
+        ui.repoMenu = { x: r.left, top: r.bottom + 4, repos: null, opening: null, err: "" };
+        render();
+        loadRepos();
+      },
+    },
+    h("span", { class: "repo-name truncate" }, name),
+    icon("chevronDown"),
+  );
+}
+
+function closeRepoMenu() {
+  ui.repoMenu = null;
+  render();
+}
+
+async function loadRepos() {
+  const m = ui.repoMenu;
+  try {
+    const r = await api("/api/repos");
+    if (ui.repoMenu !== m) return;
+    m.repos = r.repos || [];
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    if (ui.repoMenu !== m) return;
+    m.repos = [];
+    m.err = e.message;
+  }
+  render();
+}
+
+async function openRepo(r) {
+  const m = ui.repoMenu;
+  if (r.current) return closeRepoMenu();
+  if (m.opening) return;
+  // The drafts live in this page only, and the other repo's page is another page.
+  if (hasUnsent()) {
+    m.err = "Send or clear your draft first";
+    return render();
+  }
+  m.opening = r.id;
+  m.err = "";
+  render();
+  try {
+    const { url } = await api("/api/repos/open", { method: "POST", body: JSON.stringify({ id: r.id }) });
+    location.assign(url);
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    if (ui.repoMenu !== m) return;
+    m.opening = null;
+    m.err = e.message;
+    if (/isn't joined/.test(e.message)) m.repos = (m.repos || []).filter((x) => x.id !== r.id);
+    render();
+  }
+}
+
+function repoMenu() {
+  const m = ui.repoMenu;
+  const repos = m.repos || [{ id: "", name: ui.state?.repo || NAME, current: true, running: true }];
+  // A path tells two clones of one repo apart; one alone goes by its name.
+  const named = new Map();
+  for (const r of repos) named.set(r.name, (named.get(r.name) || 0) + 1);
+  const menu = h(
+    "div",
+    { class: "tag-menu repo-menu", role: "menu", "aria-label": "Repos" },
+    h(
+      "div",
+      { class: "tag-menu-list" },
+      repos.map((r) =>
+        h(
+          "button",
+          {
+            class: "tag-menu-row repo-row" + (r.current ? " current" : ""),
+            role: "menuitemradio",
+            "aria-checked": r.current ? "true" : "false",
+            title: r.path || null,
+            "data-key": "repo-" + r.id,
+            disabled: !!m.opening && m.opening !== r.id,
+            onclick: () => openRepo(r),
+          },
+          h("span", { class: "dot" + (r.running ? " ok" : "") }),
+          h("span", { class: "repo-row-text" }, h("span", { class: "tm-name truncate" }, r.name), named.get(r.name) > 1 && r.path && h("span", { class: "repo-path truncate" }, r.path)),
+          m.opening === r.id ? icon("rotateCw", "spin") : r.current && icon("check"),
+        ),
+      ),
+    ),
+    m.err && h("p", { class: "tm-err" }, m.err),
+  );
+  // Placed through the CSSOM: the page's CSP refuses style attributes.
+  menu.style.left = m.x + "px";
+  menu.style.top = m.top + "px";
+  return h(
+    "div",
+    {
+      class: "menu-scrim",
+      onclick: (e) => {
+        if (e.target === e.currentTarget) closeRepoMenu();
       },
     },
     menu,
@@ -3606,10 +3740,11 @@ async function poll() {
 
 // A fresh link pasted into a tab already showing the page changes only the fragment, so the
 // page takes the new token here and starts over with it.
-function start() {
+async function start() {
+  await takeKey();
   const token = takeToken();
   if (token !== ui.token) {
-    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0, draftTo: null, restored: null, outbox: [], setup: null, picker: null, newMark: null, armed: null });
+    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0, draftTo: null, restored: null, outbox: [], setup: null, picker: null, newMark: null, armed: null, repoMenu: null });
     ui.ids = new Set();
     ui.notes = new Map();
     ui.readLocal = new Set();
@@ -3634,10 +3769,12 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && ui.tagMenu && !e.defaultPrevented) {
     ui.tagMenu = null;
     render();
+  } else if (e.key === "Escape" && ui.repoMenu && !e.defaultPrevented) {
+    closeRepoMenu();
   }
 });
 window.addEventListener("hashchange", () => {
-  if (location.hash.includes("token=")) start();
+  if (location.hash.includes("token=") || location.hash.includes("key=")) start();
   else setView(location.hash.slice(1));
 });
 document.addEventListener("visibilitychange", () => {
