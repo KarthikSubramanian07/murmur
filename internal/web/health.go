@@ -113,7 +113,8 @@ type HandoffHealth struct {
 	Failed int64 `json:"failed"`
 }
 
-// HookHealth counts what Murmur's hook gave sessions: messages whole, and notices of messages.
+// HookHealth counts what Murmur's hook gave sessions: messages whole, and notices of messages. Both
+// count per session: a message for everyone that one hook shows two of its sessions counts twice.
 type HookHealth struct {
 	Whole   int64 `json:"whole"`
 	Notices int64 `json:"notices"`
@@ -128,8 +129,8 @@ type DaemonHealth struct {
 	// wait in seconds, which is longer while syncs fail.
 	Poll      string  `json:"poll,omitempty"`
 	PollEvery float64 `json:"pollEverySeconds,omitempty"`
-	// UpdateChecked is when a check for a newer release last reached GitHub, from any daemon of
-	// this clone; zero if none has.
+	// UpdateChecked is when a daemon of this clone last learned from GitHub which release is the
+	// latest; zero if none has. A check that failed, or found no release, doesn't move it.
 	UpdateChecked time.Time `json:"updateChecked,omitzero"`
 }
 

@@ -443,8 +443,9 @@ func recordLatest(gitDir, tag string) {
 	}
 }
 
-// Checked is when a daemon of the clone last heard from GitHub which release is the latest, zero if
-// none has: the time latest.json was written.
+// Checked is when a daemon of the clone last learned from GitHub which release is the latest, zero
+// if none has: the time latest.json was written. A check that failed, or found no release, doesn't
+// write it.
 func Checked(gitDir string) time.Time {
 	fi, err := os.Stat(latestPath(gitDir))
 	if err != nil {
