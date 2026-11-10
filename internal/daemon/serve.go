@@ -565,15 +565,18 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 				// would show all of it, and the agent, having it, wouldn't call inbox, so it
 				// would stay unread and come a second time when the turn ends.
 				//
-				// One that doesn't fit the reply's room (wholeRoom) is told of as any other,
-				// and stays in the inbox for the agent to read.
+				// The reply has room for so much (wholeRoom): one that doesn't fit whole is told
+				// of as any other, and one whose notice doesn't fit either isn't told of yet, and
+				// waits, counted as unread, for the hook's next call.
 				if printsWhole && (busyWhole || subjectOnly(m)) && !m.Attempted && !m.PushFailed && room.take(m) {
 					whole = append(whole, delivery{id, m})
 					continue
 				}
-				m.Held = d.hookBusyLocked(id) && d.holdableLocked(id, m, wake, d.turnStartLocked(id))
-				m.Noticed, m.NoticedAt = true, time.Now()
-				fresh = append(fresh, m)
+				if room.takeNotice(m) {
+					m.Held = d.hookBusyLocked(id) && d.holdableLocked(id, m, wake, d.turnStartLocked(id))
+					m.Noticed, m.NoticedAt = true, time.Now()
+					fresh = append(fresh, m)
+				}
 			}
 			unread++
 		}
@@ -594,7 +597,14 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	if len(fresh) > 0 || len(whole) > 0 {
 		d.saveLocked()
 	}
-	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
+	var freshMsgs []*inMsg
+	for _, m := range fresh {
+		if !shown["notice "+m.Event.ID] {
+			shown["notice "+m.Event.ID] = true
+			freshMsgs = append(freshMsgs, m)
+		}
+	}
+	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(freshMsgs, false)}
 	if len(whole) > 0 {
 		resp.Read = d.wholeViewsLocked(wholeMsgs, whole)
 	}

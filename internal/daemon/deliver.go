@@ -379,21 +379,34 @@ func (d *Daemon) endTurnLocked(s *session, wake pageSettings) {
 // None are taken from a session on do not disturb (#198) either: wayInLocked finds no way in for it.
 //
 // The reply carries them whole, so they are taken, oldest first, only while they fit room (see
-// wholeRoom); the rest stay in the inbox for the turn's next end.
+// wholeRoom); the rest stay in the inbox for the turn's next end. After the first that doesn't fit,
+// only a message the reply already carries is taken: one for everyone, given to another session
+// the hook speaks for, would otherwise stay here and be given again (Sol's review of #376). A
+// session left with messages the reply had no room for goes on with the turn all the same, as it
+// does: it is the same agent, and the reply has the others' (the reply carries something, since
+// any one message fits an empty room). Otherwise its messages would be handed to T3 while the
+// agent is at work, and its count of continuations would fall behind Claude Code's.
 func (d *Daemon) continueTurnLocked(s *session, wake pageSettings, room *wholeRoom) []*inMsg {
 	if s.continuations >= stopBlockCap || !d.wayInLocked(s.id, wake) {
 		return nil
 	}
 	var out []*inMsg
+	waiting, full := false, false
 	for _, m := range d.st.Inbox[s.id] {
-		if pushable(m) {
-			if !room.take(m) {
-				break
-			}
-			out = append(out, m)
+		if !pushable(m) {
+			continue
 		}
+		waiting = true
+		if full && !room.has(m) {
+			continue
+		}
+		if !room.take(m) {
+			full = true
+			continue
+		}
+		out = append(out, m)
 	}
-	if len(out) > 0 {
+	if waiting {
 		now := time.Now()
 		s.busyAt, s.turnStart, s.continuedAt = now, now, now
 		s.continuations++
@@ -621,15 +634,15 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	delete(d.pushWarned, j.id)
 }
 
-// maxWholeReply is how much of one reply to the hook the messages it gives whole may take. A
+// maxWholeReply is how much of one reply to the hook its messages may take, whole or as notices. A
 // client reads at most 64 MB of a reply (#371), and the hook's speaks for every session of its
 // agent's process, each with an inbox of up to maxInbox messages, which the daemon takes out of the
-// inbox before it replies: a reply the client then refused would lose them. Half the client's
-// limit leaves room for the rest of the reply. A variable for the test.
+// inbox, or marks told, before it replies: a reply the client then refused would lose them. Half
+// the client's limit leaves room for the rest of the reply. A variable for the test.
 var maxWholeReply = 32 << 20
 
 // wholeRoom is what is left of one reply's maxWholeReply. A message for everyone is in each inbox
-// the hook speaks for and is given once, so it is counted once.
+// the hook speaks for and is in the reply once, so it is counted once.
 type wholeRoom struct {
 	left  int
 	taken map[string]bool
@@ -637,19 +650,30 @@ type wholeRoom struct {
 
 func newWholeRoom() *wholeRoom { return &wholeRoom{left: maxWholeReply, taken: map[string]bool{}} }
 
-// take reports whether message m fits in what is left, and if so counts it. Its size is taken at
-// its longest, every character of it escaped six times over (`<` is `<`), and a kilobyte
-// for the rest of its view.
+// has says the reply already carries message m whole.
+func (r *wholeRoom) has(m *inMsg) bool { return r.taken["whole "+m.Event.ID] }
+
+// take reports whether message m fits in what is left whole, and if so counts it, at its longest:
+// every character escaped six times over (`<` is `<`), and a kilobyte for the rest of its
+// view. One the reply already carries whole costs nothing more.
 func (r *wholeRoom) take(m *inMsg) bool {
-	if r.taken[m.Event.ID] {
+	return r.fit("whole "+m.Event.ID, 6*(len(m.Event.Body)+len(m.Event.Subject))+1<<10)
+}
+
+// takeNotice is take for a notice of message m, which has its subject and not its body.
+func (r *wholeRoom) takeNotice(m *inMsg) bool {
+	return r.fit("notice "+m.Event.ID, 6*len(m.Event.Subject)+1<<10)
+}
+
+func (r *wholeRoom) fit(key string, cost int) bool {
+	if r.taken[key] {
 		return true
 	}
-	cost := 6*(len(m.Event.Body)+len(m.Event.Subject)) + 1<<10
 	if cost > r.left {
 		return false
 	}
 	r.left -= cost
-	r.taken[m.Event.ID] = true
+	r.taken[key] = true
 	return true
 }
 
