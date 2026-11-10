@@ -257,11 +257,10 @@ func TestALogIsEmptiedWhenItsCopyFails(t *testing.T) {
 	for i := range 12 {
 		l.Printf("line %02d, ten more bytes", i)
 	}
-	got := read(t, path)
-	if !strings.Contains(got, "emptied without its copy") || !strings.HasSuffix(got, lines(11, 11)) {
-		t.Fatalf("the log is %q", got)
-	}
-	if fi, err := os.Stat(path); err != nil || fi.Size() > 300 {
-		t.Fatalf("the log grew past its limit: %v, %v", fi.Size(), err)
+	// The note names the file, so its length is the temp dir's: what the test checks is that the log
+	// holds the note and what came after the last emptying, not the lines before it.
+	note, rest, _ := strings.Cut(read(t, path), "\n")
+	if !strings.Contains(note, "emptied without its copy") || rest != lines(11, 11) {
+		t.Fatalf("the log is %q, then %q", note, rest)
 	}
 }
