@@ -221,18 +221,23 @@ func (d *Daemon) queuedAtLocked(to string) string {
 //
 // Codex's MCP server learns its thread's ID only from a call to one of Murmur's tools, so a session
 // whose agent hasn't called one is found by its process instead: the agent that ran the hook started
-// the session's MCP server, and is among the hook's ancestors. The one such session of that agent
-// that has no ID yet takes the hook's. Where there are several, nothing tells them apart: the hook
+// the session's MCP server, and is among the hook's ancestors. Where that process has one session
+// of the agent, with no ID yet, it takes the hook's. Where it has several (T3 runs every Codex
+// thread in one app server), nothing tells the hook's apart, even when only one has no ID: the hook
 // speaks for none of them, but each is marked as having its hook run, which is true of every
-// session of that process. Caller holds mu.
+// session of that process. An ID the MCP server learns overrides one taken from a hook. Caller
+// holds mu.
 func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 	var byID, byProcess []*session
 	for _, s := range d.sortedSessionsLocked() {
 		if !s.dropped.IsZero() || !isAgent(s.agent, req.Agent) {
 			continue
 		}
+		if s.route.Native != "" && s.hookNative != s.route.Native {
+			s.hookNative = "" // the session's own ID overrides one taken from a hook, which may be wrong
+		}
 		switch {
-		case s.route.Native == req.ClaudeSession || s.hookNative == req.ClaudeSession:
+		case s.route.Native == req.ClaudeSession || s.route.Native == "" && s.hookNative == req.ClaudeSession:
 			byID = append(byID, s)
 		case s.clientPID != 0 && slices.Contains(req.Ancestors, s.clientPID):
 			byProcess = append(byProcess, s)
@@ -241,15 +246,9 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 	if len(byID) > 0 {
 		return byID
 	}
-	var unknown []*session
-	for _, s := range byProcess {
-		if s.route.Native == "" && s.hookNative == "" {
-			unknown = append(unknown, s)
-		}
-	}
-	if len(unknown) == 1 {
-		unknown[0].hookNative = req.ClaudeSession
-		return unknown
+	if len(byProcess) == 1 && byProcess[0].route.Native == "" && byProcess[0].hookNative == "" {
+		byProcess[0].hookNative = req.ClaudeSession
+		return byProcess
 	}
 	for _, s := range byProcess {
 		s.hookSeen = true

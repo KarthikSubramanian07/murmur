@@ -149,7 +149,13 @@ func TestEditCodexTrust(t *testing.T) {
 	if out, _, err := editCodexTrust(header, trust); err != nil || !strings.HasPrefix(out, "[hooks.state.'C:\\h\\hooks.json:stop:0:0']\ntrusted_hash = \"sha256:new\"\n") {
 		t.Errorf("a table without the hash: %v\n%s", err, out)
 	}
+	// Other keys of the hook's table stay, and a header inside a multi-line string is no header.
+	other := "[hooks.state.'C:\\h\\hooks.json:stop:0:0']\nenabled = true\nnote = '''\n[tui]\n'''\n\n[tui]\n"
+	if out, _, err := editCodexTrust(other, trust); err != nil || out != strings.Replace(other, "'''\n\n", "'''\ntrusted_hash = \"sha256:new\"\n\n", 1) {
+		t.Errorf("another key of the table: %v\n%s", err, out)
+	}
 	for _, bad := range []string{
+		"[hooks.state.'C:\\h\\hooks.json:stop:0:0']\ntrusted_hash = \"\"\"\nsha256:old\"\"\"\n",
 		"[hooks.state]\n'C:\\h\\hooks.json:stop:0:0'.trusted_hash = \"x\"\n",
 		"[hooks]\nstate = {}\n",
 		"hooks.state = {}\n",
@@ -177,6 +183,10 @@ func TestAgentHookCommand(t *testing.T) {
 		if got := agentHookCommand(`Z:\no such\o'k\mur.exe`, "grok"); got != `& 'Z:\no such\o''k\mur.exe' hook grok` {
 			t.Errorf("command %q", got)
 		}
+	}
+	// Each of PowerShell's single quotes is doubled, the curly ones too.
+	if got := psQuote("a'b\u2018c\u2019d\u201ae\u201bf"); got != "'a''b\u2018\u2018c\u2019\u2019d\u201a\u201ae\u201b\u201bf'" {
+		t.Errorf("psQuote %q", got)
 	}
 	if !bareSafe(`C:\Users\me\.local\bin\mur.exe`) || bareSafe(`C:\a b\mur.exe`) || bareSafe(`C:\a&b\mur.exe`) || bareSafe(`C:/a/mur.exe`) {
 		t.Error("bareSafe")

@@ -83,6 +83,30 @@ func TestAnAgentHookOfSeveralUnknownSessionsTakesNone(t *testing.T) {
 	}
 }
 
+// A process with a known session and one without an ID may run a third conversation the daemon
+// hasn't heard of yet, so a hook it doesn't know speaks for neither. And once the MCP server learns
+// its session's ID, a different one taken from a hook no longer finds the session.
+func TestAnAgentHookNeedsMoreThanAProcessOfSeveral(t *testing.T) {
+	d := agentHookDaemon(t)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	a := d.newSessionLocked(&proto.Hello{ID: "aaaaaa"}, "codex in T3", "", "aaaaaa")
+	b := d.newSessionLocked(&proto.Hello{ID: "bbbbbb"}, "codex in T3", "", "bbbbbb")
+	a.clientPID, b.clientPID = 700, 700
+	a.route.Native = "thread-a"
+	if got := d.hookSessionsLocked(proto.Request{Agent: "codex", ClaudeSession: "thread-c", Ancestors: []int{700}}); len(got) != 0 || b.hookNative != "" {
+		t.Fatalf("took %v, hookNative %q", ids(got), b.hookNative)
+	}
+
+	b.hookNative, b.route.Native = "thread-c", "thread-b"
+	if got := d.hookSessionsLocked(proto.Request{Agent: "codex", ClaudeSession: "thread-c", Ancestors: []int{900}}); len(got) != 0 || b.hookNative != "" {
+		t.Fatalf("the stale ID found %v, hookNative %q", ids(got), b.hookNative)
+	}
+	if got := d.hookSessionsLocked(proto.Request{Agent: "codex", ClaudeSession: "thread-b", Ancestors: []int{900}}); len(got) != 1 || got[0] != b {
+		t.Fatalf("by its own ID: %v", ids(got))
+	}
+}
+
 // A session counts as having no hook once it called one of Murmur's tools a while ago and no hook
 // of it has reported: only for agents join installs the hook in, and never once one has.
 func TestHookOff(t *testing.T) {

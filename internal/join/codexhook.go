@@ -65,9 +65,24 @@ func agentHookCommand(exe, agent string) string {
 		if short := shortPath(exe); bareSafe(short) {
 			return short + " hook " + agent
 		}
-		return "& '" + strings.ReplaceAll(exe, "'", "''") + "' hook " + agent
+		return "& " + psQuote(exe) + " hook " + agent
 	}
 	return "'" + strings.ReplaceAll(exe, "'", `'\''`) + "' hook " + agent
+}
+
+// psQuote quotes s as a PowerShell single-quoted string. PowerShell ends one at any of its five
+// single quotes (' and four curly ones), and reads a doubled one as itself, so each is doubled.
+func psQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('\'')
+	for _, r := range s {
+		if strings.ContainsRune("'‘’‚‛", r) {
+			b.WriteRune(r)
+		}
+		b.WriteRune(r)
+	}
+	b.WriteByte('\'')
+	return b.String()
 }
 
 // bareSafe says a Windows path means only itself, unquoted, to PowerShell and to cmd.
@@ -276,8 +291,20 @@ func setTrustedHash(text, nl, key, hash string) (string, error) {
 	lines := strings.Split(text, "\n")
 	var table []string
 	header, at := -1, -1
+	inString := "" // the quotes that end the multi-line string a line is in
 	for i, raw := range lines {
 		l := strings.TrimRight(raw, "\r")
+		if inString != "" {
+			if strings.Count(l, inString)%2 == 1 {
+				inString = ""
+			}
+			continue
+		}
+		for _, q := range []string{`"""`, `'''`} {
+			if strings.Count(l, q)%2 == 1 {
+				inString = q
+			}
+		}
 		if path, ok := tableHeader(l); ok {
 			table = path
 			if header >= 0 && at < 0 {
@@ -295,8 +322,13 @@ func setTrustedHash(text, nl, key, hash string) (string, error) {
 		full := append(append([]string(nil), table...), path...)
 		switch {
 		case slicesEqual(table, want) && len(path) == 1 && path[0] == "trusted_hash":
+			if inString != "" {
+				return "", errors.New("config.toml sets the trust of " + brand.Product + "'s hook as a multi-line string, which join doesn't edit")
+			}
 			lines[i] = line + raw[len(l):]
 			return strings.Join(lines, "\n"), nil
+		case slicesEqual(table, want):
+			// Another key of the hook's own table, like enabled: kept as it is.
 		case hasPrefix(full, want) || hasPrefix(want, full) && len(full) < len(want):
 			// `state = {...}` under [hooks], or `'<key>'.trusted_hash = ...` under [hooks.state].
 			return "", errors.New("config.toml sets the trust of " + brand.Product + "'s hook, or hooks.state, in a form join doesn't edit (a dotted key or an inline table)")

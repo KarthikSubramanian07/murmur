@@ -415,6 +415,12 @@ keeps its turn going at Stop (#202) runs in Codex and Grok too, as `mur hook cod
   the key under the path with links resolved as well. If a Codex release hashes differently, the
   hook silently stops running, which the daemon shows (below). The handler's `statusMessage` is
   "Murmur", which is how Codex names it in its hooks list and how join finds its own entries again.
+  Seen on Codex 0.167.0, 2026-11-09, in a throwaway Codex home joined by `mur join`: no review
+  screen at three starts of the TUI, `/hooks` listing the hooks as active, and the notice reaching
+  the model mid-turn (Codex's rollout records it as `hooks.additional_context`) in the TUI, in
+  `codex exec` and in a T3 Codex thread, with `Stop` keeping the turn going with the message
+  whole. A broken `trusted_hash` showed as "hook not running" a minute after the session's first
+  Murmur call.
 - **Grok.** Grok runs every file in `~/.grok/hooks/` without asking, where a project's hooks wait
   for folder trust (Grok Build's `docs/user-guide/10-hooks.md`, read 2026-11-09), so join writes
   `murmur.json` there, on `PostToolUse` and `Stop`. Not on a prompt: Grok discards what that hook
@@ -434,10 +440,12 @@ keeps its turn going at Stop (#202) runs in Codex and Grok too, as `mur hook cod
   tools (`_meta.threadId`), so before that the daemon can't match the hook's `session_id` to it.
   The hook also sends its ancestor processes, and the MCP server's parent is among them: the Codex
   process that runs the thread, which is a shared app server, both for T3 and for Codex's own TUI.
-  Of that process's sessions, the one with no ID yet takes the hook's (as `hookNative`), and is
-  found by it from then on. Two such sessions at once (two threads started before either's first
-  prompt, or after a daemon restart) can't be told apart: the hook speaks for neither until one
-  calls a Murmur tool, but both count as having a hook.
+  If that process has one session of the agent, with no ID yet, it takes the hook's (as
+  `hookNative`) and is found by it from then on. A process with several (T3's Codex threads) can't
+  be told apart, even when only one has no ID, since a thread whose MCP server hasn't reached the
+  daemon yet would look the same: the hook speaks for none until each calls a Murmur tool, but all
+  count as having a hook. The ID the MCP server learns overrides one taken from a hook (Sol's
+  review, 2026-11-09, found a wrong one could otherwise take another thread's notices).
 - **Hook not running.** A session of an agent join installs the hook in (Claude Code, Codex, Grok)
   that called one of Murmur's tools over a minute ago, with no hook of it reporting since the
   daemon started, is marked: `who` adds ", hook not running" to its line and tells a session its
