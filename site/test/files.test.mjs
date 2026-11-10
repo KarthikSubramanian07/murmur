@@ -44,7 +44,7 @@ test('the sitemap follows the sitemaps.org protocol and lists pages that exist',
     assert.match(lastmod ?? '', /^\d{4}-\d{2}-\d{2}$/, `${loc}'s lastmod`);
     assert.ok(!Number.isNaN(Date.parse(lastmod)) && lastmod <= today, `${loc}'s lastmod ${lastmod}`);
   }
-  for (const page of ['/', '/daemon/', '/setup', '/join', '/use']) assert.ok(seen.has(SITE + page), `${page} missing`);
+  for (const page of ['/', '/daemon/', '/about/', '/privacy/', '/contact/', '/setup', '/join', '/use']) assert.ok(seen.has(SITE + page), `${page} missing`);
 });
 
 test('robots.txt allows crawling and names the sitemap', () => {
@@ -74,6 +74,57 @@ test('the home page has its canonical URL, language and Open Graph tags', () => 
 
 test('the daemon page has its canonical URL, language and Open Graph tags', () => {
   checkMeta(read('daemon/index.html'), `${SITE}/daemon/`);
+});
+
+// The words a reader sees: the body, without scripts, styles, drawings or tags.
+function visibleText(html) {
+  const body = /<body[^>]*>([\s\S]*)<\/body>/.exec(html)?.[1] ?? '';
+  return body
+    .replace(/<(script|style|svg|noscript)\b[\s\S]*?<\/\1>/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&[a-z]+;|&#\d+;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// About, Privacy and Contact: what an agent or a person checks before trusting the site.
+for (const [page, title] of [['about', /About/], ['privacy', /Privacy/], ['contact', /Contact/]]) {
+  test(`the ${page} page exists, has its metadata, and says something`, () => {
+    const file = `${page}/index.html`;
+    assert.ok(existsSync(join(root, file)), `${file} missing`);
+    const html = read(file);
+    checkMeta(html, `${SITE}/${page}/`);
+    assert.match(/<title>([^<]+)<\/title>/.exec(html)?.[1] ?? '', title);
+    assert.match(html, /<meta name="description" content="[^"]{50,}">/);
+    const text = visibleText(html);
+    assert.ok(text.length >= 500, `${page} has ${text.length} characters of text`);
+    // A heading's name is its text alone; a subtitle goes beside it, not inside.
+    for (const [h2] of html.matchAll(/<h2>[\s\S]*?<\/h2>/g)) assert.match(h2, /^<h2>[^<]+<\/h2>$/, `${page}: ${h2}`);
+    // Its stylesheet is published with it.
+    for (const [, href] of html.matchAll(/<link rel="stylesheet" href="(\/[^"]+)">/g)) assert.ok(existsSync(source(SITE + href)), `${href} missing`);
+  });
+}
+
+test('the privacy page dates itself and points at join.md as the full account', () => {
+  const html = read('privacy/index.html');
+  assert.match(visibleText(html), /As of \d{4}-\d{2}-\d{2}/);
+  assert.ok(html.includes('docs/agents/join.md#what-murmurafigdev-receives-and-why'));
+  // Every host the page names as one a browser contacts is one the page really loads.
+  for (const host of ['fonts.googleapis.com', 'fonts.gstatic.com']) assert.ok(html.includes(`href="https://${host}`), host);
+});
+
+test('every page ends with the same links, and each one leads somewhere', () => {
+  const pages = ['index.html', 'daemon/index.html', 'about/index.html', 'privacy/index.html', 'contact/index.html'];
+  for (const file of pages) {
+    const html = read(file);
+    const foot = /<footer class="site-foot">([\s\S]*?)<\/footer>/.exec(html)?.[1];
+    assert.ok(foot, `${file} has no footer`);
+    // After <main>, so it is the page's contentinfo landmark.
+    assert.ok(html.indexOf('<footer class="site-foot">') > html.lastIndexOf('</main>'), `${file}'s footer is inside <main>`);
+    const hrefs = [...foot.matchAll(/<a href="([^"]+)"/g)].map(m => m[1]);
+    assert.deepEqual(hrefs, ['/about/', '/privacy/', '/contact/', 'https://github.com/a-Fig/murmur'], file);
+    for (const href of hrefs.filter(h => h.startsWith('/'))) assert.ok(existsSync(source(SITE + href)), `${href} has no page`);
+  }
 });
 
 test('the home page\'s JSON-LD parses, says what Murmur is, and uses words the page uses', () => {
