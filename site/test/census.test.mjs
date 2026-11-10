@@ -26,7 +26,7 @@ process.env.GIT_CONFIG_NOSYSTEM = '1';
 // Run in Actions, the tests' runs would write to the job's own summary. The tests that read one set
 // their own.
 delete process.env.GITHUB_STEP_SUMMARY;
-const { main, count, authors, contributors, apiLookup, tooBig, summary, census: readRepo } = await import('../census/census.mjs');
+const { main, count, authors, contributors, apiLookup, tooBig, summaryHead, summaryRow, census: readRepo } = await import('../census/census.mjs');
 
 const today = new Date().toISOString().slice(0, 10);
 const daysAgo = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
@@ -410,8 +410,10 @@ test("the run's summary has a row for each repo, its counts or why it has none, 
   await main(names, { read });
   const lines = written().split('\n');
   assert.match(lines[0], /^## Census, \d{4}-\d\d-\d\d \d\d:\d\d UTC$/);
-  assert.equal(lines[2], '4 repos: 2 sent, 1 skipped, 1 not read.');
-  assert.deepEqual(lines.slice(4), [
+  assert.deepEqual(lines.slice(1), [
+    '',
+    '4 repos to count.',
+    '',
     '| Repo | Result | Devices | People | Matched to an account | Sessions | Messages | Records | Contributors | Days |',
     '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
     '| [a/one](https://github.com/a/one) | sent | 1 | 1 | 0 | 1 | 2 | 3 | 0 | 1 |',
@@ -420,7 +422,31 @@ test("the run's summary has a row for each repo, its counts or why it has none, 
     '| [d/four](https://github.com/d/four) | sent | 1 | 1 | 0 | 1 | 2 | 3 | 3 | 1 |',
     '| **Total** | 2 sent | 2 | 2 | 0 | 2 | 4 | 6 | 3 | 2 |',
     '',
+    '4 repos: 2 sent, 1 skipped, 1 not read.',
+    '',
   ]);
+});
+
+test("each repo's row is in the summary as soon as it is done, so a run cut off keeps what it did", async t => {
+  const names = ['github.com/a/one', 'github.com/b/two', 'github.com/c/three'];
+  site(t, recordingD1(names));
+  const written = stepSummary(t);
+  // What the summary held as each repo was started. The third never finishes, as when the job is
+  // cancelled at its timeout while a repo is read.
+  const seen = [];
+  let stuck;
+  const reached = new Promise(resolve => (stuck = resolve));
+  const read = name => {
+    seen.push(written());
+    if (name.endsWith('three')) return stuck(), new Promise(() => {});
+    return tooSlow(name);
+  };
+  main(names, { read });
+  await reached;
+  assert.match(seen[0], /\n3 repos to count\.\n\n\| Repo \|.*\n\| --- \|.*\n$/);
+  assert.match(seen[1], /\n\| \[a\/one\]\(https:\/\/github\.com\/a\/one\) \| sent \| 1 \|.*\n$/);
+  assert.match(seen[2], /\n\| \[b\/two\]\(https:\/\/github\.com\/b\/two\) \| skipped: took too long to count \|.*\n$/);
+  assert.doesNotMatch(seen[2], /Total/);
 });
 
 test("a run that fails for a repo the site refused still writes its summary, with the site's answer", async t => {
@@ -430,15 +456,25 @@ test("a run that fails for a repo the site refused still writes its summary, wit
   const written = stepSummary(t);
   await assert.rejects(main(names, { read: name => counts(name, name.endsWith('two') ? { days: early } : {}) }), /1 of 2 repos counted but not sent/);
   const out = written();
-  assert.ok(out.includes('2 repos: 1 sent, 1 not sent.'), out);
+  assert.ok(out.endsWith('\n2 repos: 1 sent, 1 not sent.\n'), out);
   assert.ok(out.includes('| [b/two](https://github.com/b/two) | not sent: /v1/census: 400 Not counts: totals days. | 1 | 1 | 0 | 1 | 2 | 3 | 0 | 1 |'), out);
   assert.ok(out.includes('| **Total** | 1 sent | 1 | 1 | 0 | 1 | 2 | 3 | 0 | 1 |'), out);
 });
 
+test('a dry run says in its summary that it counted and sent nothing', async t => {
+  const db = recordingD1(['github.com/a/one']);
+  site(t, db);
+  const written = stepSummary(t);
+  await main(['--dry', 'github.com/a/one'], { read: name => counts(name) });
+  const out = written();
+  assert.ok(out.includes('| [a/one](https://github.com/a/one) | counted: not sent (--dry) | 1 | 1 | 0 | 1 | 2 | 3 | 0 | 1 |\n'), out);
+  assert.ok(out.endsWith('| **Total** | 1 counted | 1 | 1 | 0 | 1 | 2 | 3 | 0 | 1 |\n\n1 repo: 1 counted.\n'), out);
+  assert.equal(db.batches.length, 0);
+});
+
 test("a reason in the summary stays on its line and in its cell, whatever git or the site said", () => {
-  const out = summary([{ name: 'github.com/a/one', kind: 'not read', why: 'fatal: one\n| two | <img src=x> [link](https://x) `code` **bold**' }], new Date(NOW));
-  assert.equal(out.split('\n')[6],
-    '| [a/one](https://github.com/a/one) | not read: fatal: one \\| two \\| \\<img src=x\\> \\[link\\](https://x) \\`code\\` \\*\\*bold\\*\\* |  |  |  |  |  |  |  |  |');
-  assert.equal(summary([], new Date(NOW)), '## Census, 2026-11-09 12:00 UTC\n\nNo repos listed.\n');
+  assert.equal(summaryRow({ name: 'github.com/a/one', kind: 'not read', why: 'fatal: one\n| two | <img src=x> [link](https://x) `code` **bold**' }),
+    '| [a/one](https://github.com/a/one) | not read: fatal: one \\| two \\| \\<img src=x\\> \\[link\\](https://x) \\`code\\` \\*\\*bold\\*\\* |  |  |  |  |  |  |  |  |\n');
+  assert.equal(summaryHead(0, new Date(NOW)), '## Census, 2026-11-09 12:00 UTC\n\nNo repos listed.\n');
 });
 
