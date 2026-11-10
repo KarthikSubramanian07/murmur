@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Max is the size past which daemon.log moves to daemon.log.old: when a daemon starts
@@ -36,13 +37,17 @@ type Writer struct {
 	path string // "" when out isn't the file at path, such as a terminal: then nothing is moved
 	size int64
 	max  int64
-	// retry is when to try moving the file aside again, after emptying it failed.
-	retry time.Time
+	// retry is when to try moving the file aside again, after emptying it failed. Until it is
+	// emptied, a write that would take it past max is dropped, and dropped counts its bytes.
+	retry   time.Time
+	dropped int64
+	// truncate is os.Truncate, but for the tests.
+	truncate func(string, int64) error
 }
 
 // New returns a Writer to out that keeps the file at path under max bytes, if out is that file.
 func New(out *os.File, path string, max int64) *Writer {
-	w := &Writer{out: out, max: max}
+	w := &Writer{out: out, max: max, truncate: os.Truncate}
 	if fi, ok := same(out, path); ok {
 		w.path, w.size = path, fi.Size()
 	}
@@ -71,12 +76,19 @@ func (w *Writer) Write(p []byte) (int, error) {
 		p = []byte(Redact(string(p)))
 	}
 	if len(p) > MaxRecord {
-		p = append(p[:MaxRecord:MaxRecord], fmt.Sprintf("… (%d more bytes not logged)\n", len(p)-MaxRecord)...)
+		cut := MaxRecord
+		for cut > 0 && !utf8.RuneStart(p[cut]) {
+			cut-- // not inside a character
+		}
+		p = append(p[:cut:cut], fmt.Sprintf("… (%d more bytes not logged)\n", len(p)-cut)...)
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.path != "" && w.size > 0 && w.size+int64(len(p)) > w.max && !time.Now().Before(w.retry) {
-		w.rotate()
+	if w.path != "" && w.size > 0 && w.size+int64(len(p)) > w.max {
+		if time.Now().Before(w.retry) || !w.rotate() {
+			w.dropped += int64(len(p)) // the file couldn't be emptied: it stays at its limit
+			return n, nil
+		}
 	}
 	m, err := w.out.Write(p)
 	w.size += int64(m)
@@ -90,26 +102,34 @@ func (w *Writer) Write(p []byte) (int, error) {
 // update, moves the file aside itself when it starts; this one then stops moving it, rather than
 // empty the file the new daemon writes. A copy that fails doesn't stop the emptying: the limit
 // holds, what the file held is lost, and a line at its start says so. Emptying that fails leaves the
-// size as it is and tries again in a minute, not on every line, since each try copies the file.
+// size as it is and tries again in a minute, not on every line, since each try copies the file;
+// meanwhile the lines that don't fit are dropped, and once it is emptied a line says how much.
 // What reaches the file other than through this Writer while it is copied (a panic's trace, a
-// starter's line) is lost when it is emptied. Caller holds mu.
-func (w *Writer) rotate() {
+// starter's line) is lost when it is emptied. It says whether there is room now, which is so
+// unless emptying failed. Caller holds mu.
+func (w *Writer) rotate() bool {
 	if _, ok := same(w.out, w.path); !ok {
 		w.path, w.size = "", 0
-		return
+		return true
 	}
 	copyErr := copyFile(w.path, w.path+".old")
-	if err := os.Truncate(w.path, 0); err != nil {
+	if err := w.truncate(w.path, 0); err != nil {
 		w.retry = time.Now().Add(time.Minute)
-		return
+		return false
 	}
 	w.out.Seek(0, io.SeekStart)
 	w.size = 0
+	now := time.Now().Format("2006/01/02 15:04:05")
 	if copyErr != nil {
-		m, _ := fmt.Fprintf(w.out, "%s the log was emptied without its copy to %s.old: %v\n",
-			time.Now().Format("2006/01/02 15:04:05"), w.path, copyErr)
+		m, _ := fmt.Fprintf(w.out, "%s the log was emptied without its copy to %s.old: %v\n", now, w.path, copyErr)
 		w.size += int64(m)
 	}
+	if w.dropped > 0 {
+		m, _ := fmt.Fprintf(w.out, "%s %d bytes of log were dropped while it couldn't be emptied\n", now, w.dropped)
+		w.size += int64(m)
+		w.dropped = 0
+	}
+	return true
 }
 
 func copyFile(from, to string) error {

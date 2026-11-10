@@ -255,12 +255,12 @@ The daemon's log, `.git/murmur/daemon.log`, is its only record of what it did, s
 teammate is asked to send when their device misbehaves, maybe to someone off the team. So it can be
 shared: it names events by type, ID and address, never by what a message says, and each line the
 daemon's loggers write passes through `internal/logfile`, which takes the user and password, the
-query and the fragment out of any URL, and cuts a line at 64 KB (a starter's own lines and a panic's
-trace go to the file directly). It does name the
-clone's paths. Past 4 MB it moves to `daemon.log.old` when a daemon starts, and while it runs it is
-copied there and emptied, since Windows can't rename an open file; if the copy fails it is emptied
-anyway, with a line saying so. A daemon whose log was moved
-under it, as a later start does past 4 MB, stops moving it and writes on to the moved file. Until
+query and the fragment out of any URL, and cuts a line at 64 KB, with a note of how much it cut (a
+starter's own lines and a panic's trace go to the file directly). It does name the clone's paths.
+Past 4 MB it moves to `daemon.log.old` when a daemon starts, and while it runs it is copied there and
+emptied, since Windows can't rename an open file. If the copy fails it is emptied anyway, with a
+line saying so; if emptying fails, the lines that don't fit are dropped, and it is tried again a
+minute later. A daemon whose log was moved under it, as a later start does past 4 MB, stops moving it and writes on to the moved file. Until
 2026-11-09 it moved only at a start, so a daemon kept up for days by an open page grew it without
 limit.
 

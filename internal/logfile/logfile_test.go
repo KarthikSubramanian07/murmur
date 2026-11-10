@@ -1,6 +1,8 @@
 package logfile
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -8,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 )
 
 // open opens path as a starter opens daemon.log for a daemon's standard error: to append.
@@ -161,12 +165,26 @@ func TestCredentialsInURLsAreNotLogged(t *testing.T) {
 // git puts a remote's URL in its own messages, query and all, and a token can be in the query. What
 // git says when it can't reach such a remote reaches the log without the token.
 func TestATokenInARemotesQueryIsNotLogged(t *testing.T) {
-	out, err := exec.Command("git", "ls-remote", "http://127.0.0.1:1/repo?access_token=SENTINEL").CombinedOutput()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Fatal(err) // Murmur needs git, and so do its tests
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", "http://127.0.0.1:1/repo?access_token=SENTINEL")
+	// No user or system config, which could rewrite the URL, and no proxy, which could answer for it.
+	empty := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+empty, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0",
+		"http_proxy=", "https_proxy=", "HTTP_PROXY=", "HTTPS_PROXY=", "ALL_PROXY=", "all_proxy=", "NO_PROXY=*", "no_proxy=*")
+	cmd.WaitDelay = 5 * time.Second
+	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Skip("something answered on port 1")
 	}
 	if !strings.Contains(string(out), "SENTINEL") {
-		t.Skipf("git didn't say the URL: %q", out)
+		t.Fatalf("git didn't say the URL, so this checks nothing: %v, %q", err, out)
 	}
 	path := filepath.Join(t.TempDir(), "daemon.log")
 	l := log.New(New(open(t, path), path, Max), "", 0)
@@ -188,6 +206,43 @@ func TestOneBigWriteIsCut(t *testing.T) {
 	got := read(t, path)
 	if len(got) > MaxRecord+100 || !strings.HasSuffix(got, " more bytes not logged)\n") {
 		t.Fatalf("the log is %d bytes, ending %q", len(got), got[max(0, len(got)-60):])
+	}
+
+	// The cut falls between characters, not inside one.
+	path = filepath.Join(t.TempDir(), "daemon.log")
+	w = New(open(t, path), path, 4*MaxRecord)
+	w.Write([]byte(strings.Repeat("x", MaxRecord-1) + "€€\n"))
+	if got := read(t, path); !utf8.ValidString(got) || !strings.HasPrefix(got, strings.Repeat("x", MaxRecord-1)+"…") {
+		t.Fatalf("the cut line isn't whole characters: ends %q", got[max(0, len(got)-60):])
+	}
+}
+
+// When the log can't be emptied, a line that would take it past its limit is dropped, not written,
+// and once it can be, a line says how much was dropped.
+func TestALogThatCantBeEmptiedStaysAtItsLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.log")
+	w := New(open(t, path), path, 100)
+	failing := true
+	w.truncate = func(p string, n int64) error {
+		if failing {
+			return errors.New("refused")
+		}
+		return os.Truncate(p, n)
+	}
+	l := log.New(w, "", 0)
+	for i := range 12 {
+		l.Printf("line %02d, ten more bytes", i)
+	}
+	if fi, err := os.Stat(path); err != nil || fi.Size() > 100 {
+		t.Fatalf("the log grew past its limit while it couldn't be emptied: %v, %v", fi.Size(), err)
+	}
+	failing = false
+	w.mu.Lock()
+	w.retry = time.Time{} // the minute is up
+	w.mu.Unlock()
+	l.Printf("line %02d, ten more bytes", 12)
+	if got := read(t, path); !strings.Contains(got, "bytes of log were dropped") || !strings.HasSuffix(got, lines(12, 12)) {
+		t.Fatalf("once emptied, the log is %q", got)
 	}
 }
 
