@@ -648,9 +648,25 @@ in its own session.
   the claim as a name it couldn't have made. The first claim in the registry stands, and like a
   session's name it is never forgotten. So a message to an old name still reaches its owner, and a
   registry rewritten by an older daemon, which drops people's claims, is repaired with them. A name
-  held from before the claims has the first daemon to claim it keep it. The other person's page asks
+  held from before the claims has the first daemon to claim it keep it, and so has each name a
+  person had before a rename from then, which their own daemon still knows: once a gone presence no
+  longer holds such a name, only a claim keeps someone else from choosing it. The other person's page asks
   them for another, and until they choose one they can't send, as their messages would carry a name
   that reaches someone else. The cost: choosing a name needs the remote, as sending does.
+- **A name on a message or in a presence is only a claim** (2026-11-09). Any device can write a
+  message that says it is from `tyler`, or a presence that says its person is. A daemon gives a name
+  to the first device whose presence it sees with it, as for session names, and only a registry
+  claim moves it. A sync reads the registry and the presences before the logs (#304), so a claim is
+  known before any message, including a person's first one after choosing their name. A message's
+  name is never recorded, since one device could send a thousand, each with another name. It is
+  shown only if the sender holds the name, by a claim, in its live presence, or as a name a presence
+  of theirs first gave them, and isn't someone else's; otherwise the message is from its address. A presence counts only its first person. Once
+  the registry has been read, only a claim or a live presence makes a name taken on the page. While
+  another live presence says a person's name, every turn from it says which device sent it; the mark
+  goes when that presence does. The cost: a person on a daemon from before #272, with no claim, who
+  re-clones keeps resolving to the old device until they choose the name on a daemon from #272 on,
+  which claims it. Until then, messages to the name go to the old device, and theirs show from their
+  address.
 - **A person's direct message wakes a session past the "Within" window**, because they are waiting
   for an answer. It doesn't wake past Never or do not disturb, which a person also chose. A broadcast
   from a person wakes nothing extra: one sentence shouldn't wake every idle session on the mesh. The

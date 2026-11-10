@@ -93,6 +93,60 @@ func (d *Daemon) notePersonClaimLocked(name, addr string) bool {
 	return true
 }
 
+// notePersonLocked records that the person at addr goes by name, as their device's presence says.
+// The first address seen with a name keeps it, as for a session's name (noteNameLocked), and only
+// a claim in the registry, which stands over any sighting, gives it to another. A message's name
+// never comes here: one device can send any number of messages, each saying another name, and
+// would hold them all. A sync reads the registry before the presences, so a claim is known before
+// any presence says the name. It reports whether anything changed. Caller holds mu.
+func (d *Daemon) notePersonLocked(name, addr string) bool {
+	cur, ok := d.st.People[name]
+	switch {
+	case !ok:
+		d.st.People[name] = addr
+		return true
+	case cur == addr || d.personClashes[name]:
+		return false
+	}
+	if d.personClashes == nil {
+		d.personClashes = map[string]bool{}
+	}
+	d.personClashes[name] = true // logged once: a presence is read on each of its heartbeats
+	d.log.Printf("%s says its person is %s, which is the name of the person at %s; that one keeps it", addr, name, cur)
+	return false
+}
+
+// livePersonLocked is the name the live presence of the device at addr gives its person, "" if
+// there is none or it is stale. Caller holds mu.
+func (d *Daemon) livePersonLocked(addr string) string {
+	dev, _ := bus.SplitAddr(addr)
+	if dev == d.device {
+		return d.st.Person
+	}
+	p := d.peers[dev]
+	if p == nil || d.staleLocked(p) {
+		return ""
+	}
+	for _, s := range p.pres.Sessions {
+		if s.ID == bus.PersonSession {
+			return s.Name
+		}
+	}
+	return ""
+}
+
+// nameOnOthersLocked says a live presence of a device other than addr's says its person is name.
+// Caller holds mu.
+func (d *Daemon) nameOnOthersLocked(name, addr string) bool {
+	dev, _ := bus.SplitAddr(addr)
+	for other := range d.peers {
+		if other != dev && d.livePersonLocked(bus.Addr(other, bus.PersonSession)) == name {
+			return true
+		}
+	}
+	return dev != d.device && d.st.Person == name
+}
+
 // processNames reads the registry's tip into the set of used names. sha is the tip on the remote
 // and already fetched, "" if the listing didn't show the ref (which it checks again, if this
 // daemon has read the registry before). Caller holds advMu.
@@ -274,7 +328,7 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	changed = changed || repair != wasRepair
 	// The claim of a name from before people were in the registry waits for this first read (see
 	// nextNames), and nothing else would wake the assigner for it.
-	claim := !checked && d.st.Person != "" && d.st.PersonClaims[d.st.Person] == ""
+	claim := !checked && len(d.unclaimedPersonNamesLocked()) > 0
 	d.namesChecked = true
 	if changed {
 		d.saveLocked()
@@ -401,11 +455,34 @@ type nameWork struct {
 	wants   []wanted
 	reserve int
 	repair  bool
-	person  string // this device's person's name, to claim for them (#268)
+	person  []string // this device's person's names, to claim for them (#268)
 }
 
 func (w nameWork) empty() bool {
-	return len(w.binds) == 0 && len(w.wants) == 0 && w.reserve == 0 && !w.repair && w.person == ""
+	return len(w.binds) == 0 && len(w.wants) == 0 && w.reserve == 0 && !w.repair && len(w.person) == 0
+}
+
+// unclaimedPersonNamesLocked is this device's person's names that nobody has claimed in the
+// registry: their name, and the names they had before people were in the registry, which People
+// keeps for them here. #272 claims a name when it is chosen, and a renamed person keeps their old
+// one; a name left from a rename before #272 was never claimed, and once the registry is read only a
+// claim or a live presence holds a name (nameTakenLocked), so without a claim of its own another
+// person could choose it, and messages to it would reach them. Caller holds mu.
+func (d *Daemon) unclaimedPersonNamesLocked() []string {
+	if d.st.Person == "" {
+		return nil
+	}
+	var out []string
+	if d.st.PersonClaims[d.st.Person] == "" {
+		out = append(out, d.st.Person)
+	}
+	me := d.personAddr()
+	for _, name := range sortedKeys(d.st.People) {
+		if name != d.st.Person && d.st.People[name] == me && d.st.PersonClaims[name] == "" && bus.ValidPerson(name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // nameForKeyLocked is the name for a session of key, id: the name the key has, else the oldest in
@@ -463,10 +540,10 @@ func (d *Daemon) nextNames() nameWork {
 		w.reserve = d.opt.NamePool - len(d.st.NamePool)
 	}
 	w.repair = d.st.NamesRepair
-	if d.st.Person != "" && d.st.PersonClaims[d.st.Person] == "" && d.namesChecked {
-		// A name from before people were in the registry. Only once the registry is read: until
+	if d.namesChecked {
+		// Names from before people were in the registry. Only once the registry is read: until
 		// then, a claim made before this one isn't known to be there.
-		w.person = d.st.Person
+		w.person = d.unclaimedPersonNamesLocked()
 	}
 	return w
 }
@@ -568,12 +645,12 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		reserved = append(reserved, name)
 		recs = append(recs, rec(name, ""))
 	}
-	person := w.person
-	if people[person] != "" {
-		person = "" // claimed already: by this person, or first by someone else, who keeps it
-	}
-	if person != "" {
-		recs = append(recs, rec(person, bus.PersonSession))
+	var person []string
+	for _, name := range w.person {
+		if people[name] == "" { // else claimed already: by this person, or first by someone else, who keeps it
+			person = append(person, name)
+			recs = append(recs, rec(name, bus.PersonSession))
+		}
 	}
 	parent := tip
 	if parent != "" {
@@ -660,9 +737,9 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		}
 		d.log.Printf("session %s is named %s", addr, name)
 	}
-	if person != "" {
-		d.notePersonClaimLocked(person, d.personAddr())
-		d.noteLocked(at, rec(person, bus.PersonSession).Subject())
+	for _, name := range person {
+		d.notePersonClaimLocked(name, d.personAddr())
+		d.noteLocked(at, rec(name, bus.PersonSession).Subject())
 	}
 	for _, name := range reserved {
 		d.noteNameLocked(name, "")

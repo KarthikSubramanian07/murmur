@@ -25,6 +25,17 @@ func TestTurnFromAPerson(t *testing.T) {
 	if got := Turn(m); got != want {
 		t.Errorf("later turn:\n%s\nwant:\n%s", got, want)
 	}
+
+	// A name seen on more than one device doesn't say who sent it, so every turn names the device.
+	m.FromDevice = "dev-0001"
+	want = "Message from ada [human] (from device dev-0001) via " + name + ":\n\nlook at this\n\nplease\n\n" + last
+	if got := Turn(m); got != want {
+		t.Errorf("a later turn from a name on two devices:\n%s\nwant:\n%s", got, want)
+	}
+	m.Introduced = false
+	if got := Turn(m); !strings.Contains(got, "(on "+name+"'s page, on smash's machine, from device dev-0001)") {
+		t.Errorf("a first turn from a name on two devices:\n%s", got)
+	}
 }
 
 func TestPeopleAreNotCalledAgents(t *testing.T) {
