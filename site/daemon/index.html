@@ -163,8 +163,6 @@
   svg .pale { fill: #C3C9DC; }
   /* Red words: darkened with ink to 4.5:1 on the cream tags and butter rows (shapes keep C.red). */
   svg .red { fill: color-mix(in srgb, var(--red) 82%, var(--ink)); }
-  /* The stale clock's red, on the blue: pale enough for 3:1 at its size. */
-  svg .red-lt { fill: color-mix(in srgb, var(--red) 30%, var(--cream)); }
   svg .blue { fill: var(--blue); }
   svg .bink { fill: var(--badge-ink); }
 
@@ -1048,6 +1046,8 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
     // Rings: a countdown drawn round a part.
     const ring = () => S('circle', { fill: 'none', stroke: C.butter, 'stroke-width': 5, pathLength: 1, 'stroke-linecap': 'round', display: 'none', transform: '' }, lTop);
     const graceRing = ring(), exitRing = ring();
+    // Red on the blue can't reach 3:1, so the stale clock goes red on a cream backing, as the "stale" tag does.
+    const bigBack = S('rect', { rx: 12, fill: C.cream, display: 'none' }, lTop);
     const bigNum = text(lTop, 0, 0, '', { size: L.stale.size, cls: 'b butter', anchor: 'middle', fixed: true });
     bigNum.e.setAttribute('style', 'letter-spacing:-.04em;font-variant-numeric:tabular-nums');
     const bigLab = text(lTop, 0, 0, '', { size: fs.small, cls: 'm cream', anchor: 'middle' });
@@ -1583,7 +1583,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       if (showClock > 0) {
         const mm = Math.floor(readerMin), secs = Math.floor((readerMin - mm) * 60);
         setStr(bigNum, `${mm}:${String(secs).padStart(2, '0')}`);
-        A(bigNum.e, 'x', L.stale.x); A(bigNum.e, 'y', L.stale.y); A(bigNum.e, 'class', readerMin >= 6 ? 'b red-lt' : 'b butter');
+        A(bigNum.e, 'x', L.stale.x); A(bigNum.e, 'y', L.stale.y); A(bigNum.e, 'class', readerMin >= 6 ? 'b red' : 'b butter');
         setStr(bigLab, L.tall ? 'since Sam\'s presence changed' : 'since Sam\'s presence changed, by this clock');
         A(bigLab.e, 'x', L.stale.x); A(bigLab.e, 'y', L.stale.ly);
       }
@@ -1597,6 +1597,9 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
         setStr(bigLab, 'no sessions, no open page');
         A(bigLab.e, 'x', L.tall ? 890 : 1170); A(bigLab.e, 'y', L.tall ? 632 : 616);
       }
+      const backed = showClock > 0 && readerMin >= 6 && !showExit;
+      if (backed) { const b = bigNum.e.getBBox(), p = b.height * .16; A(bigBack, 'x', fmt(b.x - 2 * p)); A(bigBack, 'y', fmt(b.y + p / 2)); A(bigBack, 'width', fmt(b.width + 4 * p)); A(bigBack, 'height', fmt(b.height - p)); }
+      O(bigBack, backed ? showClock : 0);
       O(bigNum.e, Math.max(showClock, showExit ? 1 : 0));
       O(bigLab.e, Math.max(showClock, showExit ? 1 : 0));
       if (L.tall) O(parts.tape, levelOf('tape', t) * (1 - showClock));
@@ -2082,6 +2085,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
     const logC = mkCard([['git log refs/murmur/mesh/', 'butter'], ['        bob-laptop-3f2a', 'butter'], ['', ''], ['bob-laptop-3f2a/3f9a1c ->', 'cream'], ['alice-mbp-91c0/7bd204:', 'cream'], ['Are you changing the auth', 'cream'], ['middleware?', 'cream']], C.ink);
 
     // Big readouts: the poll rate, a clock, a countdown.
+    const bigBack = S('rect', { rx: 10, fill: C.cream, display: 'none' }, L3); // the stale clock's backing
     const bigN = tx(L3, 'b butter', 48, '', 'middle');
     bigN.setAttribute('style', 'letter-spacing:-.03em;font-variant-numeric:tabular-nums');
     const bigL = tx(L3, 'm cream', 14, '', 'middle');
@@ -2312,7 +2316,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       if (!opts.fit) svg.parentNode.style.clipPath = `inset(${Math.max(0, st.top - 12).toFixed(1)}px 0 0 0)`;
       spotN = 0; lineUsed.clear(); tagUsed.clear();
       A(pill.g, 'display', 'none'); [nA, nS, nT].forEach(n => A(n.g, 'display', 'none'));
-      O(bigN, 0); O(bigL, 0); O(bigDot, 0); A(ring, 'display', 'none');
+      O(bigN, 0); O(bigL, 0); O(bigDot, 0); O(bigBack, 0); A(ring, 'display', 'none');
       const W = (c, a, b) => clamp((t - T[c] - a) / (b - a));
       const IN = (c, a, b) => t >= T[c] + a && t < T[c] + b;
       const cx = Ar.x + Ar.w / 2;
@@ -2523,7 +2527,8 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       // presence: a clock since Sam's last heartbeat.
       if (t >= at('presence') && t < at('names', BL)) {
         const b = st.big, show = b.o * W('presence', .2, .28);
-        setT(bigN, mmss(since)); A(bigN, 'font-size', 52); A(bigN, 'class', since >= 6 ? 'b red-lt' : 'b butter'); XY(bigN, b.cx, b.y + 50); O(bigN, show);
+        setT(bigN, mmss(since)); A(bigN, 'font-size', 52); A(bigN, 'class', since >= 6 ? 'b red' : 'b butter'); XY(bigN, b.cx, b.y + 50); O(bigN, show);
+        if (since >= 6 && show > 0) { const r = bigN.getBBox(), p = r.height * .16; BOX(bigBack, r.x - 2 * p, r.y + p / 2, r.width + 4 * p, r.height - p); O(bigBack, show); }
         setT(bigL, 'since Sam\'s presence changed'); XY(bigL, b.cx, b.y + 74); O(bigL, show);
       }
       // names: two daemons claim one name; the second push is refused and tries another.
