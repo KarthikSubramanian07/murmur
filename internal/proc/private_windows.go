@@ -59,7 +59,7 @@ func Protect(dir string) error {
 	if err := probe(abs); err != nil {
 		if rerr := restore(abs, before); rerr != nil {
 			return fmt.Errorf("this user couldn't write in %s with its new access list (%v), and its old list couldn't be put back (%v): "+
-				"the user may be shut out of it; from an account that can, run icacls %q /reset /t", abs, err, rerr, abs)
+				"the user may be shut out of it; from an account that can, run icacls \"%s\" /reset /t", abs, err, rerr, abs)
 		}
 		return fmt.Errorf("%s left as it was: this user couldn't write in it with its new access list: %w", abs, err)
 	}
