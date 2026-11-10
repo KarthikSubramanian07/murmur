@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"bufio"
-	"cmp"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -441,6 +440,22 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 		return proto.Response{OK: true, Self: from, Events: append([]proto.EventView(nil), events...)}
 
+	case proto.OpPageKey:
+		// Another clone's daemon asks, to send its page's tab here (#348). It has the sessions'
+		// token, from this clone's daemon.json, so it could do more than this already.
+		page := d.page.Load()
+		if page == nil {
+			return fail("this daemon isn't serving the page")
+		}
+		// Under mu, as the restart onto an update decides, so no key is made after it has looked
+		// for keys still out: the next daemon's page wouldn't know it (Sol's review, 2026-11-09).
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if d.updating {
+			return fail(proto.ErrRestarting)
+		}
+		return proto.Response{OK: true, PageKey: page.PageKey()}
+
 	case proto.OpStop:
 		d.log.Printf("stop requested")
 		d.stop()
@@ -453,7 +468,8 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 // marks them told, with how many it has unread when that is news. The hook calls it after a prompt
 // or a tool call, so the session is at work (see touchHookLocked); the hook knows only Claude
 // Code's session ID, and its process: with them, the sessions of that process follow the hook to
-// the ID it reports (see hookSessionsLocked), and a hook that matches nothing gets nothing.
+// the ID it reports (see hookSessionsLocked), and a hook that matches nothing gets nothing. In Pi
+// it knows the session's file instead (nativeSessionsLocked).
 //
 // A message that would have gone in as a turn, but for the session being at work, is Held: it goes
 // in as one when the turn ends if it is still unread (#202). The count is told with each new
@@ -468,7 +484,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var ids []string
-	if req.ClaudeSession != "" {
+	if hookReq(req) {
 		for _, s := range d.touchHookLocked(req) {
 			ids = append(ids, s.id)
 			if validTranscript(req.Transcript) && !req.Subagent && s.transcript != req.Transcript {
@@ -510,9 +526,9 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		if s := d.sessions[id]; s != nil {
 			told = append(told, s)
 		}
-		// Only the hook shows a message whole: a request without its Claude Code session isn't one,
+		// Only the hook shows a message whole: a request that names no client's session isn't one,
 		// and a hook that doesn't say it prints Read (req.Whole) would lose it (#229).
-		printsWhole := req.ClaudeSession != "" && req.Whole
+		printsWhole := hookReq(req) && req.Whole
 		busyWhole := wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
 			if m.Pushing {
@@ -573,6 +589,11 @@ func subjectOnly(m *inMsg) bool {
 	return strings.TrimSpace(bus.Text(m.Event.Body, bus.MaxBody)) == ""
 }
 
+// hookReq says req is from the hook, which names its session by its client's ID for it: Claude
+// Code's, or another agent's own (Native, Pi's from Murmur's extension). A request with neither
+// names the session it is from (Session), as the MCP server's do.
+func hookReq(req proto.Request) bool { return req.ClaudeSession != "" || req.Native != "" }
+
 // turnEnd is the hook at the end of a turn (Claude Code's Stop). The messages the sessions it
 // speaks for were told of while at work and haven't read, and those that came during the turn and
 // weren't told, however long it took, would go in as a turn now (#202). Where the hook can keep the
@@ -582,7 +603,7 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if req.ClaudeSession == "" || req.Subagent {
+	if !hookReq(req) || req.Subagent {
 		return proto.Response{OK: true}
 	}
 	var given []delivery
@@ -637,7 +658,12 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	if len(req.Body) > maxBody {
 		return fail(fmt.Sprintf("not sent: the body is over %d KB, and the bus keeps everything forever", maxBody>>10))
 	}
-	if err := scrub.Check(subject, req.Body); err != nil {
+	// The body goes on the bus as readers will show it, so what the sender sent is what everyone
+	// reads, and it is cleaned before scrub looks: a key with a zero-width space in it is still a
+	// key once a reader drops the space. What was sent is checked too: dropping a format character
+	// can join a key to the next word, and AKIA…EXAMPLE<U+200B>note then ends in no word boundary.
+	body := bus.Text(req.Body, maxBody)
+	if err := scrub.Check(subject, body, req.Subject, req.Body); err != nil {
 		return fail(err.Error())
 	}
 	// A name is an address: it is turned into the session's device/session here, and that is what
@@ -718,7 +744,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		}
 	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, At: time.Now().UTC(),
-		To: to, Subject: subject, Body: req.Body}
+		To: to, Subject: subject, Body: body}
 	if bus.IsPerson(from) {
 		d.mu.Lock()
 		e.Person = d.st.Person
@@ -799,12 +825,18 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 			}
 			name = byAddr[e.From]
 		}
+		var device string
 		if bus.IsPerson(e.From) {
-			// A person's device may be gone from presence: the message says who sent it.
-			agent, name = bus.AgentPerson, cmp.Or(e.Person, name, d.personNameOfLocked(e.From))
+			// A person's device may be gone from presence: the message says who sent it, if that
+			// name is theirs.
+			var onMany bool
+			agent = bus.AgentPerson
+			if name, onMany = d.personSenderLocked(e); onMany {
+				device, _ = bus.SplitAddr(e.From)
+			}
 		}
 		v := proto.MessageView{ID: e.ID, From: e.From, FromName: name, FromAgent: agent, FromBranch: branch,
-			FromOwner: d.ownerOfLocked(e.From), To: e.To, Subject: e.Subject, At: e.At}
+			FromOwner: d.ownerOfLocked(e.From), FromDevice: device, To: e.To, Subject: e.Subject, At: e.At}
 		if withBody {
 			v.Body = e.Body
 			v.Told = m.NoticedAt
@@ -850,7 +882,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 				continue
 			}
 			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: bus.Addr(id, s.ID), Name: s.Name,
-				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: s.Started, LastActive: peerActive(p, s),
+				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: peerStarted(p, s), LastActive: peerActive(p, s),
 				Tags: s.Tags, HookOff: s.HookOff})
 		}
 		if !filter.Empty() && len(dv.Sessions) == 0 {

@@ -797,6 +797,62 @@ a.g-pr:hover {
 .sidebar-header .icon-btn {
   margin-left: auto;
 }
+/* The repo picker (#348): the repo's name, which opens this machine's other joined repos. It sits
+ * where the product's name was, beside the mark, and takes the sidebar's colors in every theme. */
+.repo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  height: 1.75rem;
+  margin-left: -0.375rem;
+  padding: 0 0.375rem;
+  border-radius: var(--control-radius);
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--sidebar-foreground);
+  transition: background-color 0.15s var(--ease);
+}
+.repo-btn:hover,
+.repo-btn[aria-expanded="true"] {
+  background: var(--sidebar-row-hover);
+}
+.repo-btn .icon {
+  flex-shrink: 0;
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--sidebar-icon);
+}
+.repo-menu {
+  width: 16rem;
+}
+.repo-row {
+  min-height: 2rem;
+  color: var(--foreground);
+}
+.repo-row:disabled {
+  opacity: 0.5;
+}
+.repo-row .dot.ok {
+  background: var(--success);
+}
+.repo-row > .icon {
+  flex-shrink: 0;
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--muted-foreground);
+}
+.repo-row-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.repo-path {
+  font-size: 0.6875rem;
+  color: var(--muted-foreground);
+}
 .conn-badge {
   display: inline-flex;
   align-items: center;

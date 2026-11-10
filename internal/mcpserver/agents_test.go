@@ -40,6 +40,24 @@ func TestHelloTakesTheSessionFromTheAgentsVariable(t *testing.T) {
 	}
 }
 
+// Pi's hello carries the socket Murmur's extension opened in the session, the way Claude Code's
+// carries its messaging socket, and no other agent takes those variables.
+func TestPiHelloCarriesTheExtensionsSocket(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/claude.sock")
+	t.Setenv("CLAUDE_CODE_MESSAGING_TOKEN", "tok")
+	t.Setenv("MURMUR_PI_MESSAGING_SOCKET", "/tmp/murmur-pi-1.sock")
+	t.Setenv("MURMUR_PI_MESSAGING_TOKEN", "pi-tok")
+	t.Setenv("MURMUR_PI_SESSION_FILE", "/home/u/.pi/agent/sessions/a.jsonl")
+	if h := helloFor("pi", "/work"); h.MsgSocket != "/tmp/murmur-pi-1.sock" || h.MsgToken != "pi-tok" || h.Native == "" {
+		t.Errorf("pi: %+v", h)
+	}
+	for _, agent := range []string{"muse", "grok", "opencode", "codex"} {
+		if h := helloFor(agent, "/work"); h.MsgSocket != "" || h.MsgToken != "" {
+			t.Errorf("%s took a socket: %+v", agent, h.Route)
+		}
+	}
+}
+
 func openCodeCall(session string) *mcp.CallToolRequest {
 	req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "who"}}
 	if session != "" {

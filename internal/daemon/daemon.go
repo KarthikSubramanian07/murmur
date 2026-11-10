@@ -22,6 +22,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
@@ -120,6 +121,12 @@ type Options struct {
 	// page (#240). The daemon adds whether an installed update is waiting. The page calls for
 	// it every few seconds, so it must not reach the network.
 	Version func() web.Version
+	// Clones, if set, is the user's record of this machine's joined clones (internal/clones): the
+	// daemon adds its clone there as it starts, so a clone that joined before the record existed
+	// is on it too. Tests leave it unset.
+	Clones string
+	// Repos, if set, lets the page list this machine's clones and switch to another's page (#348).
+	Repos web.Repos
 }
 
 const defaultPageAddr = "127.0.0.1:0"
@@ -275,6 +282,12 @@ type Daemon struct {
 	owner   string
 	token   string // the sessions' secret, in daemon.json
 	pageTok string // the page's secret (#42): the address carries it, so it opens the page, not the sessions' port
+	// repoName is the repository's name from its remote's address, which the page's repo picker
+	// shows.
+	repoName string
+	// page is the page's server, nil until it is made and when the page isn't served. OpPageKey
+	// asks it for a key.
+	page    atomic.Pointer[web.Server]
 	started time.Time
 	log     *log.Logger
 
@@ -313,6 +326,9 @@ type Daemon struct {
 	// namesChecked says the registry has been looked at since this daemon started, even if its
 	// tip is the one state.json recorded.
 	namesChecked bool
+	// personClashes is the people's names a second device's presence has said since this daemon
+	// started, logged once each (see notePersonLocked).
+	personClashes map[string]bool
 	// lastPage is when a page someone can see last called its API, zero if none has. msgs is the
 	// page's messages, oldest first, msgSeq the number of the newest and msgIDs the IDs in msgs.
 	lastPage time.Time
@@ -547,8 +563,10 @@ type state struct {
 	LastSync time.Time `json:"lastSync"`
 
 	// Person is the name this device's human chose on the page, "" until they do, and PersonSince
-	// is when (#242). People is the address of every person's name this daemon has seen, in presence
-	// or on a message. It only grows, so a person's earlier name still reaches them.
+	// is when (#242). People is the address of every person's name this daemon has seen in a presence
+	// or the registry: the first address seen with it, unless the registry gives the name to another
+	// (see notePersonLocked). A message's name never goes in it. It only grows, so a person's earlier
+	// name still reaches them.
 	Person      string            `json:"person,omitempty"`
 	PersonSince time.Time         `json:"personSince,omitzero"`
 	People      map[string]string `json:"people,omitempty"`
@@ -631,6 +649,11 @@ func Run(ctx context.Context, opt Options) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	// On every start, before daemon.json is written: a directory an older version made is
+	// tightened too. A clone whose state another user made can't be, and runs as before.
+	if err := proc.Protect(dir); err != nil {
+		opt.Log.Printf("keeping other users out of %s: %v", dir, err)
+	}
 	lock, err := proc.Lock(filepath.Join(dir, "daemon.lock"))
 	if errors.Is(err, proc.ErrLocked) {
 		return ErrRunning
@@ -704,13 +727,19 @@ func Run(ctx context.Context, opt Options) error {
 		d.log.Printf("page for humans on %s", info.Web)
 	}
 
+	if d.opt.Clones != "" {
+		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName}); err != nil {
+			d.log.Printf("this clone isn't on the record of this machine's clones, so other clones' pages can't switch to it: %v", err)
+		}
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	d.bgCtx = ctx
-	go d.serve(ctx, ln)
 	if pageLn != nil {
-		d.servePage(ctx, pageLn)
+		d.servePage(ctx, pageLn) // first, so a page key asked for at once finds the page
 	}
+	go d.serve(ctx, ln)
 	// Tracked, as the syncs it runs start background work of their own (clearOwnJunk).
 	d.bg.Add(1)
 	go func() {
@@ -848,6 +877,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		return nil, err
 	}
 	d.owner = d.repo.Config(ctx, "user.name")
+	d.repoName = clones.NameOf(d.repo.Config(ctx, "remote."+d.repo.Remote+".url"))
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}
@@ -1142,6 +1172,10 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	tmp := path + ".tmp"
+	// Made new each time, never truncated: a file keeps the access list it was made with, and on
+	// Windows a temporary file left by a crash from before .git\murmur was protected would carry
+	// an open one onto daemon.json (see proc.Protect).
+	os.Remove(tmp)
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
@@ -1177,7 +1211,9 @@ func (d *Daemon) restartWhenIdle(ctx context.Context) {
 			return
 		}
 		d.updateReady = true
-		if len(d.pushing) == 0 && (d.restartAsked || !d.pageOpenLocked(time.Now())) {
+		// A page key handed out for a tab on its way here (#348) dies with this daemon's page server:
+		// the restart waits out its minute, so the tab isn't turned away.
+		if len(d.pushing) == 0 && (d.restartAsked || !d.pageOpenLocked(time.Now())) && !d.pageKeysOut() {
 			d.updating = true
 			d.mu.Unlock()
 			d.stop()

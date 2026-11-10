@@ -124,6 +124,8 @@ func TestHookOff(t *testing.T) {
 		{"codex in T3", long, false, true},
 		{"claude-code", long, false, true},
 		{"grok", long, false, true},
+		{"pi", long, false, true},
+		{"pi in T3", long, false, true},
 		{"codex", long, true, false},
 		{"codex", time.Now(), false, false},  // in its grace
 		{"codex", time.Time{}, false, false}, // no tool call: maybe nothing to tell

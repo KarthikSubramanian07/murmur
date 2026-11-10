@@ -24,14 +24,16 @@ import (
 //     message as its next turn, nothing is interrupted, and it works for a thread whose MCP server
 //     T3 has stopped (idle threads lose theirs after 30 minutes), which is the thread most worth
 //     waking;
-//   - in Claude Code outside T3, the session's messaging socket (package msgsock).
+//   - in Claude Code outside T3, the session's messaging socket (package msgsock), and in Pi
+//     outside T3 the socket Murmur's extension opens in the session, which speaks the same lines.
 //
-// A session Murmur's hook runs in (Claude Code) is not given a turn while it is at work (#202): T3
-// would queue it behind the running turn, and nothing could take it back, so the agent could read
-// it with `inbox` and then get it again as a turn. The hook tells it of the message after its next
-// tool call instead, and what it hasn't read when the turn ends keeps the turn going: the Stop
-// hook gives it to the agent (continueTurnLocked). A turn that ends without Stop, one the user
-// interrupted in T3, has it handed over as a turn instead.
+// A session Murmur's hook runs in (Claude Code, and Pi through its extension) is not given a turn
+// while it is at work (#202): T3 would queue it behind the running turn, and nothing could take it
+// back, so the agent could read it with `inbox` and then get it again as a turn. The hook tells it
+// of the message after its next tool call instead, and what it hasn't read when the turn ends keeps
+// the turn going: the Stop hook gives it to the agent (continueTurnLocked). A turn that ends without
+// Stop, one the user interrupted in T3, has it handed over as a turn instead, and so does one whose
+// Stop can't keep it going (Pi's after Escape or an error).
 //
 // Handing a message over is not the agent having it: it is read (it arrives whole, so it skips
 // delivered) when the turn carrying it starts, which the daemon doesn't see (docs/VISION.md,
@@ -306,8 +308,9 @@ func (d *Daemon) queuedForPushLocked(id string, m *inMsg, wake pageSettings) boo
 // is over, whatever the order in which a late hook and the run's end came. A session whose
 // connection dropped keeps its state through its grace, and one that reconnected after this
 // daemon restarted, before its hook has run here, is at work while T3 shows its thread's run going.
-// Outside T3 nothing but Stop ends a turn, so an interrupted session waits for its next prompt and
-// the Stop after it. Caller holds mu.
+// Outside T3 nothing but Stop ends a turn. Claude Code fires none when interrupted, so its session
+// waits for its next prompt and the Stop after it; Pi's extension sends an interrupted Stop. Caller
+// holds mu.
 func (d *Daemon) hookBusyLocked(id string) bool {
 	s := d.sessions[id]
 	if s == nil {

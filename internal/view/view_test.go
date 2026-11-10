@@ -207,6 +207,58 @@ func TestWhoCountsOnlySessionsItCouldList(t *testing.T) {
 	}
 }
 
+// Each device with no session to list, stale or with none, is a line, and anyone who can push can
+// make any number of device refs. who lists WhoQuiet of them, stale ones with sessions first and the
+// most recently seen first within each, and counts the rest in one line, whatever the sessions listed.
+func TestWhoListsAFewDevicesWithNoSessionsAndCountsTheRest(t *testing.T) {
+	devices := []proto.Device{{ID: "me", Host: "laptop", Self: true, Sessions: []proto.SessionView{sess("mine", 0, "")}},
+		{ID: "live", Host: "desktop", LastSeen: time.Now(), Sessions: []proto.SessionView{sess("live-one", time.Minute, "")}}}
+	for i := range 12 {
+		d := proto.Device{ID: fmt.Sprintf("idle%02d", i), Host: "h", LastSeen: time.Now().Add(-time.Duration(i) * time.Minute)}
+		if i%2 == 1 {
+			d.Stale, d.Sessions = true, []proto.SessionView{sess(fmt.Sprintf("ghost%02d", i), time.Hour, "")}
+		}
+		devices = append(devices, d)
+	}
+	out := Who(proto.Response{Self: "me/me", Devices: devices})
+	for i := range 12 {
+		want := i%2 == 1 && i < 2*WhoQuiet // the five stale ones seen most recently, of six
+		if listed := strings.Contains(out, fmt.Sprintf("idle%02d (", i)); listed != want {
+			t.Errorf("idle%02d listed: %v, want %v:\n%s", i, listed, want, out)
+		}
+	}
+	if !strings.Contains(out, "live-one") || !strings.Contains(out, "mine") {
+		t.Errorf("a session is missing:\n%s", out)
+	}
+	if !strings.Contains(out, fmt.Sprintf("and %d more devices, stale or with no sessions", 12-WhoQuiet)) {
+		t.Errorf("who doesn't count the devices left out:\n%s", out)
+	}
+	if strings.Contains(out, "less recently active") {
+		t.Errorf("devices left out were counted as sessions:\n%s", out)
+	}
+
+	// A teammate's stale device with sessions keeps its line, however long ago it was seen, over
+	// empty devices whose presence keeps moving.
+	var busy []proto.Device
+	for i := range WhoQuiet + 2 {
+		busy = append(busy, proto.Device{ID: fmt.Sprintf("fresh%02d", i), Host: "h", LastSeen: time.Now()})
+	}
+	gone := proto.Device{ID: "gone", Host: "old", Stale: true, LastSeen: time.Now().Add(-6 * time.Hour),
+		Sessions: []proto.SessionView{sess("ghost", 6*time.Hour, "")}}
+	out = Who(proto.Response{Self: "me/me", Devices: append(append(devices[:1:1], busy...), gone)})
+	if !strings.Contains(out, "gone (old) STALE") {
+		t.Errorf("the stale device with sessions was left out for empty ones:\n%s", out)
+	}
+	if !strings.Contains(out, "and 3 more devices") {
+		t.Errorf("who doesn't count the empty devices left out:\n%s", out)
+	}
+
+	few := Who(proto.Response{Self: "me/me", Devices: devices[:2+WhoQuiet]})
+	if strings.Contains(few, "more device") {
+		t.Errorf("who counts devices left out when it lists them all:\n%s", few)
+	}
+}
+
 func TestWhoDoesNotHideTheCallersOwnSessionOrDevice(t *testing.T) {
 	var ss []proto.SessionView
 	for i := 0; i < 25; i++ {

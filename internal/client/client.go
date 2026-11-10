@@ -81,6 +81,39 @@ func (c *Client) PageURL() (string, error) {
 	return "http://" + info.Web + "/#token=" + token, nil
 }
 
+// PageKeyURL is an address that opens the page once, for another clone's page to send its tab to
+// (#348): a one-time key in the fragment, which the page trades for its token, so the token itself
+// never travels in an address.
+func (c *Client) PageKeyURL(ctx context.Context) (string, error) {
+	resp, err := c.Do(ctx, proto.Request{Op: proto.OpPageKey})
+	if err == nil && !resp.OK {
+		err = errors.New(resp.Error)
+	}
+	if err != nil {
+		return "", err
+	}
+	info := c.current() // the daemon that answered: Do reloads it if it had to reconnect
+	if info.Web == "" || resp.PageKey == "" {
+		return "", ErrNoPage
+	}
+	return "http://" + info.Web + "/#key=" + resp.PageKey, nil
+}
+
+// Running reports whether a daemon answers for gitDir, without starting one or sending it the
+// token: only its port is tried.
+func Running(ctx context.Context, gitDir string) bool {
+	info, ok := (&Client{GitDir: gitDir}).load()
+	if !ok {
+		return false
+	}
+	conn, err := dial(ctx, info.Addr)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // Connect finds the daemon for gitDir, starting one if spawn is set and none answers.
 func Connect(ctx context.Context, gitDir string, spawn bool) (*Client, error) {
 	c := &Client{GitDir: gitDir, Spawn: spawn}
@@ -183,7 +216,8 @@ func (c *Client) replace(ctx context.Context) error {
 // isn't that daemon. On a machine with other users it can be one of their processes, which would be
 // sent the sessions' hellos and requests, and could answer them with messages of its own. Another
 // user can't hold the lock where the state directory is private to its user: on Unix it is made
-// 0700, and on Windows it has whatever access the clone's location gives.
+// 0700, and on Windows the daemon gives it an access list that lets in only the user, SYSTEM and
+// Administrators (on a local volume that keeps access lists).
 //
 // The lock is tried only after something answered, as holding it for a moment can turn away a
 // daemon starting just then. Clients (another one here, WaitGone, replace) hold it for a moment
@@ -278,6 +312,9 @@ func StartDaemon(exe, gitDir string, page *os.File, flags ...string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	// Before the log is made in it. The daemon tries again, and logs a failure; this one is told
+	// only if the log can't be opened, when it may be why.
+	perr := proc.Protect(dir)
 	logPath := filepath.Join(dir, "daemon.log")
 	// WMI cannot inherit logf and adds its path as --log. Open the forwarded
 	// log destination so that fallback preserves a custom --log too.
@@ -291,6 +328,9 @@ func StartDaemon(exe, gitDir string, page *os.File, flags ...string) error {
 	}
 	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
+		if perr != nil {
+			return fmt.Errorf("%w (keeping other users out of %s: %v)", err, dir, perr)
+		}
 		return err
 	}
 	defer logf.Close()
