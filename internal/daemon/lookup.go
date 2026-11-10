@@ -141,7 +141,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 			if s.ID != sess {
 				continue
 			}
-			det.Name, det.Agent, det.Branch, det.Doing, det.Started = s.Name, s.Agent, s.Branch, s.Doing, s.Started
+			det.Name, det.Agent, det.Branch, det.Doing, det.Started = s.Name, s.Agent, s.Branch, s.Doing, peerStarted(p, s)
 			det.Committed, det.LastActive, det.Tags = s.Committed, peerActive(p, s), s.Tags
 			det.Running, det.Reachable = true, !det.Stale
 		}

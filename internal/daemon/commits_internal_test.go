@@ -190,6 +190,32 @@ func TestPeerActiveIsTheWritersGapOnThisClock(t *testing.T) {
 	}
 }
 
+// A peer session's start is worked out as its last activity is, so a start dated after the presence
+// that lists it, by a clock ahead or a presence written so, is no later than when the presence was
+// seen, and a session that says nothing of its activity can't sort above the rest of `who` for it.
+func TestPeerStartedIsNoLaterThanThePresence(t *testing.T) {
+	seen := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	wrote := seen.Add(3 * time.Hour) // the writer's clock is three hours ahead
+	p := &peer{lastChange: seen}
+	p.pres.At = wrote
+	if got, want := peerStarted(p, bus.SessionInfo{Started: wrote.Add(-time.Hour)}), seen.Add(-time.Hour); !got.Equal(want) {
+		t.Errorf("started %v, want %v: the hour's gap taken back from when the presence was seen", got, want)
+	}
+	if got := peerStarted(p, bus.SessionInfo{Started: wrote.Add(24 * time.Hour)}); !got.Equal(seen) {
+		t.Errorf("a start after the presence's write gave %v, want %v", got, seen)
+	}
+	if got := peerStarted(p, bus.SessionInfo{}); !got.IsZero() {
+		t.Errorf("a session without a start gave %v", got)
+	}
+	noAt := &peer{lastChange: seen}
+	if got := peerStarted(noAt, bus.SessionInfo{Started: seen.Add(time.Hour)}); !got.Equal(seen) {
+		t.Errorf("without the presence's own time, a later start gave %v, want %v", got, seen)
+	}
+	if got := peerStarted(noAt, bus.SessionInfo{Started: seen.Add(-time.Hour)}); !got.Equal(seen.Add(-time.Hour)) {
+		t.Errorf("without the presence's own time, an earlier start gave %v", got)
+	}
+}
+
 // A presence this daemon has never seen change is dated from when it was written, and never from
 // later than now, so a writer's clock that runs ahead can't make a device look newer than it is.
 func TestFirstSightIsWhenItWasWrittenButNeverLater(t *testing.T) {
