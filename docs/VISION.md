@@ -955,13 +955,12 @@ A body past the limit is cut, as in `inbox`.
   which is as soon as the message is queued, from what the receiving daemon knows of the sender
   then: the name from presence or the registry, the agent and owner from presence. A sync reads
   the registry and every presence before the logs, so what landed before the message is known
-  when it is queued. Those reads have 15 s (`ReadFirstLimit`), with a deadline at least 15 s before
-  the sync's minute ends, which keeps that time, less a cancelled git's up to 5 s to exit, for the
+  when it is queued. Those reads have 15 s (`ReadFirstLimit`), and never more than half of what is
+  left of the sync, which keeps at least as much, less a cancelled git's up to 5 s to exit, for the
   logs, already fetched: a registry missing from the listing is asked of the remote again, and a
   stall there would otherwise use up the minute. A sync that runs past the limit still reads the
-  logs, and then fails. One with under 15 s left after its fetches skips the registry and presence,
-  so its messages can go out without what they would have said of their senders; the next sync
-  reads them. Until 2026-11-09 the logs came first, and a sync that fetched a sender's
+  logs, and then fails; the next sync reads what it missed. A fixed reserve of 15 s, tried first,
+  skipped these reads altogether in the 10 s sync a daemon runs before it accepts sessions. Until 2026-11-09 the logs came first, and a sync that fetched a sender's
   name with its message wrote the turn without it (#71). A sender whose presence is pushed after
   its message still arrives without its agent, and without its name if it took one from the pool
   and the assignment hasn't landed either.

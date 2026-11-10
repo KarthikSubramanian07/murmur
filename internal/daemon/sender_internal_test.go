@@ -205,8 +205,9 @@ func TestAStalledRegistryReadLeavesTheLogsTheirTime(t *testing.T) {
 	}
 }
 
-// The registry and presence end ReadFirstLimit before the sync's deadline as well as after it from
-// now, so a listing and fetches that ran late can't leave them the logs' time too.
+// The registry and presence have ReadFirstLimit, and no more than half of what is left of the
+// sync, so a listing and fetches that ran late can't leave them the logs' time too, and a short
+// sync, like the 10 s one before a daemon accepts sessions, still reads them.
 func TestReadFirstContextKeepsTheLogsTime(t *testing.T) {
 	const limit = 15 * time.Second
 	for _, c := range []struct {
@@ -216,7 +217,7 @@ func TestReadFirstContextKeepsTheLogsTime(t *testing.T) {
 		{"no deadline", 0},
 		{"a whole minute left", time.Minute},
 		{"less than twice the limit left", 20 * time.Second},
-		{"less than the limit left", 10 * time.Second},
+		{"the sync before sessions", 10 * time.Second},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -233,19 +234,17 @@ func TestReadFirstContextKeepsTheLogsTime(t *testing.T) {
 			if !ok {
 				t.Fatal("no deadline")
 			}
-			if sync, ok := ctx.Deadline(); ok && sync.Add(-limit).Before(before.Add(limit)) {
-				// Less than twice the limit left: the reads end a limit before the sync does, which
-				// with less than one limit left is already past.
-				if want := sync.Add(-limit); !got.Equal(want) {
-					t.Errorf("the reads end %s before the sync, want %s", sync.Sub(got), limit)
-				}
-				if past := c.left < limit; past != (first.Err() != nil) {
-					t.Errorf("the reads' context is done: %v, want %v", first.Err() != nil, past)
-				}
-				return
+			if first.Err() != nil {
+				t.Fatal("the reads have no time at all")
 			}
-			if got.Before(before.Add(limit)) || got.After(after.Add(limit)) {
-				t.Errorf("the reads end %s from when they began, want %s", got.Sub(before), limit)
+			// readFirstContext reads the clock between before and after.
+			lo, hi := before.Add(limit), after.Add(limit)
+			if sync, ok := ctx.Deadline(); ok && 2*limit > c.left {
+				lo, hi = before.Add(sync.Sub(before)/2), after.Add(sync.Sub(after)/2)
+			}
+			if got.Before(lo) || got.After(hi) {
+				t.Errorf("the reads end %s from when they began, want between %s and %s",
+					got.Sub(before), lo.Sub(before), hi.Sub(before))
 			}
 		})
 	}

@@ -44,7 +44,7 @@ type Options struct {
 	// own is set aside; SlowFetchLimit is how long its fetch may then take, outside the syncs: 10 min.
 	FetchLimit, SlowFetchLimit time.Duration
 	// ReadFirstLimit is how long a sync may take over the names registry and every presence, which
-	// it reads before the logs: 15 s. They also end at least this long before the sync's minute does.
+	// it reads before the logs: 15 s, and never more than half of what is left of the sync.
 	// A registry read that stalls (the check of one missing from the listing asks the remote again)
 	// then can't use up the time the logs it fetched need.
 	ReadFirstLimit time.Duration
