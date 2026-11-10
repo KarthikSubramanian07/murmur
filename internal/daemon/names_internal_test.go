@@ -98,7 +98,11 @@ func TestRegistryDeletedFromTheRemoteIsStillALostRegistry(t *testing.T) {
 // claimsAt gathers what the registry's history up to sha holds, and the reservations in it.
 func claimsAt(t *testing.T, d *Daemon, sha string) (claims, aside map[string]string) {
 	t.Helper()
-	commits, err := d.repo.Log(context.Background(), "", sha)
+	var commits []bus.Commit
+	err := d.repo.Log(context.Background(), "", sha, bus.MaxSnapshot, func(page []bus.Commit) error {
+		commits = append(commits, page...)
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
