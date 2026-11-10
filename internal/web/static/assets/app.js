@@ -1488,7 +1488,7 @@ function recentPage() {
       out.push(h("div", { class: "chat-day" }, h("span", null, dayLabel(at))));
       day = d;
     }
-    out.push(recentItem(m, at));
+    out.push(openable(recentItem(m, at), m, at));
   }
   return h(
     "div",
@@ -1534,6 +1534,23 @@ function recentItem(m, at) {
   );
 }
 
+// A Recent item is a button onto its conversation. Its name is what it shows, in the order it shows
+// it (WCAG 2.5.3), Space works as well as Enter, and a link in its text is left to the conversation
+// it opens, since a button can't hold another control.
+function openable(el, m, at) {
+  const to = m.toKind === "all" ? "Everyone" : m.toKind === "device" ? host(m.to) : toName(m);
+  el.setAttribute("aria-label", fromName(m) + " to " + to + ", " + clockTime(at) + ": " + (m.subject || ""));
+  const space = (e) => {
+    if (e.key !== " ") return;
+    e.preventDefault();
+    e.currentTarget.click();
+  };
+  el.addEventListener("keydown", space);
+  el.listeners.push(["keydown", space]);
+  for (const a of el.querySelectorAll("a")) a.tabIndex = -1;
+  return el;
+}
+
 // Everyone reaches every session in the repo; a device's chat reaches every session on it. Anyone
 // who has posted is in it too, running or not.
 function groupMembers(c) {
@@ -1563,6 +1580,7 @@ function membersButton(c) {
       {
         class: "g-members",
         "aria-expanded": ui.membersOpen ? "true" : "false",
+        "aria-controls": ui.membersOpen ? "members-panel" : null,
         "data-key": "members",
         onclick: (e) => {
           e.stopPropagation();
@@ -1587,7 +1605,8 @@ function membersPanel(c, rows) {
   }
   return h(
     "div",
-    { class: "g-members-panel", role: "dialog", "aria-label": "Members", onclick: (e) => e.stopPropagation() },
+    // A disclosure: the list follows its button, and Escape folds it back onto the button.
+    { class: "g-members-panel", id: "members-panel", role: "group", "aria-label": "Members", onclick: (e) => e.stopPropagation() },
     h("div", { class: "g-mp-head" }, c.kind === "all" ? "Everyone in this repo" : "Every session on " + host(c.title)),
     [...groups].map(([title, g]) => [
       h("div", { class: "g-mp-sec" }, g.d && deviceDot(g.d), title, g.host && h("span", null, g.host), h("span", { class: "g-mp-n" }, g.rows.length)),
@@ -1978,7 +1997,7 @@ function tagMenu() {
   // Placed through the CSSOM: the page's CSP refuses style attributes.
   const menu = h(
     "div",
-    { class: "tag-menu", role: "dialog", "aria-label": "Tags" },
+    { class: "tag-menu", role: "dialog", "aria-modal": "true", "aria-label": "Tags for " + (targets.length === 1 ? targets[0].name : targets.length + " sessions") },
     h("div", { class: "tag-menu-head" }, targets.length === 1 ? targets[0].name : targets.length + " sessions"),
     h(
       "label",
@@ -2016,7 +2035,7 @@ function tagMenu() {
           "button",
           {
             class: "tag-menu-row",
-            role: "menuitemcheckbox",
+            role: "checkbox", // in a dialog with a search field, not a menu: Tab moves between them
             "aria-checked": all ? "true" : have ? "mixed" : "false",
             "data-key": "tm-" + n,
             onclick: () => toggle(n),
@@ -3065,11 +3084,12 @@ function setupDialog() {
             value: s.name,
             maxlength: 32,
             placeholder: "ada-lovelace",
-            autocomplete: "off",
+            autocomplete: "nickname",
             autocapitalize: "none",
             spellcheck: "false",
             "aria-label": "Your name",
             "aria-invalid": s.error ? "true" : null,
+            "aria-describedby": s.error ? "setup-error" : null,
             "data-key": "setup-name",
             oninput: (e) => {
               s.name = e.target.value.toLowerCase().replace(/[\s_]+/g, "-");
@@ -3078,11 +3098,13 @@ function setupDialog() {
               root.querySelector(".setup-face")?.replaceChildren(faceOf(s.name));
               root.querySelector(".dialog-error")?.remove();
               root.querySelector(".setup-field")?.classList.remove("field-bad");
+              e.target.removeAttribute("aria-invalid");
+              e.target.removeAttribute("aria-describedby");
             },
           }),
         ),
       ),
-      s.error && h("p", { class: "dialog-error", role: "alert" }, s.error),
+      s.error && h("p", { class: "dialog-error", id: "setup-error", role: "alert" }, s.error),
       h(
         "div",
         { class: "dialog-actions" },
@@ -3119,10 +3141,14 @@ function matches(r, q) {
   return [r.name, r.line, r.s?.branch, r.s?.agent, r.d.owner, r.d.id].some((x) => (x || "").toLowerCase().includes(q));
 }
 
-function personRow(r, cur, onclick) {
+// In the new-message list a row is an option of its combobox, picked with the arrow keys while the
+// focus stays in the field; elsewhere it is a plain button.
+function personRow(r, cur, onclick, option) {
   return h(
     "button",
-    { class: "pick-row" + (cur ? " current" : ""), role: "option", "aria-selected": cur ? "true" : "false", "data-pick": r.name, onclick },
+    option
+      ? { class: "pick-row" + (cur ? " current" : ""), role: "option", id: "pick-" + r.name, tabindex: -1, "aria-selected": cur ? "true" : "false", "data-pick": r.name, onclick }
+      : { class: "pick-row", "data-pick": r.name, "data-key": "start-" + r.name, onclick },
     presence(r.name, r.d),
     h(
       "span",
@@ -3170,6 +3196,9 @@ function pickerDialog() {
         spellcheck: "false",
         role: "combobox",
         "aria-expanded": "true",
+        "aria-controls": "pick-list",
+        "aria-autocomplete": "list",
+        "aria-activedescendant": rows[p.index] ? "pick-" + rows[p.index].name : null,
         "aria-label": "Who to message",
         "data-key": "picker-q",
         oninput: (e) => {
@@ -3192,8 +3221,8 @@ function pickerDialog() {
     ),
     h(
       "div",
-      { class: "pick-list", role: "listbox", "aria-label": "Sessions and people" },
-      rows.length ? rows.map((r, i) => personRow(r, i === p.index, () => startChat(r.name))) : h("p", { class: "pick-none" }, "Nobody matches."),
+      { class: "pick-list", id: "pick-list", tabindex: -1, role: rows.length ? "listbox" : null, "aria-label": rows.length ? "Sessions and people" : null },
+      rows.length ? rows.map((r, i) => personRow(r, i === p.index, () => startChat(r.name), true)) : h("p", { class: "pick-none", "data-announce": "" }, "Nobody matches."),
     ),
   );
 }
@@ -3330,7 +3359,7 @@ function composer(c, target) {
       h(
         "div",
         { class: "composer-bar" },
-        h("button", { class: "composer-chip", title: "Message someone else", "aria-label": "To " + target.label + ". Message someone else", "data-key": "composer-to", onclick: openPicker }, ...who, icon("chevronDown", "composer-chip-chev")),
+        h("button", { class: "composer-chip", title: "Message someone else", "aria-label": "To " + (c.kind === "dm" ? target.to : (c.kind === "all" ? "Everyone" : target.label) + " " + plural(target.count, "session")) + ". Message someone else", "data-key": "composer-to", onclick: openPicker }, ...who, icon("chevronDown", "composer-chip-chev")),
         !NARROW.matches && h("span", { class: "composer-hint", "aria-hidden": "true" }, h("kbd", null, "Enter"), armed ? " again to send" : " to send"),
         h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim(), "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),
       ),
@@ -3560,8 +3589,9 @@ function settingsRow(key, title, description, control, extraClass = "") {
     h(
       "div",
       { class: "row-grid " + extraClass },
-      h("div", null, h("div", { class: "row-title" }, title), description && h("p", { class: "row-description" }, description)),
-      h("div", { class: "row-control" }, control),
+      h("div", null, h("div", { class: "row-title", id: "row-" + key }, title), description && h("p", { class: "row-description" }, description)),
+      // Named by the row's title, so each of a column of Always, Within and Never says whose it is.
+      h("div", { class: "row-control", role: control ? "group" : null, "aria-labelledby": control ? "row-" + key : null }, control),
     ),
     ui.rowErrors[key] && h("p", { class: "row-error" }, ui.rowErrors[key]),
   );
@@ -3585,9 +3615,10 @@ function accountSection() {
             type: "text",
             value,
             maxlength: 32,
-            autocomplete: "off",
+            autocomplete: "nickname",
             spellcheck: "false",
             "aria-label": "Your name",
+            "aria-invalid": ui.rowErrors.account ? "true" : null,
             "data-key": "account-name",
             oninput: (e) => {
               ui.accountDraft = e.target.value;
