@@ -723,8 +723,8 @@ void main() {
     <p class="works" data-prose>Works in Claude Code, Codex, OpenCode, Muse Code, Pi and Grok, in T3 Code or on their own. A message arrives as a new turn in T3 Code and in Claude Code; elsewhere it waits in the agent's inbox.</p>
     <div class="inst">
       <div class="inst-h">Install, needs git 2.31 or later</div>
-      <div class="cmd"><span>sh</span><code data-artifact>curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh</code><button class="copy" type="button" hidden>Copy<span class="vh"> the sh command</span></button></div>
-      <div class="cmd"><span>PowerShell</span><code data-artifact>irm https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1 | iex</code><button class="copy" type="button" hidden>Copy<span class="vh"> the PowerShell command</span></button></div>
+      <div class="cmd"><span>sh</span><code data-artifact>curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh</code><button class="copy" type="button" hidden><span aria-hidden="true">Copy</span><span class="vh">Copy the sh command</span></button></div>
+      <div class="cmd"><span>PowerShell</span><code data-artifact>irm https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1 | iex</code><button class="copy" type="button" hidden><span aria-hidden="true">Copy</span><span class="vh">Copy the PowerShell command</span></button></div>
       <p class="vh" role="status" id="copied"></p>
     </div>
     <ol class="steps">
@@ -785,16 +785,23 @@ void main() {
     else if (!film.paused) { hiding = true; film.pause(); }
   }, { threshold: .6 }).observe(film);
 
-  // Copy buttons on the install commands; hidden without JS. The word on the button changes for the
-  // eye, and the status line under the commands says what happened to a screen reader.
+  // Copy buttons on the install commands; hidden without JS. The visible word changes for the eye; the
+  // button's name ("Copy the sh command") stays put, and the status line under the commands is the one
+  // thing a screen reader hears. Another press restarts the 1.4 s.
   const status = document.getElementById('copied');
-  document.querySelectorAll('.copy').forEach(b => {
+  const copies = [...document.querySelectorAll('.copy')];
+  const words = copies.map(b => b.querySelector('[aria-hidden]'));
+  let timer = 0;
+  const reset = () => { words.forEach(w => { w.textContent = 'Copy'; }); status.textContent = ''; };
+  copies.forEach((b, i) => {
     b.hidden = false;
-    const word = b.firstChild, what = b.querySelector('.vh').textContent.trim();
+    const what = b.querySelector('.vh').textContent.replace(/^Copy /, '');
     b.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(b.previousElementSibling.textContent); word.nodeValue = 'Copied'; status.textContent = `Copied ${what}.`; }
-      catch { word.nodeValue = 'Select it'; status.textContent = `Couldn't copy ${what}: select it and copy it yourself.`; }
-      setTimeout(() => { word.nodeValue = 'Copy'; status.textContent = ''; }, 1400);
+      clearTimeout(timer);
+      reset();
+      try { await navigator.clipboard.writeText(b.previousElementSibling.textContent); words[i].textContent = 'Copied'; status.textContent = `Copied ${what}.`; }
+      catch { words[i].textContent = 'Select it'; status.textContent = `Couldn't reach the clipboard: select ${what} and copy it.`; }
+      timer = setTimeout(reset, 1400);
     });
   });
 })();
