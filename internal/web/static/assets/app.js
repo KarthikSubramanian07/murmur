@@ -1372,7 +1372,13 @@ function recentPage() {
   return h(
     "div",
     { class: "g-page g-recent" },
-    list.length > 0 && h("div", { class: "g-toolbar" }, h("p", { class: "g-toolbar-meta" }, ui.messages.length > RECENT_MAX ? "Newest " + RECENT_MAX + " of " + ui.messages.length + " messages" : plural(ui.messages.length, "message") + ", newest first")),
+    // A heading at the top of the column, as on main, so the list has something to start from.
+    h(
+      "header",
+      { class: "g-page-head" },
+      h("h1", null, "Recent messages"),
+      h("p", null, ui.messages.length > RECENT_MAX ? "Newest " + RECENT_MAX + " of " + ui.messages.length : plural(ui.messages.length, "message")),
+    ),
     list.length ? h("div", { class: "g-feed" }, out) : emptyState("clock", "No messages yet", "Messages between sessions show here as this daemon reads them."),
   );
 }

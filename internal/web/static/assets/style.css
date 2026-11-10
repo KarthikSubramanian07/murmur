@@ -1407,6 +1407,21 @@ a.g-pr:hover {
   gap: 1rem;
   margin-bottom: -1rem;
 }
+/* A page's own heading, at the top of its column (Recent). */
+.g-page-head {
+  margin-bottom: -0.75rem;
+}
+.g-page-head h1 {
+  font-size: 1.375rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--foreground);
+}
+.g-page-head p {
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+}
 .g-toolbar-meta {
   font-size: 0.75rem;
   color: var(--muted-foreground);
