@@ -14,6 +14,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/publicrepo"
 )
 
@@ -205,6 +206,16 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	} else if news {
 		r.Did = append(r.Did, "Recorded that you joined "+brand.Product+" in this clone ("+p.consentPath()+")")
 	}
+	// On the record of this machine's clones, for the page's repo picker (#348). The daemon adds
+	// its clone too as it starts; this is for one that doesn't start.
+	if consentErr == nil {
+		if dir, err := clones.DefaultDir(); err == nil {
+			err = clones.Add(dir, clones.Clone{GitDir: p.GitDir, Name: clones.NameIn(ctx, p.GitDir)})
+			if err != nil {
+				r.Notes = append(r.Notes, "This clone isn't on the record of this machine's clones, so another repo's page can't switch to it until its daemon starts: "+err.Error())
+			}
+		}
+	}
 	// A daemon left running by an older mur answers, but can't do what this one does (hand a message
 	// over as a turn, for one): it is replaced, which Connect does for a client that may start daemons.
 	c, err := client.Connect(ctx, p.GitDir, false)
@@ -266,6 +277,11 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 		problem("removing the record that you joined", err)
 	} else if had {
 		r.Did = append(r.Did, "Removed the record that you joined "+brand.Product+" in this clone")
+	}
+	if dir, err := clones.DefaultDir(); err == nil {
+		if err := clones.Remove(dir, p.GitDir); err != nil {
+			problem("taking this clone off the record of this machine's clones", err)
+		}
 	}
 	trees, notes, err := removeHooks(ctx, p)
 	r.Notes = append(r.Notes, notes...)

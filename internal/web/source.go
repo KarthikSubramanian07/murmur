@@ -46,6 +46,8 @@ var ErrNoUpdate = errors.New("no update is waiting to be restarted onto")
 
 // State is what the page's sessions view and mute list show.
 type State struct {
+	// Repo is the name of the repository this page is a clone of, as the repo picker shows it.
+	Repo    string   `json:"repo,omitempty"`
 	Device  string   `json:"device"` // this device's ID
 	Devices []Device `json:"devices"`
 	Mutes   []Mute   `json:"mutes"`

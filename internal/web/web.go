@@ -53,6 +53,8 @@ type Server struct {
 	prs   *prCache
 	mux   *http.ServeMux
 	page  []byte
+	repos Repos   // nil: no picker
+	keys  keyring // one-time keys that open the page from another clone's (#348)
 }
 
 // New returns the page's handler. token is the page's own, not the one that opens the daemon to
@@ -96,6 +98,8 @@ func NewWithPRs(src Source, token string, prs LookupPR) *Server {
 	s.mux.HandleFunc("PUT /api/account", s.putAccount)
 	s.mux.HandleFunc("POST /api/send", s.postSend)
 	s.mux.HandleFunc("POST /api/read", s.postRead)
+	s.mux.HandleFunc("GET /api/repos", s.getRepos)
+	s.mux.HandleFunc("POST /api/repos/open", s.postOpenRepo)
 	s.mux.HandleFunc("GET /api/health", s.getHealth)
 	return s
 }
@@ -118,6 +122,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cross-Origin-Opener-Policy", "same-origin")
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		h.Set("Cache-Control", "no-store")
+		if r.URL.Path == keyPath {
+			if r.Method != http.MethodPost {
+				writeError(w, http.StatusMethodNotAllowed, "POST a key")
+				return
+			}
+			s.postKey(w, r) // the one call without the token, which it gives
+			return
+		}
 		if !s.authorized(r) {
 			writeError(w, http.StatusUnauthorized, "missing or wrong token")
 			return
@@ -128,6 +140,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mux.ServeHTTP(w, r)
 }
+
+// keyPath is where a page opened from another clone's trades its one-time key for the token.
+const keyPath = "/api/key"
 
 // hiddenHeader marks a call from a page nobody can see: a background tab, a minimized window, a
 // locked screen. Such a page goes on polling, slowly, so that it is current when it is looked at

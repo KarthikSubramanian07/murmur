@@ -33,6 +33,9 @@ const (
 	// and didn't read keeps the turn going, where the hook can do that (Continues), and the session
 	// is idle otherwise (#202).
 	OpTurnEnd = "turnend"
+	// OpPageKey asks for a one-time key to the daemon's page, which another clone's daemon gives
+	// its own page so the tab can move to this one's (#348).
+	OpPageKey = "pagekey"
 )
 
 // Protocol is the version of this protocol that the daemon speaks, reported in its ping reply. A
@@ -55,7 +58,8 @@ const (
 //	8: a person's account on the page (#242): an upgraded `mur ui` replaces a daemon whose page
 //	   can't send
 //	9: the hook's Agent and Ancestors, for Codex's and Grok's hooks, and SessionView's HookOff (#225)
-const Protocol = 9
+//	10: OpPageKey, so another clone's page can switch to this one's (#348)
+const Protocol = 10
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -66,6 +70,10 @@ const (
 	GoodbyeTimeout = 15 * time.Second
 	ShutdownMax    = DrainTimeout + GoodbyeTimeout
 )
+
+// ErrRestarting is OpPageKey's refusal from a daemon that has begun restarting onto an update: the
+// caller asks the next daemon.
+const ErrRestarting = "restarting onto an update; ask the next daemon"
 
 // CLISession is the session ID of requests from the command line. It is always registered on its
 // device, so a human can send and read an inbox without an agent.
@@ -234,6 +242,9 @@ type Response struct {
 	// caller's tags after an OpTags.
 	Filter string     `json:"filter,omitempty"`
 	Tags   []tags.Tag `json:"tags,omitempty"`
+
+	// PageKey is OpPageKey's key: the page trades it once, within a minute, for its token.
+	PageKey string `json:"pageKey,omitempty"`
 }
 
 // Device is one device as `who` shows it.
@@ -333,12 +344,15 @@ type MessageView struct {
 	FromAgent  string `json:"fromAgent,omitempty"`
 	FromBranch string `json:"fromBranch,omitempty"`
 	// FromOwner is the sender's person: the git user name on its device, where known.
-	FromOwner string    `json:"fromOwner,omitempty"`
-	To        string    `json:"to"` // the address the message was sent to, whatever it was sent by
-	ToName    string    `json:"toName,omitempty"`
-	Subject   string    `json:"subject"`
-	Body      string    `json:"body,omitempty"`
-	At        time.Time `json:"at"`
+	FromOwner string `json:"fromOwner,omitempty"`
+	// FromDevice is the sender's device, set when another device's live presence says the sender's
+	// name too, so a turn says which one sent it; a name says nothing of who is behind it.
+	FromDevice string    `json:"fromDevice,omitempty"`
+	To         string    `json:"to"` // the address the message was sent to, whatever it was sent by
+	ToName     string    `json:"toName,omitempty"`
+	Subject    string    `json:"subject"`
+	Body       string    `json:"body,omitempty"`
+	At         time.Time `json:"at"`
 	// Introduced says the session this goes to as a turn has had a turn from the same sender before,
 	// so the turn needn't say again what agent the sender is and whose machine it is on (#216).
 	Introduced bool `json:"introduced,omitempty"`

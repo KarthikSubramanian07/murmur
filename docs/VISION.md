@@ -546,6 +546,31 @@ call.
   and prints the address. The page's token is in the address's fragment (`#token=`), which a browser
   keeps from the server; the page reads it and sends it with each request. `mur ui --no-open`
   prints the address and opens nothing.
+- **Switching repos** (2026-11-09, #348). The sidebar's header names the repo, and opens this
+  machine's other clones that joined; picking one moves the tab to that clone's page. Each clone's
+  daemon serves its own page, on its own port with its own token, and none knows the others, so
+  they are written down: a per-user record, `clones` in the user's config directory, one file per
+  clone so that writers never need a lock (`internal/clones`). `mur join` adds a clone, `mur leave`
+  takes it off, and a daemon adds its own as it starts, which takes in clones that joined before the
+  record. Daemons finding each other was set aside: the picker has to offer a clone whose daemon
+  isn't running, and start it. A clone whose folder is gone, or that left, drops off the list when
+  the record is read. A daemon counts as running when the port in its `daemon.json` accepts a connection; no
+  token is sent to find out.
+- **The token doesn't travel with the tab.** The other page is another origin and needs its own
+  token, which mustn't go in an address. So the page asks its daemon to open the clone. That daemon
+  starts the other's if it isn't running (as `mur ui` would, replacing one of an older protocol) and
+  asks it, on its sessions' port with the sessions' token from its `daemon.json`, for a key
+  (`OpPageKey`, protocol 10): random, good once, for a minute. The tab goes to the other page with the
+  key in the fragment (`#key=`), and that page trades it at `/api/key` for its token, which the tab
+  keeps for that origin alone. The theme (#354) goes in the fragment too: the browser keeps it per
+  page, and the other page is another page. `/api/key` is the one call that takes no token; it takes only JSON,
+  which another site can't send without a preflight that nothing grants. The key left in the tab's
+  history is spent. The cost: a page's token now reaches every joined clone's page on the machine,
+  since that page can ask for keys to them, where before it reached its own; it still never reaches
+  a sessions' port. A draft in a composer has to be sent or cleared first, as it lives only in the
+  page. #303 (Karthik's draft, a private file that opens the page rather than the address) fits:
+  `mur ui` could put a key in that file in place of the token, so the file would hold nothing that
+  lasts.
 - **What it shows.** Every device the daemon knows, this one first, with each session's name,
   agent, branch, what it is doing, when it started and when it was last active (#21), and the
   branches it has committed to when there are three or fewer. Whether a device is reachable, and
@@ -556,15 +581,21 @@ call.
   senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
   it never read what was sent while it was away for more than 10 minutes, except what is kept for a
   stopped session's inbox (above).
-- **How it's laid out** (#179, 2026-11-08), after Discord and Slack: sessions down the left under
-  their devices, then a column of conversations (direct messages and group chats in one list, newest
-  first, narrowed to either with a switch), then the open conversation. A conversation is two sessions' messages to each other, a device's, or
-  everyone's: the bus has no threads. Each face carries a dot: green active in the last five
-  minutes, yellow idle, red do not disturb (the `do-not-disturb` tag from #211, or wake-ups set to
-  Never), grey when its device is unreachable. A settled session (#189) is absent from presence but
-  still in the messages, so the page folds it under its device and keeps its conversations, out of
-  the way; a direct message with a settled session folds away too. Sessions in Claude Code, Codex,
-  pi or opencode never settle: one left open in a forgotten terminal stays in presence for good.
+- **How it's laid out** (#179, 2026-11-08; drawn as a sibling of T3 Code 2026-11-09, so a person who
+  works in T3 Code reads it without learning a second app): sessions down the left under their
+  devices, as T3 Code's threads under their projects, then a column of conversations (direct
+  messages and group chats in one list, newest first, narrowed to either with a switch), then the
+  open conversation as T3 Code's timeline: a person's own messages in bubbles on the right, agents'
+  as plain text under a line naming the sender, and the composer docked under it. On a phone the
+  sidebar is a drawer, and the list and a conversation take turns. A conversation is two sessions'
+  messages to each other, a device's, or everyone's: the bus has no threads. Each session carries a
+  dot: green active in the last five minutes, yellow idle, red do not disturb (the
+  `do-not-disturb` tag from #211, or wake-ups set to Never), grey when its device is unreachable.
+  The only other color is the accent and a pull request's state; faces are plain monograms. A
+  settled session (#189) is absent from presence but still in the messages, so the page folds it
+  under its device and keeps its conversations, out of the way; a direct message with a settled
+  session folds away too. Sessions in Claude Code, Codex, pi or opencode never settle: one left
+  open in a forgotten terminal stays in presence for good.
   So a running session idle for a day, or one a person hid (the `hidden` tag, set from the page
   through #211's `/api/tags`), folds under its device as quiet. An idle one comes back once it
   does anything; a hidden one stays hidden until someone shows it again, because a tag a person
@@ -577,8 +608,9 @@ call.
   as waiting, for two minutes at most. Tags with a meaning of their own show as that meaning rather
   than as chips: `model:` beside the agent, `do-not-disturb` as the red dot, `hidden` as the quiet
   fold, `human` on a person. There is no grouping by tag: a session can carry several, so groups
-  would repeat it, and a filter shows one group at a time. The page is always dark: the design was only ever drawn dark, and a light one would be a
-  second design. Started times, worktrees and committed branches left the page with the old
+  would repeat it, and a filter shows one group at a time. Since 2026-11-09 Settings has a theme, kept in the browser: Dark (T3 Code's), Dim (the
+  soft greys the page had before it followed T3 Code) and Light (T3 Code's light theme). Each is a
+  set of color tokens over one design, so a theme costs only its palette. Started times, worktrees and committed branches left the page with the old
   Sessions view; `lookup` still has the branches.
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
   `.git/murmur/settings.json`, replaced whole; "Delivering a message as a turn" says what they do.
@@ -630,9 +662,25 @@ in its own session.
   the claim as a name it couldn't have made. The first claim in the registry stands, and like a
   session's name it is never forgotten. So a message to an old name still reaches its owner, and a
   registry rewritten by an older daemon, which drops people's claims, is repaired with them. A name
-  held from before the claims has the first daemon to claim it keep it. The other person's page asks
+  held from before the claims has the first daemon to claim it keep it, and so has each name a
+  person had before a rename from then, which their own daemon still knows: once a gone presence no
+  longer holds such a name, only a claim keeps someone else from choosing it. The other person's page asks
   them for another, and until they choose one they can't send, as their messages would carry a name
   that reaches someone else. The cost: choosing a name needs the remote, as sending does.
+- **A name on a message or in a presence is only a claim** (2026-11-09). Any device can write a
+  message that says it is from `tyler`, or a presence that says its person is. A daemon gives a name
+  to the first device whose presence it sees with it, as for session names, and only a registry
+  claim moves it. A sync reads the registry and the presences before the logs (#304), so a claim is
+  known before any message, including a person's first one after choosing their name. A message's
+  name is never recorded, since one device could send a thousand, each with another name. It is
+  shown only if the sender holds the name, by a claim, in its live presence, or as a name a presence
+  of theirs first gave them, and isn't someone else's; otherwise the message is from its address. A presence counts only its first person. Once
+  the registry has been read, only a claim or a live presence makes a name taken on the page. While
+  another live presence says a person's name, every turn from it says which device sent it; the mark
+  goes when that presence does. The cost: a person on a daemon from before #272, with no claim, who
+  re-clones keeps resolving to the old device until they choose the name on a daemon from #272 on,
+  which claims it. Until then, messages to the name go to the old device, and theirs show from their
+  address.
 - **A person's direct message wakes a session past the "Within" window**, because they are waiting
   for an answer. It doesn't wake past Never or do not disturb, which a person also chose. A broadcast
   from a person wakes nothing extra: one sentence shouldn't wake every idle session on the mesh. The
@@ -1383,7 +1431,9 @@ manager's) is logged once and left alone until restart. Successful updates log t
 versions in the daemon log.
 
 After installation, the daemon waits until no message handoff is in flight and no page counts as
-open, or until the page asks for the restart (#240). It then blocks new handoffs and shuts down
+open, or until the page asks for the restart (#240), and until no key to its page that another
+clone's page handed a tab is still good (#348), since the next daemon's page doesn't know it. From
+then on it gives no keys, and the daemon asking for one asks the next daemon. It then blocks new handoffs and shuts down
 normally, saving state and releasing the clone lock. It starts the installed binary with the same detached
 process helper clients use, forwarding its own flags (including poll and idle settings). Sessions
 reconnect through the existing grace and inbox restoration. Running MCP servers keep their loaded binary until their sessions

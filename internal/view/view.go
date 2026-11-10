@@ -279,6 +279,11 @@ func Turn(m proto.MessageView) string {
 	if m.FromOwner != "" && !m.Introduced {
 		about = append(about, "on "+m.FromOwner+"'s machine")
 	}
+	if m.FromDevice != "" {
+		// Another device says it has this name too, so the name alone doesn't say who this is. On
+		// every turn, introduced or not: the next one may be from the other device.
+		about = append(about, "from device "+m.FromDevice)
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Message from %s", who)
 	if isPerson(m) {

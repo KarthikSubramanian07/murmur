@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"bufio"
-	"cmp"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -441,6 +440,22 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 		return proto.Response{OK: true, Self: from, Events: append([]proto.EventView(nil), events...)}
 
+	case proto.OpPageKey:
+		// Another clone's daemon asks, to send its page's tab here (#348). It has the sessions'
+		// token, from this clone's daemon.json, so it could do more than this already.
+		page := d.page.Load()
+		if page == nil {
+			return fail("this daemon isn't serving the page")
+		}
+		// Under mu, as the restart onto an update decides, so no key is made after it has looked
+		// for keys still out: the next daemon's page wouldn't know it (Sol's review, 2026-11-09).
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if d.updating {
+			return fail(proto.ErrRestarting)
+		}
+		return proto.Response{OK: true, PageKey: page.PageKey()}
+
 	case proto.OpStop:
 		d.log.Printf("stop requested")
 		d.stop()
@@ -788,12 +803,18 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 			}
 			name = byAddr[e.From]
 		}
+		var device string
 		if bus.IsPerson(e.From) {
-			// A person's device may be gone from presence: the message says who sent it.
-			agent, name = bus.AgentPerson, cmp.Or(e.Person, name, d.personNameOfLocked(e.From))
+			// A person's device may be gone from presence: the message says who sent it, if that
+			// name is theirs.
+			var onMany bool
+			agent = bus.AgentPerson
+			if name, onMany = d.personSenderLocked(e); onMany {
+				device, _ = bus.SplitAddr(e.From)
+			}
 		}
 		v := proto.MessageView{ID: e.ID, From: e.From, FromName: name, FromAgent: agent, FromBranch: branch,
-			FromOwner: d.ownerOfLocked(e.From), To: e.To, Subject: e.Subject, At: e.At}
+			FromOwner: d.ownerOfLocked(e.From), FromDevice: device, To: e.To, Subject: e.Subject, At: e.At}
 		if withBody {
 			v.Body = e.Body
 		}
