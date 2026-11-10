@@ -101,7 +101,6 @@ h1 { margin-top: clamp(40px, 9vh, 88px); font-size: clamp(40px, 5.2vw, 68px); fo
 .facts { border-top: 2px solid var(--ink); }
 .fact { display: grid; grid-template-columns: minmax(0, 15em) minmax(0, 1fr); column-gap: 28px; padding: 24px 0 26px; border-bottom: 1px solid var(--line); }
 .fact h2 { font-size: 18px; font-weight: 700; letter-spacing: -.015em; line-height: 1.4; text-wrap: balance; }
-.fact .sub { margin-top: 4px; font-size: 14px; font-weight: 500; line-height: 1.4; color: var(--ink-soft); }
 .body { max-width: 64ch; }
 .body p, .body li { font-size: 16px; line-height: 1.6; }
 .body p + p, .body p + ul, .body ul + p, .body .cmd + p, .body p + .cmd, .body .cmd + .cmd { margin-top: 12px; }
