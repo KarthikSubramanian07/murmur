@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/proto"
@@ -121,9 +122,52 @@ func noneOnBus(t *testing.T, remote string, texts ...string) {
 	}
 }
 
+// lookFor is look for a wait: ok is false while d can't resolve name yet, as a session of another
+// device is known only once its presence or the registry has reached d.
+func (d *device) lookFor(as, name string) (det *proto.SessionDetail, ok bool) {
+	d.t.Helper()
+	r := d.do(proto.Request{Op: proto.OpLookup, Session: as, Name: name})
+	return r.Lookup, r.OK && r.Lookup != nil
+}
+
 func presenceTip(t *testing.T, d *device, remote string) string {
 	t.Helper()
 	return strings.Fields(git(t, d.tree(), "ls-remote", remote, "refs/murmur/presence/"+d.self()))[0]
+}
+
+// presenceSettles waits for d's presence on the remote to stop changing: the same tip for two
+// seconds in a row. A session's start and its naming each ask for a write, and on a machine busy
+// with other test runs one can land seconds after the last name shows.
+func presenceSettles(t *testing.T, d *device, remote string) {
+	t.Helper()
+	tip, since := presenceTip(t, d, remote), time.Now()
+	eventually(t, "presence to stop changing", func() bool {
+		if now := presenceTip(t, d, remote); now != tip {
+			tip, since = now, time.Now()
+		}
+		return time.Since(since) >= 2*time.Second
+	})
+}
+
+// presenceActive is the last-active time that d's presence on the remote carries for the session
+// at addr.
+func presenceActive(t *testing.T, d *device, remote, addr string) time.Time {
+	t.Helper()
+	work := t.TempDir()
+	git(t, work, "init", "-q")
+	git(t, work, "fetch", "-q", remote, "refs/murmur/presence/"+d.self())
+	var pres bus.Presence
+	if err := bus.Decode(git(t, work, "log", "-1", "--format=%B", "FETCH_HEAD"), &pres); err != nil {
+		t.Fatalf("reading %s's presence: %v", d.self(), err)
+	}
+	_, id := bus.SplitAddr(addr)
+	for _, s := range pres.Sessions {
+		if s.ID == id {
+			return s.LastActive
+		}
+	}
+	t.Fatalf("%s's presence has no session %s: %+v", d.self(), addr, pres.Sessions)
+	return time.Time{}
 }
 
 // A tool call that commits is credited to the session, with the branch, in lookup on its own
@@ -166,11 +210,14 @@ func TestToolCallThatCommitsIsCredited(t *testing.T) {
 		t.Errorf("committed to %v, want [feat-2 feat-1]", got)
 	}
 
-	// Another device reads it from presence, and has nothing of what stays local.
+	// Another device reads it from presence, and has nothing of what stays local. b saw alice
+	// above, but maybe not yet by her name, which comes with a later write.
+	var far *proto.SessionDetail
 	eventually(t, "the branches in presence on b", func() bool {
-		return slices.Equal(b.look("bbbbbb", name).Committed, []string{"feat-2", "feat-1"})
+		det, ok := b.lookFor("bbbbbb", name)
+		far = det
+		return ok && slices.Equal(det.Committed, []string{"feat-2", "feat-1"})
 	})
-	far := b.look("bbbbbb", name)
 	if far.Local || far.Worktree != "" || far.ClientSession != "" || len(far.Commits) != 0 {
 		t.Errorf("a session of another device shows what stays local: %+v", far)
 	}
@@ -384,14 +431,15 @@ func TestLastActiveMovesAndTravelsWithoutWritingPresence(t *testing.T) {
 	alice, _ := a.claudeSession("aaaaaa", "claude-la", procP, wt)
 	helper, _ := a.session("cccccc", "claude-helper")
 	bob, _ := b.session("bbbbbb", "")
-	name := a.named(alice)
-	a.named(helper)
+	name, helperName := a.named(alice), a.named(helper)
 	b.named(bob)
-	eventually(t, "presence", func() bool { return b.seesSession(alice) && b.seesSession(helper) })
-	time.Sleep(time.Second) // let the writes that the names caused finish
+	// The writes the starts and the names caused have landed once b has both names and a's
+	// presence has stopped changing.
+	b.nameIs(alice, name)
+	b.nameIs(helper, helperName)
+	presenceSettles(t, a, remote)
 
 	active := func() time.Time { return a.look("cccccc", name).LastActive }
-	tip := presenceTip(t, a, remote)
 	registered := active()
 	if registered.IsZero() {
 		t.Fatal("a registered session has no last-active time")
@@ -424,10 +472,14 @@ func TestLastActiveMovesAndTravelsWithoutWritingPresence(t *testing.T) {
 		t.Errorf("last active moved to %v on requests that weren't the session's (was %v)", got, last)
 	}
 
-	// None of that wrote presence.
+	// None of that wrote presence: what it has of alice is still her registration. A write those
+	// requests caused would come after them, and so carry the time they moved her to. A late write
+	// left from the names, which a comparison of tips mistook for theirs, carries the registration.
 	time.Sleep(time.Second)
-	if now := presenceTip(t, a, remote); now != tip {
-		t.Fatalf("presence was written (%s, was %s) by requests that should only move last active", now, tip)
+	if got := presenceActive(t, a, remote, alice); got.IsZero() {
+		t.Fatal("presence has no last-active time for alice, so this proves nothing")
+	} else if got.After(registered) {
+		t.Fatalf("presence was written with alice last active at %v (registered %v) by requests that should only move last active", got, registered)
 	}
 
 	// The next write carries it: a status line is what asks for one here. What b makes of it is
