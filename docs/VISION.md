@@ -757,6 +757,12 @@ in its own session.
   for an answer. It doesn't wake past Never or do not disturb, which a person also chose. A broadcast
   from a person wakes nothing extra: one sentence shouldn't wake every idle session on the mesh. The
   turn says who it is from, that they see only what the agent sends, and how to answer.
+- **That explanation comes once** (#345, Tyler, 2026-11-09): only the first message a session is
+  given whole from a person carries it, by any route (a turn, the hook's whole message or Stop's,
+  inbox). Later ones end with the line an agent's message does: the agent has been told, and a long
+  line on every message is noise. What each session has been told is kept in `state.json` by its
+  name, as its tags are, so it outlasts its MCP server and the daemon restarting. A message counts
+  once it reached the session, so a turn whose handoff failed explains again when the hook gives it.
 - **What the person keeps.** Messages to and from them go to `.git/murmur/person-messages.jsonl`,
   the last 2,000, apart from the page's 500, so a conversation outlasts a daemon restart. Unread is
   the person's inbox, which holds direct messages only: counting broadcasts would keep the badge lit

@@ -79,3 +79,22 @@ func TestAPersonsMessageIsTaggedHuman(t *testing.T) {
 		}
 	}
 }
+
+// Only the first message a session has from a person says in full that they see only what the agent
+// sends; later ones (Explained) end as an agent's do, in a turn and in inbox (#345).
+func TestAPersonIsExplainedOnce(t *testing.T) {
+	name := brand.Product
+	m := proto.MessageView{From: "dev-0001/" + bus.PersonSession, FromName: "ada", FromAgent: bus.AgentPerson, To: "x", Subject: "look at this", Introduced: true}
+	long := "ada sees only what you `send`, not this conversation. Answer with " + name + "'s `send` to ada.\n"
+	short := "Reply with " + name + "'s `send` to ada if a reply is needed.\n"
+	if got := Turn(m); !strings.HasSuffix(got, "\n"+long) {
+		t.Errorf("first turn:\n%s", got)
+	}
+	m.Explained = true
+	if got, want := Turn(m), "Message from ada [human] via "+name+":\n\nlook at this\n\n"+short; got != want {
+		t.Errorf("later turn:\n%s\nwant:\n%s", got, want)
+	}
+	if got := Inbox(proto.Response{Messages: []proto.MessageView{m}}); !strings.Contains(got, "(Reply to ada.)\n") || strings.Contains(got, "sees only") {
+		t.Errorf("a later message in inbox:\n%s", got)
+	}
+}
