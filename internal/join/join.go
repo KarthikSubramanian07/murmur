@@ -284,7 +284,7 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 	// A daemon that is still starting has no daemon.json to stop; it sees the consent gone and exits
 	// by itself, which is waited for here so a leave doesn't return while one is about to publish.
-	starting, err := client.WaitGone(ctx, p.GitDir, time.Until(end))
+	starting, err := waitGone(ctx, p.GitDir, time.Until(end))
 	waited()
 	if err != nil {
 		problem("waiting for the daemon to exit", fmt.Errorf("%w; it has no consent left and refuses requests, and stops by itself", err))
@@ -310,11 +310,13 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	return r, nil
 }
 
-// How long a leave waits for the daemon to let go of the clone, and how long it waits before saying
-// so. Variables, for the tests.
+// How long a leave waits for the daemon to let go of the clone, how long it waits before saying so,
+// and the wait itself. Variables, for the tests: the wait's, so that a test acts once the leave is
+// waiting rather than after a guessed time, which the git commands before it can outlast.
 var (
 	leaveWait  = client.StopWait
 	leaveQuiet = 5 * time.Second
+	waitGone   = client.WaitGone
 )
 
 // sayIfSlow writes line to w unless the function it returns is called within d. That function
