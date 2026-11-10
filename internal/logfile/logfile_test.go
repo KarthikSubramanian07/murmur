@@ -49,17 +49,41 @@ func TestTheLogIsMovedAsideWhileTheDaemonRuns(t *testing.T) {
 		t.Fatalf("the log is %d bytes, over the limit of 100", fi.Size())
 	}
 	// The file held 23 bytes, and takes four lines between moves.
-	lines := func(from, to int) (s string) {
-		for i := from; i <= to; i++ {
-			s += fmt.Sprintf("line %02d, ten more bytes\n", i)
-		}
-		return s
-	}
 	if got, want := read(t, path), lines(11, 11); got != want {
 		t.Fatalf("the log after its last move is\n%q, want\n%q", got, want)
 	}
 	if got, want := read(t, path+".old"), lines(7, 10); got != want {
 		t.Fatalf("the .old file is\n%q, want what came between the last two moves:\n%q", got, want)
+	}
+}
+
+// lines are the lines the tests log, from line from to line to.
+func lines(from, to int) (s string) {
+	for i := from; i <= to; i++ {
+		s += fmt.Sprintf("line %02d, ten more bytes\n", i)
+	}
+	return s
+}
+
+// A daemon whose standard error a shell opened with `2>`, not to append, writes at its own offset.
+// Once the file is emptied it writes from the start again, rather than on after a hole of NUL bytes
+// that would keep the file at its size and copy the hole into the .old file.
+func TestALogNotOpenedToAppendIsMovedAsideToo(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.log")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	l := log.New(New(f, path, 100), "", 0)
+	for i := range 12 {
+		l.Printf("line %02d, ten more bytes", i)
+	}
+	if got, want := read(t, path), lines(8, 11); got != want {
+		t.Fatalf("the log after its last move is\n%q, want\n%q", got, want)
+	}
+	if got, want := read(t, path+".old"), lines(4, 7); got != want {
+		t.Fatalf("the .old file is\n%q, want\n%q", got, want)
 	}
 }
 

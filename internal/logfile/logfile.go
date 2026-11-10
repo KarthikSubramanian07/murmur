@@ -20,8 +20,9 @@ const Max = 4 << 20
 // the daemon did, for --log). Once the file would pass a size, Writer copies it to path+".old" and
 // empties it. Renaming it would be simpler, but Windows doesn't rename a file that is open, and
 // out stays open: it is the process's standard error, which a panic's trace goes to too.
-// Emptying the file works on every system, because out was opened to append: each write goes to
-// the file's end, wherever that now is.
+// After emptying the file, Writer moves out's offset back to its start. Both starters open the
+// file to append, so their writes go to its end wherever that now is, but a daemon whose stderr a
+// shell opened with `2>` would write on at the old offset, behind a hole of NUL bytes.
 type Writer struct {
 	mu   sync.Mutex
 	out  *os.File
@@ -76,7 +77,8 @@ func (w *Writer) Write(p []byte) (int, error) {
 // rotate copies the file to path+".old" and empties it. A daemon started after this one, by an
 // update, moves the file aside itself when it starts; this one then stops moving it, rather than
 // empty the file the new daemon writes. A copy that fails leaves the file as it is, to be tried
-// again after another max bytes. Caller holds mu.
+// again after another max bytes. What reaches the file other than through this Writer while it is
+// copied (a panic's trace, a starter's line) is lost when it is emptied. Caller holds mu.
 func (w *Writer) rotate() {
 	w.size = 0
 	if _, ok := same(w.out, w.path); !ok {
@@ -86,7 +88,9 @@ func (w *Writer) rotate() {
 	if copyFile(w.path, w.path+".old") != nil {
 		return
 	}
-	os.Truncate(w.path, 0)
+	if os.Truncate(w.path, 0) == nil {
+		w.out.Seek(0, io.SeekStart)
+	}
 }
 
 func copyFile(from, to string) error {
