@@ -848,7 +848,9 @@ change and a daemon that knows no names routes by it all the same.
   - *What one record can add (2026-11-09).* Since the set never shrinks, a reader bounds what it
     takes from a single record. A snapshot counts only on a root commit, the one place Murmur
     writes it. A presence listing more than 200 sessions (`bus.MaxSessions`), far beyond what one
-    device runs, is read as unreadable, whole, so none of its names counts. And once 1,000 random
+    device runs, is read as unreadable, whole, so none of its names counts. A daemon's own presence
+    keeps to the cap: past it, it lists the most recently active sessions, and logs how many it
+    left out. And once 1,000 random
     picks have all been in use, a daemon goes through the lists from a random place for a name
     nobody has. Push access can still mark names used, more slowly: a force-pushed registry may
     start from a root of its own, and each presence may list 200.

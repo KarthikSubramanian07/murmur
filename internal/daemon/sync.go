@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -1245,6 +1246,19 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 		pres.Sessions = append(pres.Sessions, info)
 	}
+	room := bus.MaxSessions
+	if d.st.Person != "" {
+		room--
+	}
+	var cut int
+	pres.Sessions, cut = capSessions(pres.Sessions, room)
+	if cut != d.presenceCut {
+		if cut > 0 {
+			d.log.Printf("presence lists the %d most recently active sessions; %d more are left out, as readers take no more than %d",
+				room, cut, bus.MaxSessions)
+		}
+		d.presenceCut = cut
+	}
 	if d.st.Person != "" {
 		pres.Sessions = append(pres.Sessions, d.personInfoLocked())
 	}
@@ -1259,6 +1273,25 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		return err
 	}
 	return d.push(ctx, sha, d.presenceRef(), bus.Force, "")
+}
+
+// capSessions keeps at most n of a presence's sessions, the most recently active (by their last
+// activity, else their start), in the order they came, and says how many it left out. A reader takes a
+// presence over bus.MaxSessions for one it can't read, so a device with that many would vanish from
+// every teammate's view; this way only its least active sessions do.
+func capSessions(ss []bus.SessionInfo, n int) ([]bus.SessionInfo, int) {
+	if len(ss) <= n {
+		return ss, 0
+	}
+	at := func(s bus.SessionInfo) time.Time { return cmp.Or(s.LastActive, s.Started) }
+	byActive := slices.Clone(ss)
+	slices.SortStableFunc(byActive, func(a, b bus.SessionInfo) int { return at(b).Compare(at(a)) })
+	keep := map[string]bool{}
+	for _, s := range byActive[:n] {
+		keep[s.ID] = true
+	}
+	kept := slices.DeleteFunc(slices.Clone(ss), func(s bus.SessionInfo) bool { return !keep[s.ID] })
+	return kept, len(ss) - len(kept)
 }
 
 // liveNamesLocked is the names of the sessions that are connected, as opposed to waiting out their

@@ -297,6 +297,9 @@ type Daemon struct {
 	// namesChecked says the registry has been looked at since this daemon started, even if its
 	// tip is the one state.json recorded.
 	namesChecked bool
+	// presenceCut is how many sessions the last presence left out to keep to bus.MaxSessions (see
+	// capSessions), so that is logged when it changes, not on every heartbeat.
+	presenceCut int
 	// lastPage is when a page someone can see last called its API, zero if none has. msgs is the
 	// page's messages, oldest first, msgSeq the number of the newest and msgIDs the IDs in msgs.
 	lastPage time.Time
