@@ -167,11 +167,14 @@ is sent and how.
 
 Murmur is built by Tyler ([@a-Fig](https://github.com/a-Fig)).
 
-Thank you to [Karthik Subramanian](https://github.com/KarthikSubramanian07) for all of his work on it.
+Huge thanks to [Karthik Subramanian](https://github.com/KarthikSubramanian07), Murmur's biggest
+contributor.
 
-[Aaditya Desai](https://github.com/aadityad12) helped test Murmur early on, and Cara helped with its design.
+Thank you as well to these people for their help and support:
 
-And thanks to everyone at the AIE hackathon who tried Murmur while it was still new.
+- [Aaditya Desai](https://github.com/aadityad12)
+- Cara
+- Everyone at the AIE hackathon who tried Murmur early
 
 ## License
 
