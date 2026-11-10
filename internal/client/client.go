@@ -460,17 +460,21 @@ func (c *Client) Hello(ctx context.Context, h proto.Hello) (net.Conn, proto.Resp
 	if err := c.connect(ctx); err != nil {
 		return nil, proto.Response{}, err
 	}
-	conn, err := dial(ctx, c.current().Addr)
+	// One read of the daemon for both its address and its token: a call on another goroutine can
+	// change it in between, and one daemon's token must never go to another's address.
+	info := c.current()
+	conn, err := dial(ctx, info.Addr)
 	if err != nil {
 		if cerr := c.connect(ctx); cerr != nil {
 			return nil, proto.Response{}, cerr
 		}
-		if conn, err = dial(ctx, c.current().Addr); err != nil {
+		info = c.current()
+		if conn, err = dial(ctx, info.Addr); err != nil {
 			return nil, proto.Response{}, err
 		}
 	}
 	conn.SetDeadline(time.Now().Add(15 * time.Second))
-	if err := writeLine(conn, proto.Request{Token: c.current().Token, Op: proto.OpHello, Hello: &h}); err != nil {
+	if err := writeLine(conn, proto.Request{Token: info.Token, Op: proto.OpHello, Hello: &h}); err != nil {
 		conn.Close()
 		return nil, proto.Response{}, err
 	}
