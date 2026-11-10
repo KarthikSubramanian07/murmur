@@ -23,7 +23,7 @@
     --butter: #FDEE8C;
     --ink: #0E1B45;
     --ink-soft: color-mix(in srgb, var(--ink) 78%, var(--cream));
-    --ink-mute: color-mix(in srgb, var(--ink) 62%, var(--cream));
+    --ink-mute: color-mix(in srgb, var(--ink) 66%, var(--cream));   /* 4.5:1 on the panel */
     --cream-2: color-mix(in srgb, var(--cream) 96%, var(--ink));   /* panel */
     --cream-3: color-mix(in srgb, var(--cream) 90%, var(--ink));   /* node */
     --rule: color-mix(in srgb, var(--ink) 12%, transparent);
@@ -100,9 +100,10 @@
   .button:hover { background: var(--cream); transform: translateY(-1px); }
   .button:focus-visible { outline: 2px solid var(--cream); outline-offset: 3px; }
   /* For whoever hands the page to an agent, and for the agent: first in the text, one line above the cards. */
-  .agent-note { position: absolute; top: 16px; left: 0; right: 0; padding: 0 24px; text-align: center; font-size: 13px; line-height: 1.4; color: color-mix(in srgb, var(--cream) 80%, var(--blue)); }
+  .agent-note { position: absolute; top: 16px; left: 0; right: 0; padding: 0 24px; text-align: center; font-size: 13px; line-height: 1.4; color: var(--cream); }
   .agent-note a { color: var(--cream); font-weight: 600; text-decoration-color: color-mix(in srgb, var(--cream) 45%, transparent); text-underline-offset: 3px; }
   .agent-note a:hover { text-decoration-color: var(--cream); }
+  .agent-note a:focus-visible { outline: 2px solid var(--cream); outline-offset: 3px; border-radius: 3px; }
 
   .card {
     position: absolute;
@@ -383,11 +384,11 @@
   /* It fades into the blue of page 2 at the foot. */
   .st::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 90px; z-index: 1; pointer-events: none;
     background: linear-gradient(180deg, transparent, #225BFF); }
-  .st .agent-note { position: relative; z-index: 2; top: auto; margin: 0; padding-top: 18px; max-width: 640px; text-wrap: balance; }
+  .st .agent-note { position: relative; z-index: 2; top: auto; margin: 0; padding-top: 18px; max-width: 640px; text-wrap: balance; text-shadow: 0 1px 2px rgba(14, 27, 69, .3), 0 1px 12px rgba(14, 27, 69, .6); }
   .st .st-copy { position: relative; z-index: 2; margin-top: auto; }
   .st h1 { font-size: clamp(34px, 4.3vw, 62px); text-shadow: 0 1px 2px rgba(14, 27, 69, .25), 0 4px 18px rgba(14, 27, 69, .3), 0 10px 60px rgba(14, 27, 69, .35); }
   .st .st-copy p { max-width: 600px; margin: 22px auto 0; font-size: 18px; line-height: 1.55; text-wrap: balance;
-    color: color-mix(in srgb, #FFFBEA 92%, #225BFF); text-shadow: 0 1px 16px rgba(14, 27, 69, .45); }
+    color: var(--cream); text-shadow: 0 1px 16px rgba(14, 27, 69, .45); }
   .st .button { margin-top: 30px; }
   .st .st-bubbles { position: relative; z-index: 2; display: flex; gap: 20px; justify-content: center; margin-top: 34px; }
   .st .st-bubbles .card { position: static; text-align: left; width: 300px; }
@@ -458,7 +459,7 @@
      centred in it. */
   @media (max-width: 600px) {
     .st-trim { min-height: 100vh; min-height: 100svh; padding: 0 20px 28px; }
-    .st-trim .agent-note { padding-top: 14px; max-width: 320px; font-size: 12.5px; line-height: 1.45; opacity: .85; }
+    .st-trim .agent-note { padding-top: 14px; max-width: 320px; font-size: 12.5px; line-height: 1.45; }
     .st-trim .st-mark { font-size: 39vw; line-height: .74; letter-spacing: .01em; text-indent: .01em; }
     .st-trim .st-mark.st-inline { margin: 0 0 .14em; filter: blur(1.3px) url(#st-reeds-sm); }
     .st-trim h1 { font-size: clamp(27px, 8.2vw, 34px); line-height: 1.08; letter-spacing: -.035em; }
@@ -546,16 +547,20 @@ vec4 light(vec2 q, vec2 s, float f) {
 
 
   const FS = `precision highp float;
-uniform vec2 uRes; uniform float uDpr, uT, uK, uSc; uniform vec4 uWord;
+uniform vec2 uRes; uniform float uDpr, uT, uK, uSc; uniform vec4 uWord, uText, uNote;
 const vec3 BUT = vec3(.992, .933, .549);
 const vec3 CRM = vec3(1., .984, .918);
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+// 1 inside a box (centre, half-size), easing to 0 at 48px outside it.
+float cover(vec2 q, vec4 b) { vec2 d = abs(q - b.xy) - b.zw; return 1. - smoothstep(0., 48., max(d.x, d.y)); }
 ${LIGHT}
 void main() {
   vec2 q = vec2(gl_FragCoord.x, uRes.y * uDpr - gl_FragCoord.y) / uDpr;
   float f = fract(q.x / 12.);
   vec2 s = vec2(q.x + uK * (f - .5), q.y);
   vec4 c = light(q, s, f);
+  // The light goes out behind the words, so the cream text keeps its 4.5:1 on the blue as it passes.
+  c *= 1. - max(cover(q, uText), cover(q, uNote));
   float n = (hash(gl_FragCoord.xy) - .5) / 255.;
   gl_FragColor = vec4(clamp(c.rgb + n, 0., 1.), clamp(c.a + n, 0., 1.));
 }`;
@@ -581,7 +586,7 @@ void main() {
   gl.enableVertexAttribArray(loc);
   gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
   const u = {};
-  for (const n of ['uRes', 'uDpr', 'uT', 'uK', 'uSc', 'uWord', ...UNIFORMS]) u[n] = gl.getUniformLocation(prog, n);
+  for (const n of ['uRes', 'uDpr', 'uT', 'uK', 'uSc', 'uWord', 'uText', 'uNote', ...UNIFORMS]) u[n] = gl.getUniformLocation(prog, n);
 
   // The hero's size, and where the word's letters sit in it (CSS px, y down), as centre and
   // half-size. "mur" is all x-height letters: in its .8em line box the glyphs start about .19em
@@ -637,6 +642,8 @@ void main() {
     gl.uniform1f(u.uK, narrow.matches ? 9 : 24);
     gl.uniform1f(u.uSc, Math.min(1.15, Math.max(.6, view.w / 1440)));
     gl.uniform4fv(u.uWord, view.word);
+    gl.uniform4fv(u.uText, view.text);
+    gl.uniform4fv(u.uNote, view.note);
     SET(gl, u, tt, view);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
