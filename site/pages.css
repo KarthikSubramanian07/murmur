@@ -1,0 +1,145 @@
+/* The plain pages: /about/, /privacy/ and /contact/. One stylesheet for the three, in the home
+   page's terms: its four colors and their mixes, Inter, the reeds and grain over the blue, a cream
+   sheet with a rounded top, and Setup's ruled list for the facts. */
+:root {
+  --blue: #225BFF;
+  --cream: #FFFBEA;
+  --butter: #FDEE8C;
+  --ink: #0E1B45;
+  --ink-soft: #3A4670;
+  --badge-bg: #DCE6FF;
+  --badge-ink: #1640BF;
+  --line: #DDD7B8;
+  --mono: ui-monospace, Menlo, Consolas, monospace;
+  --sheet: clamp(28px, 3.2vw, 44px);
+  --gutter: clamp(20px, 4vw, 48px);
+  --ease: cubic-bezier(.22, .8, .24, 1);
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --flutes: repeating-linear-gradient(90deg,
+    rgba(255, 255, 255, 0.16) 0px,
+    rgba(255, 255, 255, 0.05) 1px,
+    rgba(255, 255, 255, 0) 5px,
+    rgba(14, 27, 69, 0.05) 9px,
+    rgba(14, 27, 69, 0.22) 11px,
+    rgba(14, 27, 69, 0.3) 12px);
+}
+* { box-sizing: border-box; margin: 0; }
+html { background: var(--blue); }
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--blue);
+  color: var(--cream);
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+}
+
+/* ---------- The top: the title on the blue, behind the same reeded glass as the home page ---------- */
+.top { position: relative; isolation: isolate; overflow: clip; padding: clamp(22px, 4vh, 40px) var(--gutter) clamp(48px, 9vh, 96px); }
+.top::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    var(--flutes),
+    radial-gradient(34% 60% at 88% 30%, rgba(14, 27, 69, .3), rgba(14, 27, 69, 0) 75%),
+    radial-gradient(30% 50% at 8% 110%, rgba(14, 27, 69, .26), rgba(14, 27, 69, 0) 75%),
+    var(--blue);
+  background-blend-mode: soft-light, normal, normal, normal;
+}
+.top::after { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--grain); background-size: 180px 180px; mix-blend-mode: overlay; opacity: .12; }
+.top-in { max-width: 1040px; margin: 0 auto; }
+
+/* Back to the home page: the daemon page's glass pill, which fills with butter on hover. */
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  height: 42px;
+  padding: 0 18px 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 251, 234, .05); /* a stronger fill lifts the blue under "Murmur" below 4.5:1 */
+  box-shadow: inset 0 0 0 1px rgba(255, 251, 234, .26);
+  color: var(--cream);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  text-decoration: none;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  transition: background-color .35s var(--ease), box-shadow .35s var(--ease), color .35s var(--ease), transform .2s var(--ease);
+}
+.back svg { flex: none; display: block; }
+.back .arrow { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .35s var(--ease); }
+.back .mark { width: 22px; height: 22px; }
+.back .mark rect:first-child { fill: var(--cream); transition: fill .35s var(--ease); }
+.back .mark rect + rect { fill: var(--blue); }
+.back .mark path { fill: none; stroke: var(--cream); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; transition: stroke .35s var(--ease); }
+.back:hover { background: var(--butter); box-shadow: inset 0 0 0 1px var(--butter); color: var(--ink); }
+.back:hover .arrow { transform: translateX(-3px); }
+.back:hover .mark rect:first-child { fill: var(--ink); }
+.back:hover .mark path { stroke: var(--butter); }
+.back:active { transform: scale(.97); }
+.back:focus-visible { outline: 3px solid var(--cream); outline-offset: 3px; }
+
+h1 { margin-top: clamp(40px, 9vh, 88px); font-size: clamp(40px, 5.2vw, 68px); font-weight: 700; letter-spacing: -.035em; line-height: 1.04; color: var(--butter); text-wrap: balance; }
+.lead { max-width: 640px; margin-top: 22px; font-size: clamp(17px, 1.5vw, 20px); font-weight: 500; line-height: 1.5; letter-spacing: -.008em; color: var(--cream); text-shadow: 0 1px 16px rgba(14, 27, 69, .45); text-wrap: pretty; }
+.lead a { color: var(--cream); text-decoration-color: color-mix(in srgb, var(--cream) 45%, transparent); text-underline-offset: 4px; }
+.lead a:hover { text-decoration-color: var(--cream); }
+.lead a:focus-visible { outline: 2px solid var(--cream); outline-offset: 3px; border-radius: 3px; }
+.asof { display: inline-block; margin-top: 18px; padding: 4px 10px; border-radius: 999px; background: rgba(14, 27, 69, .22); box-shadow: inset 0 0 0 1px rgba(255, 251, 234, .2); font: 500 13px/1.4 var(--mono); color: var(--cream); }
+
+/* ---------- The sheet: cream, rounded at the top, as page 2 of the home page meets the blue ---------- */
+.sheet { flex: 1; background: var(--cream); color: var(--ink); border-radius: var(--sheet) var(--sheet) 0 0; padding: clamp(36px, 7vh, 72px) var(--gutter) clamp(48px, 9vh, 88px); }
+.sheet-in { max-width: 1040px; margin: 0 auto; }
+
+/* Setup's list: a heavy rule on top, a hairline under each row, the name of the thing on the left. */
+.facts { border-top: 2px solid var(--ink); }
+.fact { display: grid; grid-template-columns: minmax(0, 15em) minmax(0, 1fr); column-gap: 28px; padding: 24px 0 26px; border-bottom: 1px solid var(--line); }
+.fact h2 { font-size: 18px; font-weight: 700; letter-spacing: -.015em; line-height: 1.4; text-wrap: balance; }
+.body { max-width: 64ch; }
+.body p, .body li { font-size: 16px; line-height: 1.6; }
+.body p + p, .body p + ul, .body ul + p, .body .cmd + p, .body p + .cmd, .body .cmd + .cmd { margin-top: 12px; }
+.body ul { padding-left: 1.15em; }
+.body li + li { margin-top: 6px; }
+.body li::marker { color: var(--blue); }
+.body strong { font-weight: 700; }
+.nw { white-space: nowrap; }
+.body a, .note a { color: var(--blue); font-weight: 600; text-decoration-thickness: 1px; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.body a:hover, .note a:hover { color: var(--ink); }
+.sheet a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; }
+code { padding: 1px 6px; border-radius: 6px; background: var(--badge-bg); color: var(--badge-ink); font: 600 .875em/1.5 var(--mono); overflow-wrap: anywhere; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.cmd { padding: 11px 14px; border-radius: 10px; background: var(--ink); color: var(--cream); font: 13.5px/1.5 var(--mono); overflow-wrap: anywhere; }
+.cmd code { padding: 0; background: none; color: inherit; font: inherit; }
+.note { margin-top: 28px; max-width: 72ch; font-size: 15.5px; line-height: 1.55; color: var(--ink-soft); }
+
+.end { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 24px; margin-top: 32px; }
+.button { display: inline-block; padding: 14px 24px; border-radius: 999px; background: var(--blue); color: var(--cream); font-size: 16px; font-weight: 600; text-decoration: none; white-space: nowrap; transition: background-color .15s ease; }
+.button:hover { background: var(--ink); }
+.sheet .button:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; border-radius: 999px; }
+.quiet { color: var(--ink); font-size: 15px; font-weight: 500; text-underline-offset: 4px; text-decoration-color: color-mix(in srgb, var(--ink) 35%, transparent); }
+.quiet:hover { text-decoration-color: var(--ink); }
+
+/* ---------- The foot: the same four links at the end of every page, after <main>, on the sheet's cream ---------- */
+.site-foot { background: var(--cream); padding: 0 var(--gutter); }
+.site-foot nav { max-width: 1040px; margin: 0 auto; padding: 20px 0 max(28px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
+.site-foot ul { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; padding: 0; list-style: none; }
+.site-foot li + li::before { content: "·"; padding: 0 12px; color: var(--ink-soft); opacity: .6; }
+.site-foot a { color: var(--ink-soft); font-size: 14px; font-weight: 500; text-decoration: none; }
+.site-foot a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
+.site-foot a[aria-current="page"] { color: var(--ink); font-weight: 600; }
+.site-foot a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; }
+
+@media (max-width: 720px) {
+  .fact { grid-template-columns: minmax(0, 1fr); row-gap: 8px; padding: 20px 0 22px; }
+  .body p, .body li { font-size: 15.5px; }
+  .cmd { font-size: 12.5px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .back, .back .arrow, .back .mark rect, .back .mark path, .button { transition: none; }
+  .back:hover .arrow { transform: none; }
+}
