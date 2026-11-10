@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -22,6 +23,31 @@ import (
 )
 
 const maxBody = bus.MaxBody
+
+// maxRequest caps a request's line, which is read before its token is checked: any local process,
+// of any user, can connect, and a line read whole however long would let one fill the daemon's
+// memory (about twice what it sent; a 1 GiB line, 2 GiB of heap). The largest legal request is a
+// send, its body at most maxBody, which JSON escaping can make six times longer (`<` for `<`),
+// with a subject and a few paths beside it. A body a little over maxBody still gets the reply that
+// says why it wasn't sent.
+const maxRequest = 8 * maxBody
+
+var errTooLong = errors.New("line too long")
+
+// readLine reads a line of at most max bytes, its newline included.
+func readLine(r *bufio.Reader, max int) ([]byte, error) {
+	var line []byte
+	for {
+		part, err := r.ReadSlice('\n')
+		if len(line)+len(part) > max {
+			return nil, errTooLong
+		}
+		line = append(line, part...)
+		if err != bufio.ErrBufferFull {
+			return line, err
+		}
+	}
+}
 
 func fail(msg string) proto.Response { return proto.Response{Error: msg} }
 
@@ -53,7 +79,11 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	r := bufio.NewReader(conn)
-	line, err := r.ReadBytes('\n')
+	line, err := readLine(r, maxRequest)
+	if errors.Is(err, errTooLong) {
+		writeResp(conn, fail(fmt.Sprintf("bad request: over %d KB", maxRequest>>10)))
+		return
+	}
 	if err != nil {
 		return
 	}
