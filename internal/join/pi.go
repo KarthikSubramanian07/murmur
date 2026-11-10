@@ -126,6 +126,9 @@ export default function (pi: any) {
   let sock = "";
   let token = "";
   let server: any = null;
+  // conns are the open server's connections, which close ends too: server.close() only stops new
+  // ones, and a connection to an earlier session's socket would otherwise start a turn in this one.
+  let conns = new Set<any>();
   let watch: any = null;
   // ended says the end of the work has been told to the daemon since it last started.
   let ended = false;
@@ -184,8 +187,10 @@ export default function (pi: any) {
     if (watch) clearInterval(watch);
     try {
       if (server) server.close();
+      for (const c of conns) c.destroy();
       if (server && !windows) rmSync(sock, { force: true });
     } catch {}
+    conns = new Set();
     watch = server = null;
     on = false;
     sock = token = "";
@@ -194,9 +199,12 @@ export default function (pi: any) {
   // then lines {"type":"user","message":{"content":...}}. Without it, messages wait for the hook.
   const listen = (path: string, key: string): Promise<void> =>
     new Promise((resolve) => {
+      const mine = new Set<any>();
       const srv = createServer((conn: any) => {
         let buf = "";
         let authed = false;
+        mine.add(conn);
+        conn.on("close", () => mine.delete(conn));
         conn.setEncoding("utf8");
         conn.on("error", () => {});
         conn.on("data", (chunk: string) => {
@@ -213,6 +221,8 @@ export default function (pi: any) {
             if (!authed) {
               if (rec?.type !== "auth" || rec?.token !== key) return conn.destroy();
               authed = true;
+            } else if (server !== srv) {
+              return conn.destroy(); // the session it was opened for has ended
             } else if (rec?.type === "user" && typeof rec?.message?.content === "string" && rec.message.content) {
               // A turn if the session is idle; held until it finishes if it is busy, not steered into it.
               pi.sendMessage(said(rec.message.content), { triggerTurn: true, deliverAs: "followUp" });
@@ -227,6 +237,7 @@ export default function (pi: any) {
         } catch {}
         srv.unref();
         server = srv;
+        conns = mine;
         resolve();
       });
     });

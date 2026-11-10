@@ -46,8 +46,23 @@ await new Promise((resolve) => {
 });
 await sleep(300);
 console.log("turns:", JSON.stringify(sent.map((s) => [s.m.customType, s.m.content, s.o])));
+// A connection made to this session's socket, which outlives the session (/new, /resume), starts no
+// turn in the next one.
+const old = net.connect(env.MURMUR_PI_MESSAGING_SOCKET);
+let oldClosed = false;
+old.on("error", () => {});
+old.on("close", () => (oldClosed = true));
+await new Promise((r) => old.on("connect", r));
+old.write(JSON.stringify({ type: "auth", token: env.MURMUR_PI_MESSAGING_TOKEN }) + "\n");
+await sleep(200);
+await handlers.session_start({}, { cwd: repo, sessionManager: { getSessionFile: () => "/s/b.jsonl" } });
+if (!old.destroyed) old.write(JSON.stringify({ type: "user", message: { role: "user", content: "for a" } }) + "\n");
+await sleep(300);
+console.log("turns after a switch:", sent.length);
+console.log("the old connection closed:", oldClosed);
+const envB = regs.at(-1).env;
 handlers.session_shutdown();
-console.log("socket left after shutdown:", fs.existsSync(env.MURMUR_PI_MESSAGING_SOCKET));
+console.log("socket left after shutdown:", fs.existsSync(env.MURMUR_PI_MESSAGING_SOCKET) || fs.existsSync(envB.MURMUR_PI_MESSAGING_SOCKET));
 `
 
 // A Pi session that was running when its user joined turns on by itself (#205, the re-review's
@@ -98,6 +113,8 @@ func TestPiExtensionTurnsOnWhenItsCloneIsJoined(t *testing.T) {
 		"listening before the join: false",
 		"listening after the join: true",
 		`turns: [["murmur","a turn",{"triggerTurn":true,"deliverAs":"followUp"}]]`,
+		"turns after a switch: 1",
+		"the old connection closed: true",
 		"socket left after shutdown: false",
 	} {
 		if !strings.Contains(got, want) {
