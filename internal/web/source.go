@@ -160,7 +160,7 @@ const (
 	ToAll     = "all"
 )
 
-// Mute is one session's mute of another: the muted session's messages to it are not delivered.
+// Mute is one session's mute of another: the muted session's messages never reach it.
 type Mute struct {
 	By    string    `json:"by"`
 	Muted string    `json:"muted"`
@@ -203,7 +203,7 @@ const (
 
 // Busy values. With BusySubject the hook shows the sender and subject, and the agent reads the
 // body with inbox; with BusyWhole it shows the message as it would go in as a turn, and the
-// message is delivered.
+// message is read.
 const (
 	BusySubject = "subject"
 	BusyWhole   = "whole"
