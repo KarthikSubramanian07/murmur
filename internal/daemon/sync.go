@@ -1269,6 +1269,10 @@ func (d *Daemon) appendSoon(e bus.Event) {
 // later than it needed to (measured 2026-11-09). Only the presence shows the session: its start on
 // the log is a line in readers' notes, and a name from the pool is set aside for this device
 // already, so readers take it from the presence before its assignment lands.
+//
+// It waits for the presence on its way, if there is one, and then for the next if a session has
+// started since, even when the writer is for an earlier session that the first already lists. The
+// gates are taken once, so that is two presences at most, not every session that starts meanwhile.
 func (d *Daemon) awaitPresence(ctx context.Context) error {
 	d.mu.Lock()
 	gates := []chan struct{}{d.presenceSending, d.presenceFirst}
