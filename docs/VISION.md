@@ -1467,6 +1467,17 @@ A body past the limit is cut, as in `inbox`.
   `ls-remote` requests about 2 s apart drew none, which is a short test, not evidence about
   hours of them from every device of a team. A poll that fails waits twice as long each time, to
   at most a minute (or 20 polls, if Poll is shorter), and goes back to its usual rate when it works.
+  A fetch offers the server only the clone's bus commits as what it already has
+  (`--negotiation-tip=refs/murmur/*`, 2026-11-10). By default git offers every local ref's
+  commits, and for a presence commit, which has no parent, the server is never ready, so the clone
+  listed the user's whole history: with 350 commits of its own, 300 of them unpushed, 6 requests
+  offering 377 commits, against 2 offering 18. Over GitHub, before the change, a fetch with a
+  presence ref in it took 0.93 s and one without 0.45 s (2026-11-09); nothing was measured over
+  GitHub after it. The cost is junk: a commit built on a branch and pushed onto a bus ref brings
+  the branch's whole history (540 KB against 12 KB for a 200-commit branch), since the server
+  isn't told the clone has it, and on a large repo the slow fetch below takes it. Offering the
+  remote's `HEAD` too would avoid that, but cost a presence fetch a request more, and a mesh fetch
+  too when the branch is newer than the log, so it was left out.
 - **A ref too slow to fetch (2026-11-08, #15).** Anyone with push access can put a large object on
   a bus ref, on purpose or with a mistaken push. A sync has a minute, and a fetch that used it up
   failed that sync and the next, for as long as the object stayed. So each fetch in a sync now has
