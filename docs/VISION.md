@@ -196,10 +196,13 @@ why. Raise the number with any change to a request or a reply that an older daem
 The daemon's log, `.git/murmur/daemon.log`, is its only record of what it did, so it is what a
 teammate is asked to send when their device misbehaves, maybe to someone off the team. So it can be
 shared: it names events by type, ID and address, never by what a message says, and each line the
-daemon logs passes through `internal/logfile`, which takes the user and password out of any URL. It
-does name the clone's paths. Past 4 MB it moves to `daemon.log.old`, when a daemon starts and while it runs, by copying
-and emptying the file, since Windows can't rename an open one. Until 2026-11-09 it moved only at a
-start, so a daemon kept up for days by an open page grew it without limit.
+daemon's loggers write passes through `internal/logfile`, which takes the user and password out of
+any URL (a starter's own lines and a panic's trace go to the file directly). It does name the
+clone's paths. Past 4 MB it moves to `daemon.log.old` when a daemon starts, and while it runs it is
+copied there and emptied, since Windows can't rename an open file. A daemon whose log was moved
+under it, as a later start does past 4 MB, stops moving it and writes on to the moved file. Until
+2026-11-09 it moved only at a start, so a daemon kept up for days by an open page grew it without
+limit.
 
 ### Joining a repo
 
