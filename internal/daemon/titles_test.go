@@ -83,6 +83,7 @@ func (d *device) waitDoing(as, addr, want string) {
 // teammate's device; a status it sets wins, and clearing it brings the title back; a rename in T3
 // shows within a few seconds.
 func TestT3ThreadTitleIsTheDefaultStatus(t *testing.T) {
+	t.Parallel()
 	home, db := t3Fixture(t, map[string]string{"thread-a": "Fix the login redirect"})
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -110,6 +111,7 @@ func TestT3ThreadTitleIsTheDefaultStatus(t *testing.T) {
 
 // A title is cut to a status line's length, and one that holds a secret is not shown.
 func TestTitleIsCutAndScrubbed(t *testing.T) {
+	t.Parallel()
 	home, _ := t3Fixture(t, map[string]string{
 		"thread-long":   strings.Repeat("long title ", 30),
 		"thread-secret": "debug with sk-ant-" + strings.Repeat("a1b2c3", 8),
@@ -136,6 +138,7 @@ func TestTitleIsCutAndScrubbed(t *testing.T) {
 // stays through a database that can't be read as before, and a session whose thread has no row, or
 // whose thread isn't known, shows none.
 func TestUnreadableTitleSourceKeepsTheLastTitle(t *testing.T) {
+	t.Parallel()
 	home, db := t3Fixture(t, map[string]string{"thread-a": "Kept title"})
 	a := newDevice(t, newRemote(t))
 	alice, _ := a.sessionRoute("aaaaaa", "", t3Route(home, "thread-a"))
@@ -161,6 +164,7 @@ func TestUnreadableTitleSourceKeepsTheLastTitle(t *testing.T) {
 // A Codex session outside T3 shows the thread's explicit name, from its state database or its
 // session index, and not the opening message that Codex keeps in the same row.
 func TestCodexNameOutsideT3(t *testing.T) {
+	// Not parallel: it writes into the CODEX_HOME that TestMain sets for the whole package.
 	dir := os.Getenv("CODEX_HOME")
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	db := openFixtureDB(t, filepath.Join(dir, "state_5.sqlite"))
@@ -226,6 +230,7 @@ func TestCodexNameWithoutAHomeIsReadFromTheDefault(t *testing.T) {
 // One daemon serves every Codex session on the device, and they may not share a Codex home: each
 // is read from the home its own MCP server named.
 func TestCodexNameIsReadFromTheSessionsOwnHome(t *testing.T) {
+	t.Parallel()
 	homeOf := func(id, name string) string {
 		dir := t.TempDir()
 		db := openFixtureDB(t, filepath.Join(dir, "state_5.sqlite"))
@@ -248,6 +253,7 @@ func TestCodexNameIsReadFromTheSessionsOwnHome(t *testing.T) {
 // A session that moves to another conversation doesn't keep the last one's title if the new one's
 // can't be read: that title would be shown, and sent to teammates, as the new conversation's.
 func TestTitleDoesNotOutliveItsConversation(t *testing.T) {
+	t.Parallel()
 	home, _ := t3Fixture(t, map[string]string{"thread-a": "First conversation"})
 	a := newDevice(t, newRemote(t))
 	alice, _ := a.sessionRoute("aaaaaa", "", t3Route(home, "thread-a"))
@@ -268,6 +274,7 @@ func TestTitleDoesNotOutliveItsConversation(t *testing.T) {
 // name the user gave it over the one Claude Code made up, and none rather than the first prompt.
 // A new transcript, as after /clear, is a new conversation.
 func TestClaudeTitleFromTheTranscriptTheHookNames(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	write := func(name string, lines ...string) string {
 		p := filepath.Join(dir, name)
@@ -303,6 +310,7 @@ func TestClaudeTitleFromTheTranscriptTheHookNames(t *testing.T) {
 
 // A title is read every TitleEvery and no oftener: with a long one, none has been read yet.
 func TestTitlesAreReadNoMoreOftenThanTitleEvery(t *testing.T) {
+	t.Parallel()
 	home, _ := t3Fixture(t, map[string]string{"thread-a": "Slow title"})
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", newRemote(t), dir)

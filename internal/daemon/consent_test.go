@@ -38,6 +38,7 @@ func runWithConsent(gitDir string, joined *atomic.Bool, poll time.Duration) (can
 // A daemon starts only for a user who joined in the clone, and leaves nothing behind otherwise: no
 // daemon.json to find, and nothing on the remote.
 func TestDaemonWithoutConsentDoesNotStart(t *testing.T) {
+	t.Parallel()
 	remote, gitDir, joined := consentClone(t)
 	cancel, done := runWithConsent(gitDir, joined, 50*time.Millisecond)
 	defer cancel()
@@ -60,6 +61,7 @@ func TestDaemonWithoutConsentDoesNotStart(t *testing.T) {
 // A user who leaves while their daemon runs, or is still starting, stops it: the daemon watches the
 // consent itself, so a leave needn't find it to end it.
 func TestDaemonStopsWhenTheUserLeaves(t *testing.T) {
+	t.Parallel()
 	_, gitDir, joined := consentClone(t)
 	joined.Store(true)
 	cancel, done := runWithConsent(gitDir, joined, 50*time.Millisecond)
@@ -90,6 +92,7 @@ func TestDaemonStopsWhenTheUserLeaves(t *testing.T) {
 
 // Between the user leaving and the daemon noticing, it takes no registration and answers no request.
 func TestDaemonRefusesRequestsOnceTheUserHasLeft(t *testing.T) {
+	t.Parallel()
 	_, gitDir, joined := consentClone(t)
 	joined.Store(true)
 	cancel, done := runWithConsent(gitDir, joined, time.Hour) // the watch never fires: only the checks on requests
@@ -138,6 +141,7 @@ func TestDaemonRefusesRequestsOnceTheUserHasLeft(t *testing.T) {
 // asks for consent in this test: no session registers, no message is delivered, and the watcher's
 // poll is an hour.
 func TestDaemonPublishesNothingOnceTheUserHasLeft(t *testing.T) {
+	t.Parallel()
 	remote, gitDir, joined := consentClone(t)
 	joined.Store(true)
 	var refused atomic.Bool // a consent check has answered that the user left
