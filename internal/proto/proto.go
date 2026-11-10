@@ -5,6 +5,9 @@
 package proto
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/tags"
@@ -61,7 +64,26 @@ const (
 //	10: OpPageKey, so another clone's page can switch to this one's (#348)
 //	11: the hook's Native: Pi's extension runs the hook, which names its session by Pi's own ID
 //	    (#205)
-const Protocol = 11
+//	12: the daemon's proof (#371): a ping that carries a nonce is answered with Proof, before any
+//	    token is checked, and the connection then takes one more request. A client sends nothing
+//	    else to a listener until it has proved itself, so a daemon of 11 or less is replaced where
+//	    the client may, and otherwise trusted only while it holds the clone's lock.
+const Protocol = 12
+
+// ProofProtocol is the first protocol whose daemon proves itself (Proof).
+const ProofProtocol = 12
+
+// Proof is what the daemon whose token is token, listening at addr, answers to a ping carrying
+// nonce: an HMAC of the address and the nonce, keyed by the token. Only that daemon and the clients
+// that read its daemon.json have the token, and the client's nonce is fresh, so a reply that carries
+// it comes from the daemon: not from another user's process that took the port of a daemon that died
+// (#371), which would otherwise be sent the session's requests and could answer them. The address is
+// in it so that a proof made at one listener can't be passed off at another.
+func Proof(token, addr, nonce string) string {
+	mac := hmac.New(sha256.New, []byte(token))
+	mac.Write([]byte("daemon proof v1\x00" + addr + "\x00" + nonce))
+	return hex.EncodeToString(mac.Sum(nil))
+}
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -101,6 +123,9 @@ type Request struct {
 	Token   string `json:"token"`
 	Op      string `json:"op"`
 	Session string `json:"session,omitempty"` // the caller; "" is the CLI
+	// Nonce, on a ping, asks the daemon for its Proof of it. Such a ping carries no token: it is
+	// what the client sends before it knows what it is talking to.
+	Nonce string `json:"nonce,omitempty"`
 
 	Hello *Hello `json:"hello,omitempty"`
 
@@ -215,8 +240,10 @@ type Response struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
 	// Protocol is the daemon's protocol number (Protocol), in the reply to a ping.
-	Protocol int    `json:"protocol,omitempty"`
-	Self     string `json:"self,omitempty"` // the caller's address
+	Protocol int `json:"protocol,omitempty"`
+	// Proof is the reply to a ping's Nonce: Proof(token, addr, nonce).
+	Proof string `json:"proof,omitempty"`
+	Self  string `json:"self,omitempty"` // the caller's address
 	// Name is the caller's name, and NamePending says it has none yet: the session works, and is
 	// addressed as Self until the name lands.
 	Name        string `json:"name,omitempty"`

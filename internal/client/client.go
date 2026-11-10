@@ -4,6 +4,9 @@ package client
 import (
 	"bufio"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,12 +57,21 @@ type Client struct {
 	info proto.Info
 	// older says the daemon that last answered a ping speaks an older protocol than this binary.
 	older bool
+	// legacy says that daemon is from before proof (proto.ProofProtocol): it can't prove itself,
+	// and is trusted only while it holds the clone's lock.
+	legacy bool
 }
 
 func (c *Client) current() proto.Info {
+	info, _ := c.target()
+	return info
+}
+
+// target is the daemon c talks to, and whether it is from before proof.
+func (c *Client) target() (proto.Info, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.info
+	return c.info, c.legacy
 }
 
 // ErrNoPage means the daemon is running but isn't serving the page for humans.
@@ -101,18 +113,10 @@ func (c *Client) PageKeyURL(ctx context.Context) (string, error) {
 }
 
 // Running reports whether a daemon answers for gitDir, without starting one or sending it the
-// token: only its port is tried.
+// token: what answers at its port is asked only to prove itself.
 func Running(ctx context.Context, gitDir string) bool {
-	info, ok := (&Client{GitDir: gitDir}).load()
-	if !ok {
-		return false
-	}
-	conn, err := dial(ctx, info.Addr)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
+	_, _, _, ok := (&Client{GitDir: gitDir}).running(ctx)
+	return ok
 }
 
 // Connect finds the daemon for gitDir, starting one if spawn is set and none answers.
@@ -210,7 +214,9 @@ func (c *Client) replace(ctx context.Context) error {
 }
 
 // found reports whether daemon.json names a running daemon, and if so makes it the one c talks to.
-// Something must answer a ping at its address while the clone's lock is held. A daemon takes the
+// What answers at its address must prove it has the token daemon.json names (proto.Proof), and the
+// clone's lock must be held. The proof is enough by itself; the lock is all a daemon from before it
+// (protocol 11 and older) has to show, and was how #312 first told a daemon from an impostor. A daemon takes the
 // lock before it writes daemon.json, and removes the file before it gives up its port and long
 // before it lets the lock go, so a daemon.json beside a free lock is stale: its daemon died without
 // removing it (a panic, SIGKILL, the OOM killer, a power cut), and whatever answers at its port
@@ -231,37 +237,61 @@ func (c *Client) replace(ctx context.Context) error {
 // When none is found, c forgets the daemon it had. That one is gone, and a long-running client (the
 // MCP server) would otherwise go on sending its requests to the address while a new daemon starts.
 func (c *Client) found(ctx context.Context) bool {
-	info, protocol, ok := c.running(ctx)
+	info, protocol, legacy, ok := c.running(ctx)
 	c.mu.Lock()
-	c.info, c.older = info, ok && protocol < proto.Protocol
+	c.info, c.legacy, c.older = info, legacy, ok && protocol < proto.Protocol
 	c.mu.Unlock()
 	return ok
 }
 
-// running is found's check: the daemon daemon.json names, and its protocol number, if it is running.
-func (c *Client) running(ctx context.Context) (proto.Info, int, bool) {
-	info, ok := c.load()
+// running is found's check: the daemon daemon.json names, its protocol number, and whether it is
+// from before proof, if it is running.
+func (c *Client) running(ctx context.Context) (info proto.Info, protocol int, legacy bool, ok bool) {
+	info, ok = c.load()
 	if !ok {
-		return proto.Info{}, 0, false
+		return proto.Info{}, 0, false, false
 	}
-	protocol, err := ping(ctx, info)
-	if err != nil {
-		return proto.Info{}, 0, false
+	protocol, perr := ping(ctx, info)
+	legacy = errors.Is(perr, errLegacy)
+	// Something that answered and couldn't prove itself isn't the daemon, but the lock still says
+	// whether daemon.json is stale.
+	if perr != nil && !legacy && !errors.Is(perr, errNotDaemon) {
+		return proto.Info{}, 0, false, false
 	}
 	dir := StateDir(c.GitDir)
 	l, err := proc.LockShared(filepath.Join(dir, "daemon.lock"))
 	if err == nil {
 		os.Remove(filepath.Join(dir, "daemon.json")) // stale, and no daemon can start to write one while this is held
 		l.Close()
-		return proto.Info{}, 0, false
+		return proto.Info{}, 0, false, false
+	}
+	if perr != nil && !legacy {
+		return proto.Info{}, 0, false, false
 	}
 	if !errors.Is(err, proc.ErrLocked) {
-		return proto.Info{}, 0, false
+		return proto.Info{}, 0, false, false
 	}
 	if again, ok := c.load(); !ok || again != info {
-		return proto.Info{}, 0, false
+		return proto.Info{}, 0, false, false
 	}
-	return info, protocol, true
+	return info, protocol, legacy, true
+}
+
+// held reports whether a daemon holds the clone's lock and daemon.json still names info: all that a
+// daemon from before proof can show, checked before each connection to one. It narrows, and can't
+// close, the window in which such a daemon dies and another process takes its port; a client that
+// may start daemons replaces one of these as soon as it finds it.
+func (c *Client) held(info proto.Info) bool {
+	l, err := proc.LockShared(filepath.Join(StateDir(c.GitDir), "daemon.lock"))
+	if err == nil {
+		l.Close()
+		return false
+	}
+	if !errors.Is(err, proc.ErrLocked) {
+		return false
+	}
+	again, ok := c.load()
+	return ok && again == info
 }
 
 // load reads daemon.json.
@@ -271,24 +301,95 @@ func (c *Client) load() (proto.Info, bool) {
 		return proto.Info{}, false
 	}
 	var info proto.Info
-	if json.Unmarshal(b, &info) != nil || info.Addr == "" {
+	if json.Unmarshal(b, &info) != nil || info.Addr == "" || info.Token == "" {
 		return proto.Info{}, false
 	}
 	return info, true
 }
 
-// ping asks whatever answers at info's address for its protocol number.
+// ping asks what answers at info's address to prove it is info's daemon, and returns its protocol
+// number. It sends no token, and reads at most maxProof of the answer: until it is proved, what
+// answers may be anyone's. errLegacy is a daemon from before proof, or something that answers as
+// one does; the caller decides what to make of that.
 func ping(ctx context.Context, info proto.Info) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	resp, _, err := exchange(ctx, info, proto.Request{Op: proto.OpPing})
+	conn, stop, err := open(ctx, info.Addr)
 	if err != nil {
 		return 0, err
 	}
-	if !resp.OK {
-		return 0, errors.New(resp.Error)
+	defer conn.Close()
+	defer stop()
+	protocol, err := prove(conn, bufio.NewReader(conn), info)
+	if err != nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	return protocol, err
+}
+
+// errNotDaemon is what answers at the daemon's address failing to prove it is the daemon.
+var errNotDaemon = errors.New("what answers at the daemon's address couldn't prove it is the daemon")
+
+// errLegacy is a refusal of the proof's ping for its missing token: what a daemon from before
+// proof answers, and what anything else can answer too.
+var errLegacy = errors.New("the daemon is from before proof")
+
+// errTooLong is a reply longer than a client reads.
+var errTooLong = errors.New("the daemon's reply is too long")
+
+// maxProof caps the reply to the proof's ping, the first thing read from a listener that may not be
+// the daemon. It is a hundred bytes or so.
+const maxProof = 4 << 10
+
+// maxReply caps a proved daemon's reply. The longest is an inbox: at most 200 messages (the
+// daemon's maxInbox) of at most 32 KB (bus.MaxBody), which JSON escaping can make six times longer,
+// about 38 MB. A variable for the test.
+var maxReply = 64 << 20
+
+// prove sends the proof's ping on conn, and reads and checks its reply from r.
+func prove(conn net.Conn, r *bufio.Reader, info proto.Info) (int, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return 0, err
+	}
+	nonce := hex.EncodeToString(b)
+	if err := writeLine(conn, proto.Request{Op: proto.OpPing, Nonce: nonce}); err != nil {
+		return 0, err
+	}
+	line, err := readLine(r, maxProof)
+	if err != nil {
+		if errors.Is(err, errTooLong) {
+			err = errNotDaemon
+		}
+		return 0, err
+	}
+	var resp proto.Response
+	if json.Unmarshal(line, &resp) != nil {
+		return 0, errNotDaemon
+	}
+	if resp.Proof == "" && !resp.OK && resp.Error == "bad token" {
+		return 0, errLegacy
+	}
+	if !hmac.Equal([]byte(resp.Proof), []byte(proto.Proof(info.Token, info.Addr, nonce))) {
+		return 0, errNotDaemon
 	}
 	return resp.Protocol, nil
+}
+
+// readLine reads a line of at most max bytes, its newline included, and never holds more than that
+// and a buffer's worth.
+func readLine(r *bufio.Reader, max int) ([]byte, error) {
+	var line []byte
+	for {
+		part, err := r.ReadSlice('\n')
+		if len(line)+len(part) > max {
+			return nil, errTooLong
+		}
+		line = append(line, part...)
+		if err != bufio.ErrBufferFull {
+			return line, err
+		}
+	}
 }
 
 // start launches a daemon detached from this process. If two clients start one at once, the
@@ -435,34 +536,57 @@ func dial(ctx context.Context, addr string) (net.Conn, error) {
 	return dialer.DialContext(dctx, "tcp", addr)
 }
 
-// roundTrip sends one request and reads the response. sent reports whether the request was
-// written, after which the daemon may have acted on it.
-func (c *Client) roundTrip(ctx context.Context, req proto.Request) (resp proto.Response, sent bool, err error) {
-	return exchange(ctx, c.current(), req)
-}
-
-// exchange is roundTrip with the daemon info names.
-func exchange(ctx context.Context, info proto.Info, req proto.Request) (resp proto.Response, sent bool, err error) {
-	if info.Addr == "" {
-		return proto.Response{}, false, ErrNoDaemon
-	}
-	conn, err := dial(ctx, info.Addr)
+// open dials addr for one exchange, with ctx's deadline (or two minutes) on the connection.
+// Cancelling ctx ends a write or read already under way: a deadline in the past makes both return
+// at once. The MCP server cancels a call when its session moves to another repo or leaves, and the
+// call must not reach the old repo's daemon, or wait on it, after that. stop undoes that link.
+func open(ctx context.Context, addr string) (conn net.Conn, stop func() bool, err error) {
+	conn, err = dial(ctx, addr)
 	if err != nil {
-		return proto.Response{}, false, err
+		return nil, nil, err
 	}
-	defer conn.Close()
 	if dl, ok := ctx.Deadline(); ok {
 		conn.SetDeadline(dl)
 	} else {
 		conn.SetDeadline(time.Now().Add(2 * time.Minute))
 	}
-	// Cancelling ctx ends a write or read already under way: a deadline in the past makes both
-	// return at once. The MCP server cancels a call when its session moves to another repo or
-	// leaves, and the call must not reach the old repo's daemon, or wait on it, after that.
-	stop := context.AfterFunc(ctx, func() { conn.SetDeadline(time.Unix(1, 0)) })
+	return conn, context.AfterFunc(ctx, func() { conn.SetDeadline(time.Unix(1, 0)) }), nil
+}
+
+// roundTrip sends one request and reads the response. sent reports whether the request was
+// written, after which the daemon may have acted on it.
+func (c *Client) roundTrip(ctx context.Context, req proto.Request) (resp proto.Response, sent bool, err error) {
+	info, legacy := c.target()
+	if legacy && !c.held(info) {
+		return proto.Response{}, false, errNotDaemon
+	}
+	return exchange(ctx, info, legacy, req)
+}
+
+// exchange is roundTrip with the daemon info names. Each connection proves the daemon before the
+// request goes, on that connection, so a request never reaches whatever took the port of a daemon
+// that died since it was found (#371); only one from before proof (legacy) is sent to unproved.
+func exchange(ctx context.Context, info proto.Info, legacy bool, req proto.Request) (resp proto.Response, sent bool, err error) {
+	if info.Addr == "" {
+		return proto.Response{}, false, ErrNoDaemon
+	}
+	conn, stop, err := open(ctx, info.Addr)
+	if err != nil {
+		return proto.Response{}, false, err
+	}
+	defer conn.Close()
 	defer stop()
 	if ctx.Err() != nil {
 		return proto.Response{}, false, ctx.Err()
+	}
+	r := bufio.NewReader(conn)
+	if !legacy {
+		if _, err := prove(conn, r, info); err != nil {
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
+			return proto.Response{}, false, err
+		}
 	}
 	req.Token = info.Token
 	if err := writeLine(conn, req); err != nil {
@@ -471,7 +595,7 @@ func exchange(ctx context.Context, info proto.Info, req proto.Request) (resp pro
 		}
 		return proto.Response{}, true, err
 	}
-	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	line, err := readLine(r, maxReply)
 	if err != nil {
 		if ctx.Err() != nil {
 			err = ctx.Err()
@@ -484,6 +608,26 @@ func exchange(ctx context.Context, info proto.Info, req proto.Request) (resp pro
 	return resp, true, nil
 }
 
+// openSession opens a connection to the daemon info names, for a hello, proving it first.
+func (c *Client) openSession(ctx context.Context, info proto.Info, legacy bool) (net.Conn, *bufio.Reader, error) {
+	if legacy && !c.held(info) {
+		return nil, nil, errNotDaemon
+	}
+	conn, err := dial(ctx, info.Addr)
+	if err != nil {
+		return nil, nil, err
+	}
+	conn.SetDeadline(time.Now().Add(15 * time.Second))
+	r := bufio.NewReader(conn)
+	if !legacy {
+		if _, err := prove(conn, r, info); err != nil {
+			conn.Close()
+			return nil, nil, err
+		}
+	}
+	return conn, r, nil
+}
+
 // Hello registers a session and returns the connection that keeps it registered. The session
 // lasts until the connection closes.
 func (c *Client) Hello(ctx context.Context, h proto.Hello) (net.Conn, proto.Response, error) {
@@ -493,23 +637,22 @@ func (c *Client) Hello(ctx context.Context, h proto.Hello) (net.Conn, proto.Resp
 	}
 	// One read of the daemon for both its address and its token: a call on another goroutine can
 	// change it in between, and one daemon's token must never go to another's address.
-	info := c.current()
-	conn, err := dial(ctx, info.Addr)
+	info, legacy := c.target()
+	conn, r, err := c.openSession(ctx, info, legacy)
 	if err != nil {
 		if cerr := c.connect(ctx); cerr != nil {
 			return nil, proto.Response{}, cerr
 		}
-		info = c.current()
-		if conn, err = dial(ctx, info.Addr); err != nil {
+		info, legacy = c.target()
+		if conn, r, err = c.openSession(ctx, info, legacy); err != nil {
 			return nil, proto.Response{}, err
 		}
 	}
-	conn.SetDeadline(time.Now().Add(15 * time.Second))
 	if err := writeLine(conn, proto.Request{Token: info.Token, Op: proto.OpHello, Hello: &h}); err != nil {
 		conn.Close()
 		return nil, proto.Response{}, err
 	}
-	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	line, err := readLine(r, maxReply)
 	if err != nil {
 		conn.Close()
 		return nil, proto.Response{}, err

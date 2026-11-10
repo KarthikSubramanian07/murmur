@@ -235,7 +235,11 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	// (see readFirstContext), so that a stall there leaves the logs the time they need: the logs
 	// were fetched already, and they hold the messages. A registry missing from the listing is
 	// asked of the remote again, which can stall like any request to it.
+	readFrom := time.Now()
 	first, cancelFirst := readFirstContext(ctx, d.opt.ReadFirstLimit)
+	// The limit it had, which is less than ReadFirstLimit when the sync has little time left: the
+	// first sync's 10 s, after a slow listing and fetch, left it 2 or 3 s (#372).
+	firstEnd, _ := first.Deadline()
 	if _, ok := remote[brand.NamesRef]; !ok {
 		d.processNames(first, "") // not on the remote
 	}
@@ -272,7 +276,7 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		return err
 	}
 	if firstErr != nil {
-		return fmt.Errorf("reading the names registry and presence took over %s: %w", d.opt.ReadFirstLimit, firstErr)
+		return fmt.Errorf("reading the names registry and presence took over %s: %w", firstEnd.Sub(readFrom).Round(100*time.Millisecond), firstErr)
 	}
 
 	d.mu.Lock()
@@ -307,8 +311,8 @@ func meshDevice(ref string) (string, bool) {
 // than half of what is left of the sync, so that a stall there leaves the logs at least as much,
 // however long the listing and fetches took, less the up to five seconds a cancelled git takes to
 // exit (see gitx.run). Half rather than a fixed reserve, since a sync's deadline isn't always a
-// minute: the one before a daemon accepts sessions has 10 s, and must read presence too, or a new
-// session could take a name a peer's presence shows.
+// minute: the first, which registrations wait for, has FirstSyncLimit, 10 s, and must read presence
+// too, or a new session could take a name a peer's presence shows.
 func readFirstContext(ctx context.Context, limit time.Duration) (context.Context, context.CancelFunc) {
 	now := time.Now()
 	end := now.Add(limit)

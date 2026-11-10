@@ -191,9 +191,33 @@ address. Clients take the lock only shared, and only a daemon takes it exclusive
 client finds held is a daemon's; a timed retry left a window where another client's cleanup looked
 like a daemon. A client from before this takes it exclusively for a moment while stopping or
 replacing a daemon. This holds where the state directory is private to its user: it is made 0700 on Unix, and on Windows
-gets an access list of its own (below). A ping that proves the daemon knows the token was
-set aside: an older daemon couldn't give the proof, and a client must still talk to one to replace
-it.
+gets an access list of its own (below).
+
+The lock is checked when a client finds its daemon, and a client goes on using the address after
+that. A daemon that died later left its port to whoever took it, and that listener got the next
+request, the token and any outgoing message with it, and could answer with an inbox of its own
+(#371, from Sol's review before v0.3.0). So since protocol 12 (2026-11-10) every connection a client
+opens starts with a ping that carries a fresh nonce and no token, and the daemon answers with an
+HMAC of its address and the nonce keyed by its token. Only then does the request go, on the same
+connection, so nothing can take the port between the proof and the request; a separate ping first
+would have left that gap. What answers without the proof is not the daemon, and the client finds
+its daemon again (or starts one). Until it is proved, a reply is read only up to 4 KB, and a proved
+daemon's up to 64 MB, about half again a full inbox of the longest messages escaped: before, one
+that never ended was read until the deadline, however much it came to. A daemon of protocol 11 or
+older can't prove itself, and refuses the nonce's ping as a missing token. A client that may start
+daemons replaces one as it replaces any older daemon; one that may not (`mur stop`, the hook) talks
+to it unproved, as before, checking the lock before each connection. Discovery still contacts the
+listener before trying the lock, since trying the lock can turn away a daemon starting just then;
+what the listener is sent there is the nonce alone.
+
+A daemon answers, and writes daemon.json, before its first sync, not after it (2026-11-10, #372).
+That sync lists the remote, fetches and reads what changed, and may take its whole 10 s; with the
+process's own start on Windows, a first start of a new binary on Tyler's laptop took 21 s, and the
+15 s a starter waits for an answer (`mur ui`, an MCP server) ran out on a daemon that was fine.
+What the sync reads still comes first where it counts: a registration waits for it, at most those
+10 s, so what it finds is the backlog and not a new session's, and so do who, send and lookup,
+which on a new clone know no other device until then. The background loops start after it, as
+before. A stop or a leave during it ends it.
 
 A daemon with no sessions, no open page (see The page for humans) and no
 T3 thread to wake for 10 minutes exits. The token lets its holder name the program the daemon runs
@@ -347,7 +371,7 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   what the thing is for. The server asks again before each registration with the daemon, before
   starting one, and before forwarding a tool call, since its 2-second look can lag a leave. The
   daemon is per clone, not per working tree, so it needs only the consent: it checks at start
-  (after its first sync, which takes a while), on every request but `stop` and `ping` (which reveal
+  and again after its first sync, which takes a while, on every request but `stop` and `ping` (which reveal
   nothing, and are how a leave finds it), again in a registration after it has resolved the branch,
   before each push of its own (presence, the names registry) and before each handoff of a message
   as a turn (the one thing it does to the user's other programs, so a message that comes in by sync
@@ -574,8 +598,9 @@ call.
   takes it off, and a daemon adds its own as it starts, which takes in clones that joined before the
   record. Daemons finding each other was set aside: the picker has to offer a clone whose daemon
   isn't running, and start it. A clone whose folder is gone, or that left, drops off the list when
-  the record is read. A daemon counts as running when the port in its `daemon.json` accepts a connection; no
-  token is sent to find out.
+  the record is read. A daemon counts as running when what answers at the port in its
+  `daemon.json` proves it is that daemon (#371) and the clone's lock is held; no token is sent to
+  find out.
 - **The token doesn't travel with the tab.** The other page is another origin and needs its own
   token, which mustn't go in an address. So the page asks its daemon to open the clone. That daemon
   starts the other's if it isn't running (as `mur ui` would, replacing one of an older protocol) and

@@ -64,15 +64,25 @@ Every command takes -C DIR to act on the repository at DIR.
 `)
 
 func main() {
-	if len(os.Args) < 2 {
+	dirs, args, err := leadingDirs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n\n%s", err, usage)
+		os.Exit(2)
+	}
+	for _, dir := range dirs {
+		if err := os.Chdir(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", brand.Command, err)
+			os.Exit(1)
+		}
+	}
+	if len(args) < 1 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
-	cmd, args := os.Args[1], os.Args[2:]
+	cmd, args := args[0], args[1:]
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	var err error
 	switch cmd {
 	case "hook":
 		// Never an error: a hook that fails would fail the agent's tool call. One it can't read
@@ -105,6 +115,31 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", brand.Command, err)
 		os.Exit(1)
 	}
+}
+
+// leadingDirs takes the -C DIR options that come before the command, as git does: `mur -C DIR stop`
+// acts where `mur stop -C DIR` does (#373). Until 2026-11-10 only the second worked, and the first
+// said `unknown command "-C"`. main changes to each directory in turn, each relative to the one
+// before, as git's do, so every command takes it, the hook included, and a -C after the command is
+// then relative to it. The flag package's other spellings, --C and -C=DIR, are taken too.
+func leadingDirs(args []string) (dirs, rest []string, err error) {
+	for len(args) > 0 {
+		name, value, hasValue := strings.Cut(args[0], "=")
+		if name != "-C" && name != "--C" {
+			break
+		}
+		if !hasValue {
+			if len(args) < 2 {
+				return nil, nil, fmt.Errorf("%s needs a directory", name)
+			}
+			value, args = args[1], args[1:]
+		}
+		if value == "" {
+			return nil, nil, fmt.Errorf("%s needs a directory", name)
+		}
+		dirs, args = append(dirs, value), args[1:]
+	}
+	return dirs, args, nil
 }
 
 // hookAgent is the agent `mur hook` runs for, from its arguments: "" for Claude Code, or the one
