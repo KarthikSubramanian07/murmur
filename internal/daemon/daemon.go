@@ -326,6 +326,9 @@ type Daemon struct {
 	// namesChecked says the registry has been looked at since this daemon started, even if its
 	// tip is the one state.json recorded.
 	namesChecked bool
+	// presenceCut is how many sessions the last presence left out to keep to bus.MaxSessions (see
+	// capSessions), so that is logged when it changes, not on every heartbeat.
+	presenceCut int
 	// personClashes is the people's names a second device's presence has said since this daemon
 	// started, logged once each (see notePersonLocked).
 	personClashes map[string]bool

@@ -1016,6 +1016,23 @@ change and a daemon that knows no names routes by it all the same.
   that records the daemon's own pushes, so it can predate the daemon's first name (#80,
   2026-10-30; the first version took it for a deletion and replaced the registry's history with a
   snapshot).
+  - *What one record can add (2026-11-09).* Since the set never shrinks, a reader bounds what it
+    takes from a single record. A snapshot counts only on the root of a history read from its start,
+    and only if that history has one root: the one place Murmur writes it, as a repair's history
+    never descends from what was read, and Murmur writes no merges. One appended is logged and
+    passed over. A merge that brings in another root, by either parent, is damage, as a rewrite is:
+    no snapshot in it counts, which would hide a real repair's names from a reader new to the
+    registry, so every reader that sees it logs it and reads the registry from the start, and one
+    that knows a name missing from it writes a repair, which replaces the merge. The names in the
+    merged-in root's snapshot never counted, so the repair doesn't bring them back. A presence
+    listing more than 200 sessions (`bus.MaxSessions`), far beyond what one device runs, is read as
+    unreadable, whole, so none of its names counts. A daemon's own presence keeps to the cap: past
+    it, it lists the most recently active sessions, and logs how many it left out. And once 1,000
+    random picks have all been in use, a daemon goes through the lists from a random place for a
+    name nobody has. Push access can still mark names used, more slowly: a registry rewritten from a
+    root of its own, which readers log and repair, and 200 names per presence. So can a daemon from
+    before this, which took a snapshot from any commit, until the team has upgraded: its next repair
+    writes what it took into a real root.
 - **Without the remote.** A session that finds no name set aside and can't get one works as
   `device/session`, with its name shown as pending, and the daemon keeps trying in the
   background, and at once when it can reach the remote again.

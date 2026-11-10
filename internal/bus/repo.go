@@ -423,6 +423,21 @@ func (r *Repo) readCommits(ctx context.Context, shas []string, sizes map[string]
 	return commits, nil
 }
 
+// Roots returns the commits with no parent in sha's history that aren't in not's ("" for none).
+// Murmur writes no merges, so a history it wrote has one root, and what it adds to one it read brings
+// none; a merge pushed by hand can bring in others, by either parent.
+func (r *Repo) Roots(ctx context.Context, sha, not string) ([]string, error) {
+	args := []string{"rev-list", "--max-parents=0", sha}
+	if not != "" {
+		args = append(args, "^"+not)
+	}
+	out, err := r.Git.Run(ctx, "", append(args, "--")...)
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(out), nil
+}
+
 // ReadCommit returns one commit, or ErrTooLarge, without reading it, if it is over max bytes.
 func (r *Repo) ReadCommit(ctx context.Context, sha string, max int64) (Commit, error) {
 	sizes, err := r.sizes(ctx, []string{sha})
