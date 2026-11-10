@@ -230,6 +230,11 @@ func ReadFile(path string) (o *Object, raw []byte, err error) {
 	return o, raw, nil
 }
 
+// ReadText is a config file's bytes, for the editors in splice.go, with ReadFile's care: a regular
+// file, or a link to one, read up to its cap, and an error for anything else. A missing file is
+// os.ErrNotExist.
+func ReadText(path string) ([]byte, error) { return readRegular(path) }
+
 // readRegular is os.ReadFile for a regular file, or a link to one, and an error for anything else.
 // A config file can be a link a repo committed (a worktree's .claude/settings.local.json), and a
 // link to a device or a pipe would be read without end (/dev/zero), or block (a terminal, a pipe

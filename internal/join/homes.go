@@ -43,7 +43,7 @@ var agents = []agent{
 		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerCodexAt(h) },
 		removal:  codexRemoval},
 	{driver: "opencode", label: "OpenCode", t3Var: "XDG_CONFIG_HOME", sub: "opencode",
-		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerOpenCodeAt(h) },
+		register: Env.registerOpenCodeAt,
 		removal:  openCodeRemoval},
 	{driver: "muse", label: "Muse Code", t3Var: "XDG_CONFIG_HOME", sub: "muse",
 		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerMuseAt(h) },

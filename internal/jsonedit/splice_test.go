@@ -117,3 +117,89 @@ func TestAppendInMovesTheItemLast(t *testing.T) {
 		t.Errorf("got %q (%v), want %q", got, err, want)
 	}
 }
+
+// DeleteIn takes out the one member, its comma with it, and leaves every other byte; one that isn't
+// there is no change.
+func TestDeleteIn(t *testing.T) {
+	path := []string{"mcp", "murmur"}
+	for _, tc := range []struct{ src, want string }{
+		// first of two: the next moves up into its place
+		{"{\n  \"mcp\": {\n    \"murmur\": 1,\n    \"other\": 2\n  }\n}\n", "{\n  \"mcp\": {\n    \"other\": 2\n  }\n}\n"},
+		// last of two: its line goes, and the comma before it
+		{"{\n  \"mcp\": {\n    \"other\": 2,\n    \"murmur\": 1\n  }\n}\n", "{\n  \"mcp\": {\n    \"other\": 2\n  }\n}\n"},
+		// last with a trailing comma of its own (JSONC): the one before keeps its comma
+		{"{\n  \"mcp\": {\n    \"other\": 2, // mine\n    \"murmur\": 1,\n  },\n}\n", "{\n  \"mcp\": {\n    \"other\": 2, // mine\n  },\n}\n"},
+		// a comment on its line after its comma goes with it
+		{"{\"mcp\": {\n  \"murmur\": 1, // join's\n  \"other\": 2\n}}", "{\"mcp\": {\n  \"other\": 2\n}}"},
+		// the only one: the object is left empty
+		{"{\n  \"mcp\": {\n    \"murmur\": {\"type\": \"local\"}\n  }\n}\n", "{\n  \"mcp\": {}\n}\n"},
+		{"{\"mcp\": {\"murmur\": 1}, \"x\": 1}", "{\"mcp\": {}, \"x\": 1}"},
+		{"{\"mcp\": {\"a\": 1, \"murmur\": 1}}", "{\"mcp\": {\"a\": 1}}"},
+		// a comment beside it, inside, stays
+		{"{\"mcp\": {\n  // keep\n  \"murmur\": 1\n}}", "{\"mcp\": {\n  // keep\n}}"},
+		{"{\r\n  \"mcp\": {\r\n    \"a\": 1,\r\n    \"murmur\": 1\r\n  }\r\n}\r\n", "{\r\n  \"mcp\": {\r\n    \"a\": 1\r\n  }\r\n}\r\n"},
+	} {
+		got, changed, err := DeleteIn(tc.src, path)
+		if err != nil || !changed || got != tc.want {
+			t.Errorf("%q:\ngot  %q (%v, %v)\nwant %q", tc.src, got, changed, err, tc.want)
+		}
+		if _, err := parseText(got); err != nil {
+			t.Errorf("%q: left %q, which isn't JSON: %v", tc.src, got, err)
+		}
+	}
+	for _, src := range []string{"", "{}", "{\"mcp\": []}", "{\"mcp\": {\"other\": 1}}", "{\"x\": {\"murmur\": 1}}"} {
+		if got, changed, err := DeleteIn(src, path); err != nil || changed || got != src {
+			t.Errorf("%q: got %q (%v, %v)", src, got, changed, err)
+		}
+	}
+	if _, _, err := DeleteIn("{\"mcp\": {\"murmur\": 1, \"murmur\": 2}}", path); err == nil {
+		t.Error("a key given twice: no error")
+	}
+	if _, _, err := DeleteIn("[1]", path); err == nil {
+		t.Error("not an object: no error")
+	}
+}
+
+// RemoveIn takes every copy of the item out of the list, and the rest stays.
+func TestRemoveIn(t *testing.T) {
+	rule := map[string]any{"action": "murmur_*", "resource": "*", "effect": "allow"}
+	src := "{\n  \"permissions\": [\n    {\"action\": \"murmur_*\", \"resource\": \"*\", \"effect\": \"allow\"},\n    {\"action\": \"*\", \"resource\": \"*\", \"effect\": \"ask\"},\n    {\"effect\": \"allow\", \"action\": \"murmur_*\", \"resource\": \"*\"}\n  ]\n}\n"
+	got, changed, err := RemoveIn(src, []string{"permissions"}, rule)
+	want := "{\n  \"permissions\": [\n    {\"action\": \"*\", \"resource\": \"*\", \"effect\": \"ask\"}\n  ]\n}\n"
+	if err != nil || !changed || got != want {
+		t.Errorf("got %q (%v, %v)\nwant %q", got, changed, err, want)
+	}
+	got, changed, err = RemoveIn("{\"permissions\": [{\"action\": \"murmur_*\", \"resource\": \"*\", \"effect\": \"allow\"}]}", []string{"permissions"}, rule)
+	if err != nil || !changed || got != "{\"permissions\": []}" {
+		t.Errorf("the only one: got %q (%v, %v)", got, changed, err)
+	}
+	for _, src := range []string{"{}", "{\"permissions\": {\"x\": 1}}", "{\"permissions\": [1]}"} {
+		if got, changed, err := RemoveIn(src, []string{"permissions"}, rule); err != nil || changed || got != src {
+			t.Errorf("%q: got %q (%v, %v)", src, got, changed, err)
+		}
+	}
+}
+
+// SetLastIn adds the member last, and moves it there from anywhere else, so a later rule can't
+// override it.
+func TestSetLastIn(t *testing.T) {
+	path := []string{"permission", "murmur_*"}
+	for _, tc := range []struct {
+		src, want string
+		changed   bool
+	}{
+		{"{}", "{\"permission\": {\"murmur_*\":\"allow\"}}", true},
+		{"{\n  \"permission\": {\n    \"*\": \"ask\"\n  }\n}\n", "{\n  \"permission\": {\n    \"*\": \"ask\",\n    \"murmur_*\": \"allow\"\n  }\n}\n", true},
+		{"{\n  \"permission\": {\n    \"murmur_*\": \"allow\",\n    \"*\": \"ask\"\n  }\n}\n", "{\n  \"permission\": {\n    \"*\": \"ask\",\n    \"murmur_*\": \"allow\"\n  }\n}\n", true},
+		{"{\n  \"permission\": {\n    \"*\": \"ask\",\n    \"murmur_*\": \"deny\"\n  }\n}\n", "{\n  \"permission\": {\n    \"*\": \"ask\",\n    \"murmur_*\": \"allow\"\n  }\n}\n", true},
+		{"{\n  \"permission\": {\n    \"*\": \"ask\",\n    \"murmur_*\": \"allow\"\n  }\n}\n", "{\n  \"permission\": {\n    \"*\": \"ask\",\n    \"murmur_*\": \"allow\"\n  }\n}\n", false},
+	} {
+		got, changed, err := SetLastIn(tc.src, path, "allow")
+		if err != nil || changed != tc.changed || got != tc.want {
+			t.Errorf("%q:\ngot  %q (%v, %v)\nwant %q", tc.src, got, changed, err, tc.want)
+		}
+	}
+	if _, _, err := SetLastIn("{\"permission\": \"ask\"}", path, "allow"); err == nil {
+		t.Error("a permission that isn't an object: no error")
+	}
+}

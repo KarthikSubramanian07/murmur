@@ -249,6 +249,9 @@ func snapshot(t *testing.T, roots ...string) map[string]string {
 			if strings.Contains(filepath.ToSlash(path), "/.git/") {
 				return nil // git's own bookkeeping changes on any command, and the daemon owns .git/murmur
 			}
+			if strings.Contains(filepath.ToSlash(path), "/.local/share/opencode/") {
+				return nil // OpenCode's own log, which grows each time join asks an installed one its version
+			}
 			b, _ := os.ReadFile(path)
 			snap[path] = string(b)
 			return nil
