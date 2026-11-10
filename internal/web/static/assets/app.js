@@ -295,7 +295,9 @@ function announceShown() {
 // A render builds the page anew. The focused element is kept, with the elements it sits in, and
 // everything around them is replaced: moved or rebuilt, it would lose focus, and a screen reader
 // would read it out again on every poll. Its counterpart in the new tree is the element with its
-// data-key, or its place among the focusable elements of the nearest message or keyed element.
+// data-key, or else its place among the focusable elements of its message. A match by place counts
+// only if the message holds as many of them as before and the counterpart is the same kind of
+// control with the same name, so a poll can never move the focus to a different control.
 function twinOf(el, kids) {
   if (held.mark.parentNode) return held.mark;
   const find = (sel) => {
@@ -308,11 +310,15 @@ function twinOf(el, kids) {
   };
   const by = (n) => (n.dataset.key ? `[data-key="${CSS.escape(n.dataset.key)}"]` : n.dataset.id ? `[data-id="${CSS.escape(n.dataset.id)}"]` : n.dataset.cid ? `[data-cid="${CSS.escape(n.dataset.cid)}"]` : null);
   if (by(el)) return find(by(el));
-  const anchor = el.parentElement?.closest("[data-key], [data-id], [data-cid]");
+  const anchor = el.parentElement?.closest("[data-id], [data-cid]");
+  if (!anchor) return null;
   const focusable = (n) => [...n.querySelectorAll("button, a[href], input, textarea, [tabindex]")];
-  const i = anchor ? focusable(anchor).indexOf(el) : -1;
-  const twin = i >= 0 ? find(by(anchor)) : null;
-  return twin ? focusable(twin)[i] || null : null;
+  const was = focusable(anchor);
+  const twinAnchor = find(by(anchor));
+  const now = twinAnchor ? focusable(twinAnchor) : [];
+  const twin = now.length === was.length ? now[was.indexOf(el)] : null;
+  const same = (a, b) => a.tagName === b.tagName && a.className === b.className && a.getAttribute("aria-label") === b.getAttribute("aria-label") && a.getAttribute("href") === b.getAttribute("href") && a.textContent === b.textContent;
+  return twin && same(el, twin) ? twin : null;
 }
 
 function graft(parent, kids, el, twin) {
@@ -418,13 +424,17 @@ function render() {
   if (twin && graft(root, kids, focused, twin)) {
     content = root.querySelector(".content") || content;
   } else {
-    // The page changed around it too much to keep it: put the focus back on its counterpart.
+    // The page changed around it too much to keep it: put the focus back on its counterpart if
+    // its key finds one, or else on the pane it was in, rather than on some other control.
     if (twin && twin === held.mark) held.mark.replaceWith(focused);
+    const inMain = !!focused?.closest("main");
     root.replaceChildren(...kids);
-    const el = keep ? root.querySelector(`[data-key="${CSS.escape(keep)}"]`) : twin;
+    const el = keep ? root.querySelector(`[data-key="${CSS.escape(keep)}"]`) : null;
     if (el?.isConnected) {
       el.focus({ preventScroll: true });
       restoreCaret(el, caret);
+    } else if (focused && inMain) {
+      root.querySelector("main")?.focus({ preventScroll: true });
     }
   }
   content.scrollTop = scroll;
@@ -1067,12 +1077,12 @@ function prFor(s) {
   return s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
 }
 
-function prBadge(pr, link) {
+function prBadge(pr, link, key) {
   const label = (pr.draft ? "Draft pull request #" : "Pull request #") + pr.number;
   const kids = [icon(pr.draft ? "prDraft" : "pr"), "#" + pr.number];
   const cls = "g-pr" + (pr.draft ? " draft" : "");
   if (link && typeof pr.url === "string" && pr.url.startsWith("https://github.com/")) {
-    return h("a", { class: cls, href: pr.url, target: "_blank", rel: "noopener noreferrer", title: label + " on GitHub", onclick: (e) => e.stopPropagation() }, kids);
+    return h("a", { class: cls, href: pr.url, target: "_blank", rel: "noopener noreferrer", title: label + " on GitHub", "data-key": key, onclick: (e) => e.stopPropagation() }, kids);
   }
   return h("span", { class: cls, title: label }, kids);
 }
@@ -1492,7 +1502,7 @@ function sessionCard(d, s) {
       "span",
       { class: "s-meta" },
       h("span", { class: "s-col-branch" }, s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch))),
-      h("span", { class: "s-col-pr" }, pr && prBadge(pr, true)),
+      h("span", { class: "s-col-pr" }, pr && prBadge(pr, true, "pr-row-" + s.name)),
       // The hook never reported after a tool call, so the session isn't told of messages while it works (#225).
       s.hookOff && h("span", { class: "badge badge-warning", title: "Isn't told of messages while it works" }, "hook not running"),
       h("span", { class: "s-chats" }, plural(convs, "chat")),
@@ -2532,7 +2542,7 @@ function conversationList(list) {
                 { class: "g-head-meta" },
                 h("span", { class: "truncate" }, [f.session.agent, modelOf(f.session)].filter(Boolean).join(" · ")),
                 f.session.branch && h("span", { class: "g-branch", title: "Branch " + f.session.branch }, icon("branch"), h("span", { class: "truncate" }, f.session.branch)),
-                prFor(f.session) && prBadge(prFor(f.session), true),
+                prFor(f.session) && prBadge(prFor(f.session), true, "pr-head-" + f.session.name),
               ),
             f && tagsLine(f.session),
             !f && h("p", { class: "g-head-doing" }, "Settled · " + ago(settledSessions().find((r) => r.name === name)?.last || 0)),
@@ -2694,7 +2704,7 @@ function conversationPane(c) {
         of && h("span", { class: "g-state g-state-" + sessionState(of.device, of.session) }, stateWord(of.device, of.session)),
         about && h("span", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
       ),
-      of && prFor(of.session) && prBadge(prFor(of.session), true),
+      of && prFor(of.session) && prBadge(prFor(of.session), true, "pr-chat-" + of.session.name),
       c.kind !== "dm" && membersButton(c),
     ),
     h("div", { class: "chat-thread", "data-conversation": c.key }, c.messages.length || pendingIn(c).length ? chatMessages(c) : chatIntro(o)),
