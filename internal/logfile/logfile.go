@@ -6,15 +6,22 @@ package logfile
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"regexp"
 	"sync"
+	"time"
 )
 
 // Max is the size past which daemon.log moves to daemon.log.old: when a daemon starts
 // (client.StartDaemon), and while it runs (Writer).
 const Max = 4 << 20
+
+// MaxRecord is the most of one write that reaches the file; the rest is cut, with a note of how
+// much. git's stderr is kept whole in an error, and one error that size would take the file past
+// Max on its own, and the .old file after it.
+const MaxRecord = 64 << 10
 
 // Writer writes a daemon's log to out, its standard error, which a starter set to daemon.log (or
 // the daemon did, for --log). Once the file would pass a size, Writer copies it to path+".old" and
@@ -29,6 +36,8 @@ type Writer struct {
 	path string // "" when out isn't the file at path, such as a terminal: then nothing is moved
 	size int64
 	max  int64
+	// retry is when to try moving the file aside again, after emptying it failed.
+	retry time.Time
 }
 
 // New returns a Writer to out that keeps the file at path under max bytes, if out is that file.
@@ -53,17 +62,20 @@ func same(out *os.File, path string) (os.FileInfo, bool) {
 	return ofi, os.SameFile(ofi, pfi)
 }
 
-// Write writes p, with any URL's credentials taken out, after moving the file aside if p would
-// take it past the limit. A log.Logger writes each line in one call, so a URL is never split
-// between two.
+// Write writes p, with any URL's credentials taken out and cut to MaxRecord, after moving the file
+// aside if p would take it past the limit. A log.Logger writes each line in one call, so a URL is
+// never split between two.
 func (w *Writer) Write(p []byte) (int, error) {
 	n := len(p)
 	if bytes.Contains(p, []byte("://")) {
 		p = []byte(Redact(string(p)))
 	}
+	if len(p) > MaxRecord {
+		p = append(p[:MaxRecord:MaxRecord], fmt.Sprintf("… (%d more bytes not logged)\n", len(p)-MaxRecord)...)
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.path != "" && w.size > 0 && w.size+int64(len(p)) > w.max {
+	if w.path != "" && w.size > 0 && w.size+int64(len(p)) > w.max && !time.Now().Before(w.retry) {
 		w.rotate()
 	}
 	m, err := w.out.Write(p)
@@ -76,20 +88,27 @@ func (w *Writer) Write(p []byte) (int, error) {
 
 // rotate copies the file to path+".old" and empties it. A daemon started after this one, by an
 // update, moves the file aside itself when it starts; this one then stops moving it, rather than
-// empty the file the new daemon writes. A copy that fails leaves the file as it is, to be tried
-// again after another max bytes. What reaches the file other than through this Writer while it is
-// copied (a panic's trace, a starter's line) is lost when it is emptied. Caller holds mu.
+// empty the file the new daemon writes. A copy that fails doesn't stop the emptying: the limit
+// holds, what the file held is lost, and a line at its start says so. Emptying that fails leaves the
+// size as it is and tries again in a minute, not on every line, since each try copies the file.
+// What reaches the file other than through this Writer while it is copied (a panic's trace, a
+// starter's line) is lost when it is emptied. Caller holds mu.
 func (w *Writer) rotate() {
-	w.size = 0
 	if _, ok := same(w.out, w.path); !ok {
-		w.path = ""
+		w.path, w.size = "", 0
 		return
 	}
-	if copyFile(w.path, w.path+".old") != nil {
+	copyErr := copyFile(w.path, w.path+".old")
+	if err := os.Truncate(w.path, 0); err != nil {
+		w.retry = time.Now().Add(time.Minute)
 		return
 	}
-	if os.Truncate(w.path, 0) == nil {
-		w.out.Seek(0, io.SeekStart)
+	w.out.Seek(0, io.SeekStart)
+	w.size = 0
+	if copyErr != nil {
+		m, _ := fmt.Fprintf(w.out, "%s the log was emptied without its copy to %s.old: %v\n",
+			time.Now().Format("2006/01/02 15:04:05"), w.path, copyErr)
+		w.size += int64(m)
 	}
 }
 
@@ -117,10 +136,16 @@ func copyFile(from, to string) error {
 // The price is that text such as `"https://host","a@b"` loses more than it needs to.
 var userinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#]*@`)
 
-// Redact takes the user and password out of every URL in s, as git does in its own messages. A
-// remote's URL can carry a token, and a log line can hold one from git's stderr or an error. It
-// takes out only those: a token in a query string (`?access_token=…`) stays, and nothing the
-// daemon logs carries one, since the page is logged by its address alone and the remote by name.
+// afterPath is a URL's query and fragment, up to the next space. A remote's URL can carry a token in
+// its query (`?access_token=…`), and git puts the URL in its own messages, query and all; the page's
+// address carries its token in its fragment (`#token=…`).
+var afterPath = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://[^\s?#]*)([?#])[^\s]*`)
+
+// Redact takes the user and password out of every URL in s, as git does in its own messages, and
+// replaces its query and fragment with REDACTED. A remote's URL can carry a token in either place,
+// and a log line can hold one from git's stderr or an error. Whatever followed the URL up to the
+// next space, such as a closing quote, goes with its query.
 func Redact(s string) string {
-	return userinfo.ReplaceAllString(s, "$1")
+	s = userinfo.ReplaceAllString(s, "$1")
+	return afterPath.ReplaceAllString(s, "${1}${2}REDACTED")
 }

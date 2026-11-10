@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -137,10 +138,12 @@ func TestCredentialsInURLsAreNotLogged(t *testing.T) {
 	for in, want := range map[string]string{
 		"fetching https://x-access-token:ghs_abc123@github.com/a-Fig/murmur.git failed": "fetching https://github.com/a-Fig/murmur.git failed",
 		`remote "https://ghp_abc123@github.com/o/r"`:                                    `remote "https://github.com/o/r"`,
-		"ssh://git@github.com:22/o/r and https://u:p@ss@host/x?y=a@b":                   "ssh://github.com:22/o/r and https://host/x?y=a@b",
-		"git@github.com:o/r.git, mail a@b.c, https://github.com/o/r?u=a@b#c@d":          "git@github.com:o/r.git, mail a@b.c, https://github.com/o/r?u=a@b#c@d",
+		"ssh://git@github.com:22/o/r and https://u:p@ss@host/x?y=a@b":                   "ssh://github.com:22/o/r and https://host/x?REDACTED",
+		"git@github.com:o/r.git, mail a@b.c, https://github.com/o/r?u=a@b#c@d":          "git@github.com:o/r.git, mail a@b.c, https://github.com/o/r?REDACTED",
 		`https://u:p"q@host/x and https://u:p<q>@host/y`:                                "https://host/x and https://host/y",
 		"https://u:it's,secret@host/x":                                                  "https://host/x",
+		"unable to access 'https://github.com/o/r.git?access_token=ghp_x/': refused":    "unable to access 'https://github.com/o/r.git?REDACTED refused",
+		"page at http://127.0.0.1:7000/#token=abc open":                                 "page at http://127.0.0.1:7000/#REDACTED open",
 	} {
 		if got := Redact(in); got != want {
 			t.Errorf("Redact(%q)\n = %q\nwant %q", in, got, want)
@@ -152,5 +155,58 @@ func TestCredentialsInURLsAreNotLogged(t *testing.T) {
 	l.Printf("reading refs/murmur/mesh/x: git ls-remote https://x-access-token:SECRET@github.com/o/r: fatal")
 	if got := read(t, path); strings.Contains(got, "SECRET") || !strings.Contains(got, "https://github.com/o/r") {
 		t.Fatalf("the log holds %q", got)
+	}
+}
+
+// git puts a remote's URL in its own messages, query and all, and a token can be in the query. What
+// git says when it can't reach such a remote reaches the log without the token.
+func TestATokenInARemotesQueryIsNotLogged(t *testing.T) {
+	out, err := exec.Command("git", "ls-remote", "http://127.0.0.1:1/repo?access_token=SENTINEL").CombinedOutput()
+	if err == nil {
+		t.Skip("something answered on port 1")
+	}
+	if !strings.Contains(string(out), "SENTINEL") {
+		t.Skipf("git didn't say the URL: %q", out)
+	}
+	path := filepath.Join(t.TempDir(), "daemon.log")
+	l := log.New(New(open(t, path), path, Max), "", 0)
+	l.Printf("fetching: %s", out)
+	if got := read(t, path); strings.Contains(got, "SENTINEL") {
+		t.Fatalf("the log holds the token: %q", got)
+	}
+}
+
+// One write bigger than MaxRecord, such as an error holding all of git's stderr, is cut, so it
+// can't take the file past its limit on its own.
+func TestOneBigWriteIsCut(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.log")
+	w := New(open(t, path), path, 4*MaxRecord)
+	big := strings.Repeat("x", 10*MaxRecord) + "\n"
+	if n, err := w.Write([]byte(big)); err != nil || n != len(big) {
+		t.Fatalf("Write = %d, %v; want %d, nil", n, err, len(big))
+	}
+	got := read(t, path)
+	if len(got) > MaxRecord+100 || !strings.HasSuffix(got, " more bytes not logged)\n") {
+		t.Fatalf("the log is %d bytes, ending %q", len(got), got[max(0, len(got)-60):])
+	}
+}
+
+// When the .old file can't be written, the log is emptied anyway, so it stays under its limit, and
+// its first line says what was lost.
+func TestALogIsEmptiedWhenItsCopyFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.log")
+	if err := os.Mkdir(path+".old", 0o700); err != nil { // a directory can't be opened to write
+		t.Fatal(err)
+	}
+	l := log.New(New(open(t, path), path, 100), "", 0)
+	for i := range 12 {
+		l.Printf("line %02d, ten more bytes", i)
+	}
+	got := read(t, path)
+	if !strings.Contains(got, "emptied without its copy") || !strings.HasSuffix(got, lines(11, 11)) {
+		t.Fatalf("the log is %q", got)
+	}
+	if fi, err := os.Stat(path); err != nil || fi.Size() > 300 {
+		t.Fatalf("the log grew past its limit: %v, %v", fi.Size(), err)
 	}
 }
