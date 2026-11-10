@@ -16,6 +16,7 @@ import (
 // read only then, is still its, where a session new to this daemon gets only what was sent after
 // it started.
 func TestReturnedSessionKeepsCatchUp(t *testing.T) {
+	t.Parallel()
 	d := &Daemon{opt: Options{StoppedInbox: time.Hour}, dir: t.TempDir(), log: log.New(io.Discard, "", 0),
 		device: "here-0001", started: time.Now(), sessions: map[string]*session{},
 		st: state{Inbox: map[string][]*inMsg{}, Stopped: map[string]time.Time{"bbbbbb": time.Now().Add(-5 * time.Minute)}}}
@@ -48,6 +49,7 @@ func TestReturnedSessionKeepsCatchUp(t *testing.T) {
 // inbox would have caught up on, goes on to the session that holds the name now. The holder's own
 // start still counts too: in a skip, what was sent after it started is its, as any session's is.
 func TestForwardedCatchUpIsJudgedByItsRecipient(t *testing.T) {
+	t.Parallel()
 	const nameX = "quiet-otter"
 	d := &Daemon{opt: Options{StoppedInbox: time.Hour}, dir: t.TempDir(), log: log.New(io.Discard, "", 0),
 		device: "here-0001", started: time.Now(), sessions: map[string]*session{},
@@ -87,6 +89,7 @@ func TestForwardedCatchUpIsJudgedByItsRecipient(t *testing.T) {
 // everyone else it queues nothing, and a session that has registered again is judged by when it
 // started, as in any skip.
 func TestSkipKeepsInboxesOfStoppedSessions(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	stopped := now.Add(-30 * time.Minute)
 	d := &Daemon{opt: Options{StoppedInbox: time.Hour}, dir: t.TempDir(), log: log.New(io.Discard, "", 0),

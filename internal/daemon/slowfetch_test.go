@@ -63,6 +63,7 @@ func dumpLogOnFailure(t *testing.T, out *syncBuf) {
 // be counted on to finish. Asked to fetch the ref again first, a sync would cut that off as well,
 // and on such a link, or such a loaded machine, it would never read anything.
 func TestRefsMovingFasterThanTheirFetchesAreStillRead(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	var out syncBuf
 	dumpLogOnFailure(t, &out)
@@ -83,6 +84,7 @@ func TestRefsMovingFasterThanTheirFetchesAreStillRead(t *testing.T) {
 // once its own fetch outside the syncs has finished (#15). This is real git, cut off by the limit
 // mid-download; a sync used to wait out its minute on such a ref and fail, at every poll.
 func TestLargeRefLeavesTheSyncsWorking(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	var out syncBuf
 	dumpLogOnFailure(t, &out)

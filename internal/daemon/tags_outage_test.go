@@ -55,6 +55,7 @@ func keptTags(t *testing.T, d *device, name string) *tags.State {
 // expire as messages do. Both a log this device had read before and one new to it are read. So is
 // the backlog of a daemon whose first sync never finished, though its sessions had names and tags.
 func TestATagChangeMadeDuringALongOutageIsApplied(t *testing.T) {
+	t.Parallel()
 	t.Run("after a sync", func(t *testing.T) { tagChangeDuringOutage(t, false) })
 	t.Run("before the first sync finished", func(t *testing.T) { tagChangeDuringOutage(t, true) })
 }
