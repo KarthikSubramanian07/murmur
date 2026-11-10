@@ -976,6 +976,19 @@ The sender's text in between is passed on as written, neither quoted nor wrapped
 agents are trusted in Murmur's model, and a message that reads as a request is meant to be acted on.
 A body past the limit is cut, as in `inbox`.
 
+- **Who it is from, as the receiver knows it.** The first line is written when the handoff starts,
+  which is as soon as the message is queued, from what the receiving daemon knows of the sender
+  then: the name from presence or the registry, the agent and owner from presence. A sync reads
+  the registry and every presence before the logs, so what landed before the message is known
+  when it is queued. Those reads have 15 s (`ReadFirstLimit`), and never more than half of what is
+  left of the sync, which keeps at least as much, less a cancelled git's up to 5 s to exit, for the
+  logs, already fetched: a registry missing from the listing is asked of the remote again, and a
+  stall there would otherwise use up the minute. A sync that runs past the limit still reads the
+  logs, and then fails; the next sync reads what it missed. A fixed reserve of 15 s, tried first,
+  skipped these reads altogether in the 10 s sync a daemon runs before it accepts sessions. Until 2026-11-09 the logs came first, and a sync that fetched a sender's
+  name with its message wrote the turn without it (#71). A sender whose presence is pushed after
+  its message still arrives without its agent, and without its name if it took one from the pool
+  and the assignment hasn't landed either.
 - **Out of the inbox when handed over.** A message handed over leaves the receiving session's
   inbox, so neither the hook nor `inbox` shows it again: the client has it now, and gives it to the agent as
   a turn. The page and the daemon's log keep it as history. A message that could not be handed over
