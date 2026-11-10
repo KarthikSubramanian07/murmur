@@ -49,6 +49,8 @@ func TestHealthErrorIsClassedAndClean(t *testing.T) {
 			false, web.ErrOther, "fatal: '/tmp/remote.git' does not appear to be a git repository"},
 		{"credentials in the message", gitErr("fatal: unable to access 'https://x-access-token:" + token + "@github.com/a/b.git/': Failed to connect to github.com port 443\n"),
 			false, web.ErrOther, "fatal: unable to access 'https://github.com/a/b.git/': Failed to connect to github.com port 443"},
+		{"a token in the URL's query", gitErr("fatal: unable to access 'http://127.0.0.1:1/acme/widget.git?access_token=opaqueABC123opaqueABC123&x=1/': Failed to connect to 127.0.0.1 port 1\n"),
+			false, web.ErrOther, "fatal: unable to access 'http://127.0.0.1:1/acme/widget.git?REDACTED': Failed to connect"},
 		{"a secret outside a URL", errors.New("push failed: token=" + token), false, web.ErrOther, "(not shown: it looked like it held a secret)"},
 		// The 200-character cut falls inside the token: too short to know for what it is, once cut.
 		{"a secret across the cut", errors.New("fatal: " + strings.Repeat("x", 175) + " " + token), false, web.ErrOther,

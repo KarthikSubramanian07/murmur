@@ -113,8 +113,10 @@ type HandoffHealth struct {
 	Failed int64 `json:"failed"`
 }
 
-// HookHealth counts what Murmur's hook gave sessions: messages whole, and notices of messages. Both
-// count per session: a message for everyone that one hook shows two of its sessions counts twice.
+// HookHealth counts what Murmur's hook gave sessions: messages whole, and notices of messages. Whole
+// counts per session: a message for everyone given whole to two of a hook's sessions counts twice.
+// Notices counts per reply: the hook shows a message's notice once across the inboxes it speaks
+// for, so that message's notice counts once.
 type HookHealth struct {
 	Whole   int64 `json:"whole"`
 	Notices int64 `json:"notices"`

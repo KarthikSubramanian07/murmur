@@ -244,11 +244,16 @@ func errorClass(err error, text string, timedOut bool) string {
 // the "@" before the host.
 var credentials = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^\s/@'"]*@`)
 
+// urlQuery is a URL's query or fragment, up to a space or quote. A remote's URL can carry a token
+// there (?access_token=…), git repeats the URL whole in its errors, and scrub doesn't know a token
+// followed by &x=1 for one.
+var urlQuery = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://[^\s?#'"]*)([?#])[^\s'"]*`)
+
 // maxErrorLine is how long the line shown of an error may be.
 const maxErrorLine = 200
 
 // errorLine is the line of text that says most about a failure: git's "fatal:" or "error:" line if
-// it has one, else its first. Credentials in URLs are taken out, and a line that still looks like it
+// it has one, else its first. Credentials, queries and fragments in URLs are taken out, and a line that still looks like it
 // holds a secret (internal/scrub) is not shown at all: the class says what kind of failure it was.
 func errorLine(text string) string {
 	line := ""
@@ -268,6 +273,7 @@ func errorLine(text string) string {
 	// Scrubbed whole, before the cut: a token cut in two would be too short for scrub to know it,
 	// and its first part would be shown.
 	line = credentials.ReplaceAllString(line, "$1")
+	line = urlQuery.ReplaceAllString(line, "${1}${2}REDACTED")
 	if scrub.Check(line) != nil {
 		return "(not shown: it looked like it held a secret)"
 	}
