@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -51,7 +52,8 @@ import (
 // the hook and opens the socket only in a clone the user joined (its .git/murmur/joined.json, read
 // at the session's start): elsewhere a tool call doesn't wait on a process of Murmur's. Under T3
 // the socket is there too, and unused: the daemon reaches a T3 session through T3
-// (internal/daemon, viaOf). A session without a file
+// (internal/daemon, viaOf). An update doesn't run join again, so Pi's MCP server rewrites an
+// older extension (RefreshPi), which Pi loads from its next session. A session without a file
 // (`pi --no-session`) has nothing to give the hook, so it gets no notices, only turns through the
 // socket, which a busy one takes when it finishes. Not covered: Pi's commits aren't credited to
 // its session, as no tool call is bracketed (Claude Code's hook snapshots before and after each).
@@ -258,6 +260,77 @@ export default function (pi: any) {
 }
 `
 
+// piMarker starts every extension join writes.
+const piMarker = "// Written by `" + brand.Command + " join`"
+
+// piExeLine is the line of an extension join wrote that names the mur it runs: `const mur = ...;`
+// now, `command: ...,` before #205.
+var piExeLine = regexp.MustCompile(`(?m)^\s*(?:const mur = |command: )("(?:[^"\\]|\\.)*")[;,]\s*$`)
+
+// RefreshPi brings Murmur's Pi extension up to this binary's, as Pi's MCP server starts (#205):
+// an update replaces the binary and doesn't run join again, so an extension from an older one
+// would stay as it was. It rewrites only an extension join wrote, that runs this very binary, and
+// whose text is another's. Pi reads extensions as a session starts, so the session whose server
+// rewrote it has the old one until its next session. It says whether it rewrote it.
+func RefreshPi() (bool, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return false, err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, err
+	}
+	return refreshPiAt(piDir(os.Getenv, home), exe)
+}
+
+func refreshPiAt(dir, exe string) (bool, error) {
+	path := piExtensionPath(dir)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false, nil // none: join writes one
+	}
+	text := strings.ReplaceAll(string(b), "\r\n", "\n")
+	m := piExeLine.FindStringSubmatch(text)
+	if !strings.HasPrefix(text, piMarker) || m == nil {
+		return false, nil
+	}
+	var named string
+	if json.Unmarshal([]byte(m[1]), &named) != nil || !sameFile(named, exe) {
+		return false, nil
+	}
+	want := piExtension(named)
+	if text == want {
+		return false, nil
+	}
+	if err := writeAtomic(path, []byte(want), 0o644); err != nil {
+		return false, fmt.Errorf("%s: %w", path, err)
+	}
+	return true, nil
+}
+
+func sameFile(a, b string) bool {
+	x, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	y, err := os.Stat(b)
+	return err == nil && os.SameFile(x, y)
+}
+
+// piDir is Pi's agent directory: PI_CODING_AGENT_DIR, whose leading ~ Pi reads as the home
+// directory (Codex's review of #136), else ~/.pi/agent.
+func piDir(getenv func(string) string, home string) string {
+	dir := getenv("PI_CODING_AGENT_DIR")
+	if strings.HasPrefix(dir, "~") {
+		dir = expandHome(dir, home)
+	}
+	if dir == "" {
+		dir = filepath.Join(home, ".pi", "agent")
+	}
+	return dir
+}
+
 func piExtensionPath(dir string) string {
 	return filepath.Join(dir, "extensions", brand.MCPServer+".ts")
 }
@@ -277,7 +350,7 @@ func (e Env) registerPiAt(h agentHome) (did []string, fresh bool, err error) {
 	switch {
 	case err == nil && strings.ReplaceAll(string(b), "\r\n", "\n") == want:
 		return nil, false, piMCPConflict(h.Dir)
-	case err == nil && !strings.HasPrefix(string(b), "// Written by `"+brand.Command+" join`"):
+	case err == nil && !strings.HasPrefix(string(b), piMarker):
 		return nil, false, fmt.Errorf("%s is there and isn't the one join writes, so it was left alone", path)
 	case err != nil && !os.IsNotExist(err):
 		return nil, false, err

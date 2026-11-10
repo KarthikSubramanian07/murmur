@@ -2,6 +2,7 @@ package join
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,6 +154,48 @@ func TestRegisterPi(t *testing.T) {
 	write(t, path, "export default function () {}\n")
 	if _, _, err := sb.registerPiAt(h); err == nil {
 		t.Error("replaced someone else's file")
+	}
+}
+
+// piBefore205 is the extension join wrote before #205, for the mur at exe.
+func piBefore205(exe string) string {
+	cmd, _ := json.Marshal(exe)
+	return "// Written by `mur join` (Murmur, https://github.com/a-Fig/murmur). mur join writes it again when mur moves.\n" +
+		"export default function (pi: any) {\n  const register = (file: string) =>\n" +
+		"    pi.registerMcpServer(\"murmur\", {\n      command: " + string(cmd) + ",\n      args: [\"mcp\", \"--agent\", \"pi\"],\n" +
+		"      exposure: \"direct\",\n      env: { MURMUR_PI_SESSION_FILE: file },\n    });\n  register(\"\");\n}\n"
+}
+
+// Pi's MCP server brings an extension join wrote for it up to its own, as an update doesn't run
+// join again (#205), and leaves alone one that isn't join's, one that runs another mur, and one
+// that is already its own.
+func TestRefreshPi(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "agent")
+	exe := filepath.Join(t.TempDir(), exeName("mur"))
+	other := filepath.Join(t.TempDir(), exeName("mur"))
+	for _, f := range []string{exe, other} {
+		write(t, f, "binary")
+	}
+	path := piExtensionPath(dir)
+	if did, err := refreshPiAt(dir, exe); did || err != nil {
+		t.Fatalf("with no extension: did=%v err=%v", did, err)
+	}
+	write(t, path, piBefore205(exe))
+	if did, err := refreshPiAt(dir, exe); !did || err != nil || read(t, path) != piExtension(exe) {
+		t.Fatalf("an old one: did=%v err=%v\n%s", did, err, read(t, path))
+	}
+	if did, _ := refreshPiAt(dir, exe); did {
+		t.Error("rewrote its own")
+	}
+	for name, text := range map[string]string{
+		"another mur's":     piBefore205(other),
+		"someone else's":    "export default function (pi: any) {}\n",
+		"with no mur in it": "// Written by `mur join` (Murmur).\nexport default function () {}\n",
+	} {
+		write(t, path, text)
+		if did, err := refreshPiAt(dir, exe); did || err != nil || read(t, path) != text {
+			t.Errorf("%s: did=%v err=%v", name, did, err)
+		}
 	}
 }
 

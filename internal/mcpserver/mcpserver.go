@@ -55,6 +55,14 @@ type Options struct {
 
 // Run serves MCP on stdin and stdout until the client disconnects.
 func Run(ctx context.Context, opt Options) error {
+	if opt.Agent == "pi" {
+		// Pi's extension is per user, like this server, and older after an update (#205).
+		if did, err := join.RefreshPi(); err != nil {
+			fmt.Fprintf(os.Stderr, brand.Command+" mcp: couldn't update its Pi extension: %v\n", err)
+		} else if did {
+			fmt.Fprintf(os.Stderr, brand.Command+" mcp: updated its Pi extension, which Pi's next session loads\n")
+		}
+	}
 	return Serve(ctx, opt, &mcp.StdioTransport{})
 }
 
