@@ -128,9 +128,20 @@ func (d *Daemon) keepable(ln net.Listener) (net.Listener, *os.File) {
 // servePage serves the page on ln until ctx is done.
 func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
 	page := web.New(pageSource{d}, d.pageTok, repoDir(d.opt.GitDir))
+	if d.opt.Repos != nil {
+		page.WithRepos(d.opt.Repos)
+	}
+	d.page.Store(page)
+	// Any local user can connect, and a connection Go keeps open costs the daemon a file descriptor:
+	// one that sends a request and then sits idle would be kept for good, and enough of them would
+	// leave the daemon none for its sessions or git. A tab polls every 3 s, or 15 s when hidden, so
+	// two idle minutes close only a tab's connection that it no longer uses; a request's body is at
+	// most 64 KiB. No write timeout, which would also cut off a handler still at work.
 	srv := &http.Server{
 		Handler:           page,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 		ErrorLog:          d.log,
 	}
 	d.bg.Add(2)
@@ -153,6 +164,12 @@ func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
 		// background work, so none is left running there after it exits.
 		page.Close()
 	}()
+}
+
+// pageKeysOut says a key to the page is out, unspent and still good (#348).
+func (d *Daemon) pageKeysOut() bool {
+	page := d.page.Load()
+	return page != nil && page.KeysOut()
 }
 
 // repoDir is the clone's top directory, where gh finds the repository from its remotes.
@@ -202,9 +219,9 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 		self.Sessions = append(self.Sessions, web.Session{
 			Name: nameOr(ss.name, addr), Addr: addr, Agent: ss.agent, Branch: ss.branch,
 			Committed: d.committedLocked(ss.id), Doing: ss.shownDoing(), Worktree: ss.worktree, Started: ss.started,
-			LastActive: ss.lastActive, Tags: d.tagsOfLocked(ss)})
+			LastActive: ss.lastActive, Tags: d.tagsOfLocked(ss), HookOff: d.hookOffLocked(ss)})
 	}
-	st := web.State{Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked()}
+	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked()}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Reachable: !d.staleLocked(p),
@@ -220,8 +237,8 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 			}
 			dv.Sessions = append(dv.Sessions, web.Session{
 				Name: nameOr(ps.Name, addr), Addr: addr, Agent: ps.Agent, Branch: ps.Branch,
-				Committed: ps.Committed, Doing: ps.Doing, Started: ps.Started, LastActive: peerActive(p, ps),
-				Tags: ps.Tags})
+				Committed: ps.Committed, Doing: ps.Doing, Started: peerStarted(p, ps), LastActive: peerActive(p, ps),
+				Tags: ps.Tags, HookOff: ps.HookOff})
 		}
 		st.Devices = append(st.Devices, dv)
 	}
@@ -350,8 +367,10 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 	for _, m := range d.msgs[first:] {
 		msg := web.Message{ID: m.e.ID, From: label(m.e.From), Subject: m.e.Subject, Body: m.e.Body, At: m.e.At,
 			FromAddr: m.e.From, ToAddr: m.e.To, FromPerson: bus.IsPerson(m.e.From), ToPerson: bus.IsPerson(m.e.To)}
-		if msg.From == m.e.From && m.e.Person != "" {
-			msg.From = m.e.Person
+		if msg.FromPerson {
+			// The name the message carries, or the one their device gives, if it is theirs.
+			name, _ := d.personSenderLocked(m.e)
+			msg.From = nameOr(name, m.e.From)
 		}
 		switch {
 		case m.e.To == "*":

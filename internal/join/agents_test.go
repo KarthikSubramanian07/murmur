@@ -2,6 +2,7 @@ package join
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,7 +117,44 @@ func TestRegisterPi(t *testing.T) {
 	}
 	path := piExtensionPath(sb.PiDir)
 	got := read(t, path)
-	for _, want := range []string{`pi.registerMcpServer("murmur"`, `MURMUR_PI_SESSION_FILE`, `"--agent", "pi"`, `exposure: "direct"`, `"session_start"`} {
+	for _, want := range []string{`pi.registerMcpServer("murmur"`, `MURMUR_PI_SESSION_FILE`, `"--agent", "pi"`, `exposure: "direct"`, `"session_start"`,
+		// Messages (#205): the hook at Claude Code's moments, and the socket for a turn when idle.
+		`MURMUR_PI_MESSAGING_SOCKET: sock`, `MURMUR_PI_MESSAGING_TOKEN: token`, `["hook", "--agent", "pi"]`,
+		`hook("UserPromptSubmit"`, `hook("PostToolUse"`, `hook("Stop"`, `"tool_result"`, `"agent_before_settle"`,
+		`deliverAs: "steer"`, `triggerTurn: true, deliverAs: "followUp"`, `continue: true`, `customType: "murmur"`,
+		`"session_shutdown"`, `rec?.token !== key`,
+		// Only in a clone the user joined (its consent file), and an interrupted end told as one.
+		`"murmur", "joined.json"`, `if (!on || !file) return resolve(null)`,
+		`"agent_settled"`, `event?.aborted`, `{ interrupted: true }`, `event === "Stop" ? undefined : ctx?.signal`,
+		`Buffer.byteLength(p) <= 100`,
+		// A session that was running when its user joined turns on then (the late join): the socket's
+		// address is chosen as it starts and given to the MCP server, and the consent is looked for
+		// again each second until it is there.
+		`sock = sockPath(`, `watch = setInterval(turnOn, 1000)`, `if (on || !sock || !joined(cwd)) return`,
+		`await listen(sock, token)`, `edits here are lost`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the extension lacks %s:\n%s", want, got)
+		}
+	}
+	// It is also looked for at each prompt and tool call, before the hook would run.
+	for _, event := range []string{`"before_agent_start"`, `"tool_result"`} {
+		_, handler, _ := strings.Cut(got, `pi.on(`+event)
+		handler, _, _ = strings.Cut(handler, "\n  });")
+		look, hook := strings.Index(handler, "await turnOn();"), strings.Index(handler, "await hook(")
+		if look < 0 || hook < 0 || look > hook {
+			t.Errorf("%s doesn't look for the consent before it runs the hook:\n%s", event, handler)
+		}
+	}
+	// The user's own words are never forged: nothing Murmur says goes in as the user's message.
+	for _, bad := range []string{"sendUserMessage", "{{"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("the extension has %s:\n%s", bad, got)
+		}
+	}
+	// What the hook prints and what the socket takes are what package hook and package msgsock
+	// write: the extension reads them by these names.
+	for _, want := range []string{`hookSpecificOutput?.additionalContext`, `r?.decision !== "block"`, `r?.reason`,
+		`rec?.type !== "auth"`, `rec?.type === "user"`, `rec?.message?.content`, `session_id: file, hook_event_name: event`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the extension lacks %s:\n%s", want, got)
 		}
@@ -133,6 +171,48 @@ func TestRegisterPi(t *testing.T) {
 	}
 }
 
+// piBefore205 is the extension join wrote before #205, for the mur at exe.
+func piBefore205(exe string) string {
+	cmd, _ := json.Marshal(exe)
+	return "// Written by `mur join` (Murmur, https://github.com/a-Fig/murmur). mur join writes it again when mur moves.\n" +
+		"export default function (pi: any) {\n  const register = (file: string) =>\n" +
+		"    pi.registerMcpServer(\"murmur\", {\n      command: " + string(cmd) + ",\n      args: [\"mcp\", \"--agent\", \"pi\"],\n" +
+		"      exposure: \"direct\",\n      env: { MURMUR_PI_SESSION_FILE: file },\n    });\n  register(\"\");\n}\n"
+}
+
+// Pi's MCP server brings an extension join wrote for it up to its own, as an update doesn't run
+// join again (#205), and leaves alone one that isn't join's, one that runs another mur, and one
+// that is already its own.
+func TestRefreshPi(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "agent")
+	exe := filepath.Join(t.TempDir(), exeName("mur"))
+	other := filepath.Join(t.TempDir(), exeName("mur"))
+	for _, f := range []string{exe, other} {
+		write(t, f, "binary")
+	}
+	path := piExtensionPath(dir)
+	if did, err := refreshPiAt(dir, exe); did || err != nil {
+		t.Fatalf("with no extension: did=%v err=%v", did, err)
+	}
+	write(t, path, piBefore205(exe))
+	if did, err := refreshPiAt(dir, exe); !did || err != nil || read(t, path) != piExtension(exe) {
+		t.Fatalf("an old one: did=%v err=%v\n%s", did, err, read(t, path))
+	}
+	if did, _ := refreshPiAt(dir, exe); did {
+		t.Error("rewrote its own")
+	}
+	for name, text := range map[string]string{
+		"another mur's":     piBefore205(other),
+		"someone else's":    "export default function (pi: any) {}\n",
+		"with no mur in it": "// Written by `mur join` (Murmur).\nexport default function () {}\n",
+	} {
+		write(t, path, text)
+		if did, err := refreshPiAt(dir, exe); did || err != nil || read(t, path) != text {
+			t.Errorf("%s: did=%v err=%v", name, did, err)
+		}
+	}
+}
+
 func TestRegisterGrok(t *testing.T) {
 	sb := newSandbox(t, false)
 	withAgents(sb)
@@ -141,18 +221,27 @@ func TestRegisterGrok(t *testing.T) {
 	write(t, path, before)
 	h := sb.defaultHome(agents[agentIndex("grok")])
 	did, fresh, err := sb.registerGrokAt(h)
-	if err != nil || !fresh || len(did) != 2 {
+	if err != nil || !fresh || len(did) != 3 {
 		t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
+	}
+	hooks := read(t, filepath.Join(sb.GrokHome, "hooks", "murmur.json"))
+	for _, want := range []string{`"PostToolUse"`, `"Stop"`, ` hook grok"`, `"timeout": 30`} {
+		if !strings.Contains(hooks, want) {
+			t.Errorf("the hook file lacks %s:\n%s", want, hooks)
+		}
+	}
+	if strings.Contains(hooks, "matcher") || strings.Contains(hooks, "UserPromptSubmit") {
+		t.Errorf("the hook file:\n%s", hooks)
 	}
 	got := read(t, path)
 	want := "# mine\n[permission]\nallow = [\"Bash(ls)\", \"MCPTool(murmur__*)\"] # kept\n\n[mcp_servers.murmur]\ncommand = " + tomlString(sb.Exe) + "\nargs = [\"mcp\", \"--agent\", \"grok\"]\n"
 	if got != want {
 		t.Errorf("config.toml:\n%s\nwant:\n%s", got, want)
 	}
-	if _, fresh, err := sb.registerGrokAt(h); err != nil || fresh {
-		t.Errorf("second: fresh=%v err=%v", fresh, err)
+	if did, fresh, err := sb.registerGrokAt(h); err != nil || fresh || len(did) != 0 {
+		t.Errorf("second: did=%q fresh=%v err=%v", did, fresh, err)
 	}
-	if r := tableRemoval(sb.Env, h); !strings.Contains(r, path) {
+	if r := grokRemoval(sb.Env, h); !strings.Contains(r, path) || !strings.Contains(r, "murmur.json") {
 		t.Errorf("removal: %q", r)
 	}
 }

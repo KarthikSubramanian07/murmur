@@ -8,11 +8,14 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/a-Fig/murmur/internal/clones"
 )
 
 func runCount(t *testing.T, b *box) int {
@@ -81,6 +84,13 @@ func TestInitJoinAndLeave(t *testing.T) {
 		t.Errorf("join's output should tell the agent what to pass on, and that this conversation needs a restart:\n%s", out)
 	}
 
+	// On the record of this machine's clones, for the page's repo picker (#348), named for its remote.
+	record := filepath.Join(b.root, "clones")
+	joined := func(string) bool { return true }
+	if list, err := clones.List(record, joined); err != nil || len(list) != 1 || list[0].Name != "remote" {
+		t.Errorf("the record after join: %+v, %v", list, err)
+	}
+
 	// Registered once for the user, with this binary's full path, and its tools allowed.
 	server, _ := jsonAt(t, b.claudeJSON(), "mcpServers", "murmur").(map[string]any)
 	if cmd, _ := server["command"].(string); server == nil || !sameFile(cmd, b.mur) || !reflect.DeepEqual(server["args"], []any{"mcp"}) {
@@ -103,8 +113,13 @@ func TestInitJoinAndLeave(t *testing.T) {
 		}
 	}
 
-	// Not for agents this machine doesn't have.
-	for _, dir := range []string{filepath.Join(b.home, ".config", "opencode"), filepath.Join(b.home, ".pi")} {
+	// Not for agents this machine doesn't have. The box's PATH is the machine's own after mur and
+	// claude, so an agent installed on the machine running the tests is found, and set up, as on a
+	// user's: only those it can't find are checked.
+	for bin, dir := range map[string]string{"opencode": filepath.Join(b.home, ".config", "opencode"), "pi": filepath.Join(b.home, ".pi")} {
+		if _, err := exec.LookPath(bin); err == nil {
+			continue
+		}
 		if exists(dir) {
 			t.Errorf("join made %s for an agent that isn't installed", dir)
 		}
@@ -161,6 +176,9 @@ func TestInitJoinAndLeave(t *testing.T) {
 	}
 	if !strings.Contains(readFile(t, filepath.Join(b.clone, "AGENTS.md")), "<!-- murmur:start -->") {
 		t.Error("--leave touched the repo's files")
+	}
+	if list, _ := clones.List(record, joined); len(list) != 0 {
+		t.Errorf("the record after --leave: %+v", list)
 	}
 	if out = b.mustRun(b.clone, "join", "--leave"); !strings.Contains(out, "Nothing to undo") {
 		t.Errorf("leaving twice should say so:\n%s", out)
@@ -223,6 +241,58 @@ func TestJoinKeepsTheUsersConfig(t *testing.T) {
 	local = readFile(t, filepath.Join(b.clone, ".claude", "settings.local.json"))
 	if !strings.Contains(local, "Bash(git status)") || strings.Contains(local, "hook") {
 		t.Errorf("settings.local.json after --leave:\n%s", local)
+	}
+}
+
+// A repo that commits .claude/settings.local.json by accident gets no hook there, but the join
+// still succeeds: running it again couldn't change that, so it is a note, not a problem, and the
+// advice is what any join gives.
+func TestJoinWhereTheRepoTracksTheHookFileStillSucceeds(t *testing.T) {
+	b := newBox(t)
+	b.mustRun(b.clone, "init")
+	local := filepath.Join(b.clone, ".claude", "settings.local.json")
+	const settings = "{\n  \"permissions\": {\"allow\": [\"Bash(ls)\"]}\n}\n"
+	writeFile(t, local, settings)
+	git(t, b.clone, "add", "-f", "--", ".claude/settings.local.json")
+	git(t, b.clone, "commit", "-q", "-m", "settings")
+
+	out := b.mustRun(b.clone, "join")
+	if !strings.Contains(out, "Not done:") || !strings.Contains(out, "git tracks") || strings.Contains(out, "Problems:") || strings.Contains(out, "retries") {
+		t.Errorf("join's output:\n%s", out)
+	}
+	if !strings.Contains(out, "copy theirs aside") || !strings.Contains(out, "join --leave") {
+		t.Errorf("join's output lacks the warning about untracking, or the usual advice:\n%s", out)
+	}
+	if got := readFile(t, local); got != settings {
+		t.Errorf("join edited the tracked hook file:\n%s", got)
+	}
+	b.mustRun(b.clone, "join", "--leave")
+}
+
+// A Codex table an older join wrote forwards T3CODE_CLI_PATH only; joining again adds CODEX_HOME
+// to the list and keeps the user's own names, and --leave leaves the per-user table as it is.
+func TestJoinForwardsCodexHome(t *testing.T) {
+	b := newBox(t)
+	b.mustRun(b.clone, "init")
+	head := "model = \"gpt\"\n\n[mcp_servers.murmur]\ncommand = " + strconv.Quote(b.mur) + "\nargs = [\"mcp\", \"--agent\", \"codex\"]\n"
+	tail := "default_tools_approval_mode = \"approve\"\n"
+	writeFile(t, b.codexConfig(), head+"env_vars = [\"HTTP_PROXY\", \"T3CODE_CLI_PATH\"] # mine\n"+tail)
+
+	b.mustRun(b.clone, "join")
+	joined := readFile(t, b.codexConfig())
+	// The server's table, then the trust of Murmur's Codex hook, one table for each of its three
+	// hooks (#225).
+	server, trust, _ := strings.Cut(joined, "\n[hooks.state.")
+	if want := head + "env_vars = [\"HTTP_PROXY\", \"T3CODE_CLI_PATH\", \"CODEX_HOME\"] # mine\n" + tail; server != want || strings.Count(trust, "trusted_hash") != 3 {
+		t.Errorf("config.toml:\n%s\nwant:\n%s\nand the hook's trust", joined, want)
+	}
+	b.mustRun(b.clone, "join")
+	if again := readFile(t, b.codexConfig()); again != joined {
+		t.Errorf("a second join changed config.toml:\n%s", again)
+	}
+	b.mustRun(b.clone, "join", "--leave")
+	if left := readFile(t, b.codexConfig()); left != joined {
+		t.Errorf("--leave changed config.toml:\n%s", left)
 	}
 }
 

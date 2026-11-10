@@ -216,15 +216,15 @@ func TestRegisterCodexKeepsTheConfig(t *testing.T) {
 	before := "# mine\nmodel = \"gpt\"\n\n[mcp_servers.other]\ncommand = \"o\"\n"
 	write(t, path, before)
 	did, fresh, err := sb.registerCodex()
-	if err != nil || !fresh || len(did) != 1 {
+	if err != nil || !fresh || len(did) != 2 { // the server, and the hook (#225)
 		t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
 	}
 	got := read(t, path)
-	if !strings.HasPrefix(got, before) || !strings.Contains(got, "[mcp_servers.murmur]") {
+	if !strings.HasPrefix(got, before) || !strings.Contains(got, "[mcp_servers.murmur]") || !strings.Contains(got, "[hooks.state.") {
 		t.Errorf("config.toml:\n%s", got)
 	}
-	if _, fresh, err := sb.registerCodex(); err != nil || fresh {
-		t.Errorf("second: fresh=%v err=%v", fresh, err)
+	if did, fresh, err := sb.registerCodex(); err != nil || fresh || len(did) != 0 {
+		t.Errorf("second: did=%q fresh=%v err=%v", did, fresh, err)
 	}
 }
 
@@ -293,7 +293,7 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 	ctx := context.Background()
 	write(t, filepath.Join(other, ".claude", "settings.local.json"), "{\n  \"permissions\": {\"allow\": [\"Bash(ls)\"]}\n}\n")
 
-	changed, err := installHooks(ctx, p, exe)
+	changed, _, err := installHooks(ctx, p, exe)
 	if err != nil || len(changed) != 2 {
 		t.Fatalf("changed %q, err %v", changed, err)
 	}
@@ -312,7 +312,7 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 	if status, _ := exec.Command("git", "-C", p.Top, "status", "--porcelain", "--", ".claude").Output(); strings.Contains(string(status), "settings.local.json") {
 		t.Errorf("the hook file would be committed:\n%s", status)
 	}
-	if again, err := installHooks(ctx, p, exe); err != nil || len(again) != 0 {
+	if again, _, err := installHooks(ctx, p, exe); err != nil || len(again) != 0 {
 		t.Errorf("a second install changed %q (err %v)", again, err)
 	}
 	if n := strings.Count(read(t, filepath.Join(p.GitDir, "info", "exclude")), "settings.local.json"); n != 1 {
@@ -320,7 +320,7 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 	}
 
 	// The binary moved: the hook names the new path and there is still one of it.
-	if _, err := installHooks(ctx, p, `/new/mur`); err != nil {
+	if _, _, err := installHooks(ctx, p, `/new/mur`); err != nil {
 		t.Fatal(err)
 	}
 	got := read(t, filepath.Join(p.Top, ".claude", "settings.local.json"))
@@ -328,7 +328,7 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 		t.Errorf("after the binary moved:\n%s", got)
 	}
 
-	removed, err := removeHooks(ctx, p)
+	removed, _, err := removeHooks(ctx, p)
 	if err != nil || len(removed) != 2 {
 		t.Fatalf("removed %q, err %v", removed, err)
 	}

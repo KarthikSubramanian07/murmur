@@ -13,6 +13,30 @@ const VIEWS = ["sessions", "messages", "recent", "settings"];
 const TITLES = { sessions: "Sessions", messages: "Conversations", recent: "Recent", settings: "Settings" };
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
+// The page's look, chosen in Settings and kept in this browser: black like T3 Code, soft greys like
+// a chat app, or light. style.css keys each one on <html data-theme>.
+const THEME_KEY = NAME + ":theme";
+const THEMES = [
+  ["dark", "Dark"],
+  ["dim", "Dim"],
+  ["light", "Light"],
+];
+let theme = "dark";
+try {
+  const t = localStorage.getItem(THEME_KEY);
+  if (THEMES.some(([id]) => id === t)) theme = t;
+} catch {}
+document.documentElement.dataset.theme = theme;
+
+function setTheme(t) {
+  theme = t;
+  document.documentElement.dataset.theme = t;
+  try {
+    localStorage.setItem(THEME_KEY, t);
+  } catch {}
+  render();
+}
+
 const ui = {
   view: "messages",
   token: null,
@@ -49,6 +73,8 @@ const ui = {
   reading: null, // the conversation someone was last seen looking at, null if nobody is looking
   newMark: null, // the open conversation's first unread message: { key, id }
   armed: null, // the group chat whose next send goes: its key
+  repoMenu: null, // the repo picker, open: { x, top, repos, opening, err } (#348)
+  drawer: false, // on a phone, whether the sidebar's drawer is open
 };
 
 class AuthError extends Error {
@@ -74,6 +100,31 @@ function takeToken() {
     history.replaceState(null, "", location.pathname + location.search + "#" + view);
   }
   return sessionStorage.getItem(TOKEN_KEY);
+}
+
+// A page opened from another repo's page (#348) arrives with a one-time key, not the token, and
+// trades it with its own daemon for the token. The key is spent either way, so it leaves the
+// address bar first. If the trade fails, the tab keeps whatever token it already had here.
+async function takeKey() {
+  const parts = location.hash.slice(1).split("&");
+  const k = parts.find((p) => p.startsWith("key="));
+  if (!k) return;
+  const view = parts.find((p) => VIEWS.includes(p)) || "messages";
+  history.replaceState(null, "", location.pathname + location.search + "#" + view);
+  // The theme comes along: this browser keeps it per page, and each repo's page is a page of its own.
+  const t = parts.find((p) => p.startsWith("theme="))?.slice(6);
+  if (THEMES.some(([id]) => id === t) && t !== theme) {
+    theme = t;
+    document.documentElement.dataset.theme = t;
+    try {
+      localStorage.setItem(THEME_KEY, t);
+    } catch {}
+  }
+  try {
+    const res = await fetch("/api/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: k.slice(4) }), cache: "no-store" });
+    const got = res.ok ? await res.json() : null;
+    if (got?.token) sessionStorage.setItem(TOKEN_KEY, got.token);
+  } catch {}
 }
 
 async function api(path, init = {}) {
@@ -211,8 +262,9 @@ function render() {
       h(
         "div",
         { class: "gate" },
+        h("img", { class: "gate-mark", src: "/assets/favicon.svg", alt: "" }),
         h("p", { class: "gate-title" }, NAME),
-        h("p", { class: "gate-line" }, "Open the page again from its link."),
+        h("p", { class: "gate-line" }, "This page needs its link again. Run " + COMMAND + " ui to open it."),
       ),
     );
     content = null;
@@ -227,7 +279,21 @@ function render() {
   const inner = page(); // before the top bar, which counts what this settles
   content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
   content.replaceChildren(inner);
-  root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)), ui.setup && setupDialog(), ui.picker && pickerDialog(), ui.tagMenu && tagMenu());
+  // On a phone the sidebar is a drawer over the page, opened from the top bar.
+  const drawer = NARROW.matches && ui.drawer;
+  root.replaceChildren(
+    h(
+      "div",
+      { class: "app" + (drawer ? " drawer-open" : "") },
+      sidebar(),
+      drawer && h("div", { class: "drawer-scrim", "aria-hidden": "true", onclick: () => setDrawer(false) }),
+      h("main", { class: "main", inert: drawer ? true : null }, showTopbar() ? topbar() : null, content),
+    ),
+    ui.setup && setupDialog(),
+    ui.picker && pickerDialog(),
+    ui.tagMenu && tagMenu(),
+    ui.repoMenu && repoMenu(),
+  );
   content.scrollTop = scroll;
   const sideNow = root.querySelector(".sidebar-content, .mini-scroll");
   if (sideNow) sideNow.scrollTop = side;
@@ -257,31 +323,20 @@ function restoreCaret(el, caret) {
   } catch {}
 }
 
-function navButton(view, iconName, count) {
+// A row in the sidebar's nav, as T3 Code's: an icon, a label, and a count or badge at the end.
+function navRow(key, iconName, label, current, onclick, end) {
   return h(
-    "li",
-    null,
-    h(
-      "button",
-      {
-        class: "menu-button",
-        "aria-current": ui.view === view ? "page" : null,
-        "data-key": "nav-" + view,
-        onclick: () => {
-          ui.filter = null;
-          go(view);
-        },
-      },
-      icon(iconName),
-      h("span", { class: "label" }, TITLES[view]),
-      count != null && h("span", { class: "menu-count" }, count),
-    ),
+    "button",
+    { class: "menu-button", "aria-current": current ? "page" : null, "data-key": key, onclick },
+    icon(iconName),
+    h("span", { class: "label" }, label),
+    end,
   );
 }
 
-// The sidebar is the sessions themselves, under their devices: every session, every conversation
-// and the newest messages at the top, Settings at the foot. It folds to a strip of faces, and
-// remembers that.
+// The sidebar is the sessions themselves, under their devices, as T3 Code's are threads under their
+// projects: your messages, every session, every conversation and the newest messages at the top,
+// Settings at the foot. It folds to a strip of faces, and remembers that. On a phone it is a drawer.
 const MINI_KEY = NAME + ":sidebar-mini";
 let mini = false;
 try {
@@ -293,6 +348,20 @@ function setMini(v) {
     localStorage.setItem(MINI_KEY, v ? "1" : "0");
   } catch {}
   render();
+}
+
+function setDrawer(open) {
+  ui.drawer = open;
+  render();
+  if (open) root.querySelector(".sidebar .menu-button")?.focus({ preventScroll: true });
+  else root.querySelector('[data-key="open-sidebar"]')?.focus({ preventScroll: true });
+}
+
+// Picking a session shows its conversations.
+function pickSession(key) {
+  ui.filter = key;
+  ui.conversation = null;
+  go("messages");
 }
 
 function miniSidebar() {
@@ -307,13 +376,14 @@ function miniSidebar() {
     "aside",
     { class: "sidebar mini", "data-app-sidebar": true, "aria-label": NAME },
     h("button", { class: "mini-btn mini-open", title: "Show the sidebar", "aria-label": "Show the sidebar", "data-key": "mini-open", onclick: () => setMini(false) }, icon("panel")),
+    connBadge(true),
     h(
       "div",
       { class: "mini-scroll" },
       miniYou(),
-      top("sessions", "users", "All sessions", ui.view === "sessions"),
-      top("messages", "message", "All conversations", ui.view === "messages" && !ui.filter),
-      top("recent", "clock", "Recent messages", ui.view === "recent"),
+      top("sessions", "users", "Sessions", ui.view === "sessions"),
+      top("messages", "message", "Conversations", ui.view === "messages" && !ui.filter),
+      top("recent", "clock", "Recent", ui.view === "recent"),
       ui.tagFilter &&
         h(
           "button",
@@ -333,7 +403,7 @@ function miniSidebar() {
         const live = shownSessions(liveSessions(d));
         if (ui.tagFilter && !live.length) return null;
         return [
-          h("div", { class: "mini-dev", title: (d.self ? "This device" : d.owner || d.id) + " · " + live.length }, deviceDot(d)),
+          h("div", { class: "mini-dev", title: deviceLabel(d) + " · " + plural(live.length, "session") }, deviceDot(d)),
           live.map((s) => {
             const key = s.addr || s.name;
             return h(
@@ -343,11 +413,7 @@ function miniSidebar() {
                 title: s.name + (s.doing ? ": " + s.doing : ""),
                 "aria-label": s.name,
                 "data-key": "mini-s-" + s.name,
-                onclick: () => {
-                  ui.filter = key;
-                  ui.conversation = null;
-                  go("messages");
-                },
+                onclick: () => pickSession(key),
               },
               presence(s.name, d),
             );
@@ -356,7 +422,7 @@ function miniSidebar() {
       }),
     ),
     miniUpdate(),
-    h("button", { class: "mini-btn mini-foot" + (ui.view === "settings" ? " current" : ""), title: "Settings", "aria-label": "Settings", onclick: () => go("settings") }, icon("settings")),
+    h("button", { class: "mini-btn mini-foot" + (ui.view === "settings" ? " current" : ""), title: "Settings", "aria-label": "Settings", "data-key": "mini-settings", onclick: () => go("settings") }, icon("settings")),
   );
 }
 
@@ -370,124 +436,149 @@ function miniYou() {
   );
 }
 
+// Whether the page can reach its daemon. Nothing shows while it can.
+function connBadge(small) {
+  if (ui.conn !== "down" || ui.restarting) return null;
+  const tip = "Can't reach the daemon. The page keeps trying; " + COMMAND + " ui starts it again.";
+  return small
+    ? h("span", { class: "mini-conn", role: "status", title: tip, "aria-label": "Disconnected" }, h("span", { class: "dot warn" }))
+    : h("span", { class: "conn-badge", role: "status", title: tip }, h("span", { class: "dot warn" }), "Disconnected");
+}
+
 function sidebar() {
-  if (mini) return miniSidebar();
+  if (mini && !NARROW.matches) return miniSidebar();
   const devs = devices();
+  const allCount = allConversations().length;
+  const live = devs.reduce((n, d) => n + liveSessions(d).length, 0);
   return h(
     "aside",
-    { class: "sidebar", "data-app-sidebar": true, "aria-label": NAME },
+    { class: "sidebar", "data-app-sidebar": true, "aria-label": NAME, id: "sidebar" },
     h(
       "div",
       { class: "sidebar-header" },
-      h("span", { class: "brand" }, NAME),
-      h("button", { class: "fold-btn", title: "Hide the sidebar", "aria-label": "Hide the sidebar", "data-key": "fold", onclick: () => setMini(true) }, icon("panel")),
+      h("img", { class: "brand-mark", src: "/assets/favicon.svg", alt: "" }),
+      repoButton(),
+      connBadge(false),
+      NARROW.matches
+        ? h("button", { class: "icon-btn", title: "Close", "aria-label": "Close the sidebar", "data-key": "close-sidebar", onclick: () => setDrawer(false) }, icon("panel"))
+        : h("button", { class: "icon-btn", title: "Hide the sidebar", "aria-label": "Hide the sidebar", "data-key": "fold", onclick: () => setMini(true) }, icon("panel")),
     ),
     h(
       "div",
       { class: "sidebar-content" },
       h(
-        "div",
-        { class: "sidebar-group g-top" },
+        "nav",
+        { class: "sidebar-group g-top", "aria-label": "Views" },
         yourRow(),
-        topRow("sessions", "users", "All sessions", allSessionsSub()),
-        allButton(),
-        topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")),
+        navRow("top-sessions", "users", "Sessions", ui.view === "sessions", () => ((ui.filter = null), go("sessions")), h("span", { class: "menu-count" }, live)),
+        navRow("all", "message", "Conversations", ui.view === "messages" && !ui.filter, () => ((ui.filter = null), (ui.conversation = null), go("messages")), h("span", { class: "menu-count" }, allCount)),
+        navRow("top-recent", "clock", "Recent", ui.view === "recent", () => ((ui.filter = null), go("recent"))),
       ),
       ui.notice && h("button", { class: "side-notice", title: "Dismiss", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
       peopleGroup(),
       tagsGroup(),
-      devs.map((d) => {
-        const live = shownSessions(liveSessions(d));
-        if (ui.tagFilter && !live.length && !shownSessions(quietSessions(d)).length) return null;
-        return h(
-          "div",
-          { class: "sidebar-group dev-group" },
-          h(
-            "div",
-            {
-              class: "device-link" + (d.reachable ? "" : " stale"),
-              title: d.reachable ? d.id : d.id + ", last seen " + ago(when(d.lastSeen) || 0),
-            },
-            icon("laptop"),
-            h("span", { class: "label" }, deviceDot(d), deviceLabel(d), h("span", { class: "dev-host" }, host(d.id))),
-            d.self ? h("span", { class: "dev-you" }, "you") : !d.reachable && h("span", { class: "dev-you" }, "offline"),
-            h("span", { class: "menu-count" }, live.length),
-          ),
-          live.length > 0 &&
-            h(
-              "ul",
-              { class: "sidebar-menu side-sessions" },
-              live.map((s) => {
-                const key = s.addr || s.name;
-                return h(
-                  "li",
-                  { class: "side-li" },
-                  h(
-                    "button",
-                    {
-                      class: "side-session",
-                      "aria-current": ui.view === "messages" && ui.filter === key ? "page" : null,
-                      "data-key": "ss-" + s.name,
-                      title: s.doing || s.name,
-                      onclick: () => {
-                        ui.filter = key;
-                        ui.conversation = null;
-                        go("messages");
-                      },
-                    },
-                    ...sideSessionBody(d, s),
-                  ),
-                  s.addr && tagButton(s),
-                  messageButton(s.name),
-                  s.addr && hideButton(s),
-                );
-              }),
-            ),
-          quietFold(d),
-          !ui.tagFilter && settledFold(d.id),
-        );
-      }),
+      devs.map((d) => deviceGroup(d)),
     ),
     sidebarFoot(),
   );
 }
 
-// The foot says who you are here, once you are someone.
+// A device, like a project in T3 Code's sidebar: a header that folds it, then its sessions. A tag
+// filter (#270) leaves out the sessions without the tag, and a device left with none.
+function deviceGroup(d) {
+  ui.closedDevices = ui.closedDevices || new Set();
+  const closed = ui.closedDevices.has(d.id);
+  const live = shownSessions(liveSessions(d));
+  if (ui.tagFilter && !live.length && !shownSessions(quietSessions(d)).length) return null;
+  return h(
+    "div",
+    { class: "sidebar-group dev-group" + (d.reachable ? "" : " stale") },
+    h(
+      "button",
+      {
+        class: "device-link",
+        "aria-expanded": closed ? "false" : "true",
+        "data-key": "dev-" + d.id,
+        title: d.reachable ? d.id : d.id + ", last seen " + ago(when(d.lastSeen) || 0),
+        onclick: () => {
+          closed ? ui.closedDevices.delete(d.id) : ui.closedDevices.add(d.id);
+          render();
+        },
+      },
+      icon("chevronRight", "dev-chev"),
+      h("span", { class: "label" }, h("span", { class: "dev-name truncate" }, deviceLabel(d)), h("span", { class: "dev-host truncate" }, host(d.id))),
+      d.self ? h("span", { class: "dev-you" }, "you") : !d.reachable && h("span", { class: "dev-you" }, "offline"),
+      h("span", { class: "menu-count" }, live.length),
+    ),
+    !closed && [
+      live.length > 0 &&
+        h(
+          "ul",
+          { class: "sidebar-menu side-sessions" },
+          live.map((s) => {
+            const key = s.addr || s.name;
+            return h(
+              "li",
+              { class: "side-li" },
+              h(
+                "button",
+                {
+                  class: "side-session",
+                  "aria-current": ui.view === "messages" && ui.filter === key ? "page" : null,
+                  "data-key": "ss-" + s.name,
+                  title: [s.name, s.doing, s.branch && "on " + s.branch, tagsOf(s).names.join(", ")].filter(Boolean).join(" · "),
+                  onclick: () => pickSession(key),
+                },
+                ...sideSessionBody(d, s),
+              ),
+              h("span", { class: "side-actions" }, s.addr && tagButton(s), messageButton(s.name), s.addr && hideButton(s)),
+            );
+          }),
+        ),
+      quietFold(d),
+      !ui.tagFilter && settledFold(d.id),
+    ],
+  );
+}
+
+// The foot says who you are here, once you are someone, and carries the update notice.
 function sidebarFoot() {
   const a = me();
-  if (!a) return h("div", { class: "sidebar-foot" }, h("ul", { class: "sidebar-menu" }, updateItem(), navButton("settings", "settings", null)));
   const update = updateItem();
   return h(
     "div",
     { class: "sidebar-foot" },
-    update && h("ul", { class: "sidebar-menu" }, update),
-    h(
-      "div",
-      { class: "foot-account" },
-      h(
-        "button",
-        { class: "account-chip", title: "Your account", "data-key": "account-chip", onclick: () => go("settings") },
-        avatar(a.name),
-        h("span", { class: "account-name truncate" }, a.name),
-      ),
-      h("button", { class: "foot-settings", title: "Settings", "aria-label": "Settings", "aria-current": ui.view === "settings" ? "page" : null, "data-key": "nav-settings", onclick: () => go("settings") }, icon("settings")),
-    ),
+    update,
+    a
+      ? h(
+          "div",
+          { class: "foot-account" },
+          h(
+            "button",
+            { class: "account-chip", title: "Your account", "data-key": "account-chip", onclick: () => go("settings") },
+            avatar(a.name),
+            h("span", { class: "account-name truncate" }, a.name),
+          ),
+          h("button", { class: "icon-btn", title: "Settings", "aria-label": "Settings", "aria-current": ui.view === "settings" ? "page" : null, "data-key": "nav-settings", onclick: () => go("settings") }, icon("settings")),
+        )
+      : navRow("nav-settings", "settings", "Settings", ui.view === "settings", () => go("settings")),
   );
 }
 
 // Your messages, at the top of the sidebar, with what is unread. With no account yet, it is where
-// you get one.
+// you get one; with a name someone else claimed first (#268), where you choose another.
 function yourRow() {
-  const a = me();
   const n = unreadCount();
-  const count = a ? yourConversationCount() : 0;
-  const sub = !ui.state ? "" : !a ? "Talk to your agents" : a.taken ? "Choose a new name" : n ? n + " unread" : count ? plural(count, "conversation") : "No messages yet";
-  return h(
-    "button",
-    { class: "all-convs top-you", "aria-current": isMyFilter() ? "page" : null, "data-key": "top-you", onclick: openYours },
-    h("span", { class: "all-ico ico-you" }, icon("user")),
-    h("span", { class: "all-text" }, h("span", { class: "all-title" }, "Your messages"), h("span", { class: "all-sub" }, sub)),
-    n > 0 && h("span", { class: "unread-badge" }, n),
+  const taken = !!me()?.taken;
+  return navRow(
+    "top-you",
+    "user",
+    "Your messages",
+    isMyFilter(),
+    openYours,
+    taken
+      ? h("span", { class: "name-taken", title: "Someone else chose your name first. Choose a new one to send again." }, "New name")
+      : n > 0 && h("span", { class: "unread-badge", "aria-label": n + " unread" }, n),
   );
 }
 
@@ -503,7 +594,7 @@ function peopleGroup() {
   return h(
     "div",
     { class: "sidebar-group dev-group" },
-    h("div", { class: "device-link" }, h("span", { class: "label" }, "People"), h("span", { class: "menu-count" }, others.length)),
+    h("div", { class: "group-label" }, h("span", { class: "label" }, "People"), h("span", { class: "menu-count" }, others.length)),
     h(
       "ul",
       { class: "sidebar-menu side-sessions" },
@@ -533,7 +624,7 @@ function messageButton(name) {
     "button",
     {
       class: "side-msg",
-      title: "Message " + name,
+      "data-tip": "Message",
       "aria-label": "Message " + name,
       "data-key": "msg-" + name,
       onclick: (e) => {
@@ -578,13 +669,9 @@ function updateItem() {
   if (!info) return null;
   const cls = "menu-button update update-" + info.kind;
   const kids = [updateIcon(info), h("span", { class: "label" }, info.text)];
-  return h(
-    "li",
-    null,
-    info.act
-      ? h("button", { class: cls, title: info.title, "data-key": "update", onclick: info.act }, kids)
-      : h("div", { class: cls, title: info.title, role: "status" }, kids),
-  );
+  return info.act
+    ? h("button", { class: cls, title: info.title, "data-key": "update", onclick: info.act }, kids)
+    : h("div", { class: cls, title: info.title, role: "status" }, kids);
 }
 
 function miniUpdate() {
@@ -746,7 +833,7 @@ function hideButton(s) {
     "button",
     {
       class: "side-hide",
-      title: hidden ? "Show " + s.name + " again" : "Hide " + s.name + " until you show it again",
+      "data-tip": hidden ? "Show again" : "Hide until you show it again",
       "aria-label": hidden ? "Show " + s.name + " again" : "Hide " + s.name,
       "data-key": "hide-" + s.name,
       onclick: () => setHidden(s, !hidden),
@@ -802,7 +889,7 @@ function quietFold(d) {
               },
               presence(s.name, d),
               h("span", { class: "settled-name truncate" }, s.name),
-              tagChips(s, Infinity, true),
+              tagChips(s, 2, true),
               h("span", { class: "settled-when" }, isHidden(s) ? "hidden" : t ? ago(t).replace(" ago", "") : ""),
             ),
             s.addr && tagButton(s),
@@ -836,6 +923,31 @@ function deviceDot(d, cls = "") {
   return h("span", { class: ("dev-dot pres-" + st + " " + cls).trim(), title: DEVICE_WORDS[st] });
 }
 
+// A state on its own, where a row has no room for a face: T3 Code's thread status dot.
+function statusDot(name, d) {
+  const p = findPerson(name);
+  const f = p ? null : findSession(name);
+  const st = p ? (personOnline(p) ? "on" : "off") : sessionState(f ? f.device : d, f ? f.session : null);
+  const tip = p ? PERSON_TIPS[st] : STATE_TIPS[st];
+  return h("span", { class: "status-dot pres-" + st, title: tip, role: "img", "aria-label": p ? tip : STATE_WORDS[st] });
+}
+
+// A pull request for a branch, as gh found it, with a link to it when it is on GitHub.
+function prFor(s) {
+  const prs = ui.state?.prs || {};
+  return s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
+}
+
+function prBadge(pr, link) {
+  const label = (pr.draft ? "Draft pull request #" : "Pull request #") + pr.number;
+  const kids = [icon(pr.draft ? "prDraft" : "pr"), "#" + pr.number];
+  const cls = "g-pr" + (pr.draft ? " draft" : "");
+  if (link && typeof pr.url === "string" && pr.url.startsWith("https://github.com/")) {
+    return h("a", { class: cls, href: pr.url, target: "_blank", rel: "noopener noreferrer", title: label + " on GitHub", onclick: (e) => e.stopPropagation() }, kids);
+  }
+  return h("span", { class: cls, title: label }, kids);
+}
+
 function presence(name, d) {
   const p = findPerson(name);
   if (p) {
@@ -845,24 +957,6 @@ function presence(name, d) {
   const f = findSession(name);
   const st = sessionState(f ? f.device : d, f ? f.session : null);
   return h("span", { class: "pres-wrap" }, avatar(name), h("span", { class: "pres pres-" + st, title: STATE_TIPS[st] }));
-}
-
-// The sidebar's top rows: a picture, a title and a count under it.
-function topRow(view, iconName, title, sub) {
-  return h(
-    "button",
-    {
-      class: "all-convs top-" + view,
-      "aria-current": ui.view === view ? "page" : null,
-      "data-key": "top-" + view,
-      onclick: () => {
-        ui.filter = null;
-        go(view);
-      },
-    },
-    h("span", { class: "all-ico" }, icon(iconName)),
-    h("span", { class: "all-text" }, h("span", { class: "all-title" }, title), h("span", { class: "all-sub" }, sub)),
-  );
 }
 
 // Settled sessions: stopped, or settled in T3, so their device leaves them out of presence (#189).
@@ -973,13 +1067,6 @@ function settledRow(r) {
   );
 }
 
-// All sessions' count: those running, and those settled if there are any, else the devices.
-function allSessionsSub() {
-  const settled = settledSessions().length;
-  const live = devices().reduce((n, d) => n + liveSessions(d).length, 0);
-  return plural(live, "session") + " · " + (settled ? settled + " settled" : plural(devices().length, "device"));
-}
-
 // Who a device belongs to, for its heading; its host name goes beside it.
 function deviceLabel(d) {
   return d.self ? "This device" : d.owner || d.id;
@@ -990,27 +1077,6 @@ function host(id) {
   return String(id).replace(/-[0-9a-f]{4}$/, "");
 }
 
-// Every conversation, between the sidebar's other two top rows.
-function allButton() {
-  const all = ui.view === "messages" && !ui.filter;
-  const count = allConversations().length;
-  return h(
-    "button",
-    {
-      class: "all-convs",
-      "aria-current": all ? "page" : null,
-      "data-key": "all",
-      onclick: () => {
-        ui.filter = null;
-        ui.conversation = null;
-        go("messages");
-      },
-    },
-    h("span", { class: "all-ico" }, icon("message")),
-    h("span", { class: "all-text" }, h("span", { class: "all-title" }, "All conversations"), h("span", { class: "all-sub" }, plural(count, "conversation"))),
-  );
-}
-
 function allConversations() {
   const keep = ui.filter;
   ui.filter = null;
@@ -1019,27 +1085,19 @@ function allConversations() {
   return list;
 }
 
-// A session in the sidebar: its face and state, what it's doing, and its branch and pull request.
+// A session in the sidebar, like a thread in T3 Code's: its state, its name and tags over what it's
+// doing, and its pull request.
 function sideSessionBody(d, s) {
-  const prs = ui.state?.prs || {};
-  const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
-  const chips = tagChips(s, Infinity, true);
+  const pr = prFor(s);
   return [
     presence(s.name, d),
     h(
       "span",
       { class: "side-session-text" },
-      h("span", { class: "side-session-name truncate" }, s.name),
+      h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate" }, s.name), tagChips(s, 2, true)),
       h("span", { class: "side-session-doing truncate" }, s.doing || s.agent || ""),
-      (s.branch || pr || chips) &&
-        h(
-          "span",
-          { class: "g-meta" },
-          s.branch && h("span", { class: "g-branch truncate" }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
-          pr && h("span", { class: "g-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number),
-          chips,
-        ),
     ),
+    pr && prBadge(pr, false),
   ];
 }
 
@@ -1051,9 +1109,10 @@ function stateWord(d, s) {
   return STATE_WORDS[st];
 }
 
-// Every session, as cards under its device; tabs show the quiet and the settled ones.
+// Every session, in a group under its device as T3 Code's settings rows are; tabs show the quiet and
+// the settled ones, and Select picks sessions to tag together (#270).
 function sessionsPage() {
-  if (!ui.state) return h("div", { class: "page" });
+  if (!ui.state) return h("div", { class: "g-page" });
   const devs = devices();
   const total = devs.reduce((n, d) => n + shownSessions(liveSessions(d)).length, 0);
   const quiet = devs.reduce((n, d) => n + shownSessions(quietSessions(d)).length, 0);
@@ -1069,9 +1128,9 @@ function sessionsPage() {
     "div",
     { class: "g-page" },
     h(
-      "header",
-      { class: "g-page-head g-page-head-row" },
-      h("div", null, h("h1", null, "All sessions"), h("p", null, sub)),
+      "div",
+      { class: "g-toolbar" },
+      h("p", { class: "g-toolbar-meta" }, sub),
       h(
         "div",
         { class: "g-head-tools" },
@@ -1090,57 +1149,65 @@ function sessionsPage() {
             },
             ui.selecting ? "Done" : "Select",
           ),
-      h(
-        "div",
-        { class: "g-tabs", role: "tablist" },
-        [
-          ["running", "Running", total],
-          ["quiet", "Quiet", quiet],
-          ["settled", "Settled", ui.tagFilter ? 0 : settledSessions().length],
-        ].map(([id, label, n]) =>
-          h(
-            "button",
-            {
-              role: "tab",
-              "aria-selected": tab === id ? "true" : "false",
-              "data-key": "tab-" + id,
-              onclick: () => {
-                ui.sessTab = id;
-                render();
+        h(
+          "div",
+          { class: "segmented", role: "tablist", "aria-label": "Which sessions" },
+          [
+            ["running", "Running", total],
+            ["quiet", "Quiet", quiet],
+            ["settled", "Settled", ui.tagFilter ? 0 : settledSessions().length],
+          ].map(([id, label, n]) =>
+            h(
+              "button",
+              {
+                role: "tab",
+                "aria-selected": tab === id ? "true" : "false",
+                "data-key": "tab-" + id,
+                onclick: () => {
+                  ui.sessTab = id;
+                  render();
+                },
               },
-            },
-            label,
-            h("span", { class: "g-tab-n" }, n),
+              label,
+              h("span", { class: "g-tab-n" }, n),
+            ),
           ),
         ),
-      ),
       ),
     ),
     ui.selecting && selectBar(pickable),
     tab === "settled"
       ? ui.tagFilter
-        ? h("p", { class: "g-none" }, "No settled session is tagged " + ui.tagFilter + ".")
+        ? emptyState("tag", "No settled session is tagged " + ui.tagFilter, null)
         : settledPage(devs)
       : tab === "quiet"
         ? quietPage(devs)
         : devs.map((d) => {
             const live = shownSessions(liveSessions(d));
             if (ui.tagFilter && !live.length) return null;
-            return h(
-              "section",
-              { class: "g-dev" },
-              h(
-                "h2",
-                { class: "g-dev-head" },
-                deviceDot(d),
-                h("span", null, d.self ? "This device" : d.owner || d.id),
-                h("span", { class: "g-dev-host" }, host(d.id)),
-                h("span", { class: "g-dev-n" }, d.reachable ? plural(live.length, "session") : "Offline · seen " + ago(when(d.lastSeen) || 0)),
-              ),
-              live.length === 0 ? h("p", { class: "g-none" }, "No sessions") : h("div", { class: "g-cards" }, live.map((s) => sessionCard(d, s))),
+            return deviceSection(
+              d,
+              d.reachable ? plural(live.length, "session") : "Offline · seen " + ago(when(d.lastSeen) || 0),
+              live.length === 0 ? h("div", { class: "row-empty" }, "No sessions") : live.map((s) => sessionCard(d, s)),
             );
           }),
-    ui.tagFilter && tab === "running" && total === 0 && h("p", { class: "g-none" }, "No running session is tagged " + ui.tagFilter + "."),
+    ui.tagFilter && tab === "running" && total === 0 && emptyState("tag", "No running session is tagged " + ui.tagFilter, null),
+  );
+}
+
+function deviceSection(d, aside, rows) {
+  return h(
+    "section",
+    { class: "section g-dev" },
+    h(
+      "div",
+      { class: "section-head" },
+      d && deviceDot(d),
+      h("h2", { class: "section-title" }, d ? deviceLabel(d) : "Unknown device"),
+      d && h("span", { class: "g-dev-host" }, host(d.id)),
+      h("span", { class: "section-aside" }, aside),
+    ),
+    h("div", { class: "group" }, rows),
   );
 }
 
@@ -1181,22 +1248,14 @@ function selectBar(pickable) {
 
 function quietPage(devs) {
   const withQuiet = devs.filter((d) => shownSessions(quietSessions(d)).length > 0);
-  if (!withQuiet.length) return h("p", { class: "g-none" }, ui.tagFilter ? "No quiet session is tagged " + ui.tagFilter + "." : "No quiet sessions.");
+  if (!withQuiet.length) {
+    return ui.tagFilter
+      ? emptyState("tag", "No quiet session is tagged " + ui.tagFilter, null)
+      : emptyState("users", "No quiet sessions", "A session idle for a day, or one someone hid, waits here.");
+  }
   return withQuiet.map((d) => {
     const rows = shownSessions(quietSessions(d));
-    return h(
-      "section",
-      { class: "g-dev" },
-      h(
-        "h2",
-        { class: "g-dev-head" },
-        deviceDot(d),
-        h("span", null, deviceLabel(d)),
-        h("span", { class: "g-dev-host" }, host(d.id)),
-        h("span", { class: "g-dev-n" }, rows.length + " quiet"),
-      ),
-      h("div", { class: "g-cards" }, rows.map((s) => sessionCard(d, s))),
-    );
+    return deviceSection(d, rows.length + " quiet", rows.map((s) => sessionCard(d, s)));
   });
 }
 
@@ -1208,119 +1267,119 @@ function settledPage(devs) {
     if (!byDev.has(r.device)) byDev.set(r.device, []);
     byDev.get(r.device).push(r);
   }
-  const label = (id) => {
-    const d = devs.find((x) => x.id === id);
-    return d ? (d.self ? "This device" : d.owner || id) : id || "Unknown device";
-  };
   return [
-    h(
-      "label",
-      { class: "g-search g-search-wide" },
-      icon("search"),
-      h("input", {
-        type: "search",
-        placeholder: "Search settled sessions",
-        "data-key": "sq",
-        value: ui.sq || null,
-        oninput: (e) => {
-          ui.sq = e.target.value;
-          render();
-        },
-      }),
-    ),
-    [...byDev].map(([id, rows]) =>
+    settledSessions().length > 0 &&
       h(
-        "section",
-        { class: "g-dev" },
-        h("h2", { class: "g-dev-head" }, h("span", null, label(id)), h("span", { class: "g-dev-host" }, host(id)), h("span", { class: "g-dev-n" }, plural(rows.length, "settled session"))),
-        h(
-          "div",
-          { class: "g-settled-list" },
-          rows.map((r) =>
-            h(
-              "button",
-              {
-                class: "g-settled",
-                onclick: () => {
-                  ui.filter = r.addr || r.name;
-                  ui.conversation = null;
-                  go("messages");
-                },
+        "label",
+        { class: "field g-search g-search-wide" },
+        icon("search"),
+        h("input", {
+          type: "search",
+          placeholder: "Search settled sessions",
+          "aria-label": "Search settled sessions",
+          "data-key": "sq",
+          value: ui.sq || null,
+          oninput: (e) => {
+            ui.sq = e.target.value;
+            render();
+          },
+        }),
+      ),
+    [...byDev].map(([id, rows]) => {
+      const d = devs.find((x) => x.id === id);
+      const sec = deviceSection(
+        d,
+        plural(rows.length, "settled session"),
+        rows.map((r) =>
+          h(
+            "button",
+            {
+              class: "g-settled",
+              "data-key": "gs-" + r.name,
+              onclick: () => {
+                ui.filter = r.addr || r.name;
+                ui.conversation = null;
+                go("messages");
               },
-              avatar(r.name),
-              h("span", { class: "g-settled-name truncate" }, r.name),
-              h("span", { class: "g-settled-last truncate" }, r.lastMsg ? r.lastMsg.subject : ""),
-              h("span", { class: "g-settled-chats" }, plural(r.peers.size, "chat")),
-              h("span", { class: "g-settled-when" }, ago(r.last)),
-            ),
+            },
+            avatar(r.name),
+            h("span", { class: "g-settled-name truncate" }, r.name),
+            h("span", { class: "g-settled-last truncate" }, r.lastMsg ? r.lastMsg.subject : ""),
+            h("span", { class: "g-settled-chats" }, plural(r.peers.size, "chat")),
+            h("span", { class: "g-settled-when" }, ago(r.last)),
           ),
         ),
-      ),
-    ),
-    all.length === 0 && h("p", { class: "g-none" }, q ? "Nothing matches." : "No settled sessions."),
+      );
+      if (!d) sec.querySelector(".section-title").textContent = id ? host(id) : "Unknown device";
+      return sec;
+    }),
+    all.length === 0 && (q ? h("p", { class: "g-none" }, "Nothing matches.") : emptyState("clock", "No settled sessions", "A session that stopped shows here while its messages are still on the page.")),
   ];
 }
 
+// A session as a row: its state, name and model over what it's doing, then its tags, branch, pull
+// request and how many conversations it has, and a way to message it. While picking, the row picks
+// its session rather than opening it.
 function sessionCard(d, s) {
-  const prs = ui.state.prs || {};
-  const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
+  const pr = prFor(s);
   const keep = ui.filter;
   ui.filter = s.addr || s.name;
   const convs = conversations().filter((c) => c.kind === "dm").length;
   ui.filter = keep;
-  const st = stateWord(d, s);
-  // While picking, a card picks its session rather than opening it.
   const picking = ui.selecting && !!s.addr;
   const picked = picking && ui.selected.has(s.addr);
-  const card = h(
-    "button",
-    {
-      class: "g-card" + (d.reachable ? "" : " stale") + (picked ? " picked" : ""),
-      "data-key": "card-" + s.name,
-      "aria-pressed": picking ? (picked ? "true" : "false") : null,
-      onclick: () => {
-        if (picking) {
-          picked ? ui.selected.delete(s.addr) : ui.selected.add(s.addr);
-          return render();
-        }
-        ui.filter = s.addr || s.name;
-        ui.conversation = null;
-        go("messages");
-      },
-    },
-    h(
-      "span",
-      { class: "g-card-top" },
-      presence(s.name, d),
-      h("span", { class: "g-card-id" }, h("span", { class: "g-card-name truncate" }, s.name), h("span", { class: "g-card-agent truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · "))),
-      picking ? h("span", { class: "g-pick" + (picked ? " on" : "") }, picked && icon("check")) : st && h("span", { class: "g-state g-state-" + sessionState(d, s) }, st),
-    ),
-    h("span", { class: "g-card-doing" + (s.doing ? "" : " none") }, s.doing || "No status set"),
-    tagChips(s),
-    h(
-      "span",
-      { class: "g-card-foot" },
-      s.branch && h("span", { class: "g-branch truncate" }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
-      pr && h("span", { class: "g-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number),
-      h("span", { class: "g-card-chats" }, plural(convs, "chat")),
-    ),
-  );
   return h(
     "div",
-    { class: "g-card-wrap" + (picking ? " picking" : "") },
-    card,
+    { class: "s-row" + (d.reachable ? "" : " stale") + (picking ? " picking" : "") + (picked ? " picked" : "") },
     h(
       "button",
       {
-        class: "g-card-msg btn btn-outline btn-xs",
-        "aria-label": "Message " + s.name,
-        "data-key": "card-msg-" + s.name,
-        onclick: () => startChat(s.name),
+        class: "s-main",
+        "data-key": "card-" + s.name,
+        title: picking ? (picked ? "Unpick " : "Pick ") + s.name : "Show " + s.name + "'s conversations",
+        "aria-pressed": picking ? (picked ? "true" : "false") : null,
+        onclick: () => {
+          if (!picking) return pickSession(s.addr || s.name);
+          picked ? ui.selected.delete(s.addr) : ui.selected.add(s.addr);
+          render();
+        },
       },
-      icon("message"),
-      "Message",
+      picking && h("span", { class: "g-pick" + (picked ? " on" : ""), "aria-hidden": "true" }, picked && icon("check")),
+      presence(s.name, d),
+      h(
+        "span",
+        { class: "s-text" },
+        h(
+          "span",
+          { class: "s-line name-line" },
+          h("span", { class: "s-name truncate" }, s.name),
+          h("span", { class: "s-agent truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · ")),
+          tagChips(s, 3, true),
+        ),
+        h("span", { class: "s-doing truncate" + (s.doing ? "" : " none") }, s.doing || "No status set"),
+      ),
+    ),
+    h(
+      "span",
+      { class: "s-meta" },
+      h("span", { class: "s-col-branch" }, s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch))),
+      h("span", { class: "s-col-pr" }, pr && prBadge(pr, true)),
+      // The hook never reported after a tool call, so the session isn't told of messages while it works (#225).
+      s.hookOff && h("span", { class: "badge badge-warning", title: "Isn't told of messages while it works" }, "hook not running"),
+      h("span", { class: "s-chats" }, plural(convs, "chat")),
+      h("span", { class: "s-col-state" }, h("span", { class: "g-state g-state-" + sessionState(d, s) }, stateWord(d, s))),
+      h(
+        "span",
+        { class: "s-col-act" },
+        !picking && h("button", { class: "btn btn-outline btn-xs", "aria-label": "Message " + s.name, "data-key": "card-msg-" + s.name, onclick: () => startChat(s.name) }, icon("message"), h("span", { class: "btn-label" }, "Message")),
+      ),
     ),
   );
+}
+
+// A view with nothing to show, as T3 Code's empty state: a small icon, a line, and what would fill it.
+function emptyState(iconName, title, line) {
+  return h("div", { class: "empty" }, h("span", { class: "empty-ico" }, icon(iconName)), h("p", { class: "empty-title" }, title), line && h("p", { class: "empty-line" }, line));
 }
 
 // Recent: the newest messages first, as many as a render can build quickly. One opens its
@@ -1342,20 +1401,21 @@ function recentPage() {
   return h(
     "div",
     { class: "g-page g-recent" },
+    // A heading at the top of the column, as on main, so the list has something to start from.
     h(
       "header",
       { class: "g-page-head" },
       h("h1", null, "Recent messages"),
       h("p", null, ui.messages.length > RECENT_MAX ? "Newest " + RECENT_MAX + " of " + ui.messages.length : plural(ui.messages.length, "message")),
     ),
-    list.length ? h("div", { class: "g-feed" }, out) : h("p", { class: "g-none" }, "No messages yet"),
+    list.length ? h("div", { class: "g-feed" }, out) : emptyState("clock", "No messages yet", "Messages between sessions show here as this daemon reads them."),
   );
 }
 
 function recentItem(m, at) {
   const from = fromName(m);
   const c = conversationOf(m);
-  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "device" ? [icon("laptop"), m.to] : [avatar(toName(m)), toName(m)];
+  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "device" ? [icon("laptop"), host(m.to)] : [avatar(toName(m)), toName(m)];
   const open = () => {
     ui.filter = null;
     ui.conversation = c.key;
@@ -1364,7 +1424,7 @@ function recentItem(m, at) {
   };
   return h(
     "article",
-    { class: "chat-msg chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" ? open() : null) },
+    { class: "chat-msg chat-msg-face chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" ? open() : null) },
     avatar(from),
     h(
       "div",
@@ -1374,8 +1434,8 @@ function recentItem(m, at) {
         { class: "chat-msg-head" },
         h("span", { class: "chat-msg-from truncate" }, from),
         m.fromPerson && humanTag(),
-        h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who" }, to)),
-        h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
+        h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who truncate" }, to)),
+        h("span", { class: "chat-msg-time", title: messageDetail(m) }, clockTime(at)),
       ),
       messageText(m),
     ),
@@ -1468,49 +1528,45 @@ document.addEventListener("click", () => {
   }
 });
 
+// The main pane's header, as T3 Code's: slim, with the view's title. A conversation's pane has a
+// header of its own, so on a wide page Conversations has none here, and on a phone an open
+// conversation's header, with its way back, stands in for it.
+function showTopbar() {
+  if (ui.view !== "messages") return true;
+  return NARROW.matches && !content?.querySelector(".chat-open");
+}
+
+function viewTitle() {
+  if (ui.view !== "messages") return TITLES[ui.view];
+  if (isMyFilter()) return "Your messages";
+  return ui.filter ? nameOf(ui.filter, ui.filter) : TITLES.messages;
+}
+
 function topbar() {
-  let meta = null;
-  if (ui.conn === "down" && !ui.restarting) {
-    meta = h("span", { class: "device-state" }, h("span", { class: "dot warn" }), "Disconnected");
-  }
-  // On a phone the sidebar, which carries the update notice, isn't shown: a dot on Settings, whose
-  // Version section has the same action, stands for it.
+  // On a phone the sidebar, which carries unread messages and the update notice, is behind this
+  // button, so a dot on it stands for them.
   const update = updateInfo();
+  const flag = unreadCount() > 0 || !!update;
   return h(
     "header",
     { class: "topbar" },
-    h("span", { class: "topbar-brand brand" }, NAME),
-    h("h1", null, TITLES[ui.view]),
-    h(
-      "div",
-      { class: "mobile-nav segmented", role: "group", "aria-label": "Views" },
+    NARROW.matches &&
       h(
         "button",
-        { "aria-pressed": isMyFilter() ? "true" : "false", "data-key": "m-you", "aria-label": unreadCount() ? "You, " + unreadCount() + " unread" : "You", onclick: openYours },
-        "You",
-        unreadCount() > 0 && h("span", { class: "m-unread" }, unreadCount()),
+        {
+          class: "icon-btn topbar-menu",
+          title: "Show the sidebar",
+          "aria-label": "Show the sidebar" + (unreadCount() ? ", " + unreadCount() + " unread" : "") + (update ? ", " + update.text : ""),
+          "aria-controls": "sidebar",
+          "aria-expanded": ui.drawer ? "true" : "false",
+          "data-key": "open-sidebar",
+          onclick: () => setDrawer(true),
+        },
+        icon("panel"),
+        flag && h("span", { class: "nav-dot" + (unreadCount() ? "" : " update-" + update.kind) }),
       ),
-      VIEWS.map((v) =>
-        h(
-          "button",
-          {
-            "aria-pressed": ui.view === v && !(v === "messages" && isMyFilter()) ? "true" : "false",
-            "data-key": "m-" + v,
-            title: v === "settings" && update ? update.text : null,
-            onclick: () => {
-              if (v === "messages") {
-                ui.filter = null;
-                ui.conversation = null;
-              }
-              go(v);
-            },
-          },
-          v === "messages" ? "All" : TITLES[v],
-          v === "settings" && update && h("span", { class: "nav-dot update-" + update.kind, "aria-label": update.text }),
-        ),
-      ),
-    ),
-    meta && h("div", { class: "topbar-meta" }, meta),
+    h("h1", { class: "truncate" }, viewTitle()),
+    NARROW.matches && connBadge(false),
   );
 }
 
@@ -1717,7 +1773,7 @@ function tagsGroup() {
   return h(
     "div",
     { class: "sidebar-group dev-group" },
-    h("div", { class: "device-link" }, h("span", { class: "label" }, "Tags"), h("span", { class: "menu-count" }, counts.size)),
+    h("div", { class: "group-label" }, h("span", { class: "label" }, "Tags"), h("span", { class: "menu-count" }, counts.size)),
     h(
       "div",
       { class: "tag-filter" },
@@ -1751,7 +1807,7 @@ function tagButton(s) {
     "button",
     {
       class: "side-tag",
-      title: "Tag " + s.name,
+      "data-tip": "Tag",
       "aria-label": "Tag " + s.name,
       "aria-haspopup": "dialog",
       "data-key": "tag-" + s.name,
@@ -1896,6 +1952,132 @@ function tagMenu() {
   );
 }
 
+// The repo picker (#348): this machine's clones that joined, each served by its own daemon. Picking
+// one moves this tab to that repo's page, whose daemon is started if it isn't running.
+function repoButton() {
+  const name = ui.state ? ui.state.repo || NAME : ""; // nothing until the state says, rather than a name that changes
+  return h(
+    "button",
+    {
+      class: "repo-btn",
+      "aria-haspopup": "menu",
+      "aria-expanded": ui.repoMenu ? "true" : "false",
+      title: "Switch repo",
+      "data-key": "repo",
+      onclick: (e) => {
+        if (ui.repoMenu) return closeRepoMenu();
+        const r = e.currentTarget.getBoundingClientRect();
+        ui.repoMenu = { x: r.left, top: r.bottom + 4, repos: null, opening: null, err: "" };
+        render();
+        loadRepos();
+      },
+    },
+    h("span", { class: "repo-name truncate" }, name),
+    icon("chevronDown"),
+  );
+}
+
+function closeRepoMenu() {
+  ui.repoMenu = null;
+  render();
+}
+
+async function loadRepos() {
+  const m = ui.repoMenu;
+  try {
+    const r = await api("/api/repos");
+    if (ui.repoMenu !== m) return;
+    m.repos = r.repos || [];
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    if (ui.repoMenu !== m) return;
+    m.repos = [];
+    m.err = e.message;
+  }
+  render();
+}
+
+async function openRepo(r) {
+  const m = ui.repoMenu;
+  if (r.current) return closeRepoMenu();
+  if (m.opening) return;
+  // The drafts live in this page only, and the other repo's page is another page.
+  if (hasUnsent()) {
+    m.err = "Send or clear your draft first";
+    return render();
+  }
+  m.opening = r.id;
+  m.err = "";
+  render();
+  try {
+    const { url } = await api("/api/repos/open", { method: "POST", body: JSON.stringify({ id: r.id }) });
+    // Starting a daemon can take a while, and the picker may have been closed and a draft begun.
+    if (ui.repoMenu !== m || hasUnsent()) {
+      if (ui.repoMenu === m) {
+        m.opening = null;
+        m.err = "Send or clear your draft first";
+        render();
+      }
+      return;
+    }
+    location.assign(url + "&theme=" + theme);
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    if (ui.repoMenu !== m) return;
+    m.opening = null;
+    m.err = e.message;
+    if (/isn't joined/.test(e.message)) m.repos = (m.repos || []).filter((x) => x.id !== r.id);
+    render();
+  }
+}
+
+function repoMenu() {
+  const m = ui.repoMenu;
+  const repos = m.repos || [{ id: "", name: ui.state?.repo || NAME, current: true, running: true }];
+  // A path tells two clones of one repo apart; one alone goes by its name.
+  const named = new Map();
+  for (const r of repos) named.set(r.name, (named.get(r.name) || 0) + 1);
+  const menu = h(
+    "div",
+    { class: "tag-menu repo-menu", role: "menu", "aria-label": "Repos" },
+    h(
+      "div",
+      { class: "tag-menu-list" },
+      repos.map((r) =>
+        h(
+          "button",
+          {
+            class: "tag-menu-row repo-row" + (r.current ? " current" : ""),
+            role: "menuitemradio",
+            "aria-checked": r.current ? "true" : "false",
+            title: r.path || null,
+            "data-key": "repo-" + r.id,
+            disabled: !!m.opening && m.opening !== r.id,
+            onclick: () => openRepo(r),
+          },
+          h("span", { class: "dot" + (r.running ? " ok" : "") }),
+          h("span", { class: "repo-row-text" }, h("span", { class: "tm-name truncate" }, r.name), named.get(r.name) > 1 && r.path && h("span", { class: "repo-path truncate" }, r.path)),
+          m.opening === r.id ? icon("rotateCw", "spin") : r.current && icon("check"),
+        ),
+      ),
+    ),
+    m.err && h("p", { class: "tm-err" }, m.err),
+  );
+  // Placed through the CSSOM: the page's CSP refuses style attributes.
+  menu.style.left = m.x + "px";
+  menu.style.top = m.top + "px";
+  return h(
+    "div",
+    {
+      class: "menu-scrim",
+      onclick: (e) => {
+        if (e.target === e.currentTarget) closeRepoMenu();
+      },
+    },
+    menu,
+  );
+}
+
 // Puts a tag on, or takes it off, each of the sessions that needs the change: one request each,
 // to the session's own device. The lists show the change at once, as waiting until it lands.
 // A session's changes go one after another, in the order they were clicked: the daemon times a
@@ -1980,10 +2162,6 @@ function myMessages() {
   const groups = new Set();
   for (const m of ui.messages) if (m.toKind !== "session" && fromName(m) === mine) groups.add(conversationOf(m).key);
   return ui.messages.filter((m) => (m.toKind === "session" ? fromName(m) === mine || toName(m) === mine : groups.has(conversationOf(m).key)));
-}
-
-function noMessages() {
-  return ui.filter ? "No messages with " + nameOf(ui.filter, ui.filter) : "No messages";
 }
 
 // Who sent a message and when, as far as the page knows.
@@ -2108,7 +2286,7 @@ function conversationsPage() {
     { class: "page chat-page" },
     // A picked session keeps its header, and so its tags, before it has any messages.
     list.length === 0 && !ui.filter
-      ? h("div", { class: "blank" }, noMessages())
+      ? emptyState("message", "No conversations yet", "Messages between sessions show here as this daemon reads them.")
       : h(
           "div",
           { class: "chat" + (open ? " chat-open" : "") },
@@ -2163,6 +2341,14 @@ function conversationList(list) {
               f && h("button", { class: "btn btn-outline btn-xs g-head-msg", "data-key": "head-msg", onclick: () => startChat(name) }, icon("message"), "Message"),
             ),
             f && f.session.doing && h("p", { class: "g-head-doing" }, f.session.doing),
+            f &&
+              h(
+                "p",
+                { class: "g-head-meta" },
+                h("span", { class: "truncate" }, [f.session.agent, modelOf(f.session)].filter(Boolean).join(" · ")),
+                f.session.branch && h("span", { class: "g-branch", title: "Branch " + f.session.branch }, icon("branch"), h("span", { class: "truncate" }, f.session.branch)),
+                prFor(f.session) && prBadge(prFor(f.session), true),
+              ),
             f && tagsLine(f.session),
             !f && h("p", { class: "g-head-doing" }, "Settled · " + ago(settledSessions().find((r) => r.name === name)?.last || 0)),
           ]
@@ -2170,11 +2356,12 @@ function conversationList(list) {
     ),
     h(
       "label",
-      { class: "g-search" },
+      { class: "field g-search" },
       icon("search"),
       h("input", {
         type: "search",
         placeholder: "Search conversations",
+        "aria-label": "Search conversations",
         "data-key": "cq",
         value: ui.cq || null,
         oninput: (e) => {
@@ -2185,7 +2372,7 @@ function conversationList(list) {
     ),
     h(
       "div",
-      { class: "g-tabs g-kinds", role: "tablist", "aria-label": "Which conversations" },
+      { class: "segmented g-kinds", role: "tablist", "aria-label": "Which conversations" },
       [
         ["all", "All"],
         ["dm", "Direct"],
@@ -2281,7 +2468,7 @@ function conversationPane(c) {
   const gs = c.kind !== "dm" ? groupSummary(c) : null;
   const op = o && findPerson(o);
   const about = gs
-    ? [groupHost(c), plural(gs.rows.length, "member"), gs.on + " active"].filter(Boolean).join(" · ")
+    ? [groupHost(c), gs.on + " active"].filter(Boolean).join(" · ")
     : o
       ? isPerson(o)
         ? op
@@ -2317,10 +2504,12 @@ function conversationPane(c) {
       h(
         "div",
         { class: "chat-head-text" },
-        h("div", { class: "name-line" }, h("h2", { class: "chat-title truncate", title: c.title }, gs ? groupName(c) : o || c.title), o && isPerson(o) && humanTag()),
-        about && h("div", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
+        h("h2", { class: "chat-title truncate", title: c.title }, gs ? groupName(c) : o || c.title),
+        o && isPerson(o) && humanTag(),
+        of && h("span", { class: "g-state g-state-" + sessionState(of.device, of.session) }, stateWord(of.device, of.session)),
+        about && h("span", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
       ),
-      of && h("span", { class: "g-state g-state-" + sessionState(of.device, of.session) }, stateWord(of.device, of.session)),
+      of && prFor(of.session) && prBadge(prFor(of.session), true),
       c.kind !== "dm" && membersButton(c),
     ),
     h("div", { class: "chat-thread", "data-conversation": c.key }, c.messages.length || pendingIn(c).length ? chatMessages(c) : chatIntro(o)),
@@ -2391,23 +2580,17 @@ function pendingMessage(item, head) {
   const failed = item.status === "failed";
   return h(
     "article",
-    { class: "chat-msg" + (head ? " chat-msg-first" : "") + (failed ? " chat-msg-failed" : " chat-msg-sending"), "data-cid": item.cid },
-    head ? avatar(myName()) : h("span", { class: "avatar-gap" }),
-    h(
-      "div",
-      { class: "chat-msg-main" },
-      head && h("div", { class: "chat-msg-head" }, h("span", { class: "chat-msg-from chat-msg-you truncate" }, myName()), h("span", { class: "chat-msg-via" }, "you")),
-      h("div", { class: "chat-msg-body rich" }, rich(item.text)),
-      failed
-        ? h(
-            "div",
-            { class: "msg-failed", role: "alert" },
-            h("span", { class: "msg-failed-why" }, item.error),
-            h("button", { class: "msg-action", "data-key": "retry-" + item.cid, onclick: () => deliver(item) }, icon("retry"), "Try again"),
-            h("button", { class: "msg-action", "data-key": "edit-" + item.cid, onclick: () => editFailed(item) }, icon("pencil"), "Edit"),
-          )
-        : item.status === "sending" && h("div", { class: "msg-sending" }, "Sending…"),
-    ),
+    { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : "") + (failed ? " chat-msg-failed" : " chat-msg-sending"), "data-cid": item.cid },
+    h("div", { class: "chat-bubble rich" }, rich(item.text)),
+    failed
+      ? h(
+          "div",
+          { class: "msg-failed", role: "alert" },
+          h("span", { class: "msg-failed-why" }, item.error),
+          h("button", { class: "btn btn-ghost btn-xs", "data-key": "retry-" + item.cid, onclick: () => deliver(item) }, icon("retry"), "Try again"),
+          h("button", { class: "btn btn-ghost btn-xs", "data-key": "edit-" + item.cid, onclick: () => editFailed(item) }, icon("pencil"), "Edit"),
+        )
+      : item.status === "sending" && h("div", { class: "chat-msg-meta msg-sending", role: "status" }, "Sending…"),
   );
 }
 
@@ -2419,42 +2602,56 @@ function dayLabel(t) {
   return new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
 }
 
+function clockTime(at) {
+  return at ? new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "";
+}
+
+function copyButton(text) {
+  return h(
+    "button",
+    {
+      class: "btn btn-ghost btn-icon-xs",
+      title: "Copy",
+      "aria-label": "Copy message",
+      onclick: (e) => {
+        navigator.clipboard?.writeText(text);
+        const b = e.currentTarget;
+        b.replaceChildren(icon("check"));
+        b.classList.add("copied");
+        setTimeout(() => (b.replaceChildren(icon("copy")), b.classList.remove("copied")), 1200);
+      },
+    },
+    icon("copy"),
+  );
+}
+
 function chatMessage(m, from, at, head) {
   const sender = findSession(from);
   const mine = from === myName();
   const copy = m.fromPerson ? personText(m) : (m.subject ? m.subject + "\n\n" : "") + (m.body || "");
+  const time = h("span", { class: "chat-msg-time", title: messageDetail(m) }, clockTime(at));
+  if (mine) {
+    return h(
+      "article",
+      { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : ""), "data-id": m.id },
+      h("div", { class: "chat-bubble rich" }, rich(personText(m))),
+      h("div", { class: "chat-msg-meta" }, time, copyButton(copy)),
+    );
+  }
+  // Everyone else's message has its sender's face beside it, and a run of messages from one sender
+  // shows the face once.
+  const via = [sender?.session.agent, sender && !sender.device.self ? host(sender.device.id) : null].filter(Boolean).join(" · ");
   return h(
     "article",
-    { class: "chat-msg" + (head ? " chat-msg-first" : ""), "data-id": m.id, title: head ? null : messageDetail(m) },
+    { class: "chat-msg chat-msg-face" + (head ? " chat-msg-first" : ""), "data-id": m.id, title: head ? null : messageDetail(m) },
     head ? avatar(from) : h("span", { class: "avatar-gap" }),
     h(
       "div",
       { class: "chat-msg-main" },
-      head &&
-        h(
-          "div",
-          { class: "chat-msg-head" },
-          h("span", { class: "chat-msg-from truncate" + (mine ? " chat-msg-you" : "") }, from),
-          mine && h("span", { class: "chat-msg-via" }, "you"),
-          !mine && m.fromPerson && humanTag(),
-          sender && h("span", { class: "chat-msg-via truncate" }, [sender.session.agent, sender.device.self ? null : sender.device.id].filter(Boolean).join(" · ")),
-          h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
-        ),
+      head && h("div", { class: "chat-msg-head" }, h("span", { class: "chat-msg-from truncate" }, from), m.fromPerson && humanTag(), via && h("span", { class: "chat-msg-via truncate" }, via), time),
       messageText(m),
     ),
-    h(
-      "div",
-      { class: "msg-tools" },
-      h(
-        "button",
-        {
-          title: "Copy",
-          "aria-label": "Copy message",
-          onclick: () => navigator.clipboard?.writeText(copy),
-        },
-        icon("copy"),
-      ),
-    ),
+    h("div", { class: "msg-tools" }, copyButton(copy)),
   );
 }
 
@@ -2807,7 +3004,7 @@ function newMessageButton() {
 
 function openPicker() {
   if (!me()) return askForName(openPicker);
-  ui.picker = { q: "", index: 0 };
+  ui.picker = { q: "", index: 0, from: document.activeElement?.dataset?.key || null };
   render();
   root.querySelector('[data-key="picker-q"]')?.focus();
 }
@@ -2817,6 +3014,7 @@ function pickerDialog() {
   const close = () => {
     ui.picker = null;
     render();
+    if (p.from) root.querySelector(`[data-key="${CSS.escape(p.from)}"]`)?.focus();
   };
   const q = p.q.trim().toLowerCase();
   const rows = reachable().filter((r) => matches(r, q));
@@ -2948,13 +3146,18 @@ function targetOf(c) {
 function paneFoot(c) {
   const target = targetOf(c);
   if (target) return composer(c, target);
-  if (c.kind !== "dm") return h("div", { class: "pane-foot" }, h("button", { class: "btn btn-outline", "data-key": "foot-name", onclick: () => askForName(render) }, "Choose a name to write here"));
+  if (c.kind !== "dm") return h("div", { class: "pane-foot" }, h("div", { class: "pane-foot-card" }, h("span", { class: "pane-foot-note" }, "Choose a name to write to " + (c.kind === "all" ? "everyone" : groupName(c).replace(/^This device$/, "this device")) + "."), h("button", { class: "btn btn-outline btn-sm", "data-key": "foot-name", onclick: () => askForName(render) }, "Choose a name")));
   const running = c.pair.filter((n) => findSession(n) || findPerson(n));
   if (!running.length) return null;
   return h(
     "div",
     { class: "pane-foot" },
-    running.map((n) => h("button", { class: "btn btn-outline", "data-key": "foot-" + n, onclick: () => startChat(n) }, icon("message"), "Message " + n)),
+    h(
+      "div",
+      { class: "pane-foot-card" },
+      h("span", { class: "pane-foot-note" }, "Only " + c.pair.join(" and ") + " write here."),
+      running.map((n) => h("button", { class: "btn btn-outline btn-sm", "data-key": "foot-" + n, onclick: () => startChat(n) }, icon("message"), "Message " + n)),
+    ),
   );
 }
 
@@ -2966,21 +3169,35 @@ function composer(c, target) {
     if (ui.armed === key) {
       ui.armed = null;
       root.querySelector(".composer-warn")?.remove();
+      root.querySelector(".composer-armed")?.classList.remove("composer-armed");
+      const hint = root.querySelector(".composer-hint");
+      if (hint?.lastChild) hint.lastChild.textContent = " to send";
     }
     const btn = root.querySelector(".composer-send");
     if (btn) btn.disabled = !el.value.trim();
   });
   el.placeholder = "Message " + target.label;
   el.setAttribute("aria-label", "Message " + target.label);
+  const armed = ui.armed === key;
+  const who =
+    c.kind === "dm"
+      ? [statusDot(target.to), h("span", { class: "truncate" }, target.to)]
+      : [icon(c.kind === "all" ? "broadcast" : "laptop"), h("span", { class: "truncate" }, c.kind === "all" ? "Everyone" : target.label), h("span", { class: "composer-chip-n" }, plural(target.count, "session"))];
   return h(
     "div",
     { class: "composer-wrap" },
-    ui.armed === key && h("p", { class: "composer-warn", role: "alert" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
     h(
       "div",
-      { class: "composer" },
+      { class: "composer" + (armed ? " composer-armed" : "") },
+      armed && h("p", { class: "composer-warn", role: "alert" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
       el,
-      h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim(), "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),
+      h(
+        "div",
+        { class: "composer-bar" },
+        h("button", { class: "composer-chip", title: "Message someone else", "aria-label": "To " + target.label + ". Message someone else", "data-key": "composer-to", onclick: openPicker }, ...who, icon("chevronDown", "composer-chip-chev")),
+        !NARROW.matches && h("span", { class: "composer-hint", "aria-hidden": "true" }, h("kbd", null, "Enter"), armed ? " again to send" : " to send"),
+        h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim(), "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),
+      ),
     ),
   );
 }
@@ -3296,12 +3513,62 @@ async function saveAccount(name) {
   render();
 }
 
+// Each session's own setting, folded under the device default so a device with many sessions
+// doesn't fill the page. The fold says how many sessions there are and how many set their own.
+function perSessionFold(key, rows, set) {
+  ui.settingsOpen = ui.settingsOpen || new Set();
+  if (!rows.length) return [];
+  const open = ui.settingsOpen.has(key);
+  const head = h(
+    "button",
+    {
+      class: "row row-fold",
+      "aria-expanded": open ? "true" : "false",
+      "data-key": "fold-" + key,
+      onclick: () => {
+        open ? ui.settingsOpen.delete(key) : ui.settingsOpen.add(key);
+        render();
+      },
+    },
+    icon("chevronRight", "row-fold-chev"),
+    h("span", { class: "row-title" }, "Each session"),
+    h("span", { class: "row-fold-meta" }, plural(rows.length, "session") + (set ? " · " + set + " set" : "")),
+  );
+  if (open) for (const r of rows) r.classList.add("row-sub");
+  return [head, ...(open ? rows : [])];
+}
+
+function themeSection() {
+  return h(
+    "section",
+    { class: "section" },
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Appearance")),
+    h(
+      "div",
+      { class: "group" },
+      settingsRow(
+        "theme",
+        "Theme",
+        null,
+        h(
+          "div",
+          { class: "segmented", role: "radiogroup", "aria-label": "Theme" },
+          THEMES.map(([id, label]) =>
+            h("button", { role: "radio", "aria-checked": theme === id ? "true" : "false", "aria-pressed": theme === id ? "true" : "false", "data-key": "theme-" + id, onclick: () => setTheme(id) }, label),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 function settingsPage() {
-  const sections = [ui.state ? accountSection() : null];
+  const sections = [ui.state ? accountSection() : null, themeSection()];
   if (ui.settings) {
     const set = ui.settings;
     const local = (ui.state?.devices || []).find((d) => d.self)?.sessions || [];
     const overrides = set.sessionWake || {};
+    const wakeOwn = local.filter((s) => overrides[s.name]).length;
     const rows = [
       settingsRow(
         "wake",
@@ -3309,7 +3576,7 @@ function settingsPage() {
         "Whether a message from another session may wake an idle session. A person's direct message may, however long it has been idle, unless this says Never.",
         wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }), false),
       ),
-      ...[...local]
+      ...perSessionFold("wake", [...local]
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((s) =>
           settingsRow(
@@ -3330,17 +3597,18 @@ function settingsPage() {
               true,
             ),
           ),
-        ),
+        ), wakeOwn),
     ];
     const busyOverrides = set.sessionBusy || {};
+    const busyOwn = local.filter((s) => busyOverrides[s.name]).length;
     const busyRows = [
       settingsRow(
         "busy",
         "Device default",
-        "What a busy Claude Code session sees when a message arrives.",
+        "What a busy session sees when a message arrives.",
         busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }), false),
       ),
-      ...[...local]
+      ...perSessionFold("busy", [...local]
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((s) =>
           settingsRow(
@@ -3359,7 +3627,7 @@ function settingsPage() {
               true,
             ),
           ),
-        ),
+        ), busyOwn),
     ];
     sections.push(
       h(
@@ -3443,6 +3711,7 @@ async function unmute(m, key) {
 // Navigation and polling.
 
 function go(view) {
+  ui.drawer = false; // going somewhere from the phone's drawer closes it
   if (location.hash !== "#" + view) location.hash = view;
   else setView(view);
 }
@@ -3606,10 +3875,11 @@ async function poll() {
 
 // A fresh link pasted into a tab already showing the page changes only the fragment, so the
 // page takes the new token here and starts over with it.
-function start() {
+async function start() {
+  await takeKey();
   const token = takeToken();
   if (token !== ui.token) {
-    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0, draftTo: null, restored: null, outbox: [], setup: null, picker: null, newMark: null, armed: null });
+    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0, draftTo: null, restored: null, outbox: [], setup: null, picker: null, newMark: null, armed: null, repoMenu: null });
     ui.ids = new Set();
     ui.notes = new Map();
     ui.readLocal = new Set();
@@ -3632,12 +3902,15 @@ function start() {
 // Escape closes the tag menu wherever the focus is, even on the page's body.
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && ui.tagMenu && !e.defaultPrevented) {
+    e.preventDefault(); // this Escape was the menu's; the phone's drawer under it stays open
     ui.tagMenu = null;
     render();
+  } else if (e.key === "Escape" && ui.repoMenu && !e.defaultPrevented) {
+    closeRepoMenu();
   }
 });
 window.addEventListener("hashchange", () => {
-  if (location.hash.includes("token=")) start();
+  if (location.hash.includes("token=") || location.hash.includes("key=")) start();
   else setView(location.hash.slice(1));
 });
 document.addEventListener("visibilitychange", () => {
@@ -3648,6 +3921,131 @@ window.addEventListener("focus", () => {
 });
 window.addEventListener("blur", markOpenRead); // nobody is looking now, so what comes next is new
 document.addEventListener("scroll", () => (scrolledAt = Date.now()), { capture: true, passive: true });
-NARROW.addEventListener("change", render);
+NARROW.addEventListener("change", () => {
+  if (!NARROW.matches) ui.drawer = false;
+  render();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !e.defaultPrevented && ui.drawer && !ui.setup && !ui.picker && !ui.tagMenu) setDrawer(false);
+});
+// Tooltips, drawn by the page rather than the browser: a browser's title waits about a second and
+// can't be styled. The page's tip is only for what a person can't already read: a button that is
+// only an icon, a state dot, a time (its tip has the full date), and "+N" more tags. Rows, messages,
+// labelled buttons and badges keep the browser's title, which waits long enough not to get in the
+// way. While the page's tip shows, the title moves to data-tip-title so the browser's own doesn't
+// show too, and it comes back after, so assistive tech still reads it.
+//
+// The tip shows 150 ms after the pointer settles. Once one is showing, the next shows at once, so
+// sliding along a row of buttons reads each. Keyboard focus shows it too. The tip lives outside
+// #root, so a render doesn't take it away.
+// While an element's title is borrowed, the element points at the tip with aria-describedby, so a
+// screen reader still reads the title as its description.
+const tip = h("div", { class: "tip", role: "tooltip", id: "page-tip" });
+document.body.append(tip);
+let tipFor = null; // the element whose tip shows, or is about to
+let tipTimer = 0;
+let tipHiddenAt = 0;
+let tipShown = false;
+let pointerX = 0;
+
+function tipText(el) {
+  return el.dataset.tip || el.dataset.tipTitle || el.getAttribute("title") || "";
+}
+
+// Takes an element's title for the page's tip, and gives it back.
+function borrowTitle(el) {
+  const t = el.getAttribute("title");
+  if (t) {
+    el.dataset.tipTitle = t;
+    el.removeAttribute("title");
+  }
+  tip.textContent = tipText(el);
+  if (!el.hasAttribute("aria-describedby")) {
+    el.setAttribute("aria-describedby", tip.id);
+    el.dataset.tipDescribed = "1";
+  }
+}
+function returnTitle(el) {
+  if (el?.dataset.tipTitle) {
+    el.setAttribute("title", el.dataset.tipTitle);
+    delete el.dataset.tipTitle;
+  }
+  if (el?.dataset.tipDescribed) {
+    el.removeAttribute("aria-describedby");
+    delete el.dataset.tipDescribed;
+  }
+}
+
+function showTip(el, atPointer) {
+  clearTimeout(tipTimer);
+  if (!el.isConnected) return hideTip();
+  const text = tipText(el);
+  if (!text) return hideTip();
+  tip.textContent = text;
+  tip.classList.add("on");
+  tipShown = true;
+  const r = el.getBoundingClientRect();
+  const t = tip.getBoundingClientRect();
+  const mid = atPointer && r.width > 120 ? pointerX : r.left + r.width / 2;
+  const x = Math.max(6, Math.min(mid - t.width / 2, window.innerWidth - t.width - 6));
+  const above = r.top - t.height - 6 >= 6;
+  tip.style.left = x + "px";
+  tip.style.top = (above ? r.top - t.height - 6 : r.bottom + 6) + "px";
+  tip.dataset.side = above ? "top" : "bottom";
+}
+
+function hideTip() {
+  clearTimeout(tipTimer);
+  if (tipShown) tipHiddenAt = Date.now();
+  tipShown = false;
+  returnTitle(tipFor);
+  tipFor = null;
+  tip.classList.remove("on");
+}
+
+function queueTip(el, atPointer) {
+  if (el === tipFor) return;
+  hideTip();
+  tipFor = el;
+  borrowTitle(el);
+  if (Date.now() - tipHiddenAt < 400 || tipShown) return showTip(el, atPointer);
+  tipTimer = setTimeout(() => showTip(el, atPointer), 150);
+}
+
+// Whether an element with a title gets the page's tip (see above).
+const TIP_KINDS = ".pres, .status-dot, .dev-dot, .mini-dev, .dot, .chat-msg-time, [data-ago], .stag-more";
+function wantsTip(el) {
+  if (el.dataset.tip || el.matches(TIP_KINDS)) return true;
+  // A button with no words on it: only an icon, or only a face (the folded sidebar's sessions).
+  if (!el.matches("button, a")) return false;
+  const faces = [...el.querySelectorAll(".avatar")].map((a) => a.textContent).join("");
+  return el.textContent.trim() === faces.trim();
+}
+
+function tipTarget(node) {
+  for (let el = node?.closest?.("[data-tip], [title], [data-tip-title]"); el; el = el.parentElement?.closest("[data-tip], [title], [data-tip-title]")) {
+    if (wantsTip(el)) return el;
+  }
+  return null;
+}
+
+document.addEventListener("pointerover", (e) => {
+  if (e.pointerType === "touch") return;
+  pointerX = e.clientX;
+  const el = tipTarget(e.target);
+  el ? queueTip(el, true) : hideTip();
+});
+document.addEventListener("pointermove", (e) => (pointerX = e.clientX), { passive: true });
+document.documentElement.addEventListener("pointerleave", hideTip);
+document.addEventListener("focusin", (e) => {
+  const el = tipTarget(e.target);
+  if (el && e.target.matches(":focus-visible")) queueTip(el, false);
+});
+document.addEventListener("focusout", hideTip);
+document.addEventListener("pointerdown", hideTip, true);
+// Escape also cancels a tip that is still waiting to show.
+document.addEventListener("keydown", (e) => e.key === "Escape" && tipFor && hideTip());
+document.addEventListener("scroll", hideTip, { capture: true, passive: true });
+
 setInterval(tick, 10000);
 start();

@@ -12,6 +12,24 @@ const DAY = /^\d{4}-\d\d-\d\d$/;
 const ID = /^[0-9a-f]{16}$/;
 // A repo's last 7 days, for "active".
 const WEEK = 7;
+// The first day a bus could have anything on it: Murmur began on 2026-10-26.
+const EPOCH = '2026-10-01';
+// D1's limits (developers.cloudflare.com/d1/platform/limits, updated 2026-10-30): 100 bound values a
+// statement; a whole db.batch() must finish within 30 seconds; and a Worker request may make 1,000
+// queries (50 on the Free plan), a batch counting as one. A census POST at the most invalid() takes
+// is about 6,650 statements of up to 33 rows: in batches of 200, 34 batches, plus one query to find
+// the repo, which is within even the Free plan's 50 queries. CPU is another limit: a Free plan
+// Worker has 10 ms of it a request, and parsing a POST that size and building its statements
+// would take more. That was so before batches, and the Paid plan's limit is far above it.
+const BATCH = 200;
+// How long one census run can take: its job's timeout in .github/workflows/census.yml, so change
+// both together. A repo counted within this of the newest count was counted in the same run.
+// A census run by hand on one repo (census.mjs's usage) is a run of its own: until the next
+// scheduled run, every other repo looks missed by it.
+const RUN = 30 * 60e3;
+// The census runs once a day, at 05:17 UTC. A scheduled run can start hours late on GitHub, so
+// the newest count is late only once it is older than this.
+const LATE = 30 * 3600e3;
 
 // /v1/census, for the census only, with the CENSUS_KEY secret as its Bearer token:
 // - GET: the listed repos, {"repos": ["github.com/Owner/Name", ...]}.
@@ -39,18 +57,7 @@ export async function census(request, env) {
   if (!known) return new Response('Not a listed repo.\n', { status: 422 });
 
   const db = env.DB, t = c.totals;
-  const stmts = [
-    db.prepare(
-      `INSERT INTO repo_census (repo, sessions, messages, records, first_day, last_day, counted)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-       ON CONFLICT (repo) DO UPDATE SET
-         sessions = MAX(sessions, excluded.sessions), messages = MAX(messages, excluded.messages),
-         records = MAX(records, excluded.records),
-         first_day = MIN(COALESCE(first_day, excluded.first_day), COALESCE(excluded.first_day, first_day)),
-         last_day = MAX(COALESCE(last_day, excluded.last_day), COALESCE(excluded.last_day, last_day)),
-         counted = excluded.counted`,
-    ).bind(c.repo, t.sessions, t.messages, t.records, t.first_day, t.last_day, new Date().toISOString()),
-  ];
+  const stmts = [];
   // D1 binds at most 100 values a statement, so rows go in groups: 20 days of 5 values, 33 rows of 3.
   const insert = (rows, width, sql, values) => {
     const per = Math.floor(100 / width);
@@ -80,25 +87,49 @@ export async function census(request, env) {
     `INSERT INTO contributors (repo, id, first) VALUES $ROWS
      ON CONFLICT (repo, id) DO UPDATE SET first = MIN(first, excluded.first)`,
     k => [c.repo, k.id, k.first]);
-  await db.batch(stmts);
+  stmts.push(db.prepare(
+    `INSERT INTO repo_census (repo, sessions, messages, records, first_day, last_day, counted)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT (repo) DO UPDATE SET
+       sessions = MAX(sessions, excluded.sessions), messages = MAX(messages, excluded.messages),
+       records = MAX(records, excluded.records),
+       first_day = MIN(COALESCE(first_day, excluded.first_day), COALESCE(excluded.first_day, first_day)),
+       last_day = MAX(COALESCE(last_day, excluded.last_day), COALESCE(excluded.last_day, last_day)),
+       counted = excluded.counted`,
+  ).bind(c.repo, t.sessions, t.messages, t.records, t.first_day, t.last_day, new Date().toISOString()));
+  // A batch must finish within D1's 30 seconds, and a big repo makes thousands of statements, so
+  // they go BATCH at a time. Each batch is its own transaction. Every write only raises a count or
+  // adds a row, so a POST cut short between batches leaves less written, never anything wrong, and
+  // the next day's census writes the rest. The totals go last, so `counted` moves only once
+  // everything else is in.
+  for (let i = 0; i < stmts.length; i += BATCH) await db.batch(stmts.slice(i, i + BATCH));
   return Response.json({ ok: true, days: c.days.length, devices: c.devices.length, contributors: c.contributors.length }, { headers });
 }
 
 // What is wrong with a census POST's body, or "" if nothing is.
+//
+// No day may be after tomorrow (UTC): a day in the future would keep a repo active and its people
+// new for ever. Nor may a bus day be before EPOCH, when there was no bus. A contributor's first
+// commit can be years before that. The census dates what it reads the same way (census.mjs).
+// Its tooBig() has the size limits below, to skip a repo too big for them: change both together.
 function invalid(c) {
+  const latest = addDays(new Date().toISOString().slice(0, 10), 1);
   const count = n => Number.isSafeInteger(n) && n >= 0;
-  const day = d => typeof d === 'string' && DAY.test(d) && !Number.isNaN(Date.parse(d));
+  const day = d => typeof d === 'string' && DAY.test(d) && !Number.isNaN(Date.parse(d)) && d <= latest;
+  const busDay = d => day(d) && d >= EPOCH;
   const id = v => typeof v === 'string' && ID.test(v);
   if (!c || typeof c !== 'object') return 'no object';
   if (typeof c.repo !== 'string' || !REPO.test(c.repo)) return 'repo';
   const t = c.totals;
   if (!t || !['sessions', 'messages', 'records'].every(k => count(t[k]))) return 'totals';
-  if (!(t.first_day === null || day(t.first_day)) || !(t.last_day === null || day(t.last_day))) return 'totals days';
+  if (!(t.first_day === null || busDay(t.first_day)) || !(t.last_day === null || busDay(t.last_day))) return 'totals days';
   if (!Array.isArray(c.days) || c.days.length > 3660) return 'days';
   for (const d of c.days) {
-    if (!d || !day(d.day) || !['sessions', 'messages', 'records'].every(k => count(d[k]))) return 'a day';
+    if (!d || !busDay(d.day) || !['sessions', 'messages', 'records'].every(k => count(d[k]))) return 'a day';
     if (!Array.isArray(d.devices) || d.devices.length > 1000 || !d.devices.every(id)) return "a day's devices";
   }
+  // A device on a day is a row, so without this a POST could carry 3,660,000 of them.
+  if (c.days.reduce((n, d) => n + d.devices.length, 0) > 100000) return "the days' devices";
   if (!Array.isArray(c.devices) || c.devices.length > 10000) return 'devices';
   for (const v of c.devices) {
     if (!v || !id(v.id) || !(v.person === null || id(v.person)) || !(v.account == null || id(v.account))) return 'a device';
@@ -130,10 +161,10 @@ export async function repoNumbers(db, days) {
          COALESCE(c.sessions, 0) AS sessions, COALESCE(c.messages, 0) AS messages, COALESCE(c.records, 0) AS records,
          MIN(r.first, COALESCE(c.first_day, r.first)) AS start, c.last_day AS last, c.counted,
          (SELECT COUNT(*) FROM contributors k WHERE k.repo = r.repo) AS contributors,
-         (SELECT COUNT(DISTINCT d.day) FROM device_days d WHERE d.repo = r.repo AND d.day >= ?1) AS week
+         (SELECT COUNT(DISTINCT d.day) FROM device_days d WHERE d.repo = r.repo AND d.day BETWEEN ?1 AND ?2) AS week
        FROM repos r LEFT JOIN repo_census c ON c.repo = r.repo
        ORDER BY week DESC, records DESC, r.repo`,
-    ).bind(weekFrom),
+    ).bind(weekFrom, today),
     // Per repo per day: its active devices and the people behind them, and its counts.
     db.prepare(
       `WITH dd AS (
@@ -148,15 +179,21 @@ export async function repoNumbers(db, days) {
        ORDER BY k.day, k.repo`,
     ).bind(from, today),
     // Each contributor once, however many repos they are in, by the day of their first commit to any.
-    db.prepare(`SELECT first AS day, COUNT(*) AS n FROM (SELECT MIN(first) AS first FROM contributors GROUP BY id) GROUP BY first ORDER BY first`),
+    // Nothing after today counts, here or above: the site refuses later days now, but rows from
+    // before it did can't then make a repo active, or a person new, for ever.
+    db.prepare(
+      `SELECT first AS day, COUNT(*) AS n FROM (SELECT MIN(first) AS first FROM contributors GROUP BY id)
+       WHERE first <= ?1 GROUP BY first ORDER BY first`,
+    ).bind(today),
     db.prepare(`SELECT MAX(counted) AS at FROM repo_census`),
-    // Every device, for users: who is behind it, and its first and last day on the bus.
+    // Every device, for users: who is behind it, and its first and last day on the bus, up to today
+    // as above.
     db.prepare(
       `SELECT v.repo, v.device, v.person, v.account, COALESCE(MIN(d.day), r.first) AS first, MAX(d.day) AS last
        FROM devices v JOIN repos r ON r.repo = v.repo
-         LEFT JOIN device_days d ON d.repo = v.repo AND d.device = v.device
+         LEFT JOIN device_days d ON d.repo = v.repo AND d.device = v.device AND d.day <= ?1
        GROUP BY v.repo, v.device`,
-    ),
+    ).bind(today),
   ]);
   const u = users(devs.results);
   const userFirsts = [...u.users.values()].map(x => x.first).sort();
@@ -180,9 +217,11 @@ export async function repoNumbers(db, days) {
   }
   const recent = rows.filter(r => r.day >= weekFrom);
   const sumOf = (rs, k) => rs.reduce((s, r) => s + r[k], 0);
+  const last = counted.results[0]?.at ?? null;
   return {
     today, days, week: WEEK,
-    counted: counted.results[0]?.at ?? null,
+    counted: last,
+    census: health(list, Date.now()),
     repos: list.length,
     activeRepos: list.filter(r => r.week > 0).length,
     newRepos: list.filter(r => r.start >= weekFrom).length,
@@ -205,6 +244,38 @@ export async function repoNumbers(db, days) {
     // Per repo per day, for the charts that split by repo.
     byRepo: rows.map(r => ({ ...r, name: names.get(r.repo) ?? r.repo })),
     repoList: list.map(({ repo, ...r }) => r),
+  };
+}
+
+// Whether the census is keeping up, from when it last read each listed repo (repo_census.counted):
+// - last: its last run, which is the newest count and the counts within RUN of it;
+// - hours: how long ago that was, and late: whether that is longer than LATE;
+// - fresh: the repos never counted that were listed on or after that run's day. Anyone can list a
+//   repo (#298), so most days some are, and they are new, not missed;
+// - notCounted: the repos that run didn't count, the longest uncounted first, each with when it
+//   last was (null for never) and the day it was listed. A repo isn't counted when it can't be
+//   read or the census skips it (census.mjs); the run's page in Actions says which, and why.
+export function health(list, now) {
+  const last = list.map(r => r.counted).filter(Boolean).sort().at(-1) ?? null;
+  const at = last ? Date.parse(last) : NaN;
+  const ago = Number.isFinite(at) ? now - at : null;
+  // The day the run began, not the day of its newest count: a run that crosses midnight UTC took
+  // its list of repos the day before, so a repo listed after midnight was never in it.
+  const runDay = Number.isFinite(at) ? new Date(at - RUN).toISOString().slice(0, 10) : last?.slice(0, 10);
+  const fresh = [], notCounted = [];
+  for (const r of list) {
+    if (r.counted && Date.parse(r.counted) >= at - RUN) continue;
+    const row = { name: r.name, counted: r.counted ?? null, listed: r.reported };
+    (!r.counted && (!last || r.reported >= runDay) ? fresh : notCounted).push(row);
+  }
+  notCounted.sort((a, b) => (a.counted ?? '').localeCompare(b.counted ?? '') || a.name.localeCompare(b.name));
+  return {
+    last,
+    hours: ago === null ? null : Math.floor(ago / 3600e3),
+    late: ago !== null && ago > LATE,
+    repos: list.length,
+    fresh,
+    notCounted,
   };
 }
 
@@ -242,7 +313,8 @@ export function users(devices) {
 // The numbers as markdown, for an agent: what the page shows, in tables, with what they mean.
 export function repoReport(n, origin) {
   const table = (head, rows) => [head, head.map(() => '---'), ...rows].map(r => `| ${r.join(' | ')} |`).join('\n');
-  const short = name => name.replace(/^github\.com\//, '');
+  // A repo's name as a link's label, with what Markdown would read in it (__a__ as bold) escaped.
+  const short = name => name.replace(/^github\.com\//, '').replace(/[\\`*_[\]<>|]/g, '\\$&');
   const weeks = [];
   for (let i = n.series.length - 1; i >= 0; i -= n.week) {
     const w = n.series.slice(Math.max(0, i - n.week + 1), i + 1);
@@ -296,5 +368,32 @@ ${repos}
 - A count is only ever raised. Days are UTC.
 
 The check-ins of earlier versions, which are no longer stored, are at ${origin}/stats/archive/report.md. The same numbers as JSON: ${origin}/stats/data?days=N (N from 14 to 730, default 90), with the same key. This page takes \`?days=N\` too.
+
+## The census
+
+${censusReport(n.census, table, short)}
 `;
+}
+
+// The census's health, from health(), for the end of the report.
+function censusReport(h, table, short) {
+  const time = iso => `${iso.slice(0, 16).replace('T', ' ')} UTC`;
+  const n = (k, one, many = one + 's') => `${k} ${k === 1 ? one : many}`;
+  if (!h.repos) return 'It has no repos to count yet.';
+  if (!h.last) return `It hasn't counted any of the ${n(h.repos, 'repo')} yet.`;
+  const total = h.repos - h.fresh.length, counted = total - h.notCounted.length;
+  const ago = h.hours ? `${n(h.hours, 'hour')} ago` : 'less than an hour ago';
+  const of = counted === total ? (total === 1 ? 'the 1 repo' : `all ${total} repos`) : `${counted} of ${n(total, 'repo')}`;
+  const since = h.fresh.length ? ` ${n(h.fresh.length, 'repo')} listed since ${h.fresh.length === 1 ? "hasn't" : "haven't"} been counted yet.` : '';
+  const lines = [];
+  if (h.late) lines.push(`**It hasn't run for ${h.hours} hours**, and it runs once a day.`);
+  lines.push(`It last ran at ${time(h.last)}, ${ago}, and counted ${of}.${since}`);
+  if (h.notCounted.length) {
+    lines.push(`Not counted in that run, so their numbers are as of when each last was:
+
+${table(['Repo', 'Last counted'], h.notCounted.map(r => [`[${short(r.name)}](https://${r.name})`, r.counted ? time(r.counted) : `never; listed ${r.listed}`]))}
+
+A repo isn't counted when it can't be read, or is skipped for its time, refs or size. The census's run in Actions says which, and why: https://github.com/a-Fig/murmur/actions/workflows/census.yml.`);
+  }
+  return lines.join('\n\n');
 }

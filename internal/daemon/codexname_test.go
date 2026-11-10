@@ -23,6 +23,7 @@ func (d *device) native(id, thread string) {
 // has its old name back once the thread ID arrives; a session that has already shown the name it
 // was given under its Murmur ID keeps that name when it learns its thread.
 func TestCodexNameFollowsItsThreadAcrossRestarts(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
 	first, conn := b.session("bbbbbb", "")
@@ -42,6 +43,7 @@ func TestCodexNameFollowsItsThreadAcrossRestarts(t *testing.T) {
 
 // Another Codex thread is another name, and each thread keeps its own when they come back in turn.
 func TestCodexThreadsHaveTheirOwnNames(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
 	first, conn := b.session("bbbbbb", "")

@@ -55,7 +55,7 @@ func (d *Daemon) adoptTagsLocked(s *session) {
 }
 
 // dndLocked says session id on this device is on do not disturb: its messages stay queued in its
-// inbox, none is handed over as a turn, and the hook delivers none (see wakesLocked and notices). A session that
+// inbox, none is handed over as a turn, and the hook tells of none (see wakesLocked and notices). A session that
 // isn't registered at the moment goes by the tags kept for its name. Caller holds mu.
 func (d *Daemon) dndLocked(id string) bool {
 	if s := d.sessions[id]; s != nil {
@@ -307,6 +307,13 @@ func (s pageSource) SetTags(ctx context.Context, addr string, add, remove []stri
 	d.mu.Unlock()
 	if !known {
 		return fmt.Errorf("%s isn't in its device's presence", addr)
+	}
+	// The page is served before Run's first sync. This append reads its own log under advMu, which
+	// Run's sync, the one a stop cuts short, would then wait for; it waits for that sync instead, as
+	// the page's send does (Sol's review of #377).
+	d.awaitFirstSync(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Tags, From: bus.Addr(d.device, proto.CLISession),
 		At: time.Now().UTC(), To: addr, Add: add, Remove: remove}

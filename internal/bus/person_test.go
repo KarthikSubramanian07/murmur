@@ -63,6 +63,19 @@ func TestPresenceCleanHoldsAPerson(t *testing.T) {
 	if len(p.Sessions) != 0 {
 		t.Errorf("a person with a bad name stayed: %+v", p.Sessions)
 	}
+
+	// A device has one person. A presence listing more would hold names nobody on it answers to.
+	p = bus.Presence{Sessions: []bus.SessionInfo{
+		{ID: bus.PersonSession, Name: "not a\nname"},
+		{ID: bus.PersonSession, Name: "eve"},
+		{ID: "abc123"},
+		{ID: bus.PersonSession, Name: "tyler"},
+		{ID: bus.PersonSession, Name: "ada"},
+	}}
+	p.Clean()
+	if len(p.Sessions) != 2 || p.Sessions[0].Name != "eve" || p.Sessions[1].ID != "abc123" {
+		t.Errorf("want the first good person and the session, got %+v", p.Sessions)
+	}
 }
 
 // A person's name in the names registry is a claim for device/human, and only that (#268). A reader

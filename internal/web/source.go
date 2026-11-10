@@ -37,6 +37,8 @@ type Source interface {
 	Send(ctx context.Context, to, text string) (Sent, error)
 	// MarkRead takes these messages out of the person's unread.
 	MarkRead(ctx context.Context, ids []string) error
+	// Health is how this device is doing with the remote and its sessions (health.go).
+	Health(ctx context.Context) (Health, error)
 }
 
 // ErrNoUpdate is Restart's answer when no installed update is waiting.
@@ -44,6 +46,8 @@ var ErrNoUpdate = errors.New("no update is waiting to be restarted onto")
 
 // State is what the page's sessions view and mute list show.
 type State struct {
+	// Repo is the name of the repository this page is a clone of, as the repo picker shows it.
+	Repo    string   `json:"repo,omitempty"`
 	Device  string   `json:"device"` // this device's ID
 	Devices []Device `json:"devices"`
 	Mutes   []Mute   `json:"mutes"`
@@ -132,6 +136,9 @@ type Session struct {
 	// Tags is the session's tags, in order of name, each with where it came from: the session,
 	// derived by its daemon, or a human (#198).
 	Tags []tags.Tag `json:"tags,omitempty"`
+	// HookOff says Murmur's hook doesn't run for the session, so it isn't told of messages while
+	// it works (#225).
+	HookOff bool `json:"hookOff,omitempty"`
 }
 
 // Message is one message between sessions.
@@ -160,7 +167,7 @@ const (
 	ToAll     = "all"
 )
 
-// Mute is one session's mute of another: the muted session's messages to it are not delivered.
+// Mute is one session's mute of another: the muted session's messages never reach it.
 type Mute struct {
 	By    string    `json:"by"`
 	Muted string    `json:"muted"`
@@ -203,7 +210,7 @@ const (
 
 // Busy values. With BusySubject the hook shows the sender and subject, and the agent reads the
 // body with inbox; with BusyWhole it shows the message as it would go in as a turn, and the
-// message is delivered.
+// message is read. A message with no body is shown the second way under either (#355).
 const (
 	BusySubject = "subject"
 	BusyWhole   = "whole"

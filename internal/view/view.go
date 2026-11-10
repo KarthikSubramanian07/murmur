@@ -40,6 +40,37 @@ func note(b *strings.Builder, r proto.Response) {
 // with pages that every agent that asks has to read; the rest are one `lookup` away.
 const WhoLimit = 20
 
+// WhoQuiet is the most devices `who` lists that have no session listed: stale ones, and live ones
+// with none. Each is a line, and anyone who can push can make any number of device refs, so past it
+// they are counted in one line.
+const WhoQuiet = 5
+
+// quiet picks, of the devices with no session to list, the WhoQuiet that `who` lists: stale devices
+// that still have sessions first, whose line says messages may not reach them, then the rest, each
+// group most recently seen first. Seen is when a presence last moved, which anyone who can push can
+// keep fresh, so empty devices can't push a teammate's stale line out. The result says, for each
+// device, whether it is one of those it leaves out.
+func quiet(devices []proto.Device) []bool {
+	var idle []int
+	for i, d := range devices {
+		if !d.Self && (d.Stale || len(d.Sessions) == 0) {
+			idle = append(idle, i)
+		}
+	}
+	sort.SliceStable(idle, func(a, b int) bool {
+		da, db := devices[idle[a]], devices[idle[b]]
+		if sa, sb := da.Stale && len(da.Sessions) > 0, db.Stale && len(db.Sessions) > 0; sa != sb {
+			return sa
+		}
+		return da.LastSeen.After(db.LastSeen)
+	})
+	out := make([]bool, len(devices))
+	for _, i := range idle[min(len(idle), WhoQuiet):] {
+		out[i] = true
+	}
+	return out
+}
+
 // activeAt is when a session was last active, else when it started: what `who` orders by.
 func activeAt(s proto.SessionView) time.Time {
 	if !s.LastActive.IsZero() {
@@ -84,8 +115,8 @@ func shown(devices []proto.Device) [][]bool {
 }
 
 // Who renders the team's devices and sessions: each device with the sessions listed on it, most
-// recently active first, at most WhoLimit in all; a stale device in one line; then how many more
-// there are.
+// recently active first, at most WhoLimit in all; a stale device in one line, and at most WhoQuiet
+// devices stale or with no sessions; then how many more there are of each.
 func Who(r proto.Response) string {
 	var b strings.Builder
 	switch {
@@ -96,6 +127,9 @@ func Who(r proto.Response) string {
 	default:
 		fmt.Fprintf(&b, "You are %s.\n", r.Self)
 	}
+	if selfHookOff(r.Devices) {
+		b.WriteString("Your hook isn't running, so you aren't told of messages while you work: ask your user to run `" + brand.Command + " join` again in this repo.\n")
+	}
 	if r.Filter != "" {
 		fmt.Fprintf(&b, "Sessions tagged %s:\n", r.Filter)
 		if len(r.Devices) == 0 || len(r.Devices) == 1 && len(r.Devices[0].Sessions) == 0 {
@@ -105,8 +139,13 @@ func Who(r proto.Response) string {
 		}
 	}
 	listed := shown(r.Devices)
-	hidden := 0
+	left := quiet(r.Devices)
+	hidden, quietHidden := 0, 0
 	for i, d := range r.Devices {
+		if left[i] {
+			quietHidden++
+			continue
+		}
 		who := d.Host
 		if d.Owner != "" {
 			who = d.Owner + " on " + d.Host
@@ -156,6 +195,9 @@ func Who(r proto.Response) string {
 			case !s.Started.IsZero():
 				line += ", started " + Ago(s.Started) // its device doesn't say when it was last active
 			}
+			if s.HookOff {
+				line += ", hook not running"
+			}
 			if len(s.Tags) > 0 {
 				line += " [" + strings.Join(tags.Names(s.Tags), ", ") + "]"
 			}
@@ -173,6 +215,11 @@ func Who(r proto.Response) string {
 	}
 	if hidden > 0 {
 		fmt.Fprintf(&b, "\nand %d more, less recently active; use lookup with a session's name to see one\n", hidden)
+	}
+	if quietHidden == 1 {
+		b.WriteString("\nand 1 more device, stale or with no sessions\n")
+	} else if quietHidden > 1 {
+		fmt.Fprintf(&b, "\nand %d more devices, stale or with no sessions\n", quietHidden)
 	}
 	note(&b, r)
 	return b.String()
@@ -249,7 +296,9 @@ func senders(msgs []proto.MessageView) string {
 // reply and that doing so is optional. The sender's text is not wrapped or quoted: teammates'
 // agents are trusted in Murmur's model, and a message that reads as a request is meant to be acted
 // on. The sender is described (its agent, whose machine) only in the first turn the session has
-// from it (m.Introduced, #216): after that it is a name the agent has met.
+// from it (m.Introduced, #216): after that it is a name the agent has met. A message the hook's
+// notice told of earlier says so (m.Told, #355): the agent may have acted on the subject already,
+// and would otherwise take the turn for a second message.
 //
 // A person on Murmur's page (#242) reads nothing of the conversation they wrote into, so a turn from
 // one always ends by saying that what the agent writes here doesn't reach them: an agent that
@@ -273,6 +322,11 @@ func Turn(m proto.MessageView) string {
 	if m.FromOwner != "" && !m.Introduced {
 		about = append(about, "on "+m.FromOwner+"'s machine")
 	}
+	if m.FromDevice != "" {
+		// Another device says it has this name too, so the name alone doesn't say who this is. On
+		// every turn, introduced or not: the next one may be from the other device.
+		about = append(about, "from device "+m.FromDevice)
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Message from %s", who)
 	if isPerson(m) {
@@ -284,6 +338,9 @@ func Turn(m proto.MessageView) string {
 	fmt.Fprintf(&b, " via %s", brand.Product)
 	if m.To == "*" {
 		b.WriteString(", sent to everyone")
+	}
+	if !m.Told.IsZero() {
+		fmt.Fprintf(&b, ", which a notice told you of %s", Ago(m.Told))
 	}
 	fmt.Fprintf(&b, ":\n\n%s\n", m.Subject)
 	if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
@@ -394,18 +451,6 @@ func Tags(r proto.Response) string {
 	return b.String()
 }
 
-// Log renders recent events.
-func Log(r proto.Response) string {
-	if len(r.Events) == 0 {
-		return "Nothing yet.\n"
-	}
-	var b strings.Builder
-	for _, e := range r.Events {
-		fmt.Fprintf(&b, "%s  %s\n", e.At.Local().Format("15:04:05"), e.Line)
-	}
-	return b.String()
-}
-
 // Note renders a bare acknowledgement.
 func Note(r proto.Response) string {
 	if r.Note == "" {
@@ -481,7 +526,7 @@ func Lookup(r proto.Response) string {
 		b.WriteString("  reachable: a message sent now reaches its inbox at once (queued, not yet seen by the agent)\n")
 	}
 	if tags.Has(d.Tags, tags.DoNotDisturb) {
-		b.WriteString("  do not disturb: a message to it is queued in its inbox, and delivered when it reads its inbox or turns do not disturb off\n")
+		b.WriteString("  do not disturb: a message to it is queued in its inbox, with no notice or turn, until it reads its inbox or turns do not disturb off\n")
 	}
 	var times []string
 	if !d.Started.IsZero() {
@@ -546,4 +591,16 @@ func toLabel(m proto.MessageView) string {
 		return "everyone"
 	}
 	return named(m.ToName, m.To)
+}
+
+// selfHookOff says the caller's own session is listed with its hook not running (#225).
+func selfHookOff(devices []proto.Device) bool {
+	for _, d := range devices {
+		for _, s := range d.Sessions {
+			if s.You {
+				return s.HookOff
+			}
+		}
+	}
+	return false
 }

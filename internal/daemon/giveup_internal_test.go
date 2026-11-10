@@ -159,10 +159,22 @@ func (r *giveUpRig) giveUp() {
 		r.t.Fatalf("the log isn't in the backlog: %v", r.d.backlog)
 	}
 	r.d.backlogAt = r.d.backlogAt.Add(-catchUpLimit - time.Minute)
+	before := r.giveUps()
 	r.sync()
 	if r.d.backlog[giveUpRef] {
 		r.t.Fatal("the backlog wasn't given up on")
 	}
+	if got := r.giveUps(); got != before+1 {
+		r.t.Errorf("the health snapshot counts %d backlogs given up on, want %d", got, before+1)
+	}
+}
+
+// giveUps is the backlogs given up on, as the health snapshot counts them.
+func (r *giveUpRig) giveUps() int64 {
+	h := &r.d.health
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.giveUps
 }
 
 // bobKnown gives this device a session called quiet-otter that has stopped and whose inbox is no
@@ -215,6 +227,7 @@ func (r *giveUpRig) queued() []string {
 // applied once the fetch lands, and what the log gained since the give-up is read as usual. Whether
 // the device has read the log before or not, and across a restart while the fetch still fails.
 func TestAGivenUpBacklogStillAppliesItsTagChanges(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name             string
 		readBefore       bool
@@ -273,6 +286,7 @@ func TestAGivenUpBacklogStillAppliesItsTagChanges(t *testing.T) {
 // A log rewritten after the give-up has no path from what was read to its new tip. It is treated as
 // any rewritten log is: its history isn't replayed, tags included, and it goes on being read.
 func TestAGivenUpBacklogRewrittenMeanwhileIsNotReplayed(t *testing.T) {
+	t.Parallel()
 	r := newGiveUpRig(t)
 	r.bobKnown()
 	r.bobHas("do-not-disturb")
@@ -305,6 +319,7 @@ func TestAGivenUpBacklogRewrittenMeanwhileIsNotReplayed(t *testing.T) {
 // hold what was given up on, the log was rewritten, so nothing in the new history is replayed, on a
 // log new to this device or one sharing history with what it read.
 func TestAGivenUpTipThatNeverCameIsARewrite(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name   string
 		shared bool
@@ -344,6 +359,7 @@ func TestAGivenUpTipThatNeverCameIsARewrite(t *testing.T) {
 // one does. The listing still shows the later tip, so this is no rewrite: the log waits for that tip,
 // with nothing moved back, and its tags events are then applied and its messages still passed over.
 func TestAGivenUpBacklogWaitsWhenAnOlderFetchLands(t *testing.T) {
+	t.Parallel()
 	r := newGiveUpRig(t)
 	r.bobKnown()
 	r.bobHas("do-not-disturb")
@@ -381,6 +397,7 @@ func TestAGivenUpBacklogWaitsWhenAnOlderFetchLands(t *testing.T) {
 // fetch: it holds the listed tip, so the rewrite is settled, and a peer that keeps writing doesn't
 // keep its log waiting.
 func TestAGivenUpTipThatNeverCameWithAFetchPastTheListing(t *testing.T) {
+	t.Parallel()
 	r := newGiveUpRig(t)
 	r.bobKnown()
 	r.bobHas("do-not-disturb")
@@ -413,6 +430,7 @@ func TestAGivenUpTipThatNeverCameWithAFetchPastTheListing(t *testing.T) {
 // With no session here and none it knows of, as on a new clone, nothing in the log can be for this
 // device, so a give-up keeps no cursor and a log of any length costs nothing later.
 func TestAGivenUpBacklogKeepsNoCursorWithNoSession(t *testing.T) {
+	t.Parallel()
 	r := newGiveUpRig(t)
 	r.append("", r.tagsEvent(time.Now(), "do-not-disturb"))
 	recovered := r.failFetches()
@@ -427,6 +445,7 @@ func TestAGivenUpBacklogKeepsNoCursorWithNoSession(t *testing.T) {
 // What junk hid when this device first looked is history for tags as for messages (see
 // state.Junked), and a give-up doesn't change that: only a change made after that look is applied.
 func TestAGivenUpBacklogKeepsWhatJunkHid(t *testing.T) {
+	t.Parallel()
 	r := newGiveUpRig(t)
 	r.bobKnown()
 	r.bobHas("do-not-disturb", "release")

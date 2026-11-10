@@ -13,6 +13,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // Tests of handing a message over to a Claude Code session outside T3, through the messaging
@@ -119,6 +120,9 @@ func TestMessageForAClaudeCodeSessionGoesThroughItsMessagingSocket(t *testing.T)
 		}
 	}
 	eventually(t, "the message to be marked read", func() bool { return strings.Contains(out.String(), "through the messaging socket") })
+	if h, _ := b.page().health(); h.Delivery.Socket != (web.HandoffHealth{Tried: 1, Handed: 1}) || h.Delivery.T3.Tried != 0 {
+		t.Errorf("the health snapshot counts the handoffs %+v", h.Delivery)
+	}
 	holds(t, "one handoff, and nothing unread", 1500*time.Millisecond, func() bool {
 		inbox, notices := b.unread("bbbbbb", "claude-bob")
 		return len(inbox) == 0 && len(notices) == 0 && len(sock.lines()) == 2
@@ -147,11 +151,20 @@ func TestSessionInT3IsNotWrittenToItsSocket(t *testing.T) {
 	a.send("aaaaaa", bob, "hi", "there")
 	eventually(t, "the handoff", func() bool { return len(calls()) == 1 })
 	holds(t, "nothing on the socket", 500*time.Millisecond, func() bool { return len(sock.lines()) == 0 })
+	pg := b.page()
+	eventually(t, "the handoff counted", func() bool {
+		h, _ := pg.health()
+		return h.Delivery.T3.Handed == 1
+	})
+	if h, _ := pg.health(); h.Delivery.T3 != (web.HandoffHealth{Tried: 1, Handed: 1}) || h.Delivery.Socket.Tried != 0 {
+		t.Errorf("the health snapshot counts the handoffs %+v", h.Delivery)
+	}
 }
 
 // The socket belongs to a running session: once its MCP server is gone, so is its token, and a
 // message sent then is not written to it.
 func TestMessagingSocketNeedsTheSessionToBeRunning(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	sock := useFakeSocket(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
@@ -171,6 +184,7 @@ func TestMessagingSocketNeedsTheSessionToBeRunning(t *testing.T) {
 // Where the socket can't be written, the message is the hook's notice after one more try, and the
 // log says so once, without the socket's address, its token or the message.
 func TestFailedSocketHandoffFallsBackToTheNotice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	dir, err := os.MkdirTemp("", "murs")
 	if err != nil {
@@ -193,6 +207,9 @@ func TestFailedSocketHandoffFallsBackToTheNotice(t *testing.T) {
 	})
 	if notices[0] != "first" {
 		t.Errorf("notices: %q", notices)
+	}
+	if h, _ := b.page().health(); h.Delivery.Socket.Failed < 1 || h.Delivery.Socket.Handed != 0 {
+		t.Errorf("the health snapshot counts the handoffs %+v", h.Delivery.Socket)
 	}
 	if n := strings.Count(out.String(), "through the messaging socket failed"); n != 1 {
 		t.Errorf("the log says it %d times, want once:\n%s", n, out.String())
