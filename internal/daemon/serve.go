@@ -94,18 +94,22 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	r := bufio.NewReader(conn)
-	line, err := readLine(r, maxRequest)
-	if errors.Is(err, errTooLong) {
-		writeResp(conn, fail(fmt.Sprintf("bad request: over %d KB", maxRequest>>10)))
+	req, ok := readRequest(conn, r)
+	if !ok {
 		return
 	}
-	if err != nil {
-		return
-	}
-	var req proto.Request
-	if err := json.Unmarshal(line, &req); err != nil {
-		writeResp(conn, fail("bad request: "+err.Error()))
-		return
+	// A client proves the daemon before it sends anything else (#371): a ping with a nonce, and no
+	// token, which is answered with the proof that this is the daemon whose token is in
+	// daemon.json. The request it was opened for follows on the same connection, so nothing can
+	// take the port between the two. The proof tells whoever asks nothing they can use: the nonce
+	// is the client's, fresh each time, and only this listener answers at this address while it
+	// lives.
+	if req.Op == proto.OpPing && req.Nonce != "" {
+		writeResp(conn, proto.Response{OK: true, Protocol: proto.Protocol, Proof: proto.Proof(d.token, conn.LocalAddr().String(), req.Nonce)})
+		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		if req, ok = readRequest(conn, r); !ok || req.Nonce != "" {
+			return
+		}
 	}
 	if subtle.ConstantTimeCompare([]byte(req.Token), []byte(d.token)) != 1 {
 		writeResp(conn, fail("bad token"))
@@ -130,6 +134,24 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 	resp := d.handle(ctx, req)
 	resp.ClaudeSession = d.claudeSessionOf(req.Session)
 	writeResp(conn, resp)
+}
+
+// readRequest reads one request line, answering one that is too long or isn't JSON with why.
+func readRequest(conn net.Conn, r *bufio.Reader) (proto.Request, bool) {
+	line, err := readLine(r, maxRequest)
+	if errors.Is(err, errTooLong) {
+		writeResp(conn, fail(fmt.Sprintf("bad request: over %d KB", maxRequest>>10)))
+		return proto.Request{}, false
+	}
+	if err != nil {
+		return proto.Request{}, false
+	}
+	var req proto.Request
+	if err := json.Unmarshal(line, &req); err != nil {
+		writeResp(conn, fail("bad request: "+err.Error()))
+		return proto.Request{}, false
+	}
+	return req, true
 }
 
 // claudeSessionOf is the Claude Code session ID held for the session id, which an MCP server
@@ -521,6 +543,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	var whole []delivery
 	var told []*session
 	unread := 0
+	room := newWholeRoom()
 	for _, id := range ids {
 		// A session in its grace, or stopped, is told of its notices once it is back.
 		if id == "" || !d.liveLocked(id) {
@@ -558,13 +581,19 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 				// A message with no body is given whole whatever the setting (#355): its notice
 				// would show all of it, and the agent, having it, wouldn't call inbox, so it
 				// would stay unread and come a second time when the turn ends.
-				if printsWhole && (busyWhole || subjectOnly(m)) && !m.Attempted && !m.PushFailed {
+				//
+				// The reply has room for so much (wholeRoom): one that doesn't fit whole is told
+				// of as any other, and one whose notice doesn't fit either isn't told of yet, and
+				// waits, counted as unread, for the hook's next call.
+				if printsWhole && (busyWhole || subjectOnly(m)) && !m.Attempted && !m.PushFailed && room.take(m) {
 					whole = append(whole, delivery{id, m})
 					continue
 				}
-				m.Held = d.hookBusyLocked(id) && d.holdableLocked(id, m, wake, d.turnStartLocked(id))
-				m.Noticed, m.NoticedAt = true, time.Now()
-				fresh = append(fresh, m)
+				if room.takeNotice(m) {
+					m.Held = d.hookBusyLocked(id) && d.holdableLocked(id, m, wake, d.turnStartLocked(id))
+					m.Noticed, m.NoticedAt = true, time.Now()
+					fresh = append(fresh, m)
+				}
 			}
 			unread++
 		}
@@ -585,7 +614,14 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	if len(fresh) > 0 || len(whole) > 0 {
 		d.saveLocked()
 	}
-	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
+	var freshMsgs []*inMsg
+	for _, m := range fresh {
+		if !shown["notice "+m.Event.ID] {
+			shown["notice "+m.Event.ID] = true
+			freshMsgs = append(freshMsgs, m)
+		}
+	}
+	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(freshMsgs, false)}
 	if len(whole) > 0 {
 		resp.Read = d.wholeViewsLocked(wholeMsgs, whole)
 	}
@@ -625,6 +661,7 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 	}
 	var given []delivery
 	held := false
+	room := newWholeRoom()
 	for _, s := range d.touchHookLocked(req) {
 		first := req.Continues && !s.stopContinues
 		s.stopSeen, s.stopContinues = true, req.Continues
@@ -641,7 +678,7 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 		if !req.Continues || !d.liveLocked(s.id) || d.clearChildInboxLocked(s.id) {
 			continue
 		}
-		for _, m := range d.continueTurnLocked(s, wake) {
+		for _, m := range d.continueTurnLocked(s, wake, room) {
 			given = append(given, delivery{s.id, m})
 		}
 	}
