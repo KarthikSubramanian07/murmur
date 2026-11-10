@@ -181,6 +181,12 @@ func TestHealthCountsNotices(t *testing.T) {
 	d.session("aaaaaa", "")
 	bob, _ := d.session("bbbbbb", "claude-bob")
 	p := d.page()
+	// The device pushes one ref at a time, so a send made now would wait behind the sessions'
+	// start events, which on a loaded machine can take longer than a request may.
+	eventually(t, "both sessions' starts pushed", func() bool {
+		h, _ := p.health()
+		return h.Pushes.Mesh.Pushed >= 2
+	})
 	if r := d.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "lunch?"}); r.Error != "" {
 		t.Fatalf("send: %+v", r)
 	}
