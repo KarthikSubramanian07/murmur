@@ -597,7 +597,7 @@ function messageButton(name) {
     "button",
     {
       class: "side-msg",
-      title: "Message " + name,
+      "data-tip": "Message",
       "aria-label": "Message " + name,
       "data-key": "msg-" + name,
       onclick: (e) => {
@@ -806,7 +806,7 @@ function hideButton(s) {
     "button",
     {
       class: "side-hide",
-      title: hidden ? "Show " + s.name + " again" : "Hide " + s.name + " until you show it again",
+      "data-tip": hidden ? "Show again" : "Hide until you show it again",
       "aria-label": hidden ? "Show " + s.name + " again" : "Hide " + s.name,
       "data-key": "hide-" + s.name,
       onclick: () => setHidden(s, !hidden),
@@ -1772,7 +1772,7 @@ function tagButton(s) {
     "button",
     {
       class: "side-tag",
-      title: "Tag " + s.name,
+      "data-tip": "Tag",
       "aria-label": "Tag " + s.name,
       "aria-haspopup": "dialog",
       "data-key": "tag-" + s.name,
@@ -3764,5 +3764,57 @@ NARROW.addEventListener("change", () => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !e.defaultPrevented && ui.drawer && !ui.setup && !ui.picker && !ui.tagMenu) setDrawer(false);
 });
+// Tooltips for icon buttons, drawn by the page rather than the browser: a browser's title waits about
+// a second and can't be styled. A tip shows 150 ms after the pointer settles on a [data-tip], or at
+// once when another tip was showing a moment ago, so sliding along a row of buttons reads each one.
+// Keyboard focus shows it too. The tip lives outside #root, so a render doesn't take it away.
+const tip = h("div", { class: "tip", role: "tooltip", "aria-hidden": "true" });
+document.body.append(tip);
+let tipFor = null;
+let tipTimer = 0;
+let tipHiddenAt = 0;
+
+function showTip(el) {
+  clearTimeout(tipTimer);
+  tipFor = el;
+  tip.textContent = el.dataset.tip;
+  tip.classList.add("on");
+  const r = el.getBoundingClientRect();
+  const t = tip.getBoundingClientRect();
+  const x = Math.max(6, Math.min(r.left + r.width / 2 - t.width / 2, window.innerWidth - t.width - 6));
+  const above = r.top - t.height - 6 >= 6;
+  tip.style.left = x + "px";
+  tip.style.top = (above ? r.top - t.height - 6 : r.bottom + 6) + "px";
+  tip.dataset.side = above ? "top" : "bottom";
+}
+
+function hideTip() {
+  clearTimeout(tipTimer);
+  if (tipFor) tipHiddenAt = Date.now();
+  tipFor = null;
+  tip.classList.remove("on");
+}
+
+function queueTip(el) {
+  if (el === tipFor) return;
+  clearTimeout(tipTimer);
+  if (tipFor || Date.now() - tipHiddenAt < 400) return showTip(el);
+  tipTimer = setTimeout(() => el.isConnected && showTip(el), 150);
+}
+
+document.addEventListener("pointerover", (e) => {
+  if (e.pointerType === "touch") return;
+  const el = e.target.closest?.("[data-tip]");
+  el ? queueTip(el) : hideTip();
+});
+document.addEventListener("pointerleave", hideTip);
+document.addEventListener("focusin", (e) => {
+  const el = e.target.closest?.("[data-tip]");
+  if (el && el.matches(":focus-visible")) queueTip(el);
+});
+document.addEventListener("focusout", hideTip);
+document.addEventListener("pointerdown", hideTip, true);
+document.addEventListener("scroll", hideTip, { capture: true, passive: true });
+
 setInterval(tick, 10000);
 start();

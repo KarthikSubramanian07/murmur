@@ -1041,11 +1041,55 @@ a.g-pr:hover {
   color: var(--sidebar-muted-foreground);
   background: var(--sidebar);
 }
+.side-tag,
+.side-msg,
+.side-hide {
+  transition:
+    background-color 0.1s var(--ease),
+    color 0.1s var(--ease),
+    transform 0.1s var(--ease);
+}
 .side-tag:hover,
 .side-msg:hover,
 .side-hide:hover {
-  background: color-mix(in oklab, var(--sidebar-foreground) 10%, var(--sidebar));
+  background: color-mix(in oklab, var(--sidebar-foreground) 14%, var(--sidebar));
   color: var(--sidebar-foreground);
+}
+.side-tag:active,
+.side-msg:active,
+.side-hide:active {
+  transform: scale(0.9);
+}
+
+/* A button's tooltip (app.js showTip), as T3 Code's: small, dark, quick to show and to move. */
+.tip {
+  position: fixed;
+  z-index: 100;
+  top: 0;
+  left: 0;
+  max-width: 16rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-md);
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1rem;
+  white-space: nowrap;
+  box-shadow: var(--shadow-popover);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(2px);
+  transition:
+    opacity 0.1s var(--ease),
+    transform 0.1s var(--ease);
+}
+.tip[data-side="bottom"] {
+  transform: translateY(-2px);
+}
+.tip.on {
+  opacity: 1;
+  transform: none;
 }
 .side-tag .icon,
 .side-msg .icon,
