@@ -135,7 +135,7 @@
   --card: #2f3238;
   --popover: #24262b;
   --primary: #8ea2ff;
-  --primary-foreground: #fff;
+  --primary-foreground: #14151a; /* dark on the pale primary: white is 2.4:1 */
   --muted-foreground: #9b9ea8;
   --secondary-label: #8c8f99;
   --message-surface: #383a42;
@@ -3185,6 +3185,12 @@ a.g-pr:hover {
 }
 .chat-msg-face.chat-msg-first {
   padding-top: 0.375rem;
+}
+/* In a conversation the message stays in the centered column, its hover area reaching 0.75rem past
+ * either side of it, as the negative margin above does in Recent. */
+.chat-thread > .chat-msg-face {
+  margin-inline: max(-0.75rem, calc((100% - var(--chat-content-max-width)) / 2 - 0.75rem));
+  max-width: none;
 }
 .chat-msg-face:hover {
   background: var(--row-hover);
