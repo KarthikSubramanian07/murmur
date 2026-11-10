@@ -2,6 +2,8 @@ module github.com/a-Fig/murmur
 
 go 1.26.0
 
+toolchain go1.26.10
+
 require (
 	github.com/Microsoft/go-winio v0.6.4
 	github.com/modelcontextprotocol/go-sdk v1.8.0
