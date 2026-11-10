@@ -477,7 +477,8 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 //
 // A session the page sets to be given messages whole while busy (#204) gets each new one with its
 // body instead, which the hook shows as its turn would read: it is read then, and leaves the
-// inbox and the count. Only a hook that says it prints them (req.Whole) gets them so.
+// inbox and the count. So does any session, for a message with no body (#355). Only a hook that
+// says it prints them (req.Whole) gets them so.
 func (d *Daemon) notices(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
@@ -527,7 +528,8 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		}
 		// Only the hook shows a message whole: a request that names no client's session isn't one,
 		// and a hook that doesn't say it prints Read (req.Whole) would lose it (#229).
-		givesWhole := hookReq(req) && req.Whole && wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
+		printsWhole := hookReq(req) && req.Whole
+		busyWhole := wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
 			if m.Pushing {
 				continue
@@ -535,12 +537,16 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
 				// One handed to T3 or the socket before may be there already: it gets the
 				// subject only, as after any handoff that failed, not a second whole telling.
-				if givesWhole && !m.Attempted && !m.PushFailed {
+				//
+				// A message with no body is given whole whatever the setting (#355): its notice
+				// would show all of it, and the agent, having it, wouldn't call inbox, so it
+				// would stay unread and come a second time when the turn ends.
+				if printsWhole && (busyWhole || subjectOnly(m)) && !m.Attempted && !m.PushFailed {
 					whole = append(whole, delivery{id, m})
 					continue
 				}
 				m.Held = d.hookBusyLocked(id) && d.holdableLocked(id, m, wake, d.turnStartLocked(id))
-				m.Noticed = true
+				m.Noticed, m.NoticedAt = true, time.Now()
 				fresh = append(fresh, m)
 			}
 			unread++
@@ -575,6 +581,12 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		resp.Unread = unread
 	}
 	return resp
+}
+
+// subjectOnly says message m has no body, as its reader sees it (view.Turn): its subject is all of
+// it, and so is the hook's notice of it.
+func subjectOnly(m *inMsg) bool {
+	return strings.TrimSpace(bus.Text(m.Event.Body, bus.MaxBody)) == ""
 }
 
 // hookReq says req is from the hook, which names its session by its client's ID for it: Claude
@@ -827,6 +839,7 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 			FromOwner: d.ownerOfLocked(e.From), FromDevice: device, To: e.To, Subject: e.Subject, At: e.At}
 		if withBody {
 			v.Body = e.Body
+			v.Told = m.NoticedAt
 		}
 		views = append(views, v)
 	}

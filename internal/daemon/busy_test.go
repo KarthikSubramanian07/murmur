@@ -62,7 +62,7 @@ func TestABusySessionIsToldAndGetsTheTurnWhenIdle(t *testing.T) {
 
 	b.finishedATurn("claude-bob")
 	b.hookNotices("claude-bob") // a prompt: the session is at work
-	a.send("aaaaaa", bob, "first", "")
+	a.send("aaaaaa", bob, "first", "its body")
 	var r proto.Response
 	eventually(t, "the notice", func() bool {
 		r = b.hookNotices("claude-bob")
@@ -74,7 +74,7 @@ func TestABusySessionIsToldAndGetsTheTurnWhenIdle(t *testing.T) {
 	if r := b.hookNotices("claude-bob"); len(r.Messages) != 0 || r.Unread != 0 {
 		t.Errorf("the next tool call was told %v, %d unread; want nothing, the count unchanged", viewSubjects(r.Messages), r.Unread)
 	}
-	a.send("aaaaaa", bob, "second", "")
+	a.send("aaaaaa", bob, "second", "its body")
 	eventually(t, "the second notice", func() bool {
 		r = b.hookNotices("claude-bob")
 		return len(r.Messages) > 0
@@ -107,7 +107,7 @@ func TestAMessageReadDuringTheTurnIsNotATurnAfter(t *testing.T) {
 
 	b.finishedATurn("claude-bob")
 	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob, "read me now", "")
+	a.send("aaaaaa", bob, "read me now", "its body")
 	eventually(t, "the notice", func() bool { return len(b.hookNotices("claude-bob").Messages) > 0 })
 	if got := viewSubjects(b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages); len(got) != 1 {
 		t.Fatalf("inbox: %v", got)
@@ -128,11 +128,11 @@ func TestAnIdleSessionIsWokenAndAnUntoldMessageWaitsForTheTurnEnd(t *testing.T) 
 
 	b.hookNotices("claude-bob")
 	b.turnEnd("claude-bob")
-	a.send("aaaaaa", bob, "while idle", "")
+	a.send("aaaaaa", bob, "while idle", "its body")
 	eventually(t, "the idle session woken", func() bool { return len(calls()) == 1 })
 
 	b.hookNotices("claude-bob") // the turn it was woken for
-	a.send("aaaaaa", bob, "late in the turn", "")
+	a.send("aaaaaa", bob, "late in the turn", "its body")
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "late in the turn") })
 	holds(t, "no turn while at work", time.Second, func() bool { return len(calls()) == 1 })
 	b.turnEnd("claude-bob")
@@ -155,7 +155,7 @@ func TestASubagentsCallTellsNothing(t *testing.T) {
 	b.finishedATurn("claude-bob")
 	b.hookNotices("claude-bob") // the turn the subagent works in
 	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Subagent: true})
-	a.send("aaaaaa", bob, "for the parent", "")
+	a.send("aaaaaa", bob, "for the parent", "its body")
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "for the parent") })
 	holds(t, "nothing told to the subagent, no turn", time.Second, func() bool {
 		r := b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Subagent: true})
@@ -179,7 +179,7 @@ func TestAnInterruptedTurnInT3EndsByT3sDatabase(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob, "after the stop", "")
+	a.send("aaaaaa", bob, "after the stop", "its body")
 	eventually(t, "the notice", func() bool { return len(b.hookNotices("claude-bob").Messages) > 0 })
 	holds(t, "no turn while the run goes on", time.Second, func() bool { return len(calls()) == 0 })
 	// The run ended a minute ago by T3's clock, before the hook's last call: a late hook.
@@ -199,7 +199,7 @@ func TestABackgroundSubagentDoesntHoldTheSession(t *testing.T) {
 
 	b.finishedATurn("claude-bob")
 	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Subagent: true})
-	a.send("aaaaaa", bob, "while the subagent works", "")
+	a.send("aaaaaa", bob, "while the subagent works", "its body")
 	eventually(t, "the turn", func() bool { return len(calls()) == 1 })
 }
 
@@ -215,7 +215,7 @@ func TestBeforeTheFirstStopABusySessionGetsTheTurn(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob, "no stop hook", "")
+	a.send("aaaaaa", bob, "no stop hook", "its body")
 	eventually(t, "the turn", func() bool { return len(calls()) == 1 })
 }
 
@@ -244,7 +244,7 @@ func TestAReconnectedSessionIsHeldWhileItsRunGoes(t *testing.T) {
 	bob := b.reconnected("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "after the restart", "")
+	a.send("aaaaaa", bob, "after the restart", "its body")
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "after the restart") })
 	holds(t, "no turn before the thread is read", time.Second, func() bool { return len(calls()) == 0 })
 	// A subagent's command, bracketed like any (#21), is a subagent's hook too.
