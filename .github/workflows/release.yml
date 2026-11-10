@@ -31,13 +31,17 @@ jobs:
       group: release-${{ inputs.tag || github.ref_name }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v5
+      # Actions are pinned to a commit, since this job can write releases (#308's review).
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
-      - uses: actions/setup-go@v6
+      # go.mod's toolchain line is the Go a release is built with. No cache: one restored from
+      # another workflow's run would go into the binaries unchecked.
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache: false
       - name: Check the tag
         run: |
           if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
@@ -64,6 +68,15 @@ jobs:
             *) echo "::error::The built binary says \"$out\", not the version $version."; exit 1 ;;
           esac
           (cd dist && sha256sum mur-* > SHA256SUMS && cat SHA256SUMS)
+      # A known vulnerability the binaries can reach stops the release; raising go.mod's toolchain
+      # line to the Go release that fixes it is the usual cure.
+      - name: Check the binaries for known vulnerabilities
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          for bin in dist/mur-*; do
+            echo "govulncheck $bin"
+            "$(go env GOPATH)/bin/govulncheck" -mode=binary "$bin"
+          done
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
