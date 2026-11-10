@@ -225,7 +225,9 @@ func StartDaemon(exe, gitDir string, page *os.File, flags ...string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	proc.Protect(dir) // before the log is made in it; the daemon tries again, and logs a failure
+	// Before the log is made in it. The daemon tries again, and logs a failure; this one is told
+	// only if the log can't be opened, when it may be why.
+	perr := proc.Protect(dir)
 	logPath := filepath.Join(dir, "daemon.log")
 	// WMI cannot inherit logf and adds its path as --log. Open the forwarded
 	// log destination so that fallback preserves a custom --log too.
@@ -239,6 +241,9 @@ func StartDaemon(exe, gitDir string, page *os.File, flags ...string) error {
 	}
 	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
+		if perr != nil {
+			return fmt.Errorf("%w (keeping other users out of %s: %v)", err, dir, perr)
+		}
 		return err
 	}
 	defer logf.Close()

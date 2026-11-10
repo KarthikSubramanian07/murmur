@@ -57,7 +57,10 @@ func Protect(dir string) error {
 		return fmt.Errorf("setting who may open %s: %w", abs, err)
 	}
 	if err := probe(abs); err != nil {
-		restore(abs, before)
+		if rerr := restore(abs, before); rerr != nil {
+			return fmt.Errorf("this user couldn't write in %s with its new access list (%v), and its old list couldn't be put back (%v): "+
+				"the user may be shut out of it; from an account that can, run icacls %q /reset /t", abs, err, rerr, abs)
+		}
 		return fmt.Errorf("%s left as it was: this user couldn't write in it with its new access list: %w", abs, err)
 	}
 	return nil
@@ -99,14 +102,14 @@ func probe(dir string) error {
 }
 
 // restore puts back the access list dir had before, protected or inherited as it was.
-func restore(dir string, sd *windows.SECURITY_DESCRIPTOR) {
+func restore(dir string, sd *windows.SECURITY_DESCRIPTOR) error {
 	dacl, _, err := sd.DACL()
 	if err != nil {
-		return
+		return err
 	}
 	info := windows.SECURITY_INFORMATION(windows.DACL_SECURITY_INFORMATION | windows.UNPROTECTED_DACL_SECURITY_INFORMATION)
 	if control, _, err := sd.Control(); err == nil && control&windows.SE_DACL_PROTECTED != 0 {
 		info = windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION
 	}
-	windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, info, nil, nil, dacl, nil)
+	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, info, nil, nil, dacl, nil)
 }
