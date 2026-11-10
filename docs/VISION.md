@@ -119,6 +119,17 @@ address once; see Updating and Counting use.)
   `mesh/<deviceId>/...`, `names/...`), and `refs/murmur/mesh` or `refs/murmur/presence` as refs
   themselves. Murmur writes nothing at any of them (found by the Opus reviews of V1, #8,
   2026-10-28).
+- A reader holds what it reads to a size, too (2026-11-09). Git keeps commits compressed, so a
+  quick fetch can bring a message of any size: one of 64 MB packed to 64 KB, and reading it whole
+  took 448 MB. A commit over 1 MB on a log or a presence, or 32 MB on the names registry (a
+  snapshot lists every name, about 45 bytes each), is passed over unread, as junk is, and the
+  cursor moves past it; git gives the size without the read. Nothing Murmur writes comes near
+  either. A log is read 500 commits at a time, with the daemon's lock let go between pages and the
+  state file saved once a page, not once per tags event, so a device back after days away doesn't
+  stall the sessions, the hook and the page while it catches up. It is read along first parents:
+  Murmur writes every log as a chain, and a page's last commit, the cursor a cut-short read goes on
+  from, stands for all before it only on a chain. A merge someone wrote by hand would otherwise have
+  its other side read again, and its messages delivered twice.
 - Reading: poll `git ls-remote origin 'refs/murmur/*'`, which is cheap; fetch only when a SHA has
   changed. How often is "Speed", below (3 s around a conversation; 10 s before 2026-10-29). A message takes about 6–8 s from a `send` to the
   receiving agent's turn ("Delivering a message as a turn", below); V1, polling every 10 s, took
@@ -169,7 +180,22 @@ daemon back after less than 10 minutes down queues what it missed for the sessio
 reconnect within 30 seconds of its start, and for sessions stopped within the 24 hours.
 
 Sessions reach the daemon over loopback TCP, on a random port written with a random token to
-`.git/murmur/daemon.json`. A daemon with no sessions, no open page (see The page for humans) and no
+`.git/murmur/daemon.json`. A client trusts that file only while the clone's lock (`daemon.lock`) is
+held (2026-11-09). A daemon that dies without removing the file (a crash, SIGKILL, a power cut)
+leaves an address another user's process could listen on, to be sent the sessions' hellos and
+requests and to answer with messages of its own. A daemon takes the lock before it writes the
+file, removes the file when it begins to stop, before it gives up its port, and lets the lock go
+only when it has gone. So a daemon.json beside a free lock is stale and is removed, a starting
+daemon removes one as soon as it holds the lock, and a client that loses its daemon forgets the
+address. Clients take the lock only shared, and only a daemon takes it exclusively, so a lock a
+client finds held is a daemon's; a timed retry left a window where another client's cleanup looked
+like a daemon. A client from before this takes it exclusively for a moment while stopping or
+replacing a daemon. This holds where the state directory is private to its user: it is made 0700 on Unix, and on Windows
+has whatever access the clone's location gives. A ping that proves the daemon knows the token was
+set aside: an older daemon couldn't give the proof, and a client must still talk to one to replace
+it.
+
+A daemon with no sessions, no open page (see The page for humans) and no
 T3 thread to wake for 10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
 next sync rather than when it goes stale.
 

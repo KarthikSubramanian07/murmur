@@ -258,6 +258,9 @@ func TestThreadFoundWhileRegisteringIsToldAfterwards(t *testing.T) {
 	l := &link{c: &client.Client{GitDir: gitDir}, hello: helloFor("claude-code", "/work"), changed: make(chan struct{}), find: fd.find, seek: currentSeek()}
 	go l.run(ctx)
 	eventually(t, "the thread to be found", l.threadKnown)
+	// The hello was made before the thread was found, but finding the daemon takes a moment, so it
+	// may reach the daemon after.
+	eventually(t, "the hello to arrive", func() bool { return f.helloCount() > 0 })
 	if h := f.lastHello(); h.T3Thread != "" {
 		t.Fatalf("the hello had the thread already: %+v", h.Route)
 	}
