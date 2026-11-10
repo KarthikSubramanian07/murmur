@@ -70,6 +70,45 @@ func agentHookCommand(exe, agent string) string {
 	return "'" + strings.ReplaceAll(exe, "'", `'\''`) + "' hook " + agent
 }
 
+// tomlStringAfter returns the delimiter of the multi-line string a TOML line leaves open (three
+// double or three single quotes), given the one open where it starts (none: ""). It reads the line's strings, so quotes in
+// a comment, or a delimiter inside a one-line string, don't count.
+func tomlStringAfter(line, open string) string {
+	for i := 0; i < len(line); {
+		if open != "" {
+			switch {
+			case open == `"""` && line[i] == '\\':
+				i += 2
+			case strings.HasPrefix(line[i:], open):
+				for i += 3; i < len(line) && line[i] == open[0]; i++ {
+					// up to two more quotes end the string, as part of it
+				}
+				open = ""
+			default:
+				i++
+			}
+			continue
+		}
+		switch c := line[i]; {
+		case c == '#':
+			return ""
+		case strings.HasPrefix(line[i:], `"""`), strings.HasPrefix(line[i:], `'''`):
+			open = line[i : i+3]
+			i += 3
+		case c == '"' || c == '\'':
+			for i++; i < len(line) && line[i] != c; i++ {
+				if c == '"' && line[i] == '\\' {
+					i++
+				}
+			}
+			i++
+		default:
+			i++
+		}
+	}
+	return open
+}
+
 // psQuote quotes s as a PowerShell single-quoted string. PowerShell ends one at any of its five
 // single quotes (' and four curly ones), and reads a doubled one as itself, so each is doubled.
 func psQuote(s string) string {
@@ -294,16 +333,9 @@ func setTrustedHash(text, nl, key, hash string) (string, error) {
 	inString := "" // the quotes that end the multi-line string a line is in
 	for i, raw := range lines {
 		l := strings.TrimRight(raw, "\r")
-		if inString != "" {
-			if strings.Count(l, inString)%2 == 1 {
-				inString = ""
-			}
-			continue
-		}
-		for _, q := range []string{`"""`, `'''`} {
-			if strings.Count(l, q)%2 == 1 {
-				inString = q
-			}
+		was := inString
+		if inString = tomlStringAfter(l, inString); was != "" {
+			continue // a line that starts inside a string is neither a header nor a key
 		}
 		if path, ok := tableHeader(l); ok {
 			table = path

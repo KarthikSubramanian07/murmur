@@ -154,6 +154,23 @@ func TestEditCodexTrust(t *testing.T) {
 	if out, _, err := editCodexTrust(other, trust); err != nil || out != strings.Replace(other, "'''\n\n", "'''\ntrusted_hash = \"sha256:new\"\n\n", 1) {
 		t.Errorf("another key of the table: %v\n%s", err, out)
 	}
+	// Quotes in a comment or a one-line string open nothing.
+	commented := "[hooks.state.'C:\\h\\hooks.json:stop:0:0']\nnote = \"'''\" # '''\n# '''\ntrusted_hash = \"sha256:old\"\n"
+	if out, _, err := editCodexTrust(commented, trust); err != nil || out != strings.Replace(commented, "sha256:old", "sha256:new", 1) {
+		t.Errorf("quotes in a comment: %v\n%s", err, out)
+	}
+	for _, c := range []struct{ line, open, want string }{
+		{`a = """x`, "", `"""`},
+		{`x""" # '''`, `"""`, ""},
+		{`x\""" still`, `"""`, `"""`},
+		{`a = '''x'''`, "", ""},
+		{`a = "\"'''"`, "", ""},
+		{`'''' b`, "'''", ""},
+	} {
+		if got := tomlStringAfter(c.line, c.open); got != c.want {
+			t.Errorf("tomlStringAfter(%q, %q) = %q, want %q", c.line, c.open, got, c.want)
+		}
+	}
 	for _, bad := range []string{
 		"[hooks.state.'C:\\h\\hooks.json:stop:0:0']\ntrusted_hash = \"\"\"\nsha256:old\"\"\"\n",
 		"[hooks.state]\n'C:\\h\\hooks.json:stop:0:0'.trusted_hash = \"x\"\n",
