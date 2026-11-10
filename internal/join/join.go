@@ -25,6 +25,8 @@ type Env struct {
 	ClaudeDir  string // Claude Code's config directory, where its settings.json is
 	ClaudeJSON string // the file Claude Code keeps user-scope MCP servers in
 	CodexHome  string // Codex's home, where its config.toml is
+	// CodexHomeDefault says CODEX_HOME is unset, so CodexHome is ~/.codex.
+	CodexHomeDefault bool
 	// The other agents' configuration directories, each "" for an agent join leaves alone (a test
 	// that isn't about it).
 	OpenCodeDir string // OpenCode's, with its opencode.json
@@ -63,7 +65,7 @@ func EnvFromProcess() (Env, error) {
 		e.ClaudeDir, e.ClaudeJSON = filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json")
 	}
 	if e.CodexHome = os.Getenv("CODEX_HOME"); e.CodexHome == "" {
-		e.CodexHome = filepath.Join(home, ".codex")
+		e.CodexHome, e.CodexHomeDefault = filepath.Join(home, ".codex"), true
 	}
 	// OpenCode and Muse follow XDG on every OS: ~/.config, not %APPDATA%, on Windows too.
 	config := os.Getenv("XDG_CONFIG_HOME")
