@@ -26,15 +26,28 @@ import { pathToFileURL } from 'node:url';
 const SITE = process.env.CENSUS_SITE || 'https://murmur.afig.dev';
 const REPO = /^github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9._-]{1,100})$/;
 
-// What one repo may cost: BUDGET of time, for its git and its account lookups, and MAX_REFS
-// devices' refs (a device has two, its log and its presence). Anyone can list a repo, and one with
-// huge objects or 100,000 refs would otherwise hold the census past its job's 30 minutes, and every
-// repo after it would go uncounted.
-// A repo over either is skipped, and fails the day's run as a refused one does, so it shows.
+// What one repo may cost: BUDGET of time, for its git and its account lookups, and MAX_REFS refs
+// on its bus, each a git log. Anyone can list a repo, and one with huge objects or 100,000 refs
+// would otherwise hold the census past its job's 30 minutes, and every repo after it would go
+// uncounted. A repo over either is skipped.
+//
+// MAX_REFS is a cost, not the site's limit: 2,000 refs can be up to 2,000 devices, and the site
+// takes at most 1,000 on one day. tooBig() checks a repo's counts against the site's limits once
+// they are made, so a repo too big for the site is skipped here, with the reason, not refused there.
 const BUDGET = 3 * 60e3;
 const MAX_REFS = 2000;
 
 const skip = message => Object.assign(new Error(message), { skipped: true });
+
+// Why the site would refuse these counts for their size (src/repos.js, invalid()), or "".
+export function tooBig(c) {
+  const over = (n, max, what) => (n > max ? `${n} ${what}, more than the site takes (${max})` : '');
+  return over(c.days.length, 3660, 'days on its bus') ||
+    over(c.days.reduce((n, d) => Math.max(n, d.devices.length), 0), 1000, 'devices on one day') ||
+    over(c.days.reduce((n, d) => n + d.devices.length, 0), 100000, "devices on the bus's days") ||
+    over(c.devices.length, 10000, 'devices') ||
+    over(c.contributors.length, 100000, 'contributors');
+}
 
 // Runs git in dir, killed at `deadline` (a Date.now() time).
 function git(dir, args, deadline = Infinity) {
@@ -310,6 +323,8 @@ export async function main(args, { read = census } = {}) {
     let c;
     try {
       c = await read(name);
+      const big = tooBig(c);
+      if (big) throw skip(big);
     } catch (err) {
       if (err.skipped) {
         console.error(`${name}: skipped: ${err.message}`);

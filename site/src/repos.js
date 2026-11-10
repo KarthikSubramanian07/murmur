@@ -101,6 +101,7 @@ export async function census(request, env) {
 // No day may be after tomorrow (UTC): a day in the future would keep a repo active and its people
 // new for ever. Nor may a bus day be before EPOCH, when there was no bus. A contributor's first
 // commit can be years before that. The census dates what it reads the same way (census.mjs).
+// Its tooBig() has the size limits below, to skip a repo too big for them: change both together.
 function invalid(c) {
   const latest = addDays(new Date().toISOString().slice(0, 10), 1);
   const count = n => Number.isSafeInteger(n) && n >= 0;

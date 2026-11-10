@@ -19,7 +19,7 @@ process.env.CENSUS_KEY = 'test-key';
 // The census's git, and the tests', read none of the developer's own config.
 process.env.GIT_CONFIG_GLOBAL = devNull;
 process.env.GIT_CONFIG_NOSYSTEM = '1';
-const { main, count, authors, contributors, apiLookup, census: readRepo } = await import('../census/census.mjs');
+const { main, count, authors, contributors, apiLookup, tooBig, census: readRepo } = await import('../census/census.mjs');
 
 const today = new Date().toISOString().slice(0, 10);
 const daysAgo = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
@@ -56,13 +56,13 @@ test('a repo the site refuses does not stop the census: the repos after it are s
   const names = ['github.com/a/one', 'github.com/b/two', 'github.com/c/three'];
   const db = recordingD1(names);
   const said = site(t, db);
-  // More days than the site takes: it answers 400.
-  const tooLong = Array.from({ length: 3661 }, () => ({ day: daysAgo(1), sessions: 0, messages: 0, records: 0, devices: [] }));
-  const read = name => counts(name, name.endsWith('two') ? { days: tooLong } : {});
+  // A day before the bus existed, which only a census with a bug would send: the site answers 400.
+  const early = [{ day: '2026-09-30', sessions: 0, messages: 1, records: 1, devices: [ID] }];
+  const read = name => counts(name, name.endsWith('two') ? { days: early } : {});
   await assert.rejects(main(names, { read }), /1 of 3 repos counted but not sent: github\.com\/b\/two/);
   assert.deepEqual(sent(db), ['github.com/a/one', 'github.com/c/three']);
   assert.equal(said.error.length, 1);
-  assert.match(said.error[0], /^github\.com\/b\/two: not sent: \/v1\/census: 400 Not counts: days\.$/);
+  assert.match(said.error[0], /^github\.com\/b\/two: not sent: \/v1\/census: 400 Not counts: totals days\.$/);
   assert.equal(said.log.length, 2);
 });
 
@@ -324,4 +324,42 @@ test('no account lookup starts after the deadline', async t => {
   const asked = hangingApi(t);
   assert.equal(await apiLookup('a', 'one', Date.now() - 1)('0'.repeat(40)), undefined);
   assert.deepEqual(asked, []);
+});
+
+// One repo's counts, each just over one of the site's size limits.
+const day = (devices = [ID]) => ({ day: daysAgo(1), sessions: 0, messages: 0, records: 0, devices });
+const thousand = Array.from({ length: 1000 }, (_, i) => hex(i));
+const oversized = {
+  'days on its bus': counts('github.com/a/one', { days: Array.from({ length: 3661 }, () => day()) }),
+  'devices on one day': counts('github.com/a/one', { days: [day([...thousand, hex(1000)])] }),
+  "devices on the bus's days": counts('github.com/a/one', { days: Array.from({ length: 101 }, () => day(thousand)) }),
+  devices: { ...counts('github.com/a/one'), devices: Array.from({ length: 10001 }, (_, i) => ({ id: hex(i), person: null })) },
+  contributors: counts('github.com/a/one', { contributors: many(100001) }),
+};
+
+test("the census's size limits are the site's: what the site refuses for its size, the census skips", async () => {
+  for (const [what, c] of Object.entries(oversized)) {
+    assert.match(tooBig(c), new RegExp(`^\\d+ ${what}, more than the site takes \\(\\d+\\)$`), what);
+    assert.equal((await post(recordingD1(['github.com/a/one']), c)).status, 400, what);
+  }
+  // At the limits, neither says no.
+  const atLimits = [
+    counts('github.com/a/one', { days: [day(thousand)] }),
+    counts('github.com/a/one', { days: Array.from({ length: 100 }, () => day(thousand)), contributors: many(100000) }),
+    { ...counts('github.com/a/one'), devices: Array.from({ length: 10000 }, (_, i) => ({ id: hex(i), person: null })) },
+  ];
+  for (const c of atLimits) {
+    assert.equal(tooBig(c), '');
+    assert.equal((await post(recordingD1(['github.com/a/one']), c)).status, 200);
+  }
+});
+
+test('a repo too big for the site is skipped, and nothing is sent for it', async t => {
+  const names = ['github.com/a/one', 'github.com/b/two'];
+  const db = recordingD1(names);
+  const said = site(t, db);
+  const read = name => (name.endsWith('two') ? { ...oversized['devices on one day'], repo: name } : counts(name));
+  await assert.rejects(main(names, { read }), { message: '1 of 2 repos skipped: github.com/b/two' });
+  assert.deepEqual(sent(db), ['github.com/a/one']);
+  assert.deepEqual(said.error, ['github.com/b/two: skipped: 1001 devices on one day, more than the site takes (1000)']);
 });
