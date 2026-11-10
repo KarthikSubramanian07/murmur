@@ -56,3 +56,23 @@ func TestReadFileRefusesALinkToADevice(t *testing.T) {
 		}
 	})
 }
+
+// A file past the cap is an error, not its first part: "{}" and then space parses, and writing it
+// back would lose what came after (Sol's review of #396).
+func TestReadTextRefusesAFilePastTheCap(t *testing.T) {
+	defer func(c int64) { readCap = c }(readCap)
+	readCap = 16
+	path := filepath.Join(t.TempDir(), "opencode.json")
+	if err := os.WriteFile(path, []byte("{}                // mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadText(path); err != errTooBig {
+		t.Errorf("ReadText: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := ReadText(path); err != nil || string(b) != "{}" {
+		t.Errorf("ReadText under the cap: %q, %v", b, err)
+	}
+}

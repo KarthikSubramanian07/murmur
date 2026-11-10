@@ -18,15 +18,16 @@ func withAgents(sb *sandbox) {
 	sb.GrokHome = filepath.Join(sb.root, "grok")
 }
 
-// OpenCode's JSONC config gets the server and the allow rule, its comments and layout kept; once.
+// OpenCode 2's JSONC config gets the server and the allow rule, its comments and layout kept; once.
 func TestRegisterOpenCodeKeepsTheConfig(t *testing.T) {
 	sb := newSandbox(t, false)
 	withAgents(sb)
+	withOpenCode(t, sb, "opencode v2.2.0")
 	path := filepath.Join(sb.OpenCodeDir, "opencode.json")
 	before := "{\n    // mine\n    \"$schema\":  \"https://opencode.ai/config.json\",\n    \"model\":  \"x/y\",\n}\n"
 	write(t, path, before)
 	h := sb.defaultHome(agents[agentIndex("opencode")])
-	did, fresh, err := sb.registerOpenCodeAt(h)
+	did, fresh, err := sb.registerOpenCodeAt(context.Background(), h)
 	if err != nil || !fresh || len(did) != 2 {
 		t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
 	}
@@ -36,7 +37,7 @@ func TestRegisterOpenCodeKeepsTheConfig(t *testing.T) {
 			t.Errorf("opencode.json lacks %s:\n%s", want, got)
 		}
 	}
-	if _, fresh, err := sb.registerOpenCodeAt(h); err != nil || fresh || read(t, path) != got {
+	if _, fresh, err := sb.registerOpenCodeAt(context.Background(), h); err != nil || fresh || read(t, path) != got {
 		t.Errorf("second: fresh=%v err=%v", fresh, err)
 	}
 	if r := openCodeRemoval(sb.Env, h); !strings.Contains(r, path) {
@@ -68,7 +69,7 @@ func TestRegisterOpenCodeRefusesWhatItCannotEdit(t *testing.T) {
 	path := filepath.Join(sb.OpenCodeDir, "opencode.jsonc")
 	bad := "{\"mcp\": [], // a list\n}"
 	write(t, path, bad)
-	if _, _, err := sb.registerOpenCodeAt(sb.defaultHome(agents[agentIndex("opencode")])); err == nil {
+	if _, _, err := sb.registerOpenCodeAt(context.Background(), sb.defaultHome(agents[agentIndex("opencode")])); err == nil {
 		t.Error("no error")
 	}
 	if read(t, path) != bad {

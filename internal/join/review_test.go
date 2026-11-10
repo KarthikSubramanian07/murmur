@@ -1,6 +1,7 @@
 package join
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,10 +15,11 @@ import (
 func TestRegisterOpenCodeWithBothFiles(t *testing.T) {
 	sb := newSandbox(t, false)
 	withAgents(sb)
+	withOpenCode(t, sb, "opencode v2.2.0")
 	jsonPath, jsoncPath := filepath.Join(sb.OpenCodeDir, "opencode.json"), filepath.Join(sb.OpenCodeDir, "opencode.jsonc")
 	write(t, jsonPath, `{"mcp": {"servers": {"murmur": {"type": "local", "command": ["/old/mur"], "disabled": true}}}}`)
 	write(t, jsoncPath, "{\n  // mine\n}\n")
-	if _, _, err := sb.registerOpenCodeAt(sb.defaultHome(agents[agentIndex("opencode")])); err != nil {
+	if _, _, err := sb.registerOpenCodeAt(context.Background(), sb.defaultHome(agents[agentIndex("opencode")])); err != nil {
 		t.Fatal(err)
 	}
 	jsonc := read(t, jsoncPath)
@@ -37,10 +39,11 @@ func TestRegisterOpenCodeWithBothFiles(t *testing.T) {
 func TestRegisterOpenCodeKeepsTheRuleLast(t *testing.T) {
 	sb := newSandbox(t, false)
 	withAgents(sb)
+	withOpenCode(t, sb, "opencode v2.2.0")
 	path := filepath.Join(sb.OpenCodeDir, "opencode.json")
 	write(t, path, `{"permissions": [{"action": "murmur_*", "resource": "*", "effect": "allow"}, {"action": "*", "resource": "*", "effect": "ask"}]}`)
 	h := sb.defaultHome(agents[agentIndex("opencode")])
-	if _, _, err := sb.registerOpenCodeAt(h); err != nil {
+	if _, _, err := sb.registerOpenCodeAt(context.Background(), h); err != nil {
 		t.Fatal(err)
 	}
 	got := read(t, path)
