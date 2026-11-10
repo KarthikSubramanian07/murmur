@@ -282,6 +282,8 @@
   .copy { font: 600 12.5px/1 Inter, system-ui, sans-serif; color: var(--ink); background: var(--butter); border: 0; border-radius: 999px; padding: 7px 11px; cursor: pointer; }
   .copy:hover { background: var(--cream); }
   .copy:focus-visible { outline: 3px solid var(--butter); outline-offset: 2px; }
+  /* Read by screen readers, not shown. */
+  .vh { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
   .steps { list-style: none; padding: 0; margin-top: 28px; border-top: 2px solid var(--ink); }
   .steps > li { display: grid; grid-template-columns: 2em minmax(0, 13em) minmax(0, 1fr); column-gap: 14px; padding: 18px 0; border-bottom: 1px solid #DDD7B8; }
   .n { font-size: 18px; font-weight: 700; color: var(--blue); line-height: 1.35; }
@@ -721,8 +723,9 @@ void main() {
     <p class="works" data-prose>Works in Claude Code, Codex, OpenCode, Muse Code, Pi and Grok, in T3 Code or on their own. A message arrives as a new turn in T3 Code and in Claude Code; elsewhere it waits in the agent's inbox.</p>
     <div class="inst">
       <div class="inst-h">Install, needs git 2.31 or later</div>
-      <div class="cmd"><span>sh</span><code data-artifact>curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh</code><button class="copy" type="button" hidden>Copy</button></div>
-      <div class="cmd"><span>PowerShell</span><code data-artifact>irm https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1 | iex</code><button class="copy" type="button" hidden>Copy</button></div>
+      <div class="cmd"><span>sh</span><code data-artifact>curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh</code><button class="copy" type="button" hidden>Copy<span class="vh"> the sh command</span></button></div>
+      <div class="cmd"><span>PowerShell</span><code data-artifact>irm https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1 | iex</code><button class="copy" type="button" hidden>Copy<span class="vh"> the PowerShell command</span></button></div>
+      <p class="vh" role="status" id="copied"></p>
     </div>
     <ol class="steps">
       <li>
@@ -782,13 +785,16 @@ void main() {
     else if (!film.paused) { hiding = true; film.pause(); }
   }, { threshold: .6 }).observe(film);
 
-  // Copy buttons on the install commands; hidden without JS.
+  // Copy buttons on the install commands; hidden without JS. The word on the button changes for the
+  // eye, and the status line under the commands says what happened to a screen reader.
+  const status = document.getElementById('copied');
   document.querySelectorAll('.copy').forEach(b => {
     b.hidden = false;
+    const word = b.firstChild, what = b.querySelector('.vh').textContent.trim();
     b.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(b.previousElementSibling.textContent); b.textContent = 'Copied'; }
-      catch { b.textContent = 'Select it'; }
-      setTimeout(() => { b.textContent = 'Copy'; }, 1400);
+      try { await navigator.clipboard.writeText(b.previousElementSibling.textContent); word.nodeValue = 'Copied'; status.textContent = `Copied ${what}.`; }
+      catch { word.nodeValue = 'Select it'; status.textContent = `Couldn't copy ${what}: select it and copy it yourself.`; }
+      setTimeout(() => { word.nodeValue = 'Copy'; status.textContent = ''; }, 1400);
     });
   });
 })();
