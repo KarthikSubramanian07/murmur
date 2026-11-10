@@ -1972,6 +1972,15 @@ async function openRepo(r) {
   render();
   try {
     const { url } = await api("/api/repos/open", { method: "POST", body: JSON.stringify({ id: r.id }) });
+    // Starting a daemon can take a while, and the picker may have been closed and a draft begun.
+    if (ui.repoMenu !== m || hasUnsent()) {
+      if (ui.repoMenu === m) {
+        m.opening = null;
+        m.err = "Send or clear your draft first";
+        render();
+      }
+      return;
+    }
     location.assign(url);
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);

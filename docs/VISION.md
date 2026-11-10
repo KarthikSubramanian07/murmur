@@ -448,8 +448,8 @@ call.
   clone so that writers never need a lock (`internal/clones`). `mur join` adds a clone, `mur leave`
   takes it off, and a daemon adds its own as it starts, which takes in clones that joined before the
   record. Daemons finding each other was set aside: the picker has to offer a clone whose daemon
-  isn't running, and start it. A clone whose folder is gone, or that left, drops off when the record
-  is read. A daemon counts as running when the port in its `daemon.json` accepts a connection; no
+  isn't running, and start it. A clone whose folder is gone, or that left, drops off the list when
+  the record is read. A daemon counts as running when the port in its `daemon.json` accepts a connection; no
   token is sent to find out.
 - **The token doesn't travel with the tab.** The other page is another origin and needs its own
   token, which mustn't go in an address. So the page asks its daemon to open the clone. That daemon
@@ -1267,7 +1267,8 @@ An unwritable install (for example, a package manager's) is logged once and left
 restart. Successful updates log the old and new versions in the daemon log.
 
 After installation, the daemon waits until no message handoff is in flight and no page counts as
-open, or until the page asks for the restart (#240). It then blocks new handoffs and shuts down
+open, or until the page asks for the restart (#240), and until no key to its page that another
+clone's page handed a tab is still good (#348), since the next daemon's page doesn't know it. It then blocks new handoffs and shuts down
 normally, saving state and releasing the clone lock. It starts the installed binary with the same detached
 process helper clients use, forwarding its own flags (including poll and idle settings). Sessions
 reconnect through the existing grace and inbox restoration. Running MCP servers keep their loaded binary until their sessions

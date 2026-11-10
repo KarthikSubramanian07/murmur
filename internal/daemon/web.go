@@ -159,6 +159,12 @@ func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
 	}()
 }
 
+// pageKeysOut says a key to the page is out, unspent and still good (#348).
+func (d *Daemon) pageKeysOut() bool {
+	page := d.page.Load()
+	return page != nil && page.KeysOut()
+}
+
 // repoDir is the clone's top directory, where gh finds the repository from its remotes.
 func repoDir(gitDir string) string {
 	if filepath.Base(gitDir) == ".git" {

@@ -80,6 +80,9 @@ func TestAKeyOpensThePageOnce(t *testing.T) {
 	if resp := h.trade(key, "application/json"); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("a spent key: %d, want 401", resp.StatusCode)
 	}
+	if page.KeysOut() {
+		t.Error("a key is out after the only one was spent")
+	}
 
 	// An old key is no good, and keys don't pile up.
 	old := page.PageKey()
@@ -88,6 +91,10 @@ func TestAKeyOpensThePageOnce(t *testing.T) {
 	page.keys.mu.Unlock()
 	if resp := h.trade(old, "application/json"); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("an expired key: %d, want 401", resp.StatusCode)
+	}
+	page.PageKey()
+	if !page.KeysOut() {
+		t.Error("a key just made isn't out")
 	}
 	for range 3 * maxKeys {
 		page.PageKey()

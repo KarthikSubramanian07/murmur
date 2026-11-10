@@ -1157,7 +1157,9 @@ func (d *Daemon) restartWhenIdle(ctx context.Context) {
 			return
 		}
 		d.updateReady = true
-		if len(d.pushing) == 0 && (d.restartAsked || !d.pageOpenLocked(time.Now())) {
+		// A page key handed out for a tab on its way here (#348) dies with this daemon's page server:
+		// the restart waits out its minute, so the tab isn't turned away.
+		if len(d.pushing) == 0 && (d.restartAsked || !d.pageOpenLocked(time.Now())) && !d.pageKeysOut() {
 			d.updating = true
 			d.mu.Unlock()
 			d.stop()

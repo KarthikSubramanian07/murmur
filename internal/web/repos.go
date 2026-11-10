@@ -94,6 +94,21 @@ func (s *Server) PageKey() string {
 	return key
 }
 
+// KeysOut says a key is out that is still good: a tab may be on its way to trade it. A daemon
+// restarting onto an update waits for none to be, since the next daemon's page doesn't know them.
+func (s *Server) KeysOut() bool {
+	k := &s.keys
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	now := time.Now()
+	for key, end := range k.keys {
+		if now.After(end) {
+			delete(k.keys, key)
+		}
+	}
+	return len(k.keys) > 0
+}
+
 // spend reports whether key is a live key, and spends it.
 func (s *Server) spend(key string) bool {
 	k := &s.keys

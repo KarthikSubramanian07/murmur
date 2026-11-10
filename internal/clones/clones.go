@@ -133,8 +133,10 @@ func Remove(dir, gitDir string) error {
 
 // List is the clones on the record that are still there and still joined, by label, then path.
 // joined says whether the user is still in Murmur in the clone with that git dir. A clone whose git
-// dir is gone, or that has left, is taken off the record on the way. A file that can't be read is
-// passed over and left: on Windows a read fails while the file is being replaced.
+// dir is gone is taken off the record on the way. One that has left is passed over and kept, as a
+// `mur join` may be writing it again at that moment, and removing it after that would lose the
+// join (Sol's review, 2026-11-09); `mur leave` takes it off. A file that can't be read is passed
+// over and left: on Windows a read fails while the file is being replaced.
 func List(dir string, joined func(gitDir string) bool) ([]Clone, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -166,7 +168,6 @@ func List(dir string, joined func(gitDir string) bool) ([]Clone, error) {
 			continue // a drive not mounted just now, say: neither listed nor forgotten
 		}
 		if !joined(c.GitDir) {
-			os.Remove(p)
 			continue
 		}
 		out = append(out, c)

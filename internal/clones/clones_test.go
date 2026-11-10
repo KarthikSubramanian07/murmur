@@ -9,7 +9,8 @@ import (
 )
 
 // A clone recorded by join, then by its daemon with the repository's name, is listed once with that
-// name; one whose folder is gone, or whose user has left, is dropped from the record as it is read.
+// name; one whose folder is gone is dropped from the record as it is read, and one whose user has
+// left isn't listed.
 func TestTheRecordListsJoinedClonesThatAreStillThere(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "record")
 	root := t.TempDir()
@@ -46,8 +47,8 @@ func TestTheRecordListsJoinedClonesThatAreStillThere(t *testing.T) {
 		t.Fatalf("listed %+v; want healveda (a) and murmur (b)", got)
 	}
 	entries, _ := os.ReadDir(dir)
-	if len(entries) != 2 {
-		t.Errorf("the record keeps %d files; the deleted and the left clones should be off it", len(entries))
+	if len(entries) != 3 {
+		t.Errorf("the record keeps %d files; the deleted clone should be off it, and the left one kept for a join that may be under way", len(entries))
 	}
 
 	// A leave takes the clone off; a second is no error.
