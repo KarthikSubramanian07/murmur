@@ -208,7 +208,7 @@ const (
 
 // Busy values. With BusySubject the hook shows the sender and subject, and the agent reads the
 // body with inbox; with BusyWhole it shows the message as it would go in as a turn, and the
-// message is read.
+// message is read. A message with no body is shown the second way under either (#355).
 const (
 	BusySubject = "subject"
 	BusyWhole   = "whole"

@@ -42,6 +42,11 @@ func TestTurn(t *testing.T) {
 			proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", FromAgent: "Claude Code", FromOwner: "smash",
 				To: "dev-0002/def456", Subject: "done", Introduced: true},
 			"Message from quiet-otter via " + name + ":\n\ndone\n\nReply with " + name + "'s `send` to quiet-otter if a reply is needed.\n"},
+		{"one a notice told of before (#355)",
+			proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", To: "*", Subject: "done", Body: "All of it.",
+				Introduced: true, Told: time.Now().Add(-12*time.Minute - 30*time.Second)},
+			"Message from quiet-otter via " + name + ", sent to everyone, which a notice told you of 12m ago:\n\ndone\n\nAll of it.\n\nReply with " +
+				name + "'s `send` to quiet-otter if a reply is needed.\n"},
 	} {
 		if got := Turn(tc.m); got != tc.want {
 			t.Errorf("%s:\n got %q\nwant %q", tc.what, got, tc.want)

@@ -40,12 +40,22 @@ func fakeDaemon(t *testing.T, gitDir string, answer func(proto.Request) string) 
 			}
 			go func() {
 				defer c.Close()
-				line, err := bufio.NewReader(c).ReadBytes('\n')
+				r := bufio.NewReader(c)
+				line, err := r.ReadBytes('\n')
 				if err != nil {
 					return
 				}
 				var req proto.Request
 				json.Unmarshal(line, &req)
+				if req.Op == proto.OpPing && req.Nonce != "" { // the daemon's proof (#371)
+					b, _ := json.Marshal(proto.Response{OK: true, Protocol: proto.Protocol, Proof: proto.Proof("tok", c.LocalAddr().String(), req.Nonce)})
+					c.Write(append(b, '\n'))
+					if line, err = r.ReadBytes('\n'); err != nil {
+						return
+					}
+					req = proto.Request{}
+					json.Unmarshal(line, &req)
+				}
 				mu.Lock()
 				got = append(got, req)
 				mu.Unlock()
