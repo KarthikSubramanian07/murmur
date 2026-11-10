@@ -4054,6 +4054,7 @@ let timer;
 let inflight = false;
 let polled = false;
 let loaded = false; // the messages have been fetched once, so what comes after is new
+let heldIds = null; // see poll
 let scrolledAt = 0;
 let stateAskedAt = 0; // when the state in hand was asked for
 
@@ -4066,11 +4067,14 @@ async function poll() {
   inflight = true;
   clearTimeout(timer);
   const wasConn = ui.conn;
-  const had = ui.messages.length;
+  // The messages in hand before any not yet announced. A poll that brings messages but not the
+  // state fails before it announces them, so this outlasts it, and the next poll still does.
+  if (!heldIds) heldIds = new Set(ui.messages.map((m) => m.id));
   try {
     const asked = Date.now();
     const [state] = await Promise.all([api("/api/state"), fetchMessages()]);
-    const arrived = loaded ? ui.messages.slice(had) : []; // the first fetch brings the history
+    const arrived = loaded ? ui.messages.filter((m) => !heldIds.has(m.id)) : []; // the first fetch brings the history
+    heldIds = null;
     loaded = true;
     // Another daemon is serving: it restarted onto an update, or a reinstall of the same version,
     // and serves this page at the same address and token. Its page may differ too, so load that.
@@ -4163,6 +4167,7 @@ async function start() {
     for (const key of [...minuteEdits.keys()]) cancelMinutes(key);
     confirmed = null;
     arrivedAt = 0;
+    heldIds = null;
     last = "";
     polled = false;
     loaded = false;
