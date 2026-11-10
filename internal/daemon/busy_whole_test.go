@@ -69,6 +69,9 @@ func TestBusySessionGetsTheWholeMessageThroughTheHook(t *testing.T) {
 	if len(r.Read) != 1 || len(r.Messages) != 0 {
 		t.Fatalf("with the whole message, the hook was given %+v", r)
 	}
+	if h, _ := pg.health(); h.Delivery.Hook.Whole != 1 || h.Delivery.Hook.Notices != 1 {
+		t.Errorf("the health snapshot counts the hook's %+v, want one whole and one notice", h.Delivery.Hook)
+	}
 	if r.Unread != 1 {
 		t.Errorf("the count is %d, want 1: first is unread, and the message given whole isn't", r.Unread)
 	}

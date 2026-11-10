@@ -159,10 +159,22 @@ func (r *giveUpRig) giveUp() {
 		r.t.Fatalf("the log isn't in the backlog: %v", r.d.backlog)
 	}
 	r.d.backlogAt = r.d.backlogAt.Add(-catchUpLimit - time.Minute)
+	before := r.giveUps()
 	r.sync()
 	if r.d.backlog[giveUpRef] {
 		r.t.Fatal("the backlog wasn't given up on")
 	}
+	if got := r.giveUps(); got != before+1 {
+		r.t.Errorf("the health snapshot counts %d backlogs given up on, want %d", got, before+1)
+	}
+}
+
+// giveUps is the backlogs given up on, as the health snapshot counts them.
+func (r *giveUpRig) giveUps() int64 {
+	h := &r.d.health
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.giveUps
 }
 
 // bobKnown gives this device a session called quiet-otter that has stopped and whose inbox is no
