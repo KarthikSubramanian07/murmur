@@ -1,0 +1,110 @@
+package logfile
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// open opens path as a starter opens daemon.log for a daemon's standard error: to append.
+func open(t *testing.T, path string) *os.File {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+	return f
+}
+
+func read(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// A daemon that runs for days keeps its log under the limit, with what came before the last move
+// in the .old file, and the lines after it at the start of the log, not after a hole where the old
+// lines were.
+func TestTheLogIsMovedAsideWhileTheDaemonRuns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.log")
+	if err := os.WriteFile(path, []byte("from the daemon before\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l := log.New(New(open(t, path), path, 100), "", 0)
+	for i := range 12 {
+		l.Printf("line %02d, ten more bytes", i) // 25 bytes a line
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Size() > 100 {
+		t.Fatalf("the log is %d bytes, over the limit of 100", fi.Size())
+	}
+	// The file held 23 bytes, and takes four lines between moves.
+	lines := func(from, to int) (s string) {
+		for i := from; i <= to; i++ {
+			s += fmt.Sprintf("line %02d, ten more bytes\n", i)
+		}
+		return s
+	}
+	if got, want := read(t, path), lines(11, 11); got != want {
+		t.Fatalf("the log after its last move is\n%q, want\n%q", got, want)
+	}
+	if got, want := read(t, path+".old"), lines(7, 10); got != want {
+		t.Fatalf("the .old file is\n%q, want what came between the last two moves:\n%q", got, want)
+	}
+}
+
+// A daemon whose standard error isn't daemon.log, such as one run by hand in a terminal, leaves
+// daemon.log alone, though another daemon wrote it.
+func TestALogThatIsntTheDaemonsIsLeftAlone(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "daemon.log")
+	big := strings.Repeat("x", 200)
+	if err := os.WriteFile(path, []byte(big), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, "terminal")
+	w := New(open(t, other), path, 100)
+	for range 10 {
+		fmt.Fprintln(w, "a line of the daemon run by hand")
+	}
+	if got := read(t, path); got != big {
+		t.Fatalf("daemon.log was changed to %q", got)
+	}
+	if _, err := os.Stat(path + ".old"); err == nil {
+		t.Fatal("daemon.log was moved aside")
+	}
+	if got := strings.Count(read(t, other), "\n"); got != 10 {
+		t.Fatalf("the daemon's own output has %d lines, want 10", got)
+	}
+}
+
+// A daemon started after this one, by an update, moves daemon.log aside when it starts. This one,
+// still writing to the file it had, then stops moving the log, which is now the new daemon's.
+func TestALogMovedByTheNextDaemonIsTheNextDaemons(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.log")
+	w := New(open(t, path), path, 100)
+	fmt.Fprintln(w, "the old daemon starts")
+	if err := os.Rename(path, path+".old"); err != nil {
+		t.Skipf("can't rename an open file here: %v", err) // Windows; StartDaemon's rename fails there too
+	}
+	newer := "the new daemon's first line\n"
+	if err := os.WriteFile(path, []byte(newer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for range 10 {
+		fmt.Fprintln(w, "the old daemon's last lines, as it stops")
+	}
+	if got := read(t, path); got != newer {
+		t.Fatalf("the new daemon's log was changed to %q", got)
+	}
+}

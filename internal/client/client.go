@@ -17,6 +17,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/logfile"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 )
@@ -236,7 +237,7 @@ func StartDaemon(exe, gitDir string, page *os.File, flags ...string) error {
 			logPath = path
 		}
 	}
-	if fi, err := os.Stat(logPath); err == nil && fi.Size() > 4<<20 {
+	if fi, err := os.Stat(logPath); err == nil && fi.Size() > logfile.Max {
 		os.Rename(logPath, logPath+".old")
 	}
 	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)

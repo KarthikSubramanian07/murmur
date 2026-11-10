@@ -1,0 +1,98 @@
+// Package logfile is what a daemon's log passes through on its way to daemon.log. It keeps the
+// file bounded while the daemon runs (docs/VISION.md, "One daemon per device").
+package logfile
+
+import (
+	"io"
+	"os"
+	"sync"
+)
+
+// Max is the size past which daemon.log moves to daemon.log.old: when a daemon starts
+// (client.StartDaemon), and while it runs (Writer).
+const Max = 4 << 20
+
+// Writer writes a daemon's log to out, its standard error, which a starter set to daemon.log (or
+// the daemon did, for --log). Once the file would pass a size, Writer copies it to path+".old" and
+// empties it. Renaming it would be simpler, but Windows doesn't rename a file that is open, and
+// out stays open: it is the process's standard error, which a panic's trace goes to too.
+// Emptying the file works on every system, because out was opened to append: each write goes to
+// the file's end, wherever that now is.
+type Writer struct {
+	mu   sync.Mutex
+	out  *os.File
+	path string // "" when out isn't the file at path, such as a terminal: then nothing is moved
+	size int64
+	max  int64
+}
+
+// New returns a Writer to out that keeps the file at path under max bytes, if out is that file.
+func New(out *os.File, path string, max int64) *Writer {
+	w := &Writer{out: out, max: max}
+	if fi, ok := same(out, path); ok {
+		w.path, w.size = path, fi.Size()
+	}
+	return w
+}
+
+// same says out is the file at path, and returns what out's Stat found.
+func same(out *os.File, path string) (os.FileInfo, bool) {
+	ofi, err := out.Stat()
+	if err != nil {
+		return nil, false
+	}
+	pfi, err := os.Stat(path)
+	if err != nil {
+		return nil, false
+	}
+	return ofi, os.SameFile(ofi, pfi)
+}
+
+// Write writes p, after moving the file aside if p would take it past the limit.
+func (w *Writer) Write(p []byte) (int, error) {
+	n := len(p)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.path != "" && w.size > 0 && w.size+int64(len(p)) > w.max {
+		w.rotate()
+	}
+	m, err := w.out.Write(p)
+	w.size += int64(m)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// rotate copies the file to path+".old" and empties it. A daemon started after this one, by an
+// update, moves the file aside itself when it starts; this one then stops moving it, rather than
+// empty the file the new daemon writes. A copy that fails leaves the file as it is, to be tried
+// again after another max bytes. Caller holds mu.
+func (w *Writer) rotate() {
+	w.size = 0
+	if _, ok := same(w.out, w.path); !ok {
+		w.path = ""
+		return
+	}
+	if copyFile(w.path, w.path+".old") != nil {
+		return
+	}
+	os.Truncate(w.path, 0)
+}
+
+func copyFile(from, to string) error {
+	src, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.OpenFile(to, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
+		return err
+	}
+	return dst.Close()
+}
