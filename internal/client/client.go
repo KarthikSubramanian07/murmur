@@ -277,9 +277,14 @@ func (c *Client) running(ctx context.Context) (info proto.Info, protocol int, le
 }
 
 // held reports whether a daemon holds the clone's lock and daemon.json still names info: all that a
-// daemon from before proof can show, checked before each connection to one. It narrows, and can't
-// close, the window in which such a daemon dies and another process takes its port; a client that
-// may start daemons replaces one of these as soon as it finds it.
+// daemon from before proof can show. It is checked on each connection to one once the connection is
+// made, before the token is sent. A daemon keeps its port, its lock and its daemon.json until it
+// dies, and nothing else can listen on the port while it lives, so if they are still its after the
+// connection was made, the connection is to it. Checked before the dial, as it first was, the
+// daemon could die and another process take its port in between (Sol's review of main before
+// v0.3.0-rc.1). What this can't tell is a daemon that has died and a new one that has just taken the
+// lock and not yet removed the old daemon.json, which it does at once; a client that may start
+// daemons replaces one of these as soon as it finds it.
 func (c *Client) held(info proto.Info) bool {
 	l, err := proc.LockShared(filepath.Join(StateDir(c.GitDir), "daemon.lock"))
 	if err == nil {
@@ -528,7 +533,14 @@ func (c *Client) Do(ctx context.Context, req proto.Request) (proto.Response, err
 	return resp, err
 }
 
+// beforeDial, if set, is called as a connection is about to be dialed: a test's moment to change
+// what answers there.
+var beforeDial func(addr string)
+
 func dial(ctx context.Context, addr string) (net.Conn, error) {
+	if beforeDial != nil {
+		beforeDial(addr)
+	}
 	var dialer net.Dialer
 	dctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -556,16 +568,14 @@ func open(ctx context.Context, addr string) (conn net.Conn, stop func() bool, er
 // written, after which the daemon may have acted on it.
 func (c *Client) roundTrip(ctx context.Context, req proto.Request) (resp proto.Response, sent bool, err error) {
 	info, legacy := c.target()
-	if legacy && !c.held(info) {
-		return proto.Response{}, false, errNotDaemon
-	}
-	return exchange(ctx, info, legacy, req)
+	return c.exchange(ctx, info, legacy, req)
 }
 
 // exchange is roundTrip with the daemon info names. Each connection proves the daemon before the
 // request goes, on that connection, so a request never reaches whatever took the port of a daemon
-// that died since it was found (#371); only one from before proof (legacy) is sent to unproved.
-func exchange(ctx context.Context, info proto.Info, legacy bool, req proto.Request) (resp proto.Response, sent bool, err error) {
+// that died since it was found (#371). One from before proof (legacy) can't prove itself; it is
+// checked by the clone's lock once the connection is made (see held).
+func (c *Client) exchange(ctx context.Context, info proto.Info, legacy bool, req proto.Request) (resp proto.Response, sent bool, err error) {
 	if info.Addr == "" {
 		return proto.Response{}, false, ErrNoDaemon
 	}
@@ -579,13 +589,15 @@ func exchange(ctx context.Context, info proto.Info, legacy bool, req proto.Reque
 		return proto.Response{}, false, ctx.Err()
 	}
 	r := bufio.NewReader(conn)
-	if !legacy {
-		if _, err := prove(conn, r, info); err != nil {
-			if ctx.Err() != nil {
-				err = ctx.Err()
-			}
-			return proto.Response{}, false, err
+	if legacy {
+		if !c.held(info) {
+			return proto.Response{}, false, errNotDaemon
 		}
+	} else if _, err := prove(conn, r, info); err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return proto.Response{}, false, err
 	}
 	req.Token = info.Token
 	if err := writeLine(conn, req); err != nil {
@@ -607,22 +619,23 @@ func exchange(ctx context.Context, info proto.Info, legacy bool, req proto.Reque
 	return resp, true, nil
 }
 
-// openSession opens a connection to the daemon info names, for a hello, proving it first.
+// openSession opens a connection to the daemon info names, for a hello, proving it first, or for
+// a daemon from before proof, checking the clone's lock once it is made (see held).
 func (c *Client) openSession(ctx context.Context, info proto.Info, legacy bool) (net.Conn, *bufio.Reader, error) {
-	if legacy && !c.held(info) {
-		return nil, nil, errNotDaemon
-	}
 	conn, err := dial(ctx, info.Addr)
 	if err != nil {
 		return nil, nil, err
 	}
 	conn.SetDeadline(time.Now().Add(15 * time.Second))
 	r := bufio.NewReader(conn)
-	if !legacy {
-		if _, err := prove(conn, r, info); err != nil {
+	if legacy {
+		if !c.held(info) {
 			conn.Close()
-			return nil, nil, err
+			return nil, nil, errNotDaemon
 		}
+	} else if _, err := prove(conn, r, info); err != nil {
+		conn.Close()
+		return nil, nil, err
 	}
 	return conn, r, nil
 }

@@ -206,7 +206,10 @@ daemon's up to 64 MB, about half again a full inbox of the longest messages esca
 that never ended was read until the deadline, however much it came to. A daemon of protocol 11 or
 older can't prove itself, and refuses the nonce's ping as a missing token. A client that may start
 daemons replaces one as it replaces any older daemon; one that may not (`mur stop`, the hook) talks
-to it unproved, as before, checking the lock before each connection. Discovery still contacts the
+to it unproved, as before, checking that the lock and daemon.json are still its once each
+connection is made, before the token goes. A daemon keeps all three until it dies, so a connection
+made while it holds them is to it; checked before the dial, as at first, the daemon could die and
+another process take its port in between (Sol's review of main before v0.3.0-rc.1). Discovery still contacts the
 listener before trying the lock, since trying the lock can turn away a daemon starting just then;
 what the listener is sent there is the nonce alone.
 

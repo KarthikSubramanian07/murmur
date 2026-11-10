@@ -246,7 +246,7 @@ func TestAProofForAnotherAddressOrNonceIsRefused(t *testing.T) {
 			if _, err := ping(context.Background(), info); !errors.Is(err, errNotDaemon) {
 				t.Errorf("ping: %v, want errNotDaemon", err)
 			}
-			if _, _, err := exchange(context.Background(), info, false, proto.Request{Op: proto.OpInbox}); err == nil {
+			if _, _, err := c.exchange(context.Background(), info, false, proto.Request{Op: proto.OpInbox}); err == nil {
 				t.Error("the inbox was answered")
 			}
 			if n := tokens.Load(); n > 0 {
@@ -277,5 +277,75 @@ func TestADaemonFromBeforeProofIsTrustedOnlyWhileItHoldsTheLock(t *testing.T) {
 	}
 	if got := m.requests(); len(got) > 0 {
 		t.Errorf("the listener at the dead daemon's address was sent %v", got)
+	}
+}
+
+// dieOnDial makes old die, and something else take its port, as the client is about to make its
+// nth connection from now: after any check made before the dial, and before the connection is
+// made. It returns what took the port, once it has.
+func dieOnDial(t *testing.T, old *standIn, n int) func() *impostor {
+	t.Helper()
+	addr := old.ln.Addr().String()
+	var m *impostor
+	dials := 0
+	beforeDial = func(to string) {
+		if to != addr {
+			return
+		}
+		if dials++; dials == n {
+			old.die()
+			m = listenImpostor(t, addr)
+		}
+	}
+	t.Cleanup(func() { beforeDial = nil })
+	return func() *impostor { return m }
+}
+
+// A daemon from before proof that dies between the client's check of the lock and its connection
+// leaves its port to whatever takes it then. The lock is checked once the connection is made, so
+// the request and the token don't go to it (Sol's review of main before v0.3.0-rc.1).
+func TestADaemonFromBeforeProofThatDiesAsTheClientDialsIsNotTrusted(t *testing.T) {
+	gitDir := stateOnly(t)
+	old := startStandIn(t, gitDir, proto.ProofProtocol-1)
+	c := connected(t, gitDir)
+	took := dieOnDial(t, old, 1)
+	if resp, err := c.Do(context.Background(), proto.Request{Op: proto.OpRoute}); err == nil {
+		t.Errorf("the request was answered: %+v", resp)
+	}
+	m := took()
+	if m == nil {
+		t.Fatal("the daemon didn't die as the client dialed")
+	}
+	if got := m.requests(); len(got) > 0 {
+		t.Errorf("what took the port was sent %v", got)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.tokens) > 0 {
+		t.Error("what took the port was sent the token")
+	}
+}
+
+// The same for a session's hello, whose connection stays open as long as the session.
+func TestAHelloToADaemonFromBeforeProofThatDiesAsTheClientDialsIsNotTaken(t *testing.T) {
+	gitDir := stateOnly(t)
+	old := startStandIn(t, gitDir, proto.ProofProtocol-1)
+	c := connected(t, gitDir)
+	took := dieOnDial(t, old, 2) // the first is Hello's ping, which finds the daemon still there
+	if conn, _, err := c.Hello(context.Background(), proto.Hello{ID: "aaaaaa"}); err == nil {
+		conn.Close()
+		t.Error("the hello was taken")
+	}
+	m := took()
+	if m == nil {
+		t.Fatal("the daemon didn't die as the client dialed")
+	}
+	if got := m.requests(); len(got) > 0 {
+		t.Errorf("what took the port was sent %v", got)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.tokens) > 0 {
+		t.Error("what took the port was sent the token")
 	}
 }
