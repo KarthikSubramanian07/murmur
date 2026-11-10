@@ -148,7 +148,8 @@ func TestPiHookWaitsOutTheGrace(t *testing.T) {
 	b.piHook(proto.OpNotices, file)
 	b.piHook(proto.OpTurnEnd, file)
 	b.piHook(proto.OpNotices, file)
-	a.send("aaaaaa", bob, "while away", "")
+	// A body, so the hook tells of it rather than giving it whole (#355).
+	a.send("aaaaaa", bob, "while away", "the body")
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "while away") })
 
 	conn.Close()
