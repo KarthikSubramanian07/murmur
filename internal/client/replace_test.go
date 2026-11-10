@@ -268,7 +268,7 @@ func TestAnOlderDaemonThatStaysIsAnError(t *testing.T) {
 		t.Error("a daemon was started while the older one holds the lock")
 		return nil
 	}
-	if !c.load() || c.ping(context.Background()) != nil || !c.Outdated() {
+	if !c.found(context.Background()) || !c.Outdated() {
 		t.Fatal("the stand-in isn't found as an older daemon")
 	}
 	old.ln.Close() // it keeps the lock and its file, and answers nothing
