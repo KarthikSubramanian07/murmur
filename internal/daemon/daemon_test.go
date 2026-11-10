@@ -333,6 +333,13 @@ func TestMessagesNoticesInbox(t *testing.T) {
 	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "key", Body: "AKIAIOSF\u200bODNN7EXAMPLE"}); !strings.Contains(r.Error, "not sent") {
 		t.Fatalf("secret with a zero-width space not blocked: %+v", r)
 	}
+	// Nor with a joiner or a non-joiner, which readers keep only between characters outside ASCII.
+	for _, joiner := range []rune{0x200D, 0x200C} {
+		body := "AKIAIOSF" + string(joiner) + "ODNN7EXAMPLE"
+		if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "key", Body: body}); !strings.Contains(r.Error, "not sent") {
+			t.Fatalf("secret with U+%04X in it not blocked: %+v", joiner, r)
+		}
+	}
 }
 
 func TestHistoryIsNotReplayed(t *testing.T) {

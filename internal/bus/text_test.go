@@ -95,9 +95,18 @@ func TestCleaningKeepsJoinersThatJoin(t *testing.T) {
 		"sh\u200d\u202eip":             "ship",
 		"ok" + "\u200d" + "\U000E0041": "ok",
 	}
+	// Next to ASCII a joiner joins nothing any script or emoji uses, and would hide a key from scrub.
+	zwj, zwnj := string(rune(0x200D)), string(rune(0x200C))
+	drop["AKIAIOSF"+zwj+"ODNN7EXAMPLE"] = "AKIAIOSFODNN7EXAMPLE"
+	drop["sec"+zwnj+"ret"] = "secret"
+	drop["👩"+zwj+"x"] = "👩x"
+	drop["x"+zwnj+"خ"] = "xخ"
 	for in, want := range drop {
 		if got := bus.OneLine(in, 120); got != want {
 			t.Errorf("OneLine(%+q) = %+q, want %+q", in, got, want)
+		}
+		if got := bus.Text(in, bus.MaxBody); !strings.Contains(in, " ") && got != want { // Text keeps spaces
+			t.Errorf("Text(%+q) = %+q, want %+q", in, got, want)
 		}
 	}
 }

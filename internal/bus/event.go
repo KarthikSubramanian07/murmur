@@ -350,10 +350,20 @@ func Text(s string, max int) string {
 // it reaches agents' context, so text from the bus could otherwise say one thing to the person
 // watching a session and another to its agent.
 //
-// The zero-width joiner and non-joiner stay where each joins two visible characters: the joiner
-// is how emoji such as a family or a woman at a laptop are made, and both shape words in Persian and the Indic scripts. One
-// in a run of them, or next to a space or another format character, is dropped. Flags spelled
-// with tag characters (England's, Scotland's) lose their tags and show as a black flag.
+// The zero-width joiner and non-joiner stay where each joins two visible characters outside ASCII:
+// the joiner is how emoji such as a family or a woman at a laptop are made, and both shape words in
+// Persian and the Indic scripts. No emoji sequence or script has one next to an ASCII character, so
+// one there is dropped, and a key can't hide from scrub behind it. So is one in a run of them, or
+// next to a space or another format character.
+//
+// What that costs: flags spelled with tag characters (England's, Scotland's) lose their tags and
+// show as a black flag; the direction marks (U+200E, U+200F, U+061C), which mixed Hebrew or Arabic
+// and Latin text sometimes needs to show in the right order, are dropped; so are the Arabic number
+// signs (U+0600 to U+0605); and a Malayalam chillu in the old encoding, a virama and a joiner at the
+// end of a word, loses its joiner.
+//
+// Other invisible characters aren't format characters and still pass: runs of variation selectors,
+// the combining grapheme joiner (U+034F) and the Hangul fillers.
 func dropFormat(s string) string {
 	if !strings.ContainsFunc(s, isFormat) {
 		return s
@@ -375,9 +385,11 @@ func dropFormat(s string) string {
 
 func isFormat(r rune) bool { return unicode.Is(unicode.Cf, r) }
 
-// joinable says whether r is a visible character a joiner may stand next to: a letter, a mark (a
-// vowel sign, an emoji's variation selector), a digit or a symbol (an emoji).
-func joinable(r rune) bool { return unicode.In(r, unicode.L, unicode.M, unicode.N, unicode.S) }
+// joinable says whether r is a visible character outside ASCII that a joiner may stand next to: a
+// letter, a mark (a vowel sign, an emoji's variation selector), a digit or a symbol (an emoji).
+func joinable(r rune) bool {
+	return r > unicode.MaxASCII && unicode.In(r, unicode.L, unicode.M, unicode.N, unicode.S)
+}
 
 // Addr joins a device and a session into an address.
 func Addr(device, session string) string { return device + "/" + session }
