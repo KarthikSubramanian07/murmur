@@ -20,11 +20,12 @@ import (
 // socket Claude Code offers (#57). The socket is a stand-in, a unix socket that records the lines
 // written to it; the stand-in `t3` of deliver_test.go shows nothing is run for these sessions.
 
-// fakeSocket records every line written to it, from every connection.
+// fakeSocket records every line written to it, from every connection, and when the first came.
 type fakeSocket struct {
-	path string
-	mu   sync.Mutex
-	got  []string
+	path  string
+	mu    sync.Mutex
+	got   []string
+	first time.Time
 }
 
 func useFakeSocket(t *testing.T) *fakeSocket {
@@ -52,6 +53,9 @@ func useFakeSocket(t *testing.T) *fakeSocket {
 				sc.Buffer(nil, 1<<21)
 				for sc.Scan() {
 					f.mu.Lock()
+					if len(f.got) == 0 {
+						f.first = time.Now()
+					}
 					f.got = append(f.got, sc.Text())
 					f.mu.Unlock()
 				}
@@ -65,6 +69,13 @@ func (f *fakeSocket) lines() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.got...)
+}
+
+// firstAt is when the socket got its first line, zero if it has none.
+func (f *fakeSocket) firstAt() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.first
 }
 
 // socketTurn reads what a session got on its socket as the daemon's one handoff: the auth line
@@ -176,7 +187,7 @@ func TestMessagingSocketNeedsTheSessionToBeRunning(t *testing.T) {
 	eventually(t, "the handoff", func() bool { return len(sock.lines()) == 2 })
 
 	conn.Close()
-	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.seesSession(bob) })
+	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.listsSession(bob) })
 	a.send("aaaaaa", bob, "while you were away", "wake up")
 	holds(t, "nothing more on the socket", time.Second, func() bool { return len(sock.lines()) == 2 })
 }
