@@ -94,6 +94,8 @@ for (const [page, title] of [['about', /About/], ['privacy', /Privacy/], ['conta
     assert.match(html, /<meta name="description" content="[^"]{50,}">/);
     const text = visibleText(html);
     assert.ok(text.length >= 500, `${page} has ${text.length} characters of text`);
+    // A heading's name is its text alone; a subtitle goes beside it, not inside.
+    for (const [h2] of html.matchAll(/<h2>[\s\S]*?<\/h2>/g)) assert.match(h2, /^<h2>[^<]+<\/h2>$/, `${page}: ${h2}`);
     // Its stylesheet is published with it.
     for (const [, href] of html.matchAll(/<link rel="stylesheet" href="(\/[^"]+)">/g)) assert.ok(existsSync(source(SITE + href)), `${href} missing`);
   });
@@ -110,8 +112,11 @@ test('the privacy page dates itself and points at join.md as the full account', 
 test('every page ends with the same links, and each one leads somewhere', () => {
   const pages = ['index.html', 'daemon/index.html', 'about/index.html', 'privacy/index.html', 'contact/index.html'];
   for (const file of pages) {
-    const foot = /<footer class="site-foot">([\s\S]*?)<\/footer>/.exec(read(file))?.[1];
+    const html = read(file);
+    const foot = /<footer class="site-foot">([\s\S]*?)<\/footer>/.exec(html)?.[1];
     assert.ok(foot, `${file} has no footer`);
+    // After <main>, so it is the page's contentinfo landmark.
+    assert.ok(html.indexOf('<footer class="site-foot">') > html.lastIndexOf('</main>'), `${file}'s footer is inside <main>`);
     const hrefs = [...foot.matchAll(/<a href="([^"]+)"/g)].map(m => m[1]);
     assert.deepEqual(hrefs, ['/about/', '/privacy/', '/contact/', 'https://github.com/a-Fig/murmur'], file);
     for (const href of hrefs.filter(h => h.startsWith('/'))) assert.ok(existsSync(source(SITE + href)), `${href} has no page`);

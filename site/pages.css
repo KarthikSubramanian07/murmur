@@ -87,21 +87,21 @@ body {
 .back:focus-visible { outline: 3px solid var(--cream); outline-offset: 3px; }
 
 h1 { margin-top: clamp(40px, 9vh, 88px); font-size: clamp(40px, 5.2vw, 68px); font-weight: 700; letter-spacing: -.035em; line-height: 1.04; color: var(--butter); text-wrap: balance; }
-.lead { max-width: 640px; margin-top: 22px; font-size: clamp(17px, 1.5vw, 20px); font-weight: 500; line-height: 1.5; letter-spacing: -.008em; color: color-mix(in srgb, var(--cream) 92%, var(--blue)); text-wrap: pretty; }
+.lead { max-width: 640px; margin-top: 22px; font-size: clamp(17px, 1.5vw, 20px); font-weight: 500; line-height: 1.5; letter-spacing: -.008em; color: var(--cream); text-shadow: 0 1px 16px rgba(14, 27, 69, .45); text-wrap: pretty; }
 .lead a { color: var(--cream); text-decoration-color: color-mix(in srgb, var(--cream) 45%, transparent); text-underline-offset: 4px; }
 .lead a:hover { text-decoration-color: var(--cream); }
 .lead a:focus-visible { outline: 2px solid var(--cream); outline-offset: 3px; border-radius: 3px; }
 .asof { display: inline-block; margin-top: 18px; padding: 4px 10px; border-radius: 999px; background: rgba(14, 27, 69, .22); box-shadow: inset 0 0 0 1px rgba(255, 251, 234, .2); font: 500 13px/1.4 var(--mono); color: var(--cream); }
 
 /* ---------- The sheet: cream, rounded at the top, as page 2 of the home page meets the blue ---------- */
-.sheet { flex: 1; background: var(--cream); color: var(--ink); border-radius: var(--sheet) var(--sheet) 0 0; padding: clamp(36px, 7vh, 72px) var(--gutter) 0; }
+.sheet { flex: 1; background: var(--cream); color: var(--ink); border-radius: var(--sheet) var(--sheet) 0 0; padding: clamp(36px, 7vh, 72px) var(--gutter) clamp(48px, 9vh, 88px); }
 .sheet-in { max-width: 1040px; margin: 0 auto; }
 
 /* Setup's list: a heavy rule on top, a hairline under each row, the name of the thing on the left. */
 .facts { border-top: 2px solid var(--ink); }
 .fact { display: grid; grid-template-columns: minmax(0, 15em) minmax(0, 1fr); column-gap: 28px; padding: 24px 0 26px; border-bottom: 1px solid var(--line); }
 .fact h2 { font-size: 18px; font-weight: 700; letter-spacing: -.015em; line-height: 1.4; text-wrap: balance; }
-.fact h2 small { display: block; margin-top: 4px; font-size: 14px; font-weight: 500; letter-spacing: 0; color: var(--ink-soft); }
+.fact .sub { margin-top: 4px; font-size: 14px; font-weight: 500; line-height: 1.4; color: var(--ink-soft); }
 .body { max-width: 64ch; }
 .body p, .body li { font-size: 16px; line-height: 1.6; }
 .body p + p, .body p + ul, .body ul + p, .body .cmd + p, .body p + .cmd, .body .cmd + .cmd { margin-top: 12px; }
@@ -125,13 +125,15 @@ code { padding: 1px 6px; border-radius: 6px; background: var(--badge-bg); color:
 .quiet { color: var(--ink); font-size: 15px; font-weight: 500; text-underline-offset: 4px; text-decoration-color: color-mix(in srgb, var(--ink) 35%, transparent); }
 .quiet:hover { text-decoration-color: var(--ink); }
 
-/* ---------- The foot: the same four links at the end of every page ---------- */
-.site-foot { max-width: 1040px; margin: clamp(48px, 9vh, 88px) auto 0; padding: 20px 0 max(28px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
+/* ---------- The foot: the same four links at the end of every page, after <main>, on the sheet's cream ---------- */
+.site-foot { background: var(--cream); padding: 0 var(--gutter); }
+.site-foot nav { max-width: 1040px; margin: 0 auto; padding: 20px 0 max(28px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
 .site-foot ul { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; padding: 0; list-style: none; }
 .site-foot li + li::before { content: "·"; padding: 0 12px; color: var(--ink-soft); opacity: .6; }
 .site-foot a { color: var(--ink-soft); font-size: 14px; font-weight: 500; text-decoration: none; }
 .site-foot a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
 .site-foot a[aria-current="page"] { color: var(--ink); font-weight: 600; }
+.site-foot a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; }
 
 @media (max-width: 720px) {
   .fact { grid-template-columns: minmax(0, 1fr); row-gap: 8px; padding: 20px 0 22px; }

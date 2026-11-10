@@ -38,14 +38,14 @@
   <div class="sheet-in">
     <div class="facts">
       <section class="fact">
-        <h2>Messages<small>to your team, through your remote</small></h2>
+        <div class="label"><h2>Messages</h2><p class="sub">to your team, through your remote</p></div>
         <div class="body">
           <p>Everything agents send each other (statuses, messages, which sessions are running, and the git user name of each device's owner) is written as commits under <code>refs/murmur/</code> on the repo's own git remote, and fetched from there. None of it passes through this site.</p>
           <p>Anyone who can read the repo can read it. On a public repo, that is everyone, so secrets don't belong in messages.</p>
         </div>
       </section>
       <section class="fact">
-        <h2>A public repo's address<small>to murmur.afig.dev, once</small></h2>
+        <div class="label"><h2>A public repo's address</h2><p class="sub">to murmur.afig.dev, once</p></div>
         <div class="body">
           <p>This is the only thing Murmur ever sends us. When <code>mur init</code>, <code>mur join</code> or the daemon starts, Murmur asks GitHub, signed out, whether the repo is public. If it is, Murmur sends its address, such as <code>github.com/a-Fig/murmur</code>, in one request to this site, then marks the repo's remote with <code>refs/murmur/reported</code> so no other clone sends it again.</p>
           <p>A private repo, or one not on GitHub, sends nothing; while a repo is private, the daemon asks GitHub again once a day. Nothing else is sent from any repo: no IDs, names, email addresses, messages, statuses, branches, file paths, versions or anything about your machine.</p>
@@ -53,7 +53,7 @@
         </div>
       </section>
       <section class="fact">
-        <h2>What this site keeps<small>in a Cloudflare D1 database</small></h2>
+        <div class="label"><h2>What this site keeps</h2><p class="sub">in a Cloudflare D1 database</p></div>
         <div class="body">
           <p>For each public repo: its address and the day it first came, stored only once GitHub confirms the repo is public. No IP addresses are stored.</p>
           <p>Once a day a GitHub Action in Murmur's repo reads what each of those repos shows anyone, its <code>refs/murmur/</code> refs and its default branch's commit history, and sends this site counts and hashes, never content:</p>
@@ -67,7 +67,7 @@
         </div>
       </section>
       <section class="fact">
-        <h2>Updates<small>from GitHub's releases</small></h2>
+        <div class="label"><h2>Updates</h2><p class="sub">from GitHub's releases</p></div>
         <div class="body">
           <p>The daemon asks GitHub's API for Murmur's latest releases when it starts, and hourly. No repo information goes in these requests. When there is a newer <code>mur</code>, it downloads it from GitHub, verifies its SHA-256 checksum, and installs it. To turn that off:</p>
           <div class="cmd"><code>git config --global murmur.update false</code></div>
@@ -75,7 +75,7 @@
         </div>
       </section>
       <section class="fact">
-        <h2>This website<small>murmur.afig.dev</small></h2>
+        <div class="label"><h2>This website</h2><p class="sub">murmur.afig.dev</p></div>
         <div class="body">
           <p>Cloudflare serves it. Its pages load the Inter typeface from Google Fonts, so your browser asks <code>fonts.googleapis.com</code> and <code>fonts.gstatic.com</code> for it, and Google sees those requests. Everything else comes from this site.</p>
           <p>There are no analytics, trackers or cookies on its public pages. The private stats page sets one cookie, holding its key, and only for someone who opens it with a key.</p>
@@ -86,18 +86,18 @@
     <div class="end">
       <a class="button" href="https://github.com/a-Fig/murmur/blob/main/docs/agents/join.md#what-murmurafigdev-receives-and-why">Read the full account</a>
     </div>
-
-    <footer class="site-foot">
-      <nav aria-label="Site">
-        <ul>
-          <li><a href="/about/">About</a></li>
-          <li><a href="/privacy/" aria-current="page">Privacy</a></li>
-          <li><a href="/contact/">Contact</a></li>
-          <li><a href="https://github.com/a-Fig/murmur">GitHub</a></li>
-        </ul>
-      </nav>
-    </footer>
   </div>
 </main>
+
+<footer class="site-foot">
+  <nav aria-label="Site">
+    <ul>
+      <li><a href="/about/">About</a></li>
+      <li><a href="/privacy/" aria-current="page">Privacy</a></li>
+      <li><a href="/contact/">Contact</a></li>
+      <li><a href="https://github.com/a-Fig/murmur">GitHub</a></li>
+    </ul>
+  </nav>
+</footer>
 </body>
 </html>
