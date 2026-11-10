@@ -179,7 +179,8 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 	if !join.Joined(*gitDir) {
 		return fmt.Errorf("this clone hasn't joined %s, so its daemon won't run (`%s join` joins, after asking the user)", brand.Product, brand.Command)
 	}
-	// The log is kept under a size while the daemon runs.
+	// The log is kept under a size while the daemon runs, and credentials in URLs out of it, so
+	// that it can be sent to whoever helps debug this device.
 	logs := *logPath
 	if logs == "" {
 		logs = filepath.Join(client.StateDir(*gitDir), "daemon.log") // where StartDaemon points stderr

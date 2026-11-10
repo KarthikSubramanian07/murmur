@@ -108,3 +108,23 @@ func TestALogMovedByTheNextDaemonIsTheNextDaemons(t *testing.T) {
 		t.Fatalf("the new daemon's log was changed to %q", got)
 	}
 }
+
+func TestCredentialsInURLsAreNotLogged(t *testing.T) {
+	for in, want := range map[string]string{
+		"fetching https://x-access-token:ghs_abc123@github.com/a-Fig/murmur.git failed": "fetching https://github.com/a-Fig/murmur.git failed",
+		`remote "https://ghp_abc123@github.com/o/r"`:                                    `remote "https://github.com/o/r"`,
+		"ssh://git@github.com:22/o/r and https://u:p@ss@host/x?y=a@b":                   "ssh://github.com:22/o/r and https://host/x?y=a@b",
+		"git@github.com:o/r.git, mail a@b.c, https://github.com/o/r?u=a@b#c@d":          "git@github.com:o/r.git, mail a@b.c, https://github.com/o/r?u=a@b#c@d",
+	} {
+		if got := Redact(in); got != want {
+			t.Errorf("Redact(%q)\n = %q\nwant %q", in, got, want)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "daemon.log")
+	l := log.New(New(open(t, path), path, Max), "", 0)
+	l.Printf("reading refs/murmur/mesh/x: git ls-remote https://x-access-token:SECRET@github.com/o/r: fatal")
+	if got := read(t, path); strings.Contains(got, "SECRET") || !strings.Contains(got, "https://github.com/o/r") {
+		t.Fatalf("the log holds %q", got)
+	}
+}

@@ -1,10 +1,14 @@
 // Package logfile is what a daemon's log passes through on its way to daemon.log. It keeps the
-// file bounded while the daemon runs (docs/VISION.md, "One daemon per device").
+// file bounded while the daemon runs, and keeps credentials in URLs out of it, since daemon.log is
+// what a teammate is asked to send when their device misbehaves (docs/VISION.md, "One daemon per
+// device").
 package logfile
 
 import (
+	"bytes"
 	"io"
 	"os"
+	"regexp"
 	"sync"
 )
 
@@ -48,9 +52,14 @@ func same(out *os.File, path string) (os.FileInfo, bool) {
 	return ofi, os.SameFile(ofi, pfi)
 }
 
-// Write writes p, after moving the file aside if p would take it past the limit.
+// Write writes p, with any URL's credentials taken out, after moving the file aside if p would
+// take it past the limit. A log.Logger writes each line in one call, so a URL is never split
+// between two.
 func (w *Writer) Write(p []byte) (int, error) {
 	n := len(p)
+	if bytes.Contains(p, []byte("://")) {
+		p = []byte(Redact(string(p)))
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.path != "" && w.size > 0 && w.size+int64(len(p)) > w.max {
@@ -95,4 +104,14 @@ func copyFile(from, to string) error {
 		return err
 	}
 	return dst.Close()
+}
+
+// userinfo is the user and password of a URL (`https://x-access-token:…@github.com/…`), up to its
+// authority's last @, since a password can hold an @ of its own.
+var userinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#]*@`)
+
+// Redact takes the user and password out of every URL in s, as git does in its own messages. A
+// remote's URL can carry a token, and a log line can hold one from git's stderr or an error.
+func Redact(s string) string {
+	return userinfo.ReplaceAllString(s, "$1")
 }
