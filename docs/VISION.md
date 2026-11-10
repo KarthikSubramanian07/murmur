@@ -424,10 +424,10 @@ since it wasn't installed). The details, and where each came from, are in the co
   after 30 minutes without one, as a stopped session is; its T3 route outlives that as any does.
 - **Delivery.** Inside T3 the existing `t3 thread send` handoff needed nothing new: an OpenCode and
   a Muse thread each took a message as a turn and answered it with `send`, nobody typing
-  (2026-11-01). Outside T3 none of the four has a way in that Murmur uses yet (OpenCode has an HTTP
-  API and plugins, Pi extensions can start a turn, Muse's session messaging isn't on Windows), so a
-  message waits in the inbox. OpenCode, Muse and Pi have no hook of Murmur's, so no notice either;
-  Grok has one (below).
+  (2026-11-01). Outside T3, OpenCode, Muse and Grok have no way in that Murmur uses yet (OpenCode
+  has an HTTP API and plugins, Muse's session messaging isn't on Windows), so a message waits in the
+  inbox. OpenCode and Muse have no hook of Murmur's, so no notice either; Grok has one (below). Pi
+  has both since 2026-11-09 (#205): see "Pi's extension" under "Delivering a message as a turn".
 - **Titles.** Inside T3 the thread's title is read as for any thread. Outside T3 none is read for
   these agents: their IDs aren't Codex threads.
 - **Tool approval.** OpenCode and Grok have a rule for it, which join writes; Muse and Pi have none.
@@ -489,7 +489,8 @@ keeps its turn going at Stop (#202) runs in Codex and Grok too, as `mur hook cod
   daemon yet would look the same: the hook speaks for none until each calls a Murmur tool, but all
   count as having a hook. The ID the MCP server learns overrides one taken from a hook (Sol's
   review, 2026-11-09, found a wrong one could otherwise take another thread's notices).
-- **Hook not running.** A session of an agent join installs the hook in (Claude Code, Codex, Grok)
+- **Hook not running.** A session of an agent the hook runs in (Claude Code, Codex, Grok, and Pi
+  through the extension join writes)
   that called one of Murmur's tools over a minute ago, with no hook of it reporting since the
   daemon started, is marked: `who` adds ", hook not running" to its line and tells a session its
   own, the page puts a badge on its card, and `send` says the recipient won't be told while it
@@ -1101,8 +1102,8 @@ was delivered then, and is read later, by whichever of these comes first. Where 
 | Route | Delivered or read when | Can Murmur see it |
 |---|---|---|
 | `t3 thread send` | read when the turn carrying it starts: at once in an idle thread, after the running turn in a busy one (a busy one only where the hook doesn't run, #202) | No. The daemon sees `t3` accept the message, not the turn start; T3's database would show it (`orchestration_v2_projection_messages`), but those tables are T3's own and may change |
-| The messaging socket (Claude Code outside T3) | read when Claude Code takes it as a turn | No: the socket answers nothing |
-| The hook's notice (Claude Code) | delivered when the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt, with the sender and subject. Where the page's busy setting says whole message (#204), it is read then instead. A message told of is read later by `inbox`, by the `Stop` hook keeping the turn going with it, or as a turn handed over when the turn ends | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
+| The messaging socket (Claude Code outside T3; Pi's extension's, outside T3) | read when the client takes it as a turn | No: the socket answers nothing |
+| The hook's notice (Claude Code, and Pi through its extension) | delivered when the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt, with the sender and subject. Where the page's busy setting says whole message (#204), it is read then instead. A message told of is read later by `inbox`, by the `Stop` hook keeping the turn going with it, or as a turn handed over when the turn ends | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
 | `inbox` | read when the tool's result returns to the agent | Partly: the daemon sees the messages leave in its answer, not the answer reach the agent through MCP |
 
 Nothing reports a message's state to its sender yet. Whatever does (#26, `who`, `lookup`, the web
@@ -1114,9 +1115,10 @@ hook has the session at work (see "A session at work", below):
 
 | Where the session runs | Handed over by | Starts a turn in an idle session |
 |---|---|---|
-| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing. A busy session the hook runs in (Claude Code, Codex, Grok) is not handed the message: the hook tells it | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
+| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing. A busy session the hook runs in (Claude Code, Codex, Grok, and Pi through its extension) is not handed the message: the hook tells it | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
 | Claude Code outside T3 | the session's messaging socket | Unverified: a message Murmur's code wrote to a session's socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle one has not been tried |
-| Codex, OpenCode, Muse, Pi or Grok outside T3, or any handoff that fails | the hook's notice where the hook runs (Claude Code, Codex, Grok), and `inbox` | No |
+| Pi outside T3 | the socket Murmur's extension opens in the session | Yes (2026-11-09, Pi 1.5.0 in RPC mode with a stand-in model: an idle session took a message as a turn, nobody typing) |
+| Codex, OpenCode, Muse or Grok outside T3, or any handoff that fails | the hook's notice where the hook runs (Claude Code, Codex, Grok, Pi), and `inbox` | No |
 
 What the agent reads:
 
@@ -1221,9 +1223,9 @@ A body past the limit is cut, as in `inbox`.
     older, it stays a notice, as it would have without the turn.
   - *Why not hand it to T3 as well*: T3 can't take back a queued message, so the agent could read
     it with `inbox` mid-turn and then get it again as a turn.
-  - *Where the hook doesn't run* (OpenCode, Muse and Pi in T3, as of 2026-11-08), nothing tells
-    the daemon the session is at work, and a message goes to T3 as before: without the handoff the
-    session would hear nothing at all. Codex and Grok have the hook since #225.
+  - *Where the hook doesn't run* (OpenCode and Muse in T3, as of 2026-11-09), nothing tells the
+    daemon the session is at work, and a message goes to T3 as before: without the handoff the
+    session would hear nothing at all. Codex and Grok have the hook since #225, and Pi since #205.
   - *Subagents.* A subagent's tool call carries the parent's `session_id`, with `agent_id` set
     (Claude Code 2.1.312, 2026-10-29). The hook tells it nothing, as its notice would land in the
     subagent's context, not the session's (inferred, not seen; #188), and it doesn't mark the
@@ -1296,6 +1298,41 @@ A body past the limit is cut, as in `inbox`.
   server is connected. A session inside T3 is never written to this way: the socket there is T3's.
   Claude Code wraps what arrives on the socket in a note of its own that says the message came
   from another Claude session, not the user (seen 2026-10-29), which suits Murmur's framing.
+- **Pi's extension (2026-11-09, #205).** Pi has no hooks of Claude Code's kind, so the extension
+  `mur join` writes (`extensions/murmur.ts`) brings Pi #202's delivery itself, with nothing new in
+  the daemon but a way for the hook to name a Pi session: by its file, `Native` in the hook's
+  request, as the session's MCP server registered with it. It runs `mur hook --agent pi` at Claude
+  Code's moments: as a run starts (`before_agent_start`, a prompt), after each tool call
+  (`tool_result`; the notice goes in as a message `deliverAs: "steer"`, which Pi puts after the tool
+  calls and before the next model request), and as the work ends (`agent_before_settle`, where a
+  `custom_message` entry and `continue: true` keep it going, as blocking Stop does). Pi, unlike
+  Claude Code, says when the work ended without a chance to go on: an error is the boundary's
+  `outcome`, and Escape skips `agent_before_settle` and sets `agent_settled`'s `aborted`. The hook's
+  Stop then says it was interrupted, and the daemon takes the session for idle and hands what is
+  unread over as a turn, as for a T3 turn the user stopped. It opens a socket in the session that
+  takes Claude Code's messaging-socket lines, and gives its address and token to the MCP server in
+  its environment as Claude Code does, so the daemon hands an idle Pi session a turn the way it
+  hands Claude Code one; Pi takes it with `triggerTurn`, and with `deliverAs: "followUp"` a busy one
+  takes it when it finishes, not steered in. What Murmur says is a custom message, shown in the
+  session and read in the user's role, never `sendUserMessage`, which Pi treats as the user's
+  typing. The extension is in every Pi session, so it runs the hook and opens the socket only in a
+  clone the user joined (its `joined.json`): elsewhere a tool call waits on no process of
+  Murmur's (about 0.1 s each, Opus's review). It looks for the consent as the session starts, then
+  each second and at each prompt and tool call until it is there, a few stats each time: the user
+  usually joins from inside a running session, which would otherwise get nothing until its next
+  session (the re-review's R1, reproduced with a real Pi). The socket's address and token are
+  chosen at the start and given to the MCP server, which registers only once the clone is joined;
+  a message that comes in the second before the socket opens is tried again after 2 s, and failing
+  that waits for the hook. An update doesn't run `mur
+  join` again, so Pi's MCP server rewrites an extension join wrote for its own binary when the
+  text is an older binary's; Pi reads extensions as a session starts, so the first session after
+  an update still has the old one. Seen with Pi 1.5.0 against a stand-in model, in RPC mode and in
+  its terminal UI (driven in a pty by Opus's review, then here): a notice after a tool call, the
+  message whole at the end of the work, a turn when idle, a turn right after an abort, a new socket
+  and session after `/new`, no socket in a repo not joined, and an old extension rewritten. Not
+  tried: Windows' named pipe, and Pi inside T3 (where the hook now runs too, and the socket is
+  unused). Not covered: Pi's commits aren't credited, as no call is bracketed, and a session
+  without a file (`--no-session`) gets turns and no notices.
 - **A thread that is idle (#87).** T3 stops an idle thread's provider process, and with it Murmur's
   MCP server, after about 30 minutes (seen live on 2026-10-30: both threads' sessions stopped at
   03:30, half an hour after their last turn), so the session of a thread that is idle is the normal

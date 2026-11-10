@@ -59,7 +59,9 @@ const (
 //	   can't send
 //	9: the hook's Agent and Ancestors, for Codex's and Grok's hooks, and SessionView's HookOff (#225)
 //	10: OpPageKey, so another clone's page can switch to this one's (#348)
-const Protocol = 10
+//	11: the hook's Native: Pi's extension runs the hook, which names its session by Pi's own ID
+//	    (#205)
+const Protocol = 11
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -110,6 +112,10 @@ type Request struct {
 
 	// ClaudeSession finds the session for the hook, which only knows Claude Code's ID for it.
 	ClaudeSession string `json:"claudeSession,omitempty"`
+	// Native finds the session for a hook of another agent instead, by the client's own ID for its
+	// conversation, the one its MCP server registered with (Hello's Native): for Pi, the session's
+	// file, which Murmur's Pi extension gives the hook (#205). ClaudeSession is empty then.
+	Native string `json:"native,omitempty"`
 	// ClientPID is the hook's CLAUDE_PID, the Claude Code process it runs under: with
 	// ClaudeSession, it tells the daemon which sessions that process's conversation has moved to
 	// a new Claude ID. 0 if the hook has none.

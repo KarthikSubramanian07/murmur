@@ -468,7 +468,8 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 // marks them told, with how many it has unread when that is news. The hook calls it after a prompt
 // or a tool call, so the session is at work (see touchHookLocked); the hook knows only Claude
 // Code's session ID, and its process: with them, the sessions of that process follow the hook to
-// the ID it reports (see hookSessionsLocked), and a hook that matches nothing gets nothing.
+// the ID it reports (see hookSessionsLocked), and a hook that matches nothing gets nothing. In Pi
+// it knows the session's file instead (nativeSessionsLocked).
 //
 // A message that would have gone in as a turn, but for the session being at work, is Held: it goes
 // in as one when the turn ends if it is still unread (#202). The count is told with each new
@@ -482,7 +483,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var ids []string
-	if req.ClaudeSession != "" {
+	if hookReq(req) {
 		for _, s := range d.touchHookLocked(req) {
 			ids = append(ids, s.id)
 			if validTranscript(req.Transcript) && !req.Subagent && s.transcript != req.Transcript {
@@ -524,9 +525,9 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		if s := d.sessions[id]; s != nil {
 			told = append(told, s)
 		}
-		// Only the hook shows a message whole: a request without its Claude Code session isn't one,
+		// Only the hook shows a message whole: a request that names no client's session isn't one,
 		// and a hook that doesn't say it prints Read (req.Whole) would lose it (#229).
-		givesWhole := req.ClaudeSession != "" && req.Whole && wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
+		givesWhole := hookReq(req) && req.Whole && wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
 			if m.Pushing {
 				continue
@@ -576,6 +577,11 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	return resp
 }
 
+// hookReq says req is from the hook, which names its session by its client's ID for it: Claude
+// Code's, or another agent's own (Native, Pi's from Murmur's extension). A request with neither
+// names the session it is from (Session), as the MCP server's do.
+func hookReq(req proto.Request) bool { return req.ClaudeSession != "" || req.Native != "" }
+
 // turnEnd is the hook at the end of a turn (Claude Code's Stop). The messages the sessions it
 // speaks for were told of while at work and haven't read, and those that came during the turn and
 // weren't told, however long it took, would go in as a turn now (#202). Where the hook can keep the
@@ -585,7 +591,7 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if req.ClaudeSession == "" || req.Subagent {
+	if !hookReq(req) || req.Subagent {
 		return proto.Response{OK: true}
 	}
 	var given []delivery
