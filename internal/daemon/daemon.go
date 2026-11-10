@@ -329,6 +329,10 @@ type Daemon struct {
 	// presenceCut is how many sessions the last presence left out to keep to bus.MaxSessions (see
 	// capSessions), so that is logged when it changes, not on every heartbeat.
 	presenceCut int
+	// presenceFirst, when not nil, is closed once a presence listing the sessions started since it
+	// was made has been pushed or has failed. A session's start on the log and its name's
+	// assignment wait for it, so the push that shows the session goes first (see awaitPresence).
+	presenceFirst chan struct{}
 	// personClashes is the people's names a second device's presence has said since this daemon
 	// started, logged once each (see notePersonLocked).
 	personClashes map[string]bool

@@ -218,6 +218,11 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		close(s.takeover)
 		s.takeover = nil
 	} else {
+		// Before the session takes a name from the pool, which wakes the assigner: the session's
+		// presence goes out ahead of its name's assignment and its start on the log.
+		if d.presenceFirst == nil {
+			d.presenceFirst = make(chan struct{})
+		}
 		s = d.newSessionLocked(h, agent, branch, key)
 		s.worktree = worktree
 		s.route = route

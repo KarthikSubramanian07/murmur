@@ -1236,7 +1236,8 @@ func (d *Daemon) clearOwnJunk(listed map[string]string) {
 	}()
 }
 
-// appendSoon appends an event in the background, for events nobody waits on.
+// appendSoon appends an event in the background, for events nobody waits on. It goes after the
+// presence of a session just started (see awaitPresence).
 func (d *Daemon) appendSoon(e bus.Event) {
 	if d.bgCtx.Err() != nil {
 		return
@@ -1246,10 +1247,37 @@ func (d *Daemon) appendSoon(e bus.Event) {
 		defer d.bg.Done()
 		ctx, cancel := context.WithTimeout(d.bgCtx, time.Minute)
 		defer cancel()
-		if err := d.appendEvent(ctx, e); err != nil {
+		err := d.awaitPresence(ctx)
+		if err == nil {
+			err = d.appendEvent(ctx, e)
+		}
+		if err != nil {
 			d.log.Printf("writing %q: %v", e.Line(), err)
 		}
 	}()
+}
+
+// awaitPresence waits, if a session has started since the last presence was made, until a presence
+// that lists it has been pushed or has failed. A device pushes one ref at a time, and a session's
+// start sets off three pushes: its start on the log and its name's assignment are ready within
+// milliseconds, and the presence, which waits 300 ms to gather the session's first changes, went
+// last. Over GitHub, at about 1.4 s a push, the session showed in other devices' who about 3 s
+// later than it needed to (measured 2026-11-09). Only the presence shows the session: its start on
+// the log is a line in readers' notes, and a name from the pool is set aside for this device
+// already, so readers take it from the presence before its assignment lands.
+func (d *Daemon) awaitPresence(ctx context.Context) error {
+	d.mu.Lock()
+	first := d.presenceFirst
+	d.mu.Unlock()
+	if first == nil {
+		return nil
+	}
+	select {
+	case <-first:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (d *Daemon) kickPresence() {
@@ -1262,6 +1290,15 @@ func (d *Daemon) kickPresence() {
 // presenceLoop pushes this device's presence when it changes, and on a heartbeat so others can
 // tell it is still here.
 func (d *Daemon) presenceLoop(ctx context.Context) {
+	defer func() {
+		// Nothing is left waiting for a presence that won't be pushed now.
+		d.mu.Lock()
+		if d.presenceFirst != nil {
+			close(d.presenceFirst)
+			d.presenceFirst = nil
+		}
+		d.mu.Unlock()
+	}()
 	heartbeat := time.NewTicker(d.opt.Heartbeat)
 	defer heartbeat.Stop()
 	retry := time.NewTimer(0) // publish once at start
@@ -1354,6 +1391,12 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	if d.st.Person != "" {
 		pres.Sessions = append(pres.Sessions, d.personInfoLocked())
+	}
+	// This presence lists every session started so far, so what waits for one that does can go
+	// once it is pushed, or has failed: a failing remote is no reason to hold back the rest.
+	if first := d.presenceFirst; first != nil {
+		d.presenceFirst = nil
+		defer close(first)
 	}
 	d.mu.Unlock()
 

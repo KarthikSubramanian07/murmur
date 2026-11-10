@@ -628,6 +628,14 @@ func (d *Daemon) pickName(used map[string]string, taken map[string]bool) (string
 // again, leased on whatever the tip is. It returns
 // bus.ErrRejected if the lease failed.
 func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
+	// After the presence of a session just started, before the tip for the lease is read. Not when
+	// a session found the pool empty and waits on this push for its name: until it lands, a
+	// presence can only show the session as pending.
+	if len(w.wants) == 0 {
+		if err := d.awaitPresence(ctx); err != nil {
+			return err
+		}
+	}
 	// The repair flag is read with the tip it goes with: a sync between nextNames and here may have
 	// found the registry rewound, and building on the new tip without the snapshot would lose names.
 	d.mu.Lock()
