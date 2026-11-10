@@ -556,15 +556,21 @@ call.
   senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
   it never read what was sent while it was away for more than 10 minutes, except what is kept for a
   stopped session's inbox (above).
-- **How it's laid out** (#179, 2026-11-08), after Discord and Slack: sessions down the left under
-  their devices, then a column of conversations (direct messages and group chats in one list, newest
-  first, narrowed to either with a switch), then the open conversation. A conversation is two sessions' messages to each other, a device's, or
-  everyone's: the bus has no threads. Each face carries a dot: green active in the last five
-  minutes, yellow idle, red do not disturb (the `do-not-disturb` tag from #211, or wake-ups set to
-  Never), grey when its device is unreachable. A settled session (#189) is absent from presence but
-  still in the messages, so the page folds it under its device and keeps its conversations, out of
-  the way; a direct message with a settled session folds away too. Sessions in Claude Code, Codex,
-  pi or opencode never settle: one left open in a forgotten terminal stays in presence for good.
+- **How it's laid out** (#179, 2026-11-08; drawn as a sibling of T3 Code 2026-11-09, so a person who
+  works in T3 Code reads it without learning a second app): sessions down the left under their
+  devices, as T3 Code's threads under their projects, then a column of conversations (direct
+  messages and group chats in one list, newest first, narrowed to either with a switch), then the
+  open conversation as T3 Code's timeline: a person's own messages in bubbles on the right, agents'
+  as plain text under a line naming the sender, and the composer docked under it. On a phone the
+  sidebar is a drawer, and the list and a conversation take turns. A conversation is two sessions'
+  messages to each other, a device's, or everyone's: the bus has no threads. Each session carries a
+  dot: green active in the last five minutes, yellow idle, red do not disturb (the
+  `do-not-disturb` tag from #211, or wake-ups set to Never), grey when its device is unreachable.
+  The only other color is the accent and a pull request's state; faces are plain monograms. A
+  settled session (#189) is absent from presence but still in the messages, so the page folds it
+  under its device and keeps its conversations, out of the way; a direct message with a settled
+  session folds away too. Sessions in Claude Code, Codex, pi or opencode never settle: one left
+  open in a forgotten terminal stays in presence for good.
   So a running session idle for a day, or one a person hid (the `hidden` tag, set from the page
   through #211's `/api/tags`), folds under its device as quiet. An idle one comes back once it
   does anything; a hidden one stays hidden until someone shows it again, because a tag a person
@@ -577,8 +583,9 @@ call.
   as waiting, for two minutes at most. Tags with a meaning of their own show as that meaning rather
   than as chips: `model:` beside the agent, `do-not-disturb` as the red dot, `hidden` as the quiet
   fold, `human` on a person. There is no grouping by tag: a session can carry several, so groups
-  would repeat it, and a filter shows one group at a time. The page is always dark: the design was only ever drawn dark, and a light one would be a
-  second design. Started times, worktrees and committed branches left the page with the old
+  would repeat it, and a filter shows one group at a time. Since 2026-11-09 Settings has a theme, kept in the browser: Dark (T3 Code's), Dim (the
+  soft greys the page had before it followed T3 Code) and Light (T3 Code's light theme). Each is a
+  set of color tokens over one design, so a theme costs only its palette. Started times, worktrees and committed branches left the page with the old
   Sessions view; `lookup` still has the branches.
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
   `.git/murmur/settings.json`, replaced whole; "Delivering a message as a turn" says what they do.

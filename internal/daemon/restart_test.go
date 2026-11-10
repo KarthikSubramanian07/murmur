@@ -55,6 +55,7 @@ func holds(t *testing.T, what string, d time.Duration, cond func() bool) {
 }
 
 func TestRestartDoesNotReplayToNewSessions(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	eventually(t, "presence", func() bool { return a.seesDevices(2) && b.seesDevices(2) })
@@ -81,6 +82,7 @@ func TestRestartDoesNotReplayToNewSessions(t *testing.T) {
 }
 
 func TestInboxSurvivesCleanRestart(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	bob, _ := b.session("bbbbbb", "")
@@ -101,6 +103,7 @@ func TestInboxSurvivesCleanRestart(t *testing.T) {
 // A daemon that stops deletes its presence, so others drop it at their next sync rather than
 // when it goes stale.
 func TestGoodbyeDropsDeviceAtOnce(t *testing.T) {
+	// Not parallel: it times how soon b is dropped, which other tests' load would stretch.
 	remote := newRemote(t)
 	// A real stale limit: the goodbye must drop the device long before it would go stale.
 	a, b := newDevice(t, remote, time.Minute), newDevice(t, remote, time.Minute)
@@ -124,6 +127,8 @@ func (d *device) offline(remote string, off bool) {
 // A reader that can't reach the remote (asleep, offline) has no grounds to call anyone else
 // gone: it judges staleness only up to its own last successful sync.
 func TestOfflineReaderCallsNobodyStale(t *testing.T) {
+	// Not parallel: b must stay fresh on a for seconds, and other tests' load can hold one of its
+	// heartbeats back for the 3 seconds that make it stale.
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	bdev := b.self()
@@ -137,6 +142,7 @@ func TestOfflineReaderCallsNobodyStale(t *testing.T) {
 // A daemon that starts after another device went quiet, longer ago than the stale limit, shows it
 // stale from the first time it lists it, not alive for one more stale period (#66).
 func TestNewDaemonShowsADeadDeviceStaleAtOnce(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newDevice(t, remote)
 	bdev := b.self()
@@ -165,6 +171,7 @@ func TestNewDaemonShowsADeadDeviceStaleAtOnce(t *testing.T) {
 // After a restart, what arrived while the daemon was down reaches sessions that were running
 // before and reconnect, and nobody else.
 func TestRestartCatchesUpReconnectingSessions(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	bob, _ := b.session("bbbbbb", "")
@@ -195,6 +202,7 @@ func TestRestartCatchesUpReconnectingSessions(t *testing.T) {
 }
 
 func TestStaleLockIsCleared(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	work := filepath.Dir(a.gitDir)
@@ -231,6 +239,7 @@ func TestStaleLockIsCleared(t *testing.T) {
 // A message that lands after a restarted daemon's first sync, but before a session that was
 // running reconnects, still reaches it.
 func TestMessageBeforeReconnectIsCaughtUp(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	bob, _ := b.session("bbbbbb", "")
@@ -254,6 +263,7 @@ func TestMessageBeforeReconnectIsCaughtUp(t *testing.T) {
 // When a daemon's first sync fails, sessions register before anything is settled. What was then
 // sent after they started still reaches them; the backlog doesn't.
 func TestFirstSyncFailedStillQueues(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	pushEvent(t, remote, "refs/murmur/mesh/old-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
