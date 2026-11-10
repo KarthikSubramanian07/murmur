@@ -394,18 +394,6 @@ func Tags(r proto.Response) string {
 	return b.String()
 }
 
-// Log renders recent events.
-func Log(r proto.Response) string {
-	if len(r.Events) == 0 {
-		return "Nothing yet.\n"
-	}
-	var b strings.Builder
-	for _, e := range r.Events {
-		fmt.Fprintf(&b, "%s  %s\n", e.At.Local().Format("15:04:05"), e.Line)
-	}
-	return b.String()
-}
-
 // Note renders a bare acknowledgement.
 func Note(r proto.Response) string {
 	if r.Note == "" {
@@ -481,7 +469,7 @@ func Lookup(r proto.Response) string {
 		b.WriteString("  reachable: a message sent now reaches its inbox at once (queued, not yet seen by the agent)\n")
 	}
 	if tags.Has(d.Tags, tags.DoNotDisturb) {
-		b.WriteString("  do not disturb: a message to it is queued in its inbox, and delivered when it reads its inbox or turns do not disturb off\n")
+		b.WriteString("  do not disturb: a message to it is queued in its inbox, with no notice or turn, until it reads its inbox or turns do not disturb off\n")
 	}
 	var times []string
 	if !d.Started.IsZero() {

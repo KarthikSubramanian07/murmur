@@ -171,15 +171,15 @@ func TestCodexWritesNothing(t *testing.T) {
 	}
 }
 
-func TestCodexDirFollowsCodexHome(t *testing.T) {
-	t.Setenv("CODEX_HOME", "/somewhere/codex")
-	if got := CodexDir(); got != "/somewhere/codex" {
-		t.Errorf("got %q", got)
-	}
-	t.Setenv("CODEX_HOME", "")
+// The default home is ~/.codex whatever this process's CODEX_HOME says: in the daemon, that is the
+// home of the session that started it.
+func TestDefaultCodexDirIgnoresCodexHome(t *testing.T) {
 	h, _ := os.UserHomeDir()
-	if got := CodexDir(); got != filepath.Join(h, ".codex") {
-		t.Errorf("got %q", got)
+	for _, env := range []string{"/somewhere/codex", ""} {
+		t.Setenv("CODEX_HOME", env)
+		if got := DefaultCodexDir(); got != filepath.Join(h, ".codex") {
+			t.Errorf("CODEX_HOME=%q: got %q", env, got)
+		}
 	}
 }
 

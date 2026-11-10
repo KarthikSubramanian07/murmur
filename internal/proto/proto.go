@@ -46,8 +46,8 @@ const (
 //	   reports and the Codex thread ID in the route (#66)
 //	3: OpTurnEnd, OpNotices's Unread and Subagent: a session the hook runs in gets notices while it
 //	   is at work, and turns only when it isn't (#202)
-//	4: OpNotices's Delivered: a busy session may be given its messages whole by the hook (#204)
-//	5: OpTurnEnd's Continues and Delivered: the Stop hook keeps the turn going with the messages
+//	4: OpNotices's Read (on the wire, "delivered"): a busy session may be given its messages whole by the hook (#204)
+//	5: OpTurnEnd's Continues and Read: the Stop hook keeps the turn going with the messages
 //	   that would have gone in as a turn after it (#202)
 //	6: session tags: OpTags, and who's search by tags (#198)
 //	7: the page's own token, pageToken in daemon.json, so that an upgraded `mur ui` replaces a
@@ -113,9 +113,9 @@ type Request struct {
 	// so OpNotices answers with nothing (#188).
 	Subagent bool `json:"subagent,omitempty"`
 	// Continues says, on OpTurnEnd, that the hook can keep the turn going with messages (Claude
-	// Code's Stop hook, by blocking the stop): the reply's Delivered is what it should give.
+	// Code's Stop hook, by blocking the stop): the reply's Read is what it should give.
 	Continues bool `json:"continues,omitempty"`
-	// Whole says, on OpNotices, that the hook prints the reply's Delivered. A hook from before it
+	// Whole says, on OpNotices, that the hook prints the reply's Read. A hook from before it
 	// prints only Messages, so the daemon gives it a message's subject, and keeps the message in the
 	// inbox, even where the page says to give it whole (#229). An older daemon ignores it, and gives
 	// messages whole to a hook that sends it, which prints them: no new Protocol number.
@@ -166,7 +166,8 @@ type Route struct {
 	Native string `json:"native,omitempty"`
 	// CodexHome is the Codex state directory of that client (CODEX_HOME, else ~/.codex), as its MCP
 	// server sees it: one daemon serves every client on the device, and they may not share a
-	// Codex home. Empty takes the daemon's own.
+	// Codex home. A server names one, ~/.codex where it has no CODEX_HOME; only a server from before
+	// #88 leaves it empty, and the daemon then takes its own CODEX_HOME, else ~/.codex.
 	CodexHome string `json:"codexHome,omitempty"`
 }
 
@@ -210,11 +211,13 @@ type Response struct {
 	// Unread is, in an OpNotices reply, how many messages the session has unread, set when there
 	// are new ones to tell or the number changed since the hook last said it; 0 otherwise.
 	Unread int `json:"unread,omitempty"`
-	// Delivered is, in an OpNotices reply, the new messages the page's setting gives the session
-	// whole while it is busy (#204), and in an OpTurnEnd reply, the messages that keep its turn
-	// going (#202), with their bodies. The hook shows each as its turn would read; they are
-	// delivered, and gone from the inbox.
-	Delivered []MessageView `json:"delivered,omitempty"`
+	// Read is, in an OpNotices reply, the new messages the page's setting gives the session whole
+	// while it is busy (#204), and in an OpTurnEnd reply, the messages that keep its turn going
+	// (#202), with their bodies. The hook shows each as its turn would read; they are read, and
+	// gone from the inbox. Its JSON name is "delivered", the word for this before #325 changed what
+	// delivered means (2026-11-09): a hook installed earlier keeps running until its user runs
+	// `mur join` again, and reads the field by that name.
+	Read []MessageView `json:"delivered,omitempty"`
 
 	Lookup *SessionDetail `json:"lookup,omitempty"`
 

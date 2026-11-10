@@ -11,12 +11,18 @@ import (
 
 // Lock takes an exclusive lock on path, held until it is closed or the process exits, however it
 // exits.
-func Lock(path string) (*Held, error) {
+func Lock(path string) (*Held, error) { return lock(path, syscall.LOCK_EX) }
+
+// LockShared takes a shared lock on path: any number of processes can hold one at once, and none
+// while another holds the exclusive lock, which then fails with ErrLocked.
+func LockShared(path string) (*Held, error) { return lock(path, syscall.LOCK_SH) }
+
+func lock(path string, how int) (*Held, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB); err != nil {
 		f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, ErrLocked

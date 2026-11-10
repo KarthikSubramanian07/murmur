@@ -119,6 +119,17 @@ address once; see Updating and Counting use.)
   `mesh/<deviceId>/...`, `names/...`), and `refs/murmur/mesh` or `refs/murmur/presence` as refs
   themselves. Murmur writes nothing at any of them (found by the Opus reviews of V1, #8,
   2026-10-28).
+- A reader holds what it reads to a size, too (2026-11-09). Git keeps commits compressed, so a
+  quick fetch can bring a message of any size: one of 64 MB packed to 64 KB, and reading it whole
+  took 448 MB. A commit over 1 MB on a log or a presence, or 32 MB on the names registry (a
+  snapshot lists every name, about 45 bytes each), is passed over unread, as junk is, and the
+  cursor moves past it; git gives the size without the read. Nothing Murmur writes comes near
+  either. A log is read 500 commits at a time, with the daemon's lock let go between pages and the
+  state file saved once a page, not once per tags event, so a device back after days away doesn't
+  stall the sessions, the hook and the page while it catches up. It is read along first parents:
+  Murmur writes every log as a chain, and a page's last commit, the cursor a cut-short read goes on
+  from, stands for all before it only on a chain. A merge someone wrote by hand would otherwise have
+  its other side read again, and its messages delivered twice.
 - Reading: poll `git ls-remote origin 'refs/murmur/*'`, which is cheap; fetch only when a SHA has
   changed. How often is "Speed", below (3 s around a conversation; 10 s before 2026-10-29). A message takes about 6–8 s from a `send` to the
   receiving agent's turn ("Delivering a message as a turn", below); V1, polling every 10 s, took
@@ -169,7 +180,22 @@ daemon back after less than 10 minutes down queues what it missed for the sessio
 reconnect within 30 seconds of its start, and for sessions stopped within the 24 hours.
 
 Sessions reach the daemon over loopback TCP, on a random port written with a random token to
-`.git/murmur/daemon.json`. A daemon with no sessions, no open page (see The page for humans) and no
+`.git/murmur/daemon.json`. A client trusts that file only while the clone's lock (`daemon.lock`) is
+held (2026-11-09). A daemon that dies without removing the file (a crash, SIGKILL, a power cut)
+leaves an address another user's process could listen on, to be sent the sessions' hellos and
+requests and to answer with messages of its own. A daemon takes the lock before it writes the
+file, removes the file when it begins to stop, before it gives up its port, and lets the lock go
+only when it has gone. So a daemon.json beside a free lock is stale and is removed, a starting
+daemon removes one as soon as it holds the lock, and a client that loses its daemon forgets the
+address. Clients take the lock only shared, and only a daemon takes it exclusively, so a lock a
+client finds held is a daemon's; a timed retry left a window where another client's cleanup looked
+like a daemon. A client from before this takes it exclusively for a moment while stopping or
+replacing a daemon. This holds where the state directory is private to its user: it is made 0700 on Unix, and on Windows
+has whatever access the clone's location gives. A ping that proves the daemon knows the token was
+set aside: an older daemon couldn't give the proof, and a client must still talk to one to replace
+it.
+
+A daemon with no sessions, no open page (see The page for humans) and no
 T3 thread to wake for 10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
 next sync rather than when it goes stale.
 
@@ -235,7 +261,8 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   uncommitted change to a file the pull brings, even an identical one, checked 2026-11-01);
   otherwise it is left alone and gets the section when the default branch is merged in. The push
   skips the repo's pre-push hook, as bus pushes do: the hook would run against a checkout that
-  isn't this commit. `init --no-push` is the old behavior. `docs/agents/setup.md` is the page an
+  isn't this commit. `init --no-push` is the old behavior, and refuses as the push does a file
+  that a symbolic link takes out of the repo (2026-11-09). `docs/agents/setup.md` is the page an
   agent follows when its user asks it to set Murmur up; the README links it.
 - **What `mur join` writes.** It refuses in a repo without the marker. Everything it writes is
   outside the repo's tracked files:
@@ -245,7 +272,7 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   | Consent | `.git/murmur/joined.json` (mode 0600) | clone, so every worktree of it |
   | The MCP server, for Claude Code | `claude mcp add --scope user murmur -- <absolute path of mur> mcp`, which writes `.claude.json` in `$CLAUDE_CONFIG_DIR`, else the home directory | user |
   | Permission for its tools | `mcp__murmur` in `permissions.allow` of `settings.json` next to it | user |
-  | The MCP server, for Codex | a `[mcp_servers.murmur]` table in `$CODEX_HOME/config.toml`, else `~/.codex/config.toml`: the command, `args = ["mcp", "--agent", "codex"]` and `default_tools_approval_mode = "approve"` | user |
+  | The MCP server, for Codex | a `[mcp_servers.murmur]` table in `$CODEX_HOME/config.toml`, else `~/.codex/config.toml`: the command, `args = ["mcp", "--agent", "codex"]`, `env_vars = ["T3CODE_CLI_PATH", "CODEX_HOME"]` and `default_tools_approval_mode = "approve"` | user |
   | The MCP server, for OpenCode, Muse Code, Pi and Grok | see "Other agents", below | user |
   | The skills, `murmur` and `murmur-pro` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode and Pi; Muse Code and Grok document no skills folder (2026-11-08) | user |
   | The hook, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit` and `Stop` (`setup.HookEvents`) | `.claude/settings.local.json` in each worktree of the clone, kept out of `git status` through the clone's `info/exclude` | clone |
@@ -271,6 +298,11 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   in the path, 2026-10-29. A config file that is a symbolic link (a dotfiles repository's, say) is
   written through, one that points at a file not yet there included: the file it points to is
   replaced or created and the link stays; a hook file that is a link is emptied, never deleted.
+  A hook file the repo tracks, or a `.claude` it tracks as a link, isn't the user's, and gets no
+  hook (2026-11-09): a committed link points wherever the commit chose, `~/.claude/settings.json`
+  included, and a tracked file would take this machine's path to mur into the next commit. Names
+  are matched ignoring case, as macOS's and Windows' disks match them. It is a note under "Not
+  done", not a problem: repos do commit that file by accident, and a rerun couldn't fix it.
   Run again, `join` changes nothing and says so; it fills in what is missing and repoints an entry
   whose binary moved. A worktree made after joining has no hook until `mur join` runs in it again.
   `mur join --leave` removes the consent and the hooks and stops the daemon. It leaves the server
@@ -302,14 +334,15 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   itself if the user has left. The last two are what end a daemon that was still starting when
   `join --leave` ran and so had no `daemon.json` to be found by. `mur daemon` and `mur ui` refuse in
   a clone that hasn't joined (so a stale client or a script can't start one). `join --leave`
-  forgets the consent before it stops anything, then waits up to 20 seconds for the daemon's lock to
-  be free, and reports it as a problem, not as stopped, if it isn't. What it can't close: a push
-  already past its check when the leave lands completes, and a starter already past its own
-  check (Windows starts the daemon through WMI, which is slow) can still launch `mur daemon`, which
-  exits at its consent check before it opens any state or publishes. A repo without the marker, or
-  one the user hasn't joined, gets no daemon, no `refs/murmur/*` and nothing published. A clone
-  whose user joined but whose current branch lacks the marker keeps its daemon (it is the user's,
-  for every worktree) and gets no MCP tools there.
+  forgets the consent before it stops anything, then waits for the daemon's lock to be free as long
+  as a replacement does, 40 seconds from asking it to stop (20 until #91, which was shorter than a
+  shutdown may take), saying so on standard error once it has waited 5, and reports it as a problem,
+  not as stopped, if it isn't. What it can't close: a push already past its check when the leave
+  lands completes, and a starter already past its own check (Windows starts the daemon through WMI,
+  which is slow) can still launch `mur daemon`, which exits at its consent check before it opens any
+  state or publishes. A repo without the marker, or one the user hasn't joined, gets no daemon, no
+  `refs/murmur/*` and nothing published. A clone whose user joined but whose current branch lacks
+  the marker keeps its daemon (it is the user's, for every worktree) and gets no MCP tools there.
 - **Per user, in every account T3 runs.** T3 can start Claude Code with its own `CLAUDE_CONFIG_DIR`
   (a provider instance with a home path, as `claude_personal` on Tyler's laptop, 2026-10-29), and
   Codex with its own `CODEX_HOME`. Until 2026-11-01 `mur join` wrote only to the home of the agent
@@ -632,7 +665,7 @@ agents that mattered.
   | Session | Title | Not used |
   |---|---|---|
   | In T3 (its thread found, see Delivering a message as a turn) | `orchestration_v2_projection_threads.title` for the thread, in T3's `statev2.sqlite` | The client's own name for the conversation: T3 doesn't copy its title there, and the two would take turns |
-  | Codex outside T3 | The thread's explicit name: `threads.name` in `state_N.sqlite` (the highest N) of `$CODEX_HOME` as the session's MCP server has it (Codex starts it with a bare environment, and `join` doesn't forward `CODEX_HOME` yet), else the daemon's, else `~/.codex`; failing that `thread_name` in `session_index.jsonl`, the last entry for the thread | `threads.title` and `threads.preview`, which hold the opening message |
+  | Codex outside T3 | The thread's explicit name: `threads.name` in `state_N.sqlite` (the highest N) of `$CODEX_HOME` as the session's MCP server has it (Codex starts it with a bare environment, so `join` names `CODEX_HOME` in `env_vars`, #88), else `~/.codex`, which the server names too, rather than leave the daemon its own `CODEX_HOME`, the home of whichever session started it; a server from before #88 names no home, and gets the daemon's `CODEX_HOME`, else `~/.codex`, as before; failing that `thread_name` in `session_index.jsonl`, the last entry for the thread | `threads.title` and `threads.preview`, which hold the opening message |
   | Claude Code outside T3 | The last `custom-title` line in the session's transcript (the name the user gave it), else the last `ai-title` line (the one Claude Code made up) | The first prompt: a session with neither has no title |
 
   The transcript is the hook's `transcript_path`, which the hook sends with its notices request;
@@ -663,9 +696,9 @@ tag with behaviour, below.
 - **What a tag is.** Up to 40 lowercase letters, digits and `. _ : / -`, at most 12 on a session
   (`internal/tags`). A tag under `model:` names the session's model, and a session has one at most.
 - **`do-not-disturb`** keeps a session's messages queued in its inbox. None is handed over as a
-  turn (the daemon treats the session as one it may not wake). The hook delivers neither a notice
+  turn (the daemon treats the session as one it may not wake). The hook gives neither a notice
   nor the whole message (#204), holds none for the turn's end (#202), and the `Stop` hook doesn't
-  keep the turn going with them (#213), even while the session is at work. `inbox` delivers them as
+  keep the turn going with them (#213), even while the session is at work. `inbox` gives them as
   usual. When the tag comes off, each goes out once, by whichever route applies then: handed over
   as a turn if the session is idle, or, if it is at work, a notice or the whole message from the
   hook, and given at its turn's end. A message queued through the tag counts as arriving when the
@@ -767,7 +800,8 @@ evidence is in #19.
   2026-10-28 not to change T3's source, so Murmur looks up the provider's session in T3's database
   (#56, 2026-10-29): "Delivering a message as a turn", below.
 - **Codex's MCP servers get a bare environment,** about 20 Windows core variables and no
-  `CODEX_*` or `T3CODE_CLI_PATH` (unless the Codex config forwards it), so the server learns its
+  `CODEX_*` or `T3CODE_CLI_PATH` (unless the Codex config forwards them, as `join` does for
+  `T3CODE_CLI_PATH` and `CODEX_HOME`), so the server learns its
   thread at its first tool call. Hooks under Codex inherit
   the `CLAUDE_CODE_SESSION_ID` of any Claude Code session that started Codex, so that variable
   doesn't prove a hook runs under Claude Code.
@@ -902,28 +936,42 @@ the agent happens to call a tool. Tyler's decision (2026-10-29, #57), which repl
 delivery: **a message from another agent reaches the receiving session as a turn of its own**, the
 way a message between two T3 threads does. Murmur's core is two agents talking with nobody typing.
 
-**What "delivered" means.** Tyler's rule (2026-11-07, #187): a message is *delivered* only once it
-has reached the agent's context. Before that it is *queued*, wherever it waits: in the recipient
-daemon's inbox, in a T3 thread's queue behind a running turn, or for the hook's next run. Delivered
-is what a sender acts on, so a looser word would let a sender believe an agent knows something it
-hasn't seen, and may not see for hours if it is idle and nothing wakes it (#25). The words, in the
-order a message meets them:
+**What "delivered" and "read" mean.** Tyler's rule (2026-11-09, #325), which replaces the one of
+2026-11-07 (#187): a message is *delivered* once its recipient knows it is waiting, and *read* once
+the recipient has the message itself. The same two words hold for an agent and for a person, so a
+sender reads them the same way whoever the recipient is. Before delivered a message is *queued*,
+wherever it waits: in the recipient daemon's inbox, in a T3 thread's queue behind a running turn,
+or for the hook's next run. These are what a sender acts on, so neither may be said early: a looser
+word would let a sender believe an agent knows something it hasn't seen, and may not see for hours
+if it is idle and nothing wakes it (#25). #187 used *delivered* for what is now *read*; the change
+was made so that a person's inbox and an agent's use one pair of words. The words, in the order a
+message meets them:
 
 - *Queued:* the recipient's daemon has put it in the session's inbox. The daemon knows.
 - *Handed over:* the daemon has passed it to the session's client, by `t3 thread send` or the
   messaging socket. Still queued, in the client now, and out of the daemon's inbox.
-- *Delivered:* it is in the agent's context. Where that moment is, by route:
+- *Delivered:* the recipient knows it is waiting. For an agent, the hook's notice (sender and
+  subject) is in its context. For a person, it is in their inbox on the page, counted as unread;
+  the page can't tell whether they looked.
+- *Read:* the recipient has the message. For an agent, the body is in its context. For a person,
+  they opened the conversation, which marks it read (a hidden page, or one in a background
+  window, marks nothing).
 
-| Route | Delivered when | Can Murmur see it |
+A message that arrives whole (a turn, the hook's whole message, the `Stop` hook's continuation)
+is read then. If no notice told of it first, it skipped delivered: so does every message to an
+agent the hook doesn't run in, which gets no notice. One the hook's notice told of during a turn
+was delivered then, and is read later, by whichever of these comes first. Where each moment is for an agent, by route:
+
+| Route | Delivered or read when | Can Murmur see it |
 |---|---|---|
-| `t3 thread send` | the turn carrying it starts: at once in an idle thread, after the running turn in a busy one (a busy one only where the hook doesn't run, #202) | No. The daemon sees `t3` accept the message, not the turn start; T3's database would show it (`orchestration_v2_projection_messages`), but those tables are T3's own and may change |
-| The messaging socket (Claude Code outside T3) | Claude Code takes it as a turn | No: the socket answers nothing |
-| The hook's notice (Claude Code) | the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt. That delivers the sender and subject, or the whole message where the page's busy setting says so (#204); otherwise the body is delivered by `inbox` | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
-| `inbox` | the tool's result returns to the agent | Partly: the daemon sees the messages leave in its answer, not the answer reach the agent through MCP |
+| `t3 thread send` | read when the turn carrying it starts: at once in an idle thread, after the running turn in a busy one (a busy one only where the hook doesn't run, #202) | No. The daemon sees `t3` accept the message, not the turn start; T3's database would show it (`orchestration_v2_projection_messages`), but those tables are T3's own and may change |
+| The messaging socket (Claude Code outside T3) | read when Claude Code takes it as a turn | No: the socket answers nothing |
+| The hook's notice (Claude Code) | delivered when the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt, with the sender and subject. Where the page's busy setting says whole message (#204), it is read then instead. A message told of is read later by `inbox`, by the `Stop` hook keeping the turn going with it, or as a turn handed over when the turn ends | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
+| `inbox` | read when the tool's result returns to the agent | Partly: the daemon sees the messages leave in its answer, not the answer reach the agent through MCP |
 
 Nothing reports a message's state to its sender yet. Whatever does (#26, `who`, `lookup`, the web
-page) shows queued, handed over and delivered as different states, and a handed-over message as
-delivered only once something can see the turn start.
+page) shows queued, handed over, delivered and read as different states, and a handed-over message
+as read only once something can see the turn start.
 
 The daemon hands a message over at once, when it arrives for a session it can reach, unless the
 hook has the session at work (see "A session at work", below):
@@ -951,8 +999,21 @@ The sender's text in between is passed on as written, neither quoted nor wrapped
 agents are trusted in Murmur's model, and a message that reads as a request is meant to be acted on.
 A body past the limit is cut, as in `inbox`.
 
+- **Who it is from, as the receiver knows it.** The first line is written when the handoff starts,
+  which is as soon as the message is queued, from what the receiving daemon knows of the sender
+  then: the name from presence or the registry, the agent and owner from presence. A sync reads
+  the registry and every presence before the logs, so what landed before the message is known
+  when it is queued. Those reads have 15 s (`ReadFirstLimit`), and never more than half of what is
+  left of the sync, which keeps at least as much, less a cancelled git's up to 5 s to exit, for the
+  logs, already fetched: a registry missing from the listing is asked of the remote again, and a
+  stall there would otherwise use up the minute. A sync that runs past the limit still reads the
+  logs, and then fails; the next sync reads what it missed. A fixed reserve of 15 s, tried first,
+  skipped these reads altogether in the 10 s sync a daemon runs before it accepts sessions. Until 2026-11-09 the logs came first, and a sync that fetched a sender's
+  name with its message wrote the turn without it (#71). A sender whose presence is pushed after
+  its message still arrives without its agent, and without its name if it took one from the pool
+  and the assignment hasn't landed either.
 - **Out of the inbox when handed over.** A message handed over leaves the receiving session's
-  inbox, so neither the hook nor `inbox` shows it again: the client has it now, and delivers it as
+  inbox, so neither the hook nor `inbox` shows it again: the client has it now, and gives it to the agent as
   a turn. The page and the daemon's log keep it as history. A message that could not be handed over
   stays in the inbox and is announced by the hook as before. The hook leaves alone a message that
   is waiting its turn to be handed over, behind the one being handed over: announced by a notice it
@@ -973,7 +1034,7 @@ A body past the limit is cut, as in `inbox`.
     read (Tyler, 2026-11-08; first built as a new turn, handed to T3 or the socket). That needs
     neither T3 nor a messaging socket, and nothing goes into T3's queue, which may hold a turn for
     good (above). The cost is a longer turn: its user sees it go on after what looked like the
-    agent's last word. The messages are delivered once the daemon answers the hook, so a hook that
+    agent's last word. The messages are read once the daemon answers the hook, so a hook that
     gave up waiting (3 s) just before the answer came loses them, as a whole message can (#204).
     The session is at work again, so a message that comes now waits for the turn's next end.
     Outside T3 that lasts 2 minutes unless another hook of the session shows the turn went on: an
@@ -1007,11 +1068,11 @@ A body past the limit is cut, as in `inbox`.
   - *Subject or whole message (#204).* What the hook tells a busy session is the page's busy
     setting, for the device or for one session, beside the wake setting (Tyler, 2026-11-08).
     "Subject", the default, is the line above. "Whole message" is the message as its turn would
-    read, a long body cut the same way, and the message is then delivered: it leaves the inbox and
+    read, a long body cut the same way, and the message is then read: it leaves the inbox and
     the count, and the page and the daemon's log say it went through the hook. Subject leaves the
     agent's focus to the agent, at the cost that it may pass over a line it needed; whole puts
     every message in front of it mid-task, at full length, whether or not it matters to the task.
-    A message given whole counts as delivered once the daemon answers the hook, so a hook that gave
+    A message given whole counts as read once the daemon answers the hook, so a hook that gave
     up waiting (3 s) just before the answer came loses it. One that was handed to T3 or the socket
     before, and may be there already, gets the subject only, as does a hook from before the
     setting, which prints only subjects: its request doesn't say it prints whole messages, and the
@@ -1082,8 +1143,11 @@ A body past the limit is cut, as in `inbox`.
   tools note it, `lookup` too), but its MCP servers start with a bare environment, `T3CODE_CLI_PATH`
   not among its variables, so Codex's config must forward it: `env_vars = ["T3CODE_CLI_PATH"]` under
   `[mcp_servers.murmur]` (worked with Codex 0.164.0 under T3 0.1.2, 2026-10-29). `mur join` writes
-  it, and adds the name to a list the user already has there without touching their other entries; a
-  list over several lines, or of anything but names, it leaves alone and says what to add by hand.
+  it with `CODEX_HOME` (Session names, #88), and adds a name missing from a list the user already
+  has there without touching their other entries; a list over several lines, or of anything but
+  names, it leaves alone and says what to add by hand. Codex leaves out a name its own environment
+  doesn't have, without a warning (`create_env_for_mcp_server` in `codex-rs/rmcp-client`, read
+  2026-11-09), so a session in `~/.codex` starts its server as before.
   Without it the server doesn't know it is in T3, and a Codex session gets notices only. Codex
   reads a project's `.codex/config.toml` only once the project is trusted.
 - **The messaging socket** is for Claude Code outside T3. Claude Code sets
@@ -1219,14 +1283,18 @@ A development build (`-dev`) never updates itself. Versions before this updater 
 install to acquire it.
 
 The daemon downloads the `mur-<os>-<arch>[.exe]` asset and that release's `SHA256SUMS`, verifies
-SHA-256, and stages a closed, synced executable beside the running binary's resolved symlink
-target. Unix renames it atomically over the old file. Windows renames the running exe to a unique
-backup, installs the staged file, and restores the backup if installation fails. Backups still
-held by processes are cleaned on a later daemon start. A lock beside the executable serializes
-clones sharing an install; a daemon whose executable has already been replaced restarts onto it.
-Identity is checked again after downloading so a manual reinstall during the download is left alone.
-An unwritable install (for example, a package manager's) is logged once and left alone until
-restart. Successful updates log the old and new versions in the daemon log.
+SHA-256, and stages a closed, synced executable beside the running binary's resolved symlink target.
+The downloads never leave https (2026-11-09): a redirect from https to plain http, or an asset URL
+that isn't https, fails the check, since whoever could serve the binary over plain http could serve
+its checksum too. Hosts aren't limited, because GitHub has moved its asset host before and a daemon
+refusing the next one could never update past it. Unix renames it atomically over the old file.
+Windows renames the running exe to a unique backup, installs the staged file, and restores the
+backup if installation fails. Backups still held by processes are cleaned on a later daemon start. A
+lock beside the executable serializes clones sharing an install; a daemon whose executable has
+already been replaced restarts onto it. Identity is checked again after downloading so a manual
+reinstall during the download is left alone. An unwritable install (for example, a package
+manager's) is logged once and left alone until restart. Successful updates log the old and new
+versions in the daemon log.
 
 After installation, the daemon waits until no message handoff is in flight and no page counts as
 open, or until the page asks for the restart (#240). It then blocks new handoffs and shuts down
@@ -1365,7 +1433,7 @@ agent, which reads it as markdown at `/stats/report.md` or JSON at `/stats/data`
   now that a message starts a turn without anyone typing (Tyler's decision, 2026-10-29): two
   agents that keep answering each other are stopped by nothing but the agents.
 - **Prompt injection.** Anyone with push access can now put text in front of your agent. That
-  matches the trust model (a hackathon team), and a delivered message is text in front of the
+  matches the trust model (a hackathon team), and a message is text in front of the
   agent as a turn of its own, passed on as written; messages never get to bypass the receiving
   user's permission mode, and the framing's first line keeps their origin visible.
 - **Leaked secrets.** Everything on the bus stays in repo history, readable by anyone with read

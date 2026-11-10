@@ -15,6 +15,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/hook"
+	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
 )
@@ -58,6 +59,13 @@ func fakeDaemon(t *testing.T, gitDir string, answer func(proto.Request) string) 
 	}()
 	dir := client.StateDir(gitDir)
 	os.MkdirAll(dir, 0o700)
+	// It holds the clone's lock, as a daemon does: a client takes a daemon.json beside a free lock
+	// for a dead daemon's.
+	lock, err := proc.Lock(filepath.Join(dir, "daemon.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lock.Close() })
 	b, _ := json.Marshal(proto.Info{Addr: ln.Addr().String(), Token: "tok", PID: os.Getpid(), Device: "fake-0001"})
 	if err := os.WriteFile(filepath.Join(dir, "daemon.json"), b, 0o600); err != nil {
 		t.Fatal(err)
@@ -281,7 +289,7 @@ func TestTheUnreadCountAlone(t *testing.T) {
 
 // A message the daemon gives whole (#204) is added to the agent's context as its turn would read,
 // before the count of what is left unread.
-func TestDeliveredMessagesAreShownWhole(t *testing.T) {
+func TestReadMessagesAreShownWhole(t *testing.T) {
 	repo := newRepo(t)
 	fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
 		if r.Op == proto.OpNotices {

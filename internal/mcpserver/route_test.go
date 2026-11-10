@@ -11,6 +11,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/title"
 )
 
 // Tests of how the server finds out how to reach its client, for the daemon to hand messages over as
@@ -214,7 +215,10 @@ func TestNoThreadMeansNoRoute(t *testing.T) {
 		s := started(t, f, nil, map[string]string{"CLAUDE_CODE_SESSION_ID": "claude-session-1", "T3CODE_CLI_PATH": "", "CODEX_HOME": ""})
 		s.noteMeta(context.Background(), metaCall("x"))
 		eventually(t, "the daemon to be told the thread ID", func() bool { return len(f.routesTold()) > 0 })
-		if rs := f.routesTold(); len(rs) != 1 || rs[0] != (proto.Route{Native: "x"}) || f.lastHello().T3Thread != "" {
+		// With no CODEX_HOME the server names Codex's default home, so the daemon doesn't take its
+		// own, which is the home of whichever session started it (#88, Sol's review of #301).
+		want := proto.Route{Native: "x", CodexHome: title.DefaultCodexDir()}
+		if rs := f.routesTold(); len(rs) != 1 || rs[0] != want || f.lastHello().T3Thread != "" {
 			t.Errorf("told %+v, hello %+v", rs, f.lastHello().Route)
 		}
 	})
@@ -254,6 +258,9 @@ func TestThreadFoundWhileRegisteringIsToldAfterwards(t *testing.T) {
 	l := &link{c: &client.Client{GitDir: gitDir}, hello: helloFor("claude-code", "/work"), changed: make(chan struct{}), find: fd.find, seek: currentSeek()}
 	go l.run(ctx)
 	eventually(t, "the thread to be found", l.threadKnown)
+	// The hello was made before the thread was found, but finding the daemon takes a moment, so it
+	// may reach the daemon after.
+	eventually(t, "the hello to arrive", func() bool { return f.helloCount() > 0 })
 	if h := f.lastHello(); h.T3Thread != "" {
 		t.Fatalf("the hello had the thread already: %+v", h.Route)
 	}
