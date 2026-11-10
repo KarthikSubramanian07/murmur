@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -113,9 +114,15 @@ func readTitle(ctx context.Context, j titleJob) (raw string, known bool, err err
 		}
 		return raw, true, err
 	case r.Native != "" && !ownTitleUnread(j.agent):
-		dir := r.CodexHome // the session's own, as the daemon may have been started by another client
+		// The session's own home, as its MCP server has it: CODEX_HOME, which join forwards to the
+		// server when the session has one, else Codex's default (#88). The daemon's own CODEX_HOME
+		// is the home of whichever session started it, so it is taken only for a route that names
+		// no home, which comes from a server older than #88's, as such a server expects.
+		dir := r.CodexHome
 		if !filepath.IsAbs(dir) {
-			dir = title.CodexDir()
+			if dir = os.Getenv("CODEX_HOME"); !filepath.IsAbs(dir) {
+				dir = title.DefaultCodexDir()
+			}
 		}
 		raw, err = title.Codex(ctx, dir, r.Native)
 		return raw, true, err

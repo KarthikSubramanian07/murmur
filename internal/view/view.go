@@ -435,18 +435,6 @@ func Tags(r proto.Response) string {
 	return b.String()
 }
 
-// Log renders recent events.
-func Log(r proto.Response) string {
-	if len(r.Events) == 0 {
-		return "Nothing yet.\n"
-	}
-	var b strings.Builder
-	for _, e := range r.Events {
-		fmt.Fprintf(&b, "%s  %s\n", e.At.Local().Format("15:04:05"), e.Line)
-	}
-	return b.String()
-}
-
 // Note renders a bare acknowledgement.
 func Note(r proto.Response) string {
 	if r.Note == "" {

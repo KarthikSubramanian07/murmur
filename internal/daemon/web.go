@@ -128,9 +128,16 @@ func (d *Daemon) keepable(ln net.Listener) (net.Listener, *os.File) {
 // servePage serves the page on ln until ctx is done.
 func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
 	page := web.New(pageSource{d}, d.pageTok, repoDir(d.opt.GitDir))
+	// Any local user can connect, and a connection Go keeps open costs the daemon a file descriptor:
+	// one that sends a request and then sits idle would be kept for good, and enough of them would
+	// leave the daemon none for its sessions or git. A tab polls every 3 s, or 15 s when hidden, so
+	// two idle minutes close only a tab's connection that it no longer uses; a request's body is at
+	// most 64 KiB. No write timeout, which would also cut off a handler still at work.
 	srv := &http.Server{
 		Handler:           page,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 		ErrorLog:          d.log,
 	}
 	d.bg.Add(2)

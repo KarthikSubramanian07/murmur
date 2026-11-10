@@ -89,8 +89,8 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 	t := time.NewTicker(d.opt.Poll)
 	defer t.Stop()
 	failing, quiet := false, false
-	// wait is until the next poll; every, when all is well; calm is where the slow phase is.
-	wait, every, calm := d.opt.Poll, d.opt.Poll, d.opt.Poll
+	// wait is until the next poll; calm is where the slow phase is.
+	wait, calm := d.opt.Poll, d.opt.Poll
 	for {
 		err := d.pollOnce(ctx)
 		if err != nil && ctx.Err() == nil {
@@ -117,8 +117,8 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 			}
 			quiet = rate.quiet
 		}
-		every, calm = rate.every, rate.calm
-		if next := nextPoll(wait, every, failing); next != wait {
+		calm = rate.calm
+		if next := nextPoll(wait, rate.every, failing); next != wait {
 			wait = next
 			t.Reset(wait)
 		}
@@ -133,7 +133,7 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 				// slower rate than that calls for, look now and from here on at the faster; if
 				// not, it is as quick as it gets. A failure's backoff is not ended by it either,
 				// unless the loop was quiet: a session that comes then is the reason to look now.
-				if d.pollEvery(calm).every >= every || failing && !quiet {
+				if d.pollEvery(calm).every >= rate.every || failing && !quiet {
 					continue sleep
 				}
 			}
@@ -230,7 +230,16 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	d.mu.Unlock()
 	d.clearOwnJunk(listed)
 
-	for _, ref := range sortedKeys(remote) {
+	// The registry and every presence are read first (see readOrder), within a limit of their own
+	// (see readFirstContext), so that a stall there leaves the logs the time they need: the logs
+	// were fetched already, and they hold the messages. A registry missing from the listing is
+	// asked of the remote again, which can stall like any request to it.
+	first, cancelFirst := readFirstContext(ctx, d.opt.ReadFirstLimit)
+	if _, ok := remote[brand.NamesRef]; !ok {
+		d.processNames(first, "") // not on the remote
+	}
+	var logs []string
+	for _, ref := range readOrder(remote) {
 		sha := remote[ref]
 		if failed[ref] != nil {
 			// Not here to read, but the listing shows it moved: for a presence, that is still a
@@ -242,22 +251,27 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		}
 		switch {
 		case ref == brand.NamesRef:
-			d.processNames(ctx, sha)
+			d.processNames(first, sha)
 		case strings.HasPrefix(ref, brand.MeshPrefix):
 			if _, ok := meshDevice(ref); ok {
-				d.advanceMesh(ctx, ref, sha, listed[ref])
+				logs = append(logs, ref)
 			}
 		case strings.HasPrefix(ref, brand.PresencePrefix):
-			d.updatePeer(ctx, ref, sha)
+			d.updatePeer(first, ref, sha)
 		}
 	}
-	if _, ok := remote[brand.NamesRef]; !ok {
-		d.processNames(ctx, "") // not on the remote
+	firstErr := first.Err()
+	cancelFirst()
+	for _, ref := range logs {
+		d.advanceMesh(ctx, ref, remote[ref], listed[ref])
 	}
 	// A sync cut short is no fresh look: staleness is judged up to the last successful sync, and
 	// this one didn't read every presence it listed.
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if firstErr != nil {
+		return fmt.Errorf("reading the names registry and presence took over %s: %w", d.opt.ReadFirstLimit, firstErr)
 	}
 
 	d.mu.Lock()
@@ -286,6 +300,44 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 func meshDevice(ref string) (string, bool) {
 	dev := strings.TrimPrefix(ref, brand.MeshPrefix)
 	return dev, bus.ValidDevice(dev)
+}
+
+// readFirstContext is what a sync reads the registry and presence on: limit from now, but no more
+// than half of what is left of the sync, so that a stall there leaves the logs at least as much,
+// however long the listing and fetches took, less the up to five seconds a cancelled git takes to
+// exit (see gitx.run). Half rather than a fixed reserve, since a sync's deadline isn't always a
+// minute: the one before a daemon accepts sessions has 10 s, and must read presence too, or a new
+// session could take a name a peer's presence shows.
+func readFirstContext(ctx context.Context, limit time.Duration) (context.Context, context.CancelFunc) {
+	now := time.Now()
+	end := now.Add(limit)
+	if dl, ok := ctx.Deadline(); ok {
+		if half := now.Add(dl.Sub(now) / 2); half.Before(end) {
+			end = half
+		}
+	}
+	return context.WithDeadline(ctx, end)
+}
+
+// readOrder is the order a sync reads the refs it fetched: the names registry, then every
+// presence, then the logs (#71). A message's handoff starts as soon as its log is read, and writes
+// the turn from what this daemon knows of the sender then, so what was fetched with the message
+// about its sender is read first. In the refs' own order, mesh/ before names and presence/, a turn
+// could go out without a name the same sync had brought (docs/VISION.md, "Delivering a message as
+// a turn").
+func readOrder(remote map[string]string) []string {
+	rank := func(ref string) int {
+		switch {
+		case ref == brand.NamesRef:
+			return 0
+		case strings.HasPrefix(ref, brand.PresencePrefix):
+			return 1
+		}
+		return 2
+	}
+	refs := sortedKeys(remote)
+	slices.SortStableFunc(refs, func(a, b string) int { return rank(a) - rank(b) })
+	return refs
 }
 
 // readable keeps the refs Murmur reads: each device's log and presence, and the names registry.
@@ -1253,7 +1305,19 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return d.push(ctx, sha, d.presenceRef(), bus.Force, "")
+	ref := d.presenceRef()
+	if err := d.push(ctx, sha, ref, bus.Force, ""); err != nil {
+		return err
+	}
+	// Recorded as the device's other pushes are, so the next poll doesn't fetch it back:
+	// updatePeer skips this device's own presence, so the fetch would read nothing.
+	if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
+		d.log.Printf("updating local %s: %v", ref, err)
+	}
+	d.mu.Lock()
+	d.known[ref] = sha
+	d.mu.Unlock()
+	return nil
 }
 
 // liveNamesLocked is the names of the sessions that are connected, as opposed to waiting out their
