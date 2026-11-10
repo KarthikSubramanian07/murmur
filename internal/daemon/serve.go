@@ -319,6 +319,12 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	// human's, and hooks, which reach here as the CLI, mark the sessions they speak for themselves.
 	if s := d.sessions[sess]; registered && s != nil {
 		d.touchLocked(s, now)
+		if toolOps[req.Op] && s.toolCalled.IsZero() {
+			s.toolCalled = now
+			// Other devices learn that its hook isn't running from presence, which is written when
+			// something in it changes; the end of the grace changes nothing else, so it asks.
+			time.AfterFunc(hookGrace+time.Second, d.kickPresence)
+		}
 	}
 	d.mu.Unlock()
 	if !registered && req.Op != proto.OpNotices && req.Op != proto.OpTurnEnd && req.Op != proto.OpPing {
@@ -670,6 +676,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		_, stopped := d.st.Stopped[sess]
 		offline := d.offlineLocked(dev, sess)
 		dnd := d.peerDNDLocked(dev, sess)
+		hookOff, agent := d.peerHookOffLocked(dev, sess)
 		why := ""
 		if offline {
 			why = d.offlineWhyLocked(dev, sess, nameOr(toName, at))
@@ -680,6 +687,14 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 			return fail("not sent: " + why)
 		case known && dnd:
 			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox until it reads its inbox or turns do not disturb off, with no notice or turn."
+		case known && hookOff:
+			// Without the hook the daemon hands the message over as a turn where it can (in T3, or
+			// Claude Code's socket), at once, which T3 queues if the session is busy.
+			if strings.HasSuffix(agent, " in T3") || agent == "claude-code" {
+				note = nameOr(toName, at) + "'s hook isn't running, so it won't be told while it works: it gets this as its next turn."
+			} else {
+				note = nameOr(toName, at) + "'s hook isn't running, so it sees this when it next reads its inbox."
+			}
 		case known:
 		case dev == d.device && stopped:
 			note = at + " has stopped. The message waits for it, in case it comes back."
@@ -805,7 +820,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 		}
 		self.Sessions = append(self.Sessions, proto.SessionView{Addr: bus.Addr(d.device, s.id), Name: s.name,
 			Pending: s.name == "", Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(), Started: s.started, LastActive: s.lastActive,
-			You: s.id == you, Tags: ts})
+			You: s.id == you, Tags: ts, HookOff: d.hookOffLocked(s)})
 	}
 	if d.st.Person != "" && filter.Match(tags.Person()) {
 		self.Sessions = append(self.Sessions, d.personViewLocked())
@@ -828,7 +843,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 			}
 			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: bus.Addr(id, s.ID), Name: s.Name,
 				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: s.Started, LastActive: peerActive(p, s),
-				Tags: s.Tags})
+				Tags: s.Tags, HookOff: s.HookOff})
 		}
 		if !filter.Empty() && len(dv.Sessions) == 0 {
 			continue // nothing on it matches

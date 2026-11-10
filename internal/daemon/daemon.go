@@ -434,6 +434,13 @@ type session struct {
 	hooked, stopSeen, stopContinues bool
 	busyAt, turnStart, continuedAt  time.Time
 	toldUnread, continuations       int
+	// hookSeen says a hook of the session has reported, a subagent's included; toolCalled is when
+	// the session first called one of Murmur's tools (see hookOffLocked, #225). hookNative is the
+	// conversation's own ID as a hook of an agent other than Claude Code reported it, for a session
+	// whose MCP server hasn't learned it (see agentHookSessionsLocked).
+	hookSeen   bool
+	toolCalled time.Time
+	hookNative string
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its

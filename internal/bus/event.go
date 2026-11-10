@@ -284,6 +284,9 @@ type SessionInfo struct {
 	// Tags is the session's tags as its device decided them, each with where it came from (#198).
 	// A daemon from before tags ignores them.
 	Tags []tags.Tag `json:"tags,omitempty"`
+	// HookOff says Murmur's hook doesn't run for the session (proto.SessionView.HookOff, #225). A
+	// daemon from before it ignores it.
+	HookOff bool `json:"hookOff,omitempty"`
 }
 
 // MaxCommitted caps SessionInfo.Committed.
