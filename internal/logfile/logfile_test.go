@@ -139,7 +139,7 @@ func TestCredentialsInURLsAreNotLogged(t *testing.T) {
 		`remote "https://ghp_abc123@github.com/o/r"`:                                    `remote "https://github.com/o/r"`,
 		"ssh://git@github.com:22/o/r and https://u:p@ss@host/x?y=a@b":                   "ssh://github.com:22/o/r and https://host/x?y=a@b",
 		"git@github.com:o/r.git, mail a@b.c, https://github.com/o/r?u=a@b#c@d":          "git@github.com:o/r.git, mail a@b.c, https://github.com/o/r?u=a@b#c@d",
-		`["https://host","a@b.c"] <https://host>,<a@b>`:                                 `["https://host","a@b.c"] <https://host>,<a@b>`,
+		`https://u:p"q@host/x and https://u:p<q>@host/y`:                                "https://host/x and https://host/y",
 		"https://u:it's,secret@host/x":                                                  "https://host/x",
 	} {
 		if got := Redact(in); got != want {

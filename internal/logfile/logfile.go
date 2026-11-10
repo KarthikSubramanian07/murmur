@@ -111,11 +111,11 @@ func copyFile(from, to string) error {
 }
 
 // userinfo is the user and password of a URL (`https://x-access-token:…@github.com/…`), up to its
-// authority's last @, since a password can hold an @ of its own. It stops at a double quote or an
-// angle bracket, which no URL holds unescaped, so `"https://host","a@b"` keeps its host. A comma
-// or a single quote doesn't stop it: a password may hold either, and stopping there would let the
-// whole password through.
-var userinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#"<>]*@`)
+// authority's last @, since a password can hold an @ of its own. Nothing but a space, /, ? or #
+// stops it: git takes a remote typed with a quote, a bracket, a comma or an apostrophe in its
+// password, and stopping at any of those would leave no @ to match and let the password through.
+// The price is that text such as `"https://host","a@b"` loses more than it needs to.
+var userinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#]*@`)
 
 // Redact takes the user and password out of every URL in s, as git does in its own messages. A
 // remote's URL can carry a token, and a log line can hold one from git's stderr or an error. It
