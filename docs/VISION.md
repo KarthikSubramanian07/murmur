@@ -204,17 +204,19 @@ would have left that gap. What answers without the proof is not the daemon, and 
 its daemon again (or starts one). Until it is proved, a reply is read only up to 4 KB, and a proved
 daemon's up to 64 MB, about half again a full inbox of the longest messages escaped: before, one
 that never ended was read until the deadline, however much it came to. A daemon of protocol 11 or
-older can't prove itself, and refuses the nonce's ping as a missing token. A client that may start
-daemons replaces one as it replaces any older daemon. One that may not (the hook, a session whose
-user left) sends it nothing but a stop, and says how to end it: `mur stop`, then any command that
-may start a daemon (2026-11-10, Sol's reviews of main before v0.3.0-rc.1 and of #389). At first
-such clients talked to it unproved, trusting the clone's lock and daemon.json, but those don't show
-that a connection is to the daemon. Checked before the dial, the daemon could die and another
-process take its port in between; checked after, a daemon from before 07a1ecba still fails it,
-having closed its port as it began to stop while it kept both. The stop, which `mur stop` and a
-replacement need, checks them once its connection is made: if it goes astray all the same, what
-took the port gets the token of a daemon no longer listening, and its answer decides nothing, as
-the lock is waited on after it. Discovery still contacts the
+older can't prove itself, and refuses the nonce's ping as a missing token. A client sends it
+nothing at all, not even a stop, and so can neither stop nor replace it: it says the daemon is from
+an older version, and how to end it, by the process ID in daemon.json, or that it exits on its own
+10 minutes after its last session, when the next command starts a current one (2026-11-10). That
+is the cost of an upgrade from 0.2: a daemon left running by the old mur is in the way until it
+goes. Everything else was tried first and failed review (Sol's reviews of main before v0.3.0-rc.1
+and of #389). Talking to it unproved while the clone's lock was held left a gap between the check
+and the dial. Checking after the dial still trusted a daemon from before 07a1ecba, which closes its
+port as it begins to stop and keeps its lock and daemon.json while it finishes, so another process
+can take the port in that time. Even a stop alone gave that process the token, which is also the
+key the proof uses: it could then prove itself to the next client, beside the old daemon's lock and
+file, and be sent its messages and answer with text the hook puts in the agent's context. A daemon
+of 12 or later that is older than its client proves itself, and is replaced as before. Discovery still contacts the
 listener before trying the lock, since trying the lock can turn away a daemon starting just then;
 what the listener is sent there is the nonce alone.
 
