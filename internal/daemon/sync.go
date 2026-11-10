@@ -1271,17 +1271,30 @@ func (d *Daemon) appendSoon(e bus.Event) {
 // already, so readers take it from the presence before its assignment lands.
 func (d *Daemon) awaitPresence(ctx context.Context) error {
 	d.mu.Lock()
-	first := d.presenceFirst
+	gates := []chan struct{}{d.presenceSending, d.presenceFirst}
 	d.mu.Unlock()
-	if first == nil {
-		return nil
+	for _, g := range gates {
+		if g == nil {
+			continue
+		}
+		select {
+		case <-g:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
-	select {
-	case <-first:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	return nil
+}
+
+// presenceSent lets go of what waits for the presence publishPresence took gate for, once that
+// presence has been pushed or has failed.
+func (d *Daemon) presenceSent(gate chan struct{}) {
+	d.mu.Lock()
+	if d.presenceSending == gate {
+		d.presenceSending = nil
 	}
+	d.mu.Unlock()
+	close(gate)
 }
 
 func (d *Daemon) kickPresence() {
@@ -1397,10 +1410,12 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		pres.Sessions = append(pres.Sessions, d.personInfoLocked())
 	}
 	// This presence lists every session started so far, so what waits for one that does can go
-	// once it is pushed, or has failed: a failing remote is no reason to hold back the rest.
+	// once it is pushed, or has failed: a failing remote is no reason to hold back the rest. Until
+	// then the gate stays where awaitPresence finds it, as presenceSending, so a writer that comes
+	// to it while this presence is being encoded or waits for the push slot still waits.
 	if first := d.presenceFirst; first != nil {
-		d.presenceFirst = nil
-		defer close(first)
+		d.presenceFirst, d.presenceSending = nil, first
+		defer d.presenceSent(first)
 	}
 	d.mu.Unlock()
 
