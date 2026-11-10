@@ -677,6 +677,7 @@ func TestNameMovesToTheLiveSessionInTheGrace(t *testing.T) {
 // first start since the daemon kept people's claims (#268), which reads the registry again from its
 // start: that read mustn't hide the damage.
 func TestAnUpgradedDaemonStillRepairsARewoundRegistry(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.names, d.grace = seededNames(53), 300*time.Millisecond })
 	var taken []string

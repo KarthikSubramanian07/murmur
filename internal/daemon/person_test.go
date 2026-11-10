@@ -526,6 +526,7 @@ func TestALongPersonLogIsCutBack(t *testing.T) {
 // Two people who choose one name at the same moment can't both have it: the names registry takes one
 // claim, and the other is told the name is taken (#268).
 func TestTwoPeopleCantTakeOneName(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	pa, pb := a.page(), b.page()
@@ -576,6 +577,7 @@ func TestTwoPeopleCantTakeOneName(t *testing.T) {
 // keeps it; the other's person is asked for another name, can't send until they choose one, and
 // keeps what was sent to them (#268).
 func TestANameHeldFromBeforeIsClaimedOnce(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	b.session("bbbbbb", "")
@@ -616,6 +618,7 @@ func TestANameHeldFromBeforeIsClaimedOnce(t *testing.T) {
 // A daemon from before #268 read the registry past people's claims without keeping them. Upgraded, it
 // reads the registry again from the start, and a name claimed back then is taken (#268).
 func TestAnUpgradedDaemonReadsClaimsItPassedOver(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	a.page().choose("ada")
@@ -643,6 +646,7 @@ func TestAnUpgradedDaemonReadsClaimsItPassedOver(t *testing.T) {
 // A person's account is tagged human wherever it is listed, on their device and on another, and no
 // session can take the tag or have it read off the bus (#267).
 func TestAPersonIsTaggedHuman(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	a.session("aaaaaa", "")
