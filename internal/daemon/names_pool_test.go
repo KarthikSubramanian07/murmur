@@ -2,10 +2,15 @@ package daemon_test
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 )
@@ -22,6 +27,23 @@ func (r registry) setAside(dev string) []string {
 		}
 	}
 	return got
+}
+
+// poolOf is the names device d keeps set aside for sessions to come, oldest first, as its
+// state.json has them.
+func poolOf(t *testing.T, d *device) []string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(d.gitDir, brand.StateDir, "state.json"))
+	if err != nil {
+		return nil // not written yet, or being replaced; look again
+	}
+	var st struct {
+		NamePool []string `json:"namePool"`
+	}
+	if err := json.Unmarshal(b, &st); err != nil {
+		t.Fatalf("state.json: %v", err)
+	}
+	return st.NamePool
 }
 
 // holders maps each name the registry assigns to a session to that session's address.
@@ -69,13 +91,17 @@ func noNameSetAsideTwice(t *testing.T, reg registry) {
 // reach has one of them at once, in the hello's answer; when the remote is back, the registry is
 // told which session took it, and the pool is filled again.
 func TestSessionTakesANameSetAsideWithoutTheRemote(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.pool = 2 })
 	dev := a.self()
 	var pool []string
+	// The daemon pushes the names it sets aside, and puts them in its pool only once the push has
+	// landed: a session starting in between is told its name is pending. So wait for the daemon's
+	// own pool, as well as the registry.
 	eventually(t, "two names set aside", func() bool {
 		pool = readRegistry(t, remote).free(dev)
-		return len(pool) == 2
+		return len(pool) == 2 && slices.Equal(poolOf(t, a), pool)
 	})
 
 	a.offline(remote, true)
@@ -104,6 +130,7 @@ func TestSessionTakesANameSetAsideWithoutTheRemote(t *testing.T) {
 // A name set aside for one device is never another's to give, even when both draw the same names:
 // a daemon reads it as a name in use, as one that predates the pool does (see bus.NameRecord).
 func TestNamesSetAsideAreNeverHandedOut(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.pool = 2; d.names = seededNames(7) })
 	dev := a.self()
@@ -125,6 +152,7 @@ func TestNamesSetAsideAreNeverHandedOut(t *testing.T) {
 // A name set aside that no session has taken is in use, but nobody can be sent to: send says so,
 // and says for which device, rather than that nobody has the name.
 func TestSendToANameSetAside(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.pool = 1 })
 	b := newDevice(t, remote)
@@ -163,6 +191,7 @@ func TestSendToANameSetAside(t *testing.T) {
 // A device's first start with the remote out of reach has no names set aside: its first session
 // is pending, at device/session, until the remote is back, as before the pool.
 func TestFirstStartOfflineIsPending(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) {
 		d.pool = 2

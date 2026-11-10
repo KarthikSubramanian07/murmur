@@ -42,16 +42,21 @@ func (d *Daemon) ownPersonMsgLocked(e bus.Event) bool {
 }
 
 // resolvePersonLocked finds who is called name: whoever claimed it in the names registry (#268), then
-// this device's person, then a person in another device's presence, then anyone this daemon has seen
-// with that name, which reaches a person whose daemon has gone: their device reads the message when
-// it comes back. The last three are for names from before people were in the registry, and for a
-// daemon that hasn't read it yet. Caller holds mu.
+// this device's person, then the first person this daemon saw with that name (People), which reaches
+// a person whose daemon has gone: their device reads the message when it comes back. Then a person in
+// another device's presence, for a state from before People held everyone presence shows. The last
+// three are for names from before people were in the registry, and for a daemon that hasn't read it
+// yet. The first sighting goes before presence because any device can say its person has any name,
+// and the first to be seen with one keeps it, as with sessions' names. Caller holds mu.
 func (d *Daemon) resolvePersonLocked(name string) (string, bool) {
 	if addr := d.st.PersonClaims[name]; addr != "" {
 		return addr, true
 	}
 	if name == d.st.Person && name != "" {
 		return d.personAddr(), true
+	}
+	if addr, ok := d.st.People[name]; ok {
+		return addr, true
 	}
 	for _, dev := range sortedKeys(d.peers) {
 		for _, s := range d.peers[dev].pres.Sessions {
@@ -60,8 +65,7 @@ func (d *Daemon) resolvePersonLocked(name string) (string, bool) {
 			}
 		}
 	}
-	addr, ok := d.st.People[name]
-	return addr, ok
+	return "", false
 }
 
 // personNameOfLocked is the name of the person at addr, "" if addr isn't a person's or their name
@@ -89,6 +93,29 @@ func (d *Daemon) personNameOfLocked(addr string) string {
 		}
 	}
 	return found
+}
+
+// personSenderLocked is the name a person's message e is shown from: the one it carries, which may
+// be an earlier name of theirs, or else the one their device gives them. A message can carry any
+// name, so the one it carries counts only if its sender holds it: by a claim in the registry, in
+// its live presence, or in People, as a name they have had. People has only what a presence or a
+// claim gave it, never a message's name (notePersonLocked), so this holds for a sender whose
+// presence has gone, as one that renamed before #272 and has no claim. Either name then
+// counts only if it doesn't reach someone else; otherwise the message is from its address. onMany
+// says a live presence of another device says the name too, so whoever reads the message should be
+// told which device sent it; it lasts only as long as that presence does. Caller holds mu.
+func (d *Daemon) personSenderLocked(e bus.Event) (name string, onMany bool) {
+	carried := e.Person
+	if carried != "" && d.st.PersonClaims[carried] != e.From && d.livePersonLocked(e.From) != carried &&
+		d.st.People[carried] != e.From {
+		carried = ""
+	}
+	for _, n := range []string{carried, d.personNameOfLocked(e.From)} {
+		if addr, ok := d.resolvePersonLocked(n); n != "" && (!ok || addr == e.From) {
+			return n, d.nameOnOthersLocked(n, e.From)
+		}
+	}
+	return "", false
 }
 
 // personInfoLocked is this device's person as presence carries them. Last active is when a page
@@ -236,9 +263,36 @@ func (d *Daemon) personNameProblemLocked(name string) string {
 	if _, isDevice := d.peers[name]; isDevice || name == d.device {
 		return fmt.Sprintf("%s is a device's ID here, so a message to it would go to that device.", name)
 	}
-	if addr, ok := d.resolvePersonLocked(name); ok && addr != d.personAddr() {
-		dev, _ := bus.SplitAddr(addr)
+	if dev := d.nameTakenLocked(name); dev != "" {
 		return fmt.Sprintf("%s is taken, by the person on %s.", name, dev)
+	}
+	return ""
+}
+
+// nameTakenLocked is the device whose person has name, other than this one, "" if none. Once the
+// registry has been read by a daemon that keeps people's claims, only a claim there or a live
+// presence takes a name: a sighting in People alone may be a presence long gone, and the claim
+// decides between two people anyway (#268). Before that read, any sighting counts. Caller holds mu.
+func (d *Daemon) nameTakenLocked(name string) string {
+	if !d.namesChecked || !d.st.NamesPeople {
+		if addr, ok := d.resolvePersonLocked(name); ok && addr != d.personAddr() {
+			dev, _ := bus.SplitAddr(addr)
+			return dev
+		}
+		return ""
+	}
+	switch addr := d.st.PersonClaims[name]; addr {
+	case d.personAddr():
+		return ""
+	case "":
+	default:
+		dev, _ := bus.SplitAddr(addr)
+		return dev
+	}
+	for _, dev := range sortedKeys(d.peers) {
+		if d.livePersonLocked(bus.Addr(dev, bus.PersonSession)) == name {
+			return dev
+		}
 	}
 	return ""
 }
@@ -282,6 +336,10 @@ func (d *Daemon) nameTakenByLocked() string {
 // gets it (#268). A push refused because the registry moved is tried again after reading what moved
 // it, up to nameTries times; the error says whether someone else has the name.
 func (d *Daemon) claimPersonName(ctx context.Context, name string) error {
+	// The page is served before Run's first sync. A sync of its own started first would hold syncMu
+	// for up to a minute, and Run's, which a stop can cut short, would wait for it, so the daemon
+	// couldn't stop in that time (Sol's review of #377).
+	d.awaitFirstSync(ctx)
 	d.mu.Lock()
 	read := d.namesChecked
 	d.mu.Unlock()
@@ -293,7 +351,7 @@ func (d *Daemon) claimPersonName(ctx context.Context, name string) error {
 		}
 	}
 	for range nameTries {
-		err := d.pushNames(ctx, nameWork{person: name})
+		err := d.pushNames(ctx, nameWork{person: []string{name}})
 		d.mu.Lock()
 		holder := d.st.PersonClaims[name]
 		d.mu.Unlock()
@@ -347,6 +405,7 @@ func (s pageSource) SetAccount(ctx context.Context, name string) (web.Account, e
 func (s pageSource) Send(ctx context.Context, to, text string) (web.Sent, error) {
 	d := s.d
 	d.pageCalled(ctx)
+	d.awaitFirstSync(ctx) // as send does for a session: the names it resolves, and its push
 	d.mu.Lock()
 	named, takenBy := d.st.Person != "", d.nameTakenByLocked()
 	d.mu.Unlock()
