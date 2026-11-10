@@ -171,14 +171,21 @@ func TestHomesAreDeduplicated(t *testing.T) {
 
 // ~/.codex as the default and as a T3 instance's CODEX_HOME is one home, unless it is a link: then
 // Codex names its hook by the link for one and by where it leads for the other, and join keeps both
-// so that the hook is trusted under each (Sol's review, 2026-11-09).
+// so that the hook is trusted under each (Sol's review, 2026-11-09). The home directory is spelled
+// canonically, as a real one is: a temporary directory isn't on macOS (/var is a link to
+// /private/var) or on CI's Windows runner (RUNNER~1), and there the two spellings differ even with
+// no link of the test's own.
 func TestACodexHomeNamedTwoWays(t *testing.T) {
 	for _, linked := range []bool{false, true} {
 		sb := newSandbox(t, false)
-		sb.Home = sb.root
-		sb.CodexHome, sb.CodexHomeDefault = filepath.Join(sb.root, ".codex"), true
+		root, err := filepath.EvalSymlinks(sb.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sb.Home = root
+		sb.CodexHome, sb.CodexHomeDefault = filepath.Join(root, ".codex"), true
 		if linked {
-			real := filepath.Join(sb.root, "dotfiles", "codex")
+			real := filepath.Join(root, "dotfiles", "codex")
 			if err := os.MkdirAll(real, 0o755); err != nil {
 				t.Fatal(err)
 			}
