@@ -267,7 +267,7 @@ func Inbox(r proto.Response) string {
 		if m.FromName != "" {
 			reply = m.FromName // a name is an address
 		}
-		if isPerson(m) {
+		if isPerson(m) && !m.Explained {
 			fmt.Fprintf(&b, "(%s is a person, and sees only what you send them. Reply to %s.)\n", reply, reply)
 		} else {
 			fmt.Fprintf(&b, "(Reply to %s.)\n", reply)
@@ -300,9 +300,10 @@ func senders(msgs []proto.MessageView) string {
 // notice told of earlier says so (m.Told, #355): the agent may have acted on the subject already,
 // and would otherwise take the turn for a second message.
 //
-// A person on Murmur's page (#242) reads nothing of the conversation they wrote into, so a turn from
-// one always ends by saying that what the agent writes here doesn't reach them: an agent that
-// answers in its conversation, as it would to its user, has answered nobody.
+// A person on Murmur's page (#242) reads nothing of the conversation they wrote into, so the first
+// message a session has from one ends by saying that what the agent writes here doesn't reach them:
+// an agent that answers in its conversation, as it would to its user, has answered nobody. Their
+// later messages (m.Explained, #345) end as an agent's do: the agent has been told.
 func Turn(m proto.MessageView) string {
 	who := m.From
 	if m.FromName != "" {
@@ -346,7 +347,7 @@ func Turn(m proto.MessageView) string {
 	if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
 		fmt.Fprintf(&b, "\n%s\n", body)
 	}
-	if isPerson(m) {
+	if isPerson(m) && !m.Explained {
 		fmt.Fprintf(&b, "\n%s sees only what you `send`, not this conversation. Answer with %s's `send` to %s.\n", who, brand.Product, who)
 		return b.String()
 	}

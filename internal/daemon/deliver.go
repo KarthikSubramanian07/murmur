@@ -492,6 +492,9 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 	views := d.messageViewsLocked([]*inMsg{m}, true)
 	key := d.keyOfLocked(id)
 	views[0].Introduced = key != "" && d.introduced[key][m.Event.From]
+	if bus.IsPerson(m.Event.From) {
+		views[0].Explained = d.explainedLocked(id, m.Event.From) // recorded once it is handed over
+	}
 	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, msg: m, via: via, route: route, text: view.Turn(views[0])}
 }
 
@@ -631,6 +634,7 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	}
 	d.outOfInboxLocked(j.id, j.msg, "handed", "as a turn, through "+j.via)
 	d.introduceLocked(j.key, j.msg.Event.From)
+	d.noteExplainedLocked(j.id, j.msg.Event.From)
 	d.saveLocked()
 	delete(d.pushWarned, j.id)
 }
@@ -705,9 +709,10 @@ func (d *Daemon) introduceLocked(key, from string) {
 }
 
 // wholeViewsLocked renders msgs, given whole to the sessions in given, and records the sessions as
-// introduced to their senders. A message is rendered as from a sender already introduced only if
-// every session it was given to had been: the hook speaks for several sessions at once, and shows
-// a message for everyone once. Caller holds mu.
+// introduced to their senders, and as told of the people among them (see explained.go). A message
+// is rendered as from a sender already introduced only if every session it was given to had been:
+// the hook speaks for several sessions at once, and shows a message for everyone once. The caller
+// saves the state. Caller holds mu.
 func (d *Daemon) wholeViewsLocked(msgs []*inMsg, given []delivery) []proto.MessageView {
 	views := d.messageViewsLocked(msgs, true)
 	for i := range views {
@@ -721,6 +726,15 @@ func (d *Daemon) wholeViewsLocked(msgs []*inMsg, given []delivery) []proto.Messa
 	for _, g := range given {
 		d.introduceLocked(d.keyOfLocked(g.id), g.msg.Event.From)
 	}
+	d.explainViewsLocked(views, func(i int) []string {
+		var ids []string
+		for _, g := range given {
+			if g.msg.Event.ID == views[i].ID {
+				ids = append(ids, g.id)
+			}
+		}
+		return ids
+	})
 	return views
 }
 

@@ -427,6 +427,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 			}
 		}
 		msgs := d.messageViewsLocked(read, true)
+		d.explainViewsLocked(msgs, func(int) []string { return []string{sess} })
 		if len(left) == 0 {
 			delete(d.st.Inbox, sess)
 		} else {
@@ -606,6 +607,10 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		}
 		d.outOfInboxLocked(w.id, w.msg, "gave", "whole through the hook")
 	}
+	var read []proto.MessageView
+	if len(whole) > 0 {
+		read = d.wholeViewsLocked(wholeMsgs, whole) // before the save: it records who was told what
+	}
 	if len(fresh) > 0 || len(whole) > 0 {
 		d.saveLocked()
 	}
@@ -617,10 +622,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		}
 	}
 	d.health.noticed(len(freshMsgs))
-	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(freshMsgs, false)}
-	if len(whole) > 0 {
-		resp.Read = d.wholeViewsLocked(wholeMsgs, whole)
-	}
+	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(freshMsgs, false), Read: read}
 	changed := false
 	for _, s := range told {
 		changed = changed || s.toldUnread != unread
@@ -695,8 +697,9 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 		}
 		d.outOfInboxLocked(g.id, g.msg, "gave", "whole through the Stop hook, keeping its turn going")
 	}
+	read := d.wholeViewsLocked(msgs, given) // before the save: it records who was told what
 	d.saveLocked()
-	return proto.Response{OK: true, Read: d.wholeViewsLocked(msgs, given)}
+	return proto.Response{OK: true, Read: read}
 }
 
 func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto.Response {
