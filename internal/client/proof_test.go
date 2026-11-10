@@ -256,27 +256,56 @@ func TestAProofForAnotherAddressOrNonceIsRefused(t *testing.T) {
 	}
 }
 
-// A daemon from before proof can't show it is still the daemon, except by holding the clone's lock.
-// A client that may not replace it uses it while it does, and not after it dies and something else
-// takes its port.
-func TestADaemonFromBeforeProofIsTrustedOnlyWhileItHoldsTheLock(t *testing.T) {
+// A daemon from before proof can't show that a connection is to it, so a client that may not
+// replace one sends it nothing but a stop, and says why.
+func TestOnlyAStopGoesToADaemonFromBeforeProof(t *testing.T) {
 	gitDir := stateOnly(t)
 	old := startStandIn(t, gitDir, proto.ProofProtocol-1)
 	c := connected(t, gitDir)
 	if !c.Outdated() {
 		t.Error("the client doesn't take its daemon to be older")
 	}
-	if resp, err := c.Do(context.Background(), proto.Request{Op: proto.OpRoute}); err != nil || !resp.OK {
-		t.Fatalf("route: %v %+v", err, resp)
+	if _, err := c.Do(context.Background(), proto.Request{Op: proto.OpRoute}); !errors.Is(err, errOlderDaemon) {
+		t.Errorf("route: %v, want errOlderDaemon", err)
 	}
+	if conn, _, err := c.Hello(context.Background(), proto.Hello{ID: "aaaaaa"}); !errors.Is(err, errOlderDaemon) {
+		if conn != nil {
+			conn.Close()
+		}
+		t.Errorf("hello: %v, want errOlderDaemon", err)
+	}
+	if old.got(proto.OpRoute) || old.got(proto.OpHello) {
+		t.Error("the older daemon was sent a request")
+	}
+	if resp, err := c.Do(context.Background(), proto.Request{Op: proto.OpStop}); err != nil || !resp.OK || !old.got(proto.OpStop) {
+		t.Errorf("stop: %v %+v, asked: %v", err, resp, old.got(proto.OpStop))
+	}
+}
+
+// A daemon from before 07a1ecba gave up its port as it began to stop, and kept its lock and its
+// daemon.json while it finished, so another process could take the port while both still said the
+// daemon was there (Sol's review of #389). The session's requests don't go to it.
+func TestADaemonFromBeforeProofThatIsStoppingIsSentNothingButAStop(t *testing.T) {
+	gitDir := stateOnly(t)
+	old := startStandIn(t, gitDir, proto.ProofProtocol-1)
+	c := connected(t, gitDir)
 	addr := old.ln.Addr().String()
-	old.die()
+	old.ln.Close() // it keeps its lock and its daemon.json
 	m := listenImpostor(t, addr)
-	if _, err := c.Do(context.Background(), proto.Request{Op: proto.OpRoute}); err == nil {
-		t.Error("a request was answered after the daemon died")
+	if _, err := c.Do(context.Background(), proto.Request{Op: proto.OpInbox}); err == nil {
+		t.Error("the inbox was answered")
+	}
+	if conn, _, err := c.Hello(context.Background(), proto.Hello{ID: "aaaaaa"}); err == nil {
+		conn.Close()
+		t.Error("the hello was taken")
 	}
 	if got := m.requests(); len(got) > 0 {
-		t.Errorf("the listener at the dead daemon's address was sent %v", got)
+		t.Errorf("what took the port was sent %v", got)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.tokens) > 0 {
+		t.Error("what took the port was sent the token")
 	}
 }
 
@@ -301,40 +330,16 @@ func dieOnDial(t *testing.T, old *standIn, n int) func() *impostor {
 	return func() *impostor { return m }
 }
 
-// A daemon from before proof that dies between the client's check of the lock and its connection
-// leaves its port to whatever takes it then. The lock is checked once the connection is made, so
-// the request and the token don't go to it (Sol's review of main before v0.3.0-rc.1).
-func TestADaemonFromBeforeProofThatDiesAsTheClientDialsIsNotTrusted(t *testing.T) {
+// A stop for a daemon from before proof checks the clone's lock once its connection is made, not
+// before the dial: the daemon can die between the two, and whatever takes its port then isn't sent
+// the token (Sol's review of main before v0.3.0-rc.1).
+func TestAStopForADaemonFromBeforeProofThatDiesAsTheClientDialsIsNotSent(t *testing.T) {
 	gitDir := stateOnly(t)
 	old := startStandIn(t, gitDir, proto.ProofProtocol-1)
 	c := connected(t, gitDir)
 	took := dieOnDial(t, old, 1)
-	if resp, err := c.Do(context.Background(), proto.Request{Op: proto.OpRoute}); err == nil {
-		t.Errorf("the request was answered: %+v", resp)
-	}
-	m := took()
-	if m == nil {
-		t.Fatal("the daemon didn't die as the client dialed")
-	}
-	if got := m.requests(); len(got) > 0 {
-		t.Errorf("what took the port was sent %v", got)
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.tokens) > 0 {
-		t.Error("what took the port was sent the token")
-	}
-}
-
-// The same for a session's hello, whose connection stays open as long as the session.
-func TestAHelloToADaemonFromBeforeProofThatDiesAsTheClientDialsIsNotTaken(t *testing.T) {
-	gitDir := stateOnly(t)
-	old := startStandIn(t, gitDir, proto.ProofProtocol-1)
-	c := connected(t, gitDir)
-	took := dieOnDial(t, old, 2) // the first is Hello's ping, which finds the daemon still there
-	if conn, _, err := c.Hello(context.Background(), proto.Hello{ID: "aaaaaa"}); err == nil {
-		conn.Close()
-		t.Error("the hello was taken")
+	if _, sent, err := c.roundTrip(context.Background(), proto.Request{Op: proto.OpStop}); sent || err == nil {
+		t.Errorf("the stop: sent %v, err %v", sent, err)
 	}
 	m := took()
 	if m == nil {

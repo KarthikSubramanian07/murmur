@@ -205,11 +205,16 @@ its daemon again (or starts one). Until it is proved, a reply is read only up to
 daemon's up to 64 MB, about half again a full inbox of the longest messages escaped: before, one
 that never ended was read until the deadline, however much it came to. A daemon of protocol 11 or
 older can't prove itself, and refuses the nonce's ping as a missing token. A client that may start
-daemons replaces one as it replaces any older daemon; one that may not (`mur stop`, the hook) talks
-to it unproved, as before, checking that the lock and daemon.json are still its once each
-connection is made, before the token goes. A daemon keeps all three until it dies, so a connection
-made while it holds them is to it; checked before the dial, as at first, the daemon could die and
-another process take its port in between (Sol's review of main before v0.3.0-rc.1). Discovery still contacts the
+daemons replaces one as it replaces any older daemon. One that may not (the hook, a session whose
+user left) sends it nothing but a stop, and says how to end it: `mur stop`, then any command that
+may start a daemon (2026-11-10, Sol's reviews of main before v0.3.0-rc.1 and of #389). At first
+such clients talked to it unproved, trusting the clone's lock and daemon.json, but those don't show
+that a connection is to the daemon. Checked before the dial, the daemon could die and another
+process take its port in between; checked after, a daemon from before 07a1ecba still fails it,
+having closed its port as it began to stop while it kept both. The stop, which `mur stop` and a
+replacement need, checks them once its connection is made: if it goes astray all the same, what
+took the port gets the token of a daemon no longer listening, and its answer decides nothing, as
+the lock is waited on after it. Discovery still contacts the
 listener before trying the lock, since trying the lock can turn away a daemon starting just then;
 what the listener is sent there is the nonce alone.
 
