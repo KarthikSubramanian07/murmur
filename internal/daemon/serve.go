@@ -479,6 +479,13 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 		return proto.Response{OK: true, Self: from, Events: append([]proto.EventView(nil), events...)}
 
+	case proto.OpRotate:
+		note, err := d.rotateRequest(ctx, req.Collaborators, req.Force)
+		if err != nil {
+			return fail(err.Error())
+		}
+		return proto.Response{OK: true, Note: note}
+
 	case proto.OpPageKey:
 		// Another clone's daemon asks, to send its page's tab here (#348). It has the sessions'
 		// token, from this clone's daemon.json, so it could do more than this already.

@@ -1,79 +1,137 @@
 package daemon
 
 import (
+	"errors"
 	"io"
 	"log"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
 )
 
-// keyRig is a daemon with only what deciding whom to encrypt for needs: one peer, pinned.
+// keyRig is a daemon with only what the team key's rules need: one peer, pinned, and one epoch whose
+// key this device holds.
 func keyRig(t *testing.T) (*Daemon, *peer) {
 	t.Helper()
 	d := &Daemon{opt: Options{StaleAfter: time.Minute, StoppedInbox: 24 * time.Hour}, device: "me-0001",
-		dir: t.TempDir(), log: log.New(io.Discard, "", 0),
-		boxKey: bus.NewBoxKey(), peers: map[string]*peer{}, seenAt: map[string]time.Time{}, st: state{Pins: map[string]*keyPin{}}}
+		dir: t.TempDir(), log: log.New(io.Discard, "", 0), boxKey: bus.NewBoxKey(), peers: map[string]*peer{},
+		teamKeys: bus.Keyring{}, epochSeen: map[string]time.Time{}, teamChanged: make(chan struct{}),
+		pollWake: make(chan struct{}, 1), kick: make(chan struct{}, 1),
+		st: state{Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}}}
 	d.st.Pins["peer-0001"] = &keyPin{Sign: "s", Box: bus.BoxPublic(bus.NewBoxKey())}
 	p := &peer{pres: bus.Presence{V: bus.Version, Device: "peer-0001"}}
 	d.peers["peer-0001"] = p
 	return d, p
 }
 
-// A device is in the team for as long as a sealed presence of its was taken within StaleAfter, by
-// this machine's clock now: not as of the last successful sync, which stops moving while this
-// daemon is offline, so that one offline for hours doesn't write for a device whose user has since
-// lost access (Sol's review of #156).
-func TestTeamIsJudgedByNowNotTheLastSync(t *testing.T) {
+// withEpoch gives the rig an epoch, known since seen, and its key if held.
+func withEpoch(d *Daemon, seen time.Time, held bool) teamEpoch {
+	k := bus.NewBoxKey()
+	ep := teamEpoch{ID: bus.TeamID(bus.BoxPublic(k)), Pub: bus.BoxPublic(k), By: d.device, At: time.Now().UTC()}
+	d.st.Epochs = append(d.st.Epochs, ep)
+	d.epochSeen[ep.ID] = seen
+	if held {
+		d.teamKeys[ep.ID] = k
+	}
+	return ep
+}
+
+// A device is granted the team keys once this daemon has watched it publish a sealed presence after
+// the epoch began, lately: a presence from before the epoch, or one that sat on its ref, is no proof
+// it can still push, which is what keeps a removed collaborator from a new epoch.
+func TestGrantNeedsAPresenceWatchedAfterTheEpoch(t *testing.T) {
 	d, p := keyRig(t)
-	p.verified = time.Now()
-	d.lastPollOK = time.Now()
-	if _, ok := d.teamKeysLocked()["peer-0001"]; !ok {
-		t.Fatal("a peer verified just now is left out")
+	ep := withEpoch(d, time.Now().Add(-30*time.Second), true)
+	if due := d.grantsDueLocked(); len(due) != 0 {
+		t.Fatalf("granted with no presence watched: %v", due)
 	}
-	// Offline since: the last sync is as old as the presence, which the display doesn't call stale.
-	p.verified = time.Now().Add(-2 * time.Minute)
-	p.lastChange = p.verified
-	d.lastPollOK = p.verified
-	if d.staleLocked(p) {
-		t.Fatal("rig: the display should still show the peer")
+	p.watched = time.Now().Add(-time.Minute / 2).Add(-time.Second) // before the epoch was known
+	if due := d.grantsDueLocked(); len(due) != 0 {
+		t.Fatalf("granted on a presence from before the epoch: %v", due)
 	}
-	if _, ok := d.teamKeysLocked()["peer-0001"]; ok {
-		t.Fatal("encrypted for a peer last verified longer ago than StaleAfter")
+	p.watched = time.Now()
+	if due := d.grantsDueLocked(); len(due) != 1 || due[0] != "peer-0001" {
+		t.Fatalf("not granted on a presence after the epoch: %v", due)
 	}
-	if _, err := d.encryptEventLocked(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "me-0001/aaaaaa",
-		To: "*", Subject: "x"}); err != nil {
+	d.st.TeamGranted["peer-0001"] = []string{ep.ID}
+	if due := d.grantsDueLocked(); len(due) != 0 {
+		t.Fatalf("granted twice: %v", due)
+	}
+	delete(d.st.TeamGranted, "peer-0001")
+	d.epochSeen[ep.ID] = time.Now().Add(-2 * time.Minute)
+	p.watched = time.Now().Add(-90 * time.Second)
+	if due := d.grantsDueLocked(); len(due) != 0 {
+		t.Fatalf("granted on a presence older than StaleAfter: %v", due)
+	}
+}
+
+// Only a device holding the current key grants, and only to a device with a pinned box key: one on a
+// Murmur from before encryption has none.
+func TestGrantNeedsTheKeyAndAPin(t *testing.T) {
+	d, p := keyRig(t)
+	withEpoch(d, time.Now().Add(-time.Minute), false)
+	p.watched = time.Now()
+	if due := d.grantsDueLocked(); len(due) != 0 {
+		t.Fatalf("granted a key this device doesn't hold: %v", due)
+	}
+	d2, p2 := keyRig(t)
+	withEpoch(d2, time.Now().Add(-time.Minute), true)
+	p2.watched = time.Now()
+	d2.st.Pins["peer-0001"].Box = ""
+	if due := d2.grantsDueLocked(); len(due) != 0 {
+		t.Fatalf("granted a device with no box key: %v", due)
+	}
+}
+
+// A record is encrypted for the current team key alone; before there is one, nothing goes out. A
+// message to a device on a Murmur from before encryption is refused.
+func TestEncryptForTheTeamKey(t *testing.T) {
+	d, _ := keyRig(t)
+	msg := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "me-0001/aaaaaa", To: "*", Subject: "x"}
+	if _, err := d.encryptEventLocked(msg); !errors.Is(err, errNoTeamKey) {
+		t.Fatalf("encrypted with no team key: %v", err)
+	}
+	withEpoch(d, time.Now(), false)
+	ep := withEpoch(d, time.Now(), false) // a rotation: the newest is current
+	boxed, err := d.encryptEventLocked(msg)
+	if err != nil {
 		t.Fatal(err)
 	}
-}
-
-// What can't be read, or isn't the device's, moves its presence for display and counts for nothing
-// toward the team: anyone who can push could otherwise keep a device that has gone in it.
-func TestUnverifiedPresenceDoesNotKeepADeviceInTheTeam(t *testing.T) {
-	d, p := keyRig(t)
-	p.verified = time.Now().Add(-2 * time.Minute)
-	d.sawPresence("peer-0001", "0123456789abcdef", true)
-	if p.lastChange.IsZero() || time.Since(p.lastChange) > time.Second {
-		t.Fatal("rig: the unreadable presence should count as a sign of life for display")
+	if got := boxed.Box.Recipients(); len(got) != 1 || got[0] != ep.ID {
+		t.Fatalf("encrypted for %v, want only %s", got, ep.ID)
 	}
-	if _, ok := d.teamKeysLocked()["peer-0001"]; ok {
-		t.Fatal("an unreadable presence kept the device in the team")
+	d.peers["old-0001"] = &peer{pres: bus.Presence{V: bus.Version, Device: "old-0001"}}
+	msg.To = "old-0001/bbbbbb"
+	if _, err := d.encryptEventLocked(msg); err == nil || !strings.Contains(err.Error(), "from before the bus was encrypted") {
+		t.Fatalf("a message to an older device: %v", err)
 	}
 }
 
-// A presence dated ahead of this machine's clock counts as never verified when first read; one
-// dated within the allowance, or in the past, by its date.
-func TestFirstVerifiedDistrustsTheFuture(t *testing.T) {
-	if v := firstVerified(time.Now().Add(time.Hour)); !v.IsZero() {
-		t.Fatalf("a presence dated an hour ahead verified at %v", v)
+// A box for an epoch this device hasn't been granted makes the log wait; one for a key the team ref
+// doesn't hold is junk, passed over; one for a key it holds opens.
+func TestOpenWaitsForAGrant(t *testing.T) {
+	d, _ := keyRig(t)
+	ep := withEpoch(d, time.Now(), false)
+	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa", To: "*", Subject: "x", At: time.Now().UTC()}
+	boxed, err := bus.EncryptEvent(e, "peer-0001", map[string]string{ep.ID: ep.Pub})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if v := firstVerified(time.Now().Add(30 * time.Second)); v.IsZero() || v.After(time.Now()) {
-		t.Fatalf("within the allowance: %v", v)
+	if _, ok, wait := d.openEventLocked(boxed, "peer-0001", "ref", "sha"); ok || !wait {
+		t.Fatalf("ok %v, wait %v: want a wait", ok, wait)
 	}
-	past := time.Now().Add(-10 * time.Minute)
-	if v := firstVerified(past); v.Sub(past).Abs() > time.Second {
-		t.Fatalf("a past date: %v, want %v", v, past)
+	stray := bus.NewBoxKey()
+	junk, _ := bus.EncryptEvent(e, "peer-0001", map[string]string{bus.TeamID(bus.BoxPublic(stray)): bus.BoxPublic(stray)})
+	if _, ok, wait := d.openEventLocked(junk, "peer-0001", "ref", "sha"); ok || wait {
+		t.Fatalf("ok %v, wait %v: want junk passed over", ok, wait)
+	}
+	d2, _ := keyRig(t)
+	ep2 := withEpoch(d2, time.Now(), true)
+	boxed2, _ := bus.EncryptEvent(e, "peer-0001", map[string]string{ep2.ID: ep2.Pub})
+	if in, ok, _ := d2.openEventLocked(boxed2, "peer-0001", "ref", "sha"); !ok || in.Subject != "x" {
+		t.Fatalf("didn't open with the key held: %+v", in)
 	}
 }
 
@@ -81,7 +139,7 @@ func TestFirstVerifiedDistrustsTheFuture(t *testing.T) {
 // ref, or the same one wrapped in a new commit, renews nothing, after a restart included (Sol's
 // second review of #156).
 func TestOnlyALaterPresenceIsNew(t *testing.T) {
-	d, p := keyRig(t)
+	d, _ := keyRig(t)
 	t0 := time.Now().Add(-time.Minute).UTC()
 	if !d.newPresenceLocked("peer-0001", t0) {
 		t.Fatal("the first presence isn't new")
@@ -91,66 +149,6 @@ func TestOnlyALaterPresenceIsNew(t *testing.T) {
 	}
 	if !d.newPresenceLocked("peer-0001", t0.Add(time.Second)) {
 		t.Fatal("a later presence isn't new")
-	}
-	// Not new: nothing is renewed, whether the peer is known in this run or not.
-	p.verified, p.sealed = time.Now().Add(-5*time.Minute), true
-	d.lastPollOK = time.Now()
-	if v := d.verifiedLocked(p, false, time.Now()); !v.Equal(p.verified) {
-		t.Fatal("an old presence renewed the peer")
-	}
-	if v := d.verifiedLocked(nil, false, time.Now()); !v.IsZero() {
-		t.Fatal("an old presence read after a restart counts")
-	}
-}
-
-// A new presence counts from now once this daemon is watching the device's presence change, however
-// far ahead its writer's clock runs; the first one in a run counts from when it was signed, and not
-// at all if that is in the future.
-func TestVerifiedWhenSeenChanging(t *testing.T) {
-	d, p := keyRig(t)
-	ahead := time.Now().Add(5 * time.Minute)
-	if v := d.verifiedLocked(nil, true, ahead); !v.IsZero() {
-		t.Fatal("a first presence dated ahead counts")
-	}
-	p.sealed = true // a sealed presence was taken before, though it counted for nothing
-	if v := d.verifiedLocked(p, true, ahead); !v.IsZero() {
-		t.Fatal("counted from now before any sync had finished")
-	}
-	d.lastPollOK = time.Now()
-	if v := d.verifiedLocked(p, true, ahead); time.Since(v) > time.Second {
-		t.Fatalf("a device whose clock runs ahead never counts: %v", v)
-	}
-}
-
-// The 24 hours a message addressed to a device may still be encrypted for it count on the monotonic
-// clock in a run, and from a time no later than now across a restart, so a clock set back stretches
-// nothing.
-func TestSeenWindow(t *testing.T) {
-	d, _ := keyRig(t)
-	pin := d.st.Pins["peer-0001"]
-	if d.seenWithinLocked("peer-0001", 24*time.Hour) {
-		t.Fatal("never seen, yet within the window")
-	}
-	d.noteSeenLocked("peer-0001", time.Now().Add(-23*time.Hour))
-	if !d.seenWithinLocked("peer-0001", 24*time.Hour) {
-		t.Fatal("seen 23 hours ago, not within 24")
-	}
-	d.seenAt["peer-0001"] = time.Now().Add(-25 * time.Hour) // as if the wall clock said otherwise
-	pin.Seen = time.Now().Add(48 * time.Hour)
-	if d.seenWithinLocked("peer-0001", 24*time.Hour) {
-		t.Fatal("the wall clock stretched the window in a run")
-	}
-	delete(d.seenAt, "peer-0001") // a restart, with a time ahead of the clock kept
-	if !d.seenWithinLocked("peer-0001", 24*time.Hour) {
-		t.Fatal("a kept time ahead of now should count as now")
-	}
-	pin.Seen = time.Now().Add(-25 * time.Hour)
-	if d.seenWithinLocked("peer-0001", 24*time.Hour) {
-		t.Fatal("seen 25 hours ago before the restart, still within 24")
-	}
-	if _, err := d.encryptEventLocked(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "me-0001/aaaaaa",
-		To: "peer-0001/bbbbbb", Subject: "x"}); err == nil {
-		t.Fatal("encrypted for a device last seen 25 hours ago")
 	}
 }
 

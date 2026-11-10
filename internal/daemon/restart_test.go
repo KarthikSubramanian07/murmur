@@ -85,8 +85,7 @@ func TestRestartDoesNotReplayToNewSessions(t *testing.T) {
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "sent while b was down"})
 	b.start()
 	b.session("cccccc", "") // a new session, registered as soon as the daemon is up
-	// a encrypts for the devices it has seen since b came back.
-	eventually(t, "b back", func() bool { return b.seesDevices(2) && a.seesDevices(2) })
+	eventually(t, "b back", func() bool { return b.seesDevices(2) })
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "sent after"})
 
 	for _, sess := range []string{"cccccc", proto.CLISession} {
@@ -198,31 +197,28 @@ func TestRestartCatchesUpReconnectingSessions(t *testing.T) {
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	bob, _ := b.session("bbbbbb", "")
 	eventually(t, "presence", func() bool { return a.seesSession(bob) })
+	// b holds the team key before it goes, as any device that has been up a few seconds does, so
+	// what it reads on its return isn't held back for a grant (docs/VISION.md, "The bus is encrypted").
+	eventually(t, "b holds the team key", func() bool {
+		ids := teamIDs(t, remote)
+		return len(ids) == 1 && ringOf(t, b)[ids[0]] != nil
+	})
 
 	b.stop()
-	// a encrypts for the devices whose presence it last saw, so it must have seen b's go.
-	bdev, _ := bus.SplitAddr(bob)
-	eventually(t, "b gone on a", func() bool { return !a.lists(bdev) })
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "direct, during the restart"})
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast, during the restart"})
 	b.start()
 	b.helloAgain("bbbbbb", true)
 	b.session("cccccc", "")
 
-	// Only what was addressed to bob: b was off the team while it was down, so the broadcast wasn't
-	// encrypted for it (docs/VISION.md, "The bus is encrypted").
 	var got []string
 	eventually(t, "bob catches up", func() bool {
 		for _, m := range b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages {
 			got = append(got, m.Subject)
 		}
-		return len(got) >= 1
+		return len(got) >= 2
 	})
-	time.Sleep(time.Second) // anything else would have come with it
-	for _, m := range b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages {
-		got = append(got, m.Subject)
-	}
-	if len(got) != 1 || got[0] != "direct, during the restart" {
+	if len(got) != 2 {
 		t.Fatalf("bob got %q", got)
 	}
 	for _, sess := range []string{"cccccc", proto.CLISession} {
@@ -307,8 +303,8 @@ func TestFirstSyncFailedStillQueues(t *testing.T) {
 	b := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
 	b.start()
 	bob, _ := b.session("bbbbbb", "")
-	// a sees b's device and its key, not bob: b, having read nobody's presence, can't encrypt its
-	// own for anyone else yet (docs/VISION.md, "The bus is encrypted").
+	// a sees b's device, not bob: b, never having read the team ref, encrypts its presence for
+	// itself alone (docs/VISION.md, "The bus is encrypted").
 	eventually(t, "a sees b", func() bool { return a.seesDevices(2) })
 
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast"})

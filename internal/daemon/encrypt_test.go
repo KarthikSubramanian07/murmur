@@ -157,6 +157,9 @@ func TestOlderDevice(t *testing.T) {
 	})
 
 	pushOld() // fresh again, whatever the stale limit did meanwhile
+	eventually(t, "a's session start on its log", func() bool {
+		return gitOK(remote, "rev-parse", "--verify", "-q", "refs/murmur/mesh/"+a.self()) != ""
+	})
 	before := git(t, remote, "rev-parse", "refs/murmur/mesh/"+a.self())
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: old + "/oooooo", Subject: "can't be read there"})
 	if !strings.Contains(r.Error, "not sent") || !strings.Contains(r.Error, "before the bus was encrypted") {
@@ -170,8 +173,8 @@ func TestOlderDevice(t *testing.T) {
 		t.Fatalf("broadcast: %+v", r)
 	}
 	e := lastEventOn(t, remote, a.self())
-	if e.Type != bus.Boxed || e.Box == nil || e.Box.Keys[old] != "" || e.Box.Keys[a.self()] == "" {
-		t.Fatalf("broadcast as written: %+v", e)
+	if e.Type != bus.Boxed || e.Box == nil || len(e.Box.Keys) != 1 || !bus.IsTeamID(e.Box.Recipients()[0]) {
+		t.Fatalf("broadcast as written, for the team key alone: %+v", e)
 	}
 	// What the older device makes of it: an event of a type it doesn't know, passed over; and a's
 	// presence, a device with no sessions.
@@ -266,49 +269,138 @@ func TestKeySwapIsRefused(t *testing.T) {
 	})
 }
 
-// A device whose daemon can no longer push, as when its user is removed from the repo, goes stale
-// and is left out of what is written from then on, but for a message addressed to it.
-func TestStaleDeviceIsLeftOut(t *testing.T) {
+// cantPush makes d's pushes fail while its fetches still work: a collaborator removed from a public
+// repo, who can still read it.
+func (d *device) cantPush(remote string, on bool) {
+	url := remote
+	if on {
+		url = filepath.Join(filepath.Dir(remote), "nowhere.git")
+	}
+	git(d.t, filepath.Dir(d.gitDir), "config", "remote.origin.pushurl", url)
+}
+
+// opensLog says whether ring opens every encrypted event on dev's log on the remote.
+func opensLog(t *testing.T, remote, dev string, ring bus.Keyring) bool {
+	t.Helper()
+	work := t.TempDir()
+	git(t, work, "init", "-q")
+	git(t, work, "fetch", "-q", remote, "refs/murmur/mesh/"+dev)
+	for _, msg := range strings.Split(git(t, work, "log", "--format=%B%x1e", "FETCH_HEAD"), "\x1e") {
+		var e bus.Event
+		if msg = strings.TrimSpace(msg); msg == "" || bus.Decode(msg, &e) != nil || e.Type != bus.Boxed {
+			continue
+		}
+		if _, err := bus.DecryptEvent(e, dev, ring); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// teamIDs is the team keys on the remote's team ref, oldest first.
+func teamIDs(t *testing.T, remote string) []string {
+	t.Helper()
+	if gitOK(remote, "rev-parse", "--verify", "-q", "refs/murmur/team") == "" {
+		return nil
+	}
+	var ids []string
+	for _, msg := range strings.Split(git(t, remote, "log", "--reverse", "--format=%B%x1e", "refs/murmur/team"), "\x1e") {
+		var r bus.TeamRecord
+		if msg = strings.TrimSpace(msg); msg != "" && bus.Decode(msg, &r) == nil && r.Type == bus.TeamEpoch {
+			ids = append(ids, r.ID)
+		}
+	}
+	return ids
+}
+
+// A device that joins later is granted every team key, and reads everything written before it
+// existed: the whole history, not only what came after.
+func TestLaterDeviceReadsHistory(t *testing.T) {
 	remote := newRemote(t)
-	a, b, c := newDevice(t, remote), newDevice(t, remote), newDevice(t, remote)
-	cdev := c.self()
-	eventually(t, "all see all", func() bool { return a.seesDevices(3) && b.seesDevices(3) && c.seesDevices(3) })
-	if r := a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "while c is here"}); r.Error != "" {
+	a := newDevice(t, remote)
+	a.session("aaaaaa", "")
+	if r := a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "before c existed"}); r.Error != "" {
 		t.Fatalf("send: %+v", r)
 	}
-	if e := lastEventOn(t, remote, a.self()); e.Box == nil || e.Box.Keys[cdev] == "" || e.Box.Keys[b.self()] == "" {
-		t.Fatalf("c or b left out while here: %+v", e.Box)
+	c := newDevice(t, remote)
+	eventually(t, "c is granted the team key", func() bool {
+		ids := teamIDs(t, remote)
+		return len(ids) == 1 && ringOf(t, c)[ids[0]] != nil
+	})
+	if !opensLog(t, remote, a.self(), ringOf(t, c)) {
+		t.Fatal("c can't read what a wrote before c existed")
+	}
+}
+
+// A rotation makes a new team key, which a device that can't push never gets, so it reads nothing
+// written after; a device that can push gets it, and the old keys with it. Once the device can push
+// again, it is granted the new key too.
+func TestRotationLeavesOutADeviceThatCantPush(t *testing.T) {
+	remote := newRemote(t)
+	a, b, c := newDevice(t, remote), newDevice(t, remote), newDevice(t, remote)
+	eventually(t, "b and c hold the team key", func() bool {
+		ids := teamIDs(t, remote)
+		return len(ids) == 1 && ringOf(t, b)[ids[0]] != nil && ringOf(t, c)[ids[0]] != nil
+	})
+	first := teamIDs(t, remote)[0]
+	c.cantPush(remote, true)
+	r := a.do(proto.Request{Op: proto.OpRotate, Force: true})
+	if r.Error != "" {
+		t.Fatalf("rotate: %+v", r)
+	}
+	eventually(t, "the new epoch", func() bool { return len(teamIDs(t, remote)) == 2 })
+	second := teamIDs(t, remote)[1]
+	if second == first {
+		t.Fatal("the rotation kept the key")
+	}
+	eventually(t, "b is granted the new key", func() bool { return ringOf(t, b)[second] != nil })
+	if r := a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "after the rotation"}); r.Error != "" {
+		t.Fatalf("send: %+v", r)
+	}
+	if e := lastEventOn(t, remote, a.self()); e.Box == nil || e.Box.Keys[second] == "" || len(e.Box.Keys) != 1 {
+		t.Fatalf("written for %v, want %s alone", e.Box, second)
+	}
+	if !opensLog(t, remote, a.self(), ringOf(t, b)) {
+		t.Fatal("b can't read a's log after the rotation")
+	}
+	holds(t, "c never gets the new key while it can't push", 2*time.Second, func() bool {
+		return ringOf(t, c)[second] == nil
+	})
+	if opensLog(t, remote, a.self(), ringOf(t, c)) {
+		t.Fatal("c read what was written after the rotation")
 	}
 
-	c.offline(remote, true)
-	eventually(t, "c stale on a", func() bool { return !a.fresh(cdev) })
-	// Who a encrypts for is timed apart from what who shows, on a's own clock (see teamKeysLocked),
-	// so the two can be a poll apart; within one more StaleAfter c must be out.
-	deadline := time.Now().Add(c.stale + time.Second)
-	for {
-		if r := a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "after c went"}); r.Error != "" {
-			t.Fatalf("send: %+v", r)
-		}
-		e := lastEventOn(t, remote, a.self())
-		if e.Box != nil && e.Box.Keys[cdev] == "" && e.Box.Keys[b.self()] != "" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("broadcast after c went: %+v", e.Box)
-		}
-		time.Sleep(200 * time.Millisecond)
+	// Pushing again, c is granted the new key, and reads everything.
+	c.cantPush(remote, false)
+	eventually(t, "c is granted the new key", func() bool { return ringOf(t, c)[second] != nil })
+	if !opensLog(t, remote, a.self(), ringOf(t, c)) {
+		t.Fatal("c, back, can't read a's log")
 	}
-	eventually(t, "a's presence no longer for c", func() bool {
-		p := presenceOn(t, remote, a.self())
-		return p.Box != nil && p.Box.Keys[cdev] == "" && p.Box.Keys[b.self()] != ""
-	})
-	// Addressed to it, within StoppedInbox of when it was last seen, it is still for c.
-	if r := a.do(proto.Request{Op: proto.OpSend, To: cdev, Subject: "for c's kept inbox"}); r.Error != "" {
-		t.Fatalf("send to c: %+v", r)
+}
+
+// Without a collaborator list to compare, a rotation needs --force; with one, it happens only when
+// someone the current epoch recorded has left.
+func TestRotateComparesCollaborators(t *testing.T) {
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	eventually(t, "the first epoch", func() bool { return len(teamIDs(t, remote)) == 1 })
+	if r := a.do(proto.Request{Op: proto.OpRotate}); r.Error == "" {
+		t.Fatalf("rotated with no list: %+v", r)
 	}
-	if e := lastEventOn(t, remote, a.self()); e.Box == nil || e.Box.Keys[cdev] == "" {
-		t.Fatalf("message to c: %+v", e.Box)
+	// The first epoch recorded no list, so the first rotation with one makes a key that does.
+	if r := a.do(proto.Request{Op: proto.OpRotate, Collaborators: []string{"alice", "bob"}}); r.Error != "" {
+		t.Fatalf("rotate: %+v", r)
 	}
+	eventually(t, "the second epoch", func() bool { return len(teamIDs(t, remote)) == 2 })
+	if r := a.do(proto.Request{Op: proto.OpRotate, Collaborators: []string{"alice", "bob", "carol"}}); r.Error != "" ||
+		!strings.Contains(r.Note, "Nobody has left") {
+		t.Fatalf("rotated when nobody left: %+v", r)
+	}
+	r := a.do(proto.Request{Op: proto.OpRotate, Collaborators: []string{"alice"}})
+	if r.Error != "" || !strings.Contains(r.Note, "bob") {
+		t.Fatalf("rotate after bob left: %+v", r)
+	}
+	eventually(t, "the third epoch", func() bool { return len(teamIDs(t, remote)) == 3 })
 }
 
 // A clone whose keys are lost while its device ID stays takes a new ID: its teammates would refuse
@@ -403,11 +495,40 @@ func boxKeyOf(t *testing.T, d *device) *ecdh.PrivateKey {
 	return k
 }
 
+// ringOf is every key d opens boxes with: its box key, and the team keys it has been granted.
+func ringOf(t *testing.T, d *device) bus.Keyring {
+	t.Helper()
+	ring := bus.Keyring{d.self(): boxKeyOf(t, d)}
+	b, err := os.ReadFile(filepath.Join(d.gitDir, "murmur", "team-keys"))
+	if os.IsNotExist(err) {
+		return ring
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]string
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatal(err)
+	}
+	for id, h := range raw {
+		kb, err := hex.DecodeString(h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		k, err := ecdh.X25519().NewPrivateKey(kb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ring[id] = k
+	}
+	return ring
+}
+
 // openedLog is d's log on the remote as d reads it, newest first: each commit's subject and JSON,
 // with every encrypted event opened, as the log read before encryption.
 func openedLog(t *testing.T, remote string, d *device) string {
 	t.Helper()
-	dev, key := d.self(), boxKeyOf(t, d)
+	dev, ring := d.self(), ringOf(t, d)
 	work := t.TempDir()
 	git(t, work, "init", "-q")
 	git(t, work, "fetch", "-q", remote, "refs/murmur/mesh/"+dev)
@@ -418,7 +539,7 @@ func openedLog(t *testing.T, remote string, d *device) string {
 		}
 		var e bus.Event
 		if bus.Decode(msg, &e) == nil && e.Type == bus.Boxed {
-			in, err := bus.DecryptEvent(e, dev, dev, key)
+			in, err := bus.DecryptEvent(e, dev, ring)
 			if err != nil {
 				t.Fatalf("a box on %s's log doesn't open for it: %v", dev, err)
 			}
@@ -440,7 +561,7 @@ func openedPresence(t *testing.T, remote string, d *device) string {
 	}
 	p := presenceOn(t, remote, dev)
 	if p.Box != nil {
-		open, err := bus.DecryptPresence(p, dev, boxKeyOf(t, d))
+		open, err := bus.DecryptPresence(p, ringOf(t, d))
 		if err != nil {
 			t.Fatalf("%s's presence doesn't open for it: %v", dev, err)
 		}

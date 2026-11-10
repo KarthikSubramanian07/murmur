@@ -15,19 +15,20 @@ import (
 	"github.com/a-Fig/murmur/internal/names"
 )
 
-// Everything a device writes that carries content is encrypted for the team's devices (#156): on a
-// public repo anyone can read the bus, though only collaborators can write it. Each device publishes
-// an X25519 key, its box key, in its sealed presence (see Seal), and the others encrypt to it.
+// Everything a device writes that carries content is encrypted (#156): on a public repo anyone can
+// read the bus, though only collaborators can write it. Events and presence are encrypted for the
+// team key (team.go); the team key's private half is itself carried in boxes, one recipient per
+// device, each device's X25519 box key published in its sealed presence (see Seal).
 //
 // A record is encrypted once, with a fresh content key, and the content key is wrapped for each
-// recipient: an ephemeral X25519 key agreed with the recipient's box key, through HKDF-SHA256, as age
-// does it. AES-256-GCM does both. Which devices can read a record is visible, by ID; what it says is
-// not. All of it is Go's standard library.
+// recipient: an ephemeral X25519 key agreed with the recipient's public key, through HKDF-SHA256, as
+// age does it. AES-256-GCM does both. Which keys can read a record is visible, by ID; what it says
+// is not. All of it is Go's standard library.
 
-// Box is an encrypted record: the content key wrapped for each recipient device, and the content.
+// Box is an encrypted record: the content key wrapped for each recipient, and the content.
 type Box struct {
 	Eph   string            `json:"eph"`   // the ephemeral public key, base64
-	Keys  map[string]string `json:"keys"`  // recipient device → its wrapped content key, base64
+	Keys  map[string]string `json:"keys"`  // recipient (a TeamID, or a device) → its wrapped content key, base64
 	Nonce string            `json:"nonce"` // base64
 	Data  string            `json:"data"`  // base64
 }
@@ -46,8 +47,8 @@ func NewBoxKey() *ecdh.PrivateKey {
 // BoxPublic is a box key's public half as presence carries it.
 func BoxPublic(k *ecdh.PrivateKey) string { return b64.EncodeToString(k.PublicKey().Bytes()) }
 
-// ErrNotForUs means a box has no key for the device opening it: it was written before this device
-// published its key, or while its writer didn't count it among the team's current devices.
+// ErrNotForUs means a box names none of the keys its reader holds: a team key this device hasn't
+// been granted yet, or a box for other devices.
 var ErrNotForUs = errors.New("not encrypted for this device")
 
 // errBadBox means a box that names this device doesn't open. Nothing in it is trusted.
@@ -170,6 +171,31 @@ func (b *Box) Open(dev string, k *ecdh.PrivateKey, aad []byte) ([]byte, error) {
 	return plain, nil
 }
 
+// Keyring is the private keys a reader holds, by the recipient ID a box names them by: a team key's
+// TeamID, or a device ID for a box key.
+type Keyring map[string]*ecdh.PrivateKey
+
+// OpenAny opens a box with whichever key of keys it was encrypted for. ErrNotForUs says it names
+// none of them; Recipients says which it does name.
+func (b *Box) OpenAny(keys Keyring, aad []byte) ([]byte, error) {
+	for _, id := range b.Recipients() {
+		if k, ok := keys[id]; ok {
+			return b.Open(id, k, aad)
+		}
+	}
+	return nil, ErrNotForUs
+}
+
+// Recipients is the IDs a box is encrypted for, sorted.
+func (b *Box) Recipients() []string {
+	ids := make([]string, 0, len(b.Keys))
+	for id := range b.Keys {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
 // eventAAD binds an encrypted event to the log of the device that wrote it.
 func eventAAD(device string) []byte { return []byte("event\x00" + device) }
 
@@ -188,14 +214,14 @@ func EncryptEvent(e Event, device string, recipients map[string]string) (Event, 
 	return Event{V: e.V, Type: Boxed, Box: box}, nil
 }
 
-// DecryptEvent opens a Boxed event read from device's log, as device dev with key k. The event
-// inside must not be boxed again; whether it is valid, and its sender device's, is the caller's to
-// check, as for any event.
-func DecryptEvent(e Event, device, dev string, k *ecdh.PrivateKey) (Event, error) {
+// DecryptEvent opens a Boxed event read from device's log with whichever of keys it was encrypted
+// for. The event inside must not be boxed again; whether it is valid, and its sender device's, is
+// the caller's to check, as for any event.
+func DecryptEvent(e Event, device string, keys Keyring) (Event, error) {
 	if e.Box == nil {
 		return Event{}, errBadBox
 	}
-	plain, err := e.Box.Open(dev, k, eventAAD(device))
+	plain, err := e.Box.OpenAny(keys, eventAAD(device))
 	if err != nil {
 		return Event{}, err
 	}
@@ -239,9 +265,9 @@ func EncryptPresence(p Presence, recipients map[string]string) (Presence, error)
 	return out, nil
 }
 
-// DecryptPresence opens an encrypted presence as device dev.
-func DecryptPresence(p Presence, dev string, k *ecdh.PrivateKey) (Presence, error) {
-	plain, err := p.Box.Open(dev, k, presenceAAD(p.Device))
+// DecryptPresence opens an encrypted presence with whichever of keys it was encrypted for.
+func DecryptPresence(p Presence, keys Keyring) (Presence, error) {
+	plain, err := p.Box.OpenAny(keys, presenceAAD(p.Device))
 	if err != nil {
 		return Presence{}, err
 	}

@@ -88,8 +88,6 @@ func TestKeptInboxCatchesUpAfterALongOutage(t *testing.T) {
 
 	b.stop()
 	ageLastSync(t, b, time.Hour)
-	// a encrypts for the devices whose presence it last saw, so it must have seen b's go.
-	eventually(t, "b gone on a", func() bool { return !a.lists(bdev) })
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "direct, while the daemon was down"})
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast, while the daemon was down"})
 	// A log b has never read, so its whole history is the backlog. The last of it is the one that
@@ -106,9 +104,7 @@ func TestKeptInboxCatchesUpAfterALongOutage(t *testing.T) {
 	}
 	b.start()
 
-	// The broadcast isn't among them: b was off the team while its daemon was down, so it wasn't
-	// encrypted for b (docs/VISION.md, "The bus is encrypted"). What was addressed to it was.
-	want := []string{"direct, while the daemon was down", "forged, while the daemon was down"}
+	want := []string{"broadcast, while the daemon was down", "direct, while the daemon was down", "forged, while the daemon was down"}
 	eventually(t, "bob's inbox is kept", func() bool { return len(keptFor(t, b, "bbbbbb")) >= len(want) })
 	if got := keptFor(t, b, "bbbbbb"); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("bob's kept inbox: %q, want %q", got, want)

@@ -11,8 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
+	"slices"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -20,11 +19,12 @@ import (
 	"github.com/a-Fig/murmur/internal/gitx"
 )
 
-// The bus is encrypted (#156): every record with content goes out encrypted for the team's devices,
-// with nothing for anyone to run, approve or copy. Each device makes its own keys at start, publishes
-// the public halves in its sealed presence, and pins its teammates' keys the first time it reads
-// them. Push access is the key directory: only collaborators can write refs/murmur/*, so only they
-// can publish a key. docs/VISION.md, "The bus is encrypted", has the reasons and what it costs.
+// The bus is encrypted (#156): every record with content goes out encrypted for the team key
+// (team.go), with nothing for anyone to run, approve or copy. Each device makes its own keys at
+// start, publishes the public halves in its sealed presence, and pins its teammates' keys the first
+// time it reads them. Push access is the key directory: only collaborators can write refs/murmur/*,
+// so only they can publish a key, and only they are granted the team key. docs/VISION.md, "The bus
+// is encrypted", has the reasons and what it costs.
 
 // keyPin is what this device knows of a device's keys: the signing key it pinned on first sight,
 // the box key that device's latest sealed presence carried, the latest time a sealed presence of it
@@ -206,24 +206,6 @@ func (d *Daemon) checkPresenceLocked(dev, ref string, c bus.Commit, pres bus.Pre
 	return false, false
 }
 
-// clockAllowance is how far ahead of this machine's clock a writer's may run before what it dates
-// is taken for no date at all.
-const clockAllowance = time.Minute
-
-// firstVerified is when to take a new sealed presence, the first this run has taken from its device,
-// as written: at the time it was signed with, as firstSight does with a commit's, unless that is
-// ahead of this machine's clock by more than clockAllowance. A presence dated in the future would
-// otherwise look current, for as long as its writer chose, to a daemon that starts any time before
-// then, and a device whose user has lost push access could go on reading what is new that way
-// (Sol's review of #156). Such a presence counts as never verified; the next one this daemon sees
-// arrive counts from then (verifiedLocked).
-func firstVerified(signed time.Time) time.Time {
-	if signed.After(time.Now().Add(clockAllowance)) {
-		return time.Time{}
-	}
-	return firstSight(signed)
-}
-
 // newPresenceLocked says whether a sealed presence of dev's, signed with time at, is one dev wrote
 // after every other this daemon has taken from it, and raises the high-water mark if so. Anyone who
 // can push could put an older presence of a device back on its ref, or wrap the same one in a new
@@ -239,58 +221,6 @@ func (d *Daemon) newPresenceLocked(dev string, at time.Time) bool {
 	pin.At = at.UTC()
 	d.saveLocked()
 	return true
-}
-
-// verifiedLocked is when to count a sealed presence of p's device as taken, on this machine's clock:
-// see peer.verified. One that isn't new (newPresenceLocked) renews nothing. A new one counts from
-// now if this daemon is watching the device's presence change: it has taken a sealed one from it
-// earlier in this run, and a sync has finished, so that one wasn't only the clone's own copy, which
-// may be any age. A writer's clock running ahead doesn't matter then. Otherwise, it counts from when
-// it was signed, as firstVerified says. Caller holds mu.
-func (d *Daemon) verifiedLocked(p *peer, fresh bool, at time.Time) time.Time {
-	switch {
-	case !fresh && p != nil:
-		return p.verified
-	case !fresh:
-		return time.Time{}
-	case p != nil && p.sealed && !d.lastPollOK.IsZero():
-		return time.Now()
-	}
-	return firstVerified(at)
-}
-
-// noteSeenLocked records that this daemon took a new sealed presence of dev's, verified when verified
-// says, for the 24 hours a message addressed to dev may still be encrypted for it
-// (encryptEventLocked). Caller holds mu.
-func (d *Daemon) noteSeenLocked(dev string, verified time.Time) {
-	pin := d.st.Pins[dev]
-	if pin == nil || verified.IsZero() {
-		return
-	}
-	if prev, ok := d.seenAt[dev]; !ok || verified.After(prev) {
-		d.seenAt[dev] = verified
-	}
-	if wall := time.Now().Add(-time.Since(verified)).Round(0).UTC(); wall.After(pin.Seen) {
-		pin.Seen = wall
-	}
-}
-
-// seenWithinLocked says whether this daemon took a new sealed presence of dev's within window. In
-// this run that is timed on the monotonic clock, so a wall clock set back doesn't stretch it; across a
-// restart, by the time kept in state.json, taken as no later than now. Caller holds mu.
-func (d *Daemon) seenWithinLocked(dev string, window time.Duration) bool {
-	if at, ok := d.seenAt[dev]; ok {
-		return time.Since(at) <= window
-	}
-	pin := d.st.Pins[dev]
-	if pin == nil || pin.Seen.IsZero() {
-		return false
-	}
-	seen := pin.Seen
-	if now := time.Now(); seen.After(now) {
-		seen = now
-	}
-	return time.Since(seen) <= window
 }
 
 // nextPresenceAtLocked is the time this device signs its next presence with: now, or just after the
@@ -313,88 +243,50 @@ func short(sha string) string {
 	return sha
 }
 
-// teamKeysLocked is who this device's records are encrypted for: itself, and every other device
-// whose keys are pinned and from which this daemon took a sealed presence within StaleAfter. That
-// is how a collaborator removed from the repo, whose daemon can no longer push, stops getting what
-// is new within StaleAfter.
-//
-// It is measured against now, not against the last successful sync as staleLocked is for showing a
-// device: a daemon that has been offline knows nothing of who is on the team now, so after
-// StaleAfter it writes for itself and the device a message is addressed to, until a sync shows it
-// the team again. Nor does a presence that couldn't be read, or that was refused, count: anyone who
-// can push could otherwise keep a device that has gone in the team by pushing junk over its
-// presence (Sol's review of #156). Caller holds mu.
-func (d *Daemon) teamKeysLocked() map[string]string {
-	keys := map[string]string{d.device: bus.BoxPublic(d.boxKey)}
-	for dev, p := range d.peers {
-		pin := d.st.Pins[dev]
-		if pin != nil && pin.Box != "" && !p.verified.IsZero() && time.Since(p.verified) <= d.opt.StaleAfter {
-			keys[dev] = pin.Box
-		}
-	}
-	return keys
-}
-
-// teamKeyID is a set of keys as one string, to tell whether it changed.
-func teamKeyID(keys map[string]string) string {
-	ids := make([]string, 0, len(keys))
-	for dev, k := range keys {
-		ids = append(ids, dev+"="+k)
-	}
-	sort.Strings(ids)
-	return strings.Join(ids, " ")
-}
-
 // errOldDevice says a device can't read what this one writes.
 func errOldDevice(dev string) error {
 	return fmt.Errorf("%s runs a version of Murmur from before the bus was encrypted, so it couldn't read this. "+
 		"It can once it is updated: Murmur updates itself within the hour, unless updates are turned off there", dev)
 }
 
-// encryptEventLocked returns e as this device writes it: encrypted for the team (teamKeysLocked),
-// and for the device it is addressed to, if any. A device addressed directly gets it even while its
-// presence is stale, for a kept inbox there (#30), as long as it was seen within StoppedInbox. A
-// message to a device whose keys aren't known, or that hasn't been seen for longer, is refused:
+// encryptEventLocked returns e as this device writes it: encrypted for the current team key
+// (team.go), which every device that has pushed its key since that key was made is granted. A
+// message to a device on a Murmur from before encryption, which could never read it, is refused:
 // nothing goes out in the clear. Caller holds mu.
 func (d *Daemon) encryptEventLocked(e bus.Event) (bus.Event, error) {
-	keys := d.teamKeysLocked()
-	if e.To != "" && e.To != "*" {
+	if e.Type == bus.Message && e.To != "" && e.To != "*" {
 		dev, _ := bus.SplitAddr(e.To)
-		if _, ok := keys[dev]; !ok {
-			pin := d.st.Pins[dev]
-			switch {
-			case pin != nil && pin.Box != "" && d.seenWithinLocked(dev, d.opt.StoppedInbox):
-				keys[dev] = pin.Box
-			case e.Type != bus.Message:
-				// A human's tags for a session on a device that can't read them: the others still
-				// should, so it goes out without that device.
-			case pin == nil || pin.Box == "":
-				if p := d.peers[dev]; p != nil {
-					return bus.Event{}, errOldDevice(dev)
-				}
-				return bus.Event{}, fmt.Errorf("%s isn't a device this one has seen, so there is no key to encrypt to", dev)
-			default:
-				return bus.Event{}, fmt.Errorf("%s hasn't been seen for more than %s, and messages are encrypted only for the devices that are around",
-					dev, d.opt.StoppedInbox)
+		if pin := d.st.Pins[dev]; dev != d.device && (pin == nil || pin.Box == "") {
+			if p := d.peers[dev]; p != nil {
+				return bus.Event{}, errOldDevice(dev)
 			}
+			return bus.Event{}, fmt.Errorf("%s isn't a device this one has seen, so there is no key to encrypt to", dev)
 		}
 	}
-	return bus.EncryptEvent(e, d.device, keys)
+	if d.epochLocked() == nil {
+		return bus.Event{}, errNoTeamKey
+	}
+	return bus.EncryptEvent(e, d.device, d.teamRecipientsLocked())
 }
 
 // openEventLocked decrypts an event read from dev's log, if it is encrypted. ok is false for one
-// this device can't read: written before it published its keys, or while its writer didn't count
-// it among the team's current devices, or one that doesn't open. Caller holds mu.
-func (d *Daemon) openEventLocked(e bus.Event, dev, ref, sha string) (bus.Event, bool) {
+// this device can't read. wait says it is encrypted for a team key that is on the team ref but not
+// yet granted to this device: the log is read no further until it is, so nothing is missed. A box
+// for a key the team ref doesn't hold is junk, and passed over. Caller holds mu.
+func (d *Daemon) openEventLocked(e bus.Event, dev, ref, sha string) (out bus.Event, ok, wait bool) {
 	if e.Type != bus.Boxed {
-		return e, true
+		return e, true, false
 	}
-	in, err := bus.DecryptEvent(e, dev, d.device, d.boxKey)
+	in, err := bus.DecryptEvent(e, dev, d.keyringLocked())
 	if err != nil {
-		if !errors.Is(err, bus.ErrNotForUs) {
+		if errors.Is(err, bus.ErrNotForUs) && e.Box != nil {
+			if slices.ContainsFunc(e.Box.Recipients(), d.knownEpochLocked) {
+				return bus.Event{}, false, true
+			}
+		} else {
 			d.log.Printf("%s: ignoring %s: %v", ref, short(sha), err)
 		}
-		return bus.Event{}, false
+		return bus.Event{}, false, false
 	}
-	return in, true
+	return in, true, false
 }

@@ -159,96 +159,111 @@ private, with **no friction for users or agents**: nobody runs a command, approv
 a key or makes a choice. The daemon does all of it. An earlier design (#160, closed) made it a
 setting someone turned on with `mur encrypt`, and that command was the friction.
 
-- **Keys.** At start, each daemon makes any key it lacks: an Ed25519 signing key and an X25519 box
-  key, in `.git/murmur/keys` (0600, beside the device ID; no commit or checkout touches it). It
-  publishes the box key in its presence and seals the presence with the signing key. The seal is an
-  Ed25519 signature over the record's JSON, bound to the ref (`internal/bus/seal.go`, from #159).
+Tyler's decision (2026-11-10): **every device that can push, and has published its key, reads
+everything ever sent on the bus**, direct messages included. A device that was away reads what it
+missed, and one that joins later reads the history. #257's first design encrypted each record for
+the devices seen in the last 6 minutes, so a laptop closed overnight came back to a gap it could
+never fill, and a new device could read nothing from before it joined. That design is replaced by
+a team key, below.
+
+- **Device keys.** At start, each daemon makes any key it lacks: an Ed25519 signing key and an
+  X25519 box key, in `.git/murmur/keys` (0600, beside the device ID; no commit or checkout touches
+  it). It publishes the box key in its presence and seals the presence with the signing key. The
+  seal is an Ed25519 signature over the record's JSON, bound to the ref (`internal/bus/seal.go`,
+  from #159).
 - **Push access is the key directory.** Only collaborators can write `refs/murmur/*`, so only they
-  can publish a key; GitHub's own access control decides who is on the team.
+  can publish a key, and only they are granted the team key (below); GitHub's own access control
+  decides who is on the team.
 - **Pinning.** A reader pins a device's signing key, in `state.json`, the first time it reads a
   sealed presence from that device. From then on it takes a presence as that device's only if it is
-  sealed with that key: none unsealed, none with another (`internal/daemon/keys.go`). It encrypts to
-  the box key from that device's latest sealed presence. A presence that fails these checks is
-  refused and logged, the pin stays, and nobody is asked anything. A real device never changes keys
-  under its ID (see key loss), so a mismatch means a forgery or a copied `.git`. Pinning can't stop
-  someone with push access who seals a presence for a device before a new reader has seen the
-  device's own. That reader then refuses the real device. The attack takes push access, and the
-  trust model already trusts push access with code. Someone with push access can put one of a
-  device's older presences back on its ref. `who` then shows those older sessions until the
-  device's next heartbeat, at most 2 minutes. Nothing else follows from it: each presence is signed
-  with a time that never goes back on its writer, and only one signed later than every other a
-  reader has taken from that device counts as new (next bullet but one).
-  A device whose binary is rolled back to one from before encryption writes unsealed presence,
-  which its teammates refuse once they have pinned it, until the updater brings it forward again.
-- **Records.** Each record is encrypted once, with a fresh content key, and that key is wrapped for
-  each recipient device the way age does it: an ephemeral X25519 key, HKDF-SHA256, AES-256-GCM, all
-  from Go's standard library (`internal/bus/box.go`). An event is written as
-  `{"v":1,"type":"box","box":{…}}` with the whole event inside: sender, recipient, type, subject,
-  body, tags. A presence keeps its device ID, time and box key readable and encrypts its host, owner,
-  sessions and offline sessions. Commit subjects are `event` and `presence`; they used to repeat the
-  content.
-- **Recipients.** The writer itself, and every device whose key is pinned and from which this
-  daemon took a sealed presence within StaleAfter. That is measured on this machine's clock against
-  now, not against the last successful sync as `who`'s staleness is, so a daemon that has been
-  offline for a while writes for no one else until a sync shows it the team again. A presence that
-  couldn't be read, or was refused, counts for nothing here, though `who` takes it as a sign of
-  life. Only a new presence counts: one signed with a later time than every other this daemon has
-  taken from the device, kept as a high-water mark in `state.json`. That stops an older presence
-  put back on the ref, or the same one wrapped in a new commit, from keeping a device on the team,
-  after a restart too. A new presence counts from now once this daemon has watched the device's
-  presence change, whatever the writer's clock says. The first in a run counts from when it was
-  signed, unless that is more than a minute ahead of this machine's clock, and then it doesn't
-  count at all. All of this is from Sol's two reviews: each hole let a device whose user had lost
-  push access go on reading. A message to one session or device also goes to that device while it
-  is out of the team, if this daemon took a new presence from it within StoppedInbox (24 h), timed
-  on the monotonic clock while it runs, so that a kept inbox there still works (#30). A broadcast isn't addressed to the device, though, so one
-  whose daemon is down, or asleep past StaleAfter, misses the broadcasts sent meanwhile, which a
-  kept inbox used to catch up on. Encrypting broadcasts for devices away up to 24 hours would keep
-  them, at the cost of a removed collaborator reading the team's broadcasts for that long.
-  Every record goes to the whole team, not only to a message's recipient, so the page and `lookup`
-  show every message as they did. Teammates could read everything before, and the threat is
-  outsiders. When the set of fresh devices with keys changes, the daemon pushes its presence again,
-  so a device that appears or comes back can read its teammates' presence within a poll or two.
-  Until then those teammates show with no sessions. Likewise, what a device writes before it has
-  read a newcomer's presence isn't for the newcomer. Before encryption, a new device read
-  everything written after its first sync.
+  sealed with that key: none unsealed, none with another (`internal/daemon/keys.go`). A presence
+  that fails these checks is refused and logged, the pin stays, and nobody is asked anything. A real
+  device never changes keys under its ID (see key loss), so a mismatch means a forgery or a copied
+  `.git`. Pinning can't stop someone with push access who seals a presence for a device before a new
+  reader has seen the device's own. That reader then refuses the real device. The attack takes push
+  access, and the trust model already trusts push access with code. Each presence is signed with a
+  time that never goes back on its writer, and a reader takes one as new only if it was signed later
+  than every other it has taken from that device (a high-water mark in `state.json`), so a presence
+  put back on its ref, or wrapped in a new commit, is never new (Sol's reviews of #257). A device
+  whose binary is rolled back to one from before encryption writes unsealed presence, which its
+  teammates refuse once they have pinned it, until the updater brings it forward again.
+- **The team key.** One shared ref, `refs/murmur/team`, holds a chain of sealed records, pushed with
+  a lease as the name registry is, so two devices can't both make the first key
+  (`internal/bus/team.go`, `internal/daemon/team.go`).
+  - An *epoch* publishes a team X25519 public key in the clear, with its private half wrapped for
+    its writer's box key. The first daemon to find the ref empty makes the first epoch.
+  - A *grant* wraps every team private key there has been for one device. A daemon that holds the
+    current key grants it to each device with a pinned box key that it has watched publish a sealed
+    presence after it knew of the epoch, within StaleAfter, and that hasn't been granted it. Watched
+    means seen to arrive while this daemon was syncing, not the first presence it read in a run,
+    which may have sat on the ref for any time. That is a device that can push now.
+  - A key under a team key ID that isn't its own is dropped when a grant is opened, so a grant can't
+    hand a device a key under another's name.
+  - Team private keys a device is granted are kept in `.git/murmur/team-keys` (0600), which only
+    grows: a rewritten team ref takes nothing a device could read away from it.
+- **Records.** Each event and presence is encrypted for the current epoch's team key alone: once,
+  with a fresh content key wrapped for the team key the way age does it, with an ephemeral X25519
+  key, HKDF-SHA256 and AES-256-GCM, all from Go's standard library (`internal/bus/box.go`). The
+  public half is readable by anyone, so a device can write before it holds any private half. An
+  event is written as `{"v":1,"type":"box","box":{…}}` with the whole event inside: sender,
+  recipient, type, subject, body, tags. A presence keeps its device ID, time and box key readable and
+  encrypts its host, owner, sessions and offline sessions. Before a device has read any epoch, it
+  encrypts its presence for itself alone, and pushes it again when it reads one. Commit subjects are
+  `event` and `presence`; they used to repeat the content.
+- **A device waiting for a grant** can send at once. Reading a log stops at the first record
+  encrypted for an epoch it hasn't been granted, and goes on from there once it is, so nothing is
+  missed. A box for a key the team ref doesn't hold is junk and passed over, so junk can't hold a
+  log up. While it waits, a device pushes its presence every 10 seconds instead of every heartbeat,
+  which is what a teammate grants on. A teammate's daemon must be up for the grant; until then
+  teammates' presence shows with no sessions. Messages read late this way can reach a session that
+  started within the minute after they were sent, by the allowance `queueLocked` gives a sender's
+  clock (found in `TestRestartCatchesUpReconnectingSessions`, 2026-11-10).
+- **Rotation.** A new epoch is a new team key, and everything is encrypted for it from then on. It
+  is wrapped for its writer alone; every other device gets it by a grant, which takes a presence
+  pushed after it. A collaborator removed from the repo can't push, so never gets it. A device that
+  joins later is still granted every old key, so history stays readable. Only a device that holds
+  every team key may rotate, since the devices it grants get the keys it holds.
+  `mur rotate` lists the repo's collaborators with `gh` and makes a new epoch if anyone the current
+  epoch recorded (inside its box) has left, or if the epoch recorded nobody; `--force` always does.
+  When to rotate on its own is open (Tyler, 2026-11-10: the structure first).
 - **Fails closed.** A daemon with this change never writes content in the clear. A message to a
-  device with no key is refused, and the sender is told that device runs an older Murmur.
+  device with no key is refused, and the sender is told that device runs an older Murmur. A write
+  made before any epoch exists waits for the first, which the first sync makes.
 - **Older daemons.** A daemon from before this passes over `box` events, as it does any type it
   doesn't know, and sees an updated device with no sessions. An updated daemon reads the older one's
   plaintext as it always did. It reads a plaintext event from any device, since events carry no
-  signature to hold them to, and plaintext presence only from a device it hasn't pinned. So for a while older devices can't
-  hear updated ones, and messages to them are refused. The updater (see Updating) closes that gap
-  within an hour of the release, with nobody acting. A version from before the updater needs the
-  manual install it already needed. **Until it updates, an older daemon writes in the clear, and
-  nothing can stop it.**
-- **A collaborator removed from the repo** can no longer push, so their presence goes stale within
-  StaleAfter. From then on they are left out of what is written. The one exception is a message
-  addressed to their device within 24 hours of when a teammate's daemon last took a new presence
-  from it. They keep what they could
-  already read.
-- **A device that joins later can't read what was written before it published its key.** A new
-  device never replayed history anyway. What it costs is the page's list of older messages.
-- **Key loss.** A deleted clone comes back as a new device. If only the keys file is gone and
-  `state.json` shows the device had keys, the daemon takes a new device ID, because its teammates
-  would refuse a new key under the old one. The old ID's presence goes stale, and its names stay
-  taken. With `state.json` gone too, the clone's local copy of its own presence ref still shows a
-  seal, which tells the daemon it had keys. Only a daemon meeting encryption for the first time has
-  neither, and keeps its ID.
+  signature to hold them to, and plaintext presence only from a device it hasn't pinned. So for a
+  while older devices can't hear updated ones, and messages to them are refused. The updater (see
+  Updating) closes that gap within an hour of the release, with nobody acting. A version from before
+  the updater needs the manual install it already needed. **Until it updates, an older daemon writes
+  in the clear, and nothing can stop it.**
+- **A collaborator removed from the repo** keeps every team key they were granted. On a public repo
+  they can still fetch the bus, so **they read everything written until someone rotates**, and
+  everything before. On a private repo, removal takes their read access with it. #257's first design
+  dropped them within 6 minutes with nothing to run; the team key trades that for history and for
+  devices that come back.
+- **No forward secrecy.** A leaked device's keys read everything up to the last epoch it was granted.
+- **Key loss.** A deleted clone comes back as a new device, and is granted the team keys like any.
+  If only the keys file is gone and `state.json` shows the device had keys, the daemon takes a new
+  device ID, because its teammates would refuse a new key under the old one. The old ID's presence
+  goes stale, and its names stay taken. With `state.json` gone too, the clone's local copy of its own
+  presence ref still shows a seal, which tells the daemon it had keys. Only a daemon meeting
+  encryption for the first time has neither, and keeps its ID.
 - **The name registry stays in the clear, and unsealed.** It holds random names, device IDs and
-  random session IDs. A device that joins later must read all of it, history included, so that a
-  name is never given out twice, and it couldn't read records encrypted before it joined. For the
-  same reason an encrypted presence carries its sessions' names and IDs beside the box: a device
-  that can't open it, having joined while its writer couldn't push, still knows those names are
-  taken. That exposes nothing the registry doesn't.
+  random session IDs. A device must read all of it before it can name a session, which may be before
+  it is granted the team key. For the same reason an encrypted presence carries its sessions' names
+  and IDs beside the box: a device that can't open it yet still knows those names are taken. That
+  exposes nothing the registry doesn't.
 - **What anyone who can read a public repo still sees:** device IDs, which begin with a slug of
-  the hostname; when each device writes, how many records and how large they are; which device IDs
-  each record is wrapped for; each device's public keys; the name registry; and
-  `refs/murmur/reported`. They don't see messages, subjects, who sent what to whom, statuses,
-  branches, tags, hosts, owners or agents.
+  the hostname; when each device writes, how many records and how large they are; the team key IDs
+  each record is encrypted for; which devices each team key was granted to, and when; each device's
+  public keys; the name registry; and `refs/murmur/reported`. They don't see messages, subjects, who
+  sent what to whom, statuses, branches, tags, hosts, owners, agents, or the collaborators an epoch
+  recorded.
 - **Open, for Tyler** (#156): whether the census (#199) should keep anything readable, such as
-  `owner` or an event's kind, now that encryption hides them from it; and whether new clones should
-  get a device ID without the hostname in it.
+  `owner` or an event's kind, now that encryption hides them from it; whether new clones should
+  get a device ID without the hostname in it (#330); and when a rotation should happen without
+  anyone running `mur rotate`.
 
 ### One daemon per device, a thin MCP server per session
 

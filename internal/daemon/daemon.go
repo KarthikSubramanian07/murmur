@@ -396,15 +396,21 @@ type Daemon struct {
 	threadRead   map[threadKey]time.Time
 	threadWarned map[threadKey]bool
 
-	// presenceFor is the team's keys (teamKeyID) the last presence push was encrypted for: when the
-	// team changes, presence goes out again, so a device that appears can read it. refused is when a
-	// presence claiming each device was last refused (see checkPresenceLocked), to log it once a minute.
-	presenceFor string
-	refused     map[string]time.Time
-	refusedSHA  map[string]string // the presence last refused for each device, not read again; under mu
-	// seenAt is, for each device, when this run last took a new sealed presence from it, on the
-	// monotonic clock (see seenWithinLocked); under mu.
-	seenAt map[string]time.Time
+	// refused is when a presence claiming each device was last refused (see checkPresenceLocked), to
+	// log it once a minute.
+	refused    map[string]time.Time
+	refusedSHA map[string]string // the presence last refused for each device, not read again; under mu
+
+	// The team key (team.go). teamKeys is the team private keys this device holds, by TeamID;
+	// epochSeen is when this run first knew of each epoch, on the monotonic clock, which a grant
+	// waits for a presence after; teamChanged is closed and replaced when an epoch is read. Under mu.
+	// teamMu serializes the team ref's writes; teamKick wakes teamLoop.
+	teamKeys    bus.Keyring
+	epochSeen   map[string]time.Time
+	teamChanged chan struct{}
+	teamMu      sync.Mutex
+	teamKick    chan struct{}
+	waitWarned  map[string]bool // logs already said to be waiting for the team key; under mu
 
 	polls atomic.Int64 // the remote listings tried, so a test can see the rate
 
@@ -534,13 +540,14 @@ type peer struct {
 	// machines' clocks.
 	listed     string
 	lastChange time.Time
-	// verified is when this daemon last took a sealed presence from the device, on this machine's
-	// clock: what the device's keys count as current by (see teamKeysLocked). Only a presence that
-	// passed checkPresenceLocked sets it; one that didn't, or couldn't be read, moves lastChange
-	// alone. Zero for a device that has never sealed one. sealed says this run has taken a sealed
-	// presence from it, new or not.
-	verified time.Time
-	sealed   bool
+	// sealed says this run has taken a sealed presence from the device, new or not.
+	sealed bool
+	// watched is when this daemon took a new sealed presence from the device that it saw arrive, on
+	// this machine's clock: not the first it read in this run, which may have sat on the ref for any
+	// time. A grant of the team keys goes by it (teamWork). locked says the presence was encrypted
+	// for a team key this device doesn't hold yet, to read again once it does.
+	watched time.Time
+	locked  bool
 }
 
 // fetchFail is a ref whose fetch failed: at which listed SHA, and when. It is fetched again on
@@ -681,6 +688,11 @@ type state struct {
 	// PresenceAt is the time this device's last presence was signed with, which the next one's must
 	// pass (see nextPresenceAtLocked).
 	PresenceAt time.Time `json:"presenceAt,omitzero"`
+	// The team ref as read (team.go): its tip, its epochs in order, and the team keys each device
+	// has been given, by device ID.
+	TeamTip     string              `json:"teamTip,omitempty"`
+	Epochs      []teamEpoch         `json:"epochs,omitempty"`
+	TeamGranted map[string][]string `json:"teamGranted,omitempty"`
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if
@@ -845,6 +857,11 @@ func Run(ctx context.Context, opt Options) error {
 		d.bg.Add(1)
 		go func() {
 			defer d.bg.Done()
+			d.teamLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
 			d.titleLoop(ctx)
 		}()
 		d.bg.Add(1)
@@ -945,13 +962,17 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
-		refused: map[string]time.Time{}, refusedSHA: map[string]string{}, seenAt: map[string]time.Time{},
+		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
+		epochSeen: map[string]time.Time{}, waitWarned: map[string]bool{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1),
 	}
 	device, signKey, boxKey, err := loadIdentity(dir, opt.Log, sealedLocally(ctx, gitx.Git{Dir: opt.GitDir}))
 	if err != nil {
 		return nil, err
 	}
 	d.device, d.signKey, d.boxKey = device, signKey, boxKey
+	if d.teamKeys, err = loadTeamKeys(dir); err != nil {
+		return nil, err
+	}
 	d.host, _ = os.Hostname()
 	d.repo = &bus.Repo{Git: gitx.Git{Dir: opt.GitDir}, Name: device, Email: device + "@" + brand.Name + ".invalid"}
 	if d.repo.Remote, err = bus.RemoteFor(ctx, d.repo.Git); err != nil {
@@ -1199,7 +1220,7 @@ func (d *Daemon) loadState() error {
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
 		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{},
-		Pins: map[string]*keyPin{}}
+		Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1261,6 +1282,17 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Pins == nil {
 		d.st.Pins = map[string]*keyPin{}
+	}
+	if d.st.TeamGranted == nil {
+		d.st.TeamGranted = map[string][]string{}
+	}
+	// A grant waits for a presence pushed after this run knew of the epoch: a presence read before
+	// the restart can't be told from one put back on its ref since (team.go).
+	if d.epochSeen == nil {
+		d.epochSeen = map[string]time.Time{}
+	}
+	for _, ep := range d.st.Epochs {
+		d.epochSeen[ep.ID] = time.Now()
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

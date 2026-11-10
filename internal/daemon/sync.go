@@ -266,6 +266,8 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 			}
 		case strings.HasPrefix(ref, brand.PresencePrefix):
 			d.updatePeer(first, ref, sha)
+		case ref == brand.TeamRef:
+			d.processTeam(first, sha)
 		}
 	}
 	firstErr := first.Err()
@@ -290,11 +292,7 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 		}
 	}
 	d.lastPollOK = polled
-	if d.presenceFor != "" && teamKeyID(d.teamKeysLocked()) != d.presenceFor {
-		// A device appeared, came back or went stale: presence goes out again, encrypted for the
-		// team as it is now, so a device that has just appeared can read it within a poll or two.
-		d.kickPresence()
-	}
+	d.kickTeam() // a device to grant the team keys to, or a team ref still empty
 	switched := false
 	if d.mode != modeNormal && len(d.backlog) == 0 {
 		d.mode = modeNormal
@@ -345,8 +343,10 @@ func readOrder(remote map[string]string) []string {
 			return 0
 		case strings.HasPrefix(ref, brand.PresencePrefix):
 			return 1
+		case ref == brand.TeamRef:
+			return 2 // after presence, which pins the keys its records are sealed with
 		}
-		return 2
+		return 3
 	}
 	refs := sortedKeys(remote)
 	slices.SortStableFunc(refs, func(a, b string) int { return rank(a) - rank(b) })
@@ -364,7 +364,7 @@ func readable(listed map[string]string) map[string]string {
 		_, mesh := meshDevice(ref)
 		presence := strings.HasPrefix(ref, brand.PresencePrefix) &&
 			bus.ValidDevice(strings.TrimPrefix(ref, brand.PresencePrefix))
-		if mesh || presence || ref == brand.NamesRef {
+		if mesh || presence || ref == brand.NamesRef || ref == brand.TeamRef {
 			refs[ref] = sha
 		}
 	}
@@ -692,15 +692,30 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha, listed string) {
 	// doesn't hold up the sessions, the hook and the page while it is read. Each page moves the cursor
 	// to its last commit, so a read cut short goes on from there.
 	dev := strings.TrimPrefix(ref, brand.MeshPrefix)
+	stalled := false
 	err := d.repo.Log(ctx, prev, sha, d.maxRecord, func(commits []bus.Commit) error {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		d.applyPageLocked(func() {
-			d.readEventsLocked(ref, dev, commits, mode, tagsOnly, junked, hidden)
-			d.st.Processed[ref] = commits[len(commits)-1].SHA
+			n := d.readEventsLocked(ref, dev, commits, mode, tagsOnly, junked, hidden)
+			if n > 0 {
+				d.st.Processed[ref] = commits[n-1].SHA
+			}
+			stalled = n < len(commits)
 		})
+		if stalled {
+			return errStalled
+		}
 		return nil
 	})
+	if stalled {
+		// The cursor stays at the record this device can't open yet. The log counts as read for the
+		// backlog: a grant, not time, is what it waits for.
+		d.mu.Lock()
+		delete(d.backlog, ref)
+		d.mu.Unlock()
+		return
+	}
 	if err != nil {
 		d.log.Printf("reading %s: %v", ref, err)
 		return
@@ -728,13 +743,21 @@ func (d *Daemon) applyPageLocked(apply func()) {
 
 // readEventsLocked applies a page of commits read from ref, dev's log, in the mode advanceMesh read
 // it in. A commit over the size read is passed over, as any other junk is. Caller holds mu.
-func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode syncMode, tagsOnly, junked bool, hidden time.Time) {
-	for _, c := range commits {
+func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode syncMode, tagsOnly, junked bool, hidden time.Time) int {
+	for i, c := range commits {
 		if c.Oversize {
 			d.log.Printf("reading %s: commit %s is %d bytes, over the %d read; passed over", ref, c.SHA, c.Size, d.maxRecord)
 			continue
 		}
-		e, ok := d.logEventLocked(c, dev, ref)
+		e, ok, wait := d.logEventWaitLocked(c, dev, ref)
+		if wait {
+			// Encrypted for a team key this device will be granted: read on from here then.
+			if !d.waitWarned[ref] {
+				d.log.Printf("%s: waiting for a teammate to grant this device the team key to read on from %s", ref, short(c.SHA))
+				d.waitWarned[ref] = true
+			}
+			return i
+		}
 		if !ok {
 			continue
 		}
@@ -764,25 +787,34 @@ func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode sy
 			}
 		}
 	}
+	delete(d.waitWarned, ref)
+	return len(commits)
 }
 
 // logEventLocked decodes commit c of dev's log, read from ref, opening it if it is encrypted, and
 // says whether it is an event to read: one this device can open, and a device's log carries only
 // its own sessions' events. Caller holds mu.
 func (d *Daemon) logEventLocked(c bus.Commit, dev, ref string) (bus.Event, bool) {
+	e, ok, _ := d.logEventWaitLocked(c, dev, ref)
+	return e, ok
+}
+
+// logEventWaitLocked is logEventLocked, and also says whether the event is encrypted for a team key
+// this device is waiting to be granted (openEventLocked). Caller holds mu.
+func (d *Daemon) logEventWaitLocked(c bus.Commit, dev, ref string) (bus.Event, bool, bool) {
 	var e bus.Event
 	if bus.Decode(c.Message, &e) != nil {
-		return e, false
+		return e, false, false
 	}
-	e, ok := d.openEventLocked(e, dev, ref, c.SHA)
+	e, ok, wait := d.openEventLocked(e, dev, ref, c.SHA)
 	if !ok {
-		return e, false
+		return e, false, wait
 	}
 	if e.Clean(); !e.Valid() {
-		return e, false
+		return e, false, false
 	}
 	from, _ := bus.SplitAddr(e.From)
-	return e, from == dev
+	return e, from == dev, false
 }
 
 // tagsKnownLocked says whether this device has a name or tags for any session: a tags event applies
@@ -1087,13 +1119,16 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		d.mu.Unlock()
 		return
 	}
+	locked := false
 	if pres.Box != nil {
-		open, err := bus.DecryptPresence(pres, d.device, d.boxKey)
+		open, err := bus.DecryptPresence(pres, d.keyringLocked())
 		if err != nil {
-			// Not encrypted for this device yet: it has only just appeared, and its teammates will
-			// push their presence again for it when they see it (see pollOnce). The device is
-			// there, with nothing about it readable here.
-			if !errors.Is(err, bus.ErrNotForUs) {
+			// Encrypted for a team key this device hasn't been granted yet, or for its writer alone
+			// before the team key was made. The device is there, with nothing about it readable
+			// here; it is read again once this device holds the key (addTeamKeysLocked).
+			if errors.Is(err, bus.ErrNotForUs) {
+				locked = true
+			} else {
 				d.log.Printf("%s: %s doesn't open: %v", ref, short(sha), err)
 			}
 			open = bus.Presence{V: pres.V, Device: pres.Device, At: pres.At, BoxKey: pres.BoxKey, Names: pres.Names}
@@ -1112,16 +1147,18 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		changed = firstSight(c.Time) // no change of ours to time it by
 	}
 	d.mu.Lock()
-	var verified time.Time
-	if sealed {
-		fresh := d.newPresenceLocked(dev, pres.At)
-		verified = d.verifiedLocked(p, fresh, pres.At)
-		if fresh {
-			d.noteSeenLocked(dev, verified)
-		}
+	var watched time.Time
+	if p != nil {
+		watched = p.watched
 	}
-	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, verified: verified,
-		sealed: sealed || p != nil && p.sealed}
+	// Seen to arrive: a presence signed later than any other taken from the device, read while this
+	// daemon watches its ref, after a sync has finished, so not the clone's own old copy. Pushed now,
+	// by someone who can push.
+	if sealed && d.newPresenceLocked(dev, pres.At) && p != nil && p.sealed && !d.lastPollOK.IsZero() {
+		watched = time.Now()
+	}
+	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed,
+		sealed: sealed || p != nil && p.sealed, watched: watched, locked: locked}
 	// A name in another device's presence is in use, whether or not the registry shows it yet.
 	seen := false
 	for _, s := range pres.Sessions {
@@ -1172,6 +1209,9 @@ func (d *Daemon) sawPresence(dev, sha string, tried bool) {
 // appendEvent adds an event to this device's log on the remote. It returns once the push has
 // landed, so a sender knows whether its message went out.
 func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
+	if err := d.awaitEpoch(ctx); err != nil {
+		return err
+	}
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	ref := d.meshRef()
@@ -1424,6 +1464,16 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 		case err == nil && failing:
 			d.log.Printf("presence pushed again")
 		}
+		if err == nil {
+			d.mu.Lock()
+			waiting := d.lacksTeamKeyLocked()
+			d.mu.Unlock()
+			if waiting {
+				// A teammate grants the team key on a presence it sees arrive after the epoch: push
+				// one again soon, rather than at the next heartbeat.
+				retry.Reset(min(teamWaitRepush, d.opt.Heartbeat))
+			}
+		}
 		failing = err != nil
 		d.pruneInboxes()
 	}
@@ -1489,10 +1539,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		pres.Sessions = append(pres.Sessions, d.personInfoLocked())
 	}
 	pres.BoxKey = bus.BoxPublic(d.boxKey)
-	team := d.teamKeysLocked()
-	// Set at the attempt, not the success: a push that fails is retried on its own (presenceLoop),
-	// and a sync seeing the team differ from it shouldn't push at every poll meanwhile.
-	d.presenceFor = teamKeyID(team)
+	team := d.teamRecipientsLocked()
 	// This presence lists every session started so far, so what waits for one that does can go
 	// once it is pushed, or has failed: a failing remote is no reason to hold back the rest. Until
 	// then the gate stays where awaitPresence finds it, as presenceSending, so a writer that comes

@@ -75,18 +75,18 @@ func TestEncryptedEventHidesEverything(t *testing.T) {
 	if old.Clean(); old.Valid() {
 		t.Fatalf("an older reader takes it for an event: %+v", old)
 	}
-	in, err := DecryptEvent(old, "dev-0001", "dev-0002", k)
+	in, err := DecryptEvent(old, "dev-0001", Keyring{"dev-0002": k})
 	if err != nil || in.Subject != e.Subject || in.Body != e.Body || in.From != e.From || in.ID != e.ID {
 		t.Fatalf("decrypted %+v, %v", in, err)
 	}
 	// Moved to another device's log, it doesn't open.
-	if _, err := DecryptEvent(old, "dev-0003", "dev-0002", k); err == nil {
+	if _, err := DecryptEvent(old, "dev-0003", Keyring{"dev-0002": k}); err == nil {
 		t.Fatal("opened on another device's log")
 	}
 	// A box inside a box is refused.
 	inner, _ := EncryptEvent(e, "dev-0001", map[string]string{"dev-0002": BoxPublic(k)})
 	outer, _ := EncryptEvent(inner, "dev-0001", map[string]string{"dev-0002": BoxPublic(k)})
-	if _, err := DecryptEvent(outer, "dev-0001", "dev-0002", k); err == nil {
+	if _, err := DecryptEvent(outer, "dev-0001", Keyring{"dev-0002": k}); err == nil {
 		t.Fatal("opened a box in a box")
 	}
 }
@@ -126,7 +126,7 @@ func TestEncryptedPresence(t *testing.T) {
 	if read.Device != "dev-0001" || len(read.Sessions) != 0 || read.Host != "" {
 		t.Fatalf("older reader sees %+v", read)
 	}
-	open, err := DecryptPresence(read, "dev-0001", k)
+	open, err := DecryptPresence(read, Keyring{"dev-0001": k})
 	if err != nil || open.Host != p.Host || open.Owner != p.Owner || len(open.Sessions) != 2 ||
 		open.Sessions[0].Doing != "secret status" || len(open.Offline) != 1 || open.Box != nil {
 		t.Fatalf("opened %+v, %v", open, err)
