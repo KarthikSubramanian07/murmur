@@ -261,6 +261,37 @@ const root = document.getElementById("root");
 let content; // the scrolling pane, kept across renders so its scroll position is too
 const held = { el: null, mark: null }; // the focused element while a render builds around it
 
+// One polite live region for the page, outside #root so that renders never rebuild it: a region
+// made anew each render would be read out every time, or never. What it says comes in a batch, a
+// moment after the change, and the region is cleared first so the same words can be said again.
+const live = h("div", { class: "sr-only", role: "status", "aria-live": "polite", "aria-atomic": "true" });
+document.body.append(live);
+let liveQueue = [];
+let liveTimer = 0;
+function announce(text) {
+  if (!text) return;
+  if (!liveQueue.length) live.textContent = "";
+  liveQueue.push(text);
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(() => {
+    live.textContent = liveQueue.join(" ");
+    liveQueue = [];
+  }, 150);
+}
+
+// What a render shows that is marked data-announce (an error, a warning, a lost connection) is
+// said once, when it first shows, rather than each time a poll rebuilds it.
+let announced = new Set();
+function announceShown() {
+  const now = new Set();
+  for (const el of root.querySelectorAll("[data-announce]")) {
+    const text = el.dataset.announce || el.textContent;
+    now.add(text);
+    if (!announced.has(text)) announce(text);
+  }
+  announced = now;
+}
+
 // A render builds the page anew. The focused element is kept, with the elements it sits in, and
 // everything around them is replaced: moved or rebuilt, it would lose focus, and a screen reader
 // would read it out again on every poll. Its counterpart in the new tree is the element with its
@@ -396,6 +427,7 @@ function render() {
   if (sideNow) sideNow.scrollTop = side;
   restoreChatScroll(chat);
   fitComposers();
+  announceShown();
   document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME;
   queueMicrotask(markOpenRead);
 }
@@ -533,8 +565,8 @@ function connBadge(small) {
   if (ui.conn !== "down" || ui.restarting) return null;
   const tip = "Can't reach the daemon. The page keeps trying; " + COMMAND + " ui starts it again.";
   return small
-    ? h("span", { class: "mini-conn", role: "status", title: tip, "aria-label": "Disconnected" }, h("span", { class: "dot warn" }))
-    : h("span", { class: "conn-badge", role: "status", title: tip }, h("span", { class: "dot warn" }), "Disconnected");
+    ? h("span", { class: "mini-conn", role: "img", title: tip, "aria-label": "Disconnected", "data-announce": tip }, h("span", { class: "dot warn" }))
+    : h("span", { class: "conn-badge", title: tip, "data-announce": tip }, h("span", { class: "dot warn" }), "Disconnected");
 }
 
 function sidebar() {
@@ -566,7 +598,7 @@ function sidebar() {
         navRow("all", "message", "Conversations", ui.view === "messages" && !ui.filter, () => ((ui.filter = null), (ui.conversation = null), go("messages")), h("span", { class: "menu-count" }, allCount)),
         navRow("top-recent", "clock", "Recent", ui.view === "recent", () => ((ui.filter = null), go("recent"))),
       ),
-      ui.notice && h("button", { class: "side-notice", title: "Dismiss", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
+      ui.notice && h("button", { class: "side-notice", title: "Dismiss", "data-key": "notice", "data-announce": "", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
       peopleGroup(),
       tagsGroup(),
       devs.map((d) => deviceGroup(d)),
@@ -763,7 +795,7 @@ function updateItem() {
   const kids = [updateIcon(info), h("span", { class: "label" }, info.text)];
   return info.act
     ? h("button", { class: cls, title: info.title, "data-key": "update", onclick: info.act }, kids)
-    : h("div", { class: cls, title: info.title, role: "status" }, kids);
+    : h("div", { class: cls, title: info.title, "data-announce": info.text + ". " + info.title }, kids);
 }
 
 function miniUpdate() {
@@ -819,7 +851,7 @@ function versionSection() {
         h("code", null, v.install),
         h(
           "button",
-          { class: "btn btn-ghost btn-xs", title: "Copy", "aria-label": "Copy the command", "data-key": "copy-install", onclick: () => navigator.clipboard?.writeText(v.install) },
+          { class: "btn btn-ghost btn-xs", title: "Copy", "aria-label": "Copy the command", "data-key": "copy-install", onclick: () => (navigator.clipboard?.writeText(v.install), announce("Copied.")) },
           icon("copy"),
         ),
       ),
@@ -1751,7 +1783,7 @@ function tagsLine(s) {
           },
           "+ Tag",
         ),
-    ui.rowErrors[key] && h("span", { class: "row-error" }, ui.rowErrors[key]),
+    ui.rowErrors[key] && h("span", { class: "row-error", "data-announce": "" }, ui.rowErrors[key]),
   );
 }
 
@@ -2054,7 +2086,7 @@ function tagMenu() {
         ),
       !rows.length && !make && h("p", { class: "tm-none" }, "No tags yet"),
     ),
-    m.err && h("p", { class: "tm-err" }, m.err),
+    m.err && h("p", { class: "tm-err", "data-announce": "" }, m.err),
   );
   menu.style.left = m.x + "px";
   if (m.top != null) menu.style.top = m.top + "px";
@@ -2733,12 +2765,12 @@ function pendingMessage(item, head) {
     failed
       ? h(
           "div",
-          { class: "msg-failed", role: "alert" },
-          h("span", { class: "msg-failed-why" }, item.error),
+          { class: "msg-failed" },
+          h("span", { class: "msg-failed-why", "data-announce": /^not sent/i.test(item.error) ? item.error : "Not sent: " + item.error }, item.error),
           h("button", { class: "btn btn-ghost btn-xs", "data-key": "retry-" + item.cid, onclick: () => deliver(item) }, icon("retry"), "Try again"),
           h("button", { class: "btn btn-ghost btn-xs", "data-key": "edit-" + item.cid, onclick: () => editFailed(item) }, icon("pencil"), "Edit"),
         )
-      : item.status === "sending" && h("div", { class: "chat-msg-meta msg-sending", role: "status" }, "Sending…"),
+      : item.status === "sending" && h("div", { class: "chat-msg-meta msg-sending" }, "Sending…"),
   );
 }
 
@@ -2763,6 +2795,7 @@ function copyButton(text) {
       "aria-label": "Copy message",
       onclick: (e) => {
         navigator.clipboard?.writeText(text);
+        announce("Copied.");
         const b = e.currentTarget;
         b.replaceChildren(icon("check"));
         b.classList.add("copied");
@@ -3354,7 +3387,7 @@ function composer(c, target) {
     h(
       "div",
       { class: "composer" + (armed ? " composer-armed" : "") },
-      armed && h("p", { class: "composer-warn", role: "alert" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
+      armed && h("p", { class: "composer-warn", "data-announce": "" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
       el,
       h(
         "div",
@@ -3396,6 +3429,7 @@ async function deliver(item) {
     if (sent.note) ui.notes.set(item.key, { id: sent.id, text: sent.note });
     else ui.notes.delete(item.key);
     item.status = "sent";
+    announce("Sent.");
     clearTimeout(timer);
     timer = setTimeout(poll, 100); // what was sent is among the messages by now
   } catch (e) {
@@ -3593,7 +3627,7 @@ function settingsRow(key, title, description, control, extraClass = "") {
       // Named by the row's title, so each of a column of Always, Within and Never says whose it is.
       h("div", { class: "row-control", role: control ? "group" : null, "aria-labelledby": control ? "row-" + key : null }, control),
     ),
-    ui.rowErrors[key] && h("p", { class: "row-error" }, ui.rowErrors[key]),
+    ui.rowErrors[key] && h("p", { class: "row-error", "data-announce": "" }, ui.rowErrors[key]),
   );
 }
 
@@ -3808,7 +3842,7 @@ function settingsPage() {
         { class: "section" },
         h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Busy sessions")),
         h("div", { class: "group" }, busyRows),
-        ui.settingsError && h("p", { class: "row-error section-head" }, ui.settingsError),
+        ui.settingsError && h("p", { class: "row-error section-head", "data-announce": "" }, ui.settingsError),
       ),
     );
   }
@@ -3976,9 +4010,12 @@ async function poll() {
   if (inflight) return;
   inflight = true;
   clearTimeout(timer);
+  const wasConn = ui.conn;
+  const had = ui.messages.length;
   try {
     const asked = Date.now();
     const [state] = await Promise.all([api("/api/state"), fetchMessages()]);
+    const arrived = polled ? ui.messages.slice(had) : []; // the first poll brings the history
     // Another daemon is serving: it restarted onto an update, or a reinstall of the same version,
     // and serves this page at the same address and token. Its page may differ too, so load that.
     const was = ui.state?.version;
@@ -4014,6 +4051,8 @@ async function poll() {
     for (const id of ui.readLocal) if (!state.account?.unread?.includes(id)) ui.readLocal.delete(id);
     ui.outbox = ui.outbox.filter((item) => !(item.id && ui.ids.has(item.id)));
     ui.conn = "ok";
+    announceArrivals(arrived);
+    if (wasConn === "down") announce("Connected to the daemon again.");
   } catch (e) {
     inflight = false;
     if (e instanceof AuthError) return deny(e.token);
@@ -4038,6 +4077,18 @@ async function poll() {
   const first = !polled;
   polled = true;
   timer = setTimeout(poll, document.hidden ? HIDDEN_POLL_MS : first ? 1200 : POLL_MS);
+}
+
+// New messages are read out, politely: those to the person, and those in the conversation open in
+// front of them. Agents talking among themselves anywhere else would be a flood, so they aren't.
+function announceArrivals(list) {
+  if (document.hidden) return;
+  const unread = new Set(ui.state?.account?.unread || []);
+  const open = ui.view === "messages" && ui.conversation;
+  const say = list.filter((m) => fromName(m) !== myName() && (unread.has(m.id) || (open && conversationOf(m).key === ui.conversation)));
+  if (!say.length) return;
+  const m = say[say.length - 1];
+  announce(say.length === 1 ? "New message from " + fromName(m) + ": " + m.subject : say.length + " new messages, the newest from " + fromName(m) + ": " + m.subject);
 }
 
 // A fresh link pasted into a tab already showing the page changes only the fragment, so the
