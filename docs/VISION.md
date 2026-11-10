@@ -1346,6 +1346,13 @@ ignore red. Counts the site refuses do fail the run, after every other repo has 
 census sends only what the site's limits allow, so a refusal means the two disagree, or the site
 is down, which can be fixed.
 
+A green run can still leave repos uncounted, so the stats say so, from `repo_census.counted`, which
+the site already keeps: `/stats/report.md` ends with when the census last ran, the repos that run
+didn't count, each with when it last was, and how many hours late the census is once its newest
+count is over 30 hours old (`/stats/data` has the same, and the page's footer says it only when
+something is behind). Each run's page in Actions has a table of every repo, with its counts or why
+it has none.
+
 A time on the bus or a branch is its writer's clock, and can say any year up to 9999. A day after
 tomorrow (UTC) is never believed, since one would keep a repo active and its people new for ever,
 and nor is a bus day before 2026-10-01, when there was no bus. A record with such a time is dated by
