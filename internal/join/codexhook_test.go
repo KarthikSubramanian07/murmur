@@ -3,6 +3,7 @@ package join
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -32,7 +33,7 @@ func TestCodexHookHashIsCodexs(t *testing.T) {
 func TestEditCodexHooksKeepsOthersAndIsIdempotent(t *testing.T) {
 	const path = `C:\home\.codex\hooks.json`
 	mine := "{\n    \"other\": 1,\n    \"hooks\": {\"PostToolUse\": [{\"matcher\": \"Bash\", \"hooks\": [{\"type\": \"command\", \"command\": \"lint\"}]}]}\n}\n"
-	out, trust, changed, err := editCodexHooks([]byte(mine), []string{path}, "mur hook codex")
+	out, trust, changed, err := editCodexHooks([]byte(mine), path, "mur hook codex")
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
@@ -63,7 +64,7 @@ func TestEditCodexHooksKeepsOthersAndIsIdempotent(t *testing.T) {
 			t.Errorf("no trust for %s: %v", k, trust)
 		}
 	}
-	again, trust2, changed, err := editCodexHooks(out, []string{path}, "mur hook codex")
+	again, trust2, changed, err := editCodexHooks(out, path, "mur hook codex")
 	if err != nil || changed || string(again) != string(out) || len(trust2) != len(trust) || trust2[0] != trust[0] {
 		t.Errorf("second run: changed=%v err=%v", changed, err)
 	}
@@ -74,7 +75,7 @@ func TestEditCodexHooksKeepsOthersAndIsIdempotent(t *testing.T) {
 	h := later["hooks"].(map[string]any)
 	h["Stop"] = append(h["Stop"].([]any), map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "notify"}}})
 	withLater, _ := json.Marshal(later)
-	moved, trust3, changed, _ := editCodexHooks(withLater, []string{path, `D:\real\hooks.json`}, "mur2 hook codex")
+	moved, trust3, changed, _ := editCodexHooks(withLater, path, "mur2 hook codex")
 	if !changed || strings.Count(string(moved), "hook codex") != 3 || strings.Contains(string(moved), `"mur hook codex"`) {
 		t.Errorf("after a move:\n%s", moved)
 	}
@@ -83,7 +84,7 @@ func TestEditCodexHooksKeepsOthersAndIsIdempotent(t *testing.T) {
 	if len(stop) != 2 || !strings.Contains(fmt.Sprint(stop[1]), "notify") {
 		t.Errorf("Stop after a move: %v", stop)
 	}
-	if len(trust3) != 6 || trust3[0].key != path+":user_prompt_submit:0:0" || trust3[1].key != `D:\real\hooks.json:user_prompt_submit:0:0` {
+	if len(trust3) != 3 || trust3[0].key != path+":user_prompt_submit:0:0" {
 		t.Errorf("trust after a move: %v", trust3)
 	}
 }
@@ -122,7 +123,7 @@ func TestIsMurmurGroup(t *testing.T) {
 // What join can't read it leaves alone, and says so.
 func TestEditCodexHooksRefusesWhatItCantRead(t *testing.T) {
 	for _, text := range []string{`{not json`, `{"hooks":[]}`, `{"hooks":{"Stop":{}}}`} {
-		if _, _, _, err := editCodexHooks([]byte(text), []string{"h.json"}, "mur hook codex"); err == nil {
+		if _, _, _, err := editCodexHooks([]byte(text), "h.json", "mur hook codex"); err == nil {
 			t.Errorf("%s: no error", text)
 		}
 	}
@@ -180,6 +181,24 @@ func TestEditCodexTrust(t *testing.T) {
 		if _, _, err := editCodexTrust(bad, trust); err == nil {
 			t.Errorf("%q: no error", bad)
 		}
+	}
+}
+
+// Codex canonicalizes a home CODEX_HOME names, and takes the default ~/.codex as it is. With TEMP
+// a short name (CI's Windows runner has C:\Users\RUNNER~1), the two differ even with no link
+// (symlink_test.go has the link).
+func TestCodexKeyPath(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "hooks.json")
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := codexKeyPath(path, true); got != filepath.Join(resolved, "hooks.json") {
+		t.Errorf("named: %s", got)
+	}
+	if got := codexKeyPath(path, false); got != path {
+		t.Errorf("default: %s", got)
 	}
 }
 

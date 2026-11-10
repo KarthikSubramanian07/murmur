@@ -411,8 +411,10 @@ keeps its turn going at Stop (#202) runs in Codex and Grok too, as `mur hook cod
   and `config/src/fingerprint.rs`, rust-v0.166.0 and rust-v0.167.0), and the tests check it against
   hashes Codex wrote. The key names the group by its place in the event's list, so join edits
   `hooks.json` in place: its group stays where it is, and goes last only when it is new, so the
-  user's own hooks keep their keys. Codex canonicalizes a `CODEX_HOME` it is given, so join writes
-  the key under the path with links resolved as well. If a Codex release hashes differently, the
+  user's own hooks keep their keys. The key spells the path as Codex does: a home `CODEX_HOME`
+  names (T3's instances too) it canonicalizes, links resolved and Windows short names made long,
+  and `~/.codex` it takes as it is (codex-rs `utils/home-dir`, rust-v0.167.0). A key in any other
+  spelling is never read, and Codex asks about the hook. If a Codex release hashes differently, the
   hook silently stops running, which the daemon shows (below). The handler's `statusMessage` is
   "Murmur", which is how Codex names it in its hooks list and how join finds its own entries again.
   Seen on Codex 0.167.0, 2026-11-09, in a throwaway Codex home joined by `mur join`: no review

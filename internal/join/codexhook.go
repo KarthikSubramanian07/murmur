@@ -191,13 +191,13 @@ func isMurBinary(p string) bool {
 type codexTrust struct{ key, hash string }
 
 // editCodexHooks returns hooks.json's text with Murmur's hook in it for command, and the trust
-// entries of its handlers, keyed under each of paths (the file's path as Codex may name it). Codex
+// entries of its handlers, keyed under keyPath (the file's path as Codex names it). Codex
 // keys a hook's trust by its event and its group's place in the list, so join's group keeps its
 // place when it is there, and goes last when it isn't: moving it would move the keys of the user's
 // own hooks after it, and Codex would ask about them again. Everything else stays, its keys in
 // their order (jsonedit). A file that isn't a JSON object with an object of hooks is an error:
 // join won't replace what it can't read.
-func editCodexHooks(raw []byte, paths []string, command string) (out []byte, trust []codexTrust, changed bool, err error) {
+func editCodexHooks(raw []byte, keyPath, command string) (out []byte, trust []codexTrust, changed bool, err error) {
 	doc, err := jsonedit.Parse(raw)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("isn't a JSON object (%v); fix it or move it aside, then run join again", err)
@@ -243,9 +243,7 @@ func editCodexHooks(raw []byte, paths []string, command string) (out []byte, tru
 		if err != nil {
 			return nil, nil, false, err
 		}
-		for _, p := range paths {
-			trust = append(trust, codexTrust{key: p + ":" + ev.label + ":" + strconv.Itoa(at) + ":0", hash: hash})
-		}
+		trust = append(trust, codexTrust{key: keyPath + ":" + ev.label + ":" + strconv.Itoa(at) + ":0", hash: hash})
 	}
 	if !changed {
 		return raw, trust, false, nil
@@ -419,12 +417,14 @@ func hasPrefix(a, b []string) bool {
 
 // installCodexHook puts Murmur's hook in Codex home h and trusts it.
 func (e Env) installCodexHook(h agentHome) (did []string, err error) {
+	// Read where writeAtomic writes: Windows follows a link with `..` in its target lexically, so
+	// reading through the link could read another file than the one written.
 	path := filepath.Join(h.Dir, "hooks.json")
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(resolveLinks(path))
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
-	out, trust, changed, err := editCodexHooks(b, codexKeyPaths(path), agentHookCommand(e.Exe, "codex"))
+	out, trust, changed, err := editCodexHooks(b, codexKeyPath(path, h.Named), agentHookCommand(e.Exe, "codex"))
 	if err != nil {
 		return nil, fmt.Errorf("%s %w", path, err)
 	}
@@ -434,7 +434,7 @@ func (e Env) installCodexHook(h agentHome) (did []string, err error) {
 		}
 	}
 	cfg := filepath.Join(h.Dir, "config.toml")
-	cb, err := os.ReadFile(cfg)
+	cb, err := os.ReadFile(resolveLinks(cfg))
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -456,18 +456,17 @@ func (e Env) installCodexHook(h agentHome) (did []string, err error) {
 	return did, nil
 }
 
-// codexKeyPaths is hooks.json's path as Codex may name it in its trust keys: as join found it, and
-// with links resolved, as Codex has it when CODEX_HOME names the home (it canonicalizes that,
-// codex-rs/utils/home-dir at rust-v0.167.0; the default ~/.codex it takes as it is). A key Codex
-// doesn't use is never read.
-func codexKeyPaths(path string) []string {
-	paths := []string{path}
-	if dir, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
-		if real := filepath.Join(dir, "hooks.json"); real != path {
-			paths = append(paths, real)
+// codexKeyPath is hooks.json's path as Codex names it in its trust keys. A home CODEX_HOME names
+// (named) Codex canonicalizes: links resolved and, on Windows, short names made long, as
+// filepath.EvalSymlinks does (codex-rs/utils/home-dir at rust-v0.167.0). The default ~/.codex it
+// takes as it is. A key in another spelling would never be read, and Codex would ask about the hook.
+func codexKeyPath(path string, named bool) string {
+	if named {
+		if dir, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
+			return filepath.Join(dir, filepath.Base(path))
 		}
 	}
-	return paths
+	return path
 }
 
 // hasMurmurCodexHook says the hooks.json at path has a group of join's.

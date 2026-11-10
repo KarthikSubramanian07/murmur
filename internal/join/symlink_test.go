@@ -94,4 +94,10 @@ func TestRegisterCodexFollowsDotDotThroughALink(t *testing.T) {
 	if got := read(t, filepath.Join(sb.CodexHome, "settings.toml")); strings.Contains(got, "mcp_servers") {
 		t.Errorf("the file next to the link was written:\n%s", got)
 	}
+	// The hook's trust goes in the same file, once per hook, in the one spelling of the home Codex
+	// uses (CI's temporary directory on Windows has a short name, RUNNER~1).
+	got := read(t, filepath.Join(sb.root, "dotfiles", "settings.toml"))
+	if n := strings.Count(got, "[hooks.state."); n != 3 || !strings.Contains(got, codexKeyPath(filepath.Join(sb.CodexHome, "hooks.json"), true)+":stop:0:0") {
+		t.Errorf("%d trust entries:\n%s", n, got)
+	}
 }

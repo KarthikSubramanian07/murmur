@@ -18,6 +18,9 @@ type agentHome struct {
 	JSON  string // for Claude Code, the file it keeps user-scope MCP servers in
 	Label string // what the report calls it: "Claude Code", or with T3's name for the instance
 	Bin   string // the agent's command as T3 runs it, for an agent that isn't on PATH
+	// Named says a variable names Dir (CODEX_HOME) rather than Dir being the agent's default, which
+	// Codex spells differently in its hooks' trust keys (codexKeyPath).
+	Named bool
 }
 
 // agent is one of the coding agents join registers the server with.
@@ -61,7 +64,7 @@ func (e Env) defaultHome(a agent) agentHome {
 	case "claudeAgent":
 		h.Dir, h.JSON = e.ClaudeDir, e.ClaudeJSON
 	case "codex":
-		h.Dir = e.CodexHome
+		h.Dir, h.Named = e.CodexHome, !e.CodexHomeDefault
 	case "opencode":
 		h.Dir = e.OpenCodeDir
 	case "muse":
@@ -82,7 +85,7 @@ func (e Env) t3Home(a agent, in t3Instance) (agentHome, bool) {
 	case dir != "" && a.sub != "":
 		h.Dir = filepath.Join(dir, a.sub)
 	case dir != "":
-		h.Dir = dir
+		h.Dir, h.Named = dir, true
 	case a.driver == "claudeAgent" || a.driver == "codex":
 		// T3 runs these with no variable of their own in the user's default, whatever the agent
 		// running join has: this one may be another account's.
