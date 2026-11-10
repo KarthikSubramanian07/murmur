@@ -27,9 +27,9 @@ func TestHookFileTheRepoTracksAsALinkIsLeftAlone(t *testing.T) {
 	commitLink(t, p.Top, ".claude/settings.local.json", outside)
 
 	exe := filepath.Join(t.TempDir(), "bin", "mur")
-	changed, err := installHooks(context.Background(), p, exe)
-	if err == nil || !strings.Contains(err.Error(), "symbolic link the repo tracks") || !strings.Contains(err.Error(), "git rm") {
-		t.Errorf("join on a tracked link: %v", err)
+	changed, notes, err := installHooks(context.Background(), p, exe)
+	if err != nil || len(notes) != 1 || !strings.Contains(notes[0], "symbolic link the repo tracks") || !strings.Contains(notes[0], "git rm") {
+		t.Errorf("join on a tracked link: notes %q, err %v", notes, err)
 	}
 	if exists(outside) {
 		t.Errorf("join wrote through the tracked link:\n%s", read(t, outside))
@@ -39,7 +39,7 @@ func TestHookFileTheRepoTracksAsALinkIsLeftAlone(t *testing.T) {
 	}
 
 	write(t, outside, "{\"keep\": true}\n")
-	_, notes, err := removeHooks(context.Background(), p)
+	_, notes, err = removeHooks(context.Background(), p)
 	if err != nil || len(notes) != 1 || !strings.Contains(notes[0], "didn't write through it") {
 		t.Errorf("leave on a tracked link: notes %q, err %v", notes, err)
 	}
@@ -54,11 +54,35 @@ func TestClaudeFolderTheRepoTracksAsALinkIsLeftAlone(t *testing.T) {
 	outside := t.TempDir()
 	commitLink(t, p.Top, ".claude", outside)
 
-	if _, err := installHooks(context.Background(), p, filepath.Join(t.TempDir(), "mur")); err == nil || !strings.Contains(err.Error(), "symbolic link the repo tracks") {
-		t.Errorf("join on a tracked .claude link: %v", err)
+	if _, notes, err := installHooks(context.Background(), p, filepath.Join(t.TempDir(), "mur")); err != nil || len(notes) != 1 || !strings.Contains(notes[0], "symbolic link the repo tracks") {
+		t.Errorf("join on a tracked .claude link: notes %q, err %v", notes, err)
 	}
 	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
 		t.Errorf("join wrote into the folder the tracked link points to: %v", entries)
+	}
+}
+
+// The same links committed under names that differ only in case lead to the same file on a disk
+// that ignores case, as macOS's and Windows' do by default, so they are refused too, there and
+// everywhere else.
+func TestLinksTheRepoTracksAreFoundWhateverTheirCase(t *testing.T) {
+	for _, name := range []string{".Claude", ".claude/Settings.Local.json", ".CLAUDE/SETTINGS.LOCAL.JSON"} {
+		t.Run(name, func(t *testing.T) {
+			p, _ := clone(t)
+			outside := t.TempDir()
+			target := outside
+			if strings.Contains(name, "/") {
+				target = filepath.Join(outside, "settings.json")
+			}
+			commitLink(t, p.Top, name, target)
+			_, notes, err := installHooks(context.Background(), p, filepath.Join(t.TempDir(), "mur"))
+			if err != nil || len(notes) != 1 || !strings.Contains(notes[0], "symbolic link the repo tracks") {
+				t.Errorf("join on a tracked %s link: notes %q, err %v", name, notes, err)
+			}
+			if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+				t.Errorf("join wrote where the tracked %s link points: %v", name, entries)
+			}
+		})
 	}
 }
 
@@ -73,8 +97,8 @@ func TestHookFileTheRepoTracksIsNotJoinedInto(t *testing.T) {
 	git(t, p.Top, "commit", "-q", "-m", "settings")
 
 	exe := filepath.Join(t.TempDir(), "bin", "mur")
-	if _, err := installHooks(context.Background(), p, exe); err == nil || !strings.Contains(err.Error(), "git rm --cached") {
-		t.Errorf("join on a tracked hook file: %v", err)
+	if _, notes, err := installHooks(context.Background(), p, exe); err != nil || len(notes) != 1 || !strings.Contains(notes[0], "git rm --cached") || !strings.Contains(notes[0], "copy theirs aside") {
+		t.Errorf("join on a tracked hook file: notes %q, err %v", notes, err)
 	}
 	if got := read(t, path); strings.Contains(got, "hook") {
 		t.Errorf("join edited a tracked hook file:\n%s", got)

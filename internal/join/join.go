@@ -183,7 +183,8 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 
 	// Per repo: the hook that shows incoming messages, in every working tree of the clone.
-	trees, err := installHooks(ctx, p, e.Exe)
+	trees, hookNotes, err := installHooks(ctx, p, e.Exe)
+	r.Notes = append(r.Notes, hookNotes...)
 	for _, t := range trees {
 		r.Did = append(r.Did, "Installed the hook in "+filepath.Join(t, filepath.FromSlash(hookFile))+" (not committed)")
 	}

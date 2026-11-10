@@ -226,6 +226,31 @@ func TestJoinKeepsTheUsersConfig(t *testing.T) {
 	}
 }
 
+// A repo that commits .claude/settings.local.json by accident gets no hook there, but the join
+// still succeeds: running it again couldn't change that, so it is a note, not a problem, and the
+// advice is what any join gives.
+func TestJoinWhereTheRepoTracksTheHookFileStillSucceeds(t *testing.T) {
+	b := newBox(t)
+	b.mustRun(b.clone, "init")
+	local := filepath.Join(b.clone, ".claude", "settings.local.json")
+	const settings = "{\n  \"permissions\": {\"allow\": [\"Bash(ls)\"]}\n}\n"
+	writeFile(t, local, settings)
+	git(t, b.clone, "add", "--", ".claude/settings.local.json")
+	git(t, b.clone, "commit", "-q", "-m", "settings")
+
+	out := b.mustRun(b.clone, "join")
+	if !strings.Contains(out, "Not done:") || !strings.Contains(out, "git tracks") || strings.Contains(out, "Problems:") || strings.Contains(out, "retries") {
+		t.Errorf("join's output:\n%s", out)
+	}
+	if !strings.Contains(out, "copy theirs aside") || !strings.Contains(out, "join --leave") {
+		t.Errorf("join's output lacks the warning about untracking, or the usual advice:\n%s", out)
+	}
+	if got := readFile(t, local); got != settings {
+		t.Errorf("join edited the tracked hook file:\n%s", got)
+	}
+	b.mustRun(b.clone, "join", "--leave")
+}
+
 // A Codex thread in T3 that began before Murmur was added never gets its tools, so what join prints
 // for it is to open a new thread (Tyler, 2026-10-30), in these words.
 func TestJoinInACodexThreadInT3SaysToOpenANewThread(t *testing.T) {

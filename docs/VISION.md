@@ -274,7 +274,9 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   replaced or created and the link stays; a hook file that is a link is emptied, never deleted.
   A hook file the repo tracks, or a `.claude` it tracks as a link, isn't the user's, and gets no
   hook (2026-11-09): a committed link points wherever the commit chose, `~/.claude/settings.json`
-  included, and a tracked file would take this machine's path to mur into the next commit.
+  included, and a tracked file would take this machine's path to mur into the next commit. Names
+  are matched ignoring case, as macOS's and Windows' disks match them. It is a note under "Not
+  done", not a problem: repos do commit that file by accident, and a rerun couldn't fix it.
   Run again, `join` changes nothing and says so; it fills in what is missing and repoints an entry
   whose binary moved. A worktree made after joining has no hook until `mur join` runs in it again.
   `mur join --leave` removes the consent and the hooks and stops the daemon. It leaves the server
