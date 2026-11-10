@@ -234,11 +234,14 @@ test('rows dated after today make no repo active and no one new', { skip: !sqlit
   run(`INSERT INTO contributors (repo, id, first) VALUES ('github.com/a/one', ?1, '9999-12-31')`, ID);
   let n = await repoNumbers(db, 14);
   assert.deepEqual([n.activeRepos, n.contributors, n.newContributors], [0, 0, 0]);
+  // The device is a user, from the day its repo was reported, but neither active nor new.
+  assert.deepEqual([n.users, n.activeUsers, n.newUsers], [1, 0, 0]);
 
   run(`INSERT INTO device_days (repo, day, device) VALUES ('github.com/a/one', ?1, ?2)`, today, ID);
   run(`INSERT INTO contributors (repo, id, first) VALUES ('github.com/a/one', ?1, ?2)`, PERSON, today);
   n = await repoNumbers(db, 14);
   assert.deepEqual([n.activeRepos, n.contributors, n.newContributors], [1, 1, 1]);
+  assert.deepEqual([n.users, n.activeUsers, n.newUsers], [1, 1, 1]);
   assert.equal(n.repoList[0].week, 1);
 });
 

@@ -175,13 +175,14 @@ export async function repoNumbers(db, days) {
        WHERE first <= ?1 GROUP BY first ORDER BY first`,
     ).bind(today),
     db.prepare(`SELECT MAX(counted) AS at FROM repo_census`),
-    // Every device, for users: who is behind it, and its first and last day on the bus.
+    // Every device, for users: who is behind it, and its first and last day on the bus, up to today
+    // as above.
     db.prepare(
       `SELECT v.repo, v.device, v.person, v.account, COALESCE(MIN(d.day), r.first) AS first, MAX(d.day) AS last
        FROM devices v JOIN repos r ON r.repo = v.repo
-         LEFT JOIN device_days d ON d.repo = v.repo AND d.device = v.device
+         LEFT JOIN device_days d ON d.repo = v.repo AND d.device = v.device AND d.day <= ?1
        GROUP BY v.repo, v.device`,
-    ),
+    ).bind(today),
   ]);
   const u = users(devs.results);
   const userFirsts = [...u.users.values()].map(x => x.first).sort();
