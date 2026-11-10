@@ -35,9 +35,9 @@ import (
 // Stop, one the user interrupted in T3, has it handed over as a turn instead, and so does one whose
 // Stop can't keep it going (Pi's after Escape or an error).
 //
-// Handing a message over is not delivering it: it is delivered when it reaches the agent's
-// context, when the turn carrying it starts, which the daemon doesn't see (docs/VISION.md,
-// `What "delivered" means`, #187). A message handed over is removed from the inbox, as the
+// Handing a message over is not the agent having it: it is read (it arrives whole, so it skips
+// delivered) when the turn carrying it starts, which the daemon doesn't see (docs/VISION.md,
+// `What "delivered" and "read" mean`, #325). A message handed over is removed from the inbox, as the
 // client holds it now: neither the hook nor `inbox` shows it again. docs/VISION.md ("Delivering a message as a turn") has the reasons.
 
 const (
@@ -663,9 +663,9 @@ func (d *Daemon) wholeViewsLocked(msgs []*inMsg, given []delivery) []proto.Messa
 
 // outOfInboxLocked records that message m has gone to session id: it leaves the inbox, wherever it
 // is by now (a session that takes a name takes the inboxes kept for it), and the page's notes and
-// the log say so. verb is "handed" for a handoff to the session's client, which delivers it when
-// the turn carrying it starts, and "delivered" for the hook's whole message, which is in the
-// agent's context (#187); how ends the line. The caller saves the state. Caller holds mu.
+// the log say so. verb is "handed" for a handoff to the session's client, where the agent reads it
+// when the turn carrying it starts, and "gave" for the hook's whole message, which is read: it is
+// in the agent's context (#325); how ends the line. The caller saves the state. Caller holds mu.
 func (d *Daemon) outOfInboxLocked(id string, m *inMsg, verb, how string) {
 	for inbox, box := range d.st.Inbox {
 		for i, o := range box {
@@ -684,7 +684,7 @@ func (d *Daemon) outOfInboxLocked(id string, m *inMsg, verb, how string) {
 	e, addr := m.Event, bus.Addr(d.device, id)
 	d.noteLocked(time.Now(), fmt.Sprintf("%s %q from %s to %s %s", verb, e.Subject, e.From, addr, how))
 	if verb == "handed" {
-		how += "; it is delivered when that turn starts"
+		how += "; it is read when that turn starts"
 	}
 	d.log.Printf("%s message %s to session %s %s", verb, e.ID, addr, how)
 }

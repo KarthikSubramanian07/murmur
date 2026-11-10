@@ -664,9 +664,9 @@ tag with behaviour, below.
 - **What a tag is.** Up to 40 lowercase letters, digits and `. _ : / -`, at most 12 on a session
   (`internal/tags`). A tag under `model:` names the session's model, and a session has one at most.
 - **`do-not-disturb`** keeps a session's messages queued in its inbox. None is handed over as a
-  turn (the daemon treats the session as one it may not wake). The hook delivers neither a notice
+  turn (the daemon treats the session as one it may not wake). The hook gives neither a notice
   nor the whole message (#204), holds none for the turn's end (#202), and the `Stop` hook doesn't
-  keep the turn going with them (#213), even while the session is at work. `inbox` delivers them as
+  keep the turn going with them (#213), even while the session is at work. `inbox` gives them as
   usual. When the tag comes off, each goes out once, by whichever route applies then: handed over
   as a turn if the session is idle, or, if it is at work, a notice or the whole message from the
   hook, and given at its turn's end. A message queued through the tag counts as arriving when the
@@ -903,28 +903,42 @@ the agent happens to call a tool. Tyler's decision (2026-10-29, #57), which repl
 delivery: **a message from another agent reaches the receiving session as a turn of its own**, the
 way a message between two T3 threads does. Murmur's core is two agents talking with nobody typing.
 
-**What "delivered" means.** Tyler's rule (2026-11-07, #187): a message is *delivered* only once it
-has reached the agent's context. Before that it is *queued*, wherever it waits: in the recipient
-daemon's inbox, in a T3 thread's queue behind a running turn, or for the hook's next run. Delivered
-is what a sender acts on, so a looser word would let a sender believe an agent knows something it
-hasn't seen, and may not see for hours if it is idle and nothing wakes it (#25). The words, in the
-order a message meets them:
+**What "delivered" and "read" mean.** Tyler's rule (2026-11-09, #325), which replaces the one of
+2026-11-07 (#187): a message is *delivered* once its recipient knows it is waiting, and *read* once
+the recipient has the message itself. The same two words hold for an agent and for a person, so a
+sender reads them the same way whoever the recipient is. Before delivered a message is *queued*,
+wherever it waits: in the recipient daemon's inbox, in a T3 thread's queue behind a running turn,
+or for the hook's next run. These are what a sender acts on, so neither may be said early: a looser
+word would let a sender believe an agent knows something it hasn't seen, and may not see for hours
+if it is idle and nothing wakes it (#25). #187 used *delivered* for what is now *read*; the change
+was made so that a person's inbox and an agent's use one pair of words. The words, in the order a
+message meets them:
 
 - *Queued:* the recipient's daemon has put it in the session's inbox. The daemon knows.
 - *Handed over:* the daemon has passed it to the session's client, by `t3 thread send` or the
   messaging socket. Still queued, in the client now, and out of the daemon's inbox.
-- *Delivered:* it is in the agent's context. Where that moment is, by route:
+- *Delivered:* the recipient knows it is waiting. For an agent, the hook's notice (sender and
+  subject) is in its context. For a person, it is in their inbox on the page, counted as unread;
+  the page can't tell whether they looked.
+- *Read:* the recipient has the message. For an agent, the body is in its context. For a person,
+  they opened the conversation, which marks it read (a hidden page, or one in a background
+  window, marks nothing).
 
-| Route | Delivered when | Can Murmur see it |
+A message that arrives whole (a turn, the hook's whole message, the `Stop` hook's continuation)
+is read then. If no notice told of it first, it skipped delivered: so does every message to an
+agent the hook doesn't run in, which gets no notice. One the hook's notice told of during a turn
+was delivered then, and is read later, by whichever of these comes first. Where each moment is for an agent, by route:
+
+| Route | Delivered or read when | Can Murmur see it |
 |---|---|---|
-| `t3 thread send` | the turn carrying it starts: at once in an idle thread, after the running turn in a busy one (a busy one only where the hook doesn't run, #202) | No. The daemon sees `t3` accept the message, not the turn start; T3's database would show it (`orchestration_v2_projection_messages`), but those tables are T3's own and may change |
-| The messaging socket (Claude Code outside T3; Pi's extension's, outside T3) | the client takes it as a turn | No: the socket answers nothing |
-| The hook's notice (Claude Code, and Pi through its extension) | the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt. That delivers the sender and subject, or the whole message where the page's busy setting says so (#204); otherwise the body is delivered by `inbox` | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
-| `inbox` | the tool's result returns to the agent | Partly: the daemon sees the messages leave in its answer, not the answer reach the agent through MCP |
+| `t3 thread send` | read when the turn carrying it starts: at once in an idle thread, after the running turn in a busy one (a busy one only where the hook doesn't run, #202) | No. The daemon sees `t3` accept the message, not the turn start; T3's database would show it (`orchestration_v2_projection_messages`), but those tables are T3's own and may change |
+| The messaging socket (Claude Code outside T3; Pi's extension's, outside T3) | read when the client takes it as a turn | No: the socket answers nothing |
+| The hook's notice (Claude Code, and Pi through its extension) | delivered when the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt, with the sender and subject. Where the page's busy setting says whole message (#204), it is read then instead. A message told of is read later by `inbox`, by the `Stop` hook keeping the turn going with it, or as a turn handed over when the turn ends | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
+| `inbox` | read when the tool's result returns to the agent | Partly: the daemon sees the messages leave in its answer, not the answer reach the agent through MCP |
 
 Nothing reports a message's state to its sender yet. Whatever does (#26, `who`, `lookup`, the web
-page) shows queued, handed over and delivered as different states, and a handed-over message as
-delivered only once something can see the turn start.
+page) shows queued, handed over, delivered and read as different states, and a handed-over message
+as read only once something can see the turn start.
 
 The daemon hands a message over at once, when it arrives for a session it can reach, unless the
 hook has the session at work (see "A session at work", below):
@@ -953,8 +967,21 @@ The sender's text in between is passed on as written, neither quoted nor wrapped
 agents are trusted in Murmur's model, and a message that reads as a request is meant to be acted on.
 A body past the limit is cut, as in `inbox`.
 
+- **Who it is from, as the receiver knows it.** The first line is written when the handoff starts,
+  which is as soon as the message is queued, from what the receiving daemon knows of the sender
+  then: the name from presence or the registry, the agent and owner from presence. A sync reads
+  the registry and every presence before the logs, so what landed before the message is known
+  when it is queued. Those reads have 15 s (`ReadFirstLimit`), and never more than half of what is
+  left of the sync, which keeps at least as much, less a cancelled git's up to 5 s to exit, for the
+  logs, already fetched: a registry missing from the listing is asked of the remote again, and a
+  stall there would otherwise use up the minute. A sync that runs past the limit still reads the
+  logs, and then fails; the next sync reads what it missed. A fixed reserve of 15 s, tried first,
+  skipped these reads altogether in the 10 s sync a daemon runs before it accepts sessions. Until 2026-11-09 the logs came first, and a sync that fetched a sender's
+  name with its message wrote the turn without it (#71). A sender whose presence is pushed after
+  its message still arrives without its agent, and without its name if it took one from the pool
+  and the assignment hasn't landed either.
 - **Out of the inbox when handed over.** A message handed over leaves the receiving session's
-  inbox, so neither the hook nor `inbox` shows it again: the client has it now, and delivers it as
+  inbox, so neither the hook nor `inbox` shows it again: the client has it now, and gives it to the agent as
   a turn. The page and the daemon's log keep it as history. A message that could not be handed over
   stays in the inbox and is announced by the hook as before. The hook leaves alone a message that
   is waiting its turn to be handed over, behind the one being handed over: announced by a notice it
@@ -975,7 +1002,7 @@ A body past the limit is cut, as in `inbox`.
     read (Tyler, 2026-11-08; first built as a new turn, handed to T3 or the socket). That needs
     neither T3 nor a messaging socket, and nothing goes into T3's queue, which may hold a turn for
     good (above). The cost is a longer turn: its user sees it go on after what looked like the
-    agent's last word. The messages are delivered once the daemon answers the hook, so a hook that
+    agent's last word. The messages are read once the daemon answers the hook, so a hook that
     gave up waiting (3 s) just before the answer came loses them, as a whole message can (#204).
     The session is at work again, so a message that comes now waits for the turn's next end.
     Outside T3 that lasts 2 minutes unless another hook of the session shows the turn went on: an
@@ -1009,11 +1036,11 @@ A body past the limit is cut, as in `inbox`.
   - *Subject or whole message (#204).* What the hook tells a busy session is the page's busy
     setting, for the device or for one session, beside the wake setting (Tyler, 2026-11-08).
     "Subject", the default, is the line above. "Whole message" is the message as its turn would
-    read, a long body cut the same way, and the message is then delivered: it leaves the inbox and
+    read, a long body cut the same way, and the message is then read: it leaves the inbox and
     the count, and the page and the daemon's log say it went through the hook. Subject leaves the
     agent's focus to the agent, at the cost that it may pass over a line it needed; whole puts
     every message in front of it mid-task, at full length, whether or not it matters to the task.
-    A message given whole counts as delivered once the daemon answers the hook, so a hook that gave
+    A message given whole counts as read once the daemon answers the hook, so a hook that gave
     up waiting (3 s) just before the answer came loses it. One that was handed to T3 or the socket
     before, and may be there already, gets the subject only, as does a hook from before the
     setting, which prints only subjects: its request doesn't say it prints whole messages, and the
@@ -1385,7 +1412,7 @@ agent, which reads it as markdown at `/stats/report.md` or JSON at `/stats/data`
   now that a message starts a turn without anyone typing (Tyler's decision, 2026-10-29): two
   agents that keep answering each other are stopped by nothing but the agents.
 - **Prompt injection.** Anyone with push access can now put text in front of your agent. That
-  matches the trust model (a hackathon team), and a delivered message is text in front of the
+  matches the trust model (a hackathon team), and a message is text in front of the
   agent as a turn of its own, passed on as written; messages never get to bypass the receiving
   user's permission mode, and the framing's first line keeps their origin visible.
 - **Leaked secrets.** Everything on the bus stays in repo history, readable by anyone with read

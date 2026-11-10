@@ -146,7 +146,7 @@ export default function (pi: any) {
   // hook runs {{product}}'s hook for one of Claude Code's events and gives what it printed, parsed;
   // null on any trouble, or when the session isn't in a joined clone or has no file to be known by.
   // Only a notice's hook stops with the work (Escape): the daemon counts what the end of the work
-  // gives as delivered once it answers, so that hook is left to finish.
+  // gives as read once it answers, so that hook is left to finish.
   const hook = (event: string, ctx: any, extra: any = {}): Promise<any> =>
     new Promise((resolve) => {
       if (!on || !file) return resolve(null);

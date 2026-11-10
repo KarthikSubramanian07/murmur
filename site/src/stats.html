@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- The private stats page (#148, #259): the public repos that use Murmur, and what the census reads
-     from them. src/usage.js serves it at /stats, to a browser holding the key, and it draws
+     from them. Public repos and users, approximate (#323), lead; the rest is activity. src/usage.js serves it at /stats, to a browser holding the key, and it draws
      /stats/data (src/repos.js). The check-ins of earlier versions are at /stats/archive. -->
 <html lang="en">
 <head>
@@ -69,15 +69,41 @@
   .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: 20px; min-width: 0; }
   .card h2 { font-size: 14px; font-weight: 600; }
   .card .sub { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
-  .hero { grid-column: span 4; display: flex; flex-direction: column; justify-content: space-between; gap: 18px; }
+  /* The two main numbers, public repos and users (#323), each over its chart. */
+  .hero { grid-column: span 6; }
+  .hero .top { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
   .hero .label, .tile .label { color: var(--text-secondary); font-weight: 500; }
-  .hero .value { font-size: 72px; font-weight: 600; letter-spacing: -0.03em; line-height: 1; margin-top: 10px; }
-  .hero .notes { display: grid; gap: 4px; color: var(--text-secondary); }
+  .hero .value { font-size: 64px; font-weight: 600; letter-spacing: -0.03em; line-height: 1; margin-top: 10px; font-variant-numeric: tabular-nums; }
+  .hero .notes { display: grid; gap: 4px; color: var(--text-secondary); text-align: right; }
   .hero .notes b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
   .up { color: var(--good-text); font-weight: 600; }
-  .tiles { grid-column: span 8; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .tile .value { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; margin-top: 6px; line-height: 1.1; font-variant-numeric: tabular-nums; }
-  .tile .note { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
+  /* The asterisk on the users label, a superscript, and what it means on hover or focus. */
+  /* The explanation hangs from the card's top, not the asterisk, so it fits a narrow screen; its
+     ::before bridges the gap below the label, so the pointer can move onto it without closing it. */
+  .hero .top { position: relative; }
+  .star { display: inline-block; line-height: 0; }
+  .star button {
+    font: inherit; font-size: 12px; font-weight: 600; line-height: 1; color: var(--brand); background: none;
+    border: 0; padding: 0 2px 0 1px; cursor: help; position: relative; top: -0.5em;
+  }
+  .star .why::before { content: ''; position: absolute; left: 0; right: 0; top: -12px; height: 12px; }
+  .star .why {
+    display: none; position: absolute; left: 0; top: 28px; z-index: 3; width: max-content; max-width: min(340px, 100%);
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.12); color: var(--text-secondary); font-size: 13px; font-weight: 400;
+    letter-spacing: 0; line-height: 1.45;
+  }
+  .star .why p { margin-bottom: 6px; }
+  .star .why .how { display: flex; gap: 10px; }
+  .star .why .how b { min-width: 24px; text-align: right; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .star .why .fine { margin: 6px 0 0; color: var(--text-muted); font-size: 12px; }
+  .star:hover .why, .star:focus-within .why { display: block; }
+  .section { grid-column: span 12; color: var(--text-muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-top: 12px; }
+  .tiles { grid-column: span 12; display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .tiles .card { padding: 14px 16px; }
+  .tile .label { font-size: 13px; }
+  .tile .value { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-top: 4px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .tile .note { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
   .wide { grid-column: span 12; }
   .half { grid-column: span 6; }
   .chart { position: relative; margin-top: 14px; }
@@ -109,7 +135,8 @@
   .loading main { opacity: .55; transition: opacity .2s; }
   footer { color: var(--text-muted); font-size: 12px; margin-top: 20px; max-width: 860px; }
   @media (max-width: 900px) {
-    .hero, .tiles, .half { grid-column: span 12; }
+    .hero, .half { grid-column: span 12; }
+    .tiles { grid-template-columns: 1fr 1fr; }
   }
 </style>
 </head>
@@ -133,36 +160,43 @@
 
   <div class="grid">
     <section class="card hero">
-      <div>
-        <div class="label">Public repos using Murmur</div>
-        <div class="value" id="repos">–</div>
+      <div class="top">
+        <div>
+          <div class="label">Public repos using Murmur</div>
+          <div class="value" id="repos">–</div>
+        </div>
+        <div class="notes">
+          <div id="repos-new"></div>
+          <div id="repos-active"></div>
+        </div>
       </div>
-      <div class="notes">
-        <div id="repos-new"></div>
-        <div id="repos-active"></div>
-      </div>
-    </section>
-
-    <section class="tiles">
-      <div class="card tile"><div class="label">Contributors</div><div class="value" id="t-contributors">–</div><div class="note" id="t-contributors-note"></div></div>
-      <div class="card tile"><div class="label">Devices running Murmur</div><div class="value" id="t-devices">–</div><div class="note" id="t-devices-note"></div></div>
-      <div class="card tile"><div class="label">Agent sessions</div><div class="value" id="t-sessions">–</div><div class="note" id="t-sessions-note"></div></div>
-      <div class="card tile"><div class="label">Messages between agents</div><div class="value" id="t-messages">–</div><div class="note" id="t-messages-note"></div></div>
-    </section>
-
-    <section class="card half">
-      <h2>Public repos using Murmur</h2>
-      <div class="sub">by the first day each had anything on its bus</div>
       <div class="chart" id="c-repos"></div>
     </section>
 
-    <section class="card half">
-      <h2>Contributors to those repos</h2>
-      <div class="sub">everyone who has committed to one, by their first commit; each person once</div>
-      <div class="chart" id="c-contributors"></div>
+    <section class="card hero">
+      <div class="top">
+        <div>
+          <div class="label">Users<span class="star"><button type="button" aria-describedby="users-why" aria-label="Why approximate">*</button><span class="why" role="tooltip" id="users-why"></span></span></div>
+          <div class="value" id="users">–</div>
+        </div>
+        <div class="notes">
+          <div id="users-new"></div>
+          <div id="users-active"></div>
+        </div>
+      </div>
+      <div class="chart" id="c-users"></div>
     </section>
 
-    <section class="card wide">
+    <h2 class="section">Activity</h2>
+
+    <section class="tiles">
+      <div class="card tile"><div class="label">Agent sessions</div><div class="value" id="t-sessions">–</div><div class="note" id="t-sessions-note"></div></div>
+      <div class="card tile"><div class="label">Messages between agents</div><div class="value" id="t-messages">–</div><div class="note" id="t-messages-note"></div></div>
+      <div class="card tile"><div class="label">Devices running Murmur</div><div class="value" id="t-devices">–</div><div class="note" id="t-devices-note"></div></div>
+      <div class="card tile"><div class="label">Contributors</div><div class="value" id="t-contributors">–</div><div class="note" id="t-contributors-note"></div></div>
+    </section>
+
+    <section class="card half">
       <h2>Agent sessions per day</h2>
       <div class="sub">sessions that started, each once however often its daemon restarts, by repo</div>
       <div class="chart" id="c-sessions"></div>
@@ -183,6 +217,12 @@
       <div class="legend" id="l-devices"></div>
     </section>
 
+    <section class="card half">
+      <h2>Contributors to those repos</h2>
+      <div class="sub">everyone who has committed to one, by their first commit; each person once</div>
+      <div class="chart" id="c-contributors"></div>
+    </section>
+
     <section class="card wide">
       <h2>Repos</h2>
       <div class="sub">most active first; days active counts the last 7 days</div>
@@ -195,7 +235,7 @@
 <script>
 const NS = 'http://www.w3.org/2000/svg';
 const $ = id => document.getElementById(id);
-const HTML_TAGS = new Set(['div', 'span', 'b', 'i', 'small', 'a', 'table', 'tr', 'th', 'td']);
+const HTML_TAGS = new Set(['div', 'span', 'b', 'i', 'p', 'small', 'a', 'table', 'tr', 'th', 'td']);
 const el = (tag, attrs = {}, text) => {
   const e = HTML_TAGS.has(tag) ? document.createElement(tag) : document.createElementNS(NS, tag);
   for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
@@ -266,9 +306,9 @@ function dayLabels(f, days) {
 }
 
 // A running total over time, one series, with a crosshair.
-function totalChart(box, series, key, what) {
+function totalChart(box, series, key, what, H = 220) {
   box.replaceChildren();
-  const n = series.length, H = 220;
+  const n = series.length;
   const f = frame(box, n, Math.max(1, ...series.map(d => d[key])), H, what + ' over time');
   const c = css('--series-1'), surface = css('--surface-1');
   // A step: the total holds until the day it changes.
@@ -408,6 +448,21 @@ function render() {
   };
   note('repos-new', d.newRepos ? `+${fmt(d.newRepos)}` : '0', `new in the last ${d.week} days`, d.newRepos > 0);
   note('repos-active', fmt(d.activeRepos), `active in the last ${d.week} days`);
+  $('users').textContent = fmt(d.users);
+  note('users-new', d.newUsers ? `+${fmt(d.newUsers)}` : '0', `new in the last ${d.week} days`, d.newUsers > 0);
+  note('users-active', fmt(d.activeUsers), `active in the last ${d.week} days`);
+  const b = d.usersBy;
+  // What the asterisk means: an estimate, and how many users were told apart each way.
+  const rows = [[b.account, 'by GitHub account'], [b.name, 'by git name only'], [b.device, 'by device only']].map(([n, how]) => {
+    const row = el('div', { class: 'how' });
+    row.append(el('b', {}, fmt(n)), el('span', {}, how));
+    return row;
+  });
+  $('users-why').replaceChildren(
+    el('p', {}, 'Estimated from public repos using Murmur. Each device’s git name is matched to a commit author in its repo to find their GitHub account. Without a match, the git name counts instead, or the device if no name was seen. Each person counts once:'),
+    ...rows,
+    el('p', { class: 'fine' }, 'Private repos aren’t counted.'),
+  );
   $('t-contributors').textContent = fmt(d.contributors);
   $('t-contributors-note').textContent = `people who have committed to them; ${fmt(d.newContributors)} new in the last ${d.week} days`;
   $('t-devices').textContent = fmt(d.devices);
@@ -418,7 +473,8 @@ function render() {
   $('t-messages-note').textContent = `${fmt(d.weekMessages)} in the last ${d.week} days`;
   const colors = repoColors(d.repoList);
   const dayList = d.series.map(s => s.day);
-  totalChart($('c-repos'), d.series, 'repos', 'public repos');
+  totalChart($('c-repos'), d.series, 'repos', 'public repos', 180);
+  totalChart($('c-users'), d.series, 'users', 'users', 180);
   totalChart($('c-contributors'), d.series, 'contributors', 'contributors');
   stackChart($('c-sessions'), $('l-sessions'), dayList, d.byRepo, 'sessions', 'Sessions', colors);
   stackChart($('c-messages'), $('l-messages'), dayList, d.byRepo, 'messages', 'Messages', colors);
@@ -427,7 +483,7 @@ function render() {
   const counted = d.counted ? new Date(d.counted).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'not yet';
   $('footer').textContent = 'A repo is listed once one of its clones reports it: Murmur sends a public repo’s address, once per repo, and nothing else. ' +
     `Everything else is read once a day from what each repo shows anyone, its bus and its commits; last read ${counted}. ` +
-    'A device is one clone running Murmur; a person, one git user name among a repo’s devices. Once the bus is encrypted, messages can’t be told from other records. Days are UTC. ' +
+    'A user is estimated: hover the asterisk. A device is one clone running Murmur; a person, one git user name among a repo’s devices. Once the bus is encrypted, messages can’t be told from other records. Days are UTC. ' +
     'For an agent, the same numbers are at /stats/report.md (markdown) and /stats/data (JSON).';
 }
 

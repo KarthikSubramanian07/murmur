@@ -409,7 +409,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 // message and again only when it changes, so it isn't repeated after every tool call.
 //
 // A session the page sets to be given messages whole while busy (#204) gets each new one with its
-// body instead, which the hook shows as its turn would read: it is delivered then, and leaves the
+// body instead, which the hook shows as its turn would read: it is read then, and leaves the
 // inbox and the count. Only a hook that says it prints them (req.Whole) gets them so.
 func (d *Daemon) notices(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
@@ -459,7 +459,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			told = append(told, s)
 		}
 		// Only the hook shows a message whole: a request that names no client's session isn't one,
-		// and a hook that doesn't say it prints Delivered (req.Whole) would lose it (#229).
+		// and a hook that doesn't say it prints Read (req.Whole) would lose it (#229).
 		givesWhole := hookReq(req) && req.Whole && wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
 			if m.Pushing {
@@ -490,14 +490,14 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			shown[w.msg.Event.ID] = true
 			wholeMsgs = append(wholeMsgs, w.msg)
 		}
-		d.outOfInboxLocked(w.id, w.msg, "delivered", "through the hook")
+		d.outOfInboxLocked(w.id, w.msg, "gave", "whole through the hook")
 	}
 	if len(fresh) > 0 || len(whole) > 0 {
 		d.saveLocked()
 	}
 	resp := proto.Response{OK: true, Self: self, Messages: d.messageViewsLocked(fresh, false)}
 	if len(whole) > 0 {
-		resp.Delivered = d.wholeViewsLocked(wholeMsgs, whole)
+		resp.Read = d.wholeViewsLocked(wholeMsgs, whole)
 	}
 	changed := false
 	for _, s := range told {
@@ -518,7 +518,7 @@ func hookReq(req proto.Request) bool { return req.ClaudeSession != "" || req.Nat
 // turnEnd is the hook at the end of a turn (Claude Code's Stop). The messages the sessions it
 // speaks for were told of while at work and haven't read, and those that came during the turn and
 // weren't told, however long it took, would go in as a turn now (#202). Where the hook can keep the
-// turn going (req.Continues), they are its reply instead, delivered, and the turn goes on with them
+// turn going (req.Continues), they are its reply instead, read, and the turn goes on with them
 // (Tyler, 2026-11-08). A session with none is idle.
 func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
@@ -564,10 +564,10 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 			shown[g.msg.Event.ID] = true
 			msgs = append(msgs, g.msg)
 		}
-		d.outOfInboxLocked(g.id, g.msg, "delivered", "through the Stop hook, keeping its turn going")
+		d.outOfInboxLocked(g.id, g.msg, "gave", "whole through the Stop hook, keeping its turn going")
 	}
 	d.saveLocked()
-	return proto.Response{OK: true, Delivered: d.wholeViewsLocked(msgs, given)}
+	return proto.Response{OK: true, Read: d.wholeViewsLocked(msgs, given)}
 }
 
 func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto.Response {
@@ -640,7 +640,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		case offline:
 			return fail("not sent: " + why)
 		case known && dnd:
-			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox, and is delivered when it reads its inbox or turns do not disturb off."
+			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox until it reads its inbox or turns do not disturb off, with no notice or turn."
 		case known:
 		case dev == d.device && stopped:
 			note = at + " has stopped. The message waits for it, in case it comes back."

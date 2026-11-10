@@ -56,10 +56,10 @@ func TestPiSessionGetsNoticesWhileBusyAndTurnsWhenIdle(t *testing.T) {
 	}
 	holds(t, "nothing on the socket while it works", time.Second, func() bool { return len(sock.lines()) == 0 })
 
-	if got := b.piHook(proto.OpTurnEnd, file).Delivered; len(got) != 1 || got[0].Body != "the body" {
+	if got := b.piHook(proto.OpTurnEnd, file).Read; len(got) != 1 || got[0].Body != "the body" {
 		t.Fatalf("the end of its work gave %+v", got)
 	}
-	if got := b.piHook(proto.OpTurnEnd, file).Delivered; len(got) != 0 {
+	if got := b.piHook(proto.OpTurnEnd, file).Read; len(got) != 0 {
 		t.Fatalf("the next end gave %v", viewSubjects(got))
 	}
 
@@ -127,7 +127,7 @@ func TestAnInterruptedPiSessionIsIdle(t *testing.T) {
 	holds(t, "nothing on the socket while it works", 500*time.Millisecond, func() bool { return len(sock.lines()) == 0 })
 
 	r := b.do(proto.Request{Op: proto.OpTurnEnd, Native: file})
-	if r.Error != "" || len(r.Delivered) != 0 {
+	if r.Error != "" || len(r.Read) != 0 {
 		t.Fatalf("an interrupted end gave %+v", r)
 	}
 	eventually(t, "the turn on the socket", func() bool { return len(sock.lines()) >= 2 })
@@ -166,7 +166,7 @@ func TestPiHookWaitsOutTheGrace(t *testing.T) {
 }
 
 // The page's busy setting gives a Pi session its message whole while it works, as it does Claude
-// Code (#204): delivered, and out of the inbox.
+// Code (#204): read, and out of the inbox.
 func TestBusyPiSessionGetsTheWholeMessage(t *testing.T) {
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -184,8 +184,8 @@ func TestBusyPiSessionGetsTheWholeMessage(t *testing.T) {
 	b.piHook(proto.OpNotices, file)
 	a.send("aaaaaa", bob, "whole", "all of it")
 	var r proto.Response
-	eventually(t, "the message", func() bool { r = b.piHook(proto.OpNotices, file); return len(r.Delivered) > 0 })
-	if r.Delivered[0].Body != "all of it" || len(r.Messages) != 0 {
+	eventually(t, "the message", func() bool { r = b.piHook(proto.OpNotices, file); return len(r.Read) > 0 })
+	if r.Read[0].Body != "all of it" || len(r.Messages) != 0 {
 		t.Errorf("the hook was given %+v", r)
 	}
 	if inbox, _ := b.unread("bbbbbb", ""); len(inbox) != 0 {
