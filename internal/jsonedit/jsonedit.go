@@ -233,8 +233,9 @@ func ReadFile(path string) (o *Object, raw []byte, err error) {
 // readRegular is os.ReadFile for a regular file, or a link to one, and an error for anything else.
 // A config file can be a link a repo committed (a worktree's .claude/settings.local.json), and a
 // link to a device or a pipe would be read without end (/dev/zero), or block (a terminal, a pipe
-// with no writer). A regular file isn't capped: Claude Code's .claude.json grows with its history,
-// and a file on disk ends.
+// with no writer). A regular file is read up to 256 MiB, far past the largest .claude.json, which
+// grows with Claude Code's history: some "regular" files never end (/proc/self/pagemap on Linux).
+// One cut short doesn't parse, so it is never written back.
 func readRegular(path string) ([]byte, error) {
 	if fi, err := os.Stat(path); err != nil {
 		return nil, err
@@ -251,7 +252,7 @@ func readRegular(path string) ([]byte, error) {
 	} else if !fi.Mode().IsRegular() { // replaced between the two looks
 		return nil, errNotRegular
 	}
-	return io.ReadAll(f)
+	return io.ReadAll(io.LimitReader(f, 256<<20))
 }
 
 // errNotRegular has no path in it: ReadFile's callers say which file.
