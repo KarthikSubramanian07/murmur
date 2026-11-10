@@ -94,7 +94,8 @@ var opener = template.Must(template.New(openerName).Parse(`<!DOCTYPE html>
 // read by other users of the machine (on Linux, by any of them), so the browser is given this
 // file's path instead (#220; Jupyter does the same). Only its owner can read the file, and it is
 // in the state directory, which only its owner can open and which already holds the token in
-// daemon.json. Each `mur ui` replaces it by a rename, so no wider permissions, or half a page, are
+// daemon.json; where proc.Protect leaves that directory as it is (a network drive, a volume
+// without access lists, on Windows), the file is as private as daemon.json, no more. Each `mur ui` replaces it by a rename, so no wider permissions, or half a page, are
 // left from before. It isn't deleted: the token in it stops working with the daemon's page, and
 // while the page runs daemon.json holds the same token beside it.
 func writeOpener(dir, address string) (string, error) {
@@ -149,9 +150,14 @@ func browse(path string) error {
 }
 
 // fileURL is the file URL of an absolute path: file:///C:/Users/A%20B/x.html for
-// C:\Users\A B\x.html.
+// C:\Users\A B\x.html, and file://server/share/A%20B/x.html for \\server\share\A B\x.html. A UNC
+// path's server is the URL's host: Windows reads file:////server/... as a path that keeps its %20.
 func fileURL(path string) string {
 	p := filepath.ToSlash(path)
+	if rest, ok := strings.CutPrefix(p, "//"); ok {
+		host, share, _ := strings.Cut(rest, "/")
+		return (&url.URL{Scheme: "file", Host: host, Path: "/" + share}).String()
+	}
 	if !strings.HasPrefix(p, "/") {
 		p = "/" + p
 	}

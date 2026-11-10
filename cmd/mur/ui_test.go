@@ -189,8 +189,20 @@ func TestOpenerIsPrivate(t *testing.T) {
 // Windows is handed a file URL, which has no spaces for rundll32 to keep the quotes around.
 func TestFileURL(t *testing.T) {
 	for in, want := range map[string]string{
-		"C:/Users/A B/repo/.git/murmur/open-page.html": "file:///C:/Users/A%20B/repo/.git/murmur/open-page.html",
-		"/home/a b/repo/.git/murmur/open-page.html":    "file:///home/a%20b/repo/.git/murmur/open-page.html",
+		"C:/Users/A B/repo/.git/murmur/open-page.html":  "file:///C:/Users/A%20B/repo/.git/murmur/open-page.html",
+		"/home/a b/repo/.git/murmur/open-page.html":     "file:///home/a%20b/repo/.git/murmur/open-page.html",
+		"//server/share/a b/.git/murmur/open-page.html": "file://server/share/a%20b/.git/murmur/open-page.html",
+	} {
+		if got := fileURL(in); got != want {
+			t.Errorf("fileURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if runtime.GOOS != "windows" {
+		return // a backslash separates a path's parts only there
+	}
+	for in, want := range map[string]string{
+		`C:\Users\A B\repo\.git\murmur\open-page.html`:  "file:///C:/Users/A%20B/repo/.git/murmur/open-page.html",
+		`\\server\share\a b\.git\murmur\open-page.html`: "file://server/share/a%20b/.git/murmur/open-page.html",
 	} {
 		if got := fileURL(in); got != want {
 			t.Errorf("fileURL(%q) = %q, want %q", in, got, want)
