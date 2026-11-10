@@ -498,6 +498,9 @@ func TestV1StateLoads(t *testing.T) {
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	dev := a.self()
+	// A daemon answers before its first sync (#372), and the sync is what writes state.json here;
+	// who waits for it.
+	a.do(proto.Request{Op: proto.OpWho})
 	a.stop()
 	path := filepath.Join(a.gitDir, brand.StateDir, "state.json")
 	b, err := os.ReadFile(path)
