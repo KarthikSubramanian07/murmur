@@ -606,6 +606,37 @@ func TestANameHeldFromBeforeIsClaimedOnce(t *testing.T) {
 	}
 }
 
+// A person who renamed before #272 had their old name claimed by no one. Upgraded, their daemon
+// claims it with their current one, so no one else can choose it once a gone presence no longer
+// holds it, and messages to it still reach them.
+func TestANameFromARenameBeforeClaimsIsClaimed(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	selfA := a.self()
+	me := selfA + "/" + bus.PersonSession
+	a.stop()
+	// As a daemon from #249 left it: renamed from ada to grace, and neither claimed.
+	setState(t, a, "person", "grace")
+	setState(t, a, "personSince", time.Now())
+	setState(t, a, "personClaims", map[string]string{})
+	setState(t, a, "people", map[string]string{"ada": me, "grace": me})
+	a.start()
+	eventually(t, "b to read a's claims to grace and ada", func() bool {
+		for _, name := range []string{"grace", "ada"} {
+			r := b.do(proto.Request{Op: proto.OpLookup, Name: name})
+			if r.Lookup == nil || r.Lookup.Addr != me {
+				return false
+			}
+		}
+		return true
+	})
+	a.stop() // its presence goes, so only the registry says ada is a's
+	pb := b.page()
+	if code, body := pb.call("PUT", "/api/account", pb.token, `{"name":"ada"}`); code == http.StatusOK || !strings.Contains(body, "taken") {
+		t.Errorf("b chose ada, a's name before a rename: %d %s", code, body)
+	}
+}
+
 // A daemon from before #268 read the registry past people's claims without keeping them. Upgraded, it
 // reads the registry again from the start, and a name claimed back then is taken (#268).
 func TestAnUpgradedDaemonReadsClaimsItPassedOver(t *testing.T) {

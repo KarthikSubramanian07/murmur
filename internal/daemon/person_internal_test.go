@@ -88,3 +88,21 @@ func TestTheFirstDeviceSeenWithAPersonsNameKeepsIt(t *testing.T) {
 		t.Errorf("before the registry is read, linus is taken by %q, want the device last seen with it", dev)
 	}
 }
+
+// A person who renamed before #272 has no claim to either name, and once their presence has gone
+// only People says the names are theirs. Their message carrying their later name is shown from it,
+// not from whichever of their names sorts first.
+func TestAGonePersonsMessageKeepsItsName(t *testing.T) {
+	d, _ := namedDaemon(t)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	alice, evil := "zz-alice/"+bus.PersonSession, "aa-evil/"+bus.PersonSession
+	d.notePersonLocked("ada", alice)
+	d.notePersonLocked("grace", alice)
+	if name, _ := d.personSenderLocked(bus.Event{From: alice, Person: "grace"}); name != "grace" {
+		t.Errorf("alice's message as grace, her presence gone: %q", name)
+	}
+	if name, _ := d.personSenderLocked(bus.Event{From: evil, Person: "grace"}); name != "" {
+		t.Errorf("another device's message as grace: %q", name)
+	}
+}

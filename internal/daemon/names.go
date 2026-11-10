@@ -323,7 +323,7 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	changed = changed || repair != wasRepair
 	// The claim of a name from before people were in the registry waits for this first read (see
 	// nextNames), and nothing else would wake the assigner for it.
-	claim := !checked && d.st.Person != "" && d.st.PersonClaims[d.st.Person] == ""
+	claim := !checked && len(d.unclaimedPersonNamesLocked()) > 0
 	d.namesChecked = true
 	if changed {
 		d.saveLocked()
@@ -450,11 +450,34 @@ type nameWork struct {
 	wants   []wanted
 	reserve int
 	repair  bool
-	person  string // this device's person's name, to claim for them (#268)
+	person  []string // this device's person's names, to claim for them (#268)
 }
 
 func (w nameWork) empty() bool {
-	return len(w.binds) == 0 && len(w.wants) == 0 && w.reserve == 0 && !w.repair && w.person == ""
+	return len(w.binds) == 0 && len(w.wants) == 0 && w.reserve == 0 && !w.repair && len(w.person) == 0
+}
+
+// unclaimedPersonNamesLocked is this device's person's names that nobody has claimed in the
+// registry: their name, and the names they had before people were in the registry, which People
+// keeps for them here. #272 claims a name when it is chosen, and a renamed person keeps their old
+// one; a name left from a rename before #272 was never claimed, and once the registry is read only a
+// claim or a live presence holds a name (nameTakenLocked), so without a claim of its own another
+// person could choose it, and messages to it would reach them. Caller holds mu.
+func (d *Daemon) unclaimedPersonNamesLocked() []string {
+	if d.st.Person == "" {
+		return nil
+	}
+	var out []string
+	if d.st.PersonClaims[d.st.Person] == "" {
+		out = append(out, d.st.Person)
+	}
+	me := d.personAddr()
+	for _, name := range sortedKeys(d.st.People) {
+		if name != d.st.Person && d.st.People[name] == me && d.st.PersonClaims[name] == "" && bus.ValidPerson(name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // nameForKeyLocked is the name for a session of key, id: the name the key has, else the oldest in
@@ -512,10 +535,10 @@ func (d *Daemon) nextNames() nameWork {
 		w.reserve = d.opt.NamePool - len(d.st.NamePool)
 	}
 	w.repair = d.st.NamesRepair
-	if d.st.Person != "" && d.st.PersonClaims[d.st.Person] == "" && d.namesChecked {
-		// A name from before people were in the registry. Only once the registry is read: until
+	if d.namesChecked {
+		// Names from before people were in the registry. Only once the registry is read: until
 		// then, a claim made before this one isn't known to be there.
-		w.person = d.st.Person
+		w.person = d.unclaimedPersonNamesLocked()
 	}
 	return w
 }
@@ -617,12 +640,12 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		reserved = append(reserved, name)
 		recs = append(recs, rec(name, ""))
 	}
-	person := w.person
-	if people[person] != "" {
-		person = "" // claimed already: by this person, or first by someone else, who keeps it
-	}
-	if person != "" {
-		recs = append(recs, rec(person, bus.PersonSession))
+	var person []string
+	for _, name := range w.person {
+		if people[name] == "" { // else claimed already: by this person, or first by someone else, who keeps it
+			person = append(person, name)
+			recs = append(recs, rec(name, bus.PersonSession))
+		}
 	}
 	parent := tip
 	if parent != "" {
@@ -709,9 +732,9 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		}
 		d.log.Printf("session %s is named %s", addr, name)
 	}
-	if person != "" {
-		d.notePersonClaimLocked(person, d.personAddr())
-		d.noteLocked(at, rec(person, bus.PersonSession).Subject())
+	for _, name := range person {
+		d.notePersonClaimLocked(name, d.personAddr())
+		d.noteLocked(at, rec(name, bus.PersonSession).Subject())
 	}
 	for _, name := range reserved {
 		d.noteNameLocked(name, "")

@@ -98,14 +98,16 @@ func (d *Daemon) personNameOfLocked(addr string) string {
 // personSenderLocked is the name a person's message e is shown from: the one it carries, which may
 // be an earlier name of theirs, or else the one their device gives them. A message can carry any
 // name, so the one it carries counts only if its sender holds it: by a claim in the registry, in
-// its live presence, or, for this device's own person, as a name they have had. Either name then
+// its live presence, or in People, as a name they have had. People has only what a presence or a
+// claim gave it, never a message's name (notePersonLocked), so this holds for a sender whose
+// presence has gone, as one that renamed before #272 and has no claim. Either name then
 // counts only if it doesn't reach someone else; otherwise the message is from its address. onMany
 // says a live presence of another device says the name too, so whoever reads the message should be
 // told which device sent it; it lasts only as long as that presence does. Caller holds mu.
 func (d *Daemon) personSenderLocked(e bus.Event) (name string, onMany bool) {
 	carried := e.Person
 	if carried != "" && d.st.PersonClaims[carried] != e.From && d.livePersonLocked(e.From) != carried &&
-		(e.From != d.personAddr() || d.st.People[carried] != e.From) {
+		d.st.People[carried] != e.From {
 		carried = ""
 	}
 	for _, n := range []string{carried, d.personNameOfLocked(e.From)} {
@@ -345,7 +347,7 @@ func (d *Daemon) claimPersonName(ctx context.Context, name string) error {
 		}
 	}
 	for range nameTries {
-		err := d.pushNames(ctx, nameWork{person: name})
+		err := d.pushNames(ctx, nameWork{person: []string{name}})
 		d.mu.Lock()
 		holder := d.st.PersonClaims[name]
 		d.mu.Unlock()
