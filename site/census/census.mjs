@@ -26,9 +26,10 @@ import { pathToFileURL } from 'node:url';
 const SITE = process.env.CENSUS_SITE || 'https://murmur.afig.dev';
 const REPO = /^github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9._-]{1,100})$/;
 
-// What one repo may cost: BUDGET of git's time, and MAX_REFS devices' refs (a device has two, its
-// log and its presence). Anyone can list a repo, and one with huge objects or 100,000 refs would
-// otherwise hold the census past its job's 30 minutes, and every repo after it would go uncounted.
+// What one repo may cost: BUDGET of time, for its git and its account lookups, and MAX_REFS
+// devices' refs (a device has two, its log and its presence). Anyone can list a repo, and one with
+// huge objects or 100,000 refs would otherwise hold the census past its job's 30 minutes, and every
+// repo after it would go uncounted.
 // A repo over either is skipped, and fails the day's run as a refused one does, so it shows.
 const BUDGET = 3 * 60e3;
 const MAX_REFS = 2000;
@@ -225,14 +226,20 @@ export async function accounts(owners, commits, lookup) {
 // lookup for accounts, from GitHub's API: the commit author's login, null when the API answers that
 // no account is linked, or undefined when it can't be asked (a rate limit, an outage, a timeout).
 // Once rate limited it stops asking. GITHUB_TOKEN, if set, raises the limit.
-function apiLookup(owner, name) {
+//
+// The repo's deadline holds here too: a request is cut off at it, as well as at 10 seconds, and
+// none starts after it. A repo with a thousand owners and a slow API would otherwise take hours.
+// The repo is still counted, without the accounts not asked for, and the site keeps the ones it
+// was sent before.
+export function apiLookup(owner, name, deadline = Infinity) {
   let off = false;
   return async sha => {
-    if (off) return undefined;
+    const left = deadline - Date.now();
+    if (off || left <= 0) return undefined;
     const headers = { 'User-Agent': 'murmur-census', Accept: 'application/vnd.github+json' };
     if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
     try {
-      const res = await fetch(`https://api.github.com/repos/${owner}/${name}/commits/${sha}`, { headers, signal: AbortSignal.timeout(10000) });
+      const res = await fetch(`https://api.github.com/repos/${owner}/${name}/commits/${sha}`, { headers, signal: AbortSignal.timeout(Math.min(10000, left)) });
       if (res.status === 403 || res.status === 429) off = true;
       if (!res.ok) return undefined;
       const login = (await res.json())?.author?.login;
@@ -262,7 +269,7 @@ export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, l
     const bus = count(dir, { deadline, maxRefs });
     git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url, 'HEAD'], deadline);
     const commits = authors(dir, { deadline });
-    const matched = await accounts(bus.devices.map(v => v.owner).filter(Boolean), commits, lookup(m[1], m[2]));
+    const matched = await accounts(bus.devices.map(v => v.owner).filter(Boolean), commits, lookup(m[1], m[2], deadline));
     const devices = bus.devices.map(({ id, owner }) => ({
       id,
       person: owner ? hash('owner:' + owner.trim().toLowerCase()) : null,

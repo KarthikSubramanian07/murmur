@@ -19,7 +19,7 @@ process.env.CENSUS_KEY = 'test-key';
 // The census's git, and the tests', read none of the developer's own config.
 process.env.GIT_CONFIG_GLOBAL = devNull;
 process.env.GIT_CONFIG_NOSYSTEM = '1';
-const { main, count, authors, contributors, census: readRepo } = await import('../census/census.mjs');
+const { main, count, authors, contributors, apiLookup, census: readRepo } = await import('../census/census.mjs');
 
 const today = new Date().toISOString().slice(0, 10);
 const daysAgo = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
@@ -295,4 +295,30 @@ test('a skipped repo fails the run, after the repos after it are sent', async t 
   await assert.rejects(main(names, { read }), { message: '1 of 3 repos skipped: github.com/b/two' });
   assert.deepEqual(sent(db), ['github.com/a/one', 'github.com/c/three']);
   assert.deepEqual(said.error, ['github.com/b/two: skipped: took too long to count']);
+});
+
+// GitHub's API, never answering: each request waits until it is aborted.
+function hangingApi(t) {
+  const asked = [];
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    asked.push(String(url));
+    return new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+  });
+  return asked;
+}
+
+test("an account lookup gives up at the repo's deadline, not 10 seconds later", async t => {
+  const asked = hangingApi(t);
+  const started = Date.now();
+  const lookup = apiLookup('a', 'one', started + 200);
+  assert.equal(await lookup('0'.repeat(40)), undefined);
+  const took = Date.now() - started;
+  assert.ok(took < 5000, `took ${took} ms`);
+  assert.deepEqual(asked, [`https://api.github.com/repos/a/one/commits/${'0'.repeat(40)}`]);
+});
+
+test('no account lookup starts after the deadline', async t => {
+  const asked = hangingApi(t);
+  assert.equal(await apiLookup('a', 'one', Date.now() - 1)('0'.repeat(40)), undefined);
+  assert.deepEqual(asked, []);
 });
