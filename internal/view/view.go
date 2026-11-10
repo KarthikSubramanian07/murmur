@@ -274,7 +274,7 @@ func Turn(m proto.MessageView) string {
 		about = append(about, "on "+m.FromOwner+"'s machine")
 	}
 	if m.FromDevice != "" {
-		// The name has been seen on more than one device, so it alone doesn't say who this is. On
+		// Another device says it has this name too, so the name alone doesn't say who this is. On
 		// every turn, introduced or not: the next one may be from the other device.
 		about = append(about, "from device "+m.FromDevice)
 	}

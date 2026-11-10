@@ -320,8 +320,8 @@ type MessageView struct {
 	FromBranch string `json:"fromBranch,omitempty"`
 	// FromOwner is the sender's person: the git user name on its device, where known.
 	FromOwner string `json:"fromOwner,omitempty"`
-	// FromDevice is the sender's device, set when the sender's name has been seen on more than one,
-	// so a turn says which one sent it; a name says nothing of who is behind it.
+	// FromDevice is the sender's device, set when another device's live presence says the sender's
+	// name too, so a turn says which one sent it; a name says nothing of who is behind it.
 	FromDevice string    `json:"fromDevice,omitempty"`
 	To         string    `json:"to"` // the address the message was sent to, whatever it was sent by
 	ToName     string    `json:"toName,omitempty"`

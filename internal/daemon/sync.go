@@ -649,9 +649,9 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha, listed string) {
 			d.applyTagsEventLocked(e)
 		}
 		if e.Type == bus.Message {
-			if e.Person != "" {
-				d.notePersonLocked(e.Person, e.From)
-			}
+			// The name a message carries is shown only if it is its sender's (personSenderLocked),
+			// and never recorded: see notePersonLocked.
+			//
 			// A skip passes over history, but a ref read in one only after sessions registered
 			// (the first sync failed) also holds what was sent since this daemon started, which
 			// is new to it: by the sender's clock, with the minute queueLocked allows. What a

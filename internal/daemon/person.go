@@ -95,16 +95,22 @@ func (d *Daemon) personNameOfLocked(addr string) string {
 	return found
 }
 
-// personSenderLocked is the name a person's message e is shown from: the one it carries, which a
-// daemon that never saw their presence still has, or else the one their device's presence gives.
-// Either counts only if it doesn't reach someone else, since a message or a presence can carry any
-// name: a name that is another person's isn't shown, and the message is from its address. onMany
-// says the name has been seen on more than one device, so whoever reads the message should be told
-// which device sent it. Caller holds mu.
+// personSenderLocked is the name a person's message e is shown from: the one it carries, which may
+// be an earlier name of theirs, or else the one their device gives them. A message can carry any
+// name, so the one it carries counts only if its sender holds it: by a claim in the registry, in
+// its live presence, or, for this device's own person, as a name they have had. Either name then
+// counts only if it doesn't reach someone else; otherwise the message is from its address. onMany
+// says a live presence of another device says the name too, so whoever reads the message should be
+// told which device sent it; it lasts only as long as that presence does. Caller holds mu.
 func (d *Daemon) personSenderLocked(e bus.Event) (name string, onMany bool) {
-	for _, n := range []string{e.Person, d.personNameOfLocked(e.From)} {
+	carried := e.Person
+	if carried != "" && d.st.PersonClaims[carried] != e.From && d.livePersonLocked(e.From) != carried &&
+		(e.From != d.personAddr() || d.st.People[carried] != e.From) {
+		carried = ""
+	}
+	for _, n := range []string{carried, d.personNameOfLocked(e.From)} {
 		if addr, ok := d.resolvePersonLocked(n); n != "" && (!ok || addr == e.From) {
-			return n, d.st.PeopleOnMany[n]
+			return n, d.nameOnOthersLocked(n, e.From)
 		}
 	}
 	return "", false
@@ -255,9 +261,36 @@ func (d *Daemon) personNameProblemLocked(name string) string {
 	if _, isDevice := d.peers[name]; isDevice || name == d.device {
 		return fmt.Sprintf("%s is a device's ID here, so a message to it would go to that device.", name)
 	}
-	if addr, ok := d.resolvePersonLocked(name); ok && addr != d.personAddr() {
-		dev, _ := bus.SplitAddr(addr)
+	if dev := d.nameTakenLocked(name); dev != "" {
 		return fmt.Sprintf("%s is taken, by the person on %s.", name, dev)
+	}
+	return ""
+}
+
+// nameTakenLocked is the device whose person has name, other than this one, "" if none. Once the
+// registry has been read by a daemon that keeps people's claims, only a claim there or a live
+// presence takes a name: a sighting in People alone may be a presence long gone, and the claim
+// decides between two people anyway (#268). Before that read, any sighting counts. Caller holds mu.
+func (d *Daemon) nameTakenLocked(name string) string {
+	if !d.namesChecked || !d.st.NamesPeople {
+		if addr, ok := d.resolvePersonLocked(name); ok && addr != d.personAddr() {
+			dev, _ := bus.SplitAddr(addr)
+			return dev
+		}
+		return ""
+	}
+	switch addr := d.st.PersonClaims[name]; addr {
+	case d.personAddr():
+		return ""
+	case "":
+	default:
+		dev, _ := bus.SplitAddr(addr)
+		return dev
+	}
+	for _, dev := range sortedKeys(d.peers) {
+		if d.livePersonLocked(bus.Addr(dev, bus.PersonSession)) == name {
+			return dev
+		}
 	}
 	return ""
 }

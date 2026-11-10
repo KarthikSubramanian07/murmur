@@ -6,10 +6,10 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 )
 
-// A person's name goes to the first device seen with it, as a session's does, and only a claim in
-// the registry gives it to another. Any device can say its person has any name, in its presence or
-// on a message, so one that says someone else's is passed over, and the name is marked as seen on
-// more than one device.
+// A person's name goes to the first device whose presence is seen with it, as a session's does,
+// and only a claim in the registry gives it to another. Any device can say its person has any
+// name, in its presence or on a message, so one that says someone else's is passed over. A message
+// counts for nothing: its name is shown only if its sender holds the name.
 func TestTheFirstDeviceSeenWithAPersonsNameKeepsIt(t *testing.T) {
 	d, _ := namedDaemon(t)
 	d.mu.Lock()
@@ -19,17 +19,14 @@ func TestTheFirstDeviceSeenWithAPersonsNameKeepsIt(t *testing.T) {
 		return &peer{pres: bus.Presence{Sessions: []bus.SessionInfo{{ID: bus.PersonSession, Name: name}}}}
 	}
 
-	if !d.notePersonLocked("tyler", tyler) || d.st.PeopleOnMany["tyler"] {
-		t.Fatalf("the first sighting: changed nothing, or marked the name")
-	}
-	if !d.notePersonLocked("tyler", evil) {
-		t.Errorf("a second device with the name changed nothing")
-	}
-	if d.st.People["tyler"] != tyler || !d.st.PeopleOnMany["tyler"] {
-		t.Errorf("after a second device said tyler: %q, on many %v", d.st.People["tyler"], d.st.PeopleOnMany["tyler"])
+	if !d.notePersonLocked("tyler", tyler) {
+		t.Fatalf("the first sighting changed nothing")
 	}
 	if d.notePersonLocked("tyler", evil) || d.notePersonLocked("tyler", tyler) {
-		t.Errorf("a sighting already made changed something")
+		t.Errorf("a second device with the name, or a sighting already made, changed something")
+	}
+	if d.st.People["tyler"] != tyler {
+		t.Errorf("after a second device said tyler: %q", d.st.People["tyler"])
 	}
 
 	// Both presences say tyler, and aa-evil sorts first: the one seen first is still who tyler is.
@@ -39,32 +36,55 @@ func TestTheFirstDeviceSeenWithAPersonsNameKeepsIt(t *testing.T) {
 	}
 
 	// A message from aa-evil saying it is tyler isn't shown as tyler's, and one from tyler says which
-	// device it is from.
+	// device it is from, while the other presence says tyler too.
 	if name, _ := d.personSenderLocked(bus.Event{From: evil, Person: "tyler"}); name != "" {
 		t.Errorf("a message from %s is shown from %q", evil, name)
 	}
 	if name, onMany := d.personSenderLocked(bus.Event{From: tyler, Person: "tyler"}); name != "tyler" || !onMany {
 		t.Errorf("tyler's own message: %q, on many %v", name, onMany)
 	}
-	// A message carrying no name, or a name nobody else has, is shown by what it says or its presence.
+
+	// Once aa-evil's presence says eve, tyler is on one device again, and eve's messages are hers
+	// whatever name they carry. A name only a message says is no one's, and isn't taken.
 	d.peers["aa-evil"] = person("eve")
 	d.notePersonLocked("eve", evil)
-	if name, onMany := d.personSenderLocked(bus.Event{From: evil}); name != "eve" || onMany {
-		t.Errorf("eve, from her presence: %q, on many %v", name, onMany)
+	if name, onMany := d.personSenderLocked(bus.Event{From: tyler, Person: "tyler"}); name != "tyler" || onMany {
+		t.Errorf("tyler's message once the other presence went: %q, on many %v", name, onMany)
 	}
-	if name, _ := d.personSenderLocked(bus.Event{From: evil, Person: "tyler"}); name != "eve" {
-		t.Errorf("eve, saying she is tyler: %q, want her presence's name", name)
+	for _, carried := range []string{"", "tyler", "grace"} {
+		if name, onMany := d.personSenderLocked(bus.Event{From: evil, Person: carried}); name != "eve" || onMany {
+			t.Errorf("eve, saying %q: %q, on many %v; want her presence's name", carried, name, onMany)
+		}
+	}
+	if _, ok := d.st.People["grace"]; ok {
+		t.Errorf("a name only a message carried was recorded")
+	}
+	d.namesChecked, d.st.NamesPeople = true, true
+	if dev := d.nameTakenLocked("grace"); dev != "" {
+		t.Errorf("grace, which only a message carried, is taken by %s", dev)
+	}
+	if dev := d.nameTakenLocked("eve"); dev != "aa-evil" {
+		t.Errorf("eve, in a live presence, is taken by %q", dev)
 	}
 
-	// A claim in the registry stands over every sighting, and a name seen elsewhere first is marked.
+	// A claim in the registry stands over every sighting.
 	d.notePersonLocked("ada", evil)
 	if !d.notePersonClaimLocked("ada", tyler) {
 		t.Fatal("the claim changed nothing")
 	}
-	if addr, _ := d.resolvePersonLocked("ada"); addr != tyler || !d.st.PeopleOnMany["ada"] {
-		t.Errorf("ada after a claim: %q, on many %v", addr, d.st.PeopleOnMany["ada"])
+	if addr, _ := d.resolvePersonLocked("ada"); addr != tyler {
+		t.Errorf("ada after a claim: %q", addr)
 	}
 	if d.notePersonLocked("ada", evil); d.st.People["ada"] != tyler {
 		t.Errorf("a sighting after the claim moved ada to %q", d.st.People["ada"])
+	}
+	// Once the registry is read, a sighting alone, from a presence that has gone, takes nothing.
+	d.notePersonLocked("linus", "gone-0001/"+bus.PersonSession)
+	if dev := d.nameTakenLocked("linus"); dev != "" {
+		t.Errorf("linus, seen once on a device whose presence has gone, is taken by %s", dev)
+	}
+	d.namesChecked = false
+	if dev := d.nameTakenLocked("linus"); dev != "gone-0001" {
+		t.Errorf("before the registry is read, linus is taken by %q, want the device last seen with it", dev)
 	}
 }

@@ -515,12 +515,16 @@ in its own session.
   them for another, and until they choose one they can't send, as their messages would carry a name
   that reaches someone else. The cost: choosing a name needs the remote, as sending does.
 - **A name on a message or in a presence is only a claim** (2026-11-09). Any device can write a
-  message that says it is from `tyler`, or a presence that says its person is. So a daemon gives a
-  name to the first device it sees with it, as for session names, and only a registry claim moves
-  it. A message is shown from the name it carries only if that name doesn't reach someone else,
-  and otherwise from its address. A presence counts only its first person, since a device has one,
-  so it can't hold names nobody on it answers to. A name seen on more than one device is marked,
-  and every turn from it says which device sent it: the name alone no longer says who is writing.
+  message that says it is from `tyler`, or a presence that says its person is. A daemon gives a name
+  to the first device whose presence it sees with it, as for session names, and only a registry
+  claim moves it. A sync reads the registry before the presences, so a claim is known first. A
+  message's name is never recorded, since one device could send a thousand, each with another name.
+  It is shown only if the sender holds the name, by a claim or in its live presence, and isn't
+  someone else's; otherwise the message is from its address. A presence counts only its first
+  person. Once the registry has been read, only a claim or a live presence makes a name taken on the
+  page. While another live presence says a person's name, every turn from it says which device sent
+  it; the mark goes when that presence does. The cost: a person on a daemon from before #272, with no
+  claim, who re-clones keeps resolving to the old device until their new daemon claims the name.
 - **A person's direct message wakes a session past the "Within" window**, because they are waiting
   for an answer. It doesn't wake past Never or do not disturb, which a person also chose. A broadcast
   from a person wakes nothing extra: one sentence shouldn't wake every idle session on the mesh. The
