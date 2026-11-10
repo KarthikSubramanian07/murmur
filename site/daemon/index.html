@@ -2720,6 +2720,13 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
     draw(shown);
   }
   addEventListener('scroll', onScroll, { passive: true });
+  // A link taking focus takes the reader to its place in the story: the title's chapter for the back
+  // link, the end for the closing band. Otherwise, on a phone, the back link shows under whichever
+  // passage holds the same fixed spot (WCAG 2.4.11).
+  document.getElementById('notes').addEventListener('focusin', e => {
+    const ch = e.target.closest('.ch');
+    if (ch) ch.scrollIntoView({ block: ch.dataset.id === 'finale' ? 'end' : 'start' });
+  });
   addEventListener('resize', setup);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(setup);
   setup();
