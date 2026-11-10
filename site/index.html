@@ -471,7 +471,8 @@
 </style>
 </head>
 <body>
-<main class="st st-big st-butter st-trim" style="--mark-top: 42%">
+<main>
+<div class="st st-big st-butter st-trim" style="--mark-top: 42%">
 <style>
   /* ---------- Light behind the glass ---------- */
   /* One WebGL canvas, above the blue ground and under the reed faces and the word (both later at
@@ -499,7 +500,7 @@
   // x + k*(fract(x/12) - .5): the same sawtooth the #st-reeds filter uses (k is its scale), so the
   // light breaks on the same 12px reeds as the word. It draws only while the hero is on screen and
   // the tab is visible; with reduced motion it draws one still frame.
-  const hero = document.querySelector('main.st');
+  const hero = document.querySelector('.st');
   const cv = hero && hero.querySelector('.st-gl');
   if (!cv) return;
   const gl = cv.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, powerPreference: 'low-power' });
@@ -670,7 +671,7 @@ void main() {
   kick();
 })();
 </script>
-</main>
+</div>
 
 <section id="how">
   <div class="route"><div class="route-in">
@@ -745,6 +746,7 @@ void main() {
     <div class="setup-end"><a class="button" href="https://github.com/a-Fig/murmur">Get Murmur on GitHub</a></div>
   </div>
 </section>
+</main>
 
 <script>
 (() => {
