@@ -113,9 +113,12 @@ func readTitle(ctx context.Context, j titleJob) (raw string, known bool, err err
 		}
 		return raw, true, err
 	case r.Native != "" && !ownTitleUnread(j.agent):
-		dir := r.CodexHome // the session's own, as the daemon may have been started by another client
+		// The session's own home, as its MCP server has it; none means Codex's default, since join
+		// forwards CODEX_HOME to the server when the session has one. Never the daemon's own
+		// CODEX_HOME: that is the home of whichever session started the daemon (#88).
+		dir := r.CodexHome
 		if !filepath.IsAbs(dir) {
-			dir = title.CodexDir()
+			dir = title.DefaultCodexDir()
 		}
 		raw, err = title.Codex(ctx, dir, r.Native)
 		return raw, true, err

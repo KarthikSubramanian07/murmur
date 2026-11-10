@@ -855,8 +855,9 @@ func (l *link) learnNative(ctx context.Context, id string) {
 	}
 	if l.find == nil {
 		// Outside T3 the ID is for the daemon, to find the conversation's name in Codex's state.
-		// Only where this server's environment names the Codex home: Codex starts it with a bare
-		// environment, and a guess at ~/.codex would override the daemon's own, which may be right.
+		// Codex starts this server with a bare environment, but join's env_vars passes on
+		// CODEX_HOME when the session has one (#88). So an unset one means the default home,
+		// which the daemon takes for a route without a home, rather than its own CODEX_HOME.
 		if home := os.Getenv("CODEX_HOME"); home != "" {
 			l.mu.Lock()
 			l.hello.CodexHome = home
