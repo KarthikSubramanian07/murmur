@@ -36,12 +36,29 @@ func TestUpdatedMCPStartsInstalledBinary(t *testing.T) {
 type started struct {
 	Args []string
 	Page string
+	PID  int
+}
+
+// waitExit waits a while for the detached child to exit: until it does it holds files in the
+// test's temporary directories, which Windows then can't remove. Where the child isn't this
+// process's own (Unix, once detached), Wait returns at once.
+func waitExit(pid int) {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() { p.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+	}
 }
 
 // The detached child exits after recording what it was started with. No daemon or network runs.
 func TestMain(m *testing.M) {
 	if path := os.Getenv("MURMUR_TEST_DAEMON_ARGS"); path != "" && len(os.Args) > 1 && os.Args[1] == "daemon" {
-		rec := started{Args: os.Args[1:]}
+		rec := started{Args: os.Args[1:], PID: os.Getpid()}
 		var page net.Listener
 		if f := proc.Inherited(brand.PageListenerEnv, "page"); f != nil {
 			var err error
@@ -105,6 +122,7 @@ func TestStartDaemonForwardsFlags(t *testing.T) {
 		if err != nil || json.Unmarshal(b, &rec) != nil {
 			continue
 		}
+		defer waitExit(rec.PID) // before the temporary directories go, whatever else happens
 		got := rec.Args
 		if rec.Page != "" {
 			t.Fatalf("a daemon started without the page's socket was told of one: %q", rec.Page)
