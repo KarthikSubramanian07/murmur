@@ -575,9 +575,10 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	}
 	// The body goes on the bus as readers will show it, so what the sender sent is what everyone
 	// reads, and it is cleaned before scrub looks: a key with a zero-width space in it is still a
-	// key once a reader drops the space.
+	// key once a reader drops the space. What was sent is checked too: dropping a format character
+	// can join a key to the next word, and AKIA…EXAMPLE<U+200B>note then ends in no word boundary.
 	body := bus.Text(req.Body, maxBody)
-	if err := scrub.Check(subject, body); err != nil {
+	if err := scrub.Check(subject, body, req.Subject, req.Body); err != nil {
 		return fail(err.Error())
 	}
 	// A name is an address: it is turned into the session's device/session here, and that is what

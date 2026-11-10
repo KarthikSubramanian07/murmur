@@ -340,6 +340,13 @@ func TestMessagesNoticesInbox(t *testing.T) {
 			t.Fatalf("secret with U+%04X in it not blocked: %+v", joiner, r)
 		}
 	}
+	// Nor when dropping the space would join the key to the next word, in the body or the subject.
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "key", Body: "AKIAIOSFODNN7EXAMPLE​note"}); !strings.Contains(r.Error, "not sent") {
+		t.Fatalf("secret joined to the next word not blocked: %+v", r)
+	}
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "AKIAIOSFODNN7EXAMPLE​note"}); !strings.Contains(r.Error, "not sent") {
+		t.Fatalf("secret joined to the next word in a subject not blocked: %+v", r)
+	}
 }
 
 func TestHistoryIsNotReplayed(t *testing.T) {
