@@ -230,11 +230,11 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	d.mu.Unlock()
 	d.clearOwnJunk(listed)
 
-	// The registry and every presence are read first (see readOrder), with ReadFirstLimit of their
-	// own, so that a stall there leaves the logs the time they need: the logs were fetched already,
-	// and they hold the messages. A registry missing from the listing is asked of the remote again,
-	// which can stall like any request to it.
-	first, cancelFirst := context.WithTimeout(ctx, d.opt.ReadFirstLimit)
+	// The registry and every presence are read first (see readOrder), within a limit of their own
+	// (see readFirstContext), so that a stall there leaves the logs the time they need: the logs
+	// were fetched already, and they hold the messages. A registry missing from the listing is
+	// asked of the remote again, which can stall like any request to it.
+	first, cancelFirst := readFirstContext(ctx, d.opt.ReadFirstLimit)
 	if _, ok := remote[brand.NamesRef]; !ok {
 		d.processNames(first, "") // not on the remote
 	}
@@ -300,6 +300,19 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 func meshDevice(ref string) (string, bool) {
 	dev := strings.TrimPrefix(ref, brand.MeshPrefix)
 	return dev, bus.ValidDevice(dev)
+}
+
+// readFirstContext is what a sync reads the registry and presence on: limit from now, but ending
+// at least limit before the sync's own deadline, which keeps that much of the sync for its logs
+// however long the listing and fetches took. A sync with less than that left reads neither, and
+// fails once its logs are read; the next reads them. The reserve also covers a cancelled git's
+// five seconds to exit (see gitx.run).
+func readFirstContext(ctx context.Context, limit time.Duration) (context.Context, context.CancelFunc) {
+	end := time.Now().Add(limit)
+	if dl, ok := ctx.Deadline(); ok && dl.Add(-limit).Before(end) {
+		end = dl.Add(-limit)
+	}
+	return context.WithDeadline(ctx, end)
 }
 
 // readOrder is the order a sync reads the refs it fetched: the names registry, then every

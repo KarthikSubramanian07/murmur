@@ -204,3 +204,43 @@ func TestAStalledRegistryReadLeavesTheLogsTheirTime(t *testing.T) {
 		t.Errorf("the session's inbox holds %d messages, want the one fetched with the stall", len(inbox))
 	}
 }
+
+// The registry and presence end ReadFirstLimit before the sync's deadline as well as after it from
+// now, so a listing and fetches that ran late can't leave them the logs' time too.
+func TestReadFirstContextKeepsTheLogsTime(t *testing.T) {
+	const limit = 15 * time.Second
+	for _, c := range []struct {
+		name string
+		left time.Duration // until the sync's deadline; 0 for none
+		want time.Duration // until the reads' deadline; 0 for already past
+	}{
+		{"no deadline", 0, limit},
+		{"a whole minute left", time.Minute, limit},
+		{"less than twice the limit left", 20 * time.Second, 5 * time.Second},
+		{"less than the limit left", 10 * time.Second, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			if c.left > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, c.left)
+				defer cancel()
+			}
+			first, cancel := readFirstContext(ctx, limit)
+			defer cancel()
+			dl, ok := first.Deadline()
+			if !ok {
+				t.Fatal("no deadline")
+			}
+			if c.want == 0 {
+				if first.Err() == nil {
+					t.Errorf("the reads have %s, want none", time.Until(dl).Round(time.Second))
+				}
+				return
+			}
+			if got := time.Until(dl); got > c.want || got < c.want-2*time.Second {
+				t.Errorf("the reads have %s, want %s", got.Round(time.Second), c.want)
+			}
+		})
+	}
+}
