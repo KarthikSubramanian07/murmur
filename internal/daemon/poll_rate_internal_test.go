@@ -175,6 +175,10 @@ func rateRig(t *testing.T, opt Options, run bool) (*Daemon, *bus.Repo, string) {
 	}
 	d.bgCtx = ctx
 	t.Cleanup(func() { cancel(); d.bg.Wait() })
+	// A team key to encrypt for: no team loop runs here to make the first one.
+	d.mu.Lock()
+	withEpoch(d, true)
+	d.mu.Unlock()
 	peer := &bus.Repo{Git: gitx.Git{Dir: filepath.Join(peerClone, ".git")}, Name: "peer-0001",
 		Email: "peer-0001@" + brand.Name + ".invalid", Remote: "origin"}
 	if run {
