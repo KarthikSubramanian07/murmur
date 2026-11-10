@@ -142,11 +142,15 @@ type pushJob struct {
 	id, addr string
 	// key is the session's conversation when the job was made (see Daemon.introduced): the turn
 	// goes to that one, even if the session moves to another before the handoff ends.
-	key   string
-	msg   *inMsg
-	via   string
-	route proto.Route
-	text  string
+	key string
+	// conv and explainKey are the conversation the session was in then, known for a session of T3
+	// that has stopped too (where key is ""), and what that was kept by, for what it has been told
+	// (see explained.go).
+	conv, explainKey string
+	msg              *inMsg
+	via              string
+	route            proto.Route
+	text             string
 }
 
 // wakeSnapshot copies the page's settings, the wake setting among them. setMu is taken alone,
@@ -492,7 +496,11 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 	views := d.messageViewsLocked([]*inMsg{m}, true)
 	key := d.keyOfLocked(id)
 	views[0].Introduced = key != "" && d.introduced[key][m.Event.From]
-	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, msg: m, via: via, route: route, text: view.Turn(views[0])}
+	if bus.IsPerson(m.Event.From) {
+		views[0].Explained = d.explainedLocked(id, m.Event.From) // recorded once it is handed over
+	}
+	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, conv: d.conversationLocked(id), explainKey: d.explainKeyLocked(id), msg: m, via: via,
+		route: route, text: view.Turn(views[0])}
 }
 
 // handOver passes the message to the session's client, once. It is tried a second time, after PushRetry, only
@@ -631,6 +639,7 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	}
 	d.outOfInboxLocked(j.id, j.msg, "handed", "as a turn, through "+j.via)
 	d.introduceLocked(j.key, j.msg.Event.From)
+	d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), j.msg.Event.From)
 	d.saveLocked()
 	delete(d.pushWarned, j.id)
 }
@@ -705,9 +714,10 @@ func (d *Daemon) introduceLocked(key, from string) {
 }
 
 // wholeViewsLocked renders msgs, given whole to the sessions in given, and records the sessions as
-// introduced to their senders. A message is rendered as from a sender already introduced only if
-// every session it was given to had been: the hook speaks for several sessions at once, and shows
-// a message for everyone once. Caller holds mu.
+// introduced to their senders, and as told of the people among them (see explained.go). A message
+// is rendered as from a sender already introduced only if every session it was given to had been:
+// the hook speaks for several sessions at once, and shows a message for everyone once. The caller
+// saves the state. Caller holds mu.
 func (d *Daemon) wholeViewsLocked(msgs []*inMsg, given []delivery) []proto.MessageView {
 	views := d.messageViewsLocked(msgs, true)
 	for i := range views {
@@ -721,6 +731,15 @@ func (d *Daemon) wholeViewsLocked(msgs []*inMsg, given []delivery) []proto.Messa
 	for _, g := range given {
 		d.introduceLocked(d.keyOfLocked(g.id), g.msg.Event.From)
 	}
+	d.explainViewsLocked(views, func(i int) []string {
+		var ids []string
+		for _, g := range given {
+			if g.msg.Event.ID == views[i].ID {
+				ids = append(ids, g.id)
+			}
+		}
+		return ids
+	})
 	return views
 }
 

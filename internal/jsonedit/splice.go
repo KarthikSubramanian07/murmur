@@ -247,11 +247,10 @@ func stripJSONC(text string) string {
 			i += 2 + end + 1
 			b.WriteByte(' ')
 		case c == ',':
-			j := i + 1
-			for j < len(text) && strings.IndexByte(" \t\r\n", text[j]) >= 0 {
-				j++
-			}
-			if j < len(text) && (text[j] == '}' || text[j] == ']') {
+			// A trailing comma, with space or comments before the bracket, goes.
+			sc := &scanner{s: text, pos: i + 1}
+			_ = sc.space()
+			if j := sc.pos; j < len(text) && (text[j] == '}' || text[j] == ']') {
 				continue
 			}
 			b.WriteByte(c)
@@ -524,4 +523,181 @@ func GetIn(text string, path []string) (raw string, found bool, err error) {
 		n = m.value
 	}
 	return stripJSONC(text[n.start:n.end]), true, nil
+}
+
+// DeleteIn returns text without the member at path: the member, its comma and the space after it go,
+// and every other byte stays. changed is false, and out is text, when it isn't there, a path through
+// something that isn't an object included: there is nothing of that name to take out. It refuses
+// text that isn't a JSON or JSONC object, and a key given twice on the way.
+func DeleteIn(text string, path []string) (out string, changed bool, err error) {
+	if len(path) == 0 {
+		return "", false, errors.New("no path")
+	}
+	root, err := parseText(text)
+	if err != nil {
+		return "", false, err
+	}
+	n, err := walk(root, path[:len(path)-1])
+	if err != nil || n == nil {
+		return text, false, err
+	}
+	for i := range n.members {
+		if n.members[i].key == path[len(path)-1] {
+			if _, err := n.find(path[len(path)-1]); err != nil {
+				return "", false, err
+			}
+			return cut(text, *n, i), true, nil
+		}
+	}
+	return text, false, nil
+}
+
+// RemoveIn returns text without any item of the array at path that says what item does. changed is
+// false, and out is text, when there is none, or no array there. Its refusals are DeleteIn's.
+func RemoveIn(text string, path []string, item any) (out string, changed bool, err error) {
+	for {
+		root, err := parseText(text)
+		if err != nil {
+			return "", false, err
+		}
+		n, err := walk(root, path)
+		if err != nil {
+			return "", false, err
+		}
+		if n == nil || n.kind != '[' {
+			return text, changed, nil
+		}
+		at := -1
+		for i, it := range n.items {
+			if same(text[it.start:it.end], item) {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			return text, changed, nil
+		}
+		text, changed = cut(text, *n, at), true
+	}
+}
+
+// SetLastIn is SetIn with the member at path made the last of its object, moved there if it is
+// elsewhere: for an object whose members are rules where the last match counts (OpenCode 1's
+// "permission"). changed is false only when it is last already and says what v does.
+func SetLastIn(text string, path []string, v any) (out string, changed bool, err error) {
+	if len(path) == 0 {
+		return "", false, errors.New("no path")
+	}
+	root, err := parseText(text)
+	if err != nil {
+		return "", false, err
+	}
+	if n, err := walk(root, path[:len(path)-1]); err != nil {
+		return "", false, err
+	} else if n != nil && n.kind == '{' {
+		key := path[len(path)-1]
+		m, err := n.find(key)
+		if err != nil {
+			return "", false, err
+		}
+		if m != nil {
+			last := n.members[len(n.members)-1]
+			if last.key == key && same(text[last.value.start:last.value.end], v) {
+				return text, false, nil
+			}
+			if text, _, err = DeleteIn(text, path); err != nil {
+				return "", false, err
+			}
+		}
+	}
+	out, _, err = SetIn(text, path, v)
+	return out, err == nil, err
+}
+
+// walk is the value at path under object n, nil if it isn't there or something on the way isn't an
+// object. A key given twice on the way is an error, as for SetIn.
+func walk(n node, path []string) (*node, error) {
+	for _, key := range path {
+		if n.kind != '{' {
+			return nil, nil
+		}
+		m, err := n.find(key)
+		if err != nil || m == nil {
+			return nil, err
+		}
+		n = m.value
+	}
+	if n.kind == 0 {
+		return nil, nil // blank text
+	}
+	return &n, nil
+}
+
+// cut returns text without member or item i of container n. One with another after it goes with its
+// comma, a comment on the same line after that, and the space up to the next, which takes its
+// place. The last goes with the line it has to itself, if it has one, and with the comma before it
+// unless it had a trailing comma of its own; a container left with only space inside becomes {} or [].
+func cut(text string, n node, i int) string {
+	type span struct{ start, end int }
+	var spans []span
+	for _, m := range n.members {
+		spans = append(spans, span{m.keyStart, m.value.end})
+	}
+	for _, it := range n.items {
+		spans = append(spans, span{it.start, it.end})
+	}
+	s := spans[i]
+	start, end := s.start, s.end
+	sc := &scanner{s: text, pos: s.end}
+	_ = sc.space()
+	ownComma := sc.pos < len(text) && text[sc.pos] == ','
+	if ownComma {
+		end = sc.pos + 1
+		for end < len(text) && (text[end] == ' ' || text[end] == '\t') {
+			end++
+		}
+		if strings.HasPrefix(text[end:], "//") {
+			for end < len(text) && text[end] != '\n' && text[end] != '\r' {
+				end++
+			}
+		}
+	}
+	if i < len(spans)-1 {
+		for end < len(text) && strings.IndexByte(" \t\r\n", text[end]) >= 0 {
+			end++
+		}
+		return text[:start] + text[end:]
+	}
+	if _, own := lineIndent(text, start); own {
+		// Its line goes from its start, and with the newline that ends it if nothing else is on it.
+		// Never the newline before it, which may end a // comment on the line above.
+		start = strings.LastIndexByte(text[:start], '\n') + 1
+		rest := end
+		for rest < len(text) && (text[rest] == ' ' || text[rest] == '\t') {
+			rest++
+		}
+		if strings.HasPrefix(text[rest:], "\r\n") {
+			end = rest + 2
+		} else if strings.HasPrefix(text[rest:], "\n") {
+			end = rest + 1
+		}
+	} else {
+		for start > n.start+1 && (text[start-1] == ' ' || text[start-1] == '\t') {
+			start--
+		}
+	}
+	closing := n.end - (end - start)
+	text = text[:start] + text[end:]
+	if !ownComma && i > 0 {
+		sc := &scanner{s: text, pos: spans[i-1].end}
+		_ = sc.space()
+		if sc.pos < start && text[sc.pos] == ',' {
+			text = text[:sc.pos] + text[sc.pos+1:]
+			closing--
+		}
+	}
+	if len(spans) == 1 && strings.TrimSpace(text[n.start+1:closing-1]) == "" {
+		text = text[:n.start+1] + text[closing-1:]
+	}
+	return text
 }

@@ -44,6 +44,7 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 		return
 	}
 	d.adoptTagsLocked(s)
+	d.adoptExplainedLocked(s)
 	adopted := d.adoptLocked(s, name)
 	if !adopted && d.st.NameHolders[name] == s.id && d.st.SessionNames[s.id] == name {
 		return

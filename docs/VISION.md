@@ -628,7 +628,7 @@ since it wasn't installed). The details, and where each came from, are in the co
 
 | Agent | Where join writes | How a session is told apart | Inside T3 |
 |---|---|---|---|
-| OpenCode | `mcp.servers.murmur` in `~/.config/opencode/opencode.jsonc` if there (OpenCode reads it after `opencode.json`, whose own murmur entry is made the same), else `opencode.json`; `"codemode": false`; a `murmur_*` allow rule kept last in `permissions`, where the last matching rule counts | One server process serves every session in a directory; each call names its session in `_meta["ai.opencode/sessionID"]`, and the server keeps a registration per session that calls | The session ID is T3's native ID for the thread |
+| OpenCode | `~/.config/opencode/opencode.jsonc` if there (OpenCode reads it after `opencode.json`, whose own murmur entry is made the same), else `opencode.json`, in the shape the installed OpenCode loads, from `opencode --version`: for 2.x, `mcp.servers.murmur` with `"codemode": false` and a `murmur_*` allow rule kept last in the `permissions` list; for 1.x, or a version join can't learn, `mcp.murmur` with `"enabled": true` and `"murmur_*": "allow"` kept last in the `permission` object, which 2.x loads too. In both the last matching rule counts. OpenCode 1.x refuses a whole config that has `permissions` (#388), so a rerun moves Murmur's entries to the shape it now writes | One server process serves every session in a directory; each call names its session in `_meta["ai.opencode/sessionID"]`, and the server keeps a registration per session that calls | The session ID is T3's native ID for the thread |
 | Muse Code | `mcpServers.murmur` in `~/.config/muse/settings.json`, `"mode": "optional"`, `env` forwarding `T3CODE_CLI_PATH` and, on Windows, the home variables, as `${VAR:-}` | One process per session, with `MUSE_SESSION_ID` | The same ID |
 | Pi | an extension, `extensions/murmur.ts` in `~/.pi/agent` (a `~` in `PI_CODING_AGENT_DIR` is the home, as for Pi), that registers the server with the session's file in `MURMUR_PI_SESSION_FILE`; a `murmur` server in Pi's `mcp.json`, which Pi would run instead, is reported | One process per session | T3 knows a Pi thread by that file (not tried: Pi is off in T3 on the laptop) |
 | Grok | `[mcp_servers.murmur]` in `~/.grok/config.toml`, and `MCPTool(murmur__*)` in `[permission] allow` | One process per session, with `GROK_SESSION_ID` | Expected to be the ACP session ID T3 records (not tried) |
@@ -914,6 +914,12 @@ in its own session.
   for an answer. It doesn't wake past Never or do not disturb, which a person also chose. A broadcast
   from a person wakes nothing extra: one sentence shouldn't wake every idle session on the mesh. The
   turn says who it is from, that they see only what the agent sends, and how to answer.
+- **That explanation comes once** (#345, Tyler, 2026-11-09): only the first message a session is
+  given whole from a person carries it, by any route (a turn, the hook's whole message or Stop's,
+  inbox). Later ones end with the line an agent's message does: the agent has been told, and a long
+  line on every message is noise. What each session has been told is kept in `state.json` by its
+  name, as its tags are, so it outlasts its MCP server and the daemon restarting. A message counts
+  once it reached the session, so a turn whose handoff failed explains again when the hook gives it.
 - **What the person keeps.** Messages to and from them go to `.git/murmur/person-messages.jsonl`,
   the last 2,000, apart from the page's 500, so a conversation outlasts a daemon restart. Unread is
   the person's inbox, which holds direct messages only: counting broadcasts would keep the badge lit

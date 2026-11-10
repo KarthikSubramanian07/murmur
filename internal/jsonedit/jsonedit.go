@@ -230,12 +230,18 @@ func ReadFile(path string) (o *Object, raw []byte, err error) {
 	return o, raw, nil
 }
 
+// ReadText is a config file's bytes, for the editors in splice.go, with ReadFile's care: a regular
+// file, or a link to one, read up to its cap, and an error for anything else. A missing file is
+// os.ErrNotExist.
+func ReadText(path string) ([]byte, error) { return readRegular(path) }
+
 // readRegular is os.ReadFile for a regular file, or a link to one, and an error for anything else.
 // A config file can be a link a repo committed (a worktree's .claude/settings.local.json), and a
 // link to a device or a pipe would be read without end (/dev/zero), or block (a terminal, a pipe
 // with no writer). A regular file is read up to 256 MiB, far past the largest .claude.json, which
 // grows with Claude Code's history: some "regular" files never end (/proc/self/pagemap on Linux).
-// One cut short doesn't parse, so it is never written back.
+// A longer one is an error, not cut short: a prefix can still parse ("{}" and then space), and
+// writing it back would lose the rest.
 func readRegular(path string) ([]byte, error) {
 	if fi, err := os.Stat(path); err != nil {
 		return nil, err
@@ -252,8 +258,17 @@ func readRegular(path string) ([]byte, error) {
 	} else if !fi.Mode().IsRegular() { // replaced between the two looks
 		return nil, errNotRegular
 	}
-	return io.ReadAll(io.LimitReader(f, 256<<20))
+	b, err := io.ReadAll(io.LimitReader(f, readCap+1))
+	if err == nil && int64(len(b)) > readCap {
+		return nil, errTooBig
+	}
+	return b, err
 }
+
+// readCap is the most readRegular reads; a variable, for the test of a file past it.
+var readCap int64 = 256 << 20
+
+var errTooBig = errors.New("is over 256 MiB, so it was left alone")
 
 // errNotRegular has no path in it: ReadFile's callers say which file.
 var errNotRegular = errors.New("isn't a regular file, so it was left alone")

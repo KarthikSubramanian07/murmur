@@ -38,6 +38,10 @@ type Env struct {
 	T3Settings  string // T3 Code's settings.json, "" without T3: the other agent homes T3 runs (t3homes.go)
 	Getenv      func(string) string
 	LookPath    func(string) (string, error)
+	// Run runs a program and returns what it printed, for asking an agent its version (OpenCode's,
+	// whose two versions want different configs); nil, as tests leave it, runs nothing, and the
+	// version isn't known.
+	Run func(ctx context.Context, name string, args ...string) (string, error)
 	// Version is mur's, for reporting a public repo (internal/publicrepo); "", as tests leave it,
 	// reports nothing.
 	Version string
@@ -56,7 +60,7 @@ func EnvFromProcess() (Env, error) {
 	if err != nil {
 		return Env{}, err
 	}
-	e := Env{Exe: exe, Home: home, Getenv: os.Getenv, LookPath: exec.LookPath,
+	e := Env{Exe: exe, Home: home, Getenv: os.Getenv, LookPath: exec.LookPath, Run: runProgram,
 		T3Settings: t3SettingsPath(os.Getenv("T3CODE_CLI_PATH"), os.Getenv("T3CODE_HOME"))}
 	// Claude Code puts everything under CLAUDE_CONFIG_DIR when it is set (a second account, a T3
 	// provider with its own home); else its settings are in ~/.claude and its state in ~/.claude.json.
@@ -79,6 +83,16 @@ func EnvFromProcess() (Env, error) {
 		e.GrokHome = filepath.Join(home, ".grok")
 	}
 	return e, nil
+}
+
+// runProgram runs name with args, no input, and returns its output. A program that leaves a child
+// holding its output open (an npm shim's node, killed at the deadline) is waited for a second more,
+// not forever.
+func runProgram(ctx context.Context, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = time.Second
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 func (e Env) look(name string) (string, error) {

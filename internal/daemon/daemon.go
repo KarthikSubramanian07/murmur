@@ -699,6 +699,10 @@ type state struct {
 	Epochs      []teamEpoch          `json:"epochs,omitempty"`
 	TeamGranted map[string][]string  `json:"teamGranted,omitempty"`
 	GrantMark   map[string]time.Time `json:"grantMark,omitempty"`
+	// Explained is, for each of this device's sessions, by its name as Tags is, the people whose
+	// first message to it said in full that they see only what the session sends (#345); their
+	// later messages end with the line an agent's do (see explained.go).
+	Explained map[string][]string `json:"explained,omitempty"`
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if

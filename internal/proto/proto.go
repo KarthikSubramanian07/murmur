@@ -71,8 +71,10 @@ const (
 //	    token is checked, and the connection then takes one more request. A client sends nothing
 //	    else to a listener until it has proved itself, so a daemon of 11 or less is replaced where
 //	    the client may, and otherwise trusted only while it holds the clone's lock.
+//	13: MessageView's Explained: a person's message says in full that they see only what the
+//	    agent sends the first time a session has one from them, and ends as an agent's after (#345)
 //	14: OpRotate, and a bus encrypted for a team key (#156): a daemon of 13 or less writes in the
-//	    clear, so an upgraded mur replaces it where it may. 13 is left for #395, open on 2026-11-10.
+//	    clear, so an upgraded mur replaces it where it may.
 const Protocol = 14
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
@@ -399,6 +401,10 @@ type MessageView struct {
 	// Introduced says the session this goes to as a turn has had a turn from the same sender before,
 	// so the turn needn't say again what agent the sender is and whose machine it is on (#216).
 	Introduced bool `json:"introduced,omitempty"`
+	// Explained says the session this goes to has been given a message from the same sender, a
+	// person, before, which said in full that the person sees only what the session sends: this one
+	// ends with an agent's line (#345). Always false for an agent's message.
+	Explained bool `json:"explained,omitempty"`
 	// Told is when the hook's notice told the session of this message, for one given whole after:
 	// its turn says so (#355). Zero for a message no notice told of.
 	Told time.Time `json:"told,omitzero"`
