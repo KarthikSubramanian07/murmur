@@ -2938,7 +2938,7 @@ function targetOf(c) {
 function paneFoot(c) {
   const target = targetOf(c);
   if (target) return composer(c, target);
-  if (c.kind !== "dm") return h("div", { class: "pane-foot" }, h("div", { class: "pane-foot-card" }, h("span", { class: "pane-foot-note" }, "Choose a name to write to " + (c.kind === "all" ? "everyone" : groupName(c)) + "."), h("button", { class: "btn btn-outline btn-sm", "data-key": "foot-name", onclick: () => askForName(render) }, "Choose a name")));
+  if (c.kind !== "dm") return h("div", { class: "pane-foot" }, h("div", { class: "pane-foot-card" }, h("span", { class: "pane-foot-note" }, "Choose a name to write to " + (c.kind === "all" ? "everyone" : groupName(c).replace(/^This device$/, "this device")) + "."), h("button", { class: "btn btn-outline btn-sm", "data-key": "foot-name", onclick: () => askForName(render) }, "Choose a name")));
   const running = c.pair.filter((n) => findSession(n) || findPerson(n));
   if (!running.length) return null;
   return h(

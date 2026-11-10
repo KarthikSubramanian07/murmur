@@ -1868,9 +1868,11 @@ a.g-pr:hover {
   flex-shrink: 1;
 }
 /* Beside a name, the chips give way first: those that don't fit wrap onto a hidden second line, so
- * none shows cut in half, and the row's tooltip names them all. */
+ * none shows cut in half, and the row's tooltip names them all. They take only the room the name and
+ * the agent leave (a basis of 0), so the agent text never shrinks while there is room, not even by
+ * the fraction of a pixel that would draw its ellipsis. */
 .name-line > .stags {
-  flex: 0 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   flex-wrap: wrap;
   height: 1rem;
