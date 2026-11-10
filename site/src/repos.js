@@ -259,11 +259,14 @@ export function health(list, now) {
   const last = list.map(r => r.counted).filter(Boolean).sort().at(-1) ?? null;
   const at = last ? Date.parse(last) : NaN;
   const ago = Number.isFinite(at) ? now - at : null;
+  // The day the run began, not the day of its newest count: a run that crosses midnight UTC took
+  // its list of repos the day before, so a repo listed after midnight was never in it.
+  const runDay = Number.isFinite(at) ? new Date(at - RUN).toISOString().slice(0, 10) : last?.slice(0, 10);
   const fresh = [], notCounted = [];
   for (const r of list) {
     if (r.counted && Date.parse(r.counted) >= at - RUN) continue;
     const row = { name: r.name, counted: r.counted ?? null, listed: r.reported };
-    (!r.counted && (!last || r.reported >= last.slice(0, 10)) ? fresh : notCounted).push(row);
+    (!r.counted && (!last || r.reported >= runDay) ? fresh : notCounted).push(row);
   }
   notCounted.sort((a, b) => (a.counted ?? '').localeCompare(b.counted ?? '') || a.name.localeCompare(b.name));
   return {
@@ -310,7 +313,8 @@ export function users(devices) {
 // The numbers as markdown, for an agent: what the page shows, in tables, with what they mean.
 export function repoReport(n, origin) {
   const table = (head, rows) => [head, head.map(() => '---'), ...rows].map(r => `| ${r.join(' | ')} |`).join('\n');
-  const short = name => name.replace(/^github\.com\//, '');
+  // A repo's name as a link's label, with what Markdown would read in it (__a__ as bold) escaped.
+  const short = name => name.replace(/^github\.com\//, '').replace(/[\\`*_[\]<>|]/g, '\\$&');
   const weeks = [];
   for (let i = n.series.length - 1; i >= 0; i -= n.week) {
     const w = n.series.slice(Math.max(0, i - n.week + 1), i + 1);

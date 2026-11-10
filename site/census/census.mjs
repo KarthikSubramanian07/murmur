@@ -323,17 +323,31 @@ export function summaryHead(listed, now) {
 
 export function summaryRow(r) {
   const m = REPO.exec(r.name);
-  const repo = m ? `[${m[1]}/${m[2]}](https://${r.name})` : text(r.name);
+  const repo = m ? `[${text(`${m[1]}/${m[2]}`)}](https://${r.name})` : text(r.name);
   return cells([repo, text(r.why ? `${r.kind}: ${r.why}` : r.kind), ...(r.counts ? numbers(r.counts) : COLUMNS.map(() => ''))]);
 }
 
-export function summaryEnd(results) {
-  if (!results.length) return '';
-  const sent = results.filter(r => r.kind === 'sent' || r.kind === 'counted');
-  const total = COLUMNS.map((_, i) => sent.reduce((n, r) => n + numbers(r.counts)[i], 0));
-  const tally = KINDS.map(k => [k, results.filter(r => r.kind === k).length]).filter(([, n]) => n);
-  return cells(['**Total**', `${sent.length} ${sent[0]?.kind ?? 'sent'}`, ...total]) +
-    `\n${results.length} ${results.length === 1 ? 'repo' : 'repos'}: ${tally.map(([k, n]) => `${n} ${k}`).join(', ')}.\n`;
+// The summary's totals, kept as numbers as each repo is done (tallied), so that a run holds one
+// repo's counts at a time: a big repo's contributors and days are dropped once its row is written.
+export function summaryTally() {
+  return { repos: 0, kinds: {}, sent: 0, sentKind: '', total: COLUMNS.map(() => 0) };
+}
+
+export function tallied(t, r) {
+  t.repos++;
+  t.kinds[r.kind] = (t.kinds[r.kind] ?? 0) + 1;
+  if (r.kind === 'sent' || r.kind === 'counted') {
+    t.sent++;
+    t.sentKind ||= r.kind;
+    numbers(r.counts).forEach((n, i) => { t.total[i] += n; });
+  }
+}
+
+export function summaryEnd(t) {
+  if (!t.repos) return '';
+  const tally = KINDS.map(k => [k, t.kinds[k] ?? 0]).filter(([, n]) => n);
+  return cells(['**Total**', `${t.sent} ${t.sentKind || 'sent'}`, ...t.total]) +
+    `\n${t.repos} ${t.repos === 1 ? 'repo' : 'repos'}: ${tally.map(([k, n]) => `${n} ${k}`).join(', ')}.\n`;
 }
 
 // Appends to $GITHUB_STEP_SUMMARY, when it is set. A write that fails is logged once, and the rest
@@ -383,8 +397,8 @@ export async function main(args, { read = census } = {}) {
   const skipped = [], unsent = [];
   const write = stepSummary();
   write(summaryHead(names.length, new Date()));
-  const results = []; // for the run's summary: { name, kind, why, counts }
-  const done = r => (results.push(r), write(summaryRow(r)));
+  const tally = summaryTally(); // r is { name, kind, why, counts }, written and tallied, then let go
+  const done = r => (tallied(tally, r), write(summaryRow(r)));
   for (const name of names) {
     let c;
     try {
@@ -428,7 +442,7 @@ export async function main(args, { read = census } = {}) {
     console.log(line);
     done({ name, kind: 'sent', counts: c });
   }
-  write(summaryEnd(results));
+  write(summaryEnd(tally));
   if (unsent.length) throw new Error(`${unsent.length} of ${names.length} repos counted but not sent: ${unsent.join(', ')}`);
   if (unread + skipped.length === names.length && names.length) throw new Error('no repo could be counted');
 }

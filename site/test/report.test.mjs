@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { timingSafeEqual } from 'node:crypto';
-import { census as handle, repoNumbers, repoReport } from '../src/repos.js';
+import { census as handle, repoNumbers, repoReport, health } from '../src/repos.js';
 import { statsD1, sqliteD1 } from './d1.mjs';
 
 // The Workers runtime adds this to Web Crypto; node has it only in node:crypto.
@@ -111,4 +111,20 @@ test("the health comes from repo_census as the census's POSTs leave it", { skip:
   const n = await repoNumbers(db, 14);
   assert.deepEqual(n.census.notCounted, [{ name: 'github.com/a/two', counted: then, listed: daysAgo(3) }]);
   assert.equal(n.census.late, false);
+});
+
+test("a repo listed after midnight is new to a run that began before it and ended after", () => {
+  // The run took its list at 23:50 and counted its last repo at 00:10; the repo was listed at 23:55.
+  const h = health([
+    { name: 'github.com/a/one', counted: '2026-11-11T00:10:00.000Z', reported: '2026-11-01' },
+    { name: 'github.com/b/two', counted: '2026-11-10T23:51:00.000Z', reported: '2026-11-01' },
+    { name: 'github.com/d/new', counted: null, reported: '2026-11-10' },
+  ], Date.parse('2026-11-11T02:00:00Z'));
+  assert.deepEqual(h.fresh.map(r => r.name), ['github.com/d/new']);
+  assert.deepEqual(h.notCounted, []);
+});
+
+test("a repo's name is a link's label in the report, with what Markdown would read in it escaped", async () => {
+  const { md } = await report([row('github.com/a/one', ago(2)), row('github.com/a/__demo__', ago(30))]);
+  assert.ok(section(md).includes('| [a/\\_\\_demo\\_\\_](https://github.com/a/__demo__) |'), section(md));
 });
