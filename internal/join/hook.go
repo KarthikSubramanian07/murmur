@@ -53,21 +53,78 @@ func isBare(ctx context.Context, path string) bool {
 }
 
 // installHooks puts the notice hook in every working tree of the clone, and keeps the file out of
-// commits. It returns the trees it changed.
-func installHooks(ctx context.Context, p Place, exe string) (changed []string, err error) {
+// commits. It returns the trees it changed; one it can't change doesn't stop the others. A tree
+// whose hook file the repo tracks is passed over, with a note saying why: rerunning join can't
+// change that, so it isn't a failure of the join.
+func installHooks(ctx context.Context, p Place, exe string) (changed, notes []string, err error) {
 	if err := ignoreHookFile(p.GitDir); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, top := range worktrees(ctx, p) {
-		did, err := installHook(top, setup.HookCommand(exe))
-		if err != nil {
-			return changed, err
+		path, link, terr := trackedHookPath(ctx, top)
+		if terr != nil {
+			err = errors.Join(err, terr)
+			continue
+		}
+		if path != "" {
+			notes = append(notes, trackedNote(top, path, link))
+			continue
+		}
+		did, ierr := installHook(top, setup.HookCommand(exe))
+		if ierr != nil {
+			err = errors.Join(err, ierr)
+			continue
 		}
 		if did {
 			changed = append(changed, top)
 		}
 	}
-	return changed, nil
+	return changed, notes, err
+}
+
+// trackedHookPath is what git tracks of the hook file's path in the working tree at top: the file
+// itself, or .claude when that is a symbolic link, "" for neither, and whether what it tracks is a
+// link. The hook file is meant to be this user's own, and one the repo tracks isn't: a link there
+// points wherever the repo chose, the user's global ~/.claude/settings.json included, and a plain
+// file would carry this machine's path to mur into the next commit. info/exclude hides neither,
+// since git ignores only files it doesn't track.
+//
+// Names are matched ignoring case: macOS's and Windows' disks do by default, so a tracked .Claude
+// link, or .claude/Settings.Local.json, is the file join would open. It asks with
+// --icase-pathspecs rather than a ":(icase)" pathspec: with GIT_LITERAL_PATHSPECS set, git takes
+// the latter for a file's name and finds nothing, but refuses the former, so the check can't pass
+// by mistake.
+func trackedHookPath(ctx context.Context, top string) (path string, link bool, err error) {
+	dir, _, _ := strings.Cut(hookFile, "/") // .claude
+	out, err := gitx.RunIn(ctx, top, "--icase-pathspecs", "ls-files", "-s", "-z", "--", dir)
+	if err != nil {
+		return "", false, fmt.Errorf("%s: couldn't ask git whether it tracks %s: %w", top, hookFile, err)
+	}
+	for _, rec := range strings.Split(out, "\x00") {
+		meta, name, ok := strings.Cut(rec, "\t")
+		if ok && (strings.EqualFold(name, dir) || strings.EqualFold(name, hookFile)) {
+			return name, strings.HasPrefix(meta, "120000 "), nil
+		}
+	}
+	return "", false, nil
+}
+
+// trackedNote is why join left the hook out of the working tree at top, where git tracks path.
+func trackedNote(top, path string, link bool) string {
+	where := filepath.Join(top, filepath.FromSlash(path))
+	if link {
+		return fmt.Sprintf("No hook in %s: %s is a symbolic link the repo tracks, so join didn't write through it. "+
+			"A committed link points wherever its commit chose, ~/.claude/settings.json included, so find out who added it. "+
+			"Murmur's tools work there without the hook, but messages aren't shown during a turn. "+
+			"To have the hook, take the link out of the repo (`git rm %s`, then commit) and run `%s join` again",
+			top, where, path, brand.Command)
+	}
+	return fmt.Sprintf("No hook in %s: git tracks %s, and join won't put this machine's path to %s in a file a commit could take. "+
+		"Murmur's tools work there without the hook, but messages aren't shown during a turn. "+
+		"To have the hook, move what the repo needs from that file into .claude/settings.json, which is the one meant to be shared, "+
+		"and stop tracking it (`git rm --cached %s`, add it to .gitignore, then commit). That commit deletes the file from each teammate's checkout when they pull it, "+
+		"so each should copy theirs aside first and put it back after. Then run `%s join` again",
+		top, where, brand.Command, path, brand.Command)
 }
 
 // installHook adds the hook to one working tree's settings.local.json and reports whether that
@@ -146,8 +203,21 @@ func hasCommand(groups []any, command string) bool {
 
 // removeHooks takes the hook out of every working tree of the clone and returns the trees it
 // changed. A file that held only the hook is deleted, with its directory if that is then empty.
-func removeHooks(ctx context.Context, p Place) (changed []string, err error) {
+// A link the repo tracks is not written through, as join doesn't, and notes say so; a plain file it
+// tracks is edited, since taking out a hook an older join put there only undoes that join.
+func removeHooks(ctx context.Context, p Place) (changed, notes []string, err error) {
 	for _, top := range worktrees(ctx, p) {
+		tracked, link, terr := trackedHookPath(ctx, top)
+		if terr != nil {
+			err = errors.Join(err, terr)
+			continue
+		}
+		if link {
+			notes = append(notes, fmt.Sprintf("%s is a symbolic link the repo tracks, so leave didn't write through it; "+
+				"if an older %s join put the hook where it points, remove the hook there by hand",
+				filepath.Join(top, filepath.FromSlash(tracked)), brand.Command))
+			continue
+		}
 		path := filepath.Join(top, filepath.FromSlash(hookFile))
 		cfg, raw, rerr := jsonedit.ReadFile(path)
 		if rerr != nil {
@@ -157,7 +227,8 @@ func removeHooks(ctx context.Context, p Place) (changed []string, err error) {
 		if raw == nil || !setup.RemoveHooks(cfg) {
 			continue
 		}
-		if cfg.Len() == 0 && !isLink(path) { // a link is the user's, and its target is written, not deleted
+		// A link is the user's, and its target is written, not deleted; a file the repo tracks stays too.
+		if cfg.Len() == 0 && !isLink(path) && tracked == "" {
 			if rmerr := os.Remove(path); rmerr != nil {
 				err = errors.Join(err, rmerr)
 				continue
@@ -175,7 +246,7 @@ func removeHooks(ctx context.Context, p Place) (changed []string, err error) {
 		}
 		changed = append(changed, top)
 	}
-	return changed, err
+	return changed, notes, err
 }
 
 // ignoreHookFile lists the file in the clone's own ignore file, info/exclude, which every working

@@ -187,7 +187,8 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 
 	// Per repo: the hook that shows incoming messages, in every working tree of the clone.
-	trees, err := installHooks(ctx, p, e.Exe)
+	trees, hookNotes, err := installHooks(ctx, p, e.Exe)
+	r.Notes = append(r.Notes, hookNotes...)
 	for _, t := range trees {
 		r.Did = append(r.Did, "Installed the hook in "+filepath.Join(t, filepath.FromSlash(hookFile))+" (not committed)")
 	}
@@ -264,7 +265,8 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	} else if had {
 		r.Did = append(r.Did, "Removed the record that you joined "+brand.Product+" in this clone")
 	}
-	trees, err := removeHooks(ctx, p)
+	trees, notes, err := removeHooks(ctx, p)
+	r.Notes = append(r.Notes, notes...)
 	for _, t := range trees {
 		r.Did = append(r.Did, "Removed the hook from "+filepath.Join(t, filepath.FromSlash(hookFile)))
 	}
