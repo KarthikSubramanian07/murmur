@@ -143,12 +143,14 @@ type pushJob struct {
 	// key is the session's conversation when the job was made (see Daemon.introduced): the turn
 	// goes to that one, even if the session moves to another before the handoff ends.
 	key string
-	// explainKey is what the session was kept by then, for what it has been told (see explained.go).
-	explainKey string
-	msg        *inMsg
-	via        string
-	route      proto.Route
-	text       string
+	// conv and explainKey are the conversation the session was in then, known for a session of T3
+	// that has stopped too (where key is ""), and what that was kept by, for what it has been told
+	// (see explained.go).
+	conv, explainKey string
+	msg              *inMsg
+	via              string
+	route            proto.Route
+	text             string
 }
 
 // wakeSnapshot copies the page's settings, the wake setting among them. setMu is taken alone,
@@ -497,7 +499,7 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 	if bus.IsPerson(m.Event.From) {
 		views[0].Explained = d.explainedLocked(id, m.Event.From) // recorded once it is handed over
 	}
-	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, explainKey: d.explainKeyLocked(id), msg: m, via: via,
+	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, conv: d.conversationLocked(id), explainKey: d.explainKeyLocked(id), msg: m, via: via,
 		route: route, text: view.Turn(views[0])}
 }
 
