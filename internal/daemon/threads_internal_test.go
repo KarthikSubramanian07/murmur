@@ -45,6 +45,7 @@ func wakeWithin(minutes int) pageSettings {
 }
 
 func TestWithinGoesByT3sRunsWhereKnown(t *testing.T) {
+	t.Parallel()
 	ago := func(d time.Duration) time.Time { return time.Now().Add(-d) }
 	for _, tc := range []struct {
 		name  string
@@ -84,6 +85,7 @@ func TestWithinGoesByT3sRunsWhereKnown(t *testing.T) {
 
 // A session's own setting overrides the device's, by name.
 func TestWithinTakesTheSessionsOwnSetting(t *testing.T) {
+	t.Parallel()
 	d := threadsDaemon(t)
 	inT3(d, "aaaaaa", 0)
 	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{LastRun: time.Now().Add(-20 * time.Minute)}
@@ -103,6 +105,7 @@ func TestWithinTakesTheSessionsOwnSetting(t *testing.T) {
 // A message just handed over as a turn counts as work: a second one right behind it goes in too,
 // before T3's database shows the run the first one started.
 func TestATurnHandedOverCountsAsWork(t *testing.T) {
+	t.Parallel()
 	d := threadsDaemon(t)
 	inT3(d, "aaaaaa", 0)
 	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{LastRun: time.Now().Add(-2*time.Minute - 59*time.Second)}
@@ -117,6 +120,7 @@ func TestATurnHandedOverCountsAsWork(t *testing.T) {
 
 // A stopped session in T3 whose thread hasn't been read goes by when it stopped.
 func TestWithinForAStoppedThreadNotReadYet(t *testing.T) {
+	t.Parallel()
 	d := idleDaemon(map[string]time.Duration{"aaaaaa": time.Minute, "bbbbbb": 10 * time.Minute})
 	d.pushedAt = map[string]time.Time{}
 	d.threads = map[threadKey]t3db.State{}
@@ -142,6 +146,7 @@ func TestWithinForAStoppedThreadNotReadYet(t *testing.T) {
 // a thread no session is in any more. Settled sessions leave presence, are listed as offline, and
 // get nothing.
 func TestSettledThreadsGoOffline(t *testing.T) {
+	t.Parallel()
 	d := threadsDaemon(t)
 	inT3(d, "aaaaaa", 0)
 	inT3(d, "bbbbbb", 0)
@@ -217,6 +222,7 @@ func TestSettledThreadsGoOffline(t *testing.T) {
 
 // Another device's presence says which of its sessions are offline; only while it is current.
 func TestOfflineOnAnotherDevice(t *testing.T) {
+	t.Parallel()
 	d := threadsDaemon(t)
 	d.opt.StaleAfter = time.Hour
 	d.peers["peer"] = &peer{pres: bus.Presence{Device: "peer", Offline: []string{"zzzzzz"}}, lastChange: time.Now()}
@@ -230,6 +236,7 @@ func TestOfflineOnAnotherDevice(t *testing.T) {
 // A name's earlier ID, which another device may still send to, is offline with the settled
 // session that holds the name now.
 func TestOfflineListsForwardedIDs(t *testing.T) {
+	t.Parallel()
 	d := threadsDaemon(t)
 	inT3(d, "aaaaaa", 0)
 	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{Settled: true}
@@ -249,6 +256,7 @@ func TestOfflineListsForwardedIDs(t *testing.T) {
 
 // What a restarted daemon holds for sessions reconnecting isn't given to a settled one.
 func TestCatchUpSkipsASettledSession(t *testing.T) {
+	t.Parallel()
 	d := threadsDaemon(t)
 	d.started = time.Now()
 	d.caughtUp = map[string]bool{}
@@ -268,6 +276,7 @@ func TestCatchUpSkipsASettledSession(t *testing.T) {
 
 // A session at work again lets the handoffs look at what was held back while it was idle.
 func TestActivityLetsHeldMessagesGo(t *testing.T) {
+	t.Parallel()
 	d := threadsDaemon(t)
 	d.sessions["aaaaaa"] = &session{id: "aaaaaa", started: time.Now().Add(-time.Hour)}
 	d.st.Inbox = map[string][]*inMsg{}
@@ -298,6 +307,7 @@ func TestActivityLetsHeldMessagesGo(t *testing.T) {
 // A job picked before its thread settled is not handed over: the check is made again at the
 // handoff, and the message stays in the inbox, neither failed nor marked as handed over.
 func TestHandoffChecksAgain(t *testing.T) {
+	t.Parallel()
 	d := threadsDaemon(t)
 	inT3(d, "aaaaaa", 0)
 	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{Settled: true}
@@ -317,6 +327,7 @@ func TestHandoffChecksAgain(t *testing.T) {
 
 // lookup knows a session another device lists as offline.
 func TestLookupKnowsAnOfflinePeerSession(t *testing.T) {
+	t.Parallel()
 	d := threadsDaemon(t)
 	d.peers["peer"] = &peer{pres: bus.Presence{Device: "peer", Offline: []string{"zzzzzz"}}, lastChange: time.Now()}
 	d.mu.Lock()
@@ -331,6 +342,7 @@ func TestLookupKnowsAnOfflinePeerSession(t *testing.T) {
 
 // A delegate (#188) is off the mesh, goes through its parent, and its commits are credited there.
 func TestDelegateGoesThroughItsParent(t *testing.T) {
+	t.Parallel()
 	d := threadsDaemon(t)
 	inT3(d, "parent", 0)
 	inT3(d, "child1", 0)
@@ -391,6 +403,7 @@ func TestDelegateGoesThroughItsParent(t *testing.T) {
 // From Sol's review of #188: a message on its way in when the delegate is found, a session that
 // finds a thread already known to be a child, and commits made before the thread was read.
 func TestDelegateLeftoversAreCleared(t *testing.T) {
+	t.Parallel()
 	d := threadsDaemon(t)
 	inT3(d, "parent", 0)
 	inT3(d, "child1", 0)
@@ -443,6 +456,7 @@ func TestDelegateLeftoversAreCleared(t *testing.T) {
 // kick from the takeover found the message on its way, so the new owner needs another (Sol's review
 // of #196). Neither a notice nor the next message would otherwise come for it soon.
 func TestRefusedHandoffLetsTheNewOwnerGo(t *testing.T) {
+	t.Parallel()
 	d := threadsDaemon(t)
 	inT3(d, "newnew", 0)
 	m := &inMsg{Event: bus.Event{ID: "taken-over"}, Arrived: time.Now(), Pushing: true}

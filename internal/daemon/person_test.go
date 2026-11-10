@@ -70,6 +70,7 @@ func (d *device) whoEntry(addr string) (proto.SessionView, bool) {
 }
 
 func TestAPersonIsAParticipantOnceTheyHaveAName(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	pa, pb := a.page(), b.page()
@@ -144,6 +145,7 @@ func TestAPersonIsAParticipantOnceTheyHaveAName(t *testing.T) {
 
 // No agent's session can take a person's address.
 func TestASessionCantTakeAPersonsAddress(t *testing.T) {
+	t.Parallel()
 	a := newDevice(t, newRemote(t))
 	conn, resp, err := a.c.Hello(context.Background(), proto.Hello{ID: bus.PersonSession, Agent: "test"})
 	if conn != nil {
@@ -284,6 +286,7 @@ func TestAPersonWakesALongIdleThreadWhereAnAgentWouldnt(t *testing.T) {
 // A person's name still reaches them after they change it, and their page calls them by the new
 // one, on messages from before too.
 func TestAPersonsEarlierNameStillReachesThem(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	b.session("bbbbbb", "")
@@ -310,6 +313,7 @@ func TestAPersonsEarlierNameStillReachesThem(t *testing.T) {
 // that takes: the daemon exits soon after their page closes, and an answer can take hours. What they
 // had, read and unread, is still there.
 func TestAPersonsMessagesOutlastTheDaemon(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	b.session("bbbbbb", "")
@@ -391,6 +395,7 @@ func aged(t *testing.T, a *device, d time.Duration) {
 // Agents talking among themselves don't push a person's conversations out of the page's memory, and
 // the limit still holds for what isn't theirs.
 func TestAgentsChatterDoesntPushOutAPersonsMessages(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.pageMsgs = 3 })
 	b := newDevice(t, remote)
@@ -422,6 +427,7 @@ func TestAgentsChatterDoesntPushOutAPersonsMessages(t *testing.T) {
 // A daemon that stops between logging a message and saving its state leaves the message known by ID
 // but in nobody's inbox. It counts as unread after the restart, and what was already read stays read.
 func TestAMessageLoggedBeforeACrashIsStillUnread(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	b.session("bbbbbb", "")
@@ -476,6 +482,7 @@ func TestAMessageLoggedBeforeACrashIsStillUnread(t *testing.T) {
 // A log grown to more than twice what is kept is cut back when the daemon starts, and the newest
 // messages are the ones left. On Windows this only works once the reader has closed the file.
 func TestALongPersonLogIsCutBack(t *testing.T) {
+	t.Parallel()
 	a := newDevice(t, newRemote(t))
 	pa := a.page()
 	pa.choose("ada")
@@ -519,6 +526,7 @@ func TestALongPersonLogIsCutBack(t *testing.T) {
 // Two people who choose one name at the same moment can't both have it: the names registry takes one
 // claim, and the other is told the name is taken (#268).
 func TestTwoPeopleCantTakeOneName(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	pa, pb := a.page(), b.page()
@@ -569,6 +577,7 @@ func TestTwoPeopleCantTakeOneName(t *testing.T) {
 // keeps it; the other's person is asked for another name, can't send until they choose one, and
 // keeps what was sent to them (#268).
 func TestANameHeldFromBeforeIsClaimedOnce(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	b.session("bbbbbb", "")
@@ -640,6 +649,7 @@ func TestANameFromARenameBeforeClaimsIsClaimed(t *testing.T) {
 // A daemon from before #268 read the registry past people's claims without keeping them. Upgraded, it
 // reads the registry again from the start, and a name claimed back then is taken (#268).
 func TestAnUpgradedDaemonReadsClaimsItPassedOver(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	a.page().choose("ada")
@@ -763,6 +773,7 @@ func TestAPersonsFirstMessageNamesThem(t *testing.T) {
 // A person's account is tagged human wherever it is listed, on their device and on another, and no
 // session can take the tag or have it read off the bus (#267).
 func TestAPersonIsTaggedHuman(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	a.session("aaaaaa", "")
