@@ -26,6 +26,7 @@ func TestStatusFollowsTheLooks(t *testing.T) {
 	check(gitDir, url, "1.2.3-dev", "dev", "")
 	check(gitDir, url, "", "dev", "")
 	check(gitDir, "https://gitlab.com/acme/widget.git", "1.2.3", "not-github", "")
+	check(gitDir, "https://github.com/acme/widget.git?access_token=ghp_secret", "1.2.3", "not-github", "")
 
 	f.public = false
 	if _, err := Once(ctx, f.opts(gitDir, day1)); err != nil {

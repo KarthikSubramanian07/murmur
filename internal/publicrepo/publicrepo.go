@@ -325,7 +325,7 @@ func writeState(gitDir string, st state) error {
 // (https or ssh, with or without .git or a user name), or "" if it isn't a repo on github.com.
 func Address(url string) string {
 	parts := strings.Split(RepoKey(url), "/")
-	if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+	if len(parts) != 3 || !githubName(parts[1]) || !githubName(parts[2]) {
 		return ""
 	}
 	switch parts[0] {
@@ -333,6 +333,21 @@ func Address(url string) string {
 		return "github.com/" + parts[1] + "/" + parts[2]
 	}
 	return ""
+}
+
+// githubName says whether s could be a GitHub owner or repo name, which hold only letters, digits,
+// '-', '_' and '.'. Anything else, such as a query or fragment left on a remote's URL, which can
+// carry a token, means the address isn't one to show or send.
+func githubName(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 // RepoKey is a remote's address reduced to host and path, lowercased, so every way of writing one
