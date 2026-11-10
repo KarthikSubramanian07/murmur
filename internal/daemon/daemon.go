@@ -22,6 +22,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
@@ -120,6 +121,12 @@ type Options struct {
 	// page (#240). The daemon adds whether an installed update is waiting. The page calls for
 	// it every few seconds, so it must not reach the network.
 	Version func() web.Version
+	// Clones, if set, is the user's record of this machine's joined clones (internal/clones): the
+	// daemon adds its clone there as it starts, so a clone that joined before the record existed
+	// is on it too. Tests leave it unset.
+	Clones string
+	// Repos, if set, lets the page list this machine's clones and switch to another's page (#348).
+	Repos web.Repos
 }
 
 const defaultPageAddr = "127.0.0.1:0"
@@ -275,6 +282,12 @@ type Daemon struct {
 	owner   string
 	token   string // the sessions' secret, in daemon.json
 	pageTok string // the page's secret (#42): the address carries it, so it opens the page, not the sessions' port
+	// repoName is the repository's name from its remote's address, which the page's repo picker
+	// shows.
+	repoName string
+	// page is the page's server, nil until it is made and when the page isn't served. OpPageKey
+	// asks it for a key.
+	page    atomic.Pointer[web.Server]
 	started time.Time
 	log     *log.Logger
 
@@ -700,13 +713,19 @@ func Run(ctx context.Context, opt Options) error {
 		d.log.Printf("page for humans on %s", info.Web)
 	}
 
+	if d.opt.Clones != "" {
+		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName}); err != nil {
+			d.log.Printf("this clone isn't on the record of this machine's clones, so other clones' pages can't switch to it: %v", err)
+		}
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	d.bgCtx = ctx
-	go d.serve(ctx, ln)
 	if pageLn != nil {
-		d.servePage(ctx, pageLn)
+		d.servePage(ctx, pageLn) // first, so a page key asked for at once finds the page
 	}
+	go d.serve(ctx, ln)
 	// Tracked, as the syncs it runs start background work of their own (clearOwnJunk).
 	d.bg.Add(1)
 	go func() {
@@ -844,6 +863,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		return nil, err
 	}
 	d.owner = d.repo.Config(ctx, "user.name")
+	d.repoName = clones.NameOf(d.repo.Config(ctx, "remote."+d.repo.Remote+".url"))
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}
@@ -1173,7 +1193,9 @@ func (d *Daemon) restartWhenIdle(ctx context.Context) {
 			return
 		}
 		d.updateReady = true
-		if len(d.pushing) == 0 && (d.restartAsked || !d.pageOpenLocked(time.Now())) {
+		// A page key handed out for a tab on its way here (#348) dies with this daemon's page server:
+		// the restart waits out its minute, so the tab isn't turned away.
+		if len(d.pushing) == 0 && (d.restartAsked || !d.pageOpenLocked(time.Now())) && !d.pageKeysOut() {
 			d.updating = true
 			d.mu.Unlock()
 			d.stop()
