@@ -195,6 +195,12 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 		if bus.Decode(c.Message, &rec) != nil {
 			continue
 		}
+		if !c.Root {
+			// Murmur writes a snapshot only on a new root, the repair's first commit. One anywhere
+			// else isn't Murmur's, and could mark any number of names used, for good, on every
+			// daemon that read it.
+			rec.Used = nil
+		}
 		claims := rec.Claims()
 		if name, dev, ok := rec.Reservation(); ok {
 			// The first reservation of a name gives it its device; a later one counts for nothing,

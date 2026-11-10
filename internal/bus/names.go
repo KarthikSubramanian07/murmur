@@ -13,7 +13,8 @@ import (
 // name at once. The device records the session that took it with an assignment later. A snapshot,
 // which a new root carries after the registry was lost or overwritten, lists every name its writer
 // knew to be used, so that daemons joining later learn them all. A commit can be a snapshot and
-// either of the others.
+// either of the others. A reader takes a snapshot only from a root commit, the one place Murmur
+// writes it.
 //
 // A reader that predates reservations takes one for a name in use by a session it doesn't know
 // (Claims gives it no address), which is what keeps it from handing the name out.

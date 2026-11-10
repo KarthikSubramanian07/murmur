@@ -28,6 +28,7 @@ type Commit struct {
 	SHA     string
 	Time    time.Time // committer time, the writer's clock
 	Message string
+	Root    bool // it has no parent (Log alone says)
 }
 
 // PushMode chooses how a push may move the remote ref.
@@ -276,7 +277,7 @@ const (
 // Log returns the commits after from (exclusive; "" for the start) up to to, oldest first.
 func (r *Repo) Log(ctx context.Context, from, to string) ([]Commit, error) {
 	args := []string{"log", "--no-show-signature", "--no-color", "--reverse",
-		"--format=%H%x00%ct%x00%B%x1e", to}
+		"--format=%H%x00%P%x00%ct%x00%B%x1e", to}
 	if from != "" {
 		args = append(args, "^"+from)
 	}
@@ -287,12 +288,12 @@ func (r *Repo) Log(ctx context.Context, from, to string) ([]Commit, error) {
 	var commits []Commit
 	for _, rec := range strings.Split(out, recordSep) {
 		rec = strings.TrimLeft(rec, "\r\n")
-		parts := strings.SplitN(rec, fieldSep, 3)
-		if len(parts) != 3 {
+		parts := strings.SplitN(rec, fieldSep, 4)
+		if len(parts) != 4 {
 			continue
 		}
-		secs, _ := strconv.ParseInt(parts[1], 10, 64)
-		commits = append(commits, Commit{SHA: parts[0], Time: time.Unix(secs, 0), Message: parts[2]})
+		secs, _ := strconv.ParseInt(parts[2], 10, 64)
+		commits = append(commits, Commit{SHA: parts[0], Root: parts[1] == "", Time: time.Unix(secs, 0), Message: parts[3]})
 	}
 	return commits, nil
 }
