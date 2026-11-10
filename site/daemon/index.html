@@ -212,9 +212,10 @@
   html:not(.js) .end .links { display: flex; flex-wrap: wrap; margin-top: 16px; }
   html:not(.js) .after { display: none; }
   .baked svg { display: block; width: 100%; height: auto; margin-bottom: 28px; }
-  /* A hint to scroll, for the first screen only: it fades once the page moves. */
+  /* A hint to scroll, for the first screen only: it fades once the page moves. The arrow nudges twice,
+     3.6 s, and rests: motion that starts itself and runs past 5 s would need a pause (WCAG 2.2.2). */
   .scroll-hint { position: fixed; left: 50%; bottom: clamp(16px, 4vh, 32px); z-index: 20; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--cream); font-size: 13px; font-weight: 500; letter-spacing: .02em; pointer-events: none; transition: opacity .4s; }
-  .scroll-hint svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; animation: hint-nudge 1.8s ease-in-out infinite; }
+  .scroll-hint svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; animation: hint-nudge 1.8s ease-in-out 2; }
   .scroll-hint.gone { opacity: 0; }
   @keyframes hint-nudge { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
   @media (prefers-reduced-motion: reduce) { .scroll-hint svg { animation: none; } }
