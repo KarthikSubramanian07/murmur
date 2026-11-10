@@ -9,8 +9,8 @@ import (
 )
 
 // A clone recorded by join, then by its daemon with the repository's name, is listed once with that
-// name; one whose folder is gone is dropped from the record as it is read, and one whose user has
-// left isn't listed.
+// name; one whose folder is gone, or whose user has left, isn't listed, and stays on the record, as
+// a join may be writing it again.
 func TestTheRecordListsJoinedClonesThatAreStillThere(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "record")
 	root := t.TempDir()
@@ -47,8 +47,8 @@ func TestTheRecordListsJoinedClonesThatAreStillThere(t *testing.T) {
 		t.Fatalf("listed %+v; want healveda (a) and murmur (b)", got)
 	}
 	entries, _ := os.ReadDir(dir)
-	if len(entries) != 3 {
-		t.Errorf("the record keeps %d files; the deleted clone should be off it, and the left one kept for a join that may be under way", len(entries))
+	if len(entries) != 4 {
+		t.Errorf("the record keeps %d files; listing it should remove none", len(entries))
 	}
 
 	// A leave takes the clone off; a second is no error.
@@ -63,7 +63,7 @@ func TestTheRecordListsJoinedClonesThatAreStillThere(t *testing.T) {
 	}
 }
 
-// No record yet is an empty list, not an error; a file the package didn't write is dropped.
+// No record yet is an empty list, not an error; a file the package didn't write isn't listed.
 func TestAnEmptyOrStrangeRecord(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "record")
 	if got, err := List(dir, func(string) bool { return true }); err != nil || len(got) != 0 {
@@ -74,9 +74,6 @@ func TestAnEmptyOrStrangeRecord(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, ".clone-123"), []byte(`{"gitDir":"/half"}`), 0o600) // being written
 	if got, _ := List(dir, func(string) bool { return true }); len(got) != 0 {
 		t.Fatalf("listed %v", got)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "0123456789abcdef.json")); err == nil {
-		t.Error("a record that names no absolute git dir is kept")
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".clone-123")); err != nil {
 		t.Error("a file being written was removed")

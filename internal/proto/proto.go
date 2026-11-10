@@ -70,6 +70,10 @@ const (
 	ShutdownMax    = DrainTimeout + GoodbyeTimeout
 )
 
+// ErrRestarting is OpPageKey's refusal from a daemon that has begun restarting onto an update: the
+// caller asks the next daemon.
+const ErrRestarting = "restarting onto an update; ask the next daemon"
+
 // CLISession is the session ID of requests from the command line. It is always registered on its
 // device, so a human can send and read an inbox without an agent.
 const CLISession = "cli"

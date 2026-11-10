@@ -396,6 +396,13 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		if page == nil {
 			return fail("this daemon isn't serving the page")
 		}
+		// Under mu, as the restart onto an update decides, so no key is made after it has looked
+		// for keys still out: the next daemon's page wouldn't know it (Sol's review, 2026-11-09).
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if d.updating {
+			return fail(proto.ErrRestarting)
+		}
 		return proto.Response{OK: true, PageKey: page.PageKey()}
 
 	case proto.OpStop:

@@ -3,13 +3,17 @@ package clones
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -78,15 +82,30 @@ func (p Picker) Open(ctx context.Context, id string) (string, error) {
 		if c.ID() != id {
 			continue
 		}
-		cl, err := client.Connect(ctx, c.GitDir, true)
-		if err != nil {
-			return "", err
+		// A daemon restarting onto an update refuses to give keys, and the next one gives them; one
+		// that stops just then fails the call. Either way the next daemon is asked, until ctx ends.
+		for {
+			cl, err := client.Connect(ctx, c.GitDir, true)
+			if err != nil {
+				return "", err
+			}
+			u, err := cl.PageKeyURL(ctx)
+			if errors.Is(err, client.ErrNoPage) {
+				return "", errors.New(c.Label() + "'s daemon isn't serving its page; its daemon.log says why")
+			}
+			if err == nil {
+				return u, nil
+			}
+			var ne net.Error
+			if err.Error() != proto.ErrRestarting && !errors.As(err, &ne) && !errors.Is(err, io.EOF) && !errors.Is(err, syscall.ECONNREFUSED) && !errors.Is(err, syscall.ECONNRESET) {
+				return "", err // a refusal, which asking again won't change
+			}
+			select {
+			case <-ctx.Done():
+				return "", err
+			case <-time.After(time.Second):
+			}
 		}
-		u, err := cl.PageKeyURL(ctx)
-		if errors.Is(err, client.ErrNoPage) {
-			return "", errors.New(c.Label() + "'s daemon isn't serving its page; its daemon.log says why")
-		}
-		return u, err
 	}
 	return "", web.ErrNoRepo
 }

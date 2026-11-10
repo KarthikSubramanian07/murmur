@@ -1268,7 +1268,8 @@ restart. Successful updates log the old and new versions in the daemon log.
 
 After installation, the daemon waits until no message handoff is in flight and no page counts as
 open, or until the page asks for the restart (#240), and until no key to its page that another
-clone's page handed a tab is still good (#348), since the next daemon's page doesn't know it. It then blocks new handoffs and shuts down
+clone's page handed a tab is still good (#348), since the next daemon's page doesn't know it. From
+then on it gives no keys, and the daemon asking for one asks the next daemon. It then blocks new handoffs and shuts down
 normally, saving state and releasing the clone lock. It starts the installed binary with the same detached
 process helper clients use, forwarding its own flags (including poll and idle settings). Sessions
 reconnect through the existing grace and inbox restoration. Running MCP servers keep their loaded binary until their sessions
