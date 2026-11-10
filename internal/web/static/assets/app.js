@@ -99,12 +99,16 @@ function h(tag, props, ...kids) {
   for (const [k, v] of Object.entries(props || {})) {
     if (v == null || v === false) continue;
     if (k === "class") el.className = v;
-    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
-    else el.setAttribute(k, v === true ? "" : String(v));
+    else if (k.startsWith("on")) {
+      el.addEventListener(k.slice(2), v);
+      (el.listeners ||= []).push([k.slice(2), v]); // for graft, which moves them to the node kept
+    } else el.setAttribute(k, v === true ? "" : String(v));
   }
   for (const kid of kids.flat(Infinity)) {
     if (kid == null || kid === false || kid === "") continue;
-    el.append(kid instanceof Node ? kid : String(kid));
+    // The focused node, if it outlasts renders (a composer), stays in the page; a mark takes its
+    // place in the new tree, for graft.
+    el.append(kid === held.el ? held.mark : kid instanceof Node ? kid : String(kid));
   }
   return el;
 }
@@ -205,6 +209,68 @@ function plural(n, word) {
 
 const root = document.getElementById("root");
 let content; // the scrolling pane, kept across renders so its scroll position is too
+const held = { el: null, mark: null }; // the focused element while a render builds around it
+
+// A render builds the page anew. The focused element is kept, with the elements it sits in, and
+// everything around them is replaced: moved or rebuilt, it would lose focus, and a screen reader
+// would read it out again on every poll. Its counterpart in the new tree is the element with its
+// data-key, or its place among the focusable elements of the nearest message or keyed element.
+function twinOf(el, kids) {
+  if (held.mark.parentNode) return held.mark;
+  const find = (sel) => {
+    for (const k of kids) {
+      if (k.matches(sel)) return k;
+      const f = k.querySelector(sel);
+      if (f) return f;
+    }
+    return null;
+  };
+  const by = (n) => (n.dataset.key ? `[data-key="${CSS.escape(n.dataset.key)}"]` : n.dataset.id ? `[data-id="${CSS.escape(n.dataset.id)}"]` : n.dataset.cid ? `[data-cid="${CSS.escape(n.dataset.cid)}"]` : null);
+  if (by(el)) return find(by(el));
+  const anchor = el.parentElement?.closest("[data-key], [data-id], [data-cid]");
+  const focusable = (n) => [...n.querySelectorAll("button, a[href], input, textarea, [tabindex]")];
+  const i = anchor ? focusable(anchor).indexOf(el) : -1;
+  const twin = i >= 0 ? find(by(anchor)) : null;
+  return twin ? focusable(twin)[i] || null : null;
+}
+
+function graft(parent, kids, el, twin) {
+  const chain = [];
+  for (let n = el; n && n !== parent; n = n.parentNode) chain.unshift(n);
+  const twins = [];
+  for (let n = twin; n; n = n.parentNode) {
+    twins.unshift(n);
+    if (kids.includes(n)) break;
+  }
+  if (chain.length !== twins.length || !kids.includes(twins[0])) return false;
+  if (chain.some((n, i) => twins[i] !== held.mark && n.tagName !== twins[i].tagName)) return false;
+  let list = kids;
+  for (let i = 0; i < chain.length; i++) {
+    const keep = chain[i];
+    const at = list.indexOf(twins[i]);
+    for (const n of [...parent.childNodes]) if (n !== keep) n.remove();
+    keep.before(...list.slice(0, at));
+    keep.after(...list.slice(at + 1));
+    if (twins[i] === held.mark) break; // the element itself, which outlasts renders
+    adopt(keep, twins[i]);
+    if (i === chain.length - 1) keep.replaceChildren(...twins[i].childNodes);
+    else list = [...twins[i].childNodes];
+    parent = keep;
+  }
+  return true;
+}
+
+// Gives a kept element its counterpart's attributes and listeners.
+function adopt(old, neu) {
+  for (const a of [...old.attributes]) if (!neu.hasAttribute(a.name)) old.removeAttribute(a.name);
+  for (const a of neu.attributes) {
+    if (a.name === "style") old.style.cssText = neu.style.cssText; // the CSP takes styles only through the CSSOM
+    else if (old.getAttribute(a.name) !== a.value) old.setAttribute(a.name, a.value);
+  }
+  for (const [type, fn] of old.listeners || []) old.removeEventListener(type, fn);
+  for (const [type, fn] of neu.listeners || []) old.addEventListener(type, fn);
+  old.listeners = neu.listeners;
+}
 
 function render() {
   if (ui.conn === "denied" || !ui.token) {
@@ -220,38 +286,64 @@ function render() {
     content = null;
     return;
   }
+  const focused = root.contains(document.activeElement) ? document.activeElement : null;
   const keep = document.activeElement?.dataset?.key;
   const caret = caretOf(document.activeElement);
   const scroll = content ? content.scrollTop : 0;
   const chat = chatScroll();
   const side = root.querySelector(".sidebar-content, .mini-scroll")?.scrollTop || 0;
-  if (!content) content = h("div", { class: "content" });
-  const inner = page(); // before the top bar, which counts what this settles
-  content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
-  content.replaceChildren(inner);
-  // On a phone the sidebar is a drawer over the page, opened from the top bar.
-  const drawer = NARROW.matches && ui.drawer;
-  root.replaceChildren(
-    h(
-      "div",
-      { class: "app" + (drawer ? " drawer-open" : "") },
-      sidebar(),
-      drawer && h("div", { class: "drawer-scrim", "aria-hidden": "true", onclick: () => setDrawer(false) }),
-      h("main", { class: "main", inert: drawer ? true : null }, showTopbar() ? topbar() : null, content),
-    ),
-    ui.setup && setupDialog(),
-    ui.picker && pickerDialog(),
-    ui.tagMenu && tagMenu(),
-  );
+  // With the focus in the pane, the new pane is built apart, and graft keeps the old one.
+  if (!content || content.contains(focused)) content = h("div", { class: "content" });
+  held.el = focused;
+  held.mark = focused && h("span");
+  let kids;
+  try {
+    const inner = page(); // before the top bar, which counts what this settles
+    content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
+    content.replaceChildren(inner);
+    // On a phone the sidebar is a drawer over the page, opened from the top bar. A dialog or the
+    // tag menu holds the keyboard: the page behind it is inert until it closes.
+    const drawer = NARROW.matches && ui.drawer;
+    const modal = !!(ui.setup || ui.picker || ui.tagMenu);
+    kids = [
+      h(
+        "div",
+        { class: "app" + (drawer ? " drawer-open" : ""), inert: modal ? true : null },
+        // Past the sidebar's many rows to the page, for the keyboard (WCAG 2.4.1).
+        !NARROW.matches && h("button", { class: "skip-link", "data-key": "skip", onclick: () => root.querySelector("main")?.focus() }, "Skip to content"),
+        sidebar(),
+        drawer && h("div", { class: "drawer-scrim", "aria-hidden": "true", onclick: () => setDrawer(false) }),
+        h(
+          "main",
+          { class: "main", tabindex: -1, "data-key": "main", inert: drawer ? true : null },
+          showTopbar() ? topbar() : h("h1", { class: "sr-only" }, viewTitle()),
+          content,
+        ),
+      ),
+      ui.setup && setupDialog(),
+      ui.picker && pickerDialog(),
+      ui.tagMenu && tagMenu(),
+    ].filter(Boolean);
+  } finally {
+    held.el = null;
+  }
+  const twin = focused && twinOf(focused, kids);
+  if (twin && graft(root, kids, focused, twin)) {
+    content = root.querySelector(".content") || content;
+  } else {
+    // The page changed around it too much to keep it: put the focus back on its counterpart.
+    if (twin && twin === held.mark) held.mark.replaceWith(focused);
+    root.replaceChildren(...kids);
+    const el = keep ? root.querySelector(`[data-key="${CSS.escape(keep)}"]`) : twin;
+    if (el?.isConnected) {
+      el.focus({ preventScroll: true });
+      restoreCaret(el, caret);
+    }
+  }
   content.scrollTop = scroll;
   const sideNow = root.querySelector(".sidebar-content, .mini-scroll");
   if (sideNow) sideNow.scrollTop = side;
   restoreChatScroll(chat);
-  if (keep) {
-    const el = root.querySelector(`[data-key="${CSS.escape(keep)}"]`);
-    el?.focus({ preventScroll: true });
-    restoreCaret(el, caret);
-  }
   fitComposers();
   document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME;
   queueMicrotask(markOpenRead);
@@ -1442,6 +1534,7 @@ function membersPanel(c, rows) {
           "button",
           {
             class: "g-mp-row" + (r.d && !r.d.reachable ? " stale" : ""),
+            "data-key": "mp-" + r.name,
             onclick: () => {
               ui.membersOpen = false;
               if (r.person) return startChat(r.name);
@@ -1463,6 +1556,14 @@ document.addEventListener("click", () => {
   if (ui.membersOpen) {
     ui.membersOpen = false;
     render();
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && ui.membersOpen && !e.defaultPrevented) {
+    e.preventDefault();
+    ui.membersOpen = false;
+    render();
+    root.querySelector('[data-key="members"]')?.focus();
   }
 });
 
@@ -1762,9 +1863,17 @@ function openTagMenu(addrs, anchor) {
   const r = anchor.getBoundingClientRect();
   // Below the button, or above it when there is more room there than the menu's 20rem.
   const up = window.innerHeight - r.bottom < 340 && r.top > window.innerHeight - r.bottom;
-  ui.tagMenu = { addrs, x: Math.max(8, Math.min(r.left, window.innerWidth - 264)), top: up ? null : r.bottom + 4, bottom: up ? window.innerHeight - r.top + 4 : null, q: "", err: "", known: new Set() };
+  ui.tagMenu = { addrs, x: Math.max(8, Math.min(r.left, window.innerWidth - 264)), top: up ? null : r.bottom + 4, bottom: up ? window.innerHeight - r.top + 4 : null, q: "", err: "", known: new Set(), from: anchor.dataset.key };
   render();
   root.querySelector('[data-key="tagmenu-q"]')?.focus();
+}
+
+// Closing the menu gives the focus back to the button that opened it.
+function closeTagMenu() {
+  const from = ui.tagMenu?.from;
+  ui.tagMenu = null;
+  render();
+  if (from) root.querySelector(`[data-key="${CSS.escape(from)}"]`)?.focus();
 }
 
 // The tag menu: each tag in use, checked when every session it is open on has it, and a field that
@@ -1776,10 +1885,7 @@ function tagMenu() {
     ui.tagMenu = null;
     return null;
   }
-  const close = () => {
-    ui.tagMenu = null;
-    render();
-  };
+  const close = closeTagMenu;
   const q = m.q.trim().toLowerCase();
   // A tag stays listed until the menu closes, so taking it off its last session doesn't take the
   // row from under the pointer.
@@ -2634,7 +2740,7 @@ function startChat(name) {
 
 function askForName(then) {
   const a = ui.state?.account;
-  ui.setup = { name: (a?.taken && a.name) || a?.suggested || "", error: "", busy: false, then };
+  ui.setup = { name: (a?.taken && a.name) || a?.suggested || "", error: "", busy: false, then, from: document.activeElement?.dataset?.key || null };
   render();
   const field = root.querySelector('[data-key="setup-name"]');
   field?.focus();
@@ -2656,6 +2762,7 @@ async function submitName() {
     poll();
     setup.then?.();
     render();
+    refocus(setup.from);
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
     setup.busy = false;
@@ -2663,6 +2770,11 @@ async function submitName() {
     render();
     root.querySelector('[data-key="setup-name"]')?.focus();
   }
+}
+
+// A dialog that closes gives the focus back to what opened it, unless what it did moved it on.
+function refocus(key) {
+  if (key && !root.contains(document.activeElement)) root.querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus();
 }
 
 function dialog(label, close, ...kids) {
@@ -2690,6 +2802,7 @@ function setupDialog() {
   const close = () => {
     ui.setup = null;
     render();
+    refocus(s.from);
   };
   return dialog(
     taken ? "Choose a new name" : "Choose your name",
@@ -2744,8 +2857,8 @@ function setupDialog() {
       h(
         "div",
         { class: "dialog-actions" },
-        h("button", { type: "button", class: "btn btn-ghost", onclick: close }, "Cancel"),
-        h("button", { type: "submit", class: "btn btn-primary", disabled: s.busy }, s.busy ? "Saving…" : "Continue"),
+        h("button", { type: "button", class: "btn btn-ghost", "data-key": "setup-cancel", onclick: close }, "Cancel"),
+        h("button", { type: "submit", class: "btn btn-primary", "data-key": "setup-continue", disabled: s.busy }, s.busy ? "Saving…" : "Continue"),
       ),
     ),
   );
@@ -3645,8 +3758,7 @@ function start() {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && ui.tagMenu && !e.defaultPrevented) {
     e.preventDefault(); // this Escape was the menu's; the phone's drawer under it stays open
-    ui.tagMenu = null;
-    render();
+    closeTagMenu();
   }
 });
 window.addEventListener("hashchange", () => {
