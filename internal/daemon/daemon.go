@@ -620,6 +620,11 @@ func Run(ctx context.Context, opt Options) error {
 		return err
 	}
 	defer lock.Close()
+	// A daemon.json here now is a dead daemon's, as a live one would hold the lock. It goes at once,
+	// not when this one's is written after the first sync: until then a client would ping its
+	// address, find the lock held, and take whatever answers there for this daemon.
+	infoPath := filepath.Join(dir, "daemon.json")
+	os.Remove(infoPath)
 
 	d, err := open(ctx, opt, dir)
 	if err != nil {
@@ -664,7 +669,6 @@ func Run(ctx context.Context, opt Options) error {
 			keep.Close()
 		}
 	}()
-	infoPath := filepath.Join(dir, "daemon.json")
 	info := proto.Info{Addr: ln.Addr().String(), Token: d.token, PID: os.Getpid(), Device: d.device}
 	if pageLn != nil {
 		info.Web, info.PageToken = pageLn.Addr().String(), d.pageTok
@@ -738,6 +742,11 @@ func Run(ctx context.Context, opt Options) error {
 	case <-ctx.Done():
 	case <-d.quit:
 	}
+	// daemon.json goes before the port does. A client trusts the address in it while the lock is
+	// held, and the lock is held until the drain and the goodbye are done, which can take seconds:
+	// with the port given up first, another user's process could take it and be trusted. Sessions
+	// reconnect in that time, as their connections drop now, and find no daemon.
+	os.Remove(infoPath)
 	cancel()
 	ln.Close() // no new connections, so nothing joins bg while it drains
 	drained := make(chan struct{})
