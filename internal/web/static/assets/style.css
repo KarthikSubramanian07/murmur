@@ -1061,13 +1061,15 @@ a.g-pr:hover {
   transform: scale(0.9);
 }
 
-/* A button's tooltip (app.js showTip), as T3 Code's: small, dark, quick to show and to move. */
+/* The page's tooltip (app.js showTip), as T3 Code's: small, in the inverse of the page, quick to
+ * show and to move. A long one wraps. */
 .tip {
   position: fixed;
   z-index: 100;
   top: 0;
   left: 0;
-  max-width: 16rem;
+  width: max-content;
+  max-width: min(28rem, calc(100vw - 12px));
   padding: 0.25rem 0.5rem;
   border-radius: var(--radius-md);
   background: var(--foreground);
@@ -1075,7 +1077,8 @@ a.g-pr:hover {
   font-size: 0.75rem;
   font-weight: 500;
   line-height: 1rem;
-  white-space: nowrap;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
   box-shadow: var(--shadow-popover);
   pointer-events: none;
   opacity: 0;

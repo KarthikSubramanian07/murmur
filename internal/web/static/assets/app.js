@@ -3770,24 +3770,55 @@ NARROW.addEventListener("change", () => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !e.defaultPrevented && ui.drawer && !ui.setup && !ui.picker && !ui.tagMenu) setDrawer(false);
 });
-// Tooltips for icon buttons, drawn by the page rather than the browser: a browser's title waits about
-// a second and can't be styled. A tip shows 150 ms after the pointer settles on a [data-tip], or at
-// once when another tip was showing a moment ago, so sliding along a row of buttons reads each one.
-// Keyboard focus shows it too. The tip lives outside #root, so a render doesn't take it away.
+// Tooltips, drawn by the page rather than the browser: a browser's title waits about a second and
+// can't be styled. Any element with a title, or a data-tip, gets one. While the tip shows, the
+// title moves to data-tip-title so the browser's own doesn't show too, and it comes back after, so
+// assistive tech still reads it.
+//
+// A small control's tip shows 150 ms after the pointer settles on it; a row or a message, which the
+// pointer crosses on its way elsewhere, waits 600 ms. Once a tip is showing, the next one shows at
+// once, so sliding along a row of buttons reads each. Keyboard focus shows it too. A wide element's
+// tip sits over the pointer rather than its middle. The tip lives outside #root, so a render doesn't
+// take it away.
 const tip = h("div", { class: "tip", role: "tooltip", "aria-hidden": "true" });
 document.body.append(tip);
-let tipFor = null;
+let tipFor = null; // the element whose tip shows, or is about to
 let tipTimer = 0;
 let tipHiddenAt = 0;
+let tipShown = false;
+let pointerX = 0;
 
-function showTip(el) {
+function tipText(el) {
+  return el.dataset.tip || el.dataset.tipTitle || el.getAttribute("title") || "";
+}
+
+// Takes an element's title for the page's tip, and gives it back.
+function borrowTitle(el) {
+  const t = el.getAttribute("title");
+  if (t) {
+    el.dataset.tipTitle = t;
+    el.removeAttribute("title");
+  }
+}
+function returnTitle(el) {
+  if (el?.dataset.tipTitle) {
+    el.setAttribute("title", el.dataset.tipTitle);
+    delete el.dataset.tipTitle;
+  }
+}
+
+function showTip(el, atPointer) {
   clearTimeout(tipTimer);
-  tipFor = el;
-  tip.textContent = el.dataset.tip;
+  if (!el.isConnected) return hideTip();
+  const text = tipText(el);
+  if (!text) return hideTip();
+  tip.textContent = text;
   tip.classList.add("on");
+  tipShown = true;
   const r = el.getBoundingClientRect();
   const t = tip.getBoundingClientRect();
-  const x = Math.max(6, Math.min(r.left + r.width / 2 - t.width / 2, window.innerWidth - t.width - 6));
+  const mid = atPointer && r.width > 120 ? pointerX : r.left + r.width / 2;
+  const x = Math.max(6, Math.min(mid - t.width / 2, window.innerWidth - t.width - 6));
   const above = r.top - t.height - 6 >= 6;
   tip.style.left = x + "px";
   tip.style.top = (above ? r.top - t.height - 6 : r.bottom + 6) + "px";
@@ -3796,30 +3827,40 @@ function showTip(el) {
 
 function hideTip() {
   clearTimeout(tipTimer);
-  if (tipFor) tipHiddenAt = Date.now();
+  if (tipShown) tipHiddenAt = Date.now();
+  tipShown = false;
+  returnTitle(tipFor);
   tipFor = null;
   tip.classList.remove("on");
 }
 
-function queueTip(el) {
+function queueTip(el, atPointer) {
   if (el === tipFor) return;
-  clearTimeout(tipTimer);
-  if (tipFor || Date.now() - tipHiddenAt < 400) return showTip(el);
-  tipTimer = setTimeout(() => el.isConnected && showTip(el), 150);
+  hideTip();
+  tipFor = el;
+  borrowTitle(el);
+  if (Date.now() - tipHiddenAt < 400 || tipShown) return showTip(el, atPointer);
+  const r = el.getBoundingClientRect();
+  const small = r.width <= 64 && r.height <= 48;
+  tipTimer = setTimeout(() => showTip(el, atPointer), small ? 150 : 600);
 }
 
+const TIPPED = "[data-tip], [title], [data-tip-title]";
 document.addEventListener("pointerover", (e) => {
   if (e.pointerType === "touch") return;
-  const el = e.target.closest?.("[data-tip]");
-  el ? queueTip(el) : hideTip();
+  pointerX = e.clientX;
+  const el = e.target.closest?.(TIPPED);
+  el ? queueTip(el, true) : hideTip();
 });
-document.addEventListener("pointerleave", hideTip);
+document.addEventListener("pointermove", (e) => (pointerX = e.clientX), { passive: true });
+document.documentElement.addEventListener("pointerleave", hideTip);
 document.addEventListener("focusin", (e) => {
-  const el = e.target.closest?.("[data-tip]");
-  if (el && el.matches(":focus-visible")) queueTip(el);
+  const el = e.target.closest?.(TIPPED);
+  if (el && e.target.matches(":focus-visible")) queueTip(el, false);
 });
 document.addEventListener("focusout", hideTip);
 document.addEventListener("pointerdown", hideTip, true);
+document.addEventListener("keydown", (e) => e.key === "Escape" && tipShown && hideTip());
 document.addEventListener("scroll", hideTip, { capture: true, passive: true });
 
 setInterval(tick, 10000);
