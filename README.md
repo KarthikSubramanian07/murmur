@@ -163,6 +163,19 @@ is sent and how.
 | [`docs/releasing.md`](docs/releasing.md) | Releases, installer options and building from source. |
 | [`docs/testing.md`](docs/testing.md) | How a change is tested. |
 
+## Thanks
+
+Murmur is built by Tyler ([@a-Fig](https://github.com/a-Fig)).
+
+[Karthik Subramanian](https://github.com/KarthikSubramanian07) has contributed more than anyone
+else. His pull requests scrubbed more kinds of secrets from messages, bounded what the daemon reads
+and writes, kept other Windows users out of a clone's Murmur files, brought message delivery to Pi
+outside T3 Code, and redrew the `mur ui` page.
+
+Aditya helped test Murmur early on, and Cara helped with its design.
+
+And thanks to everyone at the AIE hackathon who tried Murmur while it was still new.
+
 ## License
 
 [MIT](LICENSE)
