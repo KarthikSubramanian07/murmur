@@ -1,8 +1,14 @@
 /*
- * The design tokens and component looks are T3 Code's (MIT, Copyright (c) 2026 T3 Tools Inc.;
- * see THIRD_PARTY_NOTICES): apps/web/src/index.css for the themes, and components/ui/*.tsx,
- * settings/SettingsGroup.tsx, settings/settingsLayout.tsx and sidebar/*.tsx for the pieces,
- * translated from Tailwind classes to plain CSS. Colors are Tailwind CSS v4's palette (MIT).
+ * The page is drawn as a sibling of T3 Code (MIT, Copyright (c) 2026 T3 Tools Inc.; see
+ * THIRD_PARTY_NOTICES): its design tokens and dark theme from apps/web/src/index.css, and the looks of
+ * its app shell, sidebar, chat timeline, composer, settings, buttons, badges, inputs, segmented
+ * controls, kbd, dialogs and empty states from components/ui/*.tsx, components/sidebar/*.tsx,
+ * components/chat/*.tsx and components/settings/*.tsx, translated from Tailwind classes to plain
+ * CSS. Colors are Tailwind CSS v4's palette (MIT).
+ *
+ * Murmur's concepts take T3 Code's places: a device is a project, a session is a thread, and a
+ * conversation is a thread's timeline, with a person's own messages as T3 Code's user messages and
+ * everyone else's as its assistant messages.
  */
 
 @font-face {
@@ -19,37 +25,27 @@
 /* Tailwind CSS v4 palette, the steps T3 Code's themes use. */
 :root {
   --white: #fff;
-  --zinc-25: oklch(99.2% 0 0);
-  --zinc-50: oklch(98.5% 0 0);
-  --zinc-100: oklch(96.7% 0.001 286.375);
-  --zinc-200: oklch(92% 0.004 286.32);
-  --zinc-300: oklch(87.1% 0.006 286.286);
   --zinc-400: oklch(70.5% 0.015 286.067);
-  --zinc-500: oklch(55.2% 0.016 285.938);
-  --zinc-800: oklch(27.4% 0.006 286.033);
-  --zinc-900: oklch(21% 0.006 285.885);
   --neutral-100: oklch(97% 0 0);
   --neutral-400: oklch(70.8% 0 0);
   --neutral-950: oklch(14.5% 0 0);
   --red-400: oklch(70.4% 0.191 22.216);
   --red-500: oklch(63.7% 0.237 25.331);
-  --red-700: oklch(50.5% 0.213 27.518);
   --amber-400: oklch(82.8% 0.189 84.429);
   --amber-500: oklch(76.9% 0.188 70.08);
-  --amber-700: oklch(55.5% 0.163 48.998);
   --emerald-300: oklch(84.5% 0.143 164.978);
   --emerald-400: oklch(76.5% 0.177 163.223);
   --emerald-500: oklch(69.6% 0.17 162.48);
-  --emerald-600: oklch(59.6% 0.145 163.225);
-  --emerald-700: oklch(50.8% 0.118 165.612);
   --blue-400: oklch(70.7% 0.165 254.624);
   --blue-500: oklch(62.3% 0.214 259.815);
-  --blue-700: oklch(48.8% 0.243 264.376);
 }
 
-/* T3 Code's light theme (index.css :root). */
+/*
+ * T3 Code's dark theme (index.css :root under @variant dark), the default. Dim and Light, below,
+ * change only these tokens.
+ */
 :root {
-  color-scheme: light;
+  color-scheme: dark;
   --font-sans:
     -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif;
   --font-mono:
@@ -63,108 +59,148 @@
   --control-radius: 0.5rem;
   --sidebar-width: 16rem;
   --sidebar-content-inset: 0.5rem;
-  --sidebar-control-gap: 0.5rem;
   --sidebar-row-content-inset: 0.625rem;
   --topbar-height: 52px;
+  --gutter: 1.25rem;
+  --chat-content-max-width: 46rem;
+  --chat-gutter: 3rem;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --shadow-xs-5: 0 1px 2px 0 rgb(0 0 0 / 5%);
   --shadow-xs-10: 0 1px 2px 0 rgb(0 0 0 / 10%);
-  --scrollbar-thumb: rgb(217 217 217);
-  --scrollbar-thumb-hover: rgb(191 191 191);
+  --shadow-popover: 0 16px 40px -18px rgb(0 0 0 / 55%);
+  --shadow-dialog: 0 24px 64px -24px rgb(0 0 0 / 65%);
 
-  --background: var(--zinc-25);
-  --foreground: var(--zinc-900);
-  --card: var(--white);
-  --popover: var(--white);
-  --primary: oklch(0.488 0.217 264);
-  --primary-foreground: var(--white);
-  --secondary: var(--zinc-50);
-  --secondary-foreground: var(--zinc-800);
-  --muted: var(--zinc-50);
-  --muted-foreground: var(--zinc-500);
-  --placeholder: var(--muted-foreground);
-  --secondary-label: var(--muted-foreground);
-  --message-surface: color-mix(in srgb, var(--zinc-200) 55%, var(--zinc-100));
-  --accent: var(--zinc-100);
-  --accent-foreground: var(--zinc-900);
-  --error: var(--red-500);
-  --error-foreground: var(--red-700);
-  --destructive: var(--error);
-  --destructive-foreground: var(--error-foreground);
-  --border: var(--zinc-200);
-  --input: var(--zinc-300);
-  --ring: var(--primary);
-  --info: var(--blue-500);
-  --info-foreground: var(--blue-700);
-  --success: var(--emerald-500);
-  --success-foreground: var(--emerald-700);
-  --warning: var(--amber-500);
-  --warning-foreground: var(--amber-700);
-  --pr-open: var(--emerald-600);
-  --pr-draft: var(--zinc-500);
-  --sidebar: var(--zinc-50);
-  --sidebar-foreground: var(--foreground);
-  --sidebar-muted-foreground: var(--muted-foreground);
-  --sidebar-row-hover: var(--zinc-25);
-  --sidebar-row-active: var(--white);
-  --sidebar-row-selected: var(--white);
-  --sidebar-border: var(--border);
-  --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
-
-  /* App-chrome grain: index.css --surface-grain. */
-  --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
-}
-
-/* T3 Code's dark theme (index.css :root @variant dark). */
-.dark {
-  color-scheme: dark;
-  --scrollbar-thumb: rgb(255 255 255 / 8%);
-  --scrollbar-thumb-hover: rgb(255 255 255 / 12%);
   --background: #000;
   --foreground: var(--neutral-100);
   --card: color-mix(in srgb, var(--neutral-950) 97%, var(--white));
   --popover: color-mix(in srgb, var(--neutral-950) 97%, var(--white));
   --primary: oklch(0.571 0.21 264);
+  --primary-foreground: var(--white);
   --secondary: rgb(255 255 255 / 3%);
   --secondary-foreground: var(--neutral-100);
   --muted: rgb(255 255 255 / 3%);
   --muted-foreground: var(--neutral-400);
+  --secondary-label: var(--muted-foreground);
+  --placeholder: var(--muted-foreground);
+  --message-surface: color-mix(in srgb, var(--neutral-950) 92%, var(--white));
   --accent: rgb(255 255 255 / 4%);
   --accent-foreground: var(--neutral-100);
-  --message-surface: color-mix(in srgb, var(--neutral-950) 92%, var(--white));
-  --error: color-mix(in srgb, var(--red-500) 90%, var(--white));
-  --error-foreground: var(--red-400);
+  --destructive: color-mix(in srgb, var(--red-500) 90%, var(--white));
+  --destructive-foreground: var(--red-400);
   --border: rgb(255 255 255 / 8%);
   --input: rgb(255 255 255 / 11%);
+  --ring: var(--primary);
+  --info: var(--blue-500);
   --info-foreground: var(--blue-400);
+  --success: var(--emerald-500);
   --success-foreground: var(--emerald-400);
+  --warning: var(--amber-500);
   --warning-foreground: var(--amber-400);
   --pr-open: color-mix(in oklab, var(--emerald-300) 90%, transparent);
   --pr-draft: color-mix(in oklab, var(--zinc-400) 80%, transparent);
-  --sidebar: var(--card);
-  --sidebar-row-hover: var(--accent);
-  --sidebar-row-active: var(--accent);
-  --sidebar-row-selected: var(--muted);
+  --row-hover: rgb(255 255 255 / 5%);
+  --row-selected: rgb(255 255 255 / 8%);
+  --composer: color-mix(in srgb, var(--neutral-950) 97%, var(--white));
+  --composer-edge: rgb(255 255 255 / 7%);
+  --scrollbar-thumb: rgb(255 255 255 / 8%);
+  --scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+  --scrim: rgb(0 0 0 / 64%);
+
+  /* App-chrome grain: index.css --surface-grain. */
+  --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
 }
 
 /* The app sidebar's own hierarchy (index.css [data-app-sidebar]). */
 [data-app-sidebar] {
-  --sidebar: var(--zinc-50);
-  --sidebar-foreground: var(--zinc-900);
-  --sidebar-muted-foreground: var(--zinc-500);
-  --sidebar-row-hover: var(--zinc-25);
-  --sidebar-row-active: var(--white);
-  --sidebar-row-selected: var(--white);
-  --sidebar-border: var(--zinc-200);
-}
-.dark [data-app-sidebar] {
   --sidebar: #000;
   --sidebar-foreground: #f1f3f7;
   --sidebar-muted-foreground: #a3a3a3;
-  --sidebar-row-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
-  --sidebar-row-active: color-mix(in srgb, var(--foreground) 11%, transparent);
-  --sidebar-row-selected: color-mix(in srgb, var(--foreground) 7%, transparent);
+  --sidebar-row-hover: color-mix(in srgb, #f1f3f7 8%, transparent);
+  --sidebar-row-active: color-mix(in srgb, #f1f3f7 11%, transparent);
+  --sidebar-row-selected: color-mix(in srgb, #f1f3f7 7%, transparent);
+  --sidebar-row-ring: transparent;
   --sidebar-border: rgb(255 255 255 / 8%);
+  --sidebar-icon: color-mix(in srgb, var(--sidebar-muted-foreground) 85%, var(--sidebar));
   --secondary-label: #8f8f8f;
+}
+
+/*
+ * Two more themes, picked in Settings and set on <html data-theme>. Dim is soft greys, as the page
+ * looked before it followed T3 Code (#179): a dark sidebar, a lighter list, and the conversation
+ * lightest. Light is T3 Code's light theme (index.css :root).
+ */
+:root[data-theme="dim"] {
+  --background: #2a2c32;
+  --foreground: #e3e4e8;
+  --card: #2f3238;
+  --popover: #24262b;
+  --primary: #8ea2ff;
+  --primary-foreground: #14151a; /* dark on the pale primary: white is 2.4:1 */
+  --muted-foreground: #9b9ea8;
+  --secondary-label: #8c8f99;
+  --message-surface: #383a42;
+  --accent: rgb(255 255 255 / 5%);
+  --border: rgb(255 255 255 / 6%);
+  --input: rgb(255 255 255 / 10%);
+  --row-hover: rgb(255 255 255 / 4%);
+  --row-selected: rgb(255 255 255 / 8%);
+  --composer: #33363c;
+  --composer-edge: rgb(255 255 255 / 6%);
+  --list: #25272c;
+}
+[data-theme="dim"] [data-app-sidebar] {
+  --sidebar: #1e2024;
+  --sidebar-foreground: #e3e4e8;
+  --sidebar-muted-foreground: #8c8f99;
+  --sidebar-row-hover: rgb(255 255 255 / 5%);
+  --sidebar-row-active: rgb(255 255 255 / 9%);
+  --sidebar-row-selected: rgb(255 255 255 / 9%);
+  --sidebar-border: transparent;
+  --secondary-label: #8c8f99;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: oklch(99.2% 0 0);
+  --foreground: oklch(21% 0.006 285.885);
+  --card: var(--white);
+  --popover: var(--white);
+  --primary: oklch(0.488 0.217 264);
+  --secondary: oklch(98.5% 0 0);
+  --secondary-foreground: oklch(27.4% 0.006 286.033);
+  --muted: oklch(98.5% 0 0);
+  --muted-foreground: oklch(55.2% 0.016 285.938);
+  --message-surface: color-mix(in srgb, oklch(92% 0.004 286.32) 55%, oklch(96.7% 0.001 286.375));
+  --accent: oklch(96.7% 0.001 286.375);
+  --accent-foreground: oklch(21% 0.006 285.885);
+  --destructive: var(--red-500);
+  --destructive-foreground: oklch(50.5% 0.213 27.518);
+  --border: oklch(92% 0.004 286.32);
+  --input: oklch(87.1% 0.006 286.286);
+  --info-foreground: oklch(48.8% 0.243 264.376);
+  --success-foreground: oklch(50.8% 0.118 165.612);
+  --warning-foreground: oklch(55.5% 0.163 48.998);
+  --pr-open: oklch(59.6% 0.145 163.225);
+  --pr-draft: oklch(55.2% 0.016 285.938);
+  --row-hover: rgb(0 0 0 / 4%);
+  --row-selected: rgb(0 0 0 / 6%);
+  --composer: var(--white);
+  --composer-edge: oklch(92% 0.004 286.32);
+  --scrollbar-thumb: rgb(217 217 217);
+  --scrollbar-thumb-hover: rgb(191 191 191);
+  --scrim: rgb(0 0 0 / 32%);
+  --shadow-popover: 0 16px 40px -18px rgb(0 0 0 / 22%);
+  --shadow-dialog: 0 24px 64px -24px rgb(0 0 0 / 28%);
+}
+[data-theme="light"] [data-app-sidebar] {
+  --sidebar: oklch(98.5% 0 0);
+  --sidebar-foreground: oklch(21% 0.006 285.885);
+  --sidebar-muted-foreground: oklch(55.2% 0.016 285.938);
+  --sidebar-row-hover: rgb(0 0 0 / 4%);
+  --sidebar-row-active: rgb(0 0 0 / 6%);
+  --sidebar-row-selected: rgb(0 0 0 / 5%);
+  --sidebar-border: oklch(92% 0.004 286.32);
+  --secondary-label: oklch(55.2% 0.016 285.938);
 }
 
 /* Base. */
@@ -173,8 +209,6 @@
 ::after {
   box-sizing: border-box;
   border: 0 solid var(--border);
-  outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
-  outline-offset: -2px;
 }
 html,
 body {
@@ -190,10 +224,14 @@ body {
   background-image: var(--surface-grain);
   background-size: 256px 256px;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
   color: inherit;
   margin: 0;
@@ -202,6 +240,10 @@ button {
   background: none;
   padding: 0;
   cursor: pointer;
+  text-align: inherit;
+}
+button:disabled {
+  cursor: default;
 }
 a {
   color: inherit;
@@ -215,41 +257,28 @@ p {
   font: inherit;
 }
 pre,
-code {
+code,
+kbd {
   font-family: var(--font-mono);
+}
+/* One focus ring for everything a keyboard reaches: T3 Code's inset 2px ring in the primary. */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
 }
 .icon {
   width: 1rem;
   height: 1rem;
   flex-shrink: 0;
 }
-.icon-3 {
-  width: 0.75rem;
-  height: 0.75rem;
-}
-.icon-3-5 {
-  width: 0.875rem;
-  height: 0.875rem;
-}
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
-.tabular {
-  font-variant-numeric: tabular-nums;
-}
 .truncate {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.mono {
-  font-family: var(--font-mono);
 }
 ::-webkit-scrollbar {
   width: 6px;
@@ -265,8 +294,471 @@ code {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
 }
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+}
 
-/* Layout: a sidebar and the main pane (components/ui/sidebar.tsx). */
+/* Buttons (components/ui/button.tsx). */
+.btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  flex-shrink: 0;
+  height: 2rem;
+  padding: 0 calc(0.75rem - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--control-radius);
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background-color 0.15s var(--ease),
+    color 0.15s var(--ease),
+    box-shadow 0.15s var(--ease),
+    scale 0.15s var(--ease);
+}
+.btn:active:not(:disabled) {
+  scale: 0.97;
+}
+.btn:disabled {
+  opacity: 0.64;
+  pointer-events: none;
+}
+.btn-sm {
+  height: 1.75rem;
+  padding: 0 calc(0.625rem - 1px);
+}
+.btn-xs {
+  height: 1.5rem;
+  gap: 0.25rem;
+  padding: 0 calc(0.5rem - 1px);
+  font-size: 0.75rem;
+}
+.btn-xs .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.btn-icon-xs {
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+}
+.btn-icon-xs .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.btn-primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow:
+    var(--shadow-xs-5),
+    inset 0 1px rgb(255 255 255 / 16%);
+}
+.btn-primary:hover {
+  background: color-mix(in oklab, var(--primary) 90%, var(--background));
+}
+.btn-outline {
+  border-color: var(--input);
+  background: color-mix(in oklab, var(--input) 32%, transparent);
+  background-clip: padding-box;
+  color: var(--foreground);
+  box-shadow: var(--shadow-xs-5);
+}
+.btn-outline:hover {
+  background: color-mix(in oklab, var(--input) 64%, transparent);
+}
+.btn-ghost {
+  color: var(--muted-foreground);
+}
+.btn-ghost:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.btn-ghost.copied {
+  color: var(--primary);
+}
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--control-radius);
+  color: var(--muted-foreground);
+  transition:
+    background-color 0.15s var(--ease),
+    color 0.15s var(--ease);
+}
+.icon-btn:hover,
+.icon-btn[aria-current="page"] {
+  background: var(--accent);
+  color: var(--foreground);
+}
+[data-app-sidebar] .icon-btn {
+  color: var(--sidebar-icon);
+}
+[data-app-sidebar] .icon-btn:hover,
+[data-app-sidebar] .icon-btn[aria-current="page"] {
+  background: var(--sidebar-row-hover);
+  color: var(--sidebar-foreground);
+}
+
+/* Badges (components/ui/badge.tsx). */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  height: 1.125rem;
+  min-width: 1.125rem;
+  padding: 0 0.25rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  line-height: 1;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.badge-secondary {
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+}
+.badge-outline {
+  border-color: var(--input);
+  background: color-mix(in oklab, var(--input) 32%, transparent);
+  color: var(--foreground);
+}
+/* "hook not running" on a session (#225). */
+.badge-warning {
+  background: color-mix(in oklab, var(--warning) 16%, transparent);
+  color: var(--warning-foreground);
+}
+/* A session's state, as T3 Code's tinted status badges. */
+.g-state {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 1.125rem;
+  padding: 0 0.375rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  background: color-mix(in oklab, var(--muted-foreground) 12%, transparent);
+  color: var(--muted-foreground);
+}
+.g-state-on {
+  background: color-mix(in oklab, var(--success) 16%, transparent);
+  color: var(--success-foreground);
+}
+.g-state-idle {
+  background: color-mix(in oklab, var(--warning) 16%, transparent);
+  color: var(--warning-foreground);
+}
+.g-state-dnd {
+  background: color-mix(in oklab, var(--destructive) 16%, transparent);
+  color: var(--destructive-foreground);
+}
+
+/* A count that something is unread, in the primary. */
+.unread-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 1.125rem;
+  height: 1.125rem;
+  padding: 0 0.3125rem;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.25rem;
+  min-width: 1.25rem;
+  padding: 0 0.25rem;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+  color: var(--muted-foreground);
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+
+/* Segmented control (components/ui/toggle-group.tsx, variant segmented). */
+.segmented {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 0.125rem;
+  padding: 0.125rem;
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--input) 40%, transparent);
+}
+.segmented button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  height: 1.5rem;
+  padding: 0 0.625rem;
+  border-radius: var(--radius-md);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  transition:
+    color 0.15s var(--ease),
+    background-color 0.15s var(--ease);
+}
+.segmented button:hover {
+  background: color-mix(in oklab, var(--input) 32%, transparent);
+  color: var(--foreground);
+}
+.segmented button[aria-pressed="true"],
+.segmented button[aria-selected="true"] {
+  background: color-mix(in oklab, var(--input) 72%, transparent);
+  color: var(--foreground);
+  box-shadow: var(--shadow-xs-10);
+}
+.g-tab-n {
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+/* Inputs (components/ui/input.tsx). */
+.field {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--input) 32%, transparent);
+  background-clip: padding-box;
+  box-shadow: var(--shadow-xs-5);
+  color: var(--foreground);
+  transition:
+    border-color 0.15s var(--ease),
+    box-shadow 0.15s var(--ease);
+}
+.field:focus-within {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 3px color-mix(in oklab, var(--ring) 24%, transparent);
+}
+.field-bad,
+.field-bad:focus-within {
+  border-color: var(--destructive);
+}
+.field input {
+  height: 1.75rem;
+  min-width: 0;
+  width: 3.5rem;
+  padding: 0 calc(0.6875rem - 1px);
+  border: 0;
+  background: transparent;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+.field input:focus-visible {
+  outline: none;
+}
+.field input[type="number"] {
+  text-align: right;
+  appearance: textfield;
+}
+.field input::-webkit-inner-spin-button,
+.field input::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+.field input::placeholder,
+textarea::placeholder {
+  color: var(--placeholder);
+}
+.field-suffix {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.field > .icon {
+  margin-left: 0.625rem;
+  color: var(--muted-foreground);
+}
+.field > .icon + input {
+  padding-left: 0;
+}
+
+/* Presence, as T3 Code's status dots: green active, yellow idle, red do not disturb, grey offline. */
+.dot,
+.status-dot,
+.pres,
+.dev-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--muted-foreground) 45%, transparent);
+}
+.dot.warn {
+  background: var(--warning);
+}
+.dev-dot {
+  width: 0.375rem;
+  height: 0.375rem;
+}
+.pres-on {
+  background: var(--success);
+}
+.pres-idle {
+  background: var(--warning);
+}
+.pres-dnd {
+  background: var(--destructive);
+}
+.pres-off {
+  background: color-mix(in oklab, var(--muted-foreground) 45%, transparent);
+}
+.pres-settled {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--muted-foreground) 55%, transparent);
+}
+
+/* A name's face: a neutral monogram, square for a session and round for a person, so the page's
+ * only color is state. */
+.avatar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--foreground) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 6%, transparent);
+  color: color-mix(in oklab, var(--foreground) 80%, transparent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  user-select: none;
+}
+.avatar-person {
+  border-radius: 999px;
+}
+.pres-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.pres-wrap > .pres,
+.avatar.dotted > .pres {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  box-shadow: 0 0 0 2px var(--dot-ring, var(--background));
+}
+.avatar-pair {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+}
+.avatar-pair > .avatar {
+  position: absolute;
+  width: 1.25rem;
+  height: 1.25rem;
+  font-size: 0.625rem;
+  box-shadow: 0 0 0 2px var(--dot-ring, var(--background));
+  background-color: var(--dot-ring, var(--background));
+  background-image: linear-gradient(color-mix(in oklab, var(--foreground) 9%, transparent), color-mix(in oklab, var(--foreground) 9%, transparent));
+}
+.avatar-pair > .avatar:first-child {
+  top: 0;
+  right: 0;
+}
+.avatar-pair > .avatar:last-child {
+  bottom: 0;
+  left: 0;
+}
+.avatar-pair .pres {
+  width: 0.375rem;
+  height: 0.375rem;
+}
+.conv-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--muted-foreground);
+}
+.conv-ico .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+/* A branch and its pull request, as T3 Code's PR status: green open, grey draft. */
+.g-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--muted-foreground);
+}
+.g-branch .icon {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+.g-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1875rem;
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--pr-open);
+}
+.g-pr.draft {
+  color: var(--pr-draft);
+}
+.g-pr .icon {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+a.g-pr {
+  border-radius: var(--radius-sm);
+}
+a.g-pr:hover {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+/* ===================================================================================== Shell. */
+
+/* A sidebar and the main pane (components/ui/sidebar.tsx). */
 .app {
   display: flex;
   height: 100dvh;
@@ -282,46 +774,127 @@ code {
   background-size: 256px 256px;
   border-right: 1px solid var(--sidebar-border);
   color: var(--sidebar-foreground);
+  --dot-ring: var(--sidebar);
 }
 .sidebar-header {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   height: var(--topbar-height);
-  padding: 0 calc(var(--sidebar-content-inset) + var(--sidebar-row-content-inset));
+  padding: 0 0.75rem 0 calc(var(--sidebar-content-inset) + var(--sidebar-row-content-inset));
   flex-shrink: 0;
+}
+.brand-mark {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 4px;
 }
 .brand {
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: -0.01em;
+}
+.sidebar-header .icon-btn {
+  margin-left: auto;
+}
+/* The repo picker (#348): the repo's name, which opens this machine's other joined repos. It sits
+ * where the product's name was, beside the mark, and takes the sidebar's colors in every theme. */
+.repo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  height: 1.75rem;
+  margin-left: -0.375rem;
+  padding: 0 0.375rem;
+  border-radius: var(--control-radius);
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--sidebar-foreground);
+  transition: background-color 0.15s var(--ease);
+}
+.repo-btn:hover,
+.repo-btn[aria-expanded="true"] {
+  background: var(--sidebar-row-hover);
+}
+.repo-btn .icon {
+  flex-shrink: 0;
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--sidebar-icon);
+}
+.repo-menu {
+  width: 16rem;
+}
+.repo-row {
+  min-height: 2rem;
+  color: var(--foreground);
+}
+.repo-row:disabled {
+  opacity: 0.5;
+}
+.repo-row .dot.ok {
+  background: var(--success);
+}
+.repo-row > .icon {
+  flex-shrink: 0;
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--muted-foreground);
+}
+.repo-row-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.repo-path {
+  font-size: 0.6875rem;
+  color: var(--muted-foreground);
+}
+.conn-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 1.25rem;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--warning) 14%, transparent);
+  color: var(--warning-foreground);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.conn-badge .dot {
+  width: 0.375rem;
+  height: 0.375rem;
 }
 .sidebar-content {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-width: none;
+}
+.sidebar-content::-webkit-scrollbar {
+  display: none;
 }
 .sidebar-group {
   display: flex;
   flex-direction: column;
-  padding: var(--sidebar-content-inset);
+  gap: 1px;
+  padding: 0 var(--sidebar-content-inset);
 }
-.sidebar-group + .sidebar-group {
-  padding-top: 0;
+.g-top {
+  padding-bottom: 0.5rem;
 }
-.sidebar-label {
-  display: flex;
-  align-items: center;
-  height: 1.75rem;
-  padding: 0 var(--sidebar-row-content-inset);
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: color-mix(in oklab, var(--sidebar-muted-foreground) 80%, transparent);
+.dev-group {
+  margin-top: 0.5rem;
 }
 .sidebar-menu {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 1px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -331,25 +904,23 @@ code {
   width: 100%;
   height: 2rem;
   align-items: center;
-  gap: var(--sidebar-control-gap);
-  overflow: hidden;
-  padding: 0.375rem var(--sidebar-row-content-inset);
+  gap: 0.5rem;
+  padding: 0 var(--sidebar-row-content-inset);
   border-radius: var(--control-radius);
   font-size: 0.875rem;
   font-weight: 500;
   text-align: left;
-  color: color-mix(in oklab, var(--sidebar-muted-foreground) 80%, transparent);
-  outline: none;
+  color: var(--sidebar-muted-foreground);
+  transition:
+    background-color 0.15s var(--ease),
+    color 0.15s var(--ease);
 }
 .menu-button > .icon {
-  color: color-mix(in srgb, var(--sidebar-muted-foreground) 85%, var(--sidebar));
+  color: var(--sidebar-icon);
 }
 .menu-button:hover {
   background: var(--sidebar-row-hover);
   color: var(--sidebar-foreground);
-}
-.menu-button:active {
-  background: var(--sidebar-row-active);
 }
 .menu-button:hover > .icon,
 .menu-button[aria-current="page"] > .icon {
@@ -357,14 +928,8 @@ code {
 }
 .menu-button[aria-current="page"] {
   background: var(--sidebar-row-selected);
+  box-shadow: inset 0 0 0 1px var(--sidebar-row-ring);
   color: var(--sidebar-foreground);
-}
-:root:not(.dark) .menu-button[aria-current="page"] {
-  box-shadow: var(--shadow-xs-5);
-}
-.menu-button:focus-visible,
-.device-link:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--ring);
 }
 .menu-button .label {
   flex: 1;
@@ -376,124 +941,559 @@ code {
 .menu-count {
   flex-shrink: 0;
   font-size: 0.75rem;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
+  color: var(--secondary-label);
+}
+.side-notice {
+  margin: 0 var(--sidebar-content-inset) 0.5rem;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--control-radius);
+  background: color-mix(in oklab, var(--destructive) 10%, transparent);
+  color: var(--destructive-foreground);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  text-align: left;
+}
+
+/* A section's label in the sidebar (ui/collapsible-section-header.tsx). */
+.group-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 2rem;
+  padding: 0 var(--sidebar-row-content-inset);
+  font-size: 0.75rem;
+  font-weight: 500;
   color: var(--sidebar-muted-foreground);
 }
-/* A device in the sidebar, like a project folder header (sidebar/SidebarProjectFolderHeader.tsx). */
+.group-label .label {
+  flex: 1;
+}
+
+/* A device, like a project folder header (sidebar/SidebarProjectFolderHeader.tsx). */
 .device-link {
   display: flex;
   height: 2rem;
   width: 100%;
   align-items: center;
-  gap: 0.625rem;
+  gap: 0.5rem;
   padding: 0 var(--sidebar-row-content-inset);
   border-radius: var(--control-radius);
   text-align: left;
-  outline: none;
+  color: color-mix(in oklab, var(--sidebar-foreground) 90%, transparent);
+  transition: background-color 0.15s var(--ease);
 }
 .device-link:hover {
   background: var(--sidebar-row-hover);
 }
+.device-link .dev-chev {
+  width: 0.75rem;
+  height: 0.75rem;
+  margin: 0 0.125rem;
+  color: var(--sidebar-icon);
+  transition: rotate 0.15s var(--ease);
+}
+.device-link[aria-expanded="true"] .dev-chev {
+  rotate: 90deg;
+}
 .device-link .label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.375rem;
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 0.875rem;
   font-weight: 500;
-  color: color-mix(in oklab, var(--sidebar-foreground) 90%, transparent);
 }
-.device-link.stale .label {
-  color: var(--sidebar-muted-foreground);
-}
-.device-link .icon {
-  color: color-mix(in srgb, var(--sidebar-muted-foreground) 85%, var(--sidebar));
-}
-.sidebar-footer {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem calc(var(--sidebar-content-inset) + var(--sidebar-row-content-inset));
+.dev-host {
   font-size: 0.75rem;
-  color: var(--sidebar-muted-foreground);
+  font-weight: 400;
+  color: var(--secondary-label);
+}
+.dev-you {
   flex-shrink: 0;
+  font-size: 0.6875rem;
+  color: var(--secondary-label);
+}
+.dev-group.stale .dev-name {
+  color: var(--sidebar-muted-foreground);
 }
 
+/* A session, like a thread row (sidebar/SidebarThreadRow.tsx): two lines, a status dot, and its
+ * pull request at the end; its actions show on hover. */
+.side-li {
+  position: relative;
+}
+.side-session {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: 2.25rem;
+  padding: 0.3125rem var(--sidebar-row-content-inset) 0.3125rem 2rem;
+  border-radius: var(--radius-md);
+  text-align: left;
+  transition: background-color 0.15s var(--ease);
+}
+.side-session:hover {
+  background: var(--sidebar-row-hover);
+}
+.side-session[aria-current="page"] {
+  background: var(--sidebar-row-active);
+  box-shadow: inset 0 0 0 1px var(--sidebar-row-ring);
+}
+.side-session > .status-dot {
+  margin-left: -1.0625rem;
+  margin-right: 0.0625rem;
+  align-self: flex-start;
+  margin-top: 0.375rem;
+}
+.side-session-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.side-session-name {
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+  font-weight: 500;
+  color: var(--sidebar-foreground);
+}
+.side-session-doing {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--sidebar-muted-foreground);
+}
+.side-session > .g-pr {
+  align-self: flex-start;
+  margin-top: 0.125rem;
+  transition: opacity 0.15s var(--ease);
+}
+.side-actions {
+  position: absolute;
+  top: 0.3125rem;
+  right: 0.375rem;
+  display: flex;
+  gap: 0.125rem;
+  padding-left: 0.5rem;
+  opacity: 0;
+  background: linear-gradient(to right, transparent, var(--sidebar) 0.5rem);
+  transition: opacity 0.15s var(--ease);
+}
+.side-li:hover .side-actions,
+.side-li:focus-within .side-actions {
+  opacity: 1;
+}
+.side-li:hover .side-session > .g-pr,
+.side-li:focus-within .side-session > .g-pr {
+  opacity: 0;
+}
+.side-tag,
+.side-msg,
+.side-hide {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: var(--radius-md);
+  color: var(--sidebar-muted-foreground);
+  background: var(--sidebar);
+}
+.side-tag,
+.side-msg,
+.side-hide {
+  transition:
+    background-color 0.1s var(--ease),
+    color 0.1s var(--ease),
+    transform 0.1s var(--ease);
+}
+.side-tag:hover,
+.side-msg:hover,
+.side-hide:hover {
+  background: color-mix(in oklab, var(--sidebar-foreground) 14%, var(--sidebar));
+  color: var(--sidebar-foreground);
+}
+.side-tag:active,
+.side-msg:active,
+.side-hide:active {
+  transform: scale(0.9);
+}
+
+/* The page's tooltip (app.js showTip), as T3 Code's: small, in the inverse of the page, quick to
+ * show and to move. A long one wraps. */
+.tip {
+  position: fixed;
+  z-index: 100;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(28rem, calc(100vw - 12px));
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-md);
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1rem;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  box-shadow: var(--shadow-popover);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(2px);
+  transition:
+    opacity 0.1s var(--ease),
+    transform 0.1s var(--ease);
+}
+.tip[data-side="bottom"] {
+  transform: translateY(-2px);
+}
+.tip.on {
+  opacity: 1;
+  transform: none;
+}
+.side-tag .icon,
+.side-msg .icon,
+.side-hide .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+/* Quiet and settled sessions: folded under their device, like T3 Code's settled threads. */
+.settled {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.settled-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 1.75rem;
+  padding: 0 var(--sidebar-row-content-inset) 0 2rem;
+  border-radius: var(--radius-md);
+  font-size: 0.75rem;
+  color: var(--sidebar-muted-foreground);
+  text-align: left;
+}
+.settled-toggle:hover {
+  background: var(--sidebar-row-hover);
+  color: var(--sidebar-foreground);
+}
+.settled-caret {
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-left: -1rem;
+}
+.settled-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.quiet-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.quiet-item > .side-tag,
+.quiet-item > .side-hide {
+  flex-shrink: 0;
+  margin-left: 0.125rem;
+}
+.quiet-item > .side-tag {
+  opacity: 0;
+  transition: opacity 0.15s var(--ease);
+}
+.quiet-item:hover > .side-tag,
+.quiet-item:focus-within > .side-tag {
+  opacity: 1;
+}
+.settled-row {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 0.625rem;
+  height: 1.75rem;
+  min-width: 0;
+  padding: 0 var(--sidebar-row-content-inset) 0 2rem;
+  border-radius: var(--radius-md);
+  text-align: left;
+  color: color-mix(in oklab, var(--sidebar-foreground) 75%, transparent);
+}
+.settled-row > .status-dot {
+  margin-left: -1.0625rem;
+  margin-right: 0.0625rem;
+}
+.settled-row:hover {
+  background: var(--sidebar-row-hover);
+}
+.settled-row.current {
+  background: var(--sidebar-row-active);
+}
+.settled-name {
+  flex: 1;
+  font-size: 0.8125rem;
+}
+.settled-when {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--secondary-label);
+}
+.settled-row .stags {
+  flex: 0 1 auto;
+}
+
+/* The sidebar's foot: the update notice, then who you are and Settings. */
+.sidebar-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.25rem var(--sidebar-content-inset) var(--sidebar-content-inset);
+  flex-shrink: 0;
+}
+.foot-account {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.account-chip {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  height: 2.25rem;
+  padding: 0 0.375rem;
+  border-radius: var(--control-radius);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-align: left;
+}
+.account-chip:hover {
+  background: var(--sidebar-row-hover);
+}
+.account-chip .avatar {
+  width: 1.5rem;
+  height: 1.5rem;
+  font-size: 0.6875rem;
+}
+
+/* A newer release (#240): small, there until it's dealt with, one click (T3 Code's update pill). */
+.menu-button.update {
+  height: 2rem;
+  color: var(--info-foreground);
+  background: color-mix(in oklab, var(--info) 12%, transparent);
+}
+.menu-button.update > .icon {
+  color: currentColor;
+}
+.menu-button.update:hover {
+  background: color-mix(in oklab, var(--info) 18%, transparent);
+  color: var(--info-foreground);
+}
+.menu-button.update-ready {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: inset 0 1px rgb(255 255 255 / 16%);
+}
+.menu-button.update-ready:hover {
+  background: color-mix(in oklab, var(--primary) 90%, var(--sidebar));
+  color: var(--primary-foreground);
+}
+.menu-button.update-busy {
+  cursor: default;
+  background: transparent;
+  color: var(--sidebar-muted-foreground);
+}
+.icon.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+/* The folded sidebar: an icon rail, as T3 Code's collapsed one. */
+.sidebar.mini {
+  width: 3.25rem;
+  align-items: center;
+  padding: 0.625rem 0 0.5rem;
+  gap: 0.25rem;
+}
+.mini-scroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 0;
+  width: 100%;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.mini-scroll::-webkit-scrollbar {
+  display: none;
+}
+.mini-btn,
+.mini-face {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--control-radius);
+  color: var(--sidebar-icon);
+  transition: background-color 0.15s var(--ease);
+}
+.mini-btn:hover,
+.mini-face:hover {
+  background: var(--sidebar-row-hover);
+  color: var(--sidebar-foreground);
+}
+.mini-btn.current,
+.mini-face.current {
+  background: var(--sidebar-row-active);
+  color: var(--sidebar-foreground);
+}
+.mini-open {
+  margin-bottom: 0.25rem;
+}
+.mini-dev {
+  display: flex;
+  align-items: center;
+  gap: 0.3125rem;
+  width: 1.75rem;
+  margin: 0.375rem 0;
+}
+.mini-dev::before,
+.mini-dev::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--sidebar-border);
+}
+.mini-unread {
+  position: absolute;
+  top: 0.375rem;
+  right: 0.375rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--primary);
+  box-shadow: 0 0 0 2px var(--sidebar);
+}
+.mini-conn {
+  display: inline-flex;
+  padding: 0.25rem;
+}
+.mini-update {
+  color: var(--info-foreground);
+}
+.mini-update.update-ready {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+/* The main pane, and its header (ChatView.tsx's header, 52px). */
 .main {
   position: relative;
   display: flex;
   flex: 1;
   min-width: 0;
   flex-direction: column;
+  --dot-ring: var(--background);
 }
 .topbar {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
   height: var(--topbar-height);
   min-height: var(--topbar-height);
-  padding: 0 1.25rem;
-  border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+  padding: 0 var(--gutter);
+  border-bottom: 1px solid var(--border);
 }
 .topbar h1 {
+  flex: 1;
   font-size: 0.875rem;
   font-weight: 500;
 }
-.topbar-meta {
-  margin-left: auto;
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+.topbar-menu {
+  position: relative;
+  margin-left: -0.375rem;
 }
-.topbar-brand {
-  display: none;
+.nav-dot {
+  position: absolute;
+  top: 0.375rem;
+  right: 0.375rem;
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-radius: 999px;
+  background: var(--primary);
+  box-shadow: 0 0 0 2px var(--background);
+}
+.nav-dot.update-auto,
+.nav-dot.update-manual,
+.nav-dot.update-busy {
+  background: var(--info);
 }
 .content {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  scrollbar-gutter: stable;
 }
-.page {
-  max-width: 52rem;
-  margin: 0 auto;
-  padding: 1.25rem 1.25rem 4rem;
+.content-chat {
+  overflow: hidden;
+}
+
+/* =============================================================================== Pages. */
+
+/* A page of rows (WorkspacePageContainer.tsx, settings/settingsLayout.tsx). */
+.page,
+.g-page {
   display: flex;
   flex-direction: column;
-  gap: 1.75rem;
+  gap: 2rem;
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 1.5rem var(--gutter) 3rem;
 }
-
-/* The connection dot (ConnectionStatusDot.tsx). */
-.dot {
-  display: inline-block;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 999px;
-  flex-shrink: 0;
-  background: color-mix(in oklab, var(--muted-foreground) 40%, transparent);
+.g-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: -1rem;
 }
-.dot.ok {
-  background: var(--success);
+/* A page's own heading, at the top of its column (Recent). */
+.g-page-head {
+  margin-bottom: -0.75rem;
 }
-.dot.warn {
-  background: var(--warning);
+.g-page-head h1 {
+  font-size: 1.375rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--foreground);
 }
-.dot.bad {
-  background: var(--destructive);
+.g-page-head p {
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
 }
-.dot-sm {
-  width: 0.375rem;
-  height: 0.375rem;
+.g-toolbar-meta {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
 }
-
-/* Sections and grouped rows (settings/settingsLayout.tsx, settings/SettingsGroup.tsx). */
 .section {
   display: flex;
   flex-direction: column;
   gap: 0.625rem;
-  scroll-margin-top: 1rem;
 }
 .section-head {
   display: flex;
@@ -503,18 +1503,19 @@ code {
   padding: 0 1rem;
 }
 .section-title {
-  font-size: 1rem;
-  line-height: 1.5rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
   font-weight: 600;
-}
-.section-head .icon {
-  color: var(--muted-foreground);
 }
 .section-aside {
   margin-left: auto;
   font-size: 0.75rem;
   color: var(--muted-foreground);
   white-space: nowrap;
+}
+.g-dev-host {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
 }
 .group {
   border-radius: var(--radius-xl);
@@ -544,7 +1545,7 @@ code {
   font-weight: 500;
 }
 .row-description {
-  margin-top: 0.25rem;
+  margin-top: 0.125rem;
   max-width: 42rem;
   font-size: 0.75rem;
   line-height: 1.5;
@@ -554,7 +1555,38 @@ code {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 0.5rem;
+}
+/* A fold of per-session rows under a device default. */
+.row-fold {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  transition: background-color 0.15s var(--ease);
+}
+.row-fold:hover {
+  background: var(--row-hover);
+}
+.row-fold-chev {
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--muted-foreground);
+  transition: transform 0.15s var(--ease);
+}
+.row-fold[aria-expanded="true"] .row-fold-chev {
+  transform: rotate(90deg);
+}
+/* The fold's rows start under its title, past the chevron. */
+.row.row-sub {
+  padding-left: 2.375rem;
+}
+.row-fold-meta {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
 }
 .row-empty {
   padding: 0.75rem 1rem;
@@ -566,342 +1598,452 @@ code {
   font-size: 0.75rem;
   color: var(--destructive-foreground);
 }
-
-/* Badges (components/ui/badge.tsx, size default). */
-.badge {
-  display: inline-flex;
+.section > .row-error {
+  padding: 0 1rem;
+}
+.account-field input {
+  width: 12rem;
+  text-align: left;
+}
+.install-line {
+  display: flex;
   align-items: center;
-  justify-content: center;
   gap: 0.25rem;
-  flex-shrink: 0;
-  height: 1.125rem;
-  min-width: 1.125rem;
-  padding: 0 3px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  margin-top: 0.625rem;
+  padding: 0.375rem 0.375rem 0.375rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--muted);
+}
+.install-line code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
   font-size: 0.75rem;
-  line-height: 1;
-  font-weight: 500;
   white-space: nowrap;
+  scrollbar-width: none;
 }
-.badge-secondary {
-  background: var(--secondary);
-  color: var(--secondary-foreground);
-}
-:root:not(.dark) .badge-secondary {
-  background: var(--accent);
-}
-.badge-outline {
-  border-color: var(--input);
-  background: var(--background);
-  color: var(--foreground);
-}
-.dark .badge-outline {
-  background: color-mix(in oklab, var(--input) 32%, transparent);
-}
-.badge-success {
-  background: color-mix(in oklab, var(--success) 8%, transparent);
-  color: var(--success-foreground);
-}
-.badge-warning {
-  background: color-mix(in oklab, var(--warning) 8%, transparent);
-  color: var(--warning-foreground);
-}
-.dark .badge-success {
-  background: color-mix(in oklab, var(--success) 16%, transparent);
-}
-.dark .badge-warning {
-  background: color-mix(in oklab, var(--warning) 16%, transparent);
-}
-
-/* Buttons (components/ui/button.tsx, outline and ghost, sizes xs and sm). */
-.btn {
-  position: relative;
-  display: inline-flex;
+.mute-line {
+  display: flex;
   align-items: center;
-  justify-content: center;
   gap: 0.375rem;
-  flex-shrink: 0;
-  height: 1.75rem;
-  padding: 0 calc(0.625rem - 1px);
-  border: 1px solid transparent;
-  border-radius: var(--control-radius);
-  font-size: 0.875rem;
-  font-weight: 500;
-  white-space: nowrap;
-  outline: none;
-  transition:
-    box-shadow 0.15s,
-    scale 0.15s;
+  min-width: 0;
 }
-.btn:active:not(:disabled) {
-  scale: 0.97;
-}
-.btn:focus-visible {
-  box-shadow:
-    inset 0 0 0 2px var(--ring),
-    0 0 0 1px var(--background);
-}
-.btn:disabled {
-  opacity: 0.64;
-  pointer-events: none;
-}
-.btn-xs {
-  height: 1.5rem;
-  gap: 0.25rem;
-  padding: 0 calc(0.5rem - 1px);
-  font-size: 0.75rem;
-}
-.btn-outline {
-  border-color: var(--input);
-  background: var(--popover);
-  background-clip: padding-box;
-  color: var(--foreground);
-  box-shadow: var(--shadow-xs-5);
-}
-.btn-outline::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: calc(var(--control-radius) - 1px);
-  box-shadow: 0 1px rgb(0 0 0 / 4%);
-  pointer-events: none;
-}
-.btn-outline:hover {
-  background: color-mix(in oklab, var(--accent) 50%, var(--popover));
-}
-.dark .btn-outline {
-  background: color-mix(in oklab, var(--input) 32%, transparent);
-  background-clip: border-box;
-}
-.dark .btn-outline::before {
-  box-shadow: 0 -1px rgb(255 255 255 / 6%);
-}
-.dark .btn-outline:hover {
-  background: color-mix(in oklab, var(--input) 64%, transparent);
-}
-.btn-ghost {
+.mute-line .icon {
   color: var(--muted-foreground);
 }
-.btn-ghost:hover {
-  background: var(--accent);
-  color: var(--foreground);
+.mute-line .verb {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+.keep-inline {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
-/* Segmented control (components/ui/toggle-group.tsx, variant segmented). */
-.segmented {
-  display: inline-flex;
-  gap: 0.125rem;
-  padding: 0.125rem;
-  border-radius: var(--radius-lg);
-  background: color-mix(in oklab, var(--input) 40%, transparent);
+/* Sessions, as rows in a group per device. */
+.s-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-right: 1rem;
+  transition: background-color 0.15s var(--ease);
 }
-.segmented button {
-  position: relative;
+.s-row:hover {
+  background: var(--row-hover);
+}
+.s-main {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.75rem 0 0.75rem 1rem;
+  text-align: left;
+}
+.s-main > .status-dot {
+  margin-top: 0.375rem;
+}
+.s-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+}
+.s-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.s-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.s-agent {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.s-doing {
+  font-size: 0.75rem;
+  color: color-mix(in oklab, var(--foreground) 75%, transparent);
+}
+.s-doing.none {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+.s-meta {
+  display: grid;
+  grid-template-columns: 8.5rem 2.75rem 3.75rem 6.25rem 5.25rem;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+.s-col-branch {
+  display: flex;
+  min-width: 0;
+}
+.s-col-act {
+  display: flex;
+  justify-content: flex-end;
+}
+.s-chats {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.s-row.stale .s-name,
+.s-row.stale .s-doing {
+  color: var(--muted-foreground);
+}
+.g-search {
+  display: flex;
+  height: 2rem;
+}
+.g-search input {
+  flex: 1;
+  width: auto;
+  height: 100%;
+  text-align: left;
+}
+.g-search-wide {
+  max-width: 20rem;
+  margin-bottom: -1rem;
+}
+.g-settled {
+  display: grid;
+  grid-template-columns: auto minmax(6rem, 10rem) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.625rem 1rem;
+  text-align: left;
+  font-size: 0.8125rem;
+}
+.g-settled:hover {
+  background: var(--row-hover);
+}
+.g-settled-name {
+  font-weight: 500;
+}
+.g-settled-last {
+  color: var(--muted-foreground);
+}
+.g-settled-chats,
+.g-settled-when {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.g-none {
+  padding: 0.75rem 1rem;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+
+/* A view with nothing to show (components/ui/empty.tsx, compact). */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  max-width: 24rem;
+  margin: auto;
+  padding: 3rem 1.5rem;
+  text-align: center;
+  text-wrap: balance;
+}
+.empty-ico {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 1.5rem;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  box-shadow: var(--shadow-xs-5);
+  color: var(--muted-foreground);
+}
+.empty-ico .icon {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+.empty-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.empty-line {
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+
+/* Recent: the timeline's assistant messages, newest first, each opening its conversation. */
+.g-recent {
+  max-width: calc(var(--chat-content-max-width) + 2 * var(--gutter));
+}
+.g-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+.chat-msg.g-item {
+  position: relative;
+  margin: 0 -0.75rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: var(--radius-xl);
+  cursor: pointer;
+  transition: background-color 0.15s var(--ease);
+}
+.g-item > .chat-msg-head {
+  align-items: center;
+}
+.chat-msg.g-item:hover {
+  background: var(--row-hover);
+}
+.g-to {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  color: var(--muted-foreground);
+}
+.g-to .icon {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+.g-to-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: color-mix(in oklab, var(--foreground) 80%, transparent);
+  font-weight: 500;
+}
+
+/* ======================================================================== Conversations. */
+
+/* The list of conversations and the open one, side by side; each scrolls on its own. */
+.page.chat-page {
+  display: flex;
+  flex-direction: column;
+  max-width: none;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+}
+.chat {
+  display: grid;
+  grid-template-columns: 20rem minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+.chat-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 0.5rem 1rem;
+  border-right: 1px solid var(--border);
+}
+.g-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-height: 3.75rem;
+  justify-content: center;
+  padding: 0.5rem 0.625rem;
+}
+.g-head > h2,
+.g-head-text > h2,
+.g-head-who > h2 {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.g-head-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.g-head-text {
+  flex: 1;
+  min-width: 0;
+}
+.g-head-row .icon-btn {
+  margin-right: -0.25rem;
+}
+.g-head-who {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-width: 0;
+}
+.g-head-who > h2 {
+  flex: 1;
+}
+.g-head-doing {
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+  color: var(--muted-foreground);
+}
+.g-head-who + .g-head-doing {
+  margin-top: 0.375rem;
+}
+.g-head-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.625rem;
+  font-size: 0.6875rem;
+  color: var(--muted-foreground);
+}
+.chat-list > .g-search {
+  flex-shrink: 0;
+  margin: 0 0.125rem 0.5rem;
+}
+.g-kinds {
+  display: flex;
+  margin: 0 0.125rem 0.5rem;
+}
+.g-kinds button {
+  flex: 1;
+}
+
+/* A conversation in the list, like T3 Code's thread rows. */
+.chat-row > .avatar,
+.chat-head > .avatar {
+  width: 2rem;
+  height: 2rem;
+}
+.chat-row {
+  --dot-ring: var(--background);
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--radius-lg);
+  text-align: left;
+  transition: background-color 0.15s var(--ease);
+}
+.chat-row:hover {
+  background: var(--row-hover);
+}
+.chat-row[aria-current="true"] {
+  background: var(--row-selected);
+  box-shadow: inset 0 0 0 1px transparent;
+}
+.chat-row-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.chat-row-line {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.chat-row-title {
+  flex: 1;
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+  font-weight: 500;
+}
+.g-row-count {
+  flex-shrink: 0;
+  margin-right: auto;
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.chat-row-line > .chat-row-title:has(+ .g-row-count) {
+  flex: 0 1 auto;
+}
+.chat-row-time {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--secondary-label);
+}
+.chat-row-preview {
+  flex: 1;
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+  color: var(--muted-foreground);
+}
+.chat-row-unread .chat-row-title,
+.chat-row-unread .chat-row-preview {
+  color: var(--foreground);
+}
+.g-sec {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  height: 2rem;
+  margin-top: 0.5rem;
   padding: 0 0.625rem;
   border-radius: var(--radius-md);
   font-size: 0.75rem;
   font-weight: 500;
   color: var(--muted-foreground);
-  white-space: nowrap;
-  outline: none;
-  transition:
-    color 0.15s,
-    background-color 0.15s;
 }
-.segmented button:hover {
-  background: color-mix(in oklab, var(--background) 55%, transparent);
-  color: var(--foreground);
-}
-.segmented button[aria-pressed="true"] {
-  background: var(--background);
-  color: var(--foreground);
-  box-shadow: var(--shadow-xs-10);
-}
-.dark .segmented button:hover {
-  background: color-mix(in oklab, var(--input) 32%, transparent);
-}
-.dark .segmented button[aria-pressed="true"] {
-  background: color-mix(in oklab, var(--input) 72%, transparent);
-}
-.segmented button:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--ring);
-}
-
-/* Inputs and selects (components/ui/input.tsx, select.tsx). */
-.field {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--input);
-  border-radius: var(--radius-lg);
-  background: var(--background);
-  background-clip: padding-box;
-  box-shadow: var(--shadow-xs-5);
-  font-size: 0.875rem;
-  color: var(--foreground);
-  transition: box-shadow 0.15s;
-}
-.dark .field {
-  background: color-mix(in oklab, var(--input) 32%, transparent);
-  background-clip: border-box;
-}
-.field:focus-within {
-  border-color: var(--ring);
-  box-shadow: inset 0 0 0 3px color-mix(in oklab, var(--ring) 24%, transparent);
-}
-.field input,
-.field select {
-  height: 1.625rem;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  outline: none;
-  font-size: 0.75rem;
-}
-.field input {
-  width: 3rem;
-  padding: 0 calc(0.625rem - 1px);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  appearance: textfield;
-  -moz-appearance: textfield;
-}
-.field input::-webkit-inner-spin-button,
-.field input::-webkit-outer-spin-button {
-  appearance: none;
-  margin: 0;
-}
-.field input::placeholder {
-  color: var(--placeholder);
-}
-.field select {
-  appearance: none;
-  padding: 0 1.75rem 0 calc(0.625rem - 1px);
-  cursor: pointer;
-}
-.field select option {
-  background: var(--popover);
-  color: var(--foreground);
-}
-.field .chevron {
-  position: absolute;
-  right: 0.5rem;
-  width: 0.875rem;
-  height: 0.875rem;
-  opacity: 0.7;
-  pointer-events: none;
-  transform: rotate(90deg);
-}
-.field-suffix {
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
-}
-
-/* Devices and sessions. */
-.device-head {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-height: 1.75rem;
-  padding: 0 1rem;
-}
-.device-head .icon {
-  color: var(--muted-foreground);
-}
-.device-name {
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-.device-id {
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
-}
-.device-state {
-  margin-left: auto;
+.g-sec > span:first-child {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
-  white-space: nowrap;
 }
-.session {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.625rem 1rem 0.6875rem;
-  cursor: pointer;
-  outline: none;
-  transition: background-color 0.1s;
+.g-sec:hover {
+  background: var(--row-hover);
+  color: var(--foreground);
 }
-.session:hover {
-  background: color-mix(in oklab, var(--accent) 60%, transparent);
+.g-sec .settled-caret {
+  margin: 0;
 }
-.session:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--ring);
-}
-.session-line {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-}
-.session-name {
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-.session-active {
-  margin-left: auto;
-  flex-shrink: 0;
-  font-size: 0.75rem;
-  color: var(--secondary-label);
+.g-sec-n {
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
-.session-doing {
-  font-size: 0.8125rem;
-  line-height: 1.25rem;
-  color: color-mix(in oklab, var(--foreground) 80%, transparent);
-  padding-left: 1rem;
-}
-.session-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  column-gap: 0.875rem;
-  row-gap: 0.125rem;
-  min-width: 0;
-  padding-left: 1rem;
-  font-size: 0.75rem;
-  color: var(--secondary-label);
-}
-.meta-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3125rem;
-  min-width: 0;
-  max-width: 100%;
-}
-.meta-item .icon {
-  width: 0.75rem;
-  height: 0.75rem;
-}
-/* Tags (#198): chips a human can take off, and a field to add one. */
+
+/* An open session's tags (#198, #211), under its name in the list. */
 .session-tags {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.25rem;
-  min-width: 0;
-  padding-left: 1rem;
-  cursor: default;
+  margin-top: 0.5rem;
 }
-.tag {
-  padding: 0 4px;
+.badge.tag {
+  gap: 0.125rem;
+  padding-right: 0.125rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 400;
 }
 .tag-remove {
   display: inline-flex;
@@ -909,58 +2051,63 @@ code {
   justify-content: center;
   width: 0.875rem;
   height: 0.875rem;
-  margin-right: -2px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: inherit;
+  border-radius: 2px;
+  color: var(--muted-foreground);
+  font-family: var(--font-sans);
   font-size: 0.75rem;
   line-height: 1;
-  opacity: 0.55;
-  cursor: pointer;
 }
-.tag-remove:hover,
-.tag-remove:focus-visible {
-  opacity: 1;
-  background: color-mix(in oklab, var(--foreground) 10%, transparent);
-  outline: none;
-}
-.tag-remove:disabled {
-  opacity: 0.3;
-  pointer-events: none;
-}
-.session-tags .btn-xs {
-  height: 1.125rem;
-  padding: 0 0.375rem;
+.tag-remove:hover {
+  background: var(--accent);
+  color: var(--foreground);
 }
 .session-tags .field input {
-  width: 9rem;
-  height: 1.25rem;
+  width: 11rem;
+  height: 1.5rem;
+  font-size: 0.75rem;
   text-align: left;
-  font-variant-numeric: normal;
 }
 .session-tags .row-error {
-  margin-top: 0;
+  flex-basis: 100%;
+  margin: 0;
 }
 
-/* Tags on the session lists (#270): chips on rows and cards, the sidebar's filter, the tag menu. */
+/* Tags on the session lists (#270), as T3 Code's small badges: the one the lists are filtered by in
+ * the accent, one still on its way to its session's device outlined. */
+.name-line {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.name-line > .truncate {
+  min-width: 0;
+  flex-shrink: 1;
+}
+.name-line:has(> .stags) > .truncate {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+.name-line:has(> .stags) > .s-agent {
+  flex: 0 1 auto;
+}
 .stags {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
   min-width: 0;
   overflow: hidden;
-  flex-wrap: wrap;
+  flex-shrink: 1;
 }
-/* In a sidebar row: the branch takes up to half the line, and chips that don't fit in the rest
-   wrap onto a second line that is cut off, so none shows half. */
-.g-meta .stags {
+/* Beside a name, the chips give way first: those that don't fit wrap onto a hidden second line, so
+ * none shows cut in half, and the row's tooltip names them all. They take only the room the name and
+ * the agent leave (a basis of 0), so the agent text never shrinks while there is room, not even by
+ * the fraction of a pixel that would draw its ellipsis. */
+.name-line > .stags {
   flex: 1 1 0;
+  min-width: 0;
+  flex-wrap: wrap;
   height: 1rem;
-}
-.g-meta:has(.stags) .g-branch {
-  flex: 0 1 auto;
-  max-width: 50%;
 }
 .stag,
 .stag-more {
@@ -969,111 +2116,90 @@ code {
   flex-shrink: 0;
   height: 1rem;
   padding: 0 0.3125rem;
-  border-radius: 0.3125rem;
-  background: rgb(255 255 255 / 7%);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
   font-size: 0.6875rem;
   font-weight: 500;
   line-height: 1;
-  color: #b5b8c0;
+  color: color-mix(in oklab, var(--foreground) 72%, transparent);
   white-space: nowrap;
 }
 .stag.on {
-  background: color-mix(in oklab, #5865c9 30%, transparent);
-  color: #dfe3ff;
+  background: color-mix(in oklab, var(--primary) 22%, transparent);
+  color: var(--info-foreground);
 }
 .stag.waiting {
   background: transparent;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 18%);
-  color: #8c8f99;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 22%, transparent);
+  color: var(--muted-foreground);
 }
 .stag-more {
+  padding: 0 0.125rem;
   background: transparent;
-  color: #7b7e88;
+  color: var(--muted-foreground);
 }
-.g-card .stags {
-  margin-top: -0.125rem;
+/* The human tag (#267): T3 Code's info badge, beside a person's name wherever one is listed. */
+.badge.tag-human {
+  height: 1rem;
+  padding: 0 0.3125rem;
+  border-color: color-mix(in oklab, var(--info) 40%, transparent);
+  background: color-mix(in oklab, var(--info) 12%, transparent);
+  color: var(--info-foreground);
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  font-weight: 500;
 }
-.g-card .stag {
+.name-taken {
+  flex-shrink: 0;
   height: 1.125rem;
-  font-size: 0.75rem;
+  padding: 0 0.375rem;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--warning) 16%, transparent);
+  color: var(--warning-foreground);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1.125rem;
 }
+
+/* The sidebar's Tags: one filter chip per tag in use. */
 .tag-filter {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem;
-  padding: 0.25rem var(--sidebar-row-content-inset) 0.375rem;
+  padding: 0 var(--sidebar-row-content-inset) 0.25rem;
 }
 .tf {
   display: inline-flex;
   align-items: center;
   gap: 0.3125rem;
-  height: 1.375rem;
-  padding: 0 0.4375rem;
-  border-radius: 0.4375rem;
-  background: rgb(255 255 255 / 6%);
+  height: 1.5rem;
+  padding: 0 0.5rem;
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 0 0 1px var(--sidebar-border);
   font-size: 0.75rem;
   font-weight: 500;
-  color: #c6c8ce;
+  color: color-mix(in oklab, var(--sidebar-foreground) 85%, transparent);
+  transition: background-color 0.15s var(--ease);
 }
 .tf:hover {
-  background: rgb(255 255 255 / 10%);
+  background: var(--sidebar-row-hover);
 }
 .tf.on {
-  background: color-mix(in oklab, #5865c9 38%, transparent);
-  color: #f0f1f3;
-}
-.tf:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 1px;
+  background: color-mix(in oklab, var(--primary) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 50%, transparent);
+  color: var(--sidebar-foreground);
 }
 .tf-n {
   font-size: 0.6875rem;
-  color: #7b7e88;
+  font-variant-numeric: tabular-nums;
+  color: var(--sidebar-muted-foreground);
 }
 .tf.on .tf-n {
-  color: #c4cafa;
+  color: var(--info-foreground);
 }
-.side-tag {
-  position: absolute;
-  top: 0.375rem;
-  right: 3.625rem;
-  display: grid;
-  place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: var(--radius-sm);
-  color: var(--sidebar-muted-foreground);
-  opacity: 0;
-}
-.side-li:hover .side-tag,
-.side-li:focus-within .side-tag {
-  opacity: 1;
-}
-.side-tag:hover {
-  background: rgb(255 255 255 / 8%);
-  color: var(--sidebar-foreground);
-}
-.side-tag:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
-}
-.side-tag .icon {
-  width: 0.875rem;
-  height: 0.875rem;
-}
-.quiet-item .side-tag {
-  position: static;
-  flex-shrink: 0;
-}
-.quiet-item:hover .side-tag,
-.quiet-item:focus-within .side-tag {
-  opacity: 1;
-}
-.settled-row .stags {
-  flex: 0 1 auto;
-  height: 1rem;
-  margin-left: auto;
-}
+
+/* The tag menu, as T3 Code's menus (components/ui/menu.tsx): a search that finds or makes a tag,
+ * and checkable rows. It is placed through the CSSOM, next to the button that opened it. */
 .menu-scrim {
   position: fixed;
   inset: 0;
@@ -1085,53 +2211,52 @@ code {
   flex-direction: column;
   width: 16rem;
   max-height: 20rem;
-  border: 1px solid rgb(255 255 255 / 10%);
-  border-radius: 0.625rem;
-  background: #24262b;
-  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
   overflow: hidden;
+  padding: 0.25rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--popover);
+  box-shadow: var(--shadow-popover);
+  animation: pop-in 0.15s var(--ease);
 }
 .tag-menu-head {
-  padding: 0.5rem 0.75rem 0.25rem;
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #8c8f99;
+  padding: 0.375rem 0.5rem 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
 }
 .tag-menu-q {
   display: flex;
   align-items: center;
-  gap: 0.4375rem;
-  margin: 0.25rem 0.5rem 0.375rem;
+  gap: 0.5rem;
+  height: 2rem;
+  margin: 0 0 0.25rem;
   padding: 0 0.5rem;
-  height: 1.875rem;
-  border-radius: 0.4375rem;
-  background: #1a1c20;
-  color: #7b7e88;
-}
-.tag-menu-q:focus-within {
-  box-shadow: inset 0 0 0 1px var(--ring);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
 }
 .tag-menu-q .icon {
-  width: 0.8125rem;
-  height: 0.8125rem;
-  flex-shrink: 0;
+  width: 0.875rem;
+  height: 0.875rem;
 }
 .tag-menu-q input {
   flex: 1;
   min-width: 0;
   border: 0;
   background: transparent;
-  font: inherit;
   font-size: 0.8125rem;
-  color: #f0f1f3;
+  color: var(--foreground);
+}
+.tag-menu-q input:focus-visible {
   outline: none;
+}
+.tag-menu-q input::placeholder {
+  color: var(--placeholder);
 }
 .tag-menu-list {
   display: flex;
   flex-direction: column;
-  padding: 0 0.25rem 0.375rem;
+  gap: 1px;
   overflow-y: auto;
 }
 .tag-menu-row {
@@ -1140,30 +2265,30 @@ code {
   gap: 0.5rem;
   min-height: 1.75rem;
   padding: 0 0.5rem;
-  border-radius: 0.375rem;
-  text-align: left;
+  border-radius: var(--radius-sm);
   font-size: 0.8125rem;
-  color: #d4d6db;
+  text-align: left;
 }
-.tag-menu-row:hover,
-.tag-menu-row:focus-visible {
-  background: rgb(255 255 255 / 7%);
-  outline: none;
+.tag-menu-row:hover {
+  background: var(--accent);
 }
-.tm-box {
-  display: grid;
-  place-items: center;
+.tm-box,
+.g-pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
   width: 0.875rem;
   height: 0.875rem;
-  border-radius: 0.25rem;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 28%);
-  color: #fff;
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--input);
+  color: var(--primary-foreground);
   font-size: 0.75rem;
   line-height: 1;
 }
-.tm-box.on {
-  background: #5865c9;
+.tm-box.on,
+.g-pick.on {
+  background: var(--primary);
   box-shadow: none;
 }
 .tm-box.some::after {
@@ -1171,433 +2296,107 @@ code {
   width: 0.4375rem;
   height: 2px;
   border-radius: 1px;
-  background: #b7bff5;
+  background: var(--foreground);
 }
-.tm-box .icon {
+.tm-box .icon,
+.g-pick .icon {
   width: 0.625rem;
   height: 0.625rem;
   stroke-width: 3;
 }
 .tm-plus {
   box-shadow: none;
-  color: #8c8f99;
+  color: var(--muted-foreground);
 }
 .tm-name {
   flex: 1;
-  min-width: 0;
 }
 .tm-n {
   flex-shrink: 0;
   font-size: 0.6875rem;
-  color: #7b7e88;
+  color: var(--muted-foreground);
 }
 .tm-none,
 .tm-err {
-  margin: 0;
-  padding: 0.25rem 0.75rem 0.5rem;
+  padding: 0.375rem 0.5rem;
   font-size: 0.75rem;
-  color: #7b7e88;
+  color: var(--muted-foreground);
 }
 .tm-err {
   color: var(--destructive-foreground);
 }
+
+/* Picking sessions on All sessions to tag them together. */
 .g-head-tools {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
 }
 .g-select-btn[aria-pressed="true"] {
-  border-color: #5865c9;
+  border-color: color-mix(in oklab, var(--primary) 60%, transparent);
+  background: color-mix(in oklab, var(--primary) 16%, transparent);
 }
 .g-select-bar {
   position: sticky;
-  top: 0;
+  top: 0.5rem;
   z-index: 5;
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin: 0 0 1rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.625rem;
-  background: #24262b;
-  box-shadow: 0 0 0 1px rgb(255 255 255 / 8%);
+  margin-bottom: -1rem;
+  padding: 0.5rem 0.5rem 0.5rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--popover);
+  box-shadow: var(--shadow-popover);
 }
 .g-select-n {
-  margin-right: 0.25rem;
+  margin-right: auto;
   font-size: 0.8125rem;
-  font-weight: 600;
-  color: #f0f1f3;
-}
-.g-select-bar .icon {
-  width: 0.75rem;
-  height: 0.75rem;
-}
-.g-card.picked {
-  box-shadow: inset 0 0 0 2px #5865c9;
-}
-.g-pick {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  align-self: flex-start;
-  width: 1.125rem;
-  height: 1.125rem;
-  border-radius: 0.3125rem;
-  box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 28%);
-  color: #fff;
-}
-.g-pick.on {
-  background: #5865c9;
-  box-shadow: none;
-}
-.g-pick .icon {
-  width: 0.75rem;
-  height: 0.75rem;
-  stroke-width: 3;
-}
-.g-card-wrap.picking .g-card-msg {
-  display: none;
-}
-.g-card-wrap.picking:hover .g-card-chats {
-  visibility: visible;
-}
-.session.unreachable .session-name,
-.session.unreachable .session-doing {
-  color: var(--muted-foreground);
-}
-.pr {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
-  border-radius: var(--radius-sm);
-  outline: none;
 }
-.pr:hover {
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.pr:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 1px;
-}
-.pr-open {
-  color: var(--pr-open);
-}
-.pr-draft {
-  color: var(--pr-draft);
-}
-
-/* Messages. */
-.filter-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0 1rem;
-  margin-bottom: -0.75rem;
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
-}
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  height: 1.5rem;
-  padding: 0 0.25rem 0 0.5rem;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--input);
-  background: var(--background);
-  color: var(--foreground);
-  font-weight: 500;
-}
-.dark .chip {
-  background: color-mix(in oklab, var(--input) 32%, transparent);
-}
-.chip button {
-  display: inline-flex;
+.s-main > .g-pick {
   width: 1rem;
   height: 1rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  color: var(--muted-foreground);
-  font-size: 0.875rem;
-  line-height: 1;
+  margin-top: 0.125rem;
 }
-.chip button:hover {
-  background: var(--accent);
-  color: var(--foreground);
-}
-/* One grid for the whole list, so senders, recipients and subjects line up in columns. The
-   first and last tracks are the rows' side padding, which a subgrid can't take as padding. */
-.msg-list {
-  display: grid;
-  grid-template-columns:
-    0.5rem 0.75rem fit-content(10rem) 0.75rem fit-content(11rem) minmax(0, 1fr)
-    auto 0.5rem;
-  column-gap: 0.5rem;
-}
-.msg {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: subgrid;
-}
-.msg-head {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: subgrid;
-  align-items: center;
-  padding: 0.625rem 0;
-  text-align: left;
-  outline: none;
-  transition: background-color 0.1s;
-}
-.msg-head:hover {
-  background: color-mix(in oklab, var(--accent) 60%, transparent);
-}
-.msg-head:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--ring);
-}
-.msg-chev {
-  grid-column: 2;
-  width: 0.75rem;
-  height: 0.75rem;
-  color: var(--muted-foreground);
-  transition: transform 0.15s;
-}
-.msg[aria-expanded="true"] .msg-chev {
-  transform: rotate(90deg);
-}
-.msg-from {
-  grid-column: 3;
-  font-size: 0.8125rem;
-  font-weight: 500;
-}
-.msg-head .arrow {
-  grid-column: 4;
-  width: 0.75rem;
-  height: 0.75rem;
-  color: var(--muted-foreground);
-}
-.msg-to {
-  grid-column: 5;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  min-width: 0;
-  font-size: 0.8125rem;
-  color: color-mix(in oklab, var(--foreground) 80%, transparent);
-}
-.msg-to .icon {
-  width: 0.75rem;
-  height: 0.75rem;
-  color: var(--muted-foreground);
-}
-.msg-subject {
-  grid-column: 6;
-  min-width: 0;
-  margin-left: 0.75rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: color-mix(in oklab, var(--foreground) 85%, transparent);
-}
-.msg-time {
-  grid-column: 7;
-  justify-self: end;
-  margin-left: 0.5rem;
-  font-size: 0.75rem;
-  color: var(--secondary-label);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.msg-detail,
-.msg-body {
-  grid-column: 3 / 8;
-}
-.msg-detail {
-  margin-top: -0.25rem;
-  margin-bottom: 0.625rem;
-  font-size: 0.75rem;
-  color: var(--secondary-label);
-}
-.msg-body {
-  margin-bottom: 0.875rem;
-  padding: 0.625rem 0.875rem;
-  max-height: 28rem;
-  overflow: auto;
-  border-radius: var(--radius-lg);
-  background: var(--message-surface);
-  font-size: 0.8125rem;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.msg-modes {
-  margin-left: auto;
+.s-row.picked {
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
 }
 
-/* Conversations: a list and an open conversation, filling the pane and scrolling apart. */
-.content-chat {
-  overflow: hidden;
-  scrollbar-gutter: auto;
-}
-.page.chat-page {
-  max-width: none;
-  height: 100%;
-  padding: 0;
-  gap: 0;
-}
-.chat-page .filter-bar {
-  flex-shrink: 0;
-  min-height: 2.75rem;
-  margin-bottom: 0;
-  border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
-}
-.chat {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: 20rem minmax(0, 1fr);
-}
-.chat-list {
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0.5rem;
-  border-right: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
-}
-.chat-row {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  width: 100%;
-  padding: 0.5rem;
-  border-radius: var(--radius-lg);
-  text-align: left;
-  outline: none;
-  transition: background-color 0.1s;
-}
-.chat-row:hover {
-  background: color-mix(in oklab, var(--accent) 60%, transparent);
-}
-.chat-row[aria-current="true"] {
-  background: var(--accent);
-}
-.chat-row:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--ring);
-}
-.chat-row-text {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-}
-.chat-row-line {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  min-width: 0;
-}
-.chat-row-title {
-  flex: 1;
-  font-size: 0.8125rem;
-  font-weight: 500;
-}
-.chat-row-time {
-  flex-shrink: 0;
-  font-size: 0.6875rem;
-  color: var(--secondary-label);
-  font-variant-numeric: tabular-nums;
-}
-.chat-row-preview {
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
-}
-.avatar {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 999px;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--muted-foreground);
-  background: color-mix(in oklab, currentColor 16%, transparent);
-}
-.avatar-0 {
-  color: var(--info-foreground);
-}
-.avatar-1 {
-  color: var(--success-foreground);
-}
-.avatar-2 {
-  color: var(--warning-foreground);
-}
-.avatar-3 {
-  color: var(--error-foreground);
-}
-.avatar-4 {
-  color: var(--foreground);
-}
-.avatar-gap {
-  flex-shrink: 0;
-  width: 2rem;
-}
-/* Two faces in the room one takes. */
-.avatar-pair {
-  position: relative;
-  flex-shrink: 0;
-  width: 2rem;
-  height: 2rem;
-}
-.avatar-pair .avatar {
-  position: absolute;
-  width: 1.25rem;
-  height: 1.25rem;
-  font-size: 0.625rem;
-  background: color-mix(in oklab, currentColor 16%, var(--background));
-}
-.avatar-pair .avatar:first-child {
-  top: 0;
-  left: 0;
-}
-.avatar-pair .avatar:last-child {
-  right: 0;
-  bottom: 0;
-  box-shadow: 0 0 0 2px var(--background);
-}
+/* The open conversation: a slim header, the timeline in a centered column, and the composer. */
 .chat-pane {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  height: 100%;
 }
 .chat-head {
   display: flex;
-  flex-shrink: 0;
   align-items: center;
   gap: 0.625rem;
-  padding: 0.5rem 1rem;
-  border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+  height: var(--topbar-height);
+  min-height: var(--topbar-height);
+  padding: 0 var(--gutter);
 }
 .chat-back {
   display: none;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: var(--radius-md);
-  color: var(--muted-foreground);
 }
 .chat-head-text {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
   min-width: 0;
 }
+.chat-head-text > .badge {
+  flex-shrink: 0;
+}
 .chat-title {
+  flex-shrink: 0;
+  max-width: 60%;
   font-size: 0.875rem;
   font-weight: 500;
 }
@@ -1605,2407 +2404,282 @@ code {
   font-size: 0.75rem;
   color: var(--muted-foreground);
 }
+.chat-head > .g-pr {
+  font-size: 0.75rem;
+}
 .chat-thread {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0.75rem 0 1.5rem;
+  padding: 0.5rem var(--chat-gutter) 1.5rem;
 }
-.chat-day {
+.chat-thread > *,
+.wait-line,
+.composer-wrap,
+.pane-foot {
+  max-width: var(--chat-content-max-width);
+  margin-inline: auto;
+}
+
+/* A day, and where what's new starts (chat/TimelineSystemDivider.tsx). */
+.chat-day,
+.chat-new {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  margin: 1rem 1rem 0.25rem;
+  gap: 0.5rem;
+  padding: 1rem 0 0.25rem;
   font-size: 0.6875rem;
   font-weight: 500;
-  color: var(--secondary-label);
+  color: var(--muted-foreground);
 }
 .chat-day::before,
-.chat-day::after {
+.chat-day::after,
+.chat-new::before,
+.chat-new::after {
   content: "";
   flex: 1;
-  border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+  height: 1px;
+  background: color-mix(in oklab, var(--border) 70%, transparent);
 }
+.chat-day > span {
+  padding: 0.25rem 0.5rem;
+}
+.chat-new {
+  color: var(--primary);
+}
+.chat-new::before,
+.chat-new::after {
+  background: color-mix(in oklab, var(--primary) 45%, transparent);
+}
+.chat-new > span {
+  padding: 0 0.25rem;
+}
+
+/* A message. Everyone else's is plain text under a quiet line naming its sender, as T3 Code's
+ * assistant messages (chat/TimelineAssistantRows.tsx). */
 .chat-msg {
+  position: relative;
   display: flex;
-  gap: 0.75rem;
-  padding: 0.125rem 1rem;
+  flex-direction: column;
+  padding: 0.125rem 0.25rem;
 }
-.chat-msg:hover {
-  background: color-mix(in oklab, var(--accent) 40%, transparent);
+.chat-msg-first {
+  margin-top: 1rem;
 }
-.chat-msg + .chat-msg {
+.chat-day + .chat-msg-first,
+.chat-new + .chat-msg-first {
   margin-top: 0.5rem;
-}
-.chat-msg + .chat-msg-first {
-  margin-top: 0.875rem;
-}
-.chat-msg-main {
-  flex: 1;
-  min-width: 0;
 }
 .chat-msg-head {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
   min-width: 0;
+  margin-bottom: 0.25rem;
+  font-size: 0.75rem;
+  line-height: 1rem;
 }
 .chat-msg-from {
+  flex-shrink: 0;
+  max-width: 50%;
   font-size: 0.8125rem;
   font-weight: 600;
+  color: var(--foreground);
+}
+.chat-msg-via {
+  color: var(--muted-foreground);
 }
 .chat-msg-time {
   flex-shrink: 0;
-  font-size: 0.6875rem;
-  color: var(--secondary-label);
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
 }
 .chat-msg-subject {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
+  line-height: 1.375rem;
   font-weight: 500;
+  color: var(--foreground);
+}
+.chat-msg-body,
+.chat-bubble {
+  font-size: 0.875rem;
+  line-height: 1.625;
+  color: color-mix(in oklab, var(--foreground) 90%, transparent);
   overflow-wrap: anywhere;
 }
-.chat-msg-body {
-  font-size: 0.8125rem;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  color: color-mix(in oklab, var(--foreground) 85%, transparent);
-}
-
-/* Mutes. */
-.mute-line {
+/* Its tools show on hover, over the message's end, so a run of messages stays tight. */
+.chat-msg-meta {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
-  min-width: 0;
-  font-size: 0.875rem;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  opacity: 0;
+  transition: opacity 0.2s var(--ease);
 }
-.mute-line .icon {
-  width: 0.875rem;
-  height: 0.875rem;
-  color: var(--muted-foreground);
-}
-.mute-line .verb {
-  color: var(--muted-foreground);
-}
-
-/* A page with nothing to show: a line, centered, no story. */
-.blank {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  justify-content: center;
-  padding: 4rem 1rem;
-  font-size: 0.875rem;
-  color: var(--muted-foreground);
-}
-.gate {
-  display: flex;
-  height: 100dvh;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.375rem;
-  text-align: center;
-  padding: 1rem;
-}
-.gate-title {
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-.gate-line {
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
-}
-
-/* Mobile: the sidebar's nav moves into the top bar (T3 turns it into a sheet). */
-.mobile-nav {
-  display: none;
-}
-@media (max-width: 767px) {
-  .sidebar {
-    display: none;
-  }
-  .topbar {
-    padding: 0 0.75rem;
-    gap: 0.5rem;
-  }
-  .topbar h1 {
-    display: none;
-  }
-  .topbar-brand {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .mobile-nav {
-    display: inline-flex;
-    margin-left: auto;
-  }
-  .topbar-meta {
-    display: none;
-  }
-  .page {
-    padding: 1rem 0.75rem 3rem;
-    gap: 1.5rem;
-  }
-  .row,
-  .session,
-  .msg-head {
-    padding-left: 0.75rem;
-    padding-right: 0.75rem;
-  }
-  .section-head,
-  .device-head,
-  .filter-bar {
-    padding: 0 0.75rem;
-  }
-  .row-grid {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.75rem;
-  }
-  .row-control {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-  .row-grid.keep-inline {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-  .msg-list,
-  .msg {
-    display: block;
-  }
-  .msg-head {
-    width: 100%;
-    padding: 0.625rem 0.75rem;
-    grid-template-columns: 0.75rem minmax(0, max-content) 0.75rem minmax(0, 1fr) auto;
-    grid-template-areas:
-      "chev from arrow to time"
-      ". subject subject subject subject";
-    column-gap: 0.375rem;
-    row-gap: 0.125rem;
-  }
-  .msg-chev {
-    grid-area: chev;
-  }
-  .msg-from {
-    grid-area: from;
-  }
-  .msg-head .arrow {
-    grid-area: arrow;
-  }
-  .msg-to {
-    grid-area: to;
-  }
-  .msg-subject {
-    grid-area: subject;
-    margin-left: 0;
-  }
-  .msg-time {
-    grid-area: time;
-  }
-  .msg-body,
-  .msg-detail {
-    margin-left: 1.875rem;
-    margin-right: 0.75rem;
-  }
-  .device-id {
-    display: none;
-  }
-  .page.chat-page {
-    padding: 0;
-  }
-  .chat {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .chat-list {
-    border-right: 0;
-  }
-  .chat-open .chat-list {
-    display: none;
-  }
-  .chat-back {
-    display: inline-flex;
-  }
-  .chat-head {
-    padding: 0.5rem 0.75rem;
-  }
-  .chat-msg {
-    padding: 0.125rem 0.75rem;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  * {
-    transition: none !important;
-  }
-}
-
-
-/* The page's layout and look (#179): sessions down the left under their devices, then a
-   conversation list, then the open conversation. The page is always dark; the rules scoped to
-   .dark are the ones that override the shared ones above. */
-.sidebar {
-  width: 18rem;
-}
-.sidebar-header {
-  position: relative;
-  padding: 0 var(--sidebar-content-inset);
-}
-.dev-group {
-  padding-top: 0.75rem !important;
-}
-.dev-group .device-link .label {
-  font-weight: 600;
-}
-.dev-you {
-  flex-shrink: 0;
-  font-size: 0.6875rem;
-  color: var(--sidebar-muted-foreground);
-}
-.side-sessions {
-  margin-top: 0.125rem;
-  gap: 0.125rem;
-}
-.side-session {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.625rem;
-  width: 100%;
-  padding: 0.375rem var(--sidebar-row-content-inset) 0.4375rem;
-  border-radius: var(--control-radius);
-  text-align: left;
-  outline: none;
-}
-.side-session .dot {
-  margin-top: 0.4rem;
-  margin-left: 0.25rem;
-}
-.side-session:hover {
-  background: var(--sidebar-row-hover);
-}
-.side-session[aria-current="page"] {
-  background: var(--sidebar-row-selected);
-}
-.side-session:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--ring);
-}
-.side-session-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-.side-session-name {
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--sidebar-foreground);
-}
-.side-session-doing {
-  font-size: 0.75rem;
-  color: var(--sidebar-muted-foreground);
-}
-.sidebar-foot {
-  padding: var(--sidebar-content-inset);
-  border-top: 1px solid var(--sidebar-border);
-  flex-shrink: 0;
-}
-@media (max-width: 767px) {
-  .sidebar {
-    width: auto;
-  }
-}
-/* faces with a presence dot */
-.pres-wrap {
-  position: relative;
-  flex-shrink: 0;
-  display: inline-flex;
-}
-.pres {
+.chat-msg:not(.chat-msg-own) > .chat-msg-meta {
   position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: 0.625rem;
-  height: 0.625rem;
-  border-radius: 999px;
-  background: var(--zinc-400);
-  box-shadow: 0 0 0 2px var(--sidebar);
+  top: -0.25rem;
+  right: 0;
+  padding: 0.125rem 0.125rem 0.125rem 0.375rem;
+  border-radius: var(--radius-md);
+  background: var(--background);
 }
-.pres.ok {
-  background: var(--success);
+.chat-msg:hover > .chat-msg-meta,
+.chat-msg:focus-within > .chat-msg-meta {
+  opacity: 1;
 }
-.avatar {
-  background: color-mix(in oklab, currentColor 14%, var(--background));
-  border-radius: 999px;
-  font-weight: 600;
+
+/* A person's own message, as T3 Code's user message: a bubble on the right
+ * (chat/TimelineUserMessageRow.tsx). */
+.chat-msg-own {
+  align-items: flex-end;
+  gap: 0.25rem;
+  padding: 0;
 }
-/* messages, with their Markdown shown */
-.chat-msg {
-  position: relative;
+.chat-msg-own:not(.chat-msg-first) {
+  margin-top: 0.25rem;
 }
-.chat-msg-main {
-  max-width: 42rem;
+.chat-bubble {
+  max-width: 80%;
+  padding: 0.75rem;
+  border-radius: var(--radius-2xl);
+  background: var(--message-surface);
+  color: var(--foreground);
 }
-.chat-msg-head {
-  gap: 0.5rem;
+.chat-msg-own:not(.chat-msg-first) > .chat-bubble {
+  border-top-right-radius: var(--radius-md);
 }
-.chat-msg-via {
-  font-size: 0.6875rem;
+.chat-msg-own > .chat-msg-meta {
+  padding-right: 0.25rem;
+}
+.chat-msg-sending > .chat-bubble {
+  opacity: 0.64;
+}
+.chat-msg-sending > .msg-sending {
+  opacity: 1;
+  font-size: 0.75rem;
   color: var(--muted-foreground);
-  min-width: 0;
 }
-.chat-msg-subject {
-  font-weight: 600;
+.chat-msg-failed > .chat-bubble {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--destructive) 45%, transparent);
 }
-.chat-msg-body {
-  white-space: normal;
-  line-height: 1.7;
+.msg-failed {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  max-width: 80%;
 }
-.chat-msg-subject {
-  line-height: 1.5;
+.msg-failed-why {
+  margin-right: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--destructive-foreground);
 }
-.chat-msg-subject + .chat-msg-body {
-  margin-top: 0.375rem;
-}
-.chat-msg-head {
-  margin-bottom: 0.25rem;
-}
-.rich p {
-  margin: 0;
-}
-.rich p + *,
-.rich ul + *,
-.rich ol + *,
-.rich pre + * {
-  margin-top: 0.75rem;
+
+/* Markdown, as T3 Code's ChatMarkdown. */
+.rich > * + * {
+  margin-top: 0.65rem;
 }
 .rich ul,
 .rich ol {
-  margin: 0;
-  padding-left: 1.125rem;
+  margin-bottom: 0;
+  padding-left: 1.25rem;
 }
 .rich li + li {
-  margin-top: 0.375rem;
-}
-.rich li::marker {
-  color: var(--muted-foreground);
+  margin-top: 0.25rem;
 }
 .rich code {
-  padding: 0 0.25rem;
-  border-radius: 0.25rem;
-  background: var(--message-surface);
-  font-family: var(--font-mono);
-  font-size: 0.92em;
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--foreground) 10%, transparent);
+  font-size: 0.85em;
 }
 .rich pre {
-  margin: 0;
-  padding: 0.5rem 0.625rem;
-  border-radius: var(--radius-md);
-  background: var(--message-surface);
+  margin-bottom: 0;
+  padding: 0.8rem 0.9rem;
   overflow-x: auto;
-  white-space: pre;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
 }
 .rich pre code {
   padding: 0;
   background: none;
+  font-size: inherit;
 }
 .rich a {
-  color: var(--primary);
-  text-decoration: underline;
+  color: var(--info-foreground);
+}
+.rich a:hover {
+  text-decoration: underline dotted;
   text-underline-offset: 2px;
-  overflow-wrap: anywhere;
 }
 .rich strong {
   font-weight: 600;
   color: var(--foreground);
 }
-.msg-tools {
-  position: absolute;
-  top: -0.5rem;
-  right: 1rem;
-  display: none;
-  padding: 0.125rem;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--popover);
-  box-shadow: var(--shadow-xs-10);
-}
-.chat-msg:hover .msg-tools {
-  display: flex;
-}
-.msg-tools button {
-  display: grid;
-  place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: var(--radius-sm);
-  color: var(--muted-foreground);
-}
-.msg-tools button:hover {
-  background: var(--accent);
-  color: var(--foreground);
-}
-.msg-tools .icon {
-  width: 0.8125rem;
-  height: 0.8125rem;
-}
-/* breathing room between messages */
-.chat-msg + .chat-msg {
-  margin-top: 0.75rem;
-}
-.chat-msg + .chat-msg-first {
-  margin-top: 1.75rem;
-}
-.chat-thread {
-  padding: 1.25rem 0 2rem;
-}
-.chat-msg {
-  padding-left: 1.5rem;
-  padding-right: 1.5rem;
-}
-.chat-day {
-  margin: 1.25rem 0 0.75rem;
-}
-/* softer text, round faces, rows that light up on hover */
-.dark {
-  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-}
-.dark body {
-  -webkit-font-smoothing: antialiased;
-}
-.dark .sidebar {
-  background-image: none;
-}
-.dark .chat-msg {
-  padding: 0.375rem 1.5rem;
-  border-radius: 0;
-  gap: 0.875rem;
-}
-.dark .chat-msg + .chat-msg {
-  margin-top: 0;
-}
-.dark .chat-msg + .chat-msg-first {
-  margin-top: 0.75rem;
-}
-.dark .chat-msg > .avatar,
-.dark .avatar-gap {
-  width: 2.25rem;
-}
-.dark .chat-msg > .avatar {
-  height: 2.25rem;
-  font-size: 0.875rem;
-  margin-top: 0.125rem;
-}
-.dark .chat-msg-from {
-  font-size: 0.875rem;
-  font-weight: 650;
-}
-.dark .chat-msg-subject {
-  font-size: 0.875rem;
-}
-.dark .chat-msg-body {
-  font-size: 0.875rem;
-  line-height: 1.6;
-}
-.dark .chat-msg-main {
-  max-width: 44rem;
-}
-.dark .side-session {
-  align-items: center;
-  gap: 0.625rem;
-}
-.dark .side-session .avatar {
-  width: 1.75rem;
-  height: 1.75rem;
-  font-size: 0.75rem;
-}
-.dark .side-session {
-  padding: 0.375rem 0.5rem;
-}
-.dark .chat-day {
-  margin: 1rem 0 0.5rem;
-}
-/* three soft dark tones, no lines */
-.dark.dark {
-  --background: #2a2c32;
-  --card: #2f3238;
-  --popover: #24262b;
-  --foreground: #e3e4e8;
-  --muted-foreground: #9b9ea8;
-  --secondary-label: #8c8f99;
-  --accent: rgb(255 255 255 / 5%);
-  --border: rgb(255 255 255 / 6%);
-  --message-surface: #1f2125;
-  --primary: #8ea2ff;
-}
-.dark [data-app-sidebar] {
-  --sidebar: #1e2024;
-  --sidebar-foreground: #e3e4e8;
-  --sidebar-muted-foreground: #8c8f99;
-  --sidebar-row-hover: rgb(255 255 255 / 5%);
-  --sidebar-row-selected: rgb(255 255 255 / 9%);
-  --sidebar-border: transparent;
-}
-.dark .sidebar-header {
-  box-shadow: 0 1px 0 rgb(0 0 0 / 25%);
-}
-.dark .sidebar-foot {
-  background: #1a1b1f;
-  border-top: 0;
-}
-.dark .main {
-  background: var(--background);
-}
-.dark .topbar {
-  border-bottom: 0;
-  box-shadow: 0 1px 0 rgb(0 0 0 / 22%);
-}
-.dark .content {
-  background: var(--background);
-}
-.dark .chat-list {
-  background: #25272c;
-  border-right: 0;
-}
-.dark .chat-row:hover {
-  background: rgb(255 255 255 / 4%);
-}
-.dark .chat-row[aria-current="true"] {
-  background: rgb(255 255 255 / 8%);
-}
-.dark .chat-head {
-  border-bottom: 0;
-  box-shadow: 0 1px 0 rgb(0 0 0 / 22%);
-}
-.dark .group {
-  border: 0;
-  box-shadow: none;
-  background: #2f3238;
-}
-.dark .pres {
-  box-shadow: 0 0 0 2px var(--sidebar);
-}
-.dark .chat {
-  grid-template-columns: 18rem minmax(0, 1fr) 15rem;
-}
-.dark .chat-msg:hover {
-  background: rgb(0 0 0 / 10%);
-}
-.dark .chat-msg-body {
-  color: #cfd1d6;
-}
-.dark .avatar {
-  background: color-mix(in oklab, currentColor 22%, #2a2c32);
-}
-.dark .chat-day span {
-  color: #8c8f99;
-}
-.dark .msg-tools {
-  background: #24262b;
-  border-color: rgb(255 255 255 / 6%);
-}
-.dark .badge-secondary {
-  background: rgb(255 255 255 / 7%);
-}
-/* one header, and message rows */
-.dark .chat {
-  grid-template-columns: 19rem minmax(0, 1fr);
-}
-.dark .topbar {
-  gap: 0.625rem;
-}
-/* solid faces, white letters */
-.dark .avatar {
-  color: #fff !important;
-  font-weight: 600;
-}
-.dark .avatar-0 {
-  background: #5865c9;
-}
-.dark .avatar-1 {
-  background: #2f9e6e;
-}
-.dark .avatar-2 {
-  background: #c98a2b;
-}
-.dark .avatar-3 {
-  background: #c4505a;
-}
-.dark .avatar-4 {
-  background: #6b7280;
-}
-.dark .avatar:not([class*="avatar-"]) {
-  background: #3a3d44;
-  color: #c9ccd3 !important;
-}
-.dark .avatar-pair .avatar:last-child {
-  box-shadow: 0 0 0 2px #25272c;
-}
-/* conversation list */
-.dark .chat-list {
-  padding: 0.75rem 0.5rem;
-}
-.dark .chat-row {
-  padding: 0.5rem 0.625rem;
-  border-radius: 0.5rem;
-}
-.dark .chat-row > .avatar,
-.dark .chat-row > .avatar-pair {
-  width: 2.25rem;
-  height: 2.25rem;
-}
-.dark .chat-row > .avatar-pair .avatar {
-  width: 1.5rem;
-  height: 1.5rem;
-  font-size: 0.6875rem;
-}
-.dark .chat-head > .avatar-pair .avatar {
-  width: 1.375rem;
-  height: 1.375rem;
-  font-size: 0.625rem;
-}
-.dark .chat-row-title {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: #dfe1e5;
-}
-.dark .chat-row-preview {
-  font-size: 0.8125rem;
-  color: #8c8f99;
-}
-.dark .chat-row-time {
-  color: #7b7e88;
-}
-/* the chat */
-.dark .chat-head {
-  padding: 0.75rem 1.5rem;
-  gap: 0.75rem;
-}
-.dark .chat-head > .avatar {
-  width: 2rem;
-  height: 2rem;
-}
-.dark .chat-title {
-  font-size: 0.9375rem;
-  font-weight: 650;
-}
-.dark .chat-about {
-  font-size: 0.8125rem;
-  color: #8c8f99;
-}
-.dark .chat-thread {
-  padding: 0.5rem 0 1rem;
-}
-.dark .chat-day {
-  margin: 1.25rem 1.5rem 0.5rem;
-}
-.dark .chat-msg {
-  padding: 0.125rem 1.5rem;
-  gap: 1rem;
-}
-.dark .chat-msg-first {
-  padding-top: 0.25rem;
-}
-.dark .chat-msg + .chat-msg-first {
-  margin-top: 1rem;
-}
-.dark .chat-msg > .avatar,
-.dark .avatar-gap {
-  width: 2.5rem;
-}
-.dark .chat-msg > .avatar {
-  height: 2.5rem;
-  font-size: 1rem;
-  margin-top: 0.125rem;
-}
-.dark .chat-msg-head {
-  margin-bottom: 0.0625rem;
-}
-.dark .chat-msg-from {
-  font-size: 0.9375rem;
-  font-weight: 600;
-  color: #f0f1f3;
-}
-.dark .chat-msg-via {
-  display: none;
-}
-.dark .chat-msg-time {
-  font-size: 0.75rem;
-  color: #7b7e88;
-}
-.dark .chat-msg-main {
-  max-width: 48rem;
-}
-.dark .chat-msg-subject {
-  font-size: 0.9375rem;
-  font-weight: 600;
-  line-height: 1.45;
-  color: #e8e9ec;
-}
-.dark .chat-msg-subject + .chat-msg-body {
-  margin-top: 0.125rem;
-}
-.dark .chat-msg-body {
-  font-size: 0.9375rem;
-  line-height: 1.5;
-  color: #c6c8ce;
-}
-.dark .rich p + *,
-.dark .rich ul + *,
-.dark .rich ol + *,
-.dark .rich pre + * {
-  margin-top: 0.5rem;
-}
-.dark .rich li + li {
-  margin-top: 0.1875rem;
-}
-.dark .rich code {
-  background: #1e2024;
-  color: #d8dae0;
-  padding: 0.0625rem 0.3125rem;
-  border-radius: 0.25rem;
-}
-.dark .rich pre {
-  background: #1e2024;
-  border: 1px solid rgb(0 0 0 / 30%);
-}
-.dark .chat-msg:hover {
-  background: rgb(0 0 0 / 12%);
-}
-.dark .chat-msg:not(.chat-msg-first):hover .avatar-gap::before {
-  content: attr(data-time);
-}
-/* sessions | conversations | chat */
-.dark .sidebar {
-  width: 19rem;
-}
-.all-convs {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  width: 100%;
-  padding: 0.625rem 0.75rem;
-  border-radius: 0.625rem;
-  text-align: left;
-  background: rgb(255 255 255 / 4%);
-}
-.all-convs:hover {
-  background: rgb(255 255 255 / 7%);
-}
-.all-convs[aria-current="page"] {
-  background: rgb(255 255 255 / 10%);
-}
-.all-ico {
-  display: grid;
-  place-items: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  flex-shrink: 0;
-  border-radius: 0.625rem;
-  background: #5865c9;
-  color: #fff;
-}
-.all-ico .icon {
-  width: 1.125rem;
-  height: 1.125rem;
-}
-.all-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.all-title {
-  font-size: 0.875rem;
-  font-weight: 650;
-  color: #f0f1f3;
-}
-.all-sub {
-  font-size: 0.75rem;
-  color: #8c8f99;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dark .dev-group {
-  padding-top: 1rem !important;
-}
-.dark .dev-group .device-link {
-  height: 1.5rem;
-}
-.dark .dev-group .device-link .label {
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #8c8f99;
-}
-.dark .dev-group .device-link .icon {
-  display: none;
-}
-.dark .side-session {
-  align-items: flex-start;
-  padding: 0.5rem 0.625rem;
-}
-.dark .side-session .pres-wrap {
-  margin-top: 0.125rem;
-}
-.dark .side-session .avatar {
-  width: 2.25rem;
-  height: 2.25rem;
-  font-size: 0.875rem;
-}
-.dark .side-session-name {
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-.dark .side-session-doing {
-  font-size: 0.75rem;
-  white-space: normal;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  line-height: 1.35;
-  margin-top: 0.0625rem;
-}
-.g-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  margin-top: 0.25rem;
-  min-width: 0;
-  font-size: 0.6875rem;
-  color: #7b7e88;
-}
-.g-branch {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  min-width: 0;
-}
-.g-branch .icon {
-  width: 0.6875rem;
-  height: 0.6875rem;
-  flex-shrink: 0;
-}
-.g-pr {
-  flex-shrink: 0;
-  padding: 0 0.375rem;
-  border-radius: 999px;
-  background: rgb(47 158 110 / 20%);
-  color: #6fd3a4;
-  font-weight: 600;
-}
-.g-pr.draft {
-  background: rgb(255 255 255 / 7%);
-  color: #a3a6af;
-}
-.g-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  padding: 0 0.5rem 1rem !important;
-}
-.g-head {
-  padding: 1.25rem 0.625rem 0.75rem;
-}
-.g-head h2 {
-  font-size: 1.0625rem;
-  font-weight: 700;
-  color: #f0f1f3;
-  letter-spacing: -0.01em;
-}
-.g-head-who {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  min-width: 0;
-}
-.g-head-who .avatar {
-  width: 1.75rem;
-  height: 1.75rem;
-  font-size: 0.75rem;
-}
-.g-head-who .pres {
-  box-shadow: 0 0 0 2px #25272c;
-}
-.g-head-doing {
-  margin-top: 0.25rem;
-  font-size: 0.8125rem;
-  line-height: 1.4;
-  color: #8c8f99;
-}
-.g-search {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  height: 2.125rem;
-  margin: 0 0.25rem 0.5rem;
-  padding: 0 0.75rem;
-  border-radius: 0.5rem;
-  background: #1e2024;
-  color: #8c8f99;
-}
-.g-search .icon {
-  width: 0.875rem;
-  height: 0.875rem;
-  flex-shrink: 0;
-}
-.g-search input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: none;
-  font: inherit;
-  font-size: 0.8125rem;
-  color: #e3e4e8;
-}
-.g-search input::placeholder {
-  color: #7b7e88;
-}
-.g-sec {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.875rem 0.625rem 0.25rem;
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #8c8f99;
-}
-.g-sec-n {
-  font-weight: 600;
-  color: #6b6e78;
-}
-.g-none {
-  padding: 1rem 0.625rem;
-  font-size: 0.8125rem;
-  color: #8c8f99;
-}
-.dev-host {
-  margin-left: 0.5rem;
-  font-weight: 500;
-  letter-spacing: 0;
-  text-transform: none;
-  color: #6b6e78;
-}
-/* All sessions, Recent, and who is in a group chat */
-.g-top {
-  gap: 0.25rem;
-}
-.g-top .all-convs {
-  padding: 0.5rem 0.625rem;
-  background: none;
-}
-.g-top .all-convs:hover {
-  background: rgb(255 255 255 / 5%);
-}
-.g-top .all-convs[aria-current="page"] {
-  background: rgb(255 255 255 / 9%);
-}
-.g-top .all-ico {
-  width: 2rem;
-  height: 2rem;
-  border-radius: 0.5rem;
-  background: #3a3d44;
-  color: #c9ccd3;
-}
-.g-top .all-convs[aria-current="page"] .all-ico {
-  background: #5865c9;
-  color: #fff;
-}
-.g-top .all-ico .icon {
-  width: 1rem;
-  height: 1rem;
-}
-.g-page {
-  max-width: 64rem;
-  margin: 0 auto;
-  padding: 1.75rem 2rem 3rem;
-}
-.g-page-head {
-  margin-bottom: 1.25rem;
-}
-.g-page-head h1 {
-  font-size: 1.375rem;
-  font-weight: 700;
-  letter-spacing: -0.015em;
-  color: #f0f1f3;
-}
-.g-page-head p {
-  margin-top: 0.25rem;
-  font-size: 0.875rem;
-  color: #8c8f99;
-}
-.g-dev + .g-dev {
-  margin-top: 1.75rem;
-}
-.g-dev-head {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.625rem;
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #b5b8c0;
-}
-.g-dev-host {
-  font-weight: 500;
-  letter-spacing: 0;
-  text-transform: none;
-  color: #6b6e78;
-}
-.g-dev-n {
-  margin-left: auto;
-  font-weight: 500;
-  letter-spacing: 0;
-  text-transform: none;
-  color: #8c8f99;
-}
-.g-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
-  gap: 0.75rem;
-}
-.g-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.625rem;
-  padding: 0.875rem 1rem 0.875rem;
-  border-radius: 0.75rem;
-  background: #2f3238;
-  text-align: left;
-  transition: background-color 0.1s, transform 0.1s;
-}
-.g-card:hover {
-  background: #353840;
-}
-.g-card.stale {
-  opacity: 0.6;
-}
-.g-card-top {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  min-width: 0;
-}
-.g-card-top .avatar {
-  width: 2.5rem;
-  height: 2.5rem;
-  font-size: 1rem;
-}
-.g-card-top .pres {
-  box-shadow: 0 0 0 2px #2f3238;
-}
-.g-card-id {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-.g-card-name {
-  font-size: 0.9375rem;
-  font-weight: 650;
-  color: #f0f1f3;
-}
-.g-card-agent {
-  font-size: 0.75rem;
-  color: #8c8f99;
-}
-.g-state {
-  flex-shrink: 0;
-  align-self: flex-start;
-  padding: 0.0625rem 0.5rem;
-  border-radius: 999px;
-  background: rgb(255 255 255 / 6%);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  color: #a3a6af;
-}
-.g-state.on {
-  background: rgb(47 158 110 / 20%);
-  color: #6fd3a4;
-}
-.g-card-doing {
-  font-size: 0.8125rem;
-  line-height: 1.45;
-  color: #c6c8ce;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  min-height: 2.36em;
-}
-.g-card-doing.none {
-  color: #6b6e78;
-  font-style: italic;
-}
-.g-card-foot {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-  font-size: 0.75rem;
-  color: #7b7e88;
-}
-.g-card-foot .g-branch .icon {
-  width: 0.75rem;
-  height: 0.75rem;
-}
-.g-card-chats {
-  margin-left: auto;
-  flex-shrink: 0;
-}
-.g-recent {
-  max-width: 56rem;
-}
-.g-feed {
-  margin: 0 -1.5rem;
-}
-.g-feed .chat-day {
-  margin: 0.75rem 1.5rem 0.25rem;
-}
-.g-item {
-  cursor: pointer;
-  border-radius: 0.5rem;
-  padding-top: 0.625rem !important;
-  padding-bottom: 0.625rem !important;
-  margin-top: 0 !important;
-}
-.g-item:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--ring);
-  outline: none;
-}
-.g-to {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  min-width: 0;
-  font-size: 0.8125rem;
-  color: #a3a6af;
-}
-.g-to-arrow {
-  width: 0.75rem;
-  height: 0.75rem;
-  color: #6b6e78;
-  flex-shrink: 0;
-}
-.g-to-who {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3125rem;
-  min-width: 0;
-  font-weight: 600;
-}
-.g-to-who .avatar {
-  width: 1.125rem;
-  height: 1.125rem;
-  font-size: 0.5625rem;
-}
-.g-to-who .icon {
-  width: 0.875rem;
-  height: 0.875rem;
-}
-.g-members-wrap {
-  position: relative;
-  margin-left: auto;
-  flex-shrink: 0;
-}
-.g-members {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  height: 2.125rem;
-  padding: 0 0.625rem 0 0.375rem;
-  border-radius: 999px;
-  background: rgb(255 255 255 / 5%);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: #c6c8ce;
-}
-.g-members:hover,
-.g-members[aria-expanded="true"] {
-  background: rgb(255 255 255 / 9%);
-}
-.g-pile {
-  display: inline-flex;
-}
-.g-pile .avatar {
-  width: 1.5rem;
-  height: 1.5rem;
-  font-size: 0.625rem;
-  box-shadow: 0 0 0 2px #2a2c32;
-}
-.g-pile .avatar + .avatar {
-  margin-left: -0.4375rem;
-}
-.g-members-chev {
-  width: 0.875rem;
-  height: 0.875rem;
-  color: #8c8f99;
-}
-.g-members-panel {
-  position: absolute;
-  z-index: 40;
-  top: calc(100% + 0.5rem);
-  right: 0;
-  width: 20rem;
-  max-height: 26rem;
-  overflow-y: auto;
-  padding: 0.5rem;
-  border-radius: 0.75rem;
-  background: #1e2024;
-  box-shadow: 0 16px 40px -12px rgb(0 0 0 / 60%), 0 0 0 1px rgb(255 255 255 / 6%);
-}
-.g-mp-head {
-  padding: 0.375rem 0.5rem 0.25rem;
-  font-size: 0.8125rem;
-  font-weight: 650;
-  color: #f0f1f3;
-}
-.g-mp-sec {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.75rem 0.5rem 0.25rem;
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #8c8f99;
-}
-.g-mp-sec span:not(.g-mp-n) {
-  font-weight: 500;
-  letter-spacing: 0;
-  text-transform: none;
-  color: #6b6e78;
-}
-.g-mp-n {
-  margin-left: auto;
-  color: #6b6e78;
-}
-.g-mp-row {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  width: 100%;
-  padding: 0.375rem 0.5rem;
-  border-radius: 0.5rem;
-  text-align: left;
-}
-.g-mp-row:hover {
-  background: rgb(255 255 255 / 6%);
-}
-.g-mp-row.stale {
-  opacity: 0.55;
-}
-.g-mp-row .avatar {
-  width: 2rem;
-  height: 2rem;
-  font-size: 0.8125rem;
-}
-.g-mp-row .pres {
-  box-shadow: 0 0 0 2px #1e2024;
-}
-.g-mp-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-.g-mp-name {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: #e3e4e8;
-}
-.g-mp-doing {
-  font-size: 0.75rem;
-  color: #8c8f99;
-}
-.g-mp-posted {
-  flex-shrink: 0;
-  font-size: 0.6875rem;
-  color: #8c8f99;
-}
-/* presence: green active, yellow idle, red do not disturb, grey offline */
-.pres.pres-on {
-  background: #23a55a;
-}
-.pres.pres-idle {
-  background: #f0b232;
-}
-.pres.pres-dnd {
-  background: #f23f43;
-}
-.pres.pres-dnd::after {
-  content: "";
-  position: absolute;
-  left: 22%;
-  right: 22%;
-  top: 50%;
-  height: 2px;
-  margin-top: -1px;
-  border-radius: 1px;
-  background: var(--sidebar, #1e2024);
-}
-.pres.pres-off {
-  background: #80848e;
-}
-.g-state-on {
-  background: rgb(35 165 90 / 20%) !important;
-  color: #6fd3a4 !important;
-}
-.g-state-idle {
-  background: rgb(240 178 50 / 16%) !important;
-  color: #f5c96a !important;
-}
-.g-state-dnd {
-  background: rgb(242 63 67 / 16%) !important;
-  color: #ff8a8d !important;
-}
-.g-state-off {
-  background: rgb(255 255 255 / 6%) !important;
-  color: #a3a6af !important;
-}
-/* dots on conversation faces, Discord's DM list */
-.avatar.dotted {
-  position: relative;
-  overflow: visible;
-}
-.avatar.dotted > .pres {
-  right: -0.1875rem;
-  bottom: -0.1875rem;
-  width: 0.6875rem;
-  height: 0.6875rem;
-  box-shadow: 0 0 0 2.5px #25272c;
-}
-.avatar-pair .avatar.dotted > .pres {
-  width: 0.5625rem;
-  height: 0.5625rem;
-  right: -0.125rem;
-  bottom: -0.125rem;
-  box-shadow: 0 0 0 2px #25272c;
-}
-.chat-row[aria-current="true"] .avatar.dotted > .pres,
-.chat-row:hover .avatar.dotted > .pres {
-  box-shadow: 0 0 0 2.5px #33363c;
-}
-.chat-head .avatar.dotted > .pres {
-  box-shadow: 0 0 0 2.5px #2a2c32;
-}
-.avatar-pair .avatar.dotted {
-  position: absolute;
-}
-.avatar-pair .avatar:first-child.dotted > .pres {
-  right: auto;
-  left: -0.1875rem;
-  bottom: -0.1875rem;
-}
-/* group chats: a square of up to four members' faces */
-.g-grid {
-  position: relative;
-  display: grid;
-  flex-shrink: 0;
-  width: 2.25rem;
-  height: 2.25rem;
-  gap: 2px;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  border-radius: 0.625rem;
-  overflow: visible;
-}
-.g-grid .avatar {
-  width: 100% !important;
-  height: 100% !important;
-  border-radius: 999px;
-  font-size: 0.5625rem !important;
-  font-weight: 700;
-}
-.g-grid-1 {
-  grid-template-columns: 1fr;
-  grid-template-rows: 1fr;
-}
-.g-grid-1 .avatar {
-  border-radius: 999px;
-  font-size: 0.875rem !important;
-}
-.g-grid-2 {
-  grid-template-rows: 1fr;
-}
-.g-grid-2 {
-  align-items: center;
-}
-.g-grid-2 .avatar {
-  height: 1.0625rem !important;
-  font-size: 0.5625rem !important;
-}
-.g-more {
-  background: #3a3d44 !important;
-  color: #c9ccd3 !important;
-  font-size: 0.5rem !important;
-}
-.chat-head .g-grid {
-  width: 2rem;
-  height: 2rem;
-}
-.g-row-count {
-  flex-shrink: 0;
-  margin-left: -0.125rem;
-  padding: 0 0.375rem;
-  border-radius: 999px;
-  background: rgb(255 255 255 / 6%);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  color: #a3a6af;
-}
-/* device dots: the same colours, on devices */
-.dev-dot {
-  display: inline-block;
-  flex-shrink: 0;
-  width: 0.5rem;
-  height: 0.5rem;
-  margin-right: 0.4375rem;
-  border-radius: 999px;
-  vertical-align: 0.0625rem;
-}
-.dev-dot.pres-on {
-  background: #23a55a;
-}
-.dev-dot.pres-idle {
-  background: #f0b232;
-}
-.dev-dot.pres-off {
-  background: #80848e;
-}
-.g-dev-head .dev-dot,
-.g-mp-sec .dev-dot {
-  margin-right: 0.125rem;
-}
-/* the sidebar folds to a strip */
-.fold-btn {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 0.5rem;
-  color: #8c8f99;
-}
-.fold-btn:hover {
-  background: rgb(255 255 255 / 6%);
-  color: #e3e4e8;
-}
-.fold-btn .icon,
-.mini-btn .icon {
-  width: 1.125rem;
-  height: 1.125rem;
-}
-.sidebar.mini {
-  width: 4.25rem !important;
-  align-items: center;
-  padding: 0.625rem 0 0.5rem;
-  gap: 0.25rem;
-}
-.mini-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.375rem;
-  width: 100%;
-  padding: 0.25rem 0 0.75rem;
-  scrollbar-width: none;
-}
-.mini-btn {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: 2.5rem;
-  height: 2.5rem;
-  border-radius: 0.75rem;
-  background: rgb(255 255 255 / 4%);
-  color: #a3a6af;
-  transition: border-radius 0.15s, background-color 0.15s;
-}
-.mini-btn:hover {
-  background: rgb(255 255 255 / 9%);
-  color: #f0f1f3;
-  border-radius: 0.875rem;
-}
-.mini-btn.current {
-  background: #5865c9;
-  color: #fff;
-}
-.mini-open {
-  background: none;
-  margin-bottom: 0.25rem;
-}
-.mini-foot {
-  margin-top: 0.25rem;
-  background: none;
-}
-.mini-dev {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2rem;
-  margin: 0.625rem 0 0.125rem;
-  padding-top: 0.625rem;
-  border-top: 1px solid rgb(255 255 255 / 8%);
-}
-.mini-dev .dev-dot {
-  margin: 0;
-}
-.mini-face {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 3rem;
-  height: 2.75rem;
-  border-radius: 0.75rem;
-}
-.mini-face:hover {
-  background: rgb(255 255 255 / 5%);
-}
-.mini-face.current {
-  background: rgb(255 255 255 / 10%);
-}
-.mini-face.current::before {
-  content: "";
-  position: absolute;
-  left: -0.625rem;
-  top: 0.625rem;
-  bottom: 0.625rem;
-  width: 0.25rem;
-  border-radius: 0 4px 4px 0;
-  background: #f0f1f3;
-}
-.mini-face .avatar {
-  width: 2.25rem;
-  height: 2.25rem;
-  font-size: 0.875rem;
-}
-/* a DM's two faces on a diagonal, top right to bottom left; each dot on its face's free bottom-right corner */
-.dark .avatar-pair {
-  position: relative;
-  display: block;
-  flex-shrink: 0;
-  width: 2.5rem !important;
-  height: 2.5rem !important;
-}
-.dark .avatar-pair .avatar,
-.dark .avatar-pair .avatar.dotted {
-  position: absolute !important;
-  width: 1.5rem !important;
-  height: 1.5rem !important;
-  font-size: 0.6875rem !important;
-  box-shadow: none;
-}
-.dark .avatar-pair .avatar:first-child {
-  top: 0;
-  right: 0;
-  left: auto;
-  bottom: auto;
-  z-index: auto;
-}
-.dark .avatar-pair .avatar:last-child {
-  left: 0;
-  bottom: 0;
-  top: auto;
-  right: auto;
-  z-index: 1;
-  box-shadow: 0 0 0 2px #25272c;
-}
-.dark .avatar-pair .avatar.dotted > .pres {
-  width: 0.5rem;
-  height: 0.5rem;
-  box-shadow: 0 0 0 2px #25272c;
-}
-.dark .avatar-pair .avatar:first-child.dotted > .pres {
-  left: auto;
-  right: -2px;
-  bottom: -2px;
-  z-index: 2;
-}
-.dark .avatar-pair .avatar:last-child.dotted > .pres {
-  left: auto;
-  right: -2px;
-  bottom: -2px;
-}
-.chat-row[aria-current="true"] .avatar-pair .avatar:last-child,
-.chat-row:hover .avatar-pair .avatar:last-child,
-.chat-row[aria-current="true"] .avatar-pair .avatar.dotted > .pres,
-.chat-row:hover .avatar-pair .avatar.dotted > .pres {
-  box-shadow: 0 0 0 2px #33363c;
-}
-.dark .chat-head > .avatar-pair {
-  width: 2.25rem !important;
-  height: 2.25rem !important;
-}
-.dark .chat-head > .avatar-pair .avatar,
-.dark .chat-head > .avatar-pair .avatar.dotted {
-  width: 1.375rem !important;
-  height: 1.375rem !important;
-  font-size: 0.625rem !important;
-}
-.chat-head .avatar-pair .avatar:last-child,
-.chat-head .avatar-pair .avatar.dotted > .pres {
-  box-shadow: 0 0 0 2px #2a2c32;
-}
-/* presence dots, a little smaller than a face's corner */
-.dark .pres {
-  width: 0.5rem;
-  height: 0.5rem;
-}
-.dark .avatar.dotted > .pres {
-  width: 0.5625rem;
-  height: 0.5625rem;
-  right: -0.125rem;
-  bottom: -0.125rem;
-  box-shadow: 0 0 0 2px #25272c;
-}
-.chat-row[aria-current="true"] .avatar.dotted > .pres,
-.chat-row:hover .avatar.dotted > .pres {
-  box-shadow: 0 0 0 2px #33363c;
-}
-.chat-head .avatar.dotted > .pres {
-  box-shadow: 0 0 0 2px #2a2c32;
-}
-.dark .dev-dot {
-  width: 0.4375rem;
-  height: 0.4375rem;
-}
-/* rows line their text up whatever the picture: a pair is the widest */
-.dark .chat {
-  grid-template-columns: 21rem minmax(0, 1fr);
-}
-.dark .g-list .chat-row > .g-grid,
-.dark .g-list .chat-row > .avatar {
-  margin-right: 0.25rem;
-}
-/* settled sessions: folded under each device, a tab on All sessions, an Older section in conversations */
-.settled {
-  margin-top: 0.125rem;
-}
-.settled-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  width: 100%;
-  height: 1.875rem;
-  padding: 0 0.625rem;
-  border-radius: 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #7b7e88;
-  text-align: left;
-}
-.settled-toggle:hover {
-  background: rgb(255 255 255 / 4%);
-  color: #b5b8c0;
-}
-.settled-caret {
-  width: 0.75rem;
-  height: 0.75rem;
-  flex-shrink: 0;
-}
-.settled-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.0625rem;
-  padding: 0.125rem 0 0.375rem;
-}
-.settled-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  width: 100%;
-  height: 1.875rem;
-  padding: 0 0.625rem 0 1.5rem;
-  border-radius: 0.5rem;
-  text-align: left;
-  color: #8c8f99;
-}
-.settled-row:hover {
-  background: rgb(255 255 255 / 4%);
-  color: #c6c8ce;
-}
-.settled-row.current {
-  background: rgb(255 255 255 / 8%);
-  color: #e3e4e8;
-}
-.settled-row .avatar {
-  width: 1.25rem;
-  height: 1.25rem;
-  font-size: 0.5625rem;
-  opacity: 0.55;
-  filter: saturate(0.4);
-}
-.settled-name {
-  flex: 1;
-  min-width: 0;
-  font-size: 0.8125rem;
-}
-.settled-when {
-  flex-shrink: 0;
-  font-size: 0.6875rem;
-  color: #6b6e78;
-}
-.g-page-head-row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 1rem;
-}
-.g-tabs {
-  display: inline-flex;
-  padding: 0.1875rem;
-  border-radius: 0.625rem;
-  background: #1e2024;
-}
-.g-tabs button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4375rem;
-  height: 1.875rem;
-  padding: 0 0.75rem;
-  border-radius: 0.4375rem;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: #8c8f99;
-}
-.g-tabs button[aria-selected="true"] {
-  background: #3a3d44;
-  color: #f0f1f3;
-}
-.g-tab-n {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  color: #7b7e88;
-}
-.g-tabs button[aria-selected="true"] .g-tab-n {
-  color: #b5b8c0;
-}
-.g-settled-note {
-  margin: -0.25rem 0 0.875rem;
-  font-size: 0.8125rem;
-  color: #8c8f99;
-}
-.g-search-wide {
-  max-width: 26rem;
-  margin: 0 0 1.25rem;
-}
-.g-settled-list {
-  display: flex;
-  flex-direction: column;
-  border-radius: 0.75rem;
-  background: #2f3238;
-  overflow: hidden;
-}
-.g-settled {
-  display: grid;
-  grid-template-columns: 1.75rem 11rem minmax(0, 1fr) 4.5rem 5rem;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.5rem 0.875rem;
-  text-align: left;
-}
-.g-settled + .g-settled {
-  border-top: 1px solid rgb(255 255 255 / 5%);
-}
-.g-settled:hover {
-  background: #353840;
-}
-.g-settled .avatar {
-  width: 1.75rem;
-  height: 1.75rem;
-  font-size: 0.6875rem;
-  opacity: 0.6;
-  filter: saturate(0.4);
-}
-.g-settled-name {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: #c6c8ce;
-}
-.g-settled-last {
-  font-size: 0.8125rem;
-  color: #8c8f99;
-}
-.g-settled-chats,
-.g-settled-when {
-  font-size: 0.75rem;
-  color: #7b7e88;
-  text-align: right;
-}
-.g-sec-toggle {
-  width: 100%;
-  text-align: left;
-  border-radius: 0.375rem;
-}
-.g-sec-toggle:hover {
-  color: #c6c8ce;
-}
-.g-sec-toggle > span:first-child {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-}
-/* The repo picker (#348): the current repo's name, which opens this machine's other repos. */
-.repo-btn {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  flex: 1;
-  min-width: 0;
-  height: 2rem;
-  margin-right: auto;
-  padding: 0 0.5rem 0 var(--sidebar-row-content-inset);
-  border-radius: 0.5rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: #f0f1f3;
-  text-align: left;
-}
-.repo-btn:hover,
-.repo-btn[aria-expanded="true"] {
-  background: rgb(255 255 255 / 6%);
-}
-.repo-btn .repo-name {
-  min-width: 0;
-}
-.repo-btn .icon {
-  flex-shrink: 0;
-  width: 0.875rem;
-  height: 0.875rem;
-  color: #8c8f99;
-}
-.repo-menu {
-  width: 16.5rem;
-  z-index: 61;
-}
-.repo-menu .tag-menu-list {
-  padding: 0.25rem;
-}
-.repo-row {
-  min-height: 2rem;
-}
-.repo-row:disabled {
-  opacity: 0.5;
-}
-.repo-row.current {
-  color: #f0f1f3;
-}
-.repo-row .icon {
-  flex-shrink: 0;
-  width: 0.875rem;
-  height: 0.875rem;
-  color: #8c8f99;
-}
-.repo-row-text {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-}
-.repo-path {
-  font-size: 0.6875rem;
-  color: #7b7e88;
-}
 
-/* on a phone: the sidebar gives way to the top bar's views, and the conversation list and an open
-   conversation take turns */
-@media (max-width: 767px) {
-  .dark .chat {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .page.chat-page {
-    margin-right: 0;
-  }
-  .dark .chat-msg {
-    padding: 0.375rem 0.75rem;
-  }
-  .g-page {
-    padding: 1.25rem 0.75rem 3rem;
-  }
-}
-
-/* quiet sessions: a session's Hide button shows on hover; a hidden one has Show in its fold */
-.side-li {
-  position: relative;
-}
-.side-hide {
-  position: absolute;
-  top: 0.375rem;
-  right: 0.375rem;
-  display: grid;
-  place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: var(--radius-sm);
-  color: var(--sidebar-muted-foreground);
-  opacity: 0;
-}
-/* see-through rather than display: none, so a keyboard can still reach it */
-.side-li:hover .side-hide,
-.side-li:focus-within .side-hide {
-  opacity: 1;
-}
-.side-hide:hover {
-  background: rgb(255 255 255 / 8%);
-  color: var(--sidebar-foreground);
-}
-.side-hide .icon {
-  width: 0.875rem;
-  height: 0.875rem;
-}
-.quiet-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.quiet-item .settled-row {
-  flex: 1;
-  min-width: 0;
-}
-.quiet-item .side-hide {
-  position: static;
-  flex-shrink: 0;
-  opacity: 1;
-}
-.quiet-item .pres-wrap .avatar {
-  width: 1.25rem;
-  height: 1.25rem;
-  font-size: 0.5625rem;
-}
-.side-notice {
-  display: block;
-  width: calc(100% - 1rem);
-  margin: 0.5rem 0.5rem 0;
-  padding: 0.5rem 0.625rem;
-  border-radius: var(--radius-md);
-  background: rgb(242 63 67 / 14%);
-  color: #ff8a8d;
-  font-size: 0.75rem;
-  text-align: left;
-}
-
-/* An open session's tags (#211), under its name in the conversation list. */
-.dark .g-head .session-tags {
-  margin-top: 0.5rem;
-  padding-left: 0;
-}
-.dark .g-head .tag {
-  border-color: rgb(255 255 255 / 12%);
-  color: #c6c8ce;
-}
-.dark .g-head .session-tags .btn-xs {
-  color: #8c8f99;
-}
-.dark .g-head .session-tags .btn-xs:hover {
-  color: #f0f1f3;
-}
-
-/* All, Direct or Group, over the one conversation list. */
-.dark .g-kinds {
-  display: flex;
-  margin: 0 0.25rem 0.5rem;
-}
-.dark .g-kinds button {
-  flex: 1;
-  justify-content: center;
-}
-
-/* A newer release (#240): above Settings in the sidebar, at the foot of the folded sidebar, and in
-   the top bar on a phone. Green when one click restarts onto it, as in Discord. */
-.menu-button.update {
-  color: var(--sidebar-foreground);
-}
-.menu-button.update-ready,
-.menu-button.update-ready > .icon,
-.menu-button.update-ready:hover > .icon {
-  color: var(--success-foreground);
-}
-.menu-button.update-ready {
-  background: color-mix(in oklab, var(--success) 10%, transparent);
-}
-.menu-button.update-ready:hover {
-  background: color-mix(in oklab, var(--success) 18%, transparent);
-  color: var(--success-foreground);
-}
-div.menu-button.update,
-div.menu-button.update:hover {
-  background: none;
-  color: var(--sidebar-muted-foreground);
-  cursor: default;
-}
-.mini-btn.update-ready {
-  color: var(--success-foreground);
-}
-.mini-btn.mini-update {
-  background: none;
-}
-.mini-btn.update-ready {
-  background: color-mix(in oklab, var(--success) 14%, transparent);
-}
-.mini-btn:disabled {
-  cursor: default;
-}
-.nav-dot {
-  display: inline-block;
-  width: 0.375rem;
-  height: 0.375rem;
-  margin-left: 0.25rem;
-  vertical-align: 0.15em;
-  border-radius: 50%;
-  background: var(--muted-foreground);
-}
-.nav-dot.update-ready {
-  background: var(--success);
-}
-.icon.spin {
-  animation: spin 1s linear infinite;
-}
-@keyframes spin {
-  to {
-    rotate: 360deg;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .icon.spin {
-    animation: none;
-  }
-}
-.install-line {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  margin-top: 0.5rem;
-}
-.install-line code {
-  flex: 1;
-  min-width: 0;
-  overflow-x: auto;
-  padding: 0.375rem 0.5rem;
-  border-radius: var(--control-radius);
-  background: color-mix(in oklab, var(--input) 32%, transparent);
-  font-size: 0.75rem;
-  white-space: nowrap;
-}
-
-/* A person's account (#242): unread counts, the composer, the dialogs. */
-.avatar.avatar-person {
-  background: #5865c9;
-  color: #fff;
-}
-.ico-you {
-  background: #2f3238;
-}
-.top-you .all-text {
-  flex: 1;
-}
-.unread-badge {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  min-width: 1.125rem;
-  height: 1.125rem;
-  padding: 0 0.3125rem;
-  border-radius: 999px;
-  background: #5865c9;
-  color: #fff;
-  font-size: 0.6875rem;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-}
-.mini-btn {
-  position: relative;
-}
-.mini-unread {
-  position: absolute;
-  top: 0.25rem;
-  right: 0.25rem;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 999px;
-  background: #7a87e8;
-}
-.m-unread {
-  margin-left: 0.25rem;
-  padding: 0 0.3125rem;
-  border-radius: 999px;
-  background: #5865c9;
-  color: #fff;
-  font-size: 0.625rem;
-  font-weight: 650;
-}
-.chat-row-line .chat-row-preview {
-  flex: 1;
-  min-width: 0;
-}
-.chat-row-unread .chat-row-title,
-.chat-row-unread .chat-row-preview {
-  color: #f0f1f3;
-  font-weight: 600;
-}
-
-/* The sidebar's foot, once there is someone to name. */
-.foot-account {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-}
-.account-chip {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-  height: 2.5rem;
-  padding: 0 0.5rem;
-  border-radius: 0.5rem;
-  text-align: left;
-}
-.account-chip:hover,
-.foot-settings:hover,
-.foot-settings[aria-current="page"] {
-  background: rgb(255 255 255 / 7%);
-}
-.account-chip .avatar {
-  width: 1.75rem;
-  height: 1.75rem;
-  font-size: 0.75rem;
-}
-.account-name {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: #f0f1f3;
-}
-.foot-settings,
-.icon-btn {
-  display: grid;
-  flex-shrink: 0;
-  place-items: center;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 0.5rem;
-  color: #8c8f99;
-}
-.foot-settings:hover,
-.icon-btn:hover {
-  color: #f0f1f3;
-}
-.icon-btn:hover {
-  background: rgb(255 255 255 / 7%);
-}
-.icon-btn:focus-visible,
-.foot-settings:focus-visible,
-.account-chip:focus-visible,
-.side-msg:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
-}
-.icon-btn .icon,
-.foot-settings .icon {
-  width: 1rem;
-  height: 1rem;
-}
-
-/* Message a session: on hover in the sidebar and on its card, always where there's no hover. */
-.side-msg {
-  position: absolute;
-  top: 0.375rem;
-  right: 2rem;
-  display: grid;
-  place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: var(--radius-sm);
-  color: var(--sidebar-muted-foreground);
-  opacity: 0;
-}
-.side-li:hover .side-msg,
-.side-li:focus-within .side-msg {
-  opacity: 1;
-}
-.side-msg:hover {
-  background: rgb(255 255 255 / 8%);
-  color: var(--sidebar-foreground);
-}
-.side-msg .icon {
-  width: 0.875rem;
-  height: 0.875rem;
-}
-.g-card-wrap {
-  position: relative;
-  display: flex;
-  min-width: 0;
-}
-.g-card-wrap .g-card {
-  flex: 1;
-  min-width: 0;
-}
-.g-card-msg {
-  position: absolute;
-  right: 0.75rem;
-  bottom: 0.625rem;
-  opacity: 0;
-}
-.g-card-msg .icon {
-  width: 0.75rem;
-  height: 0.75rem;
-}
-.g-card-wrap:hover .g-card-msg,
-.g-card-msg:focus-visible {
-  opacity: 1;
-}
-.g-card-wrap:hover .g-card-chats {
-  visibility: hidden;
-}
-@media (hover: none) {
-  .g-card-msg {
-    opacity: 1;
-  }
-  .g-card-chats {
-    visibility: hidden;
-  }
-}
-.g-head-msg {
-  margin-left: auto;
-}
-.g-head-msg .icon {
-  width: 0.75rem;
-  height: 0.75rem;
-}
-.g-head-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-.g-head-text {
-  min-width: 0;
-}
-
-/* What being in a thread adds to it. */
-.chat-head .g-state {
-  margin-left: auto;
-  flex-shrink: 0;
-}
-.chat-new {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin: 0.75rem 1.5rem 0.25rem;
-  font-size: 0.6875rem;
-  font-weight: 650;
-  color: #8f9bf0;
-}
-.chat-new::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: color-mix(in oklab, #8f9bf0 45%, transparent);
-}
-.chat-msg-you {
-  color: #aab3f5;
-}
-.chat-msg-sending .chat-msg-body {
-  opacity: 0.6;
-}
-.msg-sending {
-  margin-top: 0.125rem;
-  font-size: 0.6875rem;
-  color: #8c8f99;
-}
-.msg-failed {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.25rem 0.75rem;
-  margin-top: 0.375rem;
-  font-size: 0.75rem;
-}
-.msg-failed-why {
-  flex-basis: 100%;
-  color: #ff8a8d;
-}
-.msg-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  height: 1.5rem;
-  padding: 0 0.375rem;
-  margin-left: -0.375rem;
-  border-radius: var(--radius-sm);
-  color: #c6c8ce;
-  font-weight: 500;
-}
-.msg-action:hover {
-  background: rgb(255 255 255 / 7%);
-  color: #f0f1f3;
-}
-.msg-action .icon {
-  width: 0.75rem;
-  height: 0.75rem;
-}
+/* An empty conversation says who it is with (MessagesTimeline.tsx's empty state). */
 .chat-intro {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 0.25rem;
-  padding: 2rem 1.5rem;
+  padding: 4rem 1rem 2rem;
+  text-align: center;
 }
 .chat-intro-face .avatar {
-  width: 3.5rem;
-  height: 3.5rem;
-  font-size: 1.375rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 1rem;
 }
 .chat-intro h3 {
-  margin-top: 0.5rem;
-  font-size: 1.25rem;
-  font-weight: 650;
-  color: #f0f1f3;
+  font-size: 0.9375rem;
+  font-weight: 600;
 }
 .chat-intro-doing {
-  max-width: 34rem;
-  font-size: 0.875rem;
-  color: #c6c8ce;
+  font-size: 0.8125rem;
+  color: color-mix(in oklab, var(--foreground) 75%, transparent);
 }
 .chat-intro-meta {
   font-size: 0.75rem;
-  color: #8c8f99;
+  color: var(--muted-foreground);
 }
+.chat-intro::after {
+  content: "Send a message to start the conversation.";
+  margin-top: 1rem;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+
+/* Above the composer: what has become of your last message (ThreadStatusLine.tsx). */
 .wait-line {
   display: flex;
-  flex-shrink: 0;
   align-items: center;
   gap: 0.5rem;
-  padding: 0 1.5rem 0.375rem;
+  width: calc(100% - 2 * var(--chat-gutter));
+  padding: 0 0.25rem 0.5rem;
   font-size: 0.75rem;
-  color: #8c8f99;
+  color: var(--muted-foreground);
 }
 .wait-warn {
-  color: #e0b050;
+  color: var(--warning-foreground);
 }
 .dots {
   display: inline-flex;
   gap: 0.1875rem;
 }
 .dots i {
-  width: 0.3125rem;
-  height: 0.3125rem;
+  width: 0.25rem;
+  height: 0.25rem;
   border-radius: 999px;
   background: currentColor;
-  animation: dot 1.2s infinite ease-in-out;
+  animation: dot 1.2s ease-in-out infinite;
 }
 .dots i:nth-child(2) {
   animation-delay: 0.15s;
@@ -4017,104 +2691,331 @@ div.menu-button.update:hover {
   0%,
   60%,
   100% {
-    opacity: 0.35;
-    transform: none;
+    opacity: 0.3;
   }
   30% {
     opacity: 1;
-    transform: translateY(-0.125rem);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .dots i {
-    animation: none;
   }
 }
 
-/* The composer. */
+/* The composer, as T3 Code's (chat/ComposerSurface.tsx, ChatComposer.tsx): a rounded card, the
+ * text on top, a row of controls under it, and a round send button. */
 .composer-wrap {
-  flex-shrink: 0;
-  padding: 0 1.5rem 1rem;
+  width: calc(100% - 2 * var(--chat-gutter));
+  padding-bottom: 1.25rem;
 }
 .composer {
+  position: relative;
   display: flex;
-  align-items: flex-end;
-  gap: 0.5rem;
-  padding: 0.375rem 0.375rem 0.375rem 0.875rem;
-  border: 1px solid rgb(255 255 255 / 12%);
-  border-radius: 0.75rem;
-  background: rgb(255 255 255 / 4%);
-  transition:
-    border-color 0.1s,
-    box-shadow 0.1s;
+  flex-direction: column;
+  border-radius: var(--radius-2xl);
+  background: var(--composer);
+  box-shadow:
+    0 0 0 1px var(--composer-edge),
+    0 1px 2px transparent,
+    inset 0 1px rgb(255 255 255 / 3%);
+  backdrop-filter: blur(12px) saturate(1.14);
+  transition: box-shadow 0.15s var(--ease);
 }
 .composer:focus-within {
-  border-color: var(--ring);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 22%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--ring) 35%, var(--composer-edge)),
+    0 1px 2px transparent,
+    inset 0 1px rgb(255 255 255 / 3%);
 }
-.composer-input {
-  flex: 1;
-  min-width: 0;
-  min-height: 1.75rem;
-  padding: 0.25rem 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #f0f1f3;
-  font: inherit;
-  font-size: 0.875rem;
-  line-height: 1.25rem;
-  resize: none;
-}
-.composer-input::placeholder {
-  color: #8c8f99;
-}
-.composer-send {
-  display: grid;
-  flex-shrink: 0;
-  place-items: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: 0.5rem;
-  background: #5865c9;
-  color: #fff;
-  transition: background-color 0.1s;
-}
-.composer-send:hover:not(:disabled) {
-  background: #6b78dc;
-}
-.composer-send:focus-visible {
-  outline: 2px solid #fff;
-  outline-offset: 1px;
-}
-.composer-send:disabled {
-  background: rgb(255 255 255 / 8%);
-  color: #8c8f99;
-  cursor: default;
-}
-.composer-send .icon {
-  width: 1rem;
-  height: 1rem;
+.composer.composer-armed,
+.composer.composer-armed:focus-within {
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--warning) 60%, transparent);
 }
 .composer-warn {
-  margin-bottom: 0.375rem;
+  margin: 0.375rem 0.375rem 0;
+  padding: 0.375rem 0.625rem;
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--warning) 14%, transparent);
+  color: var(--warning-foreground);
   font-size: 0.75rem;
-  color: #e0b050;
+  font-weight: 500;
 }
-.pane-foot {
+.composer-input {
+  display: block;
+  width: 100%;
+  min-height: calc(2lh + 8px);
+  max-height: 13rem;
+  padding: 0.875rem 1rem 0.5rem;
+  resize: none;
+  border: 0;
+  background: transparent;
+  font-size: 0.875rem;
+  line-height: 1.625;
+  color: var(--foreground);
+}
+.composer-input:focus-visible {
+  outline: none;
+}
+.composer-bar {
   display: flex;
-  flex-shrink: 0;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 0.5rem;
-  padding: 0.625rem 1.5rem 1rem;
-  border-top: 1px solid rgb(255 255 255 / 6%);
+  padding: 0 0.5rem 0.5rem;
 }
-.pane-foot .icon {
+/* Who it goes to, as a control chip (chat/ComposerControl.tsx). Picking someone else opens their
+ * conversation. */
+.composer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  max-width: 60%;
+  height: 1.75rem;
+  padding: 0 0.5rem;
+  border-radius: var(--control-radius);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: color-mix(in oklab, var(--foreground) 80%, transparent);
+  transition:
+    background-color 0.15s var(--ease),
+    color 0.15s var(--ease);
+}
+.composer-chip:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.composer-chip > .icon {
+  color: var(--muted-foreground);
+}
+.composer-chip-n {
+  flex-shrink: 0;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.composer-chip .composer-chip-chev {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+.composer-hint {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.15s var(--ease);
+}
+.composer:focus-within .composer-hint {
+  opacity: 1;
+}
+.composer-hint kbd {
+  height: 1.125rem;
+}
+.composer-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  margin-left: auto;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow:
+    var(--shadow-xs-5),
+    inset 0 1px rgb(255 255 255 / 16%);
+  transition:
+    background-color 0.15s var(--ease),
+    scale 0.15s var(--ease);
+}
+.composer-hint + .composer-send {
+  margin-left: 0;
+}
+.composer-send:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--primary) 90%, var(--background));
+  scale: 1.05;
+}
+.composer-send:disabled {
+  background: color-mix(in oklab, var(--foreground) 12%, transparent);
+  color: var(--muted-foreground);
+  box-shadow: none;
+}
+.composer-send .icon {
   width: 0.875rem;
   height: 0.875rem;
+  stroke-width: 2;
 }
 
-/* Dialogs: choosing a name, and who to message. */
+/* Under a conversation between two others: who writes here, and a way to either. */
+.pane-foot {
+  width: calc(100% - 2 * var(--chat-gutter));
+  padding-bottom: 1.25rem;
+}
+.pane-foot-card {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.625rem 0.625rem 0.625rem 1rem;
+  border-radius: var(--radius-2xl);
+  box-shadow: 0 0 0 1px var(--composer-edge);
+  background: color-mix(in oklab, var(--card) 50%, transparent);
+}
+.pane-foot-note {
+  flex: 1;
+  min-width: 12rem;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+
+/* With no conversation open in your messages: who you could talk to. */
+.start-pane {
+  overflow-y: auto;
+}
+.start-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+  max-width: 28rem;
+  margin: auto;
+  padding: 3rem 1.5rem;
+}
+.start-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  text-align: center;
+}
+.start-list {
+  padding: 0.25rem;
+  border: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+  border-radius: var(--radius-xl);
+  background: color-mix(in oklab, var(--card) 40%, transparent);
+}
+.start-inner > .btn {
+  align-self: center;
+}
+
+/* A group chat's members, in a popover (components/ui/menu.tsx). */
+.g-members-wrap {
+  position: relative;
+}
+.g-members {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 1.75rem;
+  padding: 0 0.5rem 0 0.375rem;
+  border-radius: var(--control-radius);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.g-members:hover,
+.g-members[aria-expanded="true"] {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.g-pile {
+  display: inline-flex;
+}
+.g-pile .avatar {
+  width: 1.125rem;
+  height: 1.125rem;
+  margin-left: -0.3125rem;
+  font-size: 0.5625rem;
+  box-shadow: 0 0 0 1.5px var(--background);
+  background-color: var(--background);
+  background-image: linear-gradient(color-mix(in oklab, var(--foreground) 10%, transparent), color-mix(in oklab, var(--foreground) 10%, transparent));
+}
+.g-pile .avatar:first-child {
+  margin-left: 0;
+}
+.g-members-chev {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+.g-members-panel {
+  --dot-ring: var(--popover);
+  position: absolute;
+  top: calc(100% + 0.375rem);
+  right: 0;
+  z-index: 30;
+  width: 18rem;
+  max-height: min(28rem, 70vh);
+  overflow-y: auto;
+  padding: 0.25rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--popover);
+  box-shadow: var(--shadow-popover);
+}
+.g-mp-head {
+  padding: 0.375rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.g-mp-sec {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-top: 0.25rem;
+  padding: 0.375rem 0.5rem 0.25rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.g-mp-sec > span:not(.dev-dot):not(.g-mp-n) {
+  font-weight: 400;
+  opacity: 0.8;
+}
+.g-mp-n {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.g-mp-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+.g-mp-row:hover {
+  background: var(--accent);
+}
+.g-mp-row.stale {
+  opacity: 0.6;
+}
+.g-mp-row .avatar {
+  width: 1.5rem;
+  height: 1.5rem;
+  font-size: 0.6875rem;
+}
+.g-mp-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.g-mp-name {
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+.g-mp-doing {
+  font-size: 0.6875rem;
+  color: var(--muted-foreground);
+}
+.g-mp-posted {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+/* ============================================================================== Dialogs. */
+
+/* components/ui/dialog.tsx: a glassy popup over a blurred page. */
 .scrim {
   position: fixed;
   inset: 0;
@@ -4122,42 +3023,49 @@ div.menu-button.update:hover {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 12vh 1rem 1rem;
-  background: rgb(0 0 0 / 55%);
+  padding: 14vh 1rem 1rem;
+  background: var(--scrim);
+  backdrop-filter: blur(4px);
+  animation: fade-in 0.2s var(--ease);
 }
 .dialog {
-  display: flex;
-  flex-direction: column;
+  --dot-ring: var(--popover);
   width: 100%;
   max-width: 28rem;
-  max-height: 70vh;
-  border: 1px solid rgb(255 255 255 / 10%);
-  border-radius: 0.875rem;
-  background: #1c1d21;
-  box-shadow: 0 16px 48px rgb(0 0 0 / 50%);
   overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  background: var(--popover);
+  box-shadow: var(--shadow-dialog);
+  animation: pop-in 0.2s var(--ease);
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    scale: 0.98;
+  }
 }
 .dialog-title {
-  padding: 1.25rem 1.25rem 0;
-  font-size: 1.0625rem;
-  font-weight: 650;
-  color: #f0f1f3;
+  padding: 1.5rem 1.5rem 0;
+  font-size: 1.125rem;
+  line-height: 1.4;
+  font-weight: 600;
 }
 .dialog-line {
-  padding: 0.25rem 1.25rem 0;
-  font-size: 0.8125rem;
-  color: #a3a6ae;
-}
-.setup-form {
-  padding: 1rem 1.25rem 1.25rem;
+  padding: 0.375rem 1.5rem 0;
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
 }
 .setup-row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-}
-.setup-face {
-  display: inline-flex;
+  padding: 1.25rem 1.5rem 0;
 }
 .setup-face .avatar {
   width: 2.25rem;
@@ -4166,193 +3074,611 @@ div.menu-button.update:hover {
 }
 .setup-field {
   flex: 1;
-  min-width: 0;
 }
-.field.setup-field input {
-  width: 100%;
+.setup-field input {
+  flex: 1;
+  width: auto;
   height: 2.25rem;
-  padding: 0 0.75rem;
-  font-size: 0.875rem;
   text-align: left;
 }
-.field-bad {
-  border-color: #ff8a8d;
-}
 .dialog-error {
-  margin-top: 0.5rem;
+  padding: 0.5rem 1.5rem 0;
   font-size: 0.75rem;
-  color: #ff8a8d;
+  color: var(--destructive-foreground);
 }
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
-  margin-top: 1rem;
+  margin-top: 1.5rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--border);
+  background: color-mix(in oklab, var(--muted) 72%, transparent);
 }
-.btn-primary {
-  height: 2rem;
-  padding: 0 0.875rem;
-  background: #5865c9;
-  color: #fff;
-}
-.btn-primary:hover:not(:disabled) {
-  background: #6b78dc;
-}
-.dialog-actions .btn-ghost {
-  height: 2rem;
-  padding: 0 0.75rem;
-}
+
+/* Who to message: T3 Code's command palette (CommandPalette.tsx). */
 .pick-search {
   display: flex;
-  flex-shrink: 0;
   align-items: center;
   gap: 0.625rem;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid rgb(255 255 255 / 8%);
-  color: #8c8f99;
-}
-.pick-search .icon {
-  flex-shrink: 0;
-  width: 1rem;
-  height: 1rem;
+  height: 3rem;
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
 }
 .pick-search input {
   flex: 1;
   min-width: 0;
-  height: 1.5rem;
+  height: 100%;
   border: 0;
-  outline: 0;
   background: transparent;
-  color: #f0f1f3;
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
+  color: var(--foreground);
+}
+.pick-search input:focus-visible {
+  outline: none;
 }
 .pick-search input::placeholder {
-  color: #8c8f99;
+  color: var(--placeholder);
 }
 .pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: min(24rem, 55vh);
   overflow-y: auto;
-  padding: 0.375rem;
+  padding: 0.25rem;
 }
 .pick-row {
   display: flex;
   align-items: center;
   gap: 0.625rem;
   width: 100%;
-  padding: 0.4375rem 0.625rem;
-  border-radius: 0.5rem;
+  min-height: 2.5rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-md);
   text-align: left;
 }
 .pick-row:hover,
 .pick-row.current {
-  background: rgb(255 255 255 / 7%);
+  background: var(--accent);
+  --dot-ring: color-mix(in oklab, var(--accent) 100%, var(--popover));
 }
-.pick-row:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
+.pick-row .avatar {
+  width: 1.5rem;
+  height: 1.5rem;
+  font-size: 0.6875rem;
 }
 .pick-text {
   display: flex;
-  flex: 1;
   flex-direction: column;
+  flex: 1;
   min-width: 0;
 }
 .pick-name {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: #f0f1f3;
+  font-size: 0.8125rem;
+  font-weight: 500;
 }
 .pick-line {
   font-size: 0.75rem;
-  color: #8c8f99;
+  color: var(--muted-foreground);
 }
 .pick-where {
   flex-shrink: 0;
-  max-width: 7rem;
+  max-width: 35%;
   font-size: 0.6875rem;
-  color: #7b7e88;
+  color: var(--secondary-label);
 }
 .pick-none {
-  padding: 1.5rem 0.75rem;
+  padding: 1.5rem 0.5rem;
   font-size: 0.8125rem;
   text-align: center;
-  color: #8c8f99;
+  color: var(--muted-foreground);
 }
-.start-pane {
-  overflow-y: auto;
-}
-.start-inner {
-  width: 100%;
-  max-width: 30rem;
-  margin: 12vh auto 2rem;
-  padding: 0 1rem;
-}
-.start-title {
-  margin-bottom: 0.75rem;
-  padding: 0 0.625rem;
-  font-size: 1.125rem;
-  font-weight: 650;
-  color: #f0f1f3;
-}
-.start-list {
-  overflow: visible;
-  padding: 0;
-}
-.start-inner > .btn {
-  margin: 0.5rem 0 0 0.625rem;
-}
-.field.account-field input {
-  width: 13rem;
-  padding: 0 0.625rem;
-  text-align: left;
-  font-variant-numeric: normal;
-}
-.row-control .account-field + .btn {
-  margin-left: 0.5rem;
+.start-list .pick-row:hover {
+  --dot-ring: var(--background);
 }
 
+/* The page without its token. */
+.gate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  height: 100dvh;
+  padding: 1.5rem;
+  text-align: center;
+}
+.gate-mark {
+  width: 2.25rem;
+  height: 2.25rem;
+  margin-bottom: 0.75rem;
+  border-radius: var(--radius-md);
+}
+.gate-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.gate-line {
+  max-width: 22rem;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+
+/* ============================================================================ Faces. */
+
+/* A name's face: a round, colored initial, the color fixed by the name, with its state as a dot on
+ * its corner (green active, amber idle, red do not disturb, grey offline). The colors carry who is
+ * who across the sidebar, the list and the timeline. */
+.avatar {
+  border-radius: 999px;
+  box-shadow: none;
+  color: #fff;
+  font-weight: 600;
+}
+/* Two classes, so a face keeps its color where a list, pile or menu sets a neutral background. */
+.avatar.avatar-0,
+.avatar.avatar-person {
+  background: #5865c9;
+}
+.avatar.avatar-1 {
+  background: #2f9e6e;
+}
+.avatar.avatar-2 {
+  background: #c98a2b;
+}
+.avatar.avatar-3 {
+  background: #c4505a;
+}
+.avatar.avatar-4 {
+  background: #6b7280;
+}
+.pres-wrap > .pres,
+.avatar.dotted > .pres {
+  width: 0.625rem;
+  height: 0.625rem;
+}
+.avatar-pair {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+.avatar-pair > .avatar {
+  width: 1.375rem;
+  height: 1.375rem;
+  font-size: 0.625rem;
+  box-shadow: 0 0 0 2px var(--dot-ring, var(--background));
+}
+.avatar-pair .pres {
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+/* In the sidebar's rows, a face in place of the bare dot. */
+.side-session {
+  padding-left: 1.25rem;
+  gap: 0.5rem;
+}
+.side-session > .pres-wrap {
+  align-self: flex-start;
+  margin-top: 0.0625rem;
+}
+.side-session .avatar,
+.settled-row .avatar {
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: 0.75rem;
+}
+.settled-row {
+  padding-left: 1.25rem;
+}
+.settled-row .pres-wrap .avatar,
+.settled-row > .avatar {
+  width: 1.375rem;
+  height: 1.375rem;
+  font-size: 0.625rem;
+}
+.s-main > .pres-wrap .avatar,
+.g-settled > .avatar {
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.8125rem;
+}
+
+/* A group chat: a square of up to four members' faces. */
+.g-grid {
+  position: relative;
+  display: grid;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  gap: 2px;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.g-grid .avatar {
+  width: 100%;
+  height: 100%;
+  font-size: 0.5rem;
+  font-weight: 700;
+}
+.chat-row > .g-grid {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+.g-grid-1 {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+.g-grid-1 .avatar {
+  font-size: 0.8125rem;
+}
+.g-grid-2 {
+  grid-template-rows: 1fr;
+  align-items: center;
+}
+.g-grid-2 .avatar {
+  height: 0.9375rem;
+}
+.avatar.g-more {
+  background: color-mix(in oklab, var(--muted-foreground) 35%, var(--background));
+  color: var(--foreground);
+  font-size: 0.4375rem;
+}
+
+/* Everyone else's message, and Recent's: the sender's face, then their name over the message. A run
+ * from one sender shows the face once. */
+.chat-msg.chat-msg-face {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.875rem;
+  margin-inline: -0.75rem;
+  padding: 0.125rem 0.75rem;
+  border-radius: var(--radius-lg);
+}
+.chat-msg-face.chat-msg-first {
+  padding-top: 0.375rem;
+}
+/* In a conversation the message stays in the centered column, its hover area reaching 0.75rem past
+ * either side of it, as the negative margin above does in Recent. */
+.chat-thread > .chat-msg-face {
+  margin-inline: max(-0.75rem, calc((100% - var(--chat-content-max-width)) / 2 - 0.75rem));
+  max-width: none;
+}
+.chat-msg-face:hover {
+  background: var(--row-hover);
+}
+.chat-msg-face > .avatar,
+.chat-msg-face > .avatar-gap {
+  flex-shrink: 0;
+  width: 2.5rem;
+}
+.chat-msg-face > .avatar {
+  height: 2.5rem;
+  margin-top: 0.125rem;
+  font-size: 1rem;
+}
+.chat-msg-main {
+  flex: 1;
+  min-width: 0;
+}
+.chat-msg-face .chat-msg-head {
+  margin-bottom: 0.0625rem;
+}
+.chat-msg-face .chat-msg-from {
+  font-size: 0.9375rem;
+}
+.chat-msg-face .chat-msg-subject {
+  font-weight: 600;
+}
+.msg-tools {
+  position: absolute;
+  top: -0.625rem;
+  right: 0.75rem;
+  display: flex;
+  padding: 0.125rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--popover);
+  box-shadow: var(--shadow-xs-10);
+  opacity: 0;
+  transition: opacity 0.15s var(--ease);
+}
+.chat-msg-face:hover > .msg-tools,
+.chat-msg-face:focus-within > .msg-tools {
+  opacity: 1;
+}
+.g-to-who .avatar {
+  width: 1rem;
+  height: 1rem;
+  font-size: 0.5625rem;
+}
+
+/* Dim's three tones: the conversation list sits between the sidebar and the conversation. */
+[data-theme="dim"] .chat-list {
+  --dot-ring: var(--list);
+  background: var(--list);
+  border-right: 0;
+}
+
+/* =============================================================================== Phones. */
+
+/* Below 768px, as T3 Code: the sidebar is a sheet from the left, opened from the header, and the
+ * list of conversations and an open one take turns. Controls are a step larger for a finger. */
 @media (max-width: 767px) {
-  .composer-wrap {
-    padding: 0 0.75rem 0.75rem;
+  :root {
+    --gutter: 0.75rem;
+    --chat-gutter: 0.75rem;
   }
-  .wait-line {
-    padding: 0 0.75rem 0.375rem;
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 46;
+    width: min(20rem, calc(100vw - 12px));
+    visibility: hidden;
+    opacity: 0;
+    translate: -2rem 0;
+    transition:
+      translate 0.2s ease-in-out,
+      opacity 0.2s ease-in-out,
+      visibility 0s linear 0.2s;
   }
-  .pane-foot {
-    padding: 0.625rem 0.75rem 0.75rem;
+  .drawer-open .sidebar {
+    visibility: visible;
+    opacity: 1;
+    translate: 0 0;
+    box-shadow: var(--shadow-dialog);
+    transition:
+      translate 0.2s ease-in-out,
+      opacity 0.2s ease-in-out;
   }
-  .composer-input {
-    font-size: 1rem; /* under 16px, a phone's browser zooms in on focus */
+  .drawer-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    background: var(--scrim);
+    backdrop-filter: blur(4px);
+    animation: fade-in 0.2s var(--ease);
   }
-  .mobile-nav button {
-    padding-left: 0.5rem;
-    padding-right: 0.5rem;
+  .menu-button,
+  .device-link {
+    height: 2.5rem;
   }
-  .scrim {
-    padding: 8vh 0.5rem 0.5rem;
+  .side-session {
+    min-height: 2.75rem;
   }
-  .pick-where {
+  .side-actions {
+    opacity: 1;
+    top: 0.5rem;
+    background: none;
+  }
+  .side-tag,
+  .side-msg,
+  .side-hide {
+    width: 1.75rem;
+    height: 1.75rem;
+    background: transparent;
+  }
+  .side-session > .g-pr {
     display: none;
   }
+  .side-session-text {
+    padding-right: 5.5rem;
+  }
+  .side-li:not(:has(.side-hide)) .side-session-text {
+    padding-right: 2rem;
+  }
+  .quiet-item > .side-tag {
+    opacity: 1;
+  }
+  .g-head-tools {
+    justify-content: space-between;
+  }
+  .g-head-tools .segmented {
+    flex: 1;
+  }
+  .settled-toggle,
+  .settled-row {
+    height: 2.25rem;
+  }
+  .topbar {
+    padding: 0 var(--gutter);
+  }
+  .icon-btn {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+
+  .page,
+  .g-page {
+    padding: 1rem var(--gutter) 2.5rem;
+    gap: 1.5rem;
+  }
+  .g-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.625rem;
+    margin-bottom: -0.5rem;
+  }
+  .g-toolbar .segmented button {
+    flex: 1;
+  }
+  .row {
+    padding: 0.75rem;
+  }
+  .row-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.625rem;
+  }
+  .row-control {
+    justify-content: flex-start;
+  }
+  .keep-inline {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .account-field {
+    flex: 1;
+  }
+  .account-field input {
+    width: 100%;
+  }
+  .section-head {
+    padding: 0 0.75rem;
+  }
+  .s-row {
+    flex-wrap: wrap;
+    gap: 0;
+    padding: 0 0.75rem 0.75rem;
+  }
+  .s-main {
+    flex-basis: 100%;
+    padding: 0.75rem 0 0.5rem;
+  }
+  .s-meta {
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+    padding-left: 1.25rem;
+  }
+  .s-meta > :empty {
+    display: none;
+  }
+  .g-settled {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .g-settled-last,
+  .g-settled-chats {
+    display: none;
+  }
+  .g-search-wide {
+    max-width: none;
+  }
+
+  .g-head > h2,
+  .g-head-text > h2 {
+    display: none;
+  }
+  .g-head {
+    min-height: 0;
+    padding: 0.75rem 0.625rem 0.625rem;
+  }
+  .s-row {
+    position: relative;
+  }
+  .s-main {
+    padding-right: 2.5rem;
+  }
+  .s-meta .btn {
+    position: absolute;
+    top: 0.625rem;
+    right: 0.75rem;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+  }
+  .s-meta .btn .icon {
+    width: 1rem;
+    height: 1rem;
+  }
+  .btn-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .chat {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .chat-open .chat-list {
+    display: none;
+  }
+  .chat:not(.chat-open) .chat-pane {
+    display: none;
+  }
+  .chat-list {
+    border-right: 0;
+    padding: 0 0.5rem 1.5rem;
+  }
+  .chat-row {
+    padding: 0.625rem;
+  }
+  .chat-back {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    margin-left: -0.5rem;
+    border-radius: var(--control-radius);
+    color: var(--muted-foreground);
+  }
+  .chat-back:hover {
+    background: var(--accent);
+    color: var(--foreground);
+  }
+  .chat-head {
+    gap: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .chat-title {
+    max-width: none;
+    flex-shrink: 1;
+  }
+  .chat-about {
+    display: none;
+  }
+  .chat-msg:not(.chat-msg-own) > .chat-msg-meta {
+    display: none;
+  }
+  .chat-msg-own > .chat-msg-meta {
+    opacity: 1;
+  }
+  .chat-bubble {
+    max-width: 88%;
+  }
+  .composer-wrap,
+  .pane-foot {
+    padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
+  }
+  .composer-input {
+    font-size: 1rem;
+  }
+  .composer-chip {
+    max-width: 75%;
+  }
+  .pane-foot-note {
+    flex-basis: 100%;
+  }
+  .pane-foot-card .btn {
+    flex: 1 1 auto;
+  }
+  .g-members-panel {
+    position: fixed;
+    top: auto;
+    right: 0.5rem;
+    left: 0.5rem;
+    bottom: 0.5rem;
+    width: auto;
+  }
+  .scrim {
+    padding-top: 8vh;
+  }
 }
 
-/* A name with the human tag beside it (#267). The name gives way first. */
-.name-line {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  min-width: 0;
-}
-.name-line > .truncate {
-  min-width: 0;
-}
-.tag-human {
-  height: 1rem;
-  padding: 0 4px;
-  font-size: 0.6875rem;
-  letter-spacing: 0.01em;
-}
-.dark .tag-human {
-  border-color: color-mix(in oklab, #7a87e8 50%, transparent);
-  background: color-mix(in oklab, #5865c9 16%, transparent);
-  color: #b7bff5;
+/* Motion only for those who want it. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .icon.spin,
+  .dots i {
+    animation: none;
+  }
 }

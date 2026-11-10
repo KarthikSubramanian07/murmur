@@ -15,6 +15,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/hook"
+	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
 )
@@ -58,6 +59,13 @@ func fakeDaemon(t *testing.T, gitDir string, answer func(proto.Request) string) 
 	}()
 	dir := client.StateDir(gitDir)
 	os.MkdirAll(dir, 0o700)
+	// It holds the clone's lock, as a daemon does: a client takes a daemon.json beside a free lock
+	// for a dead daemon's.
+	lock, err := proc.Lock(filepath.Join(dir, "daemon.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lock.Close() })
 	b, _ := json.Marshal(proto.Info{Addr: ln.Addr().String(), Token: "tok", PID: os.Getpid(), Device: "fake-0001"})
 	if err := os.WriteFile(filepath.Join(dir, "daemon.json"), b, 0o600); err != nil {
 		t.Fatal(err)
@@ -329,5 +337,59 @@ func TestStopKeepsTheTurnGoingWithItsMessages(t *testing.T) {
 		Body: "Are you changing it?"}
 	if want := view.Hook([]proto.MessageView{m}, nil, 0); got.Decision != "block" || got.Reason != want {
 		t.Errorf("Stop printed %+v, want block with %q", got, want)
+	}
+}
+
+// Codex's and Grok's hooks (#225) carry their agent's name and the processes above the hook, by which the
+// daemon finds the session before it knows the conversation's ID. They bracket no tool call (join
+// installs them on no PreToolUse) and send no transcript, which is Claude Code's. Grok spells the
+// session ID sessionId.
+func TestAnotherAgentsHook(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
+	codex, _ := json.Marshal(map[string]string{"session_id": "thread-1", "hook_event_name": "PostToolUse",
+		"cwd": repo, "tool_name": "Bash", "tool_use_id": "call_1", "transcript_path": "/x/rollout.jsonl"})
+	hook.RunFor(hook.Codex, bytes.NewReader(codex), &bytes.Buffer{})
+	grok, _ := json.Marshal(map[string]string{"sessionId": "grok-1", "hook_event_name": "Stop", "cwd": repo})
+	hook.RunFor(hook.Grok, bytes.NewReader(grok), &bytes.Buffer{})
+	seen := map[string]proto.Request{}
+	for _, r := range requests() {
+		if r.Op == proto.OpPing {
+			continue
+		}
+		seen[r.Op] = r
+		if len(r.Ancestors) == 0 || r.Ancestors[0] != os.Getppid() || r.ClientPID != 0 {
+			t.Errorf("%s: ancestors %v, client PID %d", r.Op, r.Ancestors, r.ClientPID)
+		}
+	}
+	if r, ok := seen[proto.OpNotices]; !ok || r.Agent != hook.Codex || r.ClaudeSession != "thread-1" || r.Transcript != "" {
+		t.Errorf("Codex's notices request: %+v", r)
+	}
+	if r, ok := seen[proto.OpTurnEnd]; !ok || r.Agent != hook.Grok || r.ClaudeSession != "grok-1" || !r.Continues {
+		t.Errorf("Grok's turn end: %+v", r)
+	}
+	if _, ok := seen[proto.OpToolEnd]; ok {
+		t.Error("Codex's hook bracketed a call")
+	}
+}
+
+// Grok fires a Stop when the session closes too, whose answer it ignores: that one doesn't ask to
+// keep the turn going, so what the daemon holds is handed over as a turn instead. Claude Code's and
+// Codex's hooks don't read Grok's spelling of the session ID.
+func TestGroksStopAtTheSessionsClose(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
+	closing, _ := json.Marshal(map[string]string{"sessionId": "grok-1", "hook_event_name": "Stop", "reason": "shutdown", "cwd": repo})
+	hook.RunFor(hook.Grok, bytes.NewReader(closing), &bytes.Buffer{})
+	camel, _ := json.Marshal(map[string]string{"sessionId": "grok-1", "hook_event_name": "Stop", "cwd": repo})
+	hook.RunFor(hook.Codex, bytes.NewReader(camel), &bytes.Buffer{})
+	var ends []proto.Request
+	for _, r := range requests() {
+		if r.Op == proto.OpTurnEnd {
+			ends = append(ends, r)
+		}
+	}
+	if len(ends) != 1 || ends[0].Continues || ends[0].ClaudeSession != "grok-1" {
+		t.Errorf("turn ends: %+v", ends)
 	}
 }

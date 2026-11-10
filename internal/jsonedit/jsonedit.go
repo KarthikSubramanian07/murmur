@@ -216,7 +216,7 @@ func indentOf(b []byte) string {
 // ReadFile reads a JSON object from a file. A missing file is an empty object, so a caller that
 // edits and writes back creates it; raw is nil then.
 func ReadFile(path string) (o *Object, raw []byte, err error) {
-	raw, err = os.ReadFile(path)
+	raw, err = readRegular(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return New(), nil, nil
 	}
@@ -229,3 +229,31 @@ func ReadFile(path string) (o *Object, raw []byte, err error) {
 	}
 	return o, raw, nil
 }
+
+// readRegular is os.ReadFile for a regular file, or a link to one, and an error for anything else.
+// A config file can be a link a repo committed (a worktree's .claude/settings.local.json), and a
+// link to a device or a pipe would be read without end (/dev/zero), or block (a terminal, a pipe
+// with no writer). A regular file is read up to 256 MiB, far past the largest .claude.json, which
+// grows with Claude Code's history: some "regular" files never end (/proc/self/pagemap on Linux).
+// One cut short doesn't parse, so it is never written back.
+func readRegular(path string) ([]byte, error) {
+	if fi, err := os.Stat(path); err != nil {
+		return nil, err
+	} else if !fi.Mode().IsRegular() {
+		return nil, errNotRegular
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil {
+		return nil, err
+	} else if !fi.Mode().IsRegular() { // replaced between the two looks
+		return nil, errNotRegular
+	}
+	return io.ReadAll(io.LimitReader(f, 256<<20))
+}
+
+// errNotRegular has no path in it: ReadFile's callers say which file.
+var errNotRegular = errors.New("isn't a regular file, so it was left alone")

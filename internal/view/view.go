@@ -96,6 +96,9 @@ func Who(r proto.Response) string {
 	default:
 		fmt.Fprintf(&b, "You are %s.\n", r.Self)
 	}
+	if selfHookOff(r.Devices) {
+		b.WriteString("Your hook isn't running, so you aren't told of messages while you work: ask your user to run `" + brand.Command + " join` again in this repo.\n")
+	}
 	if r.Filter != "" {
 		fmt.Fprintf(&b, "Sessions tagged %s:\n", r.Filter)
 		if len(r.Devices) == 0 || len(r.Devices) == 1 && len(r.Devices[0].Sessions) == 0 {
@@ -155,6 +158,9 @@ func Who(r proto.Response) string {
 				line += ", active " + Ago(s.LastActive)
 			case !s.Started.IsZero():
 				line += ", started " + Ago(s.Started) // its device doesn't say when it was last active
+			}
+			if s.HookOff {
+				line += ", hook not running"
 			}
 			if len(s.Tags) > 0 {
 				line += " [" + strings.Join(tags.Names(s.Tags), ", ") + "]"
@@ -394,18 +400,6 @@ func Tags(r proto.Response) string {
 	return b.String()
 }
 
-// Log renders recent events.
-func Log(r proto.Response) string {
-	if len(r.Events) == 0 {
-		return "Nothing yet.\n"
-	}
-	var b strings.Builder
-	for _, e := range r.Events {
-		fmt.Fprintf(&b, "%s  %s\n", e.At.Local().Format("15:04:05"), e.Line)
-	}
-	return b.String()
-}
-
 // Note renders a bare acknowledgement.
 func Note(r proto.Response) string {
 	if r.Note == "" {
@@ -546,4 +540,16 @@ func toLabel(m proto.MessageView) string {
 		return "everyone"
 	}
 	return named(m.ToName, m.To)
+}
+
+// selfHookOff says the caller's own session is listed with its hook not running (#225).
+func selfHookOff(devices []proto.Device) bool {
+	for _, d := range devices {
+		for _, s := range d.Sessions {
+			if s.You {
+				return s.HookOff
+			}
+		}
+	}
+	return false
 }

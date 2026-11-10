@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -240,6 +241,58 @@ func TestJoinKeepsTheUsersConfig(t *testing.T) {
 	local = readFile(t, filepath.Join(b.clone, ".claude", "settings.local.json"))
 	if !strings.Contains(local, "Bash(git status)") || strings.Contains(local, "hook") {
 		t.Errorf("settings.local.json after --leave:\n%s", local)
+	}
+}
+
+// A repo that commits .claude/settings.local.json by accident gets no hook there, but the join
+// still succeeds: running it again couldn't change that, so it is a note, not a problem, and the
+// advice is what any join gives.
+func TestJoinWhereTheRepoTracksTheHookFileStillSucceeds(t *testing.T) {
+	b := newBox(t)
+	b.mustRun(b.clone, "init")
+	local := filepath.Join(b.clone, ".claude", "settings.local.json")
+	const settings = "{\n  \"permissions\": {\"allow\": [\"Bash(ls)\"]}\n}\n"
+	writeFile(t, local, settings)
+	git(t, b.clone, "add", "-f", "--", ".claude/settings.local.json")
+	git(t, b.clone, "commit", "-q", "-m", "settings")
+
+	out := b.mustRun(b.clone, "join")
+	if !strings.Contains(out, "Not done:") || !strings.Contains(out, "git tracks") || strings.Contains(out, "Problems:") || strings.Contains(out, "retries") {
+		t.Errorf("join's output:\n%s", out)
+	}
+	if !strings.Contains(out, "copy theirs aside") || !strings.Contains(out, "join --leave") {
+		t.Errorf("join's output lacks the warning about untracking, or the usual advice:\n%s", out)
+	}
+	if got := readFile(t, local); got != settings {
+		t.Errorf("join edited the tracked hook file:\n%s", got)
+	}
+	b.mustRun(b.clone, "join", "--leave")
+}
+
+// A Codex table an older join wrote forwards T3CODE_CLI_PATH only; joining again adds CODEX_HOME
+// to the list and keeps the user's own names, and --leave leaves the per-user table as it is.
+func TestJoinForwardsCodexHome(t *testing.T) {
+	b := newBox(t)
+	b.mustRun(b.clone, "init")
+	head := "model = \"gpt\"\n\n[mcp_servers.murmur]\ncommand = " + strconv.Quote(b.mur) + "\nargs = [\"mcp\", \"--agent\", \"codex\"]\n"
+	tail := "default_tools_approval_mode = \"approve\"\n"
+	writeFile(t, b.codexConfig(), head+"env_vars = [\"HTTP_PROXY\", \"T3CODE_CLI_PATH\"] # mine\n"+tail)
+
+	b.mustRun(b.clone, "join")
+	joined := readFile(t, b.codexConfig())
+	// The server's table, then the trust of Murmur's Codex hook, one table for each of its three
+	// hooks (#225).
+	server, trust, _ := strings.Cut(joined, "\n[hooks.state.")
+	if want := head + "env_vars = [\"HTTP_PROXY\", \"T3CODE_CLI_PATH\", \"CODEX_HOME\"] # mine\n" + tail; server != want || strings.Count(trust, "trusted_hash") != 3 {
+		t.Errorf("config.toml:\n%s\nwant:\n%s\nand the hook's trust", joined, want)
+	}
+	b.mustRun(b.clone, "join")
+	if again := readFile(t, b.codexConfig()); again != joined {
+		t.Errorf("a second join changed config.toml:\n%s", again)
+	}
+	b.mustRun(b.clone, "join", "--leave")
+	if left := readFile(t, b.codexConfig()); left != joined {
+		t.Errorf("--leave changed config.toml:\n%s", left)
 	}
 }
 

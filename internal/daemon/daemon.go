@@ -44,6 +44,11 @@ type Options struct {
 	// FetchLimit is how long one fetch may take within a sync: 15 s. A ref that runs past it on its
 	// own is set aside; SlowFetchLimit is how long its fetch may then take, outside the syncs: 10 min.
 	FetchLimit, SlowFetchLimit time.Duration
+	// ReadFirstLimit is how long a sync may take over the names registry and every presence, which
+	// it reads before the logs: 15 s, and never more than half of what is left of the sync.
+	// A registry read that stalls (the check of one missing from the listing asks the remote again)
+	// then can't use up the time the logs it fetched need.
+	ReadFirstLimit time.Duration
 	// PollCap is the slowest the poll gets while a session is live and nothing is happening: 15 s.
 	// FastFor is how long after a conversation moves (this device sends a message, or queues one
 	// for a session here or hands one over to it, or a session starts) the poll stays at Poll: 3 min (#93).
@@ -141,6 +146,9 @@ func (o *Options) defaults() {
 	}
 	if o.SlowFetchLimit == 0 {
 		o.SlowFetchLimit = 10 * time.Minute
+	}
+	if o.ReadFirstLimit == 0 {
+		o.ReadFirstLimit = 15 * time.Second
 	}
 	if o.FastFor == 0 {
 		o.FastFor = 3 * time.Minute
@@ -282,6 +290,14 @@ type Daemon struct {
 	page    atomic.Pointer[web.Server]
 	started time.Time
 	log     *log.Logger
+
+	// maxRecord and maxSnapshot are the largest commits read from a device's log or presence, and
+	// from the names registry (bus.MaxRecord, bus.MaxSnapshot; tests lower them).
+	maxRecord, maxSnapshot int64
+
+	// savesHeld puts off saveLocked while a page of a log is applied, under mu throughout, so the
+	// page saves state.json once and not once for each tags event in it (see applyPageLocked).
+	savesHeld bool
 
 	mu         sync.Mutex
 	sessions   map[string]*session
@@ -428,6 +444,13 @@ type session struct {
 	hooked, stopSeen, stopContinues bool
 	busyAt, turnStart, continuedAt  time.Time
 	toldUnread, continuations       int
+	// hookSeen says a hook of the session has reported, a subagent's included; toolCalled is when
+	// the session first called one of Murmur's tools (see hookOffLocked, #225). hookNative is the
+	// conversation's own ID as a hook of an agent other than Claude Code reported it, for a session
+	// whose MCP server hasn't learned it (see agentHookSessionsLocked).
+	hookSeen   bool
+	toolCalled time.Time
+	hookNative string
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its
@@ -625,6 +648,11 @@ func Run(ctx context.Context, opt Options) error {
 		return err
 	}
 	defer lock.Close()
+	// A daemon.json here now is a dead daemon's, as a live one would hold the lock. It goes at once,
+	// not when this one's is written after the first sync: until then a client would ping its
+	// address, find the lock held, and take whatever answers there for this daemon.
+	infoPath := filepath.Join(dir, "daemon.json")
+	os.Remove(infoPath)
 
 	d, err := open(ctx, opt, dir)
 	if err != nil {
@@ -669,7 +697,6 @@ func Run(ctx context.Context, opt Options) error {
 			keep.Close()
 		}
 	}()
-	infoPath := filepath.Join(dir, "daemon.json")
 	info := proto.Info{Addr: ln.Addr().String(), Token: d.token, PID: os.Getpid(), Device: d.device}
 	if pageLn != nil {
 		info.Web, info.PageToken = pageLn.Addr().String(), d.pageTok
@@ -749,6 +776,11 @@ func Run(ctx context.Context, opt Options) error {
 	case <-ctx.Done():
 	case <-d.quit:
 	}
+	// daemon.json goes before the port does. A client trusts the address in it while the lock is
+	// held, and the lock is held until the drain and the goodbye are done, which can take seconds:
+	// with the port given up first, another user's process could take it and be trusted. Sessions
+	// reconnect in that time, as their connections drop now, and find no daemon.
+	os.Remove(infoPath)
 	cancel()
 	ln.Close() // no new connections, so nothing joins bg while it drains
 	drained := make(chan struct{})
@@ -811,7 +843,7 @@ func takePageHandoff(dir string) (pageHandoff, bool) {
 func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	now := time.Now()
 	d := &Daemon{
-		opt: opt, dir: dir, log: opt.Log, token: bus.RandHex(32), pageTok: bus.RandHex(32), started: now, lastActive: now,
+		opt: opt, dir: dir, maxRecord: bus.MaxRecord, maxSnapshot: bus.MaxSnapshot, log: opt.Log, token: bus.RandHex(32), pageTok: bus.RandHex(32), started: now, lastActive: now,
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
@@ -1108,8 +1140,12 @@ func (d *Daemon) loadState() error {
 	return nil
 }
 
-// saveLocked writes state.json. Caller holds mu.
+// saveLocked writes state.json, unless a page of a log is being applied (see applyPageLocked), which
+// saves once at its end. Caller holds mu.
 func (d *Daemon) saveLocked() {
+	if d.savesHeld {
+		return
+	}
 	if err := writeJSON(d.statePath(), d.st); err != nil {
 		d.log.Printf("saving state: %v", err)
 	}
