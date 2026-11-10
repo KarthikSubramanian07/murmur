@@ -661,6 +661,10 @@ func TestV1PeerWithoutNamesStillWorks(t *testing.T) {
 			t.Fatalf("send to %s: %+v", to, r)
 		}
 	}
+	// Its log is there once its session's start is written, which waits for the first team key.
+	eventually(t, "a's log on the remote", func() bool {
+		return strings.Contains(git(t, remote, "for-each-ref", "refs/murmur/mesh/"), a.self())
+	})
 	if text := busText(t, remote, a); strings.Contains(text, "hello old") {
 		t.Fatalf("the message went out:\n%s", text)
 	}
