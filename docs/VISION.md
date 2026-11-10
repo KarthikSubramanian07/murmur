@@ -626,16 +626,11 @@ call.
   Tyler's call). Peers are judged stale against this daemon's last successful sync, so a device
   that has lost the remote shows every peer as it was when the sync stopped, and nothing said so:
   #141's refused pushes and 52-minute DNS outage, and #87, were found by reading `daemon.log` by
-  hand. The snapshot has the last sync that worked, since when and how many times in a row the
-  syncs have failed, and the last error as a class (`dns`, `auth`, `rate-limited`, `rejected`,
-  `timeout`, `other`) and one line with any URL's credentials taken out, not shown at all if
-  `scrub` still finds a secret in it; pushes by ref (mesh, presence, names), made, refused by the
-  server and refused because the ref moved, counted apart; refs that fail to fetch or are fetched
-  apart as slow, and backlogs given up on; handoffs as a turn (T3, the socket) tried, handed and
-  failed, and the hook's whole messages and notices; the daemon's start, version, protocol, poll
-  rate and last update check; and what became of the public repo's report, the one thing Murmur
-  sends. Counts are since the daemon started. It is read from memory and one small file, behind the
-  page's token like the rest of the API, and goes nowhere else.
+  hand. The snapshot says how the syncs, pushes, fetches and handoffs have gone since the daemon
+  started, and what became of the public repo's report, the one thing Murmur sends; its fields are
+  `web.Health` (`internal/web/health.go`). An error is a class and one line, and a line that may
+  hold a credential is not shown. It is read from memory and one small file, behind the page's
+  token like the rest of the API, and goes nowhere else.
 
 ### A person on the page
 
