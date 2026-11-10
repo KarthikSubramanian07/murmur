@@ -427,7 +427,7 @@ func (d *Daemon) wakesLocked(id string, wake pageSettings) bool {
 
 // mayWakeLocked is wakesLocked without do not disturb: whether the session could be woken once the
 // tag comes off. The daemon stays up for a thread it may wake so (see holdsRouteLocked): it is
-// the one to read the tag's removal from another device's page, and to deliver what waited.
+// the one to read the tag's removal from another device's page, and to hand over what waited.
 // Caller holds mu.
 func (d *Daemon) mayWakeLocked(id string, wake pageSettings) bool {
 	if d.offMeshLocked(id) {

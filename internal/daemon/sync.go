@@ -763,8 +763,8 @@ func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha, listed string) b
 }
 
 // queueLocked puts a message in the inbox of each session here it is addressed to. That queues it;
-// it is delivered only once it reaches the agent's context (docs/VISION.md, `What "delivered"
-// means`, #187). A session gets only what arrives while it runs, or, if it stops, within StoppedInbox of that, in case it
+// it is delivered once the agent is told of it, and read once it has it (docs/VISION.md,
+// `What "delivered" and "read" mean`, #325). A session gets only what arrives while it runs, or, if it stops, within StoppedInbox of that, in case it
 // comes back (see recipientsLocked). What arrived while the daemon was down (modeCatchUp)
 // goes only to sessions that were running before and reconnect, and in modeSkip to nobody, except
 // the sessions whose inbox is kept, for what was sent since they stopped (see inTimeLocked); in

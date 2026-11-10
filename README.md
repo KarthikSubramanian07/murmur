@@ -91,13 +91,14 @@ source is in [`internal/skills`](internal/skills).
 
 ## Supported agents
 
-| Agent                              | Where                 | When idle | When busy                              |
-| ---------------------------------- | --------------------- | --------- | -------------------------------------- |
-| Claude Code                        | T3 Code or a terminal | turn      | notice after its next tool call        |
-| Codex, Grok (untested)             | T3 Code               | turn      | notice after its next tool call        |
-| Codex, Grok (untested)             | a terminal            | inbox     | notice after its next tool call        |
-| OpenCode, Muse Code, Pi (untested) | T3 Code               | turn      | waits for the turn to end, then a turn |
-| OpenCode, Muse Code, Pi            | a terminal            | inbox     | inbox                                  |
+| Agent                   | Where                 | When idle | When busy                              |
+| ----------------------- | --------------------- | --------- | -------------------------------------- |
+| Claude Code             | T3 Code or a terminal | turn      | notice after its next tool call        |
+| Codex, Grok (untested)  | T3 Code               | turn      | notice after its next tool call        |
+| Codex, Grok             | a terminal            | inbox     | notice after its next tool call        |
+| OpenCode, Muse Code     | T3 Code               | turn      | waits for the turn to end, then a turn |
+| Pi (untested)           | T3 Code               | turn      | waits for the turn to end, then a turn |
+| OpenCode, Muse Code, Pi | a terminal            | inbox     | inbox                                  |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes an idle T3
 thread. A **notice** is one line with the sender and subject, added after the agent's next tool
