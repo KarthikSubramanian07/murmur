@@ -329,6 +329,10 @@ func TestMessagesNoticesInbox(t *testing.T) {
 	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "key", Body: "AKIAIOSFODNN7EXAMPLE"}); !strings.Contains(r.Error, "not sent") {
 		t.Fatalf("secret not blocked: %+v", r)
 	}
+	// Nor with a zero-width space in it, which every reader would drop.
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "key", Body: "AKIAIOSF\u200bODNN7EXAMPLE"}); !strings.Contains(r.Error, "not sent") {
+		t.Fatalf("secret with a zero-width space not blocked: %+v", r)
+	}
 }
 
 func TestHistoryIsNotReplayed(t *testing.T) {
