@@ -668,6 +668,15 @@ call.
   tab, a minimized window, a locked screen). A hidden page marks its calls, so a tab forgotten in
   the background doesn't keep the daemon, and its polling of GitHub, up for good (Opus review,
   2026-10-29). A request without the token doesn't count.
+- **This device's health** (`GET /api/health`, 2026-11-10, data only: where the page shows it is
+  Tyler's call). Peers are judged stale against this daemon's last successful sync, so a device
+  that has lost the remote shows every peer as it was when the sync stopped, and nothing said so:
+  #141's refused pushes and 52-minute DNS outage, and #87, were found by reading `daemon.log` by
+  hand. The snapshot says how the syncs, pushes, fetches and handoffs have gone since the daemon
+  started, and what became of the public repo's report, the one thing Murmur sends; its fields are
+  `web.Health` (`internal/web/health.go`). An error is a class and one line, and a line that may
+  hold a credential is not shown. It is read from memory and one small file, behind the page's
+  token like the rest of the API, and goes nowhere else.
 
 ### A person on the page
 
@@ -1750,4 +1759,6 @@ a git library, so it gets each user's credential helpers, SSH config and URL rew
   tried.
 - Does GitHub rate-limit a `git ls-remote` every 3 s (around a conversation) from each of a team's
   devices? Nothing
-  documents a limit for git traffic; none was hit in a test of 63 requests 2 s apart.
+  documents a limit for git traffic; none was hit in a test of 63 requests 2 s apart. Since
+  2026-11-10 a device's `/api/health` counts failed syncs and classes a refusal for too many
+  requests as `rate-limited`, so a team's own devices can show it.
