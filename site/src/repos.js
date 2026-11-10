@@ -24,6 +24,8 @@ const EPOCH = '2026-10-01';
 const BATCH = 200;
 // How long one census run can take: its job's timeout in .github/workflows/census.yml, so change
 // both together. A repo counted within this of the newest count was counted in the same run.
+// A census run by hand on one repo (census.mjs's usage) is a run of its own: until the next
+// scheduled run, every other repo looks missed by it.
 const RUN = 30 * 60e3;
 // The census runs once a day, at 05:17 UTC. A scheduled run can start hours late on GitHub, so
 // the newest count is late only once it is older than this.
@@ -219,7 +221,7 @@ export async function repoNumbers(db, days) {
   return {
     today, days, week: WEEK,
     counted: last,
-    census: health(list, last, Date.now()),
+    census: health(list, Date.now()),
     repos: list.length,
     activeRepos: list.filter(r => r.week > 0).length,
     newRepos: list.filter(r => r.start >= weekFrom).length,
@@ -245,26 +247,32 @@ export async function repoNumbers(db, days) {
   };
 }
 
-// Whether the census is keeping up, from when it last read each repo (repo_census.counted): its
-// last run, which is the newest count and the counts within RUN of it; how many hours ago that
-// was, and how many late, past a day, once it is older than LATE; and the repos that run didn't
-// count, the longest uncounted first, each with when it last was (null for never) and the day it
-// was listed. A repo isn't counted when it can't be read or the census skips it (census.mjs); the
-// run's page in Actions says which, and why.
-export function health(list, last, now) {
+// Whether the census is keeping up, from when it last read each listed repo (repo_census.counted):
+// - last: its last run, which is the newest count and the counts within RUN of it;
+// - hours: how long ago that was, and late: whether that is longer than LATE;
+// - fresh: the repos never counted that were listed on or after that run's day. Anyone can list a
+//   repo (#298), so most days some are, and they are new, not missed;
+// - notCounted: the repos that run didn't count, the longest uncounted first, each with when it
+//   last was (null for never) and the day it was listed. A repo isn't counted when it can't be
+//   read or the census skips it (census.mjs); the run's page in Actions says which, and why.
+export function health(list, now) {
+  const last = list.map(r => r.counted).filter(Boolean).sort().at(-1) ?? null;
   const at = last ? Date.parse(last) : NaN;
   const ago = Number.isFinite(at) ? now - at : null;
-  const uncounted = Number.isFinite(at)
-    ? list.filter(r => !r.counted || Date.parse(r.counted) < at - RUN)
-    : list;
+  const fresh = [], notCounted = [];
+  for (const r of list) {
+    if (r.counted && Date.parse(r.counted) >= at - RUN) continue;
+    const row = { name: r.name, counted: r.counted ?? null, listed: r.reported };
+    (!r.counted && (!last || r.reported >= last.slice(0, 10)) ? fresh : notCounted).push(row);
+  }
+  notCounted.sort((a, b) => (a.counted ?? '').localeCompare(b.counted ?? '') || a.name.localeCompare(b.name));
   return {
     last,
     hours: ago === null ? null : Math.floor(ago / 3600e3),
-    late: ago !== null && ago > LATE ? Math.floor(ago / 3600e3) - 24 : 0,
+    late: ago !== null && ago > LATE,
     repos: list.length,
-    notCounted: uncounted
-      .map(r => ({ name: r.name, counted: r.counted ?? null, listed: r.reported }))
-      .sort((a, b) => (a.counted ?? '').localeCompare(b.counted ?? '') || a.name.localeCompare(b.name)),
+    fresh,
+    notCounted,
   };
 }
 
@@ -369,9 +377,13 @@ function censusReport(h, table, short) {
   const n = (k, one, many = one + 's') => `${k} ${k === 1 ? one : many}`;
   if (!h.repos) return 'It has no repos to count yet.';
   if (!h.last) return `It hasn't counted any of the ${n(h.repos, 'repo')} yet.`;
-  const counted = h.repos - h.notCounted.length;
-  const lines = [`It last ran at ${time(h.last)}, ${n(h.hours, 'hour')} ago, and counted ${counted === h.repos ? (h.repos === 1 ? 'the 1 repo' : `all ${h.repos} repos`) : `${counted} of ${n(h.repos, 'repo')}`}.`];
-  if (h.late) lines.push(`It runs once a day, so it is **${n(h.late, 'hour')} late**.`);
+  const total = h.repos - h.fresh.length, counted = total - h.notCounted.length;
+  const ago = h.hours ? `${n(h.hours, 'hour')} ago` : 'less than an hour ago';
+  const of = counted === total ? (total === 1 ? 'the 1 repo' : `all ${total} repos`) : `${counted} of ${n(total, 'repo')}`;
+  const since = h.fresh.length ? ` ${n(h.fresh.length, 'repo')} listed since ${h.fresh.length === 1 ? "hasn't" : "haven't"} been counted yet.` : '';
+  const lines = [];
+  if (h.late) lines.push(`**It hasn't run for ${h.hours} hours**, and it runs once a day.`);
+  lines.push(`It last ran at ${time(h.last)}, ${ago}, and counted ${of}.${since}`);
   if (h.notCounted.length) {
     lines.push(`Not counted in that run, so their numbers are as of when each last was:
 

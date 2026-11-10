@@ -28,17 +28,20 @@ test('a census that counted every repo a few hours ago says so, and no more', as
   const last = ago(2);
   const { n, md } = await report([row('github.com/a/one', last), row('github.com/b/two', ago(2.1)), row('github.com/c/three', ago(2.4))]);
   assert.equal(n.counted, last);
-  assert.deepEqual(n.census, { last, hours: 2, late: 0, repos: 3, notCounted: [] });
+  assert.deepEqual(n.census, { last, hours: 2, late: false, repos: 3, fresh: [], notCounted: [] });
   assert.equal(section(md), `## The census\n\nIt last ran at ${time(last)}, 2 hours ago, and counted all 3 repos.\n`);
+  // Never "0 hours ago".
+  assert.match(section((await report([row('github.com/a/one', ago(0.5))])).md), /, less than an hour ago, and counted the 1 repo\.\n$/);
 });
 
-test('a census whose newest count is over 30 hours old is late by the hours past a day', async () => {
+test("a census whose newest count is over 30 hours old is late, and says how long it hasn't run", async () => {
   const { n, md } = await report([row('github.com/a/one', ago(52.5)), row('github.com/b/two', ago(52.6))]);
   assert.equal(n.census.hours, 52);
-  assert.equal(n.census.late, 28);
-  assert.match(section(md), /, 52 hours ago, and counted all 2 repos\.\n\nIt runs once a day, so it is \*\*28 hours late\*\*\.\n$/);
+  assert.equal(n.census.late, true);
+  // Said first, before when it last ran.
+  assert.match(section(md), /^## The census\n\n\*\*It hasn't run for 52 hours\*\*, and it runs once a day\.\n\nIt last ran at .*, 52 hours ago, and counted all 2 repos\.\n$/);
   // 30 hours is not yet late: a scheduled run can start hours after its time.
-  assert.equal((await report([row('github.com/a/one', ago(29.9))])).n.census.late, 0);
+  assert.equal((await report([row('github.com/a/one', ago(29.9))])).n.census.late, false);
 });
 
 test('a repo the last run did not count is listed with when it last was, and one never counted too', async () => {
@@ -48,30 +51,43 @@ test('a repo the last run did not count is listed with when it last was, and one
     // 29 minutes before the newest count is the same run: a run takes at most its job's 30 minutes.
     row('github.com/b/two', ago(3 + 29 / 60)),
     row('github.com/C/Skipped', before),
-    { ...row('github.com/d/new', null), reported: daysAgo(0) },
+    // Listed days before the run, and still never counted: that run missed it.
+    row('github.com/e/old', null),
   ]);
   assert.deepEqual(n.census.notCounted, [
-    { name: 'github.com/d/new', counted: null, listed: daysAgo(0) },
+    { name: 'github.com/e/old', counted: null, listed: daysAgo(5) },
     { name: 'github.com/C/Skipped', counted: before, listed: daysAgo(5) },
   ]);
   const s = section(md);
   assert.match(s, /and counted 2 of 4 repos\.\n/);
-  assert.doesNotMatch(s, /late/);
-  assert.ok(s.includes(`| [d/new](https://github.com/d/new) | never; listed ${daysAgo(0)} |`), s);
+  assert.doesNotMatch(s, /hasn't run|listed since/);
+  assert.ok(s.includes(`| [e/old](https://github.com/e/old) | never; listed ${daysAgo(5)} |`), s);
   assert.ok(s.includes(`| [C/Skipped](https://github.com/C/Skipped) | ${time(before)} |`), s);
   assert.ok(s.includes('https://github.com/a-Fig/murmur/actions/workflows/census.yml'), s);
+});
+
+test('a repo listed on or after the last run\'s day is new, not missed by it', async () => {
+  const last = ago(1);
+  const { n, md } = await report([
+    row('github.com/a/one', last),
+    { ...row('github.com/d/new', null), reported: last.slice(0, 10) },
+    { ...row('github.com/f/newer', null), reported: daysAgo(-1) },
+  ]);
+  assert.deepEqual(n.census.fresh.map(r => r.name), ['github.com/d/new', 'github.com/f/newer']);
+  assert.deepEqual(n.census.notCounted, []);
+  assert.equal(section(md), `## The census\n\nIt last ran at ${time(last)}, 1 hour ago, and counted the 1 repo. 2 repos listed since haven't been counted yet.\n`);
 });
 
 test('a late census that skipped a repo says both', async () => {
   const { md } = await report([row('github.com/a/one', ago(40)), row('github.com/b/two', ago(70))]);
   const s = section(md);
-  assert.match(s, /40 hours ago, and counted 1 of 2 repos\.\n\nIt runs once a day, so it is \*\*16 hours late\*\*\.\n\nNot counted in that run/);
+  assert.match(s, /\*\*It hasn't run for 40 hours\*\*, and it runs once a day\.\n\nIt last ran at .*, 40 hours ago, and counted 1 of 2 repos\.\n\nNot counted in that run/);
   assert.ok(s.includes('| [b/two](https://github.com/b/two) |'), s);
 });
 
 test('before the census has run, the report says it has counted nothing', async () => {
   const { n, md } = await report([row('github.com/a/one', null)]);
-  assert.deepEqual(n.census, { last: null, hours: null, late: 0, repos: 1, notCounted: [{ name: 'github.com/a/one', counted: null, listed: daysAgo(5) }] });
+  assert.deepEqual(n.census, { last: null, hours: null, late: false, repos: 1, fresh: [{ name: 'github.com/a/one', counted: null, listed: daysAgo(5) }], notCounted: [] });
   assert.equal(section(md), "## The census\n\nIt hasn't counted any of the 1 repo yet.\n");
   assert.equal(section((await report([])).md), '## The census\n\nIt has no repos to count yet.\n');
 });
@@ -94,5 +110,5 @@ test("the health comes from repo_census as the census's POSTs leave it", { skip:
   db.sql.prepare("UPDATE repo_census SET counted = ?1 WHERE repo = 'github.com/a/two'").run(then);
   const n = await repoNumbers(db, 14);
   assert.deepEqual(n.census.notCounted, [{ name: 'github.com/a/two', counted: then, listed: daysAgo(3) }]);
-  assert.equal(n.census.late, 0);
+  assert.equal(n.census.late, false);
 });
