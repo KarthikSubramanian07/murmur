@@ -656,6 +656,12 @@ agents that mattered.
   when it was last seen, how many sessions it has) and its sessions are neither listed nor counted
   among the "more". The cap is in the text `who` renders, so the CLI and the MCP tool share it; the
   daemon's reply still holds every session.
+- **Held to what a device can say (2026-11-09).** Anyone who can push can make any number of device
+  refs, and date a presence as they like. So `who` lists at most 5 devices with no session listed,
+  stale or with none (`view.WhoQuiet`), those seen most recently, and counts the rest in one line.
+  And another device's session start is dated as its last activity is, on the reader's clock and
+  no later than the presence that lists it: a start dated ahead had ranked its sessions above every
+  other in every agent's `who`.
 - **Last active on every line**, as `active 2m ago` after the agent and branch (`lookup` keeps its
   own, longer form). A session on a daemon from before #21 has none, and its line says when it
   started instead.

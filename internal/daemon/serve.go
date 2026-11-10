@@ -828,7 +828,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 				continue
 			}
 			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: bus.Addr(id, s.ID), Name: s.Name,
-				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: s.Started, LastActive: peerActive(p, s),
+				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: peerStarted(p, s), LastActive: peerActive(p, s),
 				Tags: s.Tags})
 		}
 		if !filter.Empty() && len(dv.Sessions) == 0 {
