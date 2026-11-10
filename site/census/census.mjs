@@ -11,8 +11,9 @@
 // - its default branch's commits, without their files: who committed, and when each first did.
 //
 // It sends counts and hashes, not content: per UTC day, how many sessions, messages and records
-// there were and which devices wrote, each device by a hash with a hash of its owner; and each
-// contributor by a hash, so one person in two repos counts once.
+// there were and which devices wrote, each device by a hash with a hash of its owner and of the
+// GitHub account it is matched to (#323); and each contributor by a hash, so one person in two
+// repos counts once.
 // Once the bus is encrypted (#257) a record's kind is hidden, and only records are counted.
 
 import { execFileSync } from 'node:child_process';
@@ -122,26 +123,87 @@ export function count(dir) {
       const t = days.get(d);
       return { day: d, sessions: t.sessions, messages: t.messages, records: t.records, devices: [...t.devices].map(v => hash('device:' + v)).sort() };
     }),
-    devices: [...devices].sort().map(v => ({ id: hash('device:' + v), person: owners.has(v) ? hash('owner:' + owners.get(v).trim().toLowerCase()) : null })),
+    // The owner's name stays here: census() hashes it, and matches it to an account, before sending.
+    devices: [...devices].sort().map(v => ({ id: hash('device:' + v), owner: owners.get(v) ?? null })),
     totals: { sessions: started.size, messages, records, first_day: sorted[0] ?? null, last_day: sorted[sorted.length - 1] ?? null },
   };
 }
 
-// Everyone who has committed to the default branch, with the day of their first commit there.
-export function contributors(dir) {
-  const out = git(dir, ['log', '--format=%aE%x00%aN%x00%aI', 'FETCH_HEAD']);
-  const first = new Map();
+// The default branch's human commits: each one's hash, author name (lowercased), identity and day.
+export function authors(dir) {
+  const out = git(dir, ['log', '--format=%H%x00%aE%x00%aN%x00%aI', 'FETCH_HEAD']);
+  const all = [];
   for (const line of out.split('\n')) {
-    const [email, name, at] = line.split('\x00');
+    const [sha, email, name, at] = line.split('\x00');
     if (!at || /\[bot\]/i.test(name) || /\[bot\]@/i.test(email)) continue;
-    const id = hash(identity(email, name)), d = dayOf(at);
-    if (d && (!first.has(id) || d < first.get(id))) first.set(id, d);
+    all.push({ sha, name: name.trim().toLowerCase(), identity: identity(email, name), day: dayOf(at) });
+  }
+  return all;
+}
+
+// Everyone who has committed to the default branch, with the day of their first commit there.
+export function contributors(commits) {
+  const first = new Map();
+  for (const c of commits) {
+    const id = hash(c.identity);
+    if (c.day && (!first.has(id) || c.day < first.get(id))) first.set(id, c.day);
   }
   return [...first].map(([id, f]) => ({ id, first: f }));
 }
 
+// The GitHub account behind each device owner, for the stats page's users (#323). Murmur sends
+// nothing that names an account, and a bus commit names only its device, so an owner (the git user
+// name its presence shows) is matched to the repo's commit authors of the same name. Of the
+// identities that name has committed as, a GitHub login wins, then the one with the most commits.
+// An email is turned into its login when lookup(sha) can say, so the same person committing from
+// two addresses is one account. lookup answers the commit author's login, null when GitHub links
+// the commit to no account, or undefined when it couldn't ask. An owner with no commit under its
+// name is left out, and so is one whose lookup couldn't be asked: the site keeps the account it
+// was matched to before, and sending the email in its place would replace a login with it.
+export async function accounts(owners, commits, lookup) {
+  const byName = new Map(); // name -> identity -> { n, sha }
+  for (const c of commits) {
+    if (!byName.has(c.name)) byName.set(c.name, new Map());
+    const m = byName.get(c.name);
+    if (!m.has(c.identity)) m.set(c.identity, { n: 0, sha: c.sha });
+    m.get(c.identity).n++;
+  }
+  const isLogin = s => (s.startsWith('login:') ? 1 : 0);
+  const out = new Map(); // owner -> identity
+  for (const owner of new Set(owners)) {
+    const m = byName.get(owner.trim().toLowerCase());
+    if (!m) continue;
+    const [[who, { sha }]] = [...m].sort(([a, x], [b, y]) => isLogin(b) - isLogin(a) || y.n - x.n || a.localeCompare(b));
+    const login = isLogin(who) ? null : await lookup(sha);
+    if (login === undefined) continue;
+    out.set(owner, login ? 'login:' + login.toLowerCase() : who);
+  }
+  return out;
+}
+
+// lookup for accounts, from GitHub's API: the commit author's login, null when the API answers that
+// no account is linked, or undefined when it can't be asked (a rate limit, an outage, a timeout).
+// Once rate limited it stops asking. GITHUB_TOKEN, if set, raises the limit.
+function apiLookup(owner, name) {
+  let off = false;
+  return async sha => {
+    if (off) return undefined;
+    const headers = { 'User-Agent': 'murmur-census', Accept: 'application/vnd.github+json' };
+    if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+    try {
+      const res = await fetch(`https://api.github.com/repos/${owner}/${name}/commits/${sha}`, { headers, signal: AbortSignal.timeout(10000) });
+      if (res.status === 403 || res.status === 429) off = true;
+      if (!res.ok) return undefined;
+      const login = (await res.json())?.author?.login;
+      return typeof login === 'string' && login ? login : null;
+    } catch {
+      return undefined;
+    }
+  };
+}
+
 // Fetches one repo's bus and its default branch's commits into a scratch repo and counts them.
-export function census(name) {
+export async function census(name, lookup = apiLookup) {
   const m = REPO.exec(name);
   if (!m) throw new Error(`not a repo: ${name}`);
   const dir = mkdtempSync(join(tmpdir(), 'census-'));
@@ -151,7 +213,14 @@ export function census(name) {
     git(dir, ['fetch', '-q', '--no-tags', url, '+refs/murmur/*:refs/murmur/*']);
     const bus = count(dir);
     git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url, 'HEAD']);
-    return { repo: name.toLowerCase(), ...bus, contributors: contributors(dir) };
+    const commits = authors(dir);
+    const matched = await accounts(bus.devices.map(v => v.owner).filter(Boolean), commits, lookup(m[1], m[2]));
+    const devices = bus.devices.map(({ id, owner }) => ({
+      id,
+      person: owner ? hash('owner:' + owner.trim().toLowerCase()) : null,
+      account: matched.has(owner) ? hash(matched.get(owner)) : null,
+    }));
+    return { repo: name.toLowerCase(), ...bus, devices, contributors: contributors(commits) };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -176,14 +245,15 @@ async function main(args) {
   for (const name of names) {
     let c;
     try {
-      c = census(name);
+      c = await census(name);
     } catch (err) {
       // A repo that has gone private or been deleted can't be read, and keeps the counts it had.
       console.error(`${name}: not counted: ${String(err.stderr || err.message).trim()}`);
       failed++;
       continue;
     }
-    const line = `${name}: ${c.devices.length} devices, ${new Set(c.devices.map(v => v.person ?? v.id)).size} people, ${c.totals.sessions} sessions, ` +
+    const line = `${name}: ${c.devices.length} devices, ${new Set(c.devices.map(v => v.person ?? v.id)).size} people, ` +
+      `${c.devices.filter(v => v.account).length} matched to an account, ${c.totals.sessions} sessions, ` +
       `${c.totals.messages} messages, ${c.totals.records} records, ${c.contributors.length} contributors, ${c.days.length} days`;
     if (dry) {
       console.log(line);
