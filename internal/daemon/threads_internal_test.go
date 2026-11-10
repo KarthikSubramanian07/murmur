@@ -111,7 +111,7 @@ func TestATurnHandedOverCountsAsWork(t *testing.T) {
 	d.pushedAt["aaaaaa"] = time.Now()
 	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{LastRun: time.Now().Add(-10 * time.Minute)}
 	if !d.wakesLocked("aaaaaa", wakeWithin(0)) {
-		t.Errorf("just delivered to: not woken")
+		t.Errorf("just handed a message: not woken")
 	}
 }
 
