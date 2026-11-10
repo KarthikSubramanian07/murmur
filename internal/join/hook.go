@@ -100,13 +100,22 @@ func trackedHookPath(ctx context.Context, top string) (path string, link bool, e
 	if err != nil {
 		return "", false, fmt.Errorf("%s: couldn't ask git whether it tracks %s: %w", top, hookFile, err)
 	}
+	// Every entry is looked at, not just the first: the index can hold names differing only in case
+	// (a plain .Claude and a .claude link), and on a disk that ignores case only one of them is the
+	// file join and leave would open. A link among them is the answer, whichever sorts first.
 	for _, rec := range strings.Split(out, "\x00") {
 		meta, name, ok := strings.Cut(rec, "\t")
-		if ok && (strings.EqualFold(name, dir) || strings.EqualFold(name, hookFile)) {
-			return name, strings.HasPrefix(meta, "120000 "), nil
+		if !ok || !(strings.EqualFold(name, dir) || strings.EqualFold(name, hookFile)) {
+			continue
+		}
+		if strings.HasPrefix(meta, "120000 ") {
+			return name, true, nil
+		}
+		if path == "" {
+			path = name
 		}
 	}
-	return "", false, nil
+	return path, false, nil
 }
 
 // trackedNote is why join left the hook out of the working tree at top, where git tracks path.
