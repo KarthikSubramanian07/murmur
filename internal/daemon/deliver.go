@@ -142,11 +142,13 @@ type pushJob struct {
 	id, addr string
 	// key is the session's conversation when the job was made (see Daemon.introduced): the turn
 	// goes to that one, even if the session moves to another before the handoff ends.
-	key   string
-	msg   *inMsg
-	via   string
-	route proto.Route
-	text  string
+	key string
+	// explainKey is what the session was kept by then, for what it has been told (see explained.go).
+	explainKey string
+	msg        *inMsg
+	via        string
+	route      proto.Route
+	text       string
 }
 
 // wakeSnapshot copies the page's settings, the wake setting among them. setMu is taken alone,
@@ -495,7 +497,8 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 	if bus.IsPerson(m.Event.From) {
 		views[0].Explained = d.explainedLocked(id, m.Event.From) // recorded once it is handed over
 	}
-	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, msg: m, via: via, route: route, text: view.Turn(views[0])}
+	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, explainKey: d.explainKeyLocked(id), msg: m, via: via,
+		route: route, text: view.Turn(views[0])}
 }
 
 // handOver passes the message to the session's client, once. It is tried a second time, after PushRetry, only
@@ -634,7 +637,7 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	}
 	d.outOfInboxLocked(j.id, j.msg, "handed", "as a turn, through "+j.via)
 	d.introduceLocked(j.key, j.msg.Event.From)
-	d.noteExplainedLocked(j.id, j.msg.Event.From)
+	d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), j.msg.Event.From)
 	d.saveLocked()
 	delete(d.pushWarned, j.id)
 }

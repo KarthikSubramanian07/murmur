@@ -18,7 +18,11 @@ import (
 // tags.go), so it outlasts the session's MCP server restarting, a resume, and the daemon
 // restarting. A session whose name is pending keeps it by its ID until the name lands. A message
 // counts once it has reached the session: a turn whose handoff failed, and comes back by the hook,
-// explains again.
+// explains again. So does another message from the same person that inbox or the hook gives while
+// a turn's handoff that explains is under way, as the handoff is recorded only once it ends: an
+// agent told twice is the cost, rare (a handoff takes seconds, and goes only to a session that is
+// idle, which isn't calling inbox or its hook), and the safe way to err, where recording first would
+// leave one whose handoff failed told never.
 
 // explainKeyLocked is what the people session id has been told of are kept by: its tags' key,
 // else its ID; "" for the command line, which keeps nothing. Caller holds mu.
@@ -46,14 +50,31 @@ func (d *Daemon) explainedLocked(id, from string) bool {
 // noteExplainedLocked records that session id has had a message from from, if from is a person.
 // The caller saves the state. Caller holds mu.
 func (d *Daemon) noteExplainedLocked(id, from string) {
-	key := d.explainKeyLocked(id)
-	if key == "" || d.explainedLocked(id, from) {
+	d.noteExplainedAtLocked(d.explainKeyLocked(id), from)
+}
+
+// noteExplainedAtLocked records that the session kept by key has had a message from from, if
+// from is a person. The caller saves the state. Caller holds mu.
+func (d *Daemon) noteExplainedAtLocked(key, from string) {
+	if key == "" || !bus.IsPerson(from) || slices.Contains(d.st.Explained[key], from) {
 		return
 	}
 	if d.st.Explained == nil {
 		d.st.Explained = map[string][]string{}
 	}
 	d.st.Explained[key] = append(d.st.Explained[key], from)
+}
+
+// explainKeyOfPushLocked is what a turn's handoff, made for session j.id while it was in
+// conversation j.key and was kept by j.explainKey, records against when it succeeds: the same, by
+// the name it has now if that landed meanwhile, while the session is in that conversation still;
+// the one it was made for if the session has /cleared or /resumed into another since, which hasn't
+// seen the turn. Caller holds mu.
+func (d *Daemon) explainKeyOfPushLocked(j *pushJob) string {
+	if d.keyOfLocked(j.id) == j.key {
+		return d.explainKeyLocked(j.id)
+	}
+	return j.explainKey
 }
 
 // explainViewsLocked sets each of views' Explained, in order, and records the sessions as told: a
