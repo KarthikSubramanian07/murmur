@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
+	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -246,7 +249,7 @@ func TestAProofForAnotherAddressOrNonceIsRefused(t *testing.T) {
 			if _, err := ping(context.Background(), info); !errors.Is(err, errNotDaemon) {
 				t.Errorf("ping: %v, want errNotDaemon", err)
 			}
-			if _, _, err := exchange(context.Background(), info, false, proto.Request{Op: proto.OpInbox}); err == nil {
+			if _, _, err := c.exchange(context.Background(), info, false, proto.Request{Op: proto.OpInbox}); err == nil {
 				t.Error("the inbox was answered")
 			}
 			if n := tokens.Load(); n > 0 {
@@ -256,26 +259,99 @@ func TestAProofForAnotherAddressOrNonceIsRefused(t *testing.T) {
 	}
 }
 
-// A daemon from before proof can't show it is still the daemon, except by holding the clone's lock.
-// A client that may not replace it uses it while it does, and not after it dies and something else
-// takes its port.
-func TestADaemonFromBeforeProofIsTrustedOnlyWhileItHoldsTheLock(t *testing.T) {
+// A daemon from before proof can't show that a connection is to it, so it is sent nothing: no
+// request, no hello, and no stop, each of which would carry the token. The client says why, and how
+// to end it, by its process ID.
+func TestNothingGoesToADaemonFromBeforeProof(t *testing.T) {
 	gitDir := stateOnly(t)
-	old := startStandIn(t, gitDir, proto.ProofProtocol-1)
+	old := startLegacyStandIn(t, gitDir)
 	c := connected(t, gitDir)
 	if !c.Outdated() {
 		t.Error("the client doesn't take its daemon to be older")
 	}
-	if resp, err := c.Do(context.Background(), proto.Request{Op: proto.OpRoute}); err != nil || !resp.OK {
-		t.Fatalf("route: %v %+v", err, resp)
+	pid := fmt.Sprint(os.Getpid()) // the stand-in's daemon.json names this process
+	for op, err := range map[string]error{
+		"route": func() error { _, err := c.Do(context.Background(), proto.Request{Op: proto.OpRoute}); return err }(),
+		"hello": func() error {
+			conn, _, err := c.Hello(context.Background(), proto.Hello{ID: "aaaaaa"})
+			if conn != nil {
+				conn.Close()
+			}
+			return err
+		}(),
+	} {
+		if !errors.Is(err, errOlderDaemon) || !strings.Contains(err.Error(), pid) {
+			t.Errorf("%s: %v, want errOlderDaemon naming process %s", op, err, pid)
+		}
 	}
+	if stopped, err := Stop(context.Background(), gitDir); !errors.Is(err, errOlderDaemon) {
+		t.Errorf("stop: stopped %v, err %v, want errOlderDaemon", stopped, err)
+	}
+	old.mu.Lock()
+	defer old.mu.Unlock()
+	if len(old.ops) > 0 {
+		t.Errorf("the older daemon was sent %v", old.ops)
+	}
+}
+
+// A client that may start daemons doesn't replace one from before proof either, as that takes a
+// stop: it says how to end it, and starts none beside it.
+func TestADaemonFromBeforeProofIsNotReplaced(t *testing.T) {
+	gitDir := stateOnly(t)
+	old := startLegacyStandIn(t, gitDir)
+	c := &Client{GitDir: gitDir, Spawn: true}
+	c.launch = func() error {
+		t.Error("a daemon was started beside the older one")
+		return nil
+	}
+	if err := c.connect(context.Background()); !errors.Is(err, errOlderDaemon) {
+		t.Errorf("connect: %v, want errOlderDaemon", err)
+	}
+	if old.got(proto.OpStop) {
+		t.Error("the older daemon was sent a stop, and its token")
+	}
+}
+
+// A daemon from before 07a1ecba gave up its port as it began to stop, and kept its lock and its
+// daemon.json while it finished, so another process could take the port while both still said the
+// daemon was there (Sol's reviews of #389). A stop sent then would give that process the token,
+// with which it could prove itself to the next client, beside the old daemon's lock and file. It is
+// never sent the token, so the next client doesn't take it for the daemon.
+func TestWhatTakesAStoppingOlderDaemonsPortIsNeverSentItsToken(t *testing.T) {
+	gitDir := stateOnly(t)
+	old := startLegacyStandIn(t, gitDir)
+	c := connected(t, gitDir)
 	addr := old.ln.Addr().String()
-	old.die()
-	m := listenImpostor(t, addr)
-	if _, err := c.Do(context.Background(), proto.Request{Op: proto.OpRoute}); err == nil {
-		t.Error("a request was answered after the daemon died")
+	old.ln.Close() // it keeps its lock and its daemon.json
+	// What takes the port answers as an older daemon does, until it is given the token; then it
+	// proves itself with it.
+	var mu sync.Mutex
+	var token string
+	tokens := listenAnswering(t, addr, func(req proto.Request) proto.Response {
+		mu.Lock()
+		defer mu.Unlock()
+		if req.Token != "" {
+			token = req.Token
+		}
+		if req.Nonce != "" && token != "" {
+			return proto.Response{OK: true, Protocol: proto.Protocol, Proof: proto.Proof(token, addr, req.Nonce)}
+		}
+		if req.Token == "" {
+			return proto.Response{Error: "bad token"}
+		}
+		return proto.Response{OK: true}
+	})
+	Stop(context.Background(), gitDir)
+	c.Do(context.Background(), proto.Request{Op: proto.OpInbox})
+	if conn, _, err := c.Hello(context.Background(), proto.Hello{ID: "aaaaaa"}); err == nil {
+		conn.Close()
+		t.Error("the hello was taken")
 	}
-	if got := m.requests(); len(got) > 0 {
-		t.Errorf("the listener at the dead daemon's address was sent %v", got)
+	fresh := &Client{GitDir: gitDir}
+	if fresh.found(context.Background()) && !fresh.legacy {
+		t.Error("a new client took what took the port for a daemon that proved itself")
+	}
+	if n := tokens.Load(); n > 0 {
+		t.Errorf("what took the port was sent the token %d times", n)
 	}
 }

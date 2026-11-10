@@ -129,6 +129,13 @@ func TestDaemonRefusesRequestsOnceTheUserHasLeft(t *testing.T) {
 		c, err = client.Connect(context.Background(), gitDir, false)
 		return err == nil
 	})
+	// The daemon answers before its first sync (#372), and a user found gone once that sync ends
+	// stops it there and then, as the consent loop would. Under test are the checks on requests
+	// for a user who leaves after that, so the user leaves only once it has passed: who waits for
+	// it, and the daemon decides before it lets who go on.
+	if resp, err := c.Do(context.Background(), proto.Request{Op: proto.OpWho}); err != nil || resp.Error != "" {
+		t.Fatalf("who while joined: %v %q", err, resp.Error)
+	}
 
 	joined.Store(false)
 	ctx := context.Background()

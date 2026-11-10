@@ -204,9 +204,19 @@ would have left that gap. What answers without the proof is not the daemon, and 
 its daemon again (or starts one). Until it is proved, a reply is read only up to 4 KB, and a proved
 daemon's up to 64 MB, about half again a full inbox of the longest messages escaped: before, one
 that never ended was read until the deadline, however much it came to. A daemon of protocol 11 or
-older can't prove itself, and refuses the nonce's ping as a missing token. A client that may start
-daemons replaces one as it replaces any older daemon; one that may not (`mur stop`, the hook) talks
-to it unproved, as before, checking the lock before each connection. Discovery still contacts the
+older can't prove itself, and refuses the nonce's ping as a missing token. A client sends it
+nothing at all, not even a stop, and so can neither stop nor replace it: it says the daemon is from
+an older version, and how to end it, by the process ID in daemon.json, or that it exits on its own
+10 minutes after its last session, when the next command starts a current one (2026-11-10). That
+is the cost of an upgrade from 0.2: a daemon left running by the old mur is in the way until it
+goes. Everything else was tried first and failed review (Sol's reviews of main before v0.3.0-rc.1
+and of #389). Talking to it unproved while the clone's lock was held left a gap between the check
+and the dial. Checking after the dial still trusted a daemon from before 07a1ecba, which closes its
+port as it begins to stop and keeps its lock and daemon.json while it finishes, so another process
+can take the port in that time. Even a stop alone gave that process the token, which is also the
+key the proof uses: it could then prove itself to the next client, beside the old daemon's lock and
+file, and be sent its messages and answer with text the hook puts in the agent's context. A daemon
+of 12 or later that is older than its client proves itself, and is replaced as before. Discovery still contacts the
 listener before trying the lock, since trying the lock can turn away a daemon starting just then;
 what the listener is sent there is the nonce alone.
 
