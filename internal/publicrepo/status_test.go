@@ -3,6 +3,7 @@ package publicrepo
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // Status tells the page what has become of the report from what the last look left: a private repo
@@ -35,7 +36,23 @@ func TestStatusFollowsTheLooks(t *testing.T) {
 		t.Errorf("looked on %q, want 2026-11-08", looked)
 	}
 
+	// The same day's look, for another address the remote has moved to, says nothing of that one.
+	check(gitDir, "https://github.com/acme/other.git", "1.2.3", "waiting", "github.com/acme/other")
+
+	// It goes public, and the look finds that, but the site is down: waiting, not private.
 	f.public, f.siteDown = true, true
+	if _, err := Once(ctx, f.opts(gitDir, day1.Add(24*time.Hour))); err == nil {
+		t.Fatal("a report the site didn't store went through")
+	}
+	check(gitDir, url, "1.2.3", "waiting", "github.com/acme/widget")
+
+	// A remote off GitHub, looked at, then moved to GitHub: the day is not a private look of it.
+	moved := clone(t, remote(t), "https://gitlab.com/acme/widget.git")
+	if res, err := Once(ctx, f.opts(moved, day1)); err != nil || res != NotGitHub {
+		t.Fatalf("off GitHub: %v, %v", res, err)
+	}
+	check(moved, url, "1.2.3", "waiting", "github.com/acme/widget")
+
 	other := clone(t, remote(t), url)
 	if _, err := Once(ctx, f.opts(other, day1)); err == nil {
 		t.Fatal("a report the site didn't store went through")

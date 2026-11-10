@@ -138,7 +138,7 @@ func Once(ctx context.Context, o Options) (Result, error) {
 		return Waiting, nil
 	}
 	if addr == "" {
-		st.Looked = day
+		st.Looked, st.Private = day, ""
 		return NotGitHub, writeState(o.GitDir, st)
 	}
 	sha, err := repo.RemoteRef(ctx, brand.ReportedRef)
@@ -155,8 +155,15 @@ func Once(ctx context.Context, o Options) (Result, error) {
 			return Waiting, err
 		}
 		if !public {
-			st.Looked = day
+			st.Looked, st.Private = day, addr
 			return Private, writeState(o.GitDir, st)
+		}
+		if st.Private != "" {
+			// It went public. If the send below fails, the page mustn't go on calling it private.
+			st.Private = ""
+			if err := writeState(o.GitDir, st); err != nil {
+				return Waiting, err
+			}
 		}
 		if err := send(ctx, o, "github.com/"+full); err != nil {
 			return Waiting, err // not stored, so sent again at the next look
@@ -273,9 +280,11 @@ func Status(gitDir, url, version string) (status, addr, looked string) {
 		return "not-github", "", st.Looked
 	case st.Known == addr || st.Sent == addr:
 		return "reported", addr, ""
-	case st.Looked != "":
+	case st.Private == addr && st.Looked != "":
 		return "private", addr, st.Looked
 	}
+	// Not looked at yet, or the last look failed, or found an address other than this one (a remote
+	// that has moved), or a state from before Private was kept: nothing says it is private.
 	return "waiting", addr, ""
 }
 
@@ -284,6 +293,9 @@ type state struct {
 	Looked string `json:"looked"` // the UTC day, YYYY-MM-DD, a look last found the repo private or not on GitHub
 	Sent   string `json:"sent"`   // the address the site stored; for it, only refs/murmur/reported is left to push
 	Known  string `json:"known"`  // the address whose refs/murmur/reported this clone has seen or pushed
+	// Private is the address the look on Looked found private, "" if that look found the remote off
+	// GitHub, or a look since found it public. Status says private only for this address.
+	Private string `json:"private,omitempty"`
 }
 
 func statePath(gitDir string) string { return filepath.Join(gitDir, brand.StateDir, "publicrepo.json") }
