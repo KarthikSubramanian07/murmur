@@ -252,11 +252,13 @@ func errorLine(text string) string {
 			break
 		}
 	}
-	line = bus.OneLine(credentials.ReplaceAllString(line, "$1"), maxErrorLine)
+	// Scrubbed whole, before the cut: a token cut in two would be too short for scrub to know it,
+	// and its first part would be shown.
+	line = credentials.ReplaceAllString(line, "$1")
 	if scrub.Check(line) != nil {
 		return "(not shown: it looked like it held a secret)"
 	}
-	return line
+	return bus.OneLine(line, maxErrorLine)
 }
 
 // Health is this device's health, from what the daemon holds. It reads one small file and, at most

@@ -50,6 +50,9 @@ func TestHealthErrorIsClassedAndClean(t *testing.T) {
 		{"credentials in the message", gitErr("fatal: unable to access 'https://x-access-token:" + token + "@github.com/a/b.git/': Failed to connect to github.com port 443\n"),
 			false, web.ErrOther, "fatal: unable to access 'https://github.com/a/b.git/': Failed to connect to github.com port 443"},
 		{"a secret outside a URL", errors.New("push failed: token=" + token), false, web.ErrOther, "(not shown: it looked like it held a secret)"},
+		// The 200-character cut falls inside the token: too short to know for what it is, once cut.
+		{"a secret across the cut", errors.New("fatal: " + strings.Repeat("x", 175) + " " + token), false, web.ErrOther,
+			"(not shown: it looked like it held a secret)"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -65,7 +68,7 @@ func TestHealthErrorIsClassedAndClean(t *testing.T) {
 			if c.line != "" && !strings.Contains(e.Message, c.line) {
 				t.Errorf("message %q, want it to say %q", e.Message, c.line)
 			}
-			if strings.Contains(e.Message, token) || strings.Contains(e.Message, "x-access-token") {
+			if strings.Contains(e.Message, token[:8]) || strings.Contains(e.Message, "x-access-token") {
 				t.Errorf("message %q has the credentials", e.Message)
 			}
 			if strings.ContainsAny(e.Message, "\n\r") || len([]rune(e.Message)) > maxErrorLine {
