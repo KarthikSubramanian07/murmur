@@ -363,7 +363,7 @@ function adopt(old, neu) {
     else if (old.getAttribute(a.name) !== a.value) {
       // A field that has been typed in ignores its value attribute, so a render that changes it
       // (the tag menu's field, cleared once a tag is made) sets what it shows too.
-      if (a.name === "value" && "value" in old && old.value !== a.value) old.value = a.value;
+      if (a.name === "value" && old.getAttribute("value") !== a.value && "value" in old && old.value !== a.value) old.value = a.value;
       old.setAttribute(a.name, a.value);
     }
   }
