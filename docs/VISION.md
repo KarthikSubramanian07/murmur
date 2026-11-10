@@ -481,7 +481,8 @@ keeps its turn going at Stop (#202) runs in Codex and Grok too, as `mur hook cod
   daemon yet would look the same: the hook speaks for none until each calls a Murmur tool, but all
   count as having a hook. The ID the MCP server learns overrides one taken from a hook (Sol's
   review, 2026-11-09, found a wrong one could otherwise take another thread's notices).
-- **Hook not running.** A session of an agent join installs the hook in (Claude Code, Codex, Grok)
+- **Hook not running.** A session of an agent the hook runs in (Claude Code, Codex, Grok, and Pi
+  through the extension join writes)
   that called one of Murmur's tools over a minute ago, with no hook of it reporting since the
   daemon started, is marked: `who` adds ", hook not running" to its line and tells a session its
   own, the page puts a badge on its card, and `send` says the recipient won't be told while it
