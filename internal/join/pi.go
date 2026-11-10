@@ -28,25 +28,30 @@ import (
 // The extension also brings a session its messages, as Murmur's hook does in Claude Code (#202,
 // #205): Pi has no hooks of that kind, so the extension runs `mur hook --agent pi` at the same
 // moments, with Claude Code's event names and the session's file for its ID (package hook), and
-// opens a socket of its own that takes Claude Code's messaging-socket lines (package msgsock), whose
-// address and token it gives the MCP server in its environment as Claude Code does. From Pi's
-// docs/extensions.md and the types of @earendil-works/pi-coding-agent 1.5.0, read 2026-11-09, and
-// run with Pi 1.5.0 against a stub model the same day (the PR that added this says what was run):
+// opens a socket of its own that takes Claude Code's messaging-socket lines (package msgsock),
+// whose address and token it gives the MCP server in its environment as Claude Code does. From
+// Pi's docs/extensions.md and the types of @earendil-works/pi-coding-agent 1.5.0, read
+// 2026-11-09, and run with Pi 1.5.0 against a stub model the same day, in RPC mode and in its
+// terminal UI (the PR that added this says what was run):
 //   - before_agent_start, which every prompt and every turn the extension starts goes through, is
 //     UserPromptSubmit: the session is at work, and a notice goes in as the run's message;
 //   - tool_result is PostToolUse: a notice is sent with deliverAs "steer", which Pi puts in after
 //     the tool calls and before the next model request;
 //   - agent_before_settle, the last point at which Pi lets an extension add entries and continue,
 //     is Stop: what the hook gives back keeps the work going, as a custom_message entry and
-//     continue: true. Pi skips it after an abort (Escape), and the extension skips it after an
-//     error, which ends Pi's run whatever it asks; the session then stays at work for the daemon,
-//     as an interrupted Claude Code session does, until its next prompt;
+//     continue: true. After an error, which ends Pi's run whatever it asks, and after an abort
+//     (Escape), which skips agent_before_settle and shows as agent_settled's aborted, the hook's
+//     Stop says it was interrupted instead: the daemon takes the session for idle, gives nothing
+//     back, and hands over what is unread as a turn, as for a T3 turn the user stopped;
 //   - a message on the socket is sent with triggerTurn, which starts a turn in an idle session, and
 //     deliverAs "followUp", which holds it until a busy one finishes rather than steering it.
 // Everything Murmur says goes in as a custom message with customType "murmur", shown in the
 // session, which the model reads in the user's role but which Pi doesn't take for the user's
-// typing, as it would sendUserMessage's (#205). Under T3 the socket is there too, and unused: the
-// daemon reaches a T3 session through T3 (internal/daemon, viaOf). A session without a file
+// typing, as it would sendUserMessage's (#205). The extension is in every Pi session, so it runs
+// the hook and opens the socket only in a clone the user joined (its .git/murmur/joined.json, read
+// at the session's start): elsewhere a tool call doesn't wait on a process of Murmur's. Under T3
+// the socket is there too, and unused: the daemon reaches a T3 session through T3
+// (internal/daemon, viaOf). A session without a file
 // (`pi --no-session`) has nothing to give the hook, so it gets no notices, only turns through the
 // socket, which a busy one takes when it finishes. Not covered: Pi's commits aren't credited to
 // its session, as no tool call is bracketed (Claude Code's hook snapshots before and after each).
@@ -55,7 +60,7 @@ import (
 func piExtension(exe string) string {
 	cmd, _ := json.Marshal(exe)
 	return strings.NewReplacer("{{product}}", brand.Product, "{{command}}", brand.Command, "{{server}}", brand.MCPServer,
-		"{{exe}}", string(cmd)).Replace(piTemplate)
+		"{{state}}", brand.StateDir, "{{consent}}", consentFile, "{{exe}}", string(cmd)).Replace(piTemplate)
 }
 
 // piTemplate is the extension, with its names left for package brand to fill in.
@@ -67,19 +72,54 @@ const piTemplate = `// Written by ` + "`{{command}} join`" + ` ({{product}}, htt
 // Delete this file to take {{product}} out of Pi.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 const mur = {{exe}};
 const windows = process.platform === "win32";
 
+// joined says the user joined {{product}} in the clone that dir is in, as ` + "`{{command}} join`" + ` records it in
+// the clone's .git: outside one, the extension runs no hook and opens no socket.
+const joined = (dir: string): boolean => {
+  try {
+    for (let d = resolve(dir); ; d = dirname(d)) {
+      const dot = join(d, ".git");
+      if (existsSync(dot)) {
+        let git = dot;
+        if (!statSync(dot).isDirectory()) {
+          const m = /^gitdir:\s*(.+)$/m.exec(readFileSync(dot, "utf8"));
+          if (!m) return false;
+          git = resolve(d, m[1].trim());
+          const common = join(git, "commondir");
+          if (existsSync(common)) git = resolve(git, readFileSync(common, "utf8").trim());
+        }
+        return existsSync(join(git, "{{state}}", "{{consent}}"));
+      }
+      if (dirname(d) === d) return false;
+    }
+  } catch {
+    return false;
+  }
+};
+
+// sockPath is where the session's socket goes: a named pipe on Windows, else a file in the
+// temporary directory, or in /tmp where that path would be too long for a socket's address.
+const sockPath = (id: string): string => {
+  if (windows) return "\\\\.\\pipe\\murmur-pi-" + id;
+  const p = join(tmpdir(), "murmur-pi-" + id + ".sock");
+  return Buffer.byteLength(p) <= 100 ? p : join("/tmp", "murmur-pi-" + id + ".sock");
+};
+
 export default function (pi: any) {
   let file = "";
+  let on = false;
   let sock = "";
   let token = "";
   let server: any = null;
+  // ended says the end of the work has been told to the daemon since it last started.
+  let ended = false;
   const register = () =>
     pi.registerMcpServer("{{server}}", {
       command: mur,
@@ -95,14 +135,17 @@ export default function (pi: any) {
   const said = (content: string) => ({ customType: "{{server}}", content, display: true });
 
   // hook runs {{product}}'s hook for one of Claude Code's events and gives what it printed, parsed;
-  // null on any trouble, or when the session has no file to be known by.
-  const hook = (event: string, ctx: any): Promise<any> =>
+  // null on any trouble, or when the session isn't in a joined clone or has no file to be known by.
+  // Only a notice's hook stops with the work (Escape): the daemon counts what the end of the work
+  // gives as delivered once it answers, so that hook is left to finish.
+  const hook = (event: string, ctx: any, extra: any = {}): Promise<any> =>
     new Promise((resolve) => {
-      if (!file) return resolve(null);
+      if (!on || !file) return resolve(null);
       let out = "";
       try {
         const child = spawn(mur, ["hook", "--agent", "pi"], {
-          cwd: ctx?.cwd, stdio: ["pipe", "pipe", "ignore"], windowsHide: true, timeout: 10000, signal: ctx?.signal,
+          cwd: ctx?.cwd, stdio: ["pipe", "pipe", "ignore"], windowsHide: true, timeout: 10000,
+          signal: event === "Stop" ? undefined : ctx?.signal,
         });
         child.stdout.on("data", (b: any) => (out += b));
         child.on("error", () => resolve(null));
@@ -114,12 +157,19 @@ export default function (pi: any) {
           }
         });
         child.stdin.on("error", () => {});
-        child.stdin.end(JSON.stringify({ session_id: file, hook_event_name: event, cwd: ctx?.cwd }));
+        child.stdin.end(JSON.stringify({ session_id: file, hook_event_name: event, cwd: ctx?.cwd, ...extra }));
       } catch {
         resolve(null);
       }
     });
   const notice = (r: any) => String(r?.hookSpecificOutput?.additionalContext ?? "");
+  // interrupted tells the daemon the work ended without a chance to go on (Escape, an error), so the
+  // session is idle and a message can go in as a turn.
+  const interrupted = async (ctx: any) => {
+    if (ended) return;
+    ended = true;
+    await hook("Stop", ctx, { interrupted: true });
+  };
 
   const close = () => {
     try {
@@ -133,8 +183,7 @@ export default function (pi: any) {
   // then lines {"type":"user","message":{"content":...}}. Without it, messages wait for the hook.
   const listen = (): Promise<void> =>
     new Promise((resolve) => {
-      const id = randomBytes(8).toString("hex");
-      const path = windows ? "\\\\.\\pipe\\murmur-pi-" + id : join(tmpdir(), "murmur-pi-" + id + ".sock");
+      const path = sockPath(randomBytes(8).toString("hex"));
       const key = randomBytes(24).toString("hex");
       const srv = createServer((conn: any) => {
         let buf = "";
@@ -178,11 +227,13 @@ export default function (pi: any) {
   pi.on("session_start", async (_event: any, ctx: any) => {
     close();
     file = String(ctx?.sessionManager?.getSessionFile?.() ?? "");
-    await listen();
+    on = joined(String(ctx?.cwd ?? process.cwd()));
+    if (on) await listen();
     register();
   });
   pi.on("session_shutdown", () => close());
   pi.on("before_agent_start", async (_event: any, ctx: any) => {
+    ended = false;
     const text = notice(await hook("UserPromptSubmit", ctx));
     if (text) return { message: said(text) };
   });
@@ -191,10 +242,18 @@ export default function (pi: any) {
     if (text) pi.sendMessage(said(text), { deliverAs: "steer" });
   });
   pi.on("agent_before_settle", async (event: any, ctx: any) => {
-    if (event?.outcome !== "completed") return;
+    // After an error Pi ends the run whatever an extension asks.
+    if (event?.outcome !== "completed") return interrupted(ctx);
     const r = await hook("Stop", ctx);
-    if (r?.decision !== "block" || !r?.reason) return;
+    if (r?.decision !== "block" || !r?.reason) {
+      ended = true;
+      return;
+    }
     return { entries: [...(event.entries ?? []), { type: "custom_message", ...said(String(r.reason)) }], continue: true };
+  });
+  // Pi skips agent_before_settle after an abort.
+  pi.on("agent_settled", async (event: any, ctx: any) => {
+    if (event?.aborted) await interrupted(ctx);
   });
 }
 `

@@ -121,7 +121,11 @@ func TestRegisterPi(t *testing.T) {
 		`MURMUR_PI_MESSAGING_SOCKET: sock`, `MURMUR_PI_MESSAGING_TOKEN: token`, `["hook", "--agent", "pi"]`,
 		`hook("UserPromptSubmit"`, `hook("PostToolUse"`, `hook("Stop"`, `"tool_result"`, `"agent_before_settle"`,
 		`deliverAs: "steer"`, `triggerTurn: true, deliverAs: "followUp"`, `continue: true`, `customType: "murmur"`,
-		`"session_shutdown"`, `rec?.token !== key`} {
+		`"session_shutdown"`, `rec?.token !== key`,
+		// Only in a clone the user joined (its consent file), and an interrupted end told as one.
+		`"murmur", "joined.json"`, `if (on) await listen()`, `if (!on || !file) return resolve(null)`,
+		`"agent_settled"`, `event?.aborted`, `{ interrupted: true }`, `event === "Stop" ? undefined : ctx?.signal`,
+		`Buffer.byteLength(p) <= 100`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the extension lacks %s:\n%s", want, got)
 		}
