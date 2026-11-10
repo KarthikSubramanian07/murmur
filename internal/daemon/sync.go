@@ -230,7 +230,16 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	d.mu.Unlock()
 	d.clearOwnJunk(listed)
 
-	for _, ref := range sortedKeys(remote) {
+	// The registry and every presence are read first (see readOrder), within a limit of their own
+	// (see readFirstContext), so that a stall there leaves the logs the time they need: the logs
+	// were fetched already, and they hold the messages. A registry missing from the listing is
+	// asked of the remote again, which can stall like any request to it.
+	first, cancelFirst := readFirstContext(ctx, d.opt.ReadFirstLimit)
+	if _, ok := remote[brand.NamesRef]; !ok {
+		d.processNames(first, "") // not on the remote
+	}
+	var logs []string
+	for _, ref := range readOrder(remote) {
 		sha := remote[ref]
 		if failed[ref] != nil {
 			// Not here to read, but the listing shows it moved: for a presence, that is still a
@@ -242,22 +251,27 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		}
 		switch {
 		case ref == brand.NamesRef:
-			d.processNames(ctx, sha)
+			d.processNames(first, sha)
 		case strings.HasPrefix(ref, brand.MeshPrefix):
 			if _, ok := meshDevice(ref); ok {
-				d.advanceMesh(ctx, ref, sha, listed[ref])
+				logs = append(logs, ref)
 			}
 		case strings.HasPrefix(ref, brand.PresencePrefix):
-			d.updatePeer(ctx, ref, sha)
+			d.updatePeer(first, ref, sha)
 		}
 	}
-	if _, ok := remote[brand.NamesRef]; !ok {
-		d.processNames(ctx, "") // not on the remote
+	firstErr := first.Err()
+	cancelFirst()
+	for _, ref := range logs {
+		d.advanceMesh(ctx, ref, remote[ref], listed[ref])
 	}
 	// A sync cut short is no fresh look: staleness is judged up to the last successful sync, and
 	// this one didn't read every presence it listed.
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if firstErr != nil {
+		return fmt.Errorf("reading the names registry and presence took over %s: %w", d.opt.ReadFirstLimit, firstErr)
 	}
 
 	d.mu.Lock()
@@ -286,6 +300,44 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 func meshDevice(ref string) (string, bool) {
 	dev := strings.TrimPrefix(ref, brand.MeshPrefix)
 	return dev, bus.ValidDevice(dev)
+}
+
+// readFirstContext is what a sync reads the registry and presence on: limit from now, but no more
+// than half of what is left of the sync, so that a stall there leaves the logs at least as much,
+// however long the listing and fetches took, less the up to five seconds a cancelled git takes to
+// exit (see gitx.run). Half rather than a fixed reserve, since a sync's deadline isn't always a
+// minute: the one before a daemon accepts sessions has 10 s, and must read presence too, or a new
+// session could take a name a peer's presence shows.
+func readFirstContext(ctx context.Context, limit time.Duration) (context.Context, context.CancelFunc) {
+	now := time.Now()
+	end := now.Add(limit)
+	if dl, ok := ctx.Deadline(); ok {
+		if half := now.Add(dl.Sub(now) / 2); half.Before(end) {
+			end = half
+		}
+	}
+	return context.WithDeadline(ctx, end)
+}
+
+// readOrder is the order a sync reads the refs it fetched: the names registry, then every
+// presence, then the logs (#71). A message's handoff starts as soon as its log is read, and writes
+// the turn from what this daemon knows of the sender then, so what was fetched with the message
+// about its sender is read first. In the refs' own order, mesh/ before names and presence/, a turn
+// could go out without a name the same sync had brought (docs/VISION.md, "Delivering a message as
+// a turn").
+func readOrder(remote map[string]string) []string {
+	rank := func(ref string) int {
+		switch {
+		case ref == brand.NamesRef:
+			return 0
+		case strings.HasPrefix(ref, brand.PresencePrefix):
+			return 1
+		}
+		return 2
+	}
+	refs := sortedKeys(remote)
+	slices.SortStableFunc(refs, func(a, b string) int { return rank(a) - rank(b) })
+	return refs
 }
 
 // readable keeps the refs Murmur reads: each device's log and presence, and the names registry.
@@ -763,8 +815,8 @@ func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha, listed string) b
 }
 
 // queueLocked puts a message in the inbox of each session here it is addressed to. That queues it;
-// it is delivered only once it reaches the agent's context (docs/VISION.md, `What "delivered"
-// means`, #187). A session gets only what arrives while it runs, or, if it stops, within StoppedInbox of that, in case it
+// it is delivered once the agent is told of it, and read once it has it (docs/VISION.md,
+// `What "delivered" and "read" mean`, #325). A session gets only what arrives while it runs, or, if it stops, within StoppedInbox of that, in case it
 // comes back (see recipientsLocked). What arrived while the daemon was down (modeCatchUp)
 // goes only to sessions that were running before and reconnect, and in modeSkip to nobody, except
 // the sessions whose inbox is kept, for what was sent since they stopped (see inTimeLocked); in
