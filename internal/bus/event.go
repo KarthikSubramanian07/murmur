@@ -314,8 +314,10 @@ func Decode(msg string, v any) error {
 const MaxBody = 32 << 10
 
 // OneLine collapses whitespace, line breaks of every kind included, turns other control
-// characters (a terminal escape, say) into spaces, and cuts s to at most max runes.
+// characters (a terminal escape, say) into spaces, drops invisible format characters (see
+// dropFormat), and cuts s to at most max runes.
 func OneLine(s string, max int) string {
+	s = dropFormat(s)
 	s = strings.Join(strings.FieldsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " ")
 	if r := []rune(s); len(r) > max {
 		s = string(r[:max-1]) + "…"
@@ -324,9 +326,10 @@ func OneLine(s string, max int) string {
 }
 
 // Text keeps a text's lines but writes every kind of line break as "\n", turns other control
-// characters but tabs into spaces, and cuts it to at most max bytes. Whoever shows it line by line
-// then sees the same lines everyone else does.
+// characters but tabs into spaces, drops invisible format characters (see dropFormat), and cuts it
+// to at most max bytes. Whoever shows it line by line then sees the same lines everyone else does.
 func Text(s string, max int) string {
+	s = dropFormat(s)
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.Map(func(r rune) rune {
 		switch {
@@ -344,6 +347,42 @@ func Text(s string, max int) string {
 	}
 	return s
 }
+
+// dropFormat removes Unicode format characters (category Cf), which take no space on screen: bidi
+// overrides and isolates, which make a terminal or a page show text in another order than it
+// reads; zero-width spaces, word joiners and byte-order marks; the soft hyphen; and the tag block
+// (U+E0000 to U+E007F), which spells out text a model reads and no terminal or page shows. All of
+// it reaches agents' context, so text from the bus could otherwise say one thing to the person
+// watching a session and another to its agent.
+//
+// The zero-width joiner and non-joiner stay where each joins two visible characters: the joiner
+// is how emoji such as a family or a woman at a laptop are made, and both shape words in Persian and the Indic scripts. One
+// in a run of them, or next to a space or another format character, is dropped. Flags spelled
+// with tag characters (England's, Scotland's) lose their tags and show as a black flag.
+func dropFormat(s string) string {
+	if !strings.ContainsFunc(s, isFormat) {
+		return s
+	}
+	rs := []rune(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	for i, r := range rs {
+		if !isFormat(r) {
+			b.WriteRune(r)
+			continue
+		}
+		if (r == '\u200c' || r == '\u200d') && i > 0 && i+1 < len(rs) && joinable(rs[i-1]) && joinable(rs[i+1]) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func isFormat(r rune) bool { return unicode.Is(unicode.Cf, r) }
+
+// joinable says whether r is a visible character a joiner may stand next to: a letter, a mark (a
+// vowel sign, an emoji's variation selector), a digit or a symbol (an emoji).
+func joinable(r rune) bool { return unicode.In(r, unicode.L, unicode.M, unicode.N, unicode.S) }
 
 // Addr joins a device and a session into an address.
 func Addr(device, session string) string { return device + "/" + session }
