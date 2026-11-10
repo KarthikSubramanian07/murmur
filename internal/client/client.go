@@ -153,7 +153,7 @@ func (c *Client) replace(ctx context.Context) error {
 		if info, ok := c.load(); ok && info.Token != old.Token {
 			return nil
 		}
-		l, err := proc.Lock(lock)
+		l, err := proc.LockShared(lock)
 		if err == nil {
 			l.Close()
 			return nil
@@ -183,9 +183,10 @@ func (c *Client) replace(ctx context.Context) error {
 // 0700, and on Windows it has whatever access the clone's location gives.
 //
 // The lock is tried only after something answered, as holding it for a moment can turn away a
-// daemon starting just then. Others hold it for a moment too (another client here, WaitGone,
-// replace), so a lock found held is tried once more a moment later before it is believed. Then
-// daemon.json is read again: a daemon that starts beside a stale daemon.json removes it once it
+// daemon starting just then. Clients (another one here, WaitGone, replace) hold it for a moment
+// too, but only shared, and only a daemon takes it exclusively; so a client's shared lock is
+// refused only by a daemon, however long another client holds its own. Then daemon.json is read
+// again: a daemon that starts beside a stale daemon.json removes it once it
 // holds the lock, so a client that read the stale one just before doesn't take it for the new
 // daemon's.
 //
@@ -199,10 +200,6 @@ func (c *Client) found(ctx context.Context) bool {
 	return ok
 }
 
-// lockRetry is how long found waits to try a held lock again: longer than anyone but a daemon holds
-// it, which is a few system calls.
-const lockRetry = 25 * time.Millisecond
-
 // running is found's check: the daemon daemon.json names, and its protocol number, if it is running.
 func (c *Client) running(ctx context.Context) (proto.Info, int, bool) {
 	info, ok := c.load()
@@ -214,24 +211,14 @@ func (c *Client) running(ctx context.Context) (proto.Info, int, bool) {
 		return proto.Info{}, 0, false
 	}
 	dir := StateDir(c.GitDir)
-	for try := 0; ; try++ {
-		l, err := proc.Lock(filepath.Join(dir, "daemon.lock"))
-		if err == nil {
-			os.Remove(filepath.Join(dir, "daemon.json")) // stale, and no daemon can start to write one while this is held
-			l.Close()
-			return proto.Info{}, 0, false
-		}
-		if !errors.Is(err, proc.ErrLocked) {
-			return proto.Info{}, 0, false
-		}
-		if try == 1 {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return proto.Info{}, 0, false
-		case <-time.After(lockRetry):
-		}
+	l, err := proc.LockShared(filepath.Join(dir, "daemon.lock"))
+	if err == nil {
+		os.Remove(filepath.Join(dir, "daemon.json")) // stale, and no daemon can start to write one while this is held
+		l.Close()
+		return proto.Info{}, 0, false
+	}
+	if !errors.Is(err, proc.ErrLocked) {
+		return proto.Info{}, 0, false
 	}
 	if again, ok := c.load(); !ok || again != info {
 		return proto.Info{}, 0, false
@@ -361,7 +348,7 @@ var ErrStillRunning = errors.New("the daemon is still running")
 // slow daemon for a gone one.
 func WaitGone(ctx context.Context, gitDir string, d time.Duration) (held bool, err error) {
 	for end := time.Now().Add(d); ; time.Sleep(50 * time.Millisecond) {
-		l, lerr := proc.Lock(filepath.Join(StateDir(gitDir), "daemon.lock"))
+		l, lerr := proc.LockShared(filepath.Join(StateDir(gitDir), "daemon.lock"))
 		if lerr == nil {
 			l.Close()
 			return held, nil

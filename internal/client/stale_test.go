@@ -176,22 +176,22 @@ func TestAClientForgetsADaemonThatDied(t *testing.T) {
 	}
 }
 
-// A lock held only for a moment, by another client checking the same file or by WaitGone, doesn't
-// make a stale daemon.json look live: the client tries the lock again before believing it.
-func TestAMomentaryLockDoesNotMakeAStaleFileLive(t *testing.T) {
+// Another client holding the lock, here while it removes the stale file, doesn't make a stale
+// daemon.json look live, however long it holds it: clients take the lock shared, and only a
+// daemon's exclusive lock refuses a client's.
+func TestAnotherClientsLockDoesNotMakeAStaleFileLive(t *testing.T) {
 	gitDir := stateOnly(t)
 	m := listenImpostor(t, "127.0.0.1:0")
 	leaveStale(t, gitDir, m.ln.Addr().String())
-	held, err := proc.Lock(filepath.Join(StateDir(gitDir), "daemon.lock"))
+	held, err := proc.LockShared(filepath.Join(StateDir(gitDir), "daemon.lock"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() {
-		<-m.pings
-		time.Sleep(5 * time.Millisecond) // the client tries the lock now, and again after lockRetry
-		held.Close()
-	}()
+	defer held.Close()
 	if _, err := Connect(context.Background(), gitDir, false); !errors.Is(err, ErrNoDaemon) {
 		t.Fatalf("connect: %v, want ErrNoDaemon", err)
+	}
+	if got := m.requests(); len(got) > 0 {
+		t.Errorf("the listener at the dead daemon's address was sent %v", got)
 	}
 }
