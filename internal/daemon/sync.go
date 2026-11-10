@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1262,7 +1263,7 @@ func (d *Daemon) kickPresence() {
 // presenceLoop pushes this device's presence when it changes, and on a heartbeat so others can
 // tell it is still here.
 func (d *Daemon) presenceLoop(ctx context.Context) {
-	heartbeat := time.NewTicker(d.opt.Heartbeat)
+	heartbeat := time.NewTimer(jittered(d.opt.Heartbeat))
 	defer heartbeat.Stop()
 	retry := time.NewTimer(0) // publish once at start
 	defer retry.Stop()
@@ -1272,6 +1273,7 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-heartbeat.C:
+			heartbeat.Reset(jittered(d.opt.Heartbeat))
 		case <-retry.C:
 		case <-d.kick:
 			// Let a burst of changes (a session starting and setting its status) land as one push.
@@ -1294,6 +1296,14 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 		failing = err != nil
 		d.pruneInboxes()
 	}
+}
+
+// jittered is d give or take up to a fifth, at random. Each heartbeat waits that long, so devices
+// whose daemons started together drift apart rather than push at the same moment every beat:
+// GitHub refuses now and then a push that meets another (see bus.Push), and two devices started
+// within a second of each other were refused at most of their beats (2026-11-09).
+func jittered(d time.Duration) time.Duration {
+	return d - d/5 + rand.N(2*(d/5)+1)
 }
 
 func (d *Daemon) publishPresence(ctx context.Context) error {
