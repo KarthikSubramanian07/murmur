@@ -1051,6 +1051,11 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		d.sawPresence(dev, sha, true)
 		return
 	}
+	if n := len(pres.Sessions); n > bus.MaxSessions {
+		d.log.Printf("reading %s: it lists %d sessions, over the %d a presence may; passed over", ref, n, bus.MaxSessions)
+		d.sawPresence(dev, sha, true)
+		return
+	}
 	pres.Clean()
 	changed := time.Now()
 	if p == nil {

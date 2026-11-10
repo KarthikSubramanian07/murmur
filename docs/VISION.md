@@ -884,6 +884,13 @@ change and a daemon that knows no names routes by it all the same.
   that records the daemon's own pushes, so it can predate the daemon's first name (#80,
   2026-10-30; the first version took it for a deletion and replaced the registry's history with a
   snapshot).
+  - *What one record can add (2026-11-09).* Since the set never shrinks, a reader bounds what it
+    takes from a single record. A snapshot counts only on a root commit, the one place Murmur
+    writes it. A presence listing more than 200 sessions (`bus.MaxSessions`), far beyond what one
+    device runs, is read as unreadable, whole, so none of its names counts. And once 1,000 random
+    picks have all been in use, a daemon goes through the lists from a random place for a name
+    nobody has. Push access can still mark names used, more slowly: a force-pushed registry may
+    start from a root of its own, and each presence may list 200.
 - **Without the remote.** A session that finds no name set aside and can't get one works as
   `device/session`, with its name shown as pending, and the daemon keeps trying in the
   background, and at once when it can reach the remote again.

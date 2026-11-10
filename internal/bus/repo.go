@@ -32,6 +32,7 @@ type Commit struct {
 	// Oversize is a commit over the limit it was read with: it was left unread, so it has no Time
 	// or Message.
 	Oversize bool
+	Root     bool // it has no parent (Log alone says; false for an Oversize one)
 }
 
 // PushMode chooses how a push may move the remote ref.
@@ -388,18 +389,18 @@ func (r *Repo) readCommits(ctx context.Context, shas []string, sizes map[string]
 	read := map[string]Commit{}
 	if len(small) > 0 {
 		out, err := r.Git.Run(ctx, strings.Join(small, "\n")+"\n", "log", "--stdin", "--no-walk=unsorted",
-			"--no-show-signature", "--no-color", "--format=%H%x00%ct%x00%B%x1e", "--")
+			"--no-show-signature", "--no-color", "--format=%H%x00%P%x00%ct%x00%B%x1e", "--")
 		if err != nil {
 			return nil, err
 		}
 		for _, rec := range strings.Split(out, recordSep) {
 			rec = strings.TrimLeft(rec, "\r\n")
-			parts := strings.SplitN(rec, fieldSep, 3)
-			if len(parts) != 3 {
+			parts := strings.SplitN(rec, fieldSep, 4)
+			if len(parts) != 4 {
 				continue
 			}
-			secs, _ := strconv.ParseInt(parts[1], 10, 64)
-			read[parts[0]] = Commit{SHA: parts[0], Time: time.Unix(secs, 0), Message: parts[2]}
+			secs, _ := strconv.ParseInt(parts[2], 10, 64)
+			read[parts[0]] = Commit{SHA: parts[0], Root: parts[1] == "", Time: time.Unix(secs, 0), Message: parts[3]}
 		}
 	}
 	commits := make([]Commit, 0, len(shas))
