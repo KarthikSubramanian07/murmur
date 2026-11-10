@@ -58,6 +58,8 @@ func logHas(d *device, text string) bool {
 // presence, nothing is written to the bus, and it keeps its inbox and its unread notices. The test
 // runs past the end of the first grace, so a stop written when that grace ends would show.
 func TestReconnectInGraceKeepsSession(t *testing.T) {
+	// Not parallel: what it checks inside the 2-second grace has to be done before the grace
+	// ends, and other tests' load could make it late.
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 2*time.Second, 0)
 	bob, conn := b.session("bbbbbb", "claude-bob")
@@ -101,6 +103,8 @@ func TestReconnectInGraceKeepsSession(t *testing.T) {
 // When the grace runs out, the session stops as it did before: it leaves presence, and
 // session.stopped is written, but not before.
 func TestGraceRunsOut(t *testing.T) {
+	// Not parallel: what it checks inside the 2-second grace has to be done before the grace
+	// ends, and other tests' load could make it late.
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 2*time.Second, 0)
 	bob, conn := b.session("bbbbbb", "")
@@ -125,6 +129,7 @@ func TestGraceRunsOut(t *testing.T) {
 // A message sent while the session's connection is down is held, and reaches it after it
 // reconnects: its notice waits until then, and comes once.
 func TestMessageInGraceIsDeliveredAfterReconnect(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 10*time.Second, 0)
 	bob, conn := b.session("bbbbbb", "claude-bob")
@@ -157,6 +162,7 @@ func TestMessageInGraceIsDeliveredAfterReconnect(t *testing.T) {
 // A session that stopped and comes back inside the time its inbox is kept gets the inbox, with
 // what was sent to it while it was stopped, and its start is announced again, since the stop was.
 func TestStoppedSessionComesBackToItsInbox(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
 	bob, conn := b.session("bbbbbb", "")
@@ -188,6 +194,7 @@ func TestStoppedSessionComesBackToItsInbox(t *testing.T) {
 // A stopped session's inbox is in state.json like the others, so it survives a daemon restart,
 // and so does what was sent to the session while the daemon was down.
 func TestStoppedInboxSurvivesDaemonRestart(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
 	bob, conn := b.session("bbbbbb", "")
@@ -238,6 +245,7 @@ func storedFor(t *testing.T, d *device, id string) bool {
 // Past the time it is kept, a stopped session's inbox is deleted, and a session of that ID
 // registering after that starts with nothing.
 func TestStoppedInboxExpires(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 200*time.Millisecond, 8*time.Second)
 	bob, conn := b.session("bbbbbb", "")

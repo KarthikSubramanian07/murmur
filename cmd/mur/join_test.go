@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/a-Fig/murmur/internal/clones"
 )
 
 func runCount(t *testing.T, b *box) int {
@@ -80,6 +82,13 @@ func TestInitJoinAndLeave(t *testing.T) {
 	out = b.mustRun(b.clone, "join")
 	if !strings.Contains(out, "Tell your user") || !strings.Contains(out, "claude --continue") {
 		t.Errorf("join's output should tell the agent what to pass on, and that this conversation needs a restart:\n%s", out)
+	}
+
+	// On the record of this machine's clones, for the page's repo picker (#348), named for its remote.
+	record := filepath.Join(b.root, "clones")
+	joined := func(string) bool { return true }
+	if list, err := clones.List(record, joined); err != nil || len(list) != 1 || list[0].Name != "remote" {
+		t.Errorf("the record after join: %+v, %v", list, err)
 	}
 
 	// Registered once for the user, with this binary's full path, and its tools allowed.
@@ -167,6 +176,9 @@ func TestInitJoinAndLeave(t *testing.T) {
 	}
 	if !strings.Contains(readFile(t, filepath.Join(b.clone, "AGENTS.md")), "<!-- murmur:start -->") {
 		t.Error("--leave touched the repo's files")
+	}
+	if list, _ := clones.List(record, joined); len(list) != 0 {
+		t.Errorf("the record after --leave: %+v", list)
 	}
 	if out = b.mustRun(b.clone, "join", "--leave"); !strings.Contains(out, "Nothing to undo") {
 		t.Errorf("leaving twice should say so:\n%s", out)
@@ -268,8 +280,11 @@ func TestJoinForwardsCodexHome(t *testing.T) {
 
 	b.mustRun(b.clone, "join")
 	joined := readFile(t, b.codexConfig())
-	if want := head + "env_vars = [\"HTTP_PROXY\", \"T3CODE_CLI_PATH\", \"CODEX_HOME\"] # mine\n" + tail; joined != want {
-		t.Errorf("config.toml:\n%s\nwant:\n%s", joined, want)
+	// The server's table, then the trust of Murmur's Codex hook, one table for each of its three
+	// hooks (#225).
+	server, trust, _ := strings.Cut(joined, "\n[hooks.state.")
+	if want := head + "env_vars = [\"HTTP_PROXY\", \"T3CODE_CLI_PATH\", \"CODEX_HOME\"] # mine\n" + tail; server != want || strings.Count(trust, "trusted_hash") != 3 {
+		t.Errorf("config.toml:\n%s\nwant:\n%s\nand the hook's trust", joined, want)
 	}
 	b.mustRun(b.clone, "join")
 	if again := readFile(t, b.codexConfig()); again != joined {

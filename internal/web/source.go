@@ -44,6 +44,8 @@ var ErrNoUpdate = errors.New("no update is waiting to be restarted onto")
 
 // State is what the page's sessions view and mute list show.
 type State struct {
+	// Repo is the name of the repository this page is a clone of, as the repo picker shows it.
+	Repo    string   `json:"repo,omitempty"`
 	Device  string   `json:"device"` // this device's ID
 	Devices []Device `json:"devices"`
 	Mutes   []Mute   `json:"mutes"`
@@ -132,6 +134,9 @@ type Session struct {
 	// Tags is the session's tags, in order of name, each with where it came from: the session,
 	// derived by its daemon, or a human (#198).
 	Tags []tags.Tag `json:"tags,omitempty"`
+	// HookOff says Murmur's hook doesn't run for the session, so it isn't told of messages while
+	// it works (#225).
+	HookOff bool `json:"hookOff,omitempty"`
 }
 
 // Message is one message between sessions.

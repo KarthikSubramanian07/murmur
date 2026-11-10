@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -675,15 +676,52 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha, listed string) {
 			return
 		}
 	}
-	commits, err := d.repo.Log(ctx, prev, sha)
+	// A page at a time, with mu let go between pages, so a long log (a device back after days away)
+	// doesn't hold up the sessions, the hook and the page while it is read. Each page moves the cursor
+	// to its last commit, so a read cut short goes on from there.
+	dev := strings.TrimPrefix(ref, brand.MeshPrefix)
+	err := d.repo.Log(ctx, prev, sha, d.maxRecord, func(commits []bus.Commit) error {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		d.applyPageLocked(func() {
+			d.readEventsLocked(ref, dev, commits, mode, tagsOnly, junked, hidden)
+			d.st.Processed[ref] = commits[len(commits)-1].SHA
+		})
+		return nil
+	})
 	if err != nil {
 		d.log.Printf("reading %s: %v", ref, err)
 		return
 	}
-	dev := strings.TrimPrefix(ref, brand.MeshPrefix)
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	delete(d.backlog, ref)
+	if _, ok := d.st.Junked[ref]; ok || d.st.Processed[ref] != sha {
+		d.st.Processed[ref] = sha
+		delete(d.st.Junked, ref)
+		d.saveLocked()
+	}
+}
+
+// applyPageLocked runs apply, which applies a page of a log, with saveLocked put off, and then saves
+// once. Caller holds mu, as it must throughout: no save is left out that someone else is owed.
+func (d *Daemon) applyPageLocked(apply func()) {
+	d.savesHeld = true
+	defer func() {
+		d.savesHeld = false
+		d.saveLocked()
+	}()
+	apply()
+}
+
+// readEventsLocked applies a page of commits read from ref, dev's log, in the mode advanceMesh read
+// it in. A commit over the size read is passed over, as any other junk is. Caller holds mu.
+func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode syncMode, tagsOnly, junked bool, hidden time.Time) {
 	for _, c := range commits {
+		if c.Oversize {
+			d.log.Printf("reading %s: commit %s is %d bytes, over the %d read; passed over", ref, c.SHA, c.Size, d.maxRecord)
+			continue
+		}
 		e, ok := logEvent(c, dev)
 		if !ok {
 			continue
@@ -701,9 +739,9 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha, listed string) {
 			d.applyTagsEventLocked(e)
 		}
 		if e.Type == bus.Message {
-			if e.Person != "" {
-				d.st.People[e.Person] = e.From
-			}
+			// The name a message carries is shown only if it is its sender's (personSenderLocked),
+			// and never recorded: see notePersonLocked.
+			//
 			// A skip passes over history, but a ref read in one only after sessions registered
 			// (the first sync failed) also holds what was sent since this daemon started, which
 			// is new to it: by the sender's clock, with the minute queueLocked allows. What a
@@ -714,10 +752,6 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha, listed string) {
 			}
 		}
 	}
-	d.st.Processed[ref] = sha
-	delete(d.backlog, ref)
-	delete(d.st.Junked, ref)
-	d.saveLocked()
 }
 
 // logEvent decodes commit c of dev's log, and says whether it is an event to read: a device's log
@@ -791,23 +825,31 @@ func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha, listed string) b
 			return failed(err)
 		}
 	}
-	var commits []bus.Commit
 	if ok {
-		if commits, err = d.repo.Log(ctx, from, to); err != nil {
+		// A page at a time, as advanceMesh reads, the cursor moving with each.
+		dev := strings.TrimPrefix(ref, brand.MeshPrefix)
+		err := d.repo.Log(ctx, from, to, d.maxRecord, func(commits []bus.Commit) error {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			d.applyPageLocked(func() {
+				for _, c := range commits {
+					e, ok := logEvent(c, dev)
+					if ok && e.Type == bus.Tags && !(junked && e.At.Before(hidden.Add(-time.Minute))) {
+						d.applyTagsEventLocked(e)
+					}
+				}
+				d.st.TagsFrom[ref] = commits[len(commits)-1].SHA
+			})
+			return nil
+		})
+		if err != nil {
 			return failed(err)
 		}
 	} else {
 		d.log.Printf("%s was rewritten; skipping its history rather than replaying its tags", ref)
 	}
-	dev := strings.TrimPrefix(ref, brand.MeshPrefix)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for _, c := range commits {
-		e, ok := logEvent(c, dev)
-		if ok && e.Type == bus.Tags && !(junked && e.At.Before(hidden.Add(-time.Minute))) {
-			d.applyTagsEventLocked(e)
-		}
-	}
 	delete(d.st.TagsFrom, ref)
 	delete(d.st.Junked, ref)
 	d.saveLocked()
@@ -996,7 +1038,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	if p != nil && p.sha == sha {
 		return
 	}
-	c, err := d.repo.ReadCommit(ctx, sha)
+	c, err := d.repo.ReadCommit(ctx, sha, d.maxRecord)
 	if err != nil {
 		if ctx.Err() != nil {
 			return // cut short, not unreadable: read it next time
@@ -1007,6 +1049,11 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	}
 	var pres bus.Presence
 	if bus.Decode(c.Message, &pres) != nil || pres.V != bus.Version || pres.Device != dev {
+		d.sawPresence(dev, sha, true)
+		return
+	}
+	if n := len(pres.Sessions); n > bus.MaxSessions {
+		d.log.Printf("reading %s: it lists %d sessions, over the %d a presence may; passed over", ref, n, bus.MaxSessions)
 		d.sawPresence(dev, sha, true)
 		return
 	}
@@ -1021,9 +1068,9 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	seen := false
 	for _, s := range pres.Sessions {
 		if s.ID == bus.PersonSession {
-			// A person's name stays out of the registry, which holds session names for good.
-			if addr := bus.Addr(dev, s.ID); d.st.People[s.Name] != addr {
-				d.st.People[s.Name], seen = addr, true
+			// A person's name is claimed in the registry under its own key (PersonClaims), not Used.
+			if d.notePersonLocked(s.Name, bus.Addr(dev, s.ID)) {
+				seen = true
 			}
 			continue
 		}
@@ -1296,11 +1343,24 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			name = ""
 		}
 		info := bus.SessionInfo{ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(),
-			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s)}
+			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s), HookOff: d.hookOffLocked(s)}
 		if !s.lastActive.IsZero() {
 			info.LastActive = s.lastActive.UTC()
 		}
 		pres.Sessions = append(pres.Sessions, info)
+	}
+	room := bus.MaxSessions
+	if d.st.Person != "" {
+		room--
+	}
+	var cut int
+	pres.Sessions, cut = capSessions(pres.Sessions, room)
+	if cut != d.presenceCut {
+		if cut > 0 {
+			d.log.Printf("presence lists the %d most recently active sessions; %d more are left out, as readers take no more than %d",
+				room, cut, bus.MaxSessions)
+		}
+		d.presenceCut = cut
 	}
 	if d.st.Person != "" {
 		pres.Sessions = append(pres.Sessions, d.personInfoLocked())
@@ -1328,6 +1388,25 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	d.known[ref] = sha
 	d.mu.Unlock()
 	return nil
+}
+
+// capSessions keeps at most n of a presence's sessions, the most recently active (by their last
+// activity, else their start), in the order they came, and says how many it left out. A reader takes a
+// presence over bus.MaxSessions for one it can't read, so a device with that many would vanish from
+// every teammate's view; this way only its least active sessions do.
+func capSessions(ss []bus.SessionInfo, n int) ([]bus.SessionInfo, int) {
+	if len(ss) <= n {
+		return ss, 0
+	}
+	at := func(s bus.SessionInfo) time.Time { return cmp.Or(s.LastActive, s.Started) }
+	byActive := slices.Clone(ss)
+	slices.SortStableFunc(byActive, func(a, b bus.SessionInfo) int { return at(b).Compare(at(a)) })
+	keep := map[string]bool{}
+	for _, s := range byActive[:n] {
+		keep[s.ID] = true
+	}
+	kept := slices.DeleteFunc(slices.Clone(ss), func(s bus.SessionInfo) bool { return !keep[s.ID] })
+	return kept, len(ss) - len(kept)
 }
 
 // liveNamesLocked is the names of the sessions that are connected, as opposed to waiting out their

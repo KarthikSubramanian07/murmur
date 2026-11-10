@@ -38,6 +38,7 @@ func TestDaemonWithAThreadToWakeStaysUpAndHandsOver(t *testing.T) {
 // session had no T3 route, which is the case for Claude Code outside T3, whose messaging socket
 // dies with the session.
 func TestDaemonWithNothingToWakeStillExits(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newDeviceWith(t, remote, func(d *device) { d.idle, d.grace, d.keep = time.Second, 300*time.Millisecond, time.Hour })
 	_, conn := b.session("bbbbbb", "")
@@ -65,6 +66,7 @@ func TestDaemonLeavesOnceTheThreadIsNoLongerKept(t *testing.T) {
 // A daemon with no session looks at the remote less often, and a session that comes makes it look
 // at once and at the usual rate. QuietPoll here is an hour, so a poll that happens is the session's.
 func TestPollSlowsWithoutASessionAndQuickensWhenOneComes(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	var out syncBuf
