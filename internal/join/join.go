@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,9 @@ type Env struct {
 	// Version is mur's, for reporting a public repo (internal/publicrepo); "", as tests leave it,
 	// reports nothing.
 	Version string
+	// Progress is where a leave says it is still waiting for the daemon to stop, before the report;
+	// nil, as most tests leave it, says nothing.
+	Progress io.Writer
 }
 
 // EnvFromProcess is the environment of the running process.
@@ -269,13 +273,21 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	if err != nil {
 		problem("hook", err)
 	}
+	// A daemon asked to stop holds the clone's lock until it has finished its work and said goodbye,
+	// which may take client.StopWait, and so may one still starting, which sees the consent gone
+	// within a second and stops the same way. The lock is waited for that long from when the stop
+	// was asked, so a daemon only taking its time isn't reported as a problem (#91). A long wait is
+	// said out loud, so that the leave doesn't sit silent for half a minute.
+	end := time.Now().Add(leaveWait)
+	waited := sayIfSlow(e.Progress, leaveQuiet, fmt.Sprintf("Waiting for this clone's daemon to stop: it finishes what it is doing first, which can take up to %d seconds.\n", int(leaveWait/time.Second)))
 	stopped, stopErr := client.Stop(ctx, p.GitDir)
 	if stopErr != nil {
 		problem("stopping the daemon", stopErr)
 	}
 	// A daemon that is still starting has no daemon.json to stop; it sees the consent gone and exits
 	// by itself, which is waited for here so a leave doesn't return while one is about to publish.
-	starting, err := client.WaitGone(ctx, p.GitDir, 20*time.Second)
+	starting, err := waitGone(ctx, p.GitDir, time.Until(end))
+	waited()
 	if err != nil {
 		problem("waiting for the daemon to exit", fmt.Errorf("%w; it has no consent left and refuses requests, and stops by itself", err))
 	}
@@ -298,6 +310,36 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 		return r, errors.New("not everything worked; see above")
 	}
 	return r, nil
+}
+
+// How long a leave waits for the daemon to let go of the clone, how long it waits before saying so,
+// and the wait itself. Variables, for the tests: the wait's, so that a test acts once the leave is
+// waiting rather than after a guessed time, which the git commands before it can outlast.
+var (
+	leaveWait  = client.StopWait
+	leaveQuiet = 5 * time.Second
+	waitGone   = client.WaitGone
+)
+
+// sayIfSlow writes line to w unless the function it returns is called within d. That function
+// returns only once nothing more will be written. A nil w says nothing.
+func sayIfSlow(w io.Writer, d time.Duration, line string) func() {
+	if w == nil {
+		return func() {}
+	}
+	done, said := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(said)
+		select {
+		case <-done:
+		case <-time.After(d):
+			io.WriteString(w, line)
+		}
+	}()
+	return func() {
+		close(done)
+		<-said
+	}
 }
 
 // othersAdvice is what to tell about the agents other than Claude Code and Codex that Murmur was

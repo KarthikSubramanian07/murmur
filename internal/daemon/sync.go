@@ -89,8 +89,8 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 	t := time.NewTicker(d.opt.Poll)
 	defer t.Stop()
 	failing, quiet := false, false
-	// wait is until the next poll; every, when all is well; calm is where the slow phase is.
-	wait, every, calm := d.opt.Poll, d.opt.Poll, d.opt.Poll
+	// wait is until the next poll; calm is where the slow phase is.
+	wait, calm := d.opt.Poll, d.opt.Poll
 	for {
 		err := d.pollOnce(ctx)
 		if err != nil && ctx.Err() == nil {
@@ -117,8 +117,8 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 			}
 			quiet = rate.quiet
 		}
-		every, calm = rate.every, rate.calm
-		if next := nextPoll(wait, every, failing); next != wait {
+		calm = rate.calm
+		if next := nextPoll(wait, rate.every, failing); next != wait {
 			wait = next
 			t.Reset(wait)
 		}
@@ -133,7 +133,7 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 				// slower rate than that calls for, look now and from here on at the faster; if
 				// not, it is as quick as it gets. A failure's backoff is not ended by it either,
 				// unless the loop was quiet: a session that comes then is the reason to look now.
-				if d.pollEvery(calm).every >= every || failing && !quiet {
+				if d.pollEvery(calm).every >= rate.every || failing && !quiet {
 					continue sleep
 				}
 			}
@@ -1305,7 +1305,19 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return d.push(ctx, sha, d.presenceRef(), bus.Force, "")
+	ref := d.presenceRef()
+	if err := d.push(ctx, sha, ref, bus.Force, ""); err != nil {
+		return err
+	}
+	// Recorded as the device's other pushes are, so the next poll doesn't fetch it back:
+	// updatePeer skips this device's own presence, so the fetch would read nothing.
+	if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
+		d.log.Printf("updating local %s: %v", ref, err)
+	}
+	d.mu.Lock()
+	d.known[ref] = sha
+	d.mu.Unlock()
+	return nil
 }
 
 // liveNamesLocked is the names of the sessions that are connected, as opposed to waiting out their

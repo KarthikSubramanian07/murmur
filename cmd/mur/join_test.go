@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -254,6 +255,30 @@ func TestJoinWhereTheRepoTracksTheHookFileStillSucceeds(t *testing.T) {
 		t.Errorf("join edited the tracked hook file:\n%s", got)
 	}
 	b.mustRun(b.clone, "join", "--leave")
+}
+
+// A Codex table an older join wrote forwards T3CODE_CLI_PATH only; joining again adds CODEX_HOME
+// to the list and keeps the user's own names, and --leave leaves the per-user table as it is.
+func TestJoinForwardsCodexHome(t *testing.T) {
+	b := newBox(t)
+	b.mustRun(b.clone, "init")
+	head := "model = \"gpt\"\n\n[mcp_servers.murmur]\ncommand = " + strconv.Quote(b.mur) + "\nargs = [\"mcp\", \"--agent\", \"codex\"]\n"
+	tail := "default_tools_approval_mode = \"approve\"\n"
+	writeFile(t, b.codexConfig(), head+"env_vars = [\"HTTP_PROXY\", \"T3CODE_CLI_PATH\"] # mine\n"+tail)
+
+	b.mustRun(b.clone, "join")
+	joined := readFile(t, b.codexConfig())
+	if want := head + "env_vars = [\"HTTP_PROXY\", \"T3CODE_CLI_PATH\", \"CODEX_HOME\"] # mine\n" + tail; joined != want {
+		t.Errorf("config.toml:\n%s\nwant:\n%s", joined, want)
+	}
+	b.mustRun(b.clone, "join")
+	if again := readFile(t, b.codexConfig()); again != joined {
+		t.Errorf("a second join changed config.toml:\n%s", again)
+	}
+	b.mustRun(b.clone, "join", "--leave")
+	if left := readFile(t, b.codexConfig()); left != joined {
+		t.Errorf("--leave changed config.toml:\n%s", left)
+	}
 }
 
 // A Codex thread in T3 that began before Murmur was added never gets its tools, so what join prints
