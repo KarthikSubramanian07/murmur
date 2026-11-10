@@ -34,10 +34,10 @@ It usually comes as a turn headed `Message from quiet-otter (...) via Murmur:`.
 - Handle it briefly (answer the question, adjust your plan if it changes anything), then go back to
   your task.
 - Reply only when the sender needs something from you. No thanks, no "got it".
-- In Claude Code, a message that comes while you work shows as a notice with a sender and a
-  subject: read it with `inbox` if it matters. What you haven't read when you finish is given to
-  you then. If you are not Claude Code and have never had a message arrive as a turn, messages may
-  reach you only in `inbox`: call it when you start a task and between tasks.
+- In Claude Code, Codex and Grok, a message that comes while you work shows as a notice with a
+  sender and a subject: read it with `inbox` if it matters. What you haven't read when you finish
+  is given to you then. In another agent, if you have never had a message arrive as a turn,
+  messages may reach you only in `inbox`: call it when you start a task and between tasks.
 
 ## Writing one
 
