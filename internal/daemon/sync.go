@@ -230,9 +230,15 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	d.mu.Unlock()
 	d.clearOwnJunk(listed)
 
+	// The registry and every presence are read first (see readOrder), with ReadFirstLimit of their
+	// own, so that a stall there leaves the logs the time they need: the logs were fetched already,
+	// and they hold the messages. A registry missing from the listing is asked of the remote again,
+	// which can stall like any request to it.
+	first, cancelFirst := context.WithTimeout(ctx, d.opt.ReadFirstLimit)
 	if _, ok := remote[brand.NamesRef]; !ok {
-		d.processNames(ctx, "") // not on the remote
+		d.processNames(first, "") // not on the remote
 	}
+	var logs []string
 	for _, ref := range readOrder(remote) {
 		sha := remote[ref]
 		if failed[ref] != nil {
@@ -245,19 +251,27 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		}
 		switch {
 		case ref == brand.NamesRef:
-			d.processNames(ctx, sha)
+			d.processNames(first, sha)
 		case strings.HasPrefix(ref, brand.MeshPrefix):
 			if _, ok := meshDevice(ref); ok {
-				d.advanceMesh(ctx, ref, sha, listed[ref])
+				logs = append(logs, ref)
 			}
 		case strings.HasPrefix(ref, brand.PresencePrefix):
-			d.updatePeer(ctx, ref, sha)
+			d.updatePeer(first, ref, sha)
 		}
+	}
+	firstErr := first.Err()
+	cancelFirst()
+	for _, ref := range logs {
+		d.advanceMesh(ctx, ref, remote[ref], listed[ref])
 	}
 	// A sync cut short is no fresh look: staleness is judged up to the last successful sync, and
 	// this one didn't read every presence it listed.
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if firstErr != nil {
+		return fmt.Errorf("reading the names registry and presence took over %s: %w", d.opt.ReadFirstLimit, firstErr)
 	}
 
 	d.mu.Lock()

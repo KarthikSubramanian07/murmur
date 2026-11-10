@@ -2,6 +2,9 @@ package daemon
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,5 +105,102 @@ func TestATurnKnowsTheSenderFetchedWithItsMessage(t *testing.T) {
 		"Reply with " + brand.Product + "'s `send` to " + name + " if a reply is needed.\n"
 	if got != want {
 		t.Errorf("the turn reads:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// The registry and presence are read before the logs, but a stall there mustn't cost the logs
+// their time (#304's review): the logs were fetched already, and hold the messages. Here the
+// registry this daemon read is gone from the listing, so the sync asks the remote for it again, and
+// that request never answers. The message fetched in the same sync is still queued, and the sync
+// still fails, since it didn't read all it listed.
+func TestAStalledRegistryReadLeavesTheLogsTheirTime(t *testing.T) {
+	opt := rateOptions()
+	opt.ReadFirstLimit = 2 * time.Second
+	d, peer, clone := rateRig(t, opt, false)
+	ctx := context.Background()
+	push := func(ref string, v any, subject string, mode bus.PushMode) {
+		t.Helper()
+		msg, err := bus.Encode(v, subject)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sha, err := peer.NewCommit(ctx, "", msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := peer.Push(ctx, sha, ref, mode, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := bus.NameRecord{V: bus.Version, Name: "dear-syrup", Device: "peer-0001", Session: "aaaaaa", At: time.Now().UTC()}
+	push(brand.NamesRef, rec, rec.Subject(), bus.Force)
+	if err := d.pollOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	good := d.st.NamesGood
+	d.mu.Unlock()
+	if good == "" {
+		t.Fatal("the registry wasn't read")
+	}
+
+	if err := peer.Push(ctx, "", brand.NamesRef, bus.Force, ""); err != nil {
+		t.Fatal(err)
+	}
+	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa", At: time.Now().UTC(),
+		To: bus.Addr(d.device, "bbbbbb"), Subject: "auth middleware?", Body: "Are you changing it?"}
+	push(brand.MeshPrefix+"peer-0001", e, e.Line(), bus.FastForward)
+
+	// The clone's third request to the remote from here on (the listing, the fetch, then the
+	// registry asked for again) waits until released. The script, not git, stalls, so it is
+	// released at the end, for nothing to be left running in the test's directories.
+	dir := filepath.ToSlash(t.TempDir())
+	script := dir + "/stall.sh"
+	body := "#!/bin/sh\n" +
+		"echo x >> '" + dir + "/calls'\n" +
+		"if [ \"$(wc -l < '" + dir + "/calls')\" -ge 3 ]; then\n" +
+		"\ttouch '" + dir + "/stalled'\n" +
+		"\twhile [ ! -f '" + dir + "/release' ]; do sleep 0.2; done\n" +
+		"\ttouch '" + dir + "/done'\n" +
+		"\texit 1\n" +
+		"fi\n" +
+		"exec git upload-pack \"$1\"\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, clone, "config", "remote.origin.uploadpack", "sh '"+script+"'")
+	t.Cleanup(func() {
+		if _, err := os.Stat(dir + "/stalled"); err != nil {
+			return
+		}
+		if err := os.WriteFile(dir+"/release", nil, 0o644); err != nil {
+			t.Error(err)
+			return
+		}
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+			if _, err := os.Stat(dir + "/done"); err == nil {
+				return
+			}
+		}
+		t.Error("the stalled request never ended")
+	})
+
+	start := time.Now()
+	err := d.pollOnce(ctx)
+	took := time.Since(start)
+	if _, serr := os.Stat(dir + "/stalled"); serr != nil {
+		t.Fatalf("the registry wasn't asked for again, so this tested nothing (the sync returned %v)", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "names registry") {
+		t.Errorf("the sync returned %v, want the registry's stall", err)
+	}
+	if took > 30*time.Second {
+		t.Errorf("the sync took %s: the stall used up its minute", took)
+	}
+	d.mu.Lock()
+	inbox := d.st.Inbox["bbbbbb"]
+	d.mu.Unlock()
+	if len(inbox) != 1 || inbox[0].Event.Body != "Are you changing it?" {
+		t.Errorf("the session's inbox holds %d messages, want the one fetched with the stall", len(inbox))
 	}
 }
