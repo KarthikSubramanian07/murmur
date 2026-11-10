@@ -24,6 +24,7 @@ import (
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
+	"github.com/a-Fig/murmur/internal/title"
 	"github.com/a-Fig/murmur/internal/view"
 )
 
@@ -542,6 +543,11 @@ func text(s string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}
 }
 
+// oneLine cuts a subject or a status to what the daemon keeps of it (bus.OneLine at 120). The
+// daemon reads a request's line only up to a cap, before its token is checked, so a subject far
+// longer than it keeps could otherwise make a send of a full body too long to be read at all.
+func oneLine(s string) string { return bus.OneLine(s, 120) }
+
 func result(render func(proto.Response) string, resp proto.Response, err error) (*mcp.CallToolResult, any, error) {
 	if err != nil {
 		r := text(err.Error())
@@ -600,7 +606,7 @@ func (s *server) tools(srv *mcp.Server) {
 		"Update it when you switch tasks. Until you set one, your conversation's title is what they see; " +
 		"an empty status brings the title back."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in statusIn) (*mcp.CallToolResult, any, error) {
-			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpStatus, Doing: in.Doing})
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpStatus, Doing: oneLine(in.Doing)})
 			return result(view.Note, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "tags", Description: "Add or remove your own tags: short labels others see in who and lookup, " +
@@ -617,7 +623,7 @@ func (s *server) tools(srv *mcp.Server) {
 		"your subject after its next tool call and reads the body with inbox; what it hasn't read when it finishes is usually given to it then, and its turn goes on. " +
 		"Message to coordinate, not to chat."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, any, error) {
-			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpSend, To: in.To, Subject: in.Subject, Body: in.Body})
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpSend, To: in.To, Subject: oneLine(in.Subject), Body: in.Body})
 			return result(view.Sent, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "inbox", Description: "Read your unread messages from other agents, with the name of who sent them. " +
@@ -855,9 +861,15 @@ func (l *link) learnNative(ctx context.Context, id string) {
 	}
 	if l.find == nil {
 		// Outside T3 the ID is for the daemon, to find the conversation's name in Codex's state.
-		// Only where this server's environment names the Codex home: Codex starts it with a bare
-		// environment, and a guess at ~/.codex would override the daemon's own, which may be right.
-		if home := os.Getenv("CODEX_HOME"); home != "" {
+		// Codex starts this server with a bare environment, but join's env_vars passes on
+		// CODEX_HOME when the session has one (#88). So an unset one means the default home, and
+		// the server names it: the daemon reads a route that names none, from a server older than
+		// this, in its own CODEX_HOME, as that server expects.
+		home := os.Getenv("CODEX_HOME")
+		if home == "" {
+			home = title.DefaultCodexDir()
+		}
+		if home != "" {
 			l.mu.Lock()
 			l.hello.CodexHome = home
 			l.mu.Unlock()

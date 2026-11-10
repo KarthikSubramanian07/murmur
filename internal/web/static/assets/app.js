@@ -1337,6 +1337,8 @@ function sessionCard(d, s) {
       { class: "s-meta" },
       h("span", { class: "s-col-branch" }, s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch))),
       h("span", { class: "s-col-pr" }, pr && prBadge(pr, true)),
+      // The hook never reported after a tool call, so the session isn't told of messages while it works (#225).
+      s.hookOff && h("span", { class: "badge badge-warning", title: "Isn't told of messages while it works" }, "hook not running"),
       h("span", { class: "s-chats" }, plural(convs, "chat")),
       h("span", { class: "s-col-state" }, h("span", { class: "g-state g-state-" + sessionState(d, s) }, stateWord(d, s))),
       h(
@@ -3450,7 +3452,7 @@ function settingsPage() {
       settingsRow(
         "busy",
         "Device default",
-        "What a busy Claude Code session sees when a message arrives.",
+        "What a busy session sees when a message arrives.",
         busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }), false),
       ),
       ...perSessionFold("busy", [...local]

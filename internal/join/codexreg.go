@@ -32,11 +32,16 @@ func (e Env) registerCodexAt(h agentHome) (did []string, fresh bool, err error) 
 	if err != nil {
 		return nil, false, fmt.Errorf("%s: %w", path, err)
 	}
-	if !changed {
-		return nil, false, nil
+	if changed {
+		if err := writeAtomic(path, []byte(out), 0o600); err != nil {
+			return nil, false, fmt.Errorf("%s: %w", path, err)
+		}
+		did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project, and allowed its tools ("+path+")")
 	}
-	if err := writeAtomic(path, []byte(out), 0o600); err != nil {
-		return nil, false, fmt.Errorf("%s: %w", path, err)
+	// The hook, after the server: its trust goes in the same config.toml, written again (#225).
+	hookDid, err := e.installCodexHook(h)
+	if err != nil {
+		return did, changed, err
 	}
-	return []string{h.Label + ": registered the " + brand.MCPServer + " MCP server for you, in every project, and allowed its tools (" + path + ")"}, true, nil
+	return append(did, hookDid...), changed, nil
 }

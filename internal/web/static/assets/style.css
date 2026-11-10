@@ -436,6 +436,11 @@ kbd {
   background: color-mix(in oklab, var(--input) 32%, transparent);
   color: var(--foreground);
 }
+/* "hook not running" on a session (#225). */
+.badge-warning {
+  background: color-mix(in oklab, var(--warning) 16%, transparent);
+  color: var(--warning-foreground);
+}
 /* A session's state, as T3 Code's tinted status badges. */
 .g-state {
   display: inline-flex;

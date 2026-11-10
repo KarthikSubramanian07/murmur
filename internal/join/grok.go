@@ -48,11 +48,10 @@ func (e Env) registerGrokAt(h agentHome) (did []string, fresh bool, err error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("%s: %w", path, err)
 	}
-	if !changed && !allowed {
-		return nil, false, nil
-	}
-	if err := writeAtomic(path, []byte(out), 0o600); err != nil {
-		return nil, false, fmt.Errorf("%s: %w", path, err)
+	if changed || allowed {
+		if err := writeAtomic(path, []byte(out), 0o600); err != nil {
+			return nil, false, fmt.Errorf("%s: %w", path, err)
+		}
 	}
 	if changed {
 		did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project ("+path+")")
@@ -60,7 +59,8 @@ func (e Env) registerGrokAt(h agentHome) (did []string, fresh bool, err error) {
 	if allowed {
 		did = append(did, h.Label+": allowed "+brand.Product+"'s tools, so they don't ask each time ("+path+", [permission] allow)")
 	}
-	return did, changed, nil
+	hookDid, err := e.installGrokHook(h)
+	return append(did, hookDid...), changed, err
 }
 
 // addTOMLListItem returns text with item in the list key of [table], adding the key, or the table at
@@ -73,20 +73,13 @@ func addTOMLListItem(text, table, key, item, file string) (out string, changed b
 	}
 	lines := strings.Split(text, "\n")
 	start, end := -1, len(lines)
-	inString := ""
+	open := "" // the multi-line string the line starts in
 	var current []string
 	for i, raw := range lines {
 		line := strings.TrimRight(raw, "\r")
-		if inString != "" {
-			if strings.Count(line, inString)%2 == 1 {
-				inString = ""
-			}
+		inString := open != ""
+		if open = tomlLineEnd(line, open); inString {
 			continue
-		}
-		for _, q := range []string{`"""`, `'''`} {
-			if strings.Count(line, q)%2 == 1 {
-				inString = q
-			}
 		}
 		if path, ok := tableHeader(line); ok {
 			current = path
