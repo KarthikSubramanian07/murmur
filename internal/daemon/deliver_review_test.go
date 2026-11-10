@@ -25,7 +25,7 @@ func TestMessagesKeptOverARestartAreHandedOverWhenTheDaemonIsBack(t *testing.T) 
 	bob, conn := b.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 	conn.Close()
-	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.seesSession(bob) })
+	eventually(t, "bob stopped", func() bool { return busLines(b, bob, "stopped") == 1 && !a.listsSession(bob) })
 
 	a.send("aaaaaa", bob, "while T3 was away", "wake up")
 	eventually(t, "both tries to fail", func() bool { return strings.Contains(out.String(), "as a turn through T3 failed") })
@@ -72,7 +72,7 @@ func TestMessageForEveryoneReachesAThreadOnce(t *testing.T) {
 		old, conn := b.sessionRoute("bbbbbb", "claude-1", route(exe))
 		eventually(t, "presence", func() bool { return a.seesSession(old) && b.seesSession(alice) })
 		conn.Close()
-		eventually(t, "the old session to stop", func() bool { return busLines(b, old, "stopped") == 1 && !a.seesSession(old) })
+		eventually(t, "the old session to stop", func() bool { return busLines(b, old, "stopped") == 1 && !a.listsSession(old) })
 		bob, _ := b.sessionRoute("cccccc", "claude-2", route(exe))
 		eventually(t, "presence", func() bool { return a.seesSession(bob) })
 

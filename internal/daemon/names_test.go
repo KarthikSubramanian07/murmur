@@ -367,7 +367,7 @@ func TestNameSurvivesAStop(t *testing.T) {
 	eventually(t, "a to show bob's name", func() bool { return a.nameOf(bob) == bn })
 
 	conn.Close()
-	eventually(t, "bob gone from a", func() bool { return !a.seesSession(bob) })
+	eventually(t, "bob gone from a", func() bool { return !a.listsSession(bob) })
 	// Not in presence, but his name still says who he is.
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bn, Subject: "while you were away"})
 	if r.Error != "" || r.Messages[0].To != bob {
@@ -538,7 +538,8 @@ func TestSendByName(t *testing.T) {
 	bob, _ := b.session("bbbbbb", "claude-bob")
 	cleo, _ := b.session("cccccc", "claude-cleo")
 	an, bn, cn := a.named(alice), b.named(bob), b.named(cleo)
-	eventually(t, "a to show their names", func() bool { return a.nameOf(bob) == bn && a.nameOf(cleo) == cn })
+	a.nameIs(bob, bn)
+	a.nameIs(cleo, cn)
 
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bn, Subject: "by name", Body: "the body"})
 	if r.Error != "" || r.Note != "" || len(r.Messages) != 1 || r.Messages[0].To != bob || r.Messages[0].ToName != bn {
@@ -603,7 +604,7 @@ func TestUnknownNameErrorsAndOtherAddressesWork(t *testing.T) {
 	bob, _ := b.session("bbbbbb", "claude-bob")
 	a.named(alice)
 	bn := b.named(bob)
-	eventually(t, "a to show bob's name", func() bool { return a.nameOf(bob) == bn })
+	a.nameIs(bob, bn)
 
 	unknown := nthName(t, 424242, 1)
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: unknown, Subject: "to nobody"})

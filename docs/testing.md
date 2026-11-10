@@ -19,7 +19,10 @@ at a time, the serial tests were about 45% of the package's time.
 
 A parallel test meets more load than it did alone, so a wait it took for granted may come late. A
 call's end, for one, is answered before its after-snapshot is taken: a test that commits right
-after an end looks the session up first, since a lookup waits for the ends still being judged.
+after an end looks the session up first, since a lookup waits for the ends still being judged. And
+a heartbeat can come later than the tests' 3 s stale limit: `who` still lists a stale device, but a
+send to its sessions says nobody may read it. `seesSession` and `nameIs` wait for the device to be
+fresh as well as listed, and `listsSession` is for waiting until a session is gone (#387).
 
 A package whose tests can reach Murmur's `murmur.*` git config calls `testgit.Isolate` in `TestMain`,
 so a developer's own settings don't change what they see (#262). As of 2026-11-09 those are `update`,

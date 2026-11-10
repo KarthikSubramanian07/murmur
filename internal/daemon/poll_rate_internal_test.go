@@ -253,15 +253,25 @@ func within(t *testing.T, what string, d time.Duration, ok func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+// pollWait is the wait pollLoop chose after its last poll, as it tells the health snapshot.
+func pollWait(d *Daemon) time.Duration {
+	d.health.mu.Lock()
+	defer d.health.mu.Unlock()
+	return d.health.every
+}
+
 // The poll slows toward the cap while a session is open and nothing is said, ignores a peer's
 // presence heartbeats and status changes, speeds up for a while after a message is received, slows
 // again, and speeds up after this device sends one.
 func TestPollFollowsTheConversation(t *testing.T) {
-	// Not parallel: it counts polls over real time, which other tests' load would skew.
-	opt := Options{Poll: testPoll, PollCap: testCap, FastFor: 1500 * time.Millisecond, QuietPoll: time.Hour}
+	// Not parallel: it counts polls over real time, which other tests' load would skew. The counts
+	// are upper bounds, which load only lowers. That the poll speeds up is read from the wait the
+	// loop chose, not from a count: under load one poll can take longer than Poll, which held the
+	// count down and failed the test with the loop doing what it should (#387).
+	opt := Options{Poll: testPoll, PollCap: testCap, FastFor: 5 * time.Second, QuietPoll: time.Hour}
 	d, peer, _ := rateRig(t, opt, true)
-	settle := 2 * time.Second // 200, 400, 800 ms of waits, with the polls themselves
-	time.Sleep(settle)
+	atCap := func() bool { return pollWait(d) == testCap }
+	within(t, "the wait to double up to the cap", time.Minute, atCap) // 200, 400, 800 ms
 
 	stop := make(chan struct{})
 	done := make(chan struct{})
@@ -276,7 +286,14 @@ func TestPollFollowsTheConversation(t *testing.T) {
 			}
 		}
 	}()
-	slow := pollsPerSecond(d, 2400*time.Millisecond)
+	before := d.polls.Load()
+	window := 2400 * time.Millisecond
+	for end := time.Now().Add(window); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+		if w := pollWait(d); w != testCap {
+			t.Fatalf("with a peer's heartbeats and nothing said, the wait went to %v from the cap", w)
+		}
+	}
+	slow := float64(d.polls.Load()-before) / window.Seconds()
 	close(stop)
 	<-done
 	d.mu.Lock()
@@ -289,20 +306,19 @@ func TestPollFollowsTheConversation(t *testing.T) {
 		t.Errorf("polled %.1f times a second with nothing said, want about 1 (a wait of up to %v)", slow, testCap)
 	}
 
-	// A message for the session: faster for FastFor.
+	// A message for the session: Poll for FastFor. Past FastFor the wait doubles from Poll, so it
+	// is Poll again only if a message made it so.
 	peerSays(t, peer, "", d.device+"/bbbbbb")
-	within(t, "the message to arrive", 10*time.Second, func() bool {
+	within(t, "the message to arrive", time.Minute, func() bool {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		return len(d.st.Inbox["bbbbbb"]) == 1
 	})
-	if fast := pollsPerSecond(d, time.Second); fast < 2.5*slow {
-		t.Errorf("after a message arrived the poll was %.1f a second, against %.1f before; want at least 2.5 times that", fast, slow)
-	}
+	within(t, "the wait to go to Poll after a message arrived", opt.FastFor, func() bool { return pollWait(d) == testPoll })
 
 	// Slow again once FastFor has passed and the wait has doubled up.
-	time.Sleep(opt.FastFor + settle)
-	if again := pollsPerSecond(d, 2400*time.Millisecond); again > 2.5 {
+	within(t, "the wait back at the cap once the conversation went quiet", time.Minute, atCap)
+	if again := pollsPerSecond(d, window); again > 2.5 {
 		t.Errorf("polled %.1f times a second once the conversation went quiet, want about 1", again)
 	}
 
@@ -312,9 +328,7 @@ func TestPollFollowsTheConversation(t *testing.T) {
 	if err := d.appendEvent(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
-	if fast := pollsPerSecond(d, time.Second); fast < 2.5*slow {
-		t.Errorf("after a send the poll was %.1f a second, against %.1f before; want at least 2.5 times that", fast, slow)
-	}
+	within(t, "the wait to go to Poll after a send", opt.FastFor, func() bool { return pollWait(d) == testPoll })
 }
 
 // With no session the poll stays at QuietPoll, a message sent from the daemon not changing that.

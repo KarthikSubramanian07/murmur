@@ -24,15 +24,34 @@ func (d *device) seesDevices(n int) bool {
 	return len(d.do(proto.Request{Op: proto.OpWho}).Devices) == n
 }
 
+// seesSession says whether d's who lists the session at addr on a device that isn't stale, which
+// is what a send needs to count it as known. A device stays listed when it goes stale, and the
+// tests' load can hold its heartbeats back past their 3 s stale limit: a send then says its
+// sessions aren't in any device's presence (#387).
 func (d *device) seesSession(addr string) bool {
+	_, listed, fresh := d.whoShows(addr)
+	return listed && fresh
+}
+
+// listsSession says whether d's who lists the session at addr at all, its device stale or not. It
+// is for waiting until a session is gone, which its device going stale doesn't stand in for, and
+// for holds, which a heartbeat held back shouldn't break.
+func (d *device) listsSession(addr string) bool {
+	_, listed, _ := d.whoShows(addr)
+	return listed
+}
+
+// whoShows is the session at addr in d's who: its name, whether it is listed, and whether its
+// device is fresh.
+func (d *device) whoShows(addr string) (name string, listed, fresh bool) {
 	for _, dv := range d.do(proto.Request{Op: proto.OpWho}).Devices {
 		for _, s := range dv.Sessions {
 			if s.Addr == addr {
-				return true
+				return s.Name, true, !dv.Stale
 			}
 		}
 	}
-	return false
+	return "", false, false
 }
 
 func (d *device) helloAgain(id string, reconnect bool) {
