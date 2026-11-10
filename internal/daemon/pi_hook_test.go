@@ -2,6 +2,9 @@ package daemon_test
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,5 +88,107 @@ func TestPiHookSpeaksOnlyForItsSession(t *testing.T) {
 	}
 	if inbox, _ := b.unread("cccccc", ""); len(inbox) != 1 {
 		t.Errorf("the other session's inbox: %v", inbox)
+	}
+}
+
+// piSession registers a Pi session whose MCP server has the session's file and, unless sock is nil,
+// the extension's socket.
+func (d *device) piSession(id, file string, sock *fakeSocket) (string, net.Conn) {
+	d.t.Helper()
+	r := proto.Route{Native: file}
+	if sock != nil {
+		r.MsgSocket, r.MsgToken = sock.path, "tok-"+id
+	}
+	conn, resp, err := d.c.Hello(context.Background(), proto.Hello{ID: id, Agent: "pi", Route: r})
+	if err != nil {
+		d.t.Fatalf("hello %s: %v", id, err)
+	}
+	d.t.Cleanup(func() { conn.Close() })
+	return resp.Self, conn
+}
+
+// After Escape or an error the extension's Stop says the work was interrupted: the session is
+// idle at once, nothing is given back, and what it was told of goes in through the socket as a
+// turn, as for a T3 turn the user stopped. Before, it waited for the user's next prompt.
+func TestAnInterruptedPiSessionIsIdle(t *testing.T) {
+	remote := newRemote(t)
+	sock := useFakeSocket(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	const file = "/s/interrupted.jsonl"
+	bob, _ := b.piSession("bbbbbb", file, sock)
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+
+	b.piHook(proto.OpNotices, file)
+	b.piHook(proto.OpTurnEnd, file)
+	b.piHook(proto.OpNotices, file) // at work
+	a.send("aaaaaa", bob, "told mid-work", "the body")
+	eventually(t, "the notice", func() bool { return len(b.piHook(proto.OpNotices, file).Messages) > 0 })
+	holds(t, "nothing on the socket while it works", 500*time.Millisecond, func() bool { return len(sock.lines()) == 0 })
+
+	r := b.do(proto.Request{Op: proto.OpTurnEnd, Native: file})
+	if r.Error != "" || len(r.Delivered) != 0 {
+		t.Fatalf("an interrupted end gave %+v", r)
+	}
+	eventually(t, "the turn on the socket", func() bool { return len(sock.lines()) >= 2 })
+	if turn := socketTurn(t, sock.lines(), "tok-bbbbbb"); !strings.Contains(turn, "told mid-work\n\nthe body") {
+		t.Errorf("the turn: %s", turn)
+	}
+}
+
+// A Pi session in its grace, its MCP server gone, is told nothing by its hook: as for Claude Code,
+// it is told once it is back.
+func TestPiHookWaitsOutTheGrace(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	const file = "/s/grace.jsonl"
+	bob, conn := b.piSession("bbbbbb", file, nil)
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+	b.piHook(proto.OpNotices, file)
+	b.piHook(proto.OpTurnEnd, file)
+	b.piHook(proto.OpNotices, file)
+	a.send("aaaaaa", bob, "while away", "")
+	eventually(t, "the message to reach b", func() bool { return logHas(b, "while away") })
+
+	conn.Close()
+	eventually(t, "the session in its grace", func() bool {
+		d := b.do(proto.Request{Op: proto.OpLookup, Name: bob}).Lookup
+		return d != nil && d.Dropped
+	})
+	if r := b.piHook(proto.OpNotices, file); len(r.Messages) != 0 || r.Self != "" {
+		t.Fatalf("in its grace the hook got %+v", r)
+	}
+	b.piSession("bbbbbb", file, nil)
+	if r := b.piHook(proto.OpNotices, file); len(r.Messages) != 1 || r.Messages[0].Subject != "while away" {
+		t.Fatalf("back, the hook got %+v", r)
+	}
+}
+
+// The page's busy setting gives a Pi session its message whole while it works, as it does Claude
+// Code (#204): delivered, and out of the inbox.
+func TestBusyPiSessionGetsTheWholeMessage(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	const file = "/s/whole.jsonl"
+	bob, _ := b.piSession("bbbbbb", file, nil)
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+	pg := b.page()
+	if code, body := pg.call("PUT", "/api/settings", pg.token, `{"wake":{"when":"always"},"busy":"whole"}`); code != http.StatusOK {
+		t.Fatalf("PUT settings: %d %s", code, body)
+	}
+
+	b.piHook(proto.OpNotices, file)
+	b.piHook(proto.OpTurnEnd, file)
+	b.piHook(proto.OpNotices, file)
+	a.send("aaaaaa", bob, "whole", "all of it")
+	var r proto.Response
+	eventually(t, "the message", func() bool { r = b.piHook(proto.OpNotices, file); return len(r.Delivered) > 0 })
+	if r.Delivered[0].Body != "all of it" || len(r.Messages) != 0 {
+		t.Errorf("the hook was given %+v", r)
+	}
+	if inbox, _ := b.unread("bbbbbb", ""); len(inbox) != 0 {
+		t.Errorf("still in the inbox: %v", inbox)
 	}
 }

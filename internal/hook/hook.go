@@ -47,6 +47,10 @@ type input struct {
 	// AgentID is set on the hooks of a subagent's tool calls, which carry the parent's session_id
 	// (Claude Code 2.1.312, 2026-10-29). What the hook prints for one goes to the subagent.
 	AgentID string `json:"agent_id"`
+	// Interrupted is Murmur's own, on a Stop from Pi's extension: the work ended without a chance
+	// to go on (Escape, an error), so the hook tells the daemon the turn ended and keeps nothing
+	// going. Claude Code fires no Stop then.
+	Interrupted bool `json:"interrupted"`
 
 	// native is the session's ID for an agent other than Claude Code (RunFor): Pi's session file.
 	native string
@@ -147,12 +151,19 @@ func findClone(ctx context.Context, cwd string) (string, error) {
 	return client.FindGitDir(ctx, cwd)
 }
 
+// KnownAgent says RunFor knows the agent named: "" (Claude Code) or "pi".
+func KnownAgent(agent string) bool { return agent == "" || agent == "pi" }
+
 // Run reads a hook payload from stdin and writes the hook's answer, if any, to stdout.
 func Run(stdin io.Reader, stdout io.Writer) { RunFor("", stdin, stdout) }
 
-// RunFor is Run for the agent named: "" is Claude Code, and "pi" is Murmur's Pi extension.
+// RunFor is Run for the agent named: "" is Claude Code, and "pi" is Murmur's Pi extension. It
+// does nothing for any other name, rather than take another agent's hook for Claude Code's.
 func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 	defer func() { recover() }()
+	if !KnownAgent(agent) {
+		return
+	}
 	var in input
 	if err := json.NewDecoder(io.LimitReader(stdin, 1<<20)).Decode(&in); err != nil {
 		return
@@ -167,6 +178,8 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 		// Pi's is a transcript of Claude Code's form, and no call is bracketed, so Pi's commits
 		// aren't credited to it.
 		in.TranscriptPath, in.ToolUseID, in.AgentID = "", "", ""
+	} else {
+		in.Interrupted = false
 	}
 	if in.Event == stop {
 		turnEnd(in, stdout)
@@ -227,8 +240,9 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 }
 
 // turnEnd tells the daemon the turn ended, and keeps it going with the messages the daemon gives
-// back, if any. They are delivered once the daemon answers: a hook that gave up waiting
-// (NoticeTimeout) just before the answer came loses them, the risk #204's whole messages take too.
+// back, if any, unless it was interrupted: then the daemon gives none back. They are delivered once
+// the daemon answers: a hook that gave up waiting (NoticeTimeout) just before the answer came loses
+// them, the risk #204's whole messages take too.
 func turnEnd(in input, stdout io.Writer) {
 	ctx, cancel := context.WithTimeout(context.Background(), NoticeTimeout)
 	defer cancel()
@@ -241,8 +255,8 @@ func turnEnd(in input, stdout io.Writer) {
 		return
 	}
 	resp, err := c.Do(ctx, proto.Request{Op: proto.OpTurnEnd, ClaudeSession: in.SessionID, Native: in.native, ClientPID: in.pid(),
-		Subagent: in.AgentID != "", Continues: true})
-	if err != nil || len(resp.Delivered) == 0 {
+		Subagent: in.AgentID != "", Continues: !in.Interrupted})
+	if err != nil || len(resp.Delivered) == 0 || in.Interrupted {
 		return
 	}
 	json.NewEncoder(stdout).Encode(stopOutput{Decision: "block", Reason: view.Hook(resp.Delivered, nil, 0)})

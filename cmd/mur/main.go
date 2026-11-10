@@ -72,12 +72,11 @@ func main() {
 	var err error
 	switch cmd {
 	case "hook":
-		// Never an error: a hook that fails would fail the agent's tool call.
-		agent := ""
-		if len(args) == 2 && args[0] == "--agent" {
-			agent = args[1]
+		// Never an error: a hook that fails would fail the agent's tool call. One it can't read
+		// does nothing.
+		if agent, ok := hookAgent(args); ok {
+			hook.RunFor(agent, os.Stdin, os.Stdout)
 		}
-		hook.RunFor(agent, os.Stdin, os.Stdout)
 	case "mcp":
 		err = runMCP(ctx, args)
 	case "daemon":
@@ -103,6 +102,18 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", brand.Command, err)
 		os.Exit(1)
 	}
+}
+
+// hookAgent is the agent `mur hook` runs for, from its arguments: "" for Claude Code, or what
+// --agent names. ok is false for arguments it can't read or an agent the hook doesn't know.
+func hookAgent(args []string) (agent string, ok bool) {
+	fs := flag.NewFlagSet(brand.Command+" hook", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	a := fs.String("agent", "", "")
+	if fs.Parse(args) != nil || fs.NArg() != 0 || !hook.KnownAgent(*a) {
+		return "", false
+	}
+	return *a, true
 }
 
 func flags(name string) (*flag.FlagSet, *string) {

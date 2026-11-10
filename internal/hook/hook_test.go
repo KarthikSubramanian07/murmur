@@ -381,3 +381,46 @@ func TestPiHookNamesItsSessionByItsFile(t *testing.T) {
 		t.Error("Pi's Stop doesn't say it can keep the work going")
 	}
 }
+
+// Pi's extension tells the hook when the work ended without a chance to go on (Escape, an error):
+// the Stop says it can't keep the work going, and prints nothing, even if a daemon gives something
+// back. Only Pi's hook reads that: Claude Code fires no Stop then.
+func TestAnInterruptedPiStopKeepsNothingGoing(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpTurnEnd {
+			return `{"ok":true,"delivered":[{"id":"m1","from":"other-0001/bbbbbb","subject":"lost if printed"}]}`
+		}
+		return `{"ok":true}`
+	})
+	stopFor := func(agent string) (string, proto.Request) {
+		payload, _ := json.Marshal(map[string]any{"session_id": "/s/a.jsonl", "hook_event_name": "Stop", "cwd": repo, "interrupted": true})
+		var out bytes.Buffer
+		hook.RunFor(agent, bytes.NewReader(payload), &out)
+		var last proto.Request
+		for _, r := range requests() {
+			if r.Op == proto.OpTurnEnd {
+				last = r
+			}
+		}
+		return out.String(), last
+	}
+	if out, r := stopFor("pi"); out != "" || r.Continues || r.Native != "/s/a.jsonl" {
+		t.Errorf("Pi's interrupted Stop printed %q, request %+v", out, r)
+	}
+	if out, r := stopFor(""); out == "" || !r.Continues {
+		t.Errorf("Claude Code's Stop printed %q, request %+v: interrupted is Pi's alone", out, r)
+	}
+}
+
+// An agent the hook doesn't know gets nothing, and the daemon isn't asked.
+func TestHookForAnUnknownAgentDoesNothing(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
+	payload, _ := json.Marshal(map[string]string{"session_id": "x", "hook_event_name": "PostToolUse", "cwd": repo})
+	var out bytes.Buffer
+	hook.RunFor("codex", bytes.NewReader(payload), &out)
+	if out.Len() != 0 || len(requests()) != 0 {
+		t.Errorf("printed %q, asked %+v", out.String(), requests())
+	}
+}
