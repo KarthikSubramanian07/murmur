@@ -377,13 +377,19 @@ func (d *Daemon) endTurnLocked(s *session, wake pageSettings) {
 // None are taken once Claude Code would refuse the continuation (stopBlockCap): it would end the
 // turn with them gone. They are then handed over as a turn, as after a turn that ends without Stop.
 // None are taken from a session on do not disturb (#198) either: wayInLocked finds no way in for it.
-func (d *Daemon) continueTurnLocked(s *session, wake pageSettings) []*inMsg {
+//
+// The reply carries them whole, so they are taken, oldest first, only while they fit room (see
+// wholeRoom); the rest stay in the inbox for the turn's next end.
+func (d *Daemon) continueTurnLocked(s *session, wake pageSettings, room *wholeRoom) []*inMsg {
 	if s.continuations >= stopBlockCap || !d.wayInLocked(s.id, wake) {
 		return nil
 	}
 	var out []*inMsg
 	for _, m := range d.st.Inbox[s.id] {
 		if pushable(m) {
+			if !room.take(m) {
+				break
+			}
 			out = append(out, m)
 		}
 	}
@@ -613,6 +619,38 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.introduceLocked(j.key, j.msg.Event.From)
 	d.saveLocked()
 	delete(d.pushWarned, j.id)
+}
+
+// maxWholeReply is how much of one reply to the hook the messages it gives whole may take. A
+// client reads at most 64 MB of a reply (#371), and the hook's speaks for every session of its
+// agent's process, each with an inbox of up to maxInbox messages, which the daemon takes out of the
+// inbox before it replies: a reply the client then refused would lose them. Half the client's
+// limit leaves room for the rest of the reply. A variable for the test.
+var maxWholeReply = 32 << 20
+
+// wholeRoom is what is left of one reply's maxWholeReply. A message for everyone is in each inbox
+// the hook speaks for and is given once, so it is counted once.
+type wholeRoom struct {
+	left  int
+	taken map[string]bool
+}
+
+func newWholeRoom() *wholeRoom { return &wholeRoom{left: maxWholeReply, taken: map[string]bool{}} }
+
+// take reports whether message m fits in what is left, and if so counts it. Its size is taken at
+// its longest, every character of it escaped six times over (`<` is `<`), and a kilobyte
+// for the rest of its view.
+func (r *wholeRoom) take(m *inMsg) bool {
+	if r.taken[m.Event.ID] {
+		return true
+	}
+	cost := 6*(len(m.Event.Body)+len(m.Event.Subject)) + 1<<10
+	if cost > r.left {
+		return false
+	}
+	r.left -= cost
+	r.taken[m.Event.ID] = true
+	return true
 }
 
 // delivery is a message, msg, given to session id.

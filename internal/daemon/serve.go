@@ -526,6 +526,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	var whole []delivery
 	var told []*session
 	unread := 0
+	room := newWholeRoom()
 	for _, id := range ids {
 		// A session in its grace, or stopped, is told of its notices once it is back.
 		if id == "" || !d.liveLocked(id) {
@@ -563,7 +564,10 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 				// A message with no body is given whole whatever the setting (#355): its notice
 				// would show all of it, and the agent, having it, wouldn't call inbox, so it
 				// would stay unread and come a second time when the turn ends.
-				if printsWhole && (busyWhole || subjectOnly(m)) && !m.Attempted && !m.PushFailed {
+				//
+				// One that doesn't fit the reply's room (wholeRoom) is told of as any other,
+				// and stays in the inbox for the agent to read.
+				if printsWhole && (busyWhole || subjectOnly(m)) && !m.Attempted && !m.PushFailed && room.take(m) {
 					whole = append(whole, delivery{id, m})
 					continue
 				}
@@ -630,6 +634,7 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 	}
 	var given []delivery
 	held := false
+	room := newWholeRoom()
 	for _, s := range d.touchHookLocked(req) {
 		first := req.Continues && !s.stopContinues
 		s.stopSeen, s.stopContinues = true, req.Continues
@@ -646,7 +651,7 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 		if !req.Continues || !d.liveLocked(s.id) || d.clearChildInboxLocked(s.id) {
 			continue
 		}
-		for _, m := range d.continueTurnLocked(s, wake) {
+		for _, m := range d.continueTurnLocked(s, wake, room) {
 			given = append(given, delivery{s.id, m})
 		}
 	}

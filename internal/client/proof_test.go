@@ -3,8 +3,11 @@ package client
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -165,6 +168,91 @@ func TestTheReplyLimitFitsAFullInbox(t *testing.T) {
 	const maxInbox, maxBody, escaped = 200, 32 << 10, 6
 	if need := maxInbox * maxBody * escaped; maxReply < need+need/4 {
 		t.Errorf("replies are cut at %d bytes; a full inbox may take %d", maxReply, need)
+	}
+}
+
+// listenAnswering listens at addr and answers every line with reply, counting the lines that carry
+// a token.
+func listenAnswering(t *testing.T, addr string, reply func(proto.Request) proto.Response) *atomic.Int32 {
+	t.Helper()
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	var tokens atomic.Int32
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				r := bufio.NewReader(conn)
+				for {
+					line, err := r.ReadBytes('\n')
+					if err != nil {
+						return
+					}
+					var req proto.Request
+					json.Unmarshal(line, &req)
+					if req.Token != "" {
+						tokens.Add(1)
+					}
+					b, _ := json.Marshal(reply(req))
+					conn.Write(append(b, '\n'))
+				}
+			}()
+		}
+	}()
+	return &tokens
+}
+
+// What took the port can answer the proof's ping as a daemon from before proof does. That doesn't
+// make the client take it for one: such a daemon holds the clone's lock, and a dead one's doesn't.
+func TestWhatTookThePortCanNotPassForAnOlderDaemon(t *testing.T) {
+	gitDir := stateOnly(t)
+	d := startStandIn(t, gitDir, proto.Protocol)
+	c := connected(t, gitDir)
+	addr := d.ln.Addr().String()
+	d.die()
+	tokens := listenAnswering(t, addr, func(proto.Request) proto.Response { return proto.Response{Error: "bad token"} })
+	if resp, err := c.Do(context.Background(), proto.Request{Op: proto.OpInbox}); err == nil {
+		t.Errorf("the inbox was answered: %+v", resp)
+	}
+	if n := tokens.Load(); n > 0 {
+		t.Errorf("the listener at the dead daemon's address was sent the token %d times", n)
+	}
+}
+
+// A proof is good only for the nonce and the address it was made for: one made for another
+// listener, or for another nonce, is refused.
+func TestAProofForAnotherAddressOrNonceIsRefused(t *testing.T) {
+	gitDir := stateOnly(t)
+	d := startStandIn(t, gitDir, proto.Protocol)
+	c := connected(t, gitDir)
+	info := c.current()
+	addr := d.ln.Addr().String()
+	d.die()
+	for name, proof := range map[string]func(nonce string) string{
+		"another address": func(nonce string) string { return proto.Proof(info.Token, "127.0.0.1:1", nonce) },
+		"another nonce":   func(string) string { return proto.Proof(info.Token, addr, "replayed") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			tokens := listenAnswering(t, addr, func(req proto.Request) proto.Response {
+				return proto.Response{OK: true, Protocol: proto.Protocol, Proof: proof(req.Nonce)}
+			})
+			if _, err := ping(context.Background(), info); !errors.Is(err, errNotDaemon) {
+				t.Errorf("ping: %v, want errNotDaemon", err)
+			}
+			if _, _, err := exchange(context.Background(), info, false, proto.Request{Op: proto.OpInbox}); err == nil {
+				t.Error("the inbox was answered")
+			}
+			if n := tokens.Load(); n > 0 {
+				t.Errorf("the listener was sent the token %d times", n)
+			}
+		})
 	}
 }
 
