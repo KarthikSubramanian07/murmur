@@ -51,12 +51,13 @@
     color: var(--cream);
   }
   .note p { font-size: clamp(18px, 1.55vw, 22px); font-weight: 500; line-height: 1.45; letter-spacing: -.008em; text-wrap: balance; }
-  .note code { font: 500 .88em/1 var(--mono); color: var(--butter); white-space: nowrap; }
+  /* Butter eased toward cream: plain butter is 4.4:1 on the blue, short of 4.5:1 at this size. */
+  .note code { font: 500 .88em/1 var(--mono); color: color-mix(in srgb, var(--butter) 70%, var(--cream)); white-space: nowrap; }
   .note .s { display: block; }
   /* Each line hides only the drawing directly behind its own words. */
   html.js:not(.static) .note:not(.hero) .s { width: fit-content; background: var(--blue); box-shadow: 0 0 0 8px var(--blue); }
   /* A definition some readers need and others skip: smaller and quieter than the line it explains. */
-  .note .aside { font-size: .78em; font-weight: 400; opacity: .72; margin-top: 4px; }
+  .note .aside { font-size: .78em; font-weight: 400; margin-top: 4px; }
   html.js:not(.static) .note:not(.hero) {
     position: fixed;
     top: clamp(24px, 5vh, 48px);
@@ -92,7 +93,7 @@
     padding: 0 18px 0 12px;
     margin-bottom: clamp(20px, 6vh, 56px);
     border-radius: 999px;
-    background: rgba(255, 251, 234, .1);
+    background: rgba(255, 251, 234, .05);
     box-shadow: inset 0 0 0 1px rgba(255, 251, 234, .26);
     color: var(--cream);
     font-size: 15px;
@@ -160,7 +161,10 @@
   svg .butter { fill: var(--butter); }
   svg .soft { fill: var(--ink-soft); }
   svg .pale { fill: #C3C9DC; }
-  svg .red { fill: var(--red); }
+  /* Red words: darkened with ink to 4.5:1 on the cream tags and butter rows (shapes keep C.red). */
+  svg .red { fill: color-mix(in srgb, var(--red) 82%, var(--ink)); }
+  /* The stale clock's red, on the blue: pale enough for 3:1 at its size. */
+  svg .red-lt { fill: color-mix(in srgb, var(--red) 30%, var(--cream)); }
   svg .blue { fill: var(--blue); }
   svg .bink { fill: var(--badge-ink); }
 
@@ -209,7 +213,7 @@
   html:not(.js) .after { display: none; }
   .baked svg { display: block; width: 100%; height: auto; margin-bottom: 28px; }
   /* A hint to scroll, for the first screen only: it fades once the page moves. */
-  .scroll-hint { position: fixed; left: 50%; bottom: clamp(16px, 4vh, 32px); z-index: 20; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--cream); font-size: 13px; font-weight: 500; letter-spacing: .02em; opacity: .8; pointer-events: none; transition: opacity .4s; }
+  .scroll-hint { position: fixed; left: 50%; bottom: clamp(16px, 4vh, 32px); z-index: 20; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--cream); font-size: 13px; font-weight: 500; letter-spacing: .02em; pointer-events: none; transition: opacity .4s; }
   .scroll-hint svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; animation: hint-nudge 1.8s ease-in-out infinite; }
   .scroll-hint.gone { opacity: 0; }
   @keyframes hint-nudge { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
@@ -1578,7 +1582,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       if (showClock > 0) {
         const mm = Math.floor(readerMin), secs = Math.floor((readerMin - mm) * 60);
         setStr(bigNum, `${mm}:${String(secs).padStart(2, '0')}`);
-        A(bigNum.e, 'x', L.stale.x); A(bigNum.e, 'y', L.stale.y); A(bigNum.e, 'class', readerMin >= 6 ? 'b red' : 'b butter');
+        A(bigNum.e, 'x', L.stale.x); A(bigNum.e, 'y', L.stale.y); A(bigNum.e, 'class', readerMin >= 6 ? 'b red-lt' : 'b butter');
         setStr(bigLab, L.tall ? 'since Sam\'s presence changed' : 'since Sam\'s presence changed, by this clock');
         A(bigLab.e, 'x', L.stale.x); A(bigLab.e, 'y', L.stale.ly);
       }
@@ -2518,7 +2522,7 @@ bob-laptop-3f2a/3f9a1c -&gt; alice-mbp-91c0/7bd204: Are you changing the auth mi
       // presence: a clock since Sam's last heartbeat.
       if (t >= at('presence') && t < at('names', BL)) {
         const b = st.big, show = b.o * W('presence', .2, .28);
-        setT(bigN, mmss(since)); A(bigN, 'font-size', 52); A(bigN, 'class', since >= 6 ? 'b red' : 'b butter'); XY(bigN, b.cx, b.y + 50); O(bigN, show);
+        setT(bigN, mmss(since)); A(bigN, 'font-size', 52); A(bigN, 'class', since >= 6 ? 'b red-lt' : 'b butter'); XY(bigN, b.cx, b.y + 50); O(bigN, show);
         setT(bigL, 'since Sam\'s presence changed'); XY(bigL, b.cx, b.y + 74); O(bigL, show);
       }
       // names: two daemons claim one name; the second push is refused and tries another.
