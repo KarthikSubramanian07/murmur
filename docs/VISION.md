@@ -119,6 +119,17 @@ address once; see Updating and Counting use.)
   `mesh/<deviceId>/...`, `names/...`), and `refs/murmur/mesh` or `refs/murmur/presence` as refs
   themselves. Murmur writes nothing at any of them (found by the Opus reviews of V1, #8,
   2026-10-28).
+- A reader holds what it reads to a size, too (2026-11-09). Git keeps commits compressed, so a
+  quick fetch can bring a message of any size: one of 64 MB packed to 64 KB, and reading it whole
+  took 448 MB. A commit over 1 MB on a log or a presence, or 32 MB on the names registry (a
+  snapshot lists every name, about 45 bytes each), is passed over unread, as junk is, and the
+  cursor moves past it; git gives the size without the read. Nothing Murmur writes comes near
+  either. A log is read 500 commits at a time, with the daemon's lock let go between pages and the
+  state file saved once a page, not once per tags event, so a device back after days away doesn't
+  stall the sessions, the hook and the page while it catches up. It is read along first parents:
+  Murmur writes every log as a chain, and a page's last commit, the cursor a cut-short read goes on
+  from, stands for all before it only on a chain. A merge someone wrote by hand would otherwise have
+  its other side read again, and its messages delivered twice.
 - Reading: poll `git ls-remote origin 'refs/murmur/*'`, which is cheap; fetch only when a SHA has
   changed. How often is "Speed", below (3 s around a conversation; 10 s before 2026-10-29). A message takes about 6–8 s from a `send` to the
   receiving agent's turn ("Delivering a message as a turn", below); V1, polling every 10 s, took
@@ -169,7 +180,22 @@ daemon back after less than 10 minutes down queues what it missed for the sessio
 reconnect within 30 seconds of its start, and for sessions stopped within the 24 hours.
 
 Sessions reach the daemon over loopback TCP, on a random port written with a random token to
-`.git/murmur/daemon.json`. A daemon with no sessions, no open page (see The page for humans) and no
+`.git/murmur/daemon.json`. A client trusts that file only while the clone's lock (`daemon.lock`) is
+held (2026-11-09). A daemon that dies without removing the file (a crash, SIGKILL, a power cut)
+leaves an address another user's process could listen on, to be sent the sessions' hellos and
+requests and to answer with messages of its own. A daemon takes the lock before it writes the
+file, removes the file when it begins to stop, before it gives up its port, and lets the lock go
+only when it has gone. So a daemon.json beside a free lock is stale and is removed, a starting
+daemon removes one as soon as it holds the lock, and a client that loses its daemon forgets the
+address. Clients take the lock only shared, and only a daemon takes it exclusively, so a lock a
+client finds held is a daemon's; a timed retry left a window where another client's cleanup looked
+like a daemon. A client from before this takes it exclusively for a moment while stopping or
+replacing a daemon. This holds where the state directory is private to its user: it is made 0700 on Unix, and on Windows
+has whatever access the clone's location gives. A ping that proves the daemon knows the token was
+set aside: an older daemon couldn't give the proof, and a client must still talk to one to replace
+it.
+
+A daemon with no sessions, no open page (see The page for humans) and no
 T3 thread to wake for 10 minutes exits. Any daemon that stops deletes its presence, so other devices drop it at their
 next sync rather than when it goes stale.
 
@@ -235,7 +261,8 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   uncommitted change to a file the pull brings, even an identical one, checked 2026-11-01);
   otherwise it is left alone and gets the section when the default branch is merged in. The push
   skips the repo's pre-push hook, as bus pushes do: the hook would run against a checkout that
-  isn't this commit. `init --no-push` is the old behavior. `docs/agents/setup.md` is the page an
+  isn't this commit. `init --no-push` is the old behavior, and refuses as the push does a file
+  that a symbolic link takes out of the repo (2026-11-09). `docs/agents/setup.md` is the page an
   agent follows when its user asks it to set Murmur up; the README links it.
 - **What `mur join` writes.** It refuses in a repo without the marker. Everything it writes is
   outside the repo's tracked files:
@@ -245,7 +272,7 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   | Consent | `.git/murmur/joined.json` (mode 0600) | clone, so every worktree of it |
   | The MCP server, for Claude Code | `claude mcp add --scope user murmur -- <absolute path of mur> mcp`, which writes `.claude.json` in `$CLAUDE_CONFIG_DIR`, else the home directory | user |
   | Permission for its tools | `mcp__murmur` in `permissions.allow` of `settings.json` next to it | user |
-  | The MCP server, for Codex | a `[mcp_servers.murmur]` table in `$CODEX_HOME/config.toml`, else `~/.codex/config.toml`: the command, `args = ["mcp", "--agent", "codex"]` and `default_tools_approval_mode = "approve"` | user |
+  | The MCP server, for Codex | a `[mcp_servers.murmur]` table in `$CODEX_HOME/config.toml`, else `~/.codex/config.toml`: the command, `args = ["mcp", "--agent", "codex"]`, `env_vars = ["T3CODE_CLI_PATH", "CODEX_HOME"]` and `default_tools_approval_mode = "approve"` | user |
   | The MCP server, for OpenCode, Muse Code, Pi and Grok | see "Other agents", below | user |
   | The skills, `murmur` and `murmur-pro` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode and Pi; Muse Code and Grok document no skills folder (2026-11-08) | user |
   | The hook, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit` and `Stop` (`setup.HookEvents`) | `.claude/settings.local.json` in each worktree of the clone, kept out of `git status` through the clone's `info/exclude` | clone |
@@ -271,6 +298,11 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   in the path, 2026-10-29. A config file that is a symbolic link (a dotfiles repository's, say) is
   written through, one that points at a file not yet there included: the file it points to is
   replaced or created and the link stays; a hook file that is a link is emptied, never deleted.
+  A hook file the repo tracks, or a `.claude` it tracks as a link, isn't the user's, and gets no
+  hook (2026-11-09): a committed link points wherever the commit chose, `~/.claude/settings.json`
+  included, and a tracked file would take this machine's path to mur into the next commit. Names
+  are matched ignoring case, as macOS's and Windows' disks match them. It is a note under "Not
+  done", not a problem: repos do commit that file by accident, and a rerun couldn't fix it.
   Run again, `join` changes nothing and says so; it fills in what is missing and repoints an entry
   whose binary moved. A worktree made after joining has no hook until `mur join` runs in it again.
   `mur join --leave` removes the consent and the hooks and stops the daemon. It leaves the server
@@ -302,14 +334,15 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   itself if the user has left. The last two are what end a daemon that was still starting when
   `join --leave` ran and so had no `daemon.json` to be found by. `mur daemon` and `mur ui` refuse in
   a clone that hasn't joined (so a stale client or a script can't start one). `join --leave`
-  forgets the consent before it stops anything, then waits up to 20 seconds for the daemon's lock to
-  be free, and reports it as a problem, not as stopped, if it isn't. What it can't close: a push
-  already past its check when the leave lands completes, and a starter already past its own
-  check (Windows starts the daemon through WMI, which is slow) can still launch `mur daemon`, which
-  exits at its consent check before it opens any state or publishes. A repo without the marker, or
-  one the user hasn't joined, gets no daemon, no `refs/murmur/*` and nothing published. A clone
-  whose user joined but whose current branch lacks the marker keeps its daemon (it is the user's,
-  for every worktree) and gets no MCP tools there.
+  forgets the consent before it stops anything, then waits for the daemon's lock to be free as long
+  as a replacement does, 40 seconds from asking it to stop (20 until #91, which was shorter than a
+  shutdown may take), saying so on standard error once it has waited 5, and reports it as a problem,
+  not as stopped, if it isn't. What it can't close: a push already past its check when the leave
+  lands completes, and a starter already past its own check (Windows starts the daemon through WMI,
+  which is slow) can still launch `mur daemon`, which exits at its consent check before it opens any
+  state or publishes. A repo without the marker, or one the user hasn't joined, gets no daemon, no
+  `refs/murmur/*` and nothing published. A clone whose user joined but whose current branch lacks
+  the marker keeps its daemon (it is the user's, for every worktree) and gets no MCP tools there.
 - **Per user, in every account T3 runs.** T3 can start Claude Code with its own `CLAUDE_CONFIG_DIR`
   (a provider instance with a home path, as `claude_personal` on Tyler's laptop, 2026-10-29), and
   Codex with its own `CODEX_HOME`. Until 2026-11-01 `mur join` wrote only to the home of the agent
@@ -648,7 +681,7 @@ agents that mattered.
   | Session | Title | Not used |
   |---|---|---|
   | In T3 (its thread found, see Delivering a message as a turn) | `orchestration_v2_projection_threads.title` for the thread, in T3's `statev2.sqlite` | The client's own name for the conversation: T3 doesn't copy its title there, and the two would take turns |
-  | Codex outside T3 | The thread's explicit name: `threads.name` in `state_N.sqlite` (the highest N) of `$CODEX_HOME` as the session's MCP server has it (Codex starts it with a bare environment, and `join` doesn't forward `CODEX_HOME` yet), else the daemon's, else `~/.codex`; failing that `thread_name` in `session_index.jsonl`, the last entry for the thread | `threads.title` and `threads.preview`, which hold the opening message |
+  | Codex outside T3 | The thread's explicit name: `threads.name` in `state_N.sqlite` (the highest N) of `$CODEX_HOME` as the session's MCP server has it (Codex starts it with a bare environment, so `join` names `CODEX_HOME` in `env_vars`, #88), else `~/.codex`, which the server names too, rather than leave the daemon its own `CODEX_HOME`, the home of whichever session started it; a server from before #88 names no home, and gets the daemon's `CODEX_HOME`, else `~/.codex`, as before; failing that `thread_name` in `session_index.jsonl`, the last entry for the thread | `threads.title` and `threads.preview`, which hold the opening message |
   | Claude Code outside T3 | The last `custom-title` line in the session's transcript (the name the user gave it), else the last `ai-title` line (the one Claude Code made up) | The first prompt: a session with neither has no title |
 
   The transcript is the hook's `transcript_path`, which the hook sends with its notices request;
@@ -783,7 +816,8 @@ evidence is in #19.
   2026-10-28 not to change T3's source, so Murmur looks up the provider's session in T3's database
   (#56, 2026-10-29): "Delivering a message as a turn", below.
 - **Codex's MCP servers get a bare environment,** about 20 Windows core variables and no
-  `CODEX_*` or `T3CODE_CLI_PATH` (unless the Codex config forwards it), so the server learns its
+  `CODEX_*` or `T3CODE_CLI_PATH` (unless the Codex config forwards them, as `join` does for
+  `T3CODE_CLI_PATH` and `CODEX_HOME`), so the server learns its
   thread at its first tool call. Hooks under Codex inherit
   the `CLAUDE_CODE_SESSION_ID` of any Claude Code session that started Codex, so that variable
   doesn't prove a hook runs under Claude Code.
@@ -1125,8 +1159,11 @@ A body past the limit is cut, as in `inbox`.
   tools note it, `lookup` too), but its MCP servers start with a bare environment, `T3CODE_CLI_PATH`
   not among its variables, so Codex's config must forward it: `env_vars = ["T3CODE_CLI_PATH"]` under
   `[mcp_servers.murmur]` (worked with Codex 0.164.0 under T3 0.1.2, 2026-10-29). `mur join` writes
-  it, and adds the name to a list the user already has there without touching their other entries; a
-  list over several lines, or of anything but names, it leaves alone and says what to add by hand.
+  it with `CODEX_HOME` (Session names, #88), and adds a name missing from a list the user already
+  has there without touching their other entries; a list over several lines, or of anything but
+  names, it leaves alone and says what to add by hand. Codex leaves out a name its own environment
+  doesn't have, without a warning (`create_env_for_mcp_server` in `codex-rs/rmcp-client`, read
+  2026-11-09), so a session in `~/.codex` starts its server as before.
   Without it the server doesn't know it is in T3, and a Codex session gets notices only. Codex
   reads a project's `.codex/config.toml` only once the project is trusted.
 - **The messaging socket** is for Claude Code outside T3. Claude Code sets
@@ -1262,14 +1299,18 @@ A development build (`-dev`) never updates itself. Versions before this updater 
 install to acquire it.
 
 The daemon downloads the `mur-<os>-<arch>[.exe]` asset and that release's `SHA256SUMS`, verifies
-SHA-256, and stages a closed, synced executable beside the running binary's resolved symlink
-target. Unix renames it atomically over the old file. Windows renames the running exe to a unique
-backup, installs the staged file, and restores the backup if installation fails. Backups still
-held by processes are cleaned on a later daemon start. A lock beside the executable serializes
-clones sharing an install; a daemon whose executable has already been replaced restarts onto it.
-Identity is checked again after downloading so a manual reinstall during the download is left alone.
-An unwritable install (for example, a package manager's) is logged once and left alone until
-restart. Successful updates log the old and new versions in the daemon log.
+SHA-256, and stages a closed, synced executable beside the running binary's resolved symlink target.
+The downloads never leave https (2026-11-09): a redirect from https to plain http, or an asset URL
+that isn't https, fails the check, since whoever could serve the binary over plain http could serve
+its checksum too. Hosts aren't limited, because GitHub has moved its asset host before and a daemon
+refusing the next one could never update past it. Unix renames it atomically over the old file.
+Windows renames the running exe to a unique backup, installs the staged file, and restores the
+backup if installation fails. Backups still held by processes are cleaned on a later daemon start. A
+lock beside the executable serializes clones sharing an install; a daemon whose executable has
+already been replaced restarts onto it. Identity is checked again after downloading so a manual
+reinstall during the download is left alone. An unwritable install (for example, a package
+manager's) is logged once and left alone until restart. Successful updates log the old and new
+versions in the daemon log.
 
 After installation, the daemon waits until no message handoff is in flight and no page counts as
 open, or until the page asks for the restart (#240). It then blocks new handoffs and shuts down
