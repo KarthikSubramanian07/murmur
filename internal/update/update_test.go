@@ -551,6 +551,19 @@ func TestNewerFromRecordedLatest(t *testing.T) {
 	}
 }
 
+// Checked is when the clone last heard of the latest release, and zero before it has.
+func TestCheckedIsWhenTheLatestWasRecorded(t *testing.T) {
+	gitDir := t.TempDir()
+	if got := Checked(gitDir); !got.IsZero() {
+		t.Fatalf("nothing recorded, but checked at %v", got)
+	}
+	before := time.Now().Add(-2 * time.Second) // a file system's times can be coarse
+	recordLatest(gitDir, "v0.3.0")
+	if got := Checked(gitDir); got.Before(before) || got.After(time.Now().Add(2*time.Second)) {
+		t.Errorf("recorded just now, but checked at %v", got)
+	}
+}
+
 // A download never leaves https once the check is on https: not through a redirect, and not to an
 // asset URL the API names. The binary and SHA256SUMS are fetched separately, so a plain-http hop
 // would let anyone on the path swap both. Redirects that keep their scheme are followed, which is

@@ -20,6 +20,7 @@ jobs:
   count:
     if: github.repository == 'a-Fig/murmur'
     runs-on: ubuntu-latest
+    # site/src/repos.js (RUN) takes counts within this of each other to be one run: change both.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5

@@ -49,6 +49,10 @@ type Options struct {
 	// A registry read that stalls (the check of one missing from the listing asks the remote again)
 	// then can't use up the time the logs it fetched need.
 	ReadFirstLimit time.Duration
+	// FirstSyncLimit is how long the daemon's first sync may take before the background loops start
+	// and a later sync tries again: 10 s. The daemon answers before it, but a registration and the
+	// requests that want what it reads (who, send, lookup) wait for it, as long as this at most (#372).
+	FirstSyncLimit time.Duration
 	// PollCap is the slowest the poll gets while a session is live and nothing is happening: 15 s.
 	// FastFor is how long after a conversation moves (this device sends a message, or queues one
 	// for a session here or hands one over to it, or a session starts) the poll stays at Poll: 3 min (#93).
@@ -150,6 +154,9 @@ func (o *Options) defaults() {
 	if o.ReadFirstLimit == 0 {
 		o.ReadFirstLimit = 15 * time.Second
 	}
+	if o.FirstSyncLimit == 0 {
+		o.FirstSyncLimit = 10 * time.Second
+	}
 	if o.FastFor == 0 {
 		o.FastFor = 3 * time.Minute
 	}
@@ -246,7 +253,9 @@ func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
-	return d.repo.Push(ctx, sha, ref, mode, expect)
+	err := d.repo.Push(ctx, sha, ref, mode, expect)
+	d.health.pushed(ctx, ref, err)
+	return err
 }
 
 // pushTimeout bounds one push, so a push that hangs doesn't hold up the device's others for good.
@@ -378,6 +387,8 @@ type Daemon struct {
 
 	polls atomic.Int64 // the remote listings tried, so a test can see the rate
 
+	health health // what the page's health snapshot counts (health.go)
+
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
 	writeMu sync.Mutex // serializes appends to this device's log
@@ -401,6 +412,10 @@ type Daemon struct {
 	// have; bgCtx is cancelled when the daemon starts shutting down.
 	bg    sync.WaitGroup
 	bgCtx context.Context
+
+	// firstSync is closed once Run's first sync is over, done or not (see awaitFirstSync). Nil for
+	// a daemon Run didn't start, which has no first sync to wait for.
+	firstSync chan struct{}
 }
 
 type session struct {
@@ -511,6 +526,9 @@ type fetchFail struct {
 	tries  int
 	landed bool
 }
+
+// fetchRetry is how long after its failure a ref that failed to fetch is tried again on its own.
+const fetchRetry = time.Minute
 
 // staleTempAge is how long a temporary download has gone unwritten before it is taken for one a
 // stopped git left behind (see clearStaleTemp).
@@ -666,8 +684,8 @@ func Run(ctx context.Context, opt Options) error {
 	}
 	defer lock.Close()
 	// A daemon.json here now is a dead daemon's, as a live one would hold the lock. It goes at once,
-	// not when this one's is written after the first sync: until then a client would ping its
-	// address, find the lock held, and take whatever answers there for this daemon.
+	// not when this one's is written: until then a client would ping its address, find the lock
+	// held, and take whatever answers there for this daemon.
 	infoPath := filepath.Join(dir, "daemon.json")
 	os.Remove(infoPath)
 
@@ -679,18 +697,6 @@ func Run(ctx context.Context, opt Options) error {
 		return ErrNoConsent
 	}
 	clearStaleTemp(d.opt.GitDir, d.log) // a daemon stopped mid-fetch leaves no one else to do it
-	// Sync once before accepting sessions, so whatever this sync finds was sent before any of
-	// them registered: it is the backlog, and nothing a new session should get.
-	sctx, scancel := context.WithTimeout(ctx, 10*time.Second)
-	if err := d.pollOnce(sctx); err != nil {
-		d.log.Printf("first sync failed; retrying in the background: %v", err)
-	}
-	scancel()
-	// The sync can take seconds, long enough for a leave to have come and gone without finding a
-	// daemon.json to stop.
-	if !d.consented() {
-		return ErrNoConsent
-	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -718,16 +724,28 @@ func Run(ctx context.Context, opt Options) error {
 	if pageLn != nil {
 		info.Web, info.PageToken = pageLn.Addr().String(), d.pageTok
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	d.bgCtx = ctx
+	d.firstSync = make(chan struct{})
+	if pageLn != nil {
+		d.servePage(ctx, pageLn) // first, so a page key asked for at once finds the page
+	}
+	go d.serve(ctx, ln)
+	// The daemon answers, and daemon.json says where, before its first sync rather than after it
+	// (#372). That sync takes seconds, and on a slow link or a loaded machine it ran past the 15 s a
+	// client that starts a daemon waits for it to answer: `mur ui` then said the daemon didn't come
+	// up when it had. What wants the sync waits for it instead (see awaitFirstSync).
 	if err := writeJSON(infoPath, info); err != nil {
 		return err
 	}
 	defer os.Remove(infoPath)
-	d.mu.Lock()
-	d.lastActive = time.Now() // the first sync may have taken a while; the idle time starts here
-	d.mu.Unlock()
 	d.log.Printf("device %s, remote %q, listening on %s", d.device, d.repo.Remote, info.Addr)
 	if info.Web != "" {
 		d.log.Printf("page for humans on %s", info.Web)
+	}
+	if opt.Consent != nil {
+		go d.consentLoop(ctx)
 	}
 
 	if d.opt.Clones != "" {
@@ -736,58 +754,76 @@ func Run(ctx context.Context, opt Options) error {
 		}
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	d.bgCtx = ctx
-	if pageLn != nil {
-		d.servePage(ctx, pageLn) // first, so a page key asked for at once finds the page
+	// Sync once before sessions register (they wait for it), so whatever this sync finds was sent
+	// before any of them registered: it is the backlog, and nothing a new session should get. A stop
+	// asked for meanwhile cuts it short.
+	sctx, scancel := context.WithTimeout(ctx, d.opt.FirstSyncLimit)
+	go func() {
+		select {
+		case <-d.quit:
+		case <-sctx.Done():
+		}
+		scancel()
+	}()
+	if err := d.pollOnce(sctx); err != nil && !d.stopping() {
+		d.log.Printf("first sync failed; retrying in the background: %v", err)
 	}
-	go d.serve(ctx, ln)
-	// Tracked, as the syncs it runs start background work of their own (clearOwnJunk).
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		d.pollLoop(ctx)
-	}()
-	// The presence loop is drained like other background work: a push still in flight when
-	// the goodbye deletes presence could otherwise land after it and bring the device back.
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		d.presenceLoop(ctx)
-	}()
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		d.nameLoop(ctx)
-	}()
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		d.pushLoop(ctx)
-	}()
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		d.titleLoop(ctx)
-	}()
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		d.threadLoop(ctx)
-	}()
-	if opt.Idle > 0 {
-		go d.idleLoop(ctx)
+	scancel()
+	close(d.firstSync)
+	d.mu.Lock()
+	d.lastActive = time.Now() // the first sync may have taken a while; the idle time starts here
+	d.mu.Unlock()
+	// The sync can take seconds, long enough for a leave to have come and gone. The consent loop
+	// would stop the daemon soon, but nothing should start for a user who has left.
+	noConsent := !d.stopping() && !d.consented()
+	if noConsent {
+		d.stop()
 	}
-	if opt.Consent != nil {
-		go d.consentLoop(ctx)
-	}
-	if opt.Report != nil {
-		go opt.Report(ctx)
-	}
-	if opt.Update != nil {
+
+	if !d.stopping() {
+		// Tracked, as the syncs it runs start background work of their own (clearOwnJunk).
 		d.bg.Add(1)
-		go func() { defer d.bg.Done(); opt.Update(ctx, func() { d.restartWhenIdle(ctx) }) }()
+		go func() {
+			defer d.bg.Done()
+			d.pollLoop(ctx)
+		}()
+		// The presence loop is drained like other background work: a push still in flight when
+		// the goodbye deletes presence could otherwise land after it and bring the device back.
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
+			d.presenceLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
+			d.nameLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
+			d.pushLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
+			d.titleLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
+			d.threadLoop(ctx)
+		}()
+		if opt.Idle > 0 {
+			go d.idleLoop(ctx)
+		}
+		if opt.Report != nil {
+			go opt.Report(ctx)
+		}
+		if opt.Update != nil {
+			d.bg.Add(1)
+			go func() { defer d.bg.Done(); opt.Update(ctx, func() { d.restartWhenIdle(ctx) }) }()
+		}
 	}
 	select {
 	case <-ctx.Done():
@@ -824,6 +860,9 @@ func Run(ctx context.Context, opt Options) error {
 			return &Updated{Page: page}
 		}
 		return ErrUpdated
+	}
+	if noConsent {
+		return ErrNoConsent
 	}
 	return nil
 }
@@ -936,6 +975,40 @@ func (d *Daemon) presenceRef() string { return brand.PresencePrefix + d.device }
 
 // stop asks Run to return.
 func (d *Daemon) stop() { d.quitOnce.Do(func() { close(d.quit) }) }
+
+// stopping reports whether the daemon has been told to stop.
+func (d *Daemon) stopping() bool {
+	select {
+	case <-d.quit:
+		return true
+	default:
+		return false
+	}
+}
+
+// awaitFirstSync waits until Run's first sync is over, done or not, for a request that wants what it
+// reads: a registration, as what that sync reads is the backlog, which a session shouldn't be given
+// (Run); who, send and lookup, which on a new clone would know no other device until then; and the
+// page's send and name claim, which resolve names, push, and may sync on their own. It
+// waits FirstSyncLimit at most, as the sync does, and less if ctx ends first. The daemon answers
+// before that sync (#372), so a starter needn't wait for it.
+func (d *Daemon) awaitFirstSync(ctx context.Context) {
+	if d.firstSync == nil {
+		return
+	}
+	select {
+	case <-d.firstSync:
+		return
+	default:
+	}
+	t := time.NewTimer(d.opt.FirstSyncLimit)
+	defer t.Stop()
+	select {
+	case <-d.firstSync:
+	case <-ctx.Done():
+	case <-t.C:
+	}
+}
 
 // goodbye deletes this device's presence, so other devices drop it at their next sync instead of
 // finding it stale six minutes later.

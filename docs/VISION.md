@@ -191,9 +191,33 @@ address. Clients take the lock only shared, and only a daemon takes it exclusive
 client finds held is a daemon's; a timed retry left a window where another client's cleanup looked
 like a daemon. A client from before this takes it exclusively for a moment while stopping or
 replacing a daemon. This holds where the state directory is private to its user: it is made 0700 on Unix, and on Windows
-gets an access list of its own (below). A ping that proves the daemon knows the token was
-set aside: an older daemon couldn't give the proof, and a client must still talk to one to replace
-it.
+gets an access list of its own (below).
+
+The lock is checked when a client finds its daemon, and a client goes on using the address after
+that. A daemon that died later left its port to whoever took it, and that listener got the next
+request, the token and any outgoing message with it, and could answer with an inbox of its own
+(#371, from Sol's review before v0.3.0). So since protocol 12 (2026-11-10) every connection a client
+opens starts with a ping that carries a fresh nonce and no token, and the daemon answers with an
+HMAC of its address and the nonce keyed by its token. Only then does the request go, on the same
+connection, so nothing can take the port between the proof and the request; a separate ping first
+would have left that gap. What answers without the proof is not the daemon, and the client finds
+its daemon again (or starts one). Until it is proved, a reply is read only up to 4 KB, and a proved
+daemon's up to 64 MB, about half again a full inbox of the longest messages escaped: before, one
+that never ended was read until the deadline, however much it came to. A daemon of protocol 11 or
+older can't prove itself, and refuses the nonce's ping as a missing token. A client that may start
+daemons replaces one as it replaces any older daemon; one that may not (`mur stop`, the hook) talks
+to it unproved, as before, checking the lock before each connection. Discovery still contacts the
+listener before trying the lock, since trying the lock can turn away a daemon starting just then;
+what the listener is sent there is the nonce alone.
+
+A daemon answers, and writes daemon.json, before its first sync, not after it (2026-11-10, #372).
+That sync lists the remote, fetches and reads what changed, and may take its whole 10 s; with the
+process's own start on Windows, a first start of a new binary on Tyler's laptop took 21 s, and the
+15 s a starter waits for an answer (`mur ui`, an MCP server) ran out on a daemon that was fine.
+What the sync reads still comes first where it counts: a registration waits for it, at most those
+10 s, so what it finds is the backlog and not a new session's, and so do who, send and lookup,
+which on a new clone know no other device until then. The background loops start after it, as
+before. A stop or a leave during it ends it.
 
 A daemon with no sessions, no open page (see The page for humans) and no
 T3 thread to wake for 10 minutes exits. The token lets its holder name the program the daemon runs
@@ -226,6 +250,19 @@ fails with an error that names the old daemon's pid if the lock is still held. A
 daemon refuses its route (an older one that couldn't be replaced) works, with its messages as
 notices, and its MCP server logs that once, to its standard error, so that whoever wonders finds
 why. Raise the number with any change to a request or a reply that an older daemon can't serve.
+
+The daemon's log, `.git/murmur/daemon.log`, is its only record of what it did, so it is what a
+teammate is asked to send when their device misbehaves, maybe to someone off the team. So it can be
+shared: it names events by type, ID and address, never by what a message says, and each line the
+daemon's loggers write passes through `internal/logfile`, which takes the user and password, the
+query and the fragment out of any URL, and cuts a line at 64 KB, with a note of how much it cut (a
+starter's own lines and a panic's trace go to the file directly). It does name the clone's paths.
+Past 4 MB it moves to `daemon.log.old` when a daemon starts, and while it runs it is copied there and
+emptied, since Windows can't rename an open file. If the copy fails it is emptied anyway, with a
+line saying so; if emptying fails, the lines that don't fit are dropped, and it is tried again a
+minute later. A daemon whose log was moved under it, as a later start does past 4 MB, stops moving it and writes on to the moved file. Until
+2026-11-09 it moved only at a start, so a daemon kept up for days by an open page grew it without
+limit.
 
 ### Joining a repo
 
@@ -336,7 +373,7 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   what the thing is for. The server asks again before each registration with the daemon, before
   starting one, and before forwarding a tool call, since its 2-second look can lag a leave. The
   daemon is per clone, not per working tree, so it needs only the consent: it checks at start
-  (after its first sync, which takes a while), on every request but `stop` and `ping` (which reveal
+  and again after its first sync, which takes a while, on every request but `stop` and `ping` (which reveal
   nothing, and are how a leave finds it), again in a registration after it has resolved the branch,
   before each push of its own (presence, the names registry) and before each handoff of a message
   as a turn (the one thing it does to the user's other programs, so a message that comes in by sync
@@ -563,8 +600,9 @@ call.
   takes it off, and a daemon adds its own as it starts, which takes in clones that joined before the
   record. Daemons finding each other was set aside: the picker has to offer a clone whose daemon
   isn't running, and start it. A clone whose folder is gone, or that left, drops off the list when
-  the record is read. A daemon counts as running when the port in its `daemon.json` accepts a connection; no
-  token is sent to find out.
+  the record is read. A daemon counts as running when what answers at the port in its
+  `daemon.json` proves it is that daemon (#371) and the clone's lock is held; no token is sent to
+  find out.
 - **The token doesn't travel with the tab.** The other page is another origin and needs its own
   token, which mustn't go in an address. So the page asks its daemon to open the clone. That daemon
   starts the other's if it isn't running (as `mur ui` would, replacing one of an older protocol) and
@@ -631,6 +669,15 @@ call.
   tab, a minimized window, a locked screen). A hidden page marks its calls, so a tab forgotten in
   the background doesn't keep the daemon, and its polling of GitHub, up for good (Opus review,
   2026-10-29). A request without the token doesn't count.
+- **This device's health** (`GET /api/health`, 2026-11-10, data only: where the page shows it is
+  Tyler's call). Peers are judged stale against this daemon's last successful sync, so a device
+  that has lost the remote shows every peer as it was when the sync stopped, and nothing said so:
+  #141's refused pushes and 52-minute DNS outage, and #87, were found by reading `daemon.log` by
+  hand. The snapshot says how the syncs, pushes, fetches and handoffs have gone since the daemon
+  started, and what became of the public repo's report, the one thing Murmur sends; its fields are
+  `web.Health` (`internal/web/health.go`). An error is a class and one line, and a line that may
+  hold a credential is not shown. It is read from memory and one small file, behind the page's
+  token like the rest of the API, and goes nowhere else.
 
 ### A person on the page
 
@@ -1436,6 +1483,17 @@ A body past the limit is cut, as in `inbox`.
   `ls-remote` requests about 2 s apart drew none, which is a short test, not evidence about
   hours of them from every device of a team. A poll that fails waits twice as long each time, to
   at most a minute (or 20 polls, if Poll is shorter), and goes back to its usual rate when it works.
+  A fetch offers the server only the clone's bus commits as what it already has
+  (`--negotiation-tip=refs/murmur/*`, 2026-11-10). By default git offers every local ref's
+  commits, and for a presence commit, which has no parent, the server is never ready, so the clone
+  listed the user's whole history: with 350 commits of its own, 300 of them unpushed, 6 requests
+  offering 377 commits, against 2 offering 18. Over GitHub, before the change, a fetch with a
+  presence ref in it took 0.93 s and one without 0.45 s (2026-11-09); nothing was measured over
+  GitHub after it. The cost is junk: a commit built on a branch and pushed onto a bus ref brings
+  the branch's whole history (540 KB against 12 KB for a 200-commit branch), since the server
+  isn't told the clone has it, and on a large repo the slow fetch below takes it. Offering the
+  remote's `HEAD` too would avoid that, but cost a presence fetch a request more, and a mesh fetch
+  too when the branch is newer than the log, so it was left out.
 - **A ref too slow to fetch (2026-11-08, #15).** Anyone with push access can put a large object on
   a bus ref, on purpose or with a mistaken push. A sync has a minute, and a fetch that used it up
   failed that sync and the next, for as long as the object stayed. So each fetch in a sync now has
@@ -1609,6 +1667,14 @@ ignore red. Counts the site refuses do fail the run, after every other repo has 
 census sends only what the site's limits allow, so a refusal means the two disagree, or the site
 is down, which can be fixed.
 
+A green run can still leave repos uncounted, so the stats say so, from `repo_census.counted`, which
+the site already keeps: `/stats/report.md` ends with when the census last ran, and, once that is
+over 30 hours ago, that it hasn't run for that long; then the repos that run didn't count, each
+with when it last was. A repo listed since that run's day and not yet counted is new, not missed,
+since anyone can list one and most days someone does (`/stats/data` has the same, and the page's
+footer leads with it only when something is behind). Each run's page in Actions has a table of
+every repo, a row written as each is done, so a run cut off at its timeout keeps what it did.
+
 A time on the bus or a branch is its writer's clock, and can say any year up to 9999. A day after
 tomorrow (UTC) is never believed, since one would keep a repo active and its people new for ever,
 and nor is a bus day before 2026-10-01, when there was no bus. A record with such a time is dated by
@@ -1704,4 +1770,6 @@ a git library, so it gets each user's credential helpers, SSH config and URL rew
   tried.
 - Does GitHub rate-limit a `git ls-remote` every 3 s (around a conversation) from each of a team's
   devices? Nothing
-  documents a limit for git traffic; none was hit in a test of 63 requests 2 s apart.
+  documents a limit for git traffic; none was hit in a test of 63 requests 2 s apart. Since
+  2026-11-10 a device's `/api/health` counts failed syncs and classes a refusal for too many
+  requests as `rate-limited`, so a team's own devices can show it.

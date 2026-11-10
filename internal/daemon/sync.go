@@ -123,6 +123,7 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 			wait = next
 			t.Reset(wait)
 		}
+		d.health.polling(rate, wait, d.opt.Poll)
 	sleep:
 		for {
 			select {
@@ -145,13 +146,14 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 
 // pollOnce lists the remote's bus refs and fetches and processes the ones that changed. The
 // listing is one cheap round trip; objects move only when something changed.
-func (d *Daemon) pollOnce(ctx context.Context) error {
+func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	d.polls.Add(1)
 	// A listing applied after a newer one would drop presence that has since appeared.
 	d.syncMu.Lock()
 	defer d.syncMu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
+	defer func() { d.health.synced(ctx, err) }() // before cancel, so ctx still says if its time ran out
 	listed, err := d.repo.ListRemote(ctx)
 	if err != nil {
 		return err
@@ -181,6 +183,7 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			// events don't expire, so they are read once the fetch lands (see readGivenUpTags). An
 			// earlier give-up's cursor stands, as it reaches further back.
 			d.log.Printf("giving up on the messages in the backlog of %s; skipping them", ref)
+			d.health.gaveUp()
 			_, kept := d.st.TagsFrom[ref]
 			if !kept && d.st.Processed[ref] != remote[ref] && (len(d.sessions) > 0 || d.tagsKnownLocked()) {
 				d.st.TagsFrom[ref], kept = d.st.Processed[ref], true
@@ -235,7 +238,11 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	// (see readFirstContext), so that a stall there leaves the logs the time they need: the logs
 	// were fetched already, and they hold the messages. A registry missing from the listing is
 	// asked of the remote again, which can stall like any request to it.
+	readFrom := time.Now()
 	first, cancelFirst := readFirstContext(ctx, d.opt.ReadFirstLimit)
+	// The limit it had, which is less than ReadFirstLimit when the sync has little time left: the
+	// first sync's 10 s, after a slow listing and fetch, left it 2 or 3 s (#372).
+	firstEnd, _ := first.Deadline()
 	if _, ok := remote[brand.NamesRef]; !ok {
 		d.processNames(first, "") // not on the remote
 	}
@@ -272,7 +279,7 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		return err
 	}
 	if firstErr != nil {
-		return fmt.Errorf("reading the names registry and presence took over %s: %w", d.opt.ReadFirstLimit, firstErr)
+		return fmt.Errorf("reading the names registry and presence took over %s: %w", firstEnd.Sub(readFrom).Round(100*time.Millisecond), firstErr)
 	}
 
 	d.mu.Lock()
@@ -307,8 +314,8 @@ func meshDevice(ref string) (string, bool) {
 // than half of what is left of the sync, so that a stall there leaves the logs at least as much,
 // however long the listing and fetches took, less the up to five seconds a cancelled git takes to
 // exit (see gitx.run). Half rather than a fixed reserve, since a sync's deadline isn't always a
-// minute: the one before a daemon accepts sessions has 10 s, and must read presence too, or a new
-// session could take a name a peer's presence shows.
+// minute: the first, which registrations wait for, has FirstSyncLimit, 10 s, and must read presence
+// too, or a new session could take a name a peer's presence shows.
 func readFirstContext(ctx context.Context, limit time.Duration) (context.Context, context.CancelFunc) {
 	now := time.Now()
 	end := now.Add(limit)
@@ -389,7 +396,7 @@ func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]str
 			batch = append(batch, ref)
 		case f.slow:
 			failed[ref] = errors.New("too slow to fetch within a sync; being fetched apart")
-		case time.Since(f.at) < time.Minute:
+		case time.Since(f.at) < fetchRetry:
 			failed[ref] = errors.New("failed less than a minute ago")
 		default:
 			alone = append(alone, ref)
@@ -1247,9 +1254,19 @@ func (d *Daemon) appendSoon(e bus.Event) {
 		ctx, cancel := context.WithTimeout(d.bgCtx, time.Minute)
 		defer cancel()
 		if err := d.appendEvent(ctx, e); err != nil {
-			d.log.Printf("writing %q: %v", e.Line(), err)
+			d.log.Printf("writing %s: %v", logged(e), err)
 		}
 	}()
+}
+
+// logged names an event for the daemon's log by its type, ID and addresses, never by what a
+// message says: the log is sent to whoever helps debug a device, who may not be on the team.
+func logged(e bus.Event) string {
+	s := e.Type + " " + e.ID + " from " + e.From
+	if e.To != "" {
+		s += " to " + e.To
+	}
+	return s
 }
 
 func (d *Daemon) kickPresence() {

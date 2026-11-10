@@ -25,6 +25,7 @@ import (
 	"github.com/a-Fig/murmur/internal/daemon"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/join"
+	"github.com/a-Fig/murmur/internal/logfile"
 	"github.com/a-Fig/murmur/internal/mcpserver"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/publicrepo"
@@ -63,15 +64,25 @@ Every command takes -C DIR to act on the repository at DIR.
 `)
 
 func main() {
-	if len(os.Args) < 2 {
+	dirs, args, err := leadingDirs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n\n%s", err, usage)
+		os.Exit(2)
+	}
+	for _, dir := range dirs {
+		if err := os.Chdir(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", brand.Command, err)
+			os.Exit(1)
+		}
+	}
+	if len(args) < 1 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
-	cmd, args := os.Args[1], os.Args[2:]
+	cmd, args := args[0], args[1:]
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	var err error
 	switch cmd {
 	case "hook":
 		// Never an error: a hook that fails would fail the agent's tool call. One it can't read
@@ -104,6 +115,31 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", brand.Command, err)
 		os.Exit(1)
 	}
+}
+
+// leadingDirs takes the -C DIR options that come before the command, as git does: `mur -C DIR stop`
+// acts where `mur stop -C DIR` does (#373). Until 2026-11-10 only the second worked, and the first
+// said `unknown command "-C"`. main changes to each directory in turn, each relative to the one
+// before, as git's do, so every command takes it, the hook included, and a -C after the command is
+// then relative to it. The flag package's other spellings, --C and -C=DIR, are taken too.
+func leadingDirs(args []string) (dirs, rest []string, err error) {
+	for len(args) > 0 {
+		name, value, hasValue := strings.Cut(args[0], "=")
+		if name != "-C" && name != "--C" {
+			break
+		}
+		if !hasValue {
+			if len(args) < 2 {
+				return nil, nil, fmt.Errorf("%s needs a directory", name)
+			}
+			value, args = args[1], args[1:]
+		}
+		if value == "" {
+			return nil, nil, fmt.Errorf("%s needs a directory", name)
+		}
+		dirs, args = append(dirs, value), args[1:]
+	}
+	return dirs, args, nil
 }
 
 // hookAgent is the agent `mur hook` runs for, from its arguments: "" for Claude Code, or the one
@@ -208,7 +244,15 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 	if !join.Joined(*gitDir) {
 		return fmt.Errorf("this clone hasn't joined %s, so its daemon won't run (`%s join` joins, after asking the user)", brand.Product, brand.Command)
 	}
-	logger := log.New(os.Stderr, "", log.LstdFlags)
+	// The log is kept under a size while the daemon runs, and credentials in URLs out of it, so
+	// that it can be sent to whoever helps debug this device.
+	logs := *logPath
+	if logs == "" {
+		logs = filepath.Join(client.StateDir(*gitDir), "daemon.log") // where StartDaemon points stderr
+	}
+	out := logfile.New(os.Stderr, logs, logfile.Max)
+	log.SetOutput(out)
+	logger := log.New(out, "", log.LstdFlags)
 	releases := newReleaseWatch(version, *gitDir)
 	inherited := page
 	page = nil // Run takes it

@@ -5,6 +5,10 @@
 //   CENSUS_KEY=... node site/census/census.mjs            # every repo the site lists
 //   node site/census/census.mjs --dry github.com/a/b      # print one repo's counts; send nothing
 //
+// Run by hand with a key and a repo named, it sends that repo's counts. The stats then take it for
+// the census's last run (src/repos.js, RUN), and every other repo looks missed by it until the
+// next scheduled run.
+//
 // For each repo it fetches two public things, as any reader could, and commits only:
 // - its bus, refs/murmur/mesh/* and refs/murmur/presence/*: each device's log of events (sessions
 //   started, messages) and its presence (which names the git user);
@@ -18,7 +22,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -295,6 +299,72 @@ export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, l
   }
 }
 
+// The run as Markdown, for its page in Actions ($GITHUB_STEP_SUMMARY), written as it goes: a
+// head with how many repos are listed, then each repo's row as it is done, with its counts or why
+// it has none, then the totals of those sent and how many were sent, skipped, not read and not
+// sent. A run cancelled at its job's timeout keeps the rows it wrote, without the end.
+//
+// A reason can be git's or the site's words, so it is kept to one line, and anything Markdown or
+// a table would read in it is escaped.
+const COLUMNS = ['Devices', 'People', 'Matched to an account', 'Sessions', 'Messages', 'Records', 'Contributors', 'Days'];
+const KINDS = ['sent', 'counted', 'skipped', 'not read', 'not sent'];
+const cells = cs => `| ${cs.join(' | ')} |\n`;
+const numbers = c => [c.devices.length, new Set(c.devices.map(v => v.person ?? v.id)).size,
+  c.devices.filter(v => v.account).length, c.totals.sessions, c.totals.messages, c.totals.records,
+  c.contributors.length, c.days.length];
+const text = s => String(s).replace(/\s+/g, ' ').trim().slice(0, 300).replace(/[\\`*_[\]<>|]/g, '\\$&');
+
+export function summaryHead(listed, now) {
+  const head = `## Census, ${now.toISOString().slice(0, 16).replace('T', ' ')} UTC\n\n`;
+  if (!listed) return head + 'No repos listed.\n';
+  return head + `${listed} ${listed === 1 ? 'repo' : 'repos'} to count.\n\n` +
+    cells(['Repo', 'Result', ...COLUMNS]) + cells(['---', '---', ...COLUMNS.map(() => '---:')]);
+}
+
+export function summaryRow(r) {
+  const m = REPO.exec(r.name);
+  const repo = m ? `[${text(`${m[1]}/${m[2]}`)}](https://${r.name})` : text(r.name);
+  return cells([repo, text(r.why ? `${r.kind}: ${r.why}` : r.kind), ...(r.counts ? numbers(r.counts) : COLUMNS.map(() => ''))]);
+}
+
+// The summary's totals, kept as numbers as each repo is done (tallied), so that a run holds one
+// repo's counts at a time: a big repo's contributors and days are dropped once its row is written.
+export function summaryTally() {
+  return { repos: 0, kinds: {}, sent: 0, sentKind: '', total: COLUMNS.map(() => 0) };
+}
+
+export function tallied(t, r) {
+  t.repos++;
+  t.kinds[r.kind] = (t.kinds[r.kind] ?? 0) + 1;
+  if (r.kind === 'sent' || r.kind === 'counted') {
+    t.sent++;
+    t.sentKind ||= r.kind;
+    numbers(r.counts).forEach((n, i) => { t.total[i] += n; });
+  }
+}
+
+export function summaryEnd(t) {
+  if (!t.repos) return '';
+  const tally = KINDS.map(k => [k, t.kinds[k] ?? 0]).filter(([, n]) => n);
+  return cells(['**Total**', `${t.sent} ${t.sentKind || 'sent'}`, ...t.total]) +
+    `\n${t.repos} ${t.repos === 1 ? 'repo' : 'repos'}: ${tally.map(([k, n]) => `${n} ${k}`).join(', ')}.\n`;
+}
+
+// Appends to $GITHUB_STEP_SUMMARY, when it is set. A write that fails is logged once, and the rest
+// are dropped: the summary is for reading, and the run goes on without it.
+function stepSummary() {
+  let file = process.env.GITHUB_STEP_SUMMARY;
+  return s => {
+    if (!file || !s) return;
+    try {
+      appendFileSync(file, s);
+    } catch (err) {
+      console.error(`writing the run's summary: ${err.message}`);
+      file = null;
+    }
+  };
+}
+
 async function call(path, init = {}) {
   const res = await fetch(SITE + path, {
     ...init,
@@ -325,6 +395,10 @@ export async function main(args, { read = census } = {}) {
   if (!names.length) names = (await call('/v1/census')).repos;
   let unread = 0;
   const skipped = [], unsent = [];
+  const write = stepSummary();
+  write(summaryHead(names.length, new Date()));
+  const tally = summaryTally(); // r is { name, kind, why, counts }, written and tallied, then let go
+  const done = r => (tallied(tally, r), write(summaryRow(r)));
   for (const name of names) {
     let c;
     try {
@@ -338,10 +412,13 @@ export async function main(args, { read = census } = {}) {
         // so neither can carry a workflow command of its own.
         if (process.env.GITHUB_ACTIONS === 'true') console.log(`::warning title=census::${name} skipped: ${err.message}`);
         skipped.push(name);
+        done({ name, kind: 'skipped', why: err.message });
         continue;
       }
-      console.error(`${name}: not counted: ${String(err.stderr || err.message).trim()}`);
+      const why = String(err.stderr || err.message).trim();
+      console.error(`${name}: not counted: ${why}`);
       unread++;
+      done({ name, kind: 'not read', why });
       continue;
     }
     const line = `${name}: ${c.devices.length} devices, ${new Set(c.devices.map(v => v.person ?? v.id)).size} people, ` +
@@ -350,17 +427,22 @@ export async function main(args, { read = census } = {}) {
     if (dry) {
       console.log(line);
       console.log(JSON.stringify(c.days));
+      done({ name, kind: 'counted', why: 'not sent (--dry)', counts: c });
       continue;
     }
     try {
       await call('/v1/census', { method: 'POST', body: JSON.stringify(c) });
     } catch (err) {
-      console.error(`${name}: not sent: ${String(err.message || err).trim()}`);
+      const why = String(err.message || err).trim();
+      console.error(`${name}: not sent: ${why}`);
       unsent.push(name);
+      done({ name, kind: 'not sent', why, counts: c });
       continue;
     }
     console.log(line);
+    done({ name, kind: 'sent', counts: c });
   }
+  write(summaryEnd(tally));
   if (unsent.length) throw new Error(`${unsent.length} of ${names.length} repos counted but not sent: ${unsent.join(', ')}`);
   if (unread + skipped.length === names.length && names.length) throw new Error('no repo could be counted');
 }

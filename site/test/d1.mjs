@@ -25,6 +25,19 @@ export function recordingD1(listed = []) {
   };
 }
 
+// Answers repoNumbers' queries with `repos`, rows as its first query makes them, and the newest of
+// their `counted` times as its MAX(counted); its other queries find nothing. For what the stats say
+// of given rows, without SQLite.
+export function statsD1(repos) {
+  const at = repos.map(r => r.counted).filter(Boolean).sort().at(-1) ?? null;
+  const answer = sql => (/LEFT JOIN repo_census/.test(sql) && /AS week/.test(sql) ? repos : /MAX\(counted\)/.test(sql) ? [{ at }] : []);
+  const statement = (sql, args = []) => ({ sql, args, bind: (...a) => statement(sql, a) });
+  return {
+    prepare: sql => statement(sql),
+    async batch(stmts) { return stmts.map(s => ({ results: answer(s.sql) })); },
+  };
+}
+
 // D1 is SQLite, so node's own runs the site's SQL as D1 would, on a database made from migrations/.
 // node:sqlite loads without a flag from Node 22.13 and 23.4 (22.5 to 22.12 need
 // --experimental-sqlite). null where it doesn't: the tests that need it skip, and node --test
