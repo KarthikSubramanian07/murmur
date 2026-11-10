@@ -185,8 +185,12 @@ file, removes the file when it begins to stop, before it gives up its port, and 
 only when it has gone. So a daemon.json beside a free lock is stale and is removed, a starting
 daemon removes one as soon as it holds the lock, and a client that loses its daemon forgets the
 address. A lock found held is tried again 25 ms later, as clients hold it for a moment too. This
-holds where the state directory is private to its user: it is made 0700 on Unix, and on Windows
-has whatever access the clone's location gives. A ping that proves the daemon knows the token was
+holds where the state directory is private to its user. The token lets its holder name the program
+the daemon runs to hand a message to T3, so reading the file is running code as the user.
+`.git/murmur` is made 0700, and on Windows, where modes do nothing, each daemon start gives it an
+access list of its own that lets in only the user, SYSTEM and Administrators, and rewrites the
+files already in it (2026-11-09). Before that a clone outside the user's profile left it
+readable by every user. A ping that proves the daemon knows the token was
 set aside: an older daemon couldn't give the proof, and a client must still talk to one to replace
 it.
 
