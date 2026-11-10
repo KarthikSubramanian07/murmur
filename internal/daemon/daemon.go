@@ -537,10 +537,13 @@ type state struct {
 
 	// Person is the name this device's human chose on the page, "" until they do, and PersonSince
 	// is when (#242). People is the address of every person's name this daemon has seen, in presence
-	// or on a message. It only grows, so a person's earlier name still reaches them.
-	Person      string            `json:"person,omitempty"`
-	PersonSince time.Time         `json:"personSince,omitzero"`
-	People      map[string]string `json:"people,omitempty"`
+	// or on a message: the first address seen with it, unless the registry gives the name to another
+	// (see notePersonLocked). It only grows, so a person's earlier name still reaches them.
+	// PeopleOnMany is the names seen on more than one device, whose turns say which device sent them.
+	Person       string            `json:"person,omitempty"`
+	PersonSince  time.Time         `json:"personSince,omitzero"`
+	People       map[string]string `json:"people,omitempty"`
+	PeopleOnMany map[string]bool   `json:"peopleOnMany,omitempty"`
 	// PersonClaims is every person's name in the names registry, to the address that claimed it
 	// first (#268). It only grows, as Used does, and a name in it is that person's: a name chosen
 	// elsewhere at the same time is refused, and one held from before the registry had people is
@@ -1041,7 +1044,8 @@ func (d *Daemon) loadState() error {
 		TagsFrom: map[string]string{}, Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
-		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{}}
+		Tags: map[string]*tags.State{}, People: map[string]string{}, PeopleOnMany: map[string]bool{},
+		PersonClaims: map[string]string{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1100,6 +1104,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.People == nil {
 		d.st.People = map[string]string{}
+	}
+	if d.st.PeopleOnMany == nil {
+		d.st.PeopleOnMany = map[string]bool{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

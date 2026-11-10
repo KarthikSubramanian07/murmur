@@ -42,16 +42,21 @@ func (d *Daemon) ownPersonMsgLocked(e bus.Event) bool {
 }
 
 // resolvePersonLocked finds who is called name: whoever claimed it in the names registry (#268), then
-// this device's person, then a person in another device's presence, then anyone this daemon has seen
-// with that name, which reaches a person whose daemon has gone: their device reads the message when
-// it comes back. The last three are for names from before people were in the registry, and for a
-// daemon that hasn't read it yet. Caller holds mu.
+// this device's person, then the first person this daemon saw with that name (People), which reaches
+// a person whose daemon has gone: their device reads the message when it comes back. Then a person in
+// another device's presence, for a state from before People held everyone presence shows. The last
+// three are for names from before people were in the registry, and for a daemon that hasn't read it
+// yet. The first sighting goes before presence because any device can say its person has any name,
+// and the first to be seen with one keeps it, as with sessions' names. Caller holds mu.
 func (d *Daemon) resolvePersonLocked(name string) (string, bool) {
 	if addr := d.st.PersonClaims[name]; addr != "" {
 		return addr, true
 	}
 	if name == d.st.Person && name != "" {
 		return d.personAddr(), true
+	}
+	if addr, ok := d.st.People[name]; ok {
+		return addr, true
 	}
 	for _, dev := range sortedKeys(d.peers) {
 		for _, s := range d.peers[dev].pres.Sessions {
@@ -60,8 +65,7 @@ func (d *Daemon) resolvePersonLocked(name string) (string, bool) {
 			}
 		}
 	}
-	addr, ok := d.st.People[name]
-	return addr, ok
+	return "", false
 }
 
 // personNameOfLocked is the name of the person at addr, "" if addr isn't a person's or their name
@@ -89,6 +93,21 @@ func (d *Daemon) personNameOfLocked(addr string) string {
 		}
 	}
 	return found
+}
+
+// personSenderLocked is the name a person's message e is shown from: the one it carries, which a
+// daemon that never saw their presence still has, or else the one their device's presence gives.
+// Either counts only if it doesn't reach someone else, since a message or a presence can carry any
+// name: a name that is another person's isn't shown, and the message is from its address. onMany
+// says the name has been seen on more than one device, so whoever reads the message should be told
+// which device sent it. Caller holds mu.
+func (d *Daemon) personSenderLocked(e bus.Event) (name string, onMany bool) {
+	for _, n := range []string{e.Person, d.personNameOfLocked(e.From)} {
+		if addr, ok := d.resolvePersonLocked(n); n != "" && (!ok || addr == e.From) {
+			return n, d.st.PeopleOnMany[n]
+		}
+	}
+	return "", false
 }
 
 // personInfoLocked is this device's person as presence carries them. Last active is when a page

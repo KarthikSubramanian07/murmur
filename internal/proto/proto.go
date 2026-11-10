@@ -325,12 +325,15 @@ type MessageView struct {
 	FromAgent  string `json:"fromAgent,omitempty"`
 	FromBranch string `json:"fromBranch,omitempty"`
 	// FromOwner is the sender's person: the git user name on its device, where known.
-	FromOwner string    `json:"fromOwner,omitempty"`
-	To        string    `json:"to"` // the address the message was sent to, whatever it was sent by
-	ToName    string    `json:"toName,omitempty"`
-	Subject   string    `json:"subject"`
-	Body      string    `json:"body,omitempty"`
-	At        time.Time `json:"at"`
+	FromOwner string `json:"fromOwner,omitempty"`
+	// FromDevice is the sender's device, set when the sender's name has been seen on more than one,
+	// so a turn says which one sent it; a name says nothing of who is behind it.
+	FromDevice string    `json:"fromDevice,omitempty"`
+	To         string    `json:"to"` // the address the message was sent to, whatever it was sent by
+	ToName     string    `json:"toName,omitempty"`
+	Subject    string    `json:"subject"`
+	Body       string    `json:"body,omitempty"`
+	At         time.Time `json:"at"`
 	// Introduced says the session this goes to as a turn has had a turn from the same sender before,
 	// so the turn needn't say again what agent the sender is and whose machine it is on (#216).
 	Introduced bool `json:"introduced,omitempty"`
