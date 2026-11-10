@@ -293,9 +293,7 @@ func (s pageSource) Health(ctx context.Context) (web.Health, error) {
 		out.Sync.LastOKAge = int64(now.Sub(d.lastPollOK) / time.Second)
 	}
 	for _, ref := range sortedKeys(d.unfetched) {
-		f := d.unfetched[ref]
-		out.Fetches.Refs = append(out.Fetches.Refs, web.RefHealth{Ref: ref, Kind: kindNames[kindOf(ref)],
-			Slow: f.slow, Tries: f.tries, Landed: f.landed, Next: f.at})
+		out.Fetches.Refs = append(out.Fetches.Refs, refHealth(ref, d.unfetched[ref]))
 	}
 	d.mu.Unlock()
 
@@ -310,6 +308,17 @@ func (s pageSource) Health(ctx context.Context) (web.Health, error) {
 	out.Delivery = web.DeliveryHealth{T3: h.handoffs[0], Socket: h.handoffs[1], Hook: h.hook}
 	out.Daemon.Poll, out.Daemon.PollEvery = h.poll, h.every.Seconds()
 	return out, nil
+}
+
+// refHealth is ref's failed fetch as the page sees it. For a slow ref, at is already its next try;
+// for any other it is when the fetch failed, and the next try is fetchRetry after that. A zero at
+// is the next sync.
+func refHealth(ref string, f fetchFail) web.RefHealth {
+	next := f.at
+	if !f.slow && !f.at.IsZero() {
+		next = f.at.Add(fetchRetry)
+	}
+	return web.RefHealth{Ref: ref, Kind: kindNames[kindOf(ref)], Slow: f.slow, Tries: f.tries, Landed: f.landed, Next: next}
 }
 
 // remote is the remote's URL, read again once it is a minute old. No lock is held while git runs.

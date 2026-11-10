@@ -391,7 +391,7 @@ func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]str
 			batch = append(batch, ref)
 		case f.slow:
 			failed[ref] = errors.New("too slow to fetch within a sync; being fetched apart")
-		case time.Since(f.at) < time.Minute:
+		case time.Since(f.at) < fetchRetry:
 			failed[ref] = errors.New("failed less than a minute ago")
 		default:
 			alone = append(alone, ref)

@@ -513,6 +513,9 @@ type fetchFail struct {
 	landed bool
 }
 
+// fetchRetry is how long after its failure a ref that failed to fetch is tried again on its own.
+const fetchRetry = time.Minute
+
 // staleTempAge is how long a temporary download has gone unwritten before it is taken for one a
 // stopped git left behind (see clearStaleTemp).
 const staleTempAge = 10 * time.Minute

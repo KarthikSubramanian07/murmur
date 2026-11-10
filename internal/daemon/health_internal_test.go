@@ -120,3 +120,19 @@ func TestPushKindIsTheRefsExactShape(t *testing.T) {
 		}
 	}
 }
+
+// A failed fetch's next try is when it will be: a minute after an ordinary failure, the time set
+// for a slow ref, and the next sync after a stale lock was cleared.
+func TestRefHealthSaysWhenItIsTriedAgain(t *testing.T) {
+	failed := time.Now()
+	if got := refHealth("refs/murmur/mesh/dev1", fetchFail{sha: "a", at: failed}); !got.Next.Equal(failed.Add(fetchRetry)) || got.Kind != "mesh" {
+		t.Errorf("an ordinary failure: %+v, want the next try at %v", got, failed.Add(fetchRetry))
+	}
+	later := failed.Add(8 * time.Minute)
+	if got := refHealth("refs/murmur/presence/dev1", fetchFail{sha: "a", at: later, slow: true, tries: 3}); !got.Next.Equal(later) || !got.Slow || got.Tries != 3 {
+		t.Errorf("a slow ref: %+v, want the next try at %v", got, later)
+	}
+	if got := refHealth("refs/murmur/mesh/dev1", fetchFail{sha: "a"}); !got.Next.IsZero() {
+		t.Errorf("a ref to try at the next sync: %+v", got)
+	}
+}
