@@ -67,11 +67,10 @@ func Clean(s string) string {
 	return s
 }
 
-// CodexDir is where Codex keeps its state: CODEX_HOME, else ~/.codex.
-func CodexDir() string {
-	if d := os.Getenv("CODEX_HOME"); d != "" {
-		return d
-	}
+// DefaultCodexDir is where Codex keeps its state when CODEX_HOME isn't set: ~/.codex. It doesn't
+// read CODEX_HOME: the caller is the daemon, which one session started for all of them, so its own
+// CODEX_HOME is that session's home and says nothing about the others (#88).
+func DefaultCodexDir() string {
 	h, err := os.UserHomeDir()
 	if err != nil {
 		return ""

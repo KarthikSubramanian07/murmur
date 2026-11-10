@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,13 @@ func Init(ctx context.Context, dir string) ([]string, error) {
 	var changed []string
 	for _, s := range steps {
 		path := filepath.Join(top, filepath.FromSlash(s.name))
-		b, err := os.ReadFile(path)
+		if err := inTree(top, path, s.name); err != nil {
+			if s.optional {
+				continue // as Push passes over a config file it can't follow
+			}
+			return changed, err
+		}
+		b, err := readRepoFile(path)
 		exists := err == nil
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			if s.optional {
@@ -59,10 +66,61 @@ func Init(ctx context.Context, dir string) ([]string, error) {
 	return changed, nil
 }
 
+// inTree refuses a path that leads out of the working tree at top through a symbolic link, as Push
+// refuses one in its commit: the link is the repo's, a commit can point it anywhere (a shell's
+// startup file, a JSON file init would rewrite or delete), and init edits only the repo. A link
+// into .git is refused too, and so is a link to nothing, which a write would create wherever it
+// points. Name is the path as the user knows it.
+func inTree(top, path, name string) error {
+	real, err := filepath.EvalSymlinks(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if fi, lerr := os.Lstat(path); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+			target, _ := os.Readlink(path)
+			return fmt.Errorf("%s is a symbolic link to %s, which isn't there, so init leaves it alone", name, target)
+		}
+		return nil // nothing there; init creates only AGENTS.md and CLAUDE.md, at the top
+	}
+	if err != nil {
+		return err
+	}
+	if t, err := filepath.EvalSymlinks(top); err == nil {
+		top = t
+	}
+	rel, err := filepath.Rel(top, real)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("%s leads to %s, outside the repo, through a symbolic link, so init leaves it alone", name, real)
+	}
+	if first, _, _ := strings.Cut(filepath.ToSlash(rel), "/"); isGitDir(top, first) {
+		return fmt.Errorf("%s leads to %s, inside .git, through a symbolic link, so init leaves it alone", name, real)
+	}
+	return nil
+}
+
+// isGitDir reports whether first, a name at the top of the working tree, is its .git. On a disk
+// that ignores case, as macOS's and Windows' do by default, .GIT is .git too, and on Windows a
+// short name can be; so the two are compared as files, and by name ignoring case as well.
+func isGitDir(top, first string) bool {
+	if strings.EqualFold(first, ".git") {
+		return true
+	}
+	g, err := os.Stat(filepath.Join(top, ".git"))
+	if err != nil {
+		return false
+	}
+	f, err := os.Stat(filepath.Join(top, first))
+	return err == nil && os.SameFile(f, g)
+}
+
 // writeOut makes a step's change to the file at path. A file it removes takes its directory with it
 // when nothing else is in that, as .claude is when it held only the settings init cleaned.
 func writeOut(top, path string, e edited) error {
 	if !e.remove {
+		// Init reads every file it edits through readRepoFile, and so does the marker check. A file
+		// that the edit took past what that reads would no longer count as marked, so init would
+		// report success on a repo that doesn't say it uses Murmur.
+		if len(e.data) > maxRepoFile {
+			return fmt.Errorf("the file would be over %d MiB, more than %s reads", maxRepoFile>>20, brand.Command)
+		}
 		if err := os.WriteFile(path, e.data, 0o644); err != nil {
 			return fmt.Errorf("couldn't rewrite the file: %w", err)
 		}
@@ -129,11 +187,47 @@ func Marked(top string) bool { return markedTree(top) || markedUpstream(top) }
 // markedTree reports whether the working tree at top has the marker in either file.
 func markedTree(top string) bool {
 	for _, name := range markerFiles {
-		if b, err := os.ReadFile(filepath.Join(top, name)); err == nil && bytes.Contains(b, []byte(markStart)) {
+		if b, err := readRepoFile(filepath.Join(top, name)); err == nil && bytes.Contains(b, []byte(markStart)) {
 			return true
 		}
 	}
 	return false
+}
+
+// maxRepoFile is the most readRepoFile reads. Codex reads only the first 32 KiB of an AGENTS.md by
+// default; 4 MiB is over a hundred times that, so no file an agent really reads comes near it, and
+// reading one every 2 seconds is still cheap.
+const maxRepoFile = 4 << 20
+
+// readRepoFile reads a file of the working tree for the marker check and for init: a regular file,
+// or a link to one (CLAUDE.md is often a link to AGENTS.md), of at most maxRepoFile. The tree holds
+// whatever a commit put there, someone else's pull request included, and every session's MCP server
+// reads the marker files every 2 seconds: a link to /dev/zero would be read until memory ran out,
+// /dev/stdin would swallow the server's own requests, and a terminal or a pipe would block it.
+func readRepoFile(path string) ([]byte, error) {
+	if fi, err := os.Stat(path); err != nil {
+		return nil, err
+	} else if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s isn't a regular file", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil {
+		return nil, err
+	} else if !fi.Mode().IsRegular() { // replaced between the two looks
+		return nil, fmt.Errorf("%s isn't a regular file", path)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxRepoFile+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxRepoFile {
+		return nil, fmt.Errorf("%s is over %d MiB, more than any file an agent reads", path, maxRepoFile>>20)
+	}
+	return b, nil
 }
 
 // upstreamRecheck is how long markedUpstream's answer for a working tree stands. The MCP server asks
