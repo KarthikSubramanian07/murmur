@@ -103,6 +103,8 @@ type device struct {
 	titleEvery time.Duration
 	// fetchLimit is FetchLimit; zero takes the daemon's default.
 	fetchLimit time.Duration
+	// firstSync is FirstSyncLimit; zero takes the daemon's default.
+	firstSync time.Duration
 	// consent and consentPoll are the daemon's options of the same names; a nil consent means the
 	// user joined, always.
 	consent     func() bool
@@ -188,7 +190,7 @@ func (d *device) start() {
 	go func() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
-			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll, FetchLimit: d.fetchLimit,
+			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll, FetchLimit: d.fetchLimit, FirstSyncLimit: d.firstSync,
 			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState, Log: logger})

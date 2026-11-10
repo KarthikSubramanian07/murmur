@@ -119,11 +119,15 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 	if req.Op == proto.OpHello {
+		d.awaitFirstSync(ctx)
 		d.hello(ctx, conn, r, req.Hello)
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
+	if req.Op == proto.OpWho || req.Op == proto.OpSend || req.Op == proto.OpLookup {
+		d.awaitFirstSync(ctx)
+	}
 	resp := d.handle(ctx, req)
 	resp.ClaudeSession = d.claudeSessionOf(req.Session)
 	writeResp(conn, resp)
