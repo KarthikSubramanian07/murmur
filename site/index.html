@@ -547,32 +547,39 @@ vec4 light(vec2 q, vec2 s, float f) {
   const T0 = 0;
   const STILL_T = -1;  // reduced motion: the band held where it crosses the wordmark
   const DUR = 4.2;
+  const END = DUR - .8;  // the pass starts .8 s in, so it is over at 3.4 s
   const ease = x => x < 0 ? 0 : x > 1 ? 1 : .5 * x + .5 * x * x * (3 - 2 * x);
   // The pass starts right away and is over within 3.4 s. It doesn't repeat on its own: moving
   // content that runs longer than 5 s would need a way to pause it (WCAG 2.2.2).
   const progress = t => {
     if (t < 0) return .46;
-    return t > DUR - .8 ? -1 : ease((t + .8) / DUR);
+    return t > END ? -1 : ease((t + .8) / DUR);
   };
   const IDLE = t => { const p = progress(t); return p <= 0 || p >= 1; };
   const SET = (gl, u, t) => { gl.uniform1f(u.uP, progress(t)); };
 
 
+  // Lines of small text the light fades out behind (see measure); the shader loops over this many.
+  const LINES = 24;
   const FS = `precision highp float;
-uniform vec2 uRes; uniform float uDpr, uT, uK, uSc; uniform vec4 uWord, uText, uNote;
+uniform vec2 uRes; uniform float uDpr, uT, uK, uSc, uN, uSmall; uniform vec4 uWord, uLines[${LINES}];
 const vec3 BUT = vec3(.992, .933, .549);
 const vec3 CRM = vec3(1., .984, .918);
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-// 1 inside a box (centre, half-size), easing to 0 at 48px outside it.
-float cover(vec2 q, vec4 b) { vec2 d = abs(q - b.xy) - b.zw; return 1. - smoothstep(0., 48., max(d.x, d.y)); }
+// 1 inside a box (centre, half-size), easing to 0 at 28px outside it.
+float cover(vec2 q, vec4 b) { vec2 d = abs(q - b.xy) - b.zw; return 1. - smoothstep(0., 28., max(d.x, d.y)); }
 ${LIGHT}
 void main() {
   vec2 q = vec2(gl_FragCoord.x, uRes.y * uDpr - gl_FragCoord.y) / uDpr;
   float f = fract(q.x / 12.);
   vec2 s = vec2(q.x + uK * (f - .5), q.y);
   vec4 c = light(q, s, f);
-  // The light goes out behind the words, so the cream text keeps its 4.5:1 on the blue as it passes.
-  c *= 1. - max(cover(q, uText), cover(q, uNote));
+  // The light goes out behind each line of the small text (the first uSmall boxes), so its cream keeps
+  // 4.5:1 on the blue as the band passes, and dims to 40% behind the headline's, large text that needs
+  // 3:1, so the band still reads as one stroke across it.
+  float m = 0.;
+  for (int i = 0; i < ${LINES}; i++) { if (float(i) >= uN) break; m = max(m, cover(q, uLines[i]) * (float(i) < uSmall ? 1. : .6)); }
+  c *= 1. - m;
   float n = (hash(gl_FragCoord.xy) - .5) / 255.;
   gl_FragColor = vec4(clamp(c.rgb + n, 0., 1.), clamp(c.a + n, 0., 1.));
 }`;
@@ -598,12 +605,12 @@ void main() {
   gl.enableVertexAttribArray(loc);
   gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
   const u = {};
-  for (const n of ['uRes', 'uDpr', 'uT', 'uK', 'uSc', 'uWord', 'uText', 'uNote', ...UNIFORMS]) u[n] = gl.getUniformLocation(prog, n);
+  for (const n of ['uRes', 'uDpr', 'uT', 'uK', 'uSc', 'uN', 'uSmall', 'uWord', 'uLines', ...UNIFORMS]) u[n] = gl.getUniformLocation(prog, n);
 
   // The hero's size, and where the word's letters sit in it (CSS px, y down), as centre and
   // half-size. "mur" is all x-height letters: in its .8em line box the glyphs start about .19em
   // below the top and end about .04em above the bottom. On a phone it is two lines, mur over mur.
-  const view = { w: 1, h: 1, dpr: 1, word: [0, 0, 1, 1], text: [0, 0, 1, 1], note: [0, -999, 1, 1] };
+  const view = { w: 1, h: 1, dpr: 1, word: [0, 0, 1, 1], text: [0, 0, 1, 1], note: [0, -999, 1, 1], lines: new Float32Array(4 * LINES), nLines: 0, nSmall: 0 };
   const measure = () => {
     const r = hero.getBoundingClientRect();
     view.dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
@@ -634,6 +641,19 @@ void main() {
     const q = s => hero.querySelector(s);
     view.text = box([q('h1'), q('.st-copy p'), q('.button')]) || view.text;
     view.note = box([q('.agent-note')]) || view.note;
+    // Each line box of the line under the headline and of the note, padded a little, then the
+    // headline's.
+    view.lines = new Float32Array(4 * LINES);
+    view.nLines = 0;
+    for (const e of [q('.st-copy p'), q('.agent-note'), q('h1')]) {
+      if (!e) continue;
+      if (e.matches('h1')) view.nSmall = view.nLines;
+      const g = document.createRange(); g.selectNodeContents(e);
+      for (const b of g.getClientRects()) {
+        if (view.nLines >= LINES || !b.width) continue;
+        view.lines.set([b.left + b.width / 2 - r.left, b.top + b.height / 2 - r.top, b.width / 2 + 6, b.height / 2 + 2], 4 * view.nLines++);
+      }
+    }
   };
 
   const still = matchMedia('(prefers-reduced-motion: reduce)');
@@ -654,14 +674,15 @@ void main() {
     gl.uniform1f(u.uK, narrow.matches ? 9 : 24);
     gl.uniform1f(u.uSc, Math.min(1.15, Math.max(.6, view.w / 1440)));
     gl.uniform4fv(u.uWord, view.word);
-    gl.uniform4fv(u.uText, view.text);
-    gl.uniform4fv(u.uNote, view.note);
+    gl.uniform4fv(u.uLines, view.lines);
+    gl.uniform1f(u.uN, view.nLines);
+    gl.uniform1f(u.uSmall, view.nSmall);
     SET(gl, u, tt, view);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   };
-  const running = () => !lost && onScreen && !document.hidden && !still.matches && t < DUR;
+  const running = () => !lost && onScreen && !document.hidden && !still.matches && t <= END;
   // If the GPU drops the context, stop drawing; the hero is then the plain glass, with no glint.
   cv.addEventListener('webglcontextlost', () => { lost = true; if (raf) cancelAnimationFrame(raf); raf = 0; });
   const frame = now => {
