@@ -567,7 +567,8 @@ kbd {
 /* The choice made has an edge at 3:1 on the track, as its fill alone is close to the track's
  * (WCAG 1.4.11). */
 .segmented button[aria-pressed="true"],
-.segmented button[aria-selected="true"] {
+.segmented button[aria-selected="true"],
+.segmented button[aria-checked="true"] {
   background: color-mix(in oklab, var(--input) 72%, transparent);
   color: var(--foreground);
   box-shadow:
@@ -890,6 +891,12 @@ a.g-pr:hover {
 }
 .repo-row .dot.ok {
   background: var(--success);
+}
+/* A repo whose daemon isn't running is a ring, as an offline session is, not a dimmer dot (WCAG
+ * 1.4.1, 1.4.11). */
+.repo-row .dot:not(.ok) {
+  border: 1.5px solid color-mix(in oklab, var(--muted-foreground) 62%, transparent);
+  background: transparent;
 }
 .repo-row > .icon {
   flex-shrink: 0;

@@ -2235,7 +2235,7 @@ function repoMenu() {
             disabled: !!m.opening && m.opening !== r.id,
             onclick: () => openRepo(r),
           },
-          h("span", { class: "dot" + (r.running ? " ok" : "") }),
+          h("span", { class: "dot" + (r.running ? " ok" : ""), role: "img", "aria-label": r.running ? "Running" : "Not running" }),
           h("span", { class: "repo-row-text" }, h("span", { class: "tm-name truncate" }, r.name), named.get(r.name) > 1 && r.path && h("span", { class: "repo-path truncate" }, r.path)),
           m.opening === r.id ? icon("rotateCw", "spin") : r.current && icon("check"),
         ),
@@ -3755,7 +3755,27 @@ function themeSection() {
           "div",
           { class: "segmented", role: "radiogroup", "aria-label": "Theme" },
           THEMES.map(([id, label]) =>
-            h("button", { role: "radio", "aria-checked": theme === id ? "true" : "false", "aria-pressed": theme === id ? "true" : "false", "data-key": "theme-" + id, onclick: () => setTheme(id) }, label),
+            // A radio group: one Tab stop, the arrow keys move the choice (WCAG 4.1.2).
+            h(
+              "button",
+              {
+                role: "radio",
+                "aria-checked": theme === id ? "true" : "false",
+                tabindex: theme === id ? 0 : -1,
+                "data-key": "theme-" + id,
+                onclick: () => setTheme(id),
+                onkeydown: (e) => {
+                  const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+                  if (!step) return;
+                  e.preventDefault();
+                  const i = THEMES.findIndex(([t]) => t === theme);
+                  const next = THEMES[(i + step + THEMES.length) % THEMES.length][0];
+                  setTheme(next);
+                  root.querySelector(`[data-key="theme-${next}"]`)?.focus();
+                },
+              },
+              label,
+            ),
           ),
         ),
       ),
@@ -4123,6 +4143,7 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault(); // this Escape was the menu's; the phone's drawer under it stays open
     closeTagMenu();
   } else if (e.key === "Escape" && ui.repoMenu && !e.defaultPrevented) {
+    e.preventDefault(); // the drawer under it stays open, as under the tag menu
     closeRepoMenu();
   }
 });
@@ -4157,7 +4178,8 @@ document.addEventListener("keydown", (e) => {
 // #root, so a render doesn't take it away.
 // While an element's title is borrowed, the element points at the tip with aria-describedby, so a
 // screen reader still reads the title as its description.
-const tip = h("div", { class: "tip", role: "tooltip", id: "page-tip" });
+// It is a tooltip only while it shows: an empty one would be a tooltip with no name (WCAG 4.1.2).
+const tip = h("div", { class: "tip", id: "page-tip" });
 document.body.append(tip);
 let tipFor = null; // the element whose tip shows, or is about to
 let tipTimer = 0;
@@ -4199,6 +4221,7 @@ function showTip(el, atPointer) {
   const text = tipText(el);
   if (!text) return hideTip();
   tip.textContent = text;
+  tip.setAttribute("role", "tooltip");
   tip.classList.add("on");
   tipShown = true;
   const r = el.getBoundingClientRect();
@@ -4218,6 +4241,7 @@ function hideTip() {
   returnTitle(tipFor);
   tipFor = null;
   tip.classList.remove("on");
+  tip.removeAttribute("role");
 }
 
 function queueTip(el, atPointer) {
