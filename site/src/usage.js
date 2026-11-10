@@ -11,7 +11,7 @@ import statsHtml from './stats.html';
 import archiveHtml from './stats-archive.html';
 import { archiveNumbers, archiveReport } from './archive.js';
 import { repoNumbers, repoReport } from './repos.js';
-import { prefersMarkdown } from './accept.js';
+import { prefersMarkdown, wantsHtml } from './accept.js';
 
 const RELEASES = 'https://api.github.com/repos/a-Fig/murmur/releases/latest';
 const LATEST_KEY = 'https://murmur.afig.dev/_cache/latest-release';
@@ -184,14 +184,15 @@ const VIEWS = {
 
 // What a browser is shown for a stats path it can't see: a page with a language and a title (WCAG
 // 3.1.1, 2.4.2), which plain text, rendered by the browser, lacks. Anything else gets the plain line.
+// Which one depends on Accept, so caches are told so, and keep neither.
 const NOT_FOUND_HTML = '<!doctype html>\n<html lang="en">\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<meta name="robots" content="noindex">\n<title>Not found</title>\n<main><p>Not found.</p></main>\n';
 
 export async function stats(request, env) {
   const url = new URL(request.url);
-  const accept = request.headers.get('Accept') || '';
-  const notFound = () => /text\/html/i.test(accept) && !prefersMarkdown(accept)
-    ? new Response(NOT_FOUND_HTML, { status: 404, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Robots-Tag': 'noindex' } })
-    : new Response('Not found.\n', { status: 404, headers: { 'X-Robots-Tag': 'noindex' } });
+  const missing = { 'X-Robots-Tag': 'noindex', 'Vary': 'Accept', 'Cache-Control': 'no-store' };
+  const notFound = () => wantsHtml(request.headers.get('Accept'))
+    ? new Response(NOT_FOUND_HTML, { status: 404, headers: { ...missing, 'Content-Type': 'text/html; charset=utf-8' } })
+    : new Response('Not found.\n', { status: 404, headers: missing });
   const keys = String(env.STATS_KEY || '').split(/[\s,]+/).filter(Boolean);
   if (keys.length === 0) return notFound();
   const given = url.searchParams.get('key');
