@@ -41,8 +41,8 @@
 }
 
 /*
- * T3 Code's dark theme (index.css :root under @variant dark). The page is only ever dark: a light
- * one would be a second design to keep.
+ * T3 Code's dark theme (index.css :root under @variant dark), the default. Dim and Light, below,
+ * change only these tokens.
  */
 :root {
   color-scheme: dark;
@@ -122,6 +122,85 @@
   --sidebar-border: rgb(255 255 255 / 8%);
   --sidebar-icon: color-mix(in srgb, var(--sidebar-muted-foreground) 85%, var(--sidebar));
   --secondary-label: #8f8f8f;
+}
+
+/*
+ * Two more themes, picked in Settings and set on <html data-theme>. Dim is soft greys, as the page
+ * looked before it followed T3 Code (#179): a dark sidebar, a lighter list, and the conversation
+ * lightest. Light is T3 Code's light theme (index.css :root).
+ */
+:root[data-theme="dim"] {
+  --background: #2a2c32;
+  --foreground: #e3e4e8;
+  --card: #2f3238;
+  --popover: #24262b;
+  --primary: #8ea2ff;
+  --primary-foreground: #fff;
+  --muted-foreground: #9b9ea8;
+  --secondary-label: #8c8f99;
+  --message-surface: #383a42;
+  --accent: rgb(255 255 255 / 5%);
+  --border: rgb(255 255 255 / 6%);
+  --input: rgb(255 255 255 / 10%);
+  --row-hover: rgb(255 255 255 / 4%);
+  --row-selected: rgb(255 255 255 / 8%);
+  --composer: #33363c;
+  --composer-edge: rgb(255 255 255 / 6%);
+  --list: #25272c;
+}
+[data-theme="dim"] [data-app-sidebar] {
+  --sidebar: #1e2024;
+  --sidebar-foreground: #e3e4e8;
+  --sidebar-muted-foreground: #8c8f99;
+  --sidebar-row-hover: rgb(255 255 255 / 5%);
+  --sidebar-row-active: rgb(255 255 255 / 9%);
+  --sidebar-row-selected: rgb(255 255 255 / 9%);
+  --sidebar-border: transparent;
+  --secondary-label: #8c8f99;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: oklch(99.2% 0 0);
+  --foreground: oklch(21% 0.006 285.885);
+  --card: var(--white);
+  --popover: var(--white);
+  --primary: oklch(0.488 0.217 264);
+  --secondary: oklch(98.5% 0 0);
+  --secondary-foreground: oklch(27.4% 0.006 286.033);
+  --muted: oklch(98.5% 0 0);
+  --muted-foreground: oklch(55.2% 0.016 285.938);
+  --message-surface: color-mix(in srgb, oklch(92% 0.004 286.32) 55%, oklch(96.7% 0.001 286.375));
+  --accent: oklch(96.7% 0.001 286.375);
+  --accent-foreground: oklch(21% 0.006 285.885);
+  --destructive: var(--red-500);
+  --destructive-foreground: oklch(50.5% 0.213 27.518);
+  --border: oklch(92% 0.004 286.32);
+  --input: oklch(87.1% 0.006 286.286);
+  --info-foreground: oklch(48.8% 0.243 264.376);
+  --success-foreground: oklch(50.8% 0.118 165.612);
+  --warning-foreground: oklch(55.5% 0.163 48.998);
+  --pr-open: oklch(59.6% 0.145 163.225);
+  --pr-draft: oklch(55.2% 0.016 285.938);
+  --row-hover: rgb(0 0 0 / 4%);
+  --row-selected: rgb(0 0 0 / 6%);
+  --composer: var(--white);
+  --composer-edge: oklch(92% 0.004 286.32);
+  --scrollbar-thumb: rgb(217 217 217);
+  --scrollbar-thumb-hover: rgb(191 191 191);
+  --scrim: rgb(0 0 0 / 32%);
+  --shadow-popover: 0 16px 40px -18px rgb(0 0 0 / 22%);
+  --shadow-dialog: 0 24px 64px -24px rgb(0 0 0 / 28%);
+}
+[data-theme="light"] [data-app-sidebar] {
+  --sidebar: oklch(98.5% 0 0);
+  --sidebar-foreground: oklch(21% 0.006 285.885);
+  --sidebar-muted-foreground: oklch(55.2% 0.016 285.938);
+  --sidebar-row-hover: rgb(0 0 0 / 4%);
+  --sidebar-row-active: rgb(0 0 0 / 6%);
+  --sidebar-row-selected: rgb(0 0 0 / 5%);
+  --sidebar-border: oklch(92% 0.004 286.32);
+  --secondary-label: oklch(55.2% 0.016 285.938);
 }
 
 /* Base. */
@@ -2972,6 +3051,195 @@ a.g-pr:hover {
   max-width: 22rem;
   font-size: 0.8125rem;
   color: var(--muted-foreground);
+}
+
+/* ============================================================================ Faces. */
+
+/* A name's face: a round, colored initial, the color fixed by the name, with its state as a dot on
+ * its corner (green active, amber idle, red do not disturb, grey offline). The colors carry who is
+ * who across the sidebar, the list and the timeline. */
+.avatar {
+  border-radius: 999px;
+  box-shadow: none;
+  color: #fff;
+  font-weight: 600;
+}
+/* Two classes, so a face keeps its color where a list, pile or menu sets a neutral background. */
+.avatar.avatar-0,
+.avatar.avatar-person {
+  background: #5865c9;
+}
+.avatar.avatar-1 {
+  background: #2f9e6e;
+}
+.avatar.avatar-2 {
+  background: #c98a2b;
+}
+.avatar.avatar-3 {
+  background: #c4505a;
+}
+.avatar.avatar-4 {
+  background: #6b7280;
+}
+.pres-wrap > .pres,
+.avatar.dotted > .pres {
+  width: 0.625rem;
+  height: 0.625rem;
+}
+.avatar-pair {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+.avatar-pair > .avatar {
+  width: 1.375rem;
+  height: 1.375rem;
+  font-size: 0.625rem;
+  box-shadow: 0 0 0 2px var(--dot-ring, var(--background));
+}
+.avatar-pair .pres {
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+/* In the sidebar's rows, a face in place of the bare dot. */
+.side-session {
+  padding-left: 1.25rem;
+  gap: 0.5rem;
+}
+.side-session > .pres-wrap {
+  align-self: flex-start;
+  margin-top: 0.0625rem;
+}
+.side-session .avatar,
+.settled-row .avatar {
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: 0.75rem;
+}
+.settled-row {
+  padding-left: 1.25rem;
+}
+.settled-row .pres-wrap .avatar,
+.settled-row > .avatar {
+  width: 1.375rem;
+  height: 1.375rem;
+  font-size: 0.625rem;
+}
+.s-main > .pres-wrap .avatar,
+.g-settled > .avatar {
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.8125rem;
+}
+
+/* A group chat: a square of up to four members' faces. */
+.g-grid {
+  position: relative;
+  display: grid;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  gap: 2px;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.g-grid .avatar {
+  width: 100%;
+  height: 100%;
+  font-size: 0.5rem;
+  font-weight: 700;
+}
+.chat-row > .g-grid {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+.g-grid-1 {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+.g-grid-1 .avatar {
+  font-size: 0.8125rem;
+}
+.g-grid-2 {
+  grid-template-rows: 1fr;
+  align-items: center;
+}
+.g-grid-2 .avatar {
+  height: 0.9375rem;
+}
+.avatar.g-more {
+  background: color-mix(in oklab, var(--muted-foreground) 35%, var(--background));
+  color: var(--foreground);
+  font-size: 0.4375rem;
+}
+
+/* Everyone else's message, and Recent's: the sender's face, then their name over the message. A run
+ * from one sender shows the face once. */
+.chat-msg.chat-msg-face {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.875rem;
+  margin-inline: -0.75rem;
+  padding: 0.125rem 0.75rem;
+  border-radius: var(--radius-lg);
+}
+.chat-msg-face.chat-msg-first {
+  padding-top: 0.375rem;
+}
+.chat-msg-face:hover {
+  background: var(--row-hover);
+}
+.chat-msg-face > .avatar,
+.chat-msg-face > .avatar-gap {
+  flex-shrink: 0;
+  width: 2.5rem;
+}
+.chat-msg-face > .avatar {
+  height: 2.5rem;
+  margin-top: 0.125rem;
+  font-size: 1rem;
+}
+.chat-msg-main {
+  flex: 1;
+  min-width: 0;
+}
+.chat-msg-face .chat-msg-head {
+  margin-bottom: 0.0625rem;
+}
+.chat-msg-face .chat-msg-from {
+  font-size: 0.9375rem;
+}
+.chat-msg-face .chat-msg-subject {
+  font-weight: 600;
+}
+.msg-tools {
+  position: absolute;
+  top: -0.625rem;
+  right: 0.75rem;
+  display: flex;
+  padding: 0.125rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--popover);
+  box-shadow: var(--shadow-xs-10);
+  opacity: 0;
+  transition: opacity 0.15s var(--ease);
+}
+.chat-msg-face:hover > .msg-tools,
+.chat-msg-face:focus-within > .msg-tools {
+  opacity: 1;
+}
+.g-to-who .avatar {
+  width: 1rem;
+  height: 1rem;
+  font-size: 0.5625rem;
+}
+
+/* Dim's three tones: the conversation list sits between the sidebar and the conversation. */
+[data-theme="dim"] .chat-list {
+  --dot-ring: var(--list);
+  background: var(--list);
+  border-right: 0;
 }
 
 /* =============================================================================== Phones. */

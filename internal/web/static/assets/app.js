@@ -13,6 +13,30 @@ const VIEWS = ["sessions", "messages", "recent", "settings"];
 const TITLES = { sessions: "Sessions", messages: "Conversations", recent: "Recent", settings: "Settings" };
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
+// The page's look, chosen in Settings and kept in this browser: black like T3 Code, soft greys like
+// a chat app, or light. style.css keys each one on <html data-theme>.
+const THEME_KEY = NAME + ":theme";
+const THEMES = [
+  ["dark", "Dark"],
+  ["dim", "Dim"],
+  ["light", "Light"],
+];
+let theme = "dark";
+try {
+  const t = localStorage.getItem(THEME_KEY);
+  if (THEMES.some(([id]) => id === t)) theme = t;
+} catch {}
+document.documentElement.dataset.theme = theme;
+
+function setTheme(t) {
+  theme = t;
+  document.documentElement.dataset.theme = t;
+  try {
+    localStorage.setItem(THEME_KEY, t);
+  } catch {}
+  render();
+}
+
 const ui = {
   view: "messages",
   token: null,
@@ -554,7 +578,7 @@ function peopleGroup() {
           h(
             "button",
             { class: "side-session", "data-key": "person-" + p.name, title: "Message " + p.name, onclick: () => startChat(p.name) },
-            statusDot(p.name, p.device),
+            presence(p.name, p.device),
             h(
               "span",
               { class: "side-session-text" },
@@ -836,7 +860,7 @@ function quietFold(d) {
                   go("messages");
                 },
               },
-              statusDot(s.name, d),
+              presence(s.name, d),
               h("span", { class: "settled-name truncate" }, s.name),
               tagChips(s, 2, true),
               h("span", { class: "settled-when" }, isHidden(s) ? "hidden" : t ? ago(t).replace(" ago", "") : ""),
@@ -1010,7 +1034,7 @@ function settledRow(r) {
         go("messages");
       },
     },
-    h("span", { class: "status-dot pres-settled", "aria-hidden": "true" }),
+    avatar(r.name),
     h("span", { class: "settled-name truncate" }, r.name),
     h("span", { class: "settled-when" }, ago(r.last).replace(" ago", "")),
   );
@@ -1039,7 +1063,7 @@ function allConversations() {
 function sideSessionBody(d, s) {
   const pr = prFor(s);
   return [
-    statusDot(s.name, d),
+    presence(s.name, d),
     h(
       "span",
       { class: "side-session-text" },
@@ -1251,7 +1275,7 @@ function settledPage(devs) {
                 go("messages");
               },
             },
-            h("span", { class: "status-dot pres-settled", "aria-hidden": "true" }),
+            avatar(r.name),
             h("span", { class: "g-settled-name truncate" }, r.name),
             h("span", { class: "g-settled-last truncate" }, r.lastMsg ? r.lastMsg.subject : ""),
             h("span", { class: "g-settled-chats" }, plural(r.peers.size, "chat")),
@@ -1294,7 +1318,7 @@ function sessionCard(d, s) {
         },
       },
       picking && h("span", { class: "g-pick" + (picked ? " on" : ""), "aria-hidden": "true" }, picked && icon("check")),
-      statusDot(s.name, d),
+      presence(s.name, d),
       h(
         "span",
         { class: "s-text" },
@@ -1356,7 +1380,7 @@ function recentPage() {
 function recentItem(m, at) {
   const from = fromName(m);
   const c = conversationOf(m);
-  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "device" ? [icon("laptop"), host(m.to)] : toName(m);
+  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "device" ? [icon("laptop"), host(m.to)] : [avatar(toName(m)), toName(m)];
   const open = () => {
     ui.filter = null;
     ui.conversation = c.key;
@@ -1365,16 +1389,21 @@ function recentItem(m, at) {
   };
   return h(
     "article",
-    { class: "chat-msg chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" ? open() : null) },
+    { class: "chat-msg chat-msg-face chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" ? open() : null) },
+    avatar(from),
     h(
       "div",
-      { class: "chat-msg-head" },
-      h("span", { class: "chat-msg-from truncate" }, from),
-      m.fromPerson && humanTag(),
-      h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who truncate" }, to)),
-      h("span", { class: "chat-msg-time", title: messageDetail(m) }, clockTime(at)),
+      { class: "chat-msg-main" },
+      h(
+        "div",
+        { class: "chat-msg-head" },
+        h("span", { class: "chat-msg-from truncate" }, from),
+        m.fromPerson && humanTag(),
+        h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who truncate" }, to)),
+        h("span", { class: "chat-msg-time", title: messageDetail(m) }, clockTime(at)),
+      ),
+      messageText(m),
     ),
-    messageText(m),
   );
 }
 
@@ -2057,9 +2086,20 @@ function groupSummary(c) {
   return { rows, on };
 }
 
-// A group chat's picture is what it reaches: everyone, or one device.
+// Up to four members' faces in a square, the last showing how many more there are.
+function groupIcon(c) {
+  const { rows } = groupSummary(c);
+  const shown = rows.length > 4 ? rows.slice(0, 3) : rows.slice(0, 4);
+  return h(
+    "span",
+    { class: "g-grid g-grid-" + Math.min(rows.length, 4), "aria-hidden": "true" },
+    shown.map((r) => avatar(r.name)),
+    rows.length > 4 && h("span", { class: "avatar g-more" }, "+" + (rows.length - 3)),
+  );
+}
+
 function conversationIcon(c) {
-  if (c.kind !== "dm") return h("span", { class: "conv-ico", "aria-hidden": "true" }, icon(c.kind === "all" ? "broadcast" : "laptop"));
+  if (c.kind !== "dm") return groupIcon(c);
   if (c.pair.length === 1) return dotted(c.pair[0]);
   return h("span", { class: "avatar-pair" }, c.pair.map(dotted));
 }
@@ -2437,13 +2477,20 @@ function chatMessage(m, from, at, head) {
       h("div", { class: "chat-msg-meta" }, time, copyButton(copy)),
     );
   }
+  // Everyone else's message has its sender's face beside it, and a run of messages from one sender
+  // shows the face once.
   const via = [sender?.session.agent, sender && !sender.device.self ? host(sender.device.id) : null].filter(Boolean).join(" · ");
   return h(
     "article",
-    { class: "chat-msg" + (head ? " chat-msg-first" : ""), "data-id": m.id },
-    head && h("div", { class: "chat-msg-head" }, h("span", { class: "chat-msg-from truncate" }, from), m.fromPerson && humanTag(), via && h("span", { class: "chat-msg-via truncate" }, via), time),
-    messageText(m),
-    h("div", { class: "chat-msg-meta" }, !head && time, copyButton(copy)),
+    { class: "chat-msg chat-msg-face" + (head ? " chat-msg-first" : ""), "data-id": m.id, title: head ? null : messageDetail(m) },
+    head ? avatar(from) : h("span", { class: "avatar-gap" }),
+    h(
+      "div",
+      { class: "chat-msg-main" },
+      head && h("div", { class: "chat-msg-head" }, h("span", { class: "chat-msg-from truncate" }, from), m.fromPerson && humanTag(), via && h("span", { class: "chat-msg-via truncate" }, via), time),
+      messageText(m),
+    ),
+    h("div", { class: "msg-tools" }, copyButton(copy)),
   );
 }
 
@@ -3305,8 +3352,32 @@ async function saveAccount(name) {
   render();
 }
 
+function themeSection() {
+  return h(
+    "section",
+    { class: "section" },
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Appearance")),
+    h(
+      "div",
+      { class: "group" },
+      settingsRow(
+        "theme",
+        "Theme",
+        null,
+        h(
+          "div",
+          { class: "segmented", role: "radiogroup", "aria-label": "Theme" },
+          THEMES.map(([id, label]) =>
+            h("button", { role: "radio", "aria-checked": theme === id ? "true" : "false", "aria-pressed": theme === id ? "true" : "false", "data-key": "theme-" + id, onclick: () => setTheme(id) }, label),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 function settingsPage() {
-  const sections = [ui.state ? accountSection() : null];
+  const sections = [ui.state ? accountSection() : null, themeSection()];
   if (ui.settings) {
     const set = ui.settings;
     const local = (ui.state?.devices || []).find((d) => d.self)?.sessions || [];

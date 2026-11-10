@@ -478,8 +478,9 @@ call.
   as waiting, for two minutes at most. Tags with a meaning of their own show as that meaning rather
   than as chips: `model:` beside the agent, `do-not-disturb` as the red dot, `hidden` as the quiet
   fold, `human` on a person. There is no grouping by tag: a session can carry several, so groups
-  would repeat it, and a filter shows one group at a time. The page is always dark: the design was only ever drawn dark, and a light one would be a
-  second design. Started times, worktrees and committed branches left the page with the old
+  would repeat it, and a filter shows one group at a time. Since 2026-11-09 Settings has a theme, kept in the browser: Dark (T3 Code's), Dim (the
+  soft greys the page had before it followed T3 Code) and Light (T3 Code's light theme). Each is a
+  set of color tokens over one design, so a theme costs only its palette. Started times, worktrees and committed branches left the page with the old
   Sessions view; `lookup` still has the branches.
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
   `.git/murmur/settings.json`, replaced whole; "Delivering a message as a turn" says what they do.
