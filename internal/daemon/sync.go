@@ -302,11 +302,12 @@ func meshDevice(ref string) (string, bool) {
 	return dev, bus.ValidDevice(dev)
 }
 
-// readFirstContext is what a sync reads the registry and presence on: limit from now, but ending
-// at least limit before the sync's own deadline, which keeps that much of the sync for its logs
-// however long the listing and fetches took. A sync with less than that left reads neither, and
-// fails once its logs are read; the next reads them. The reserve also covers a cancelled git's
-// five seconds to exit (see gitx.run).
+// readFirstContext is what a sync reads the registry and presence on: limit from now, but with a
+// deadline no later than limit before the sync's own, so that a stall there leaves the logs that
+// much of the sync however long the listing and fetches took, less the up to five seconds a
+// cancelled git takes to exit (see gitx.run). A sync with less than limit left skips both reads,
+// so its messages can go out without what they would have said of their senders; it fails once
+// its logs are read, and the next sync reads what it skipped.
 func readFirstContext(ctx context.Context, limit time.Duration) (context.Context, context.CancelFunc) {
 	end := time.Now().Add(limit)
 	if dl, ok := ctx.Deadline(); ok && dl.Add(-limit).Before(end) {

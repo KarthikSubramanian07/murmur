@@ -212,12 +212,11 @@ func TestReadFirstContextKeepsTheLogsTime(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		left time.Duration // until the sync's deadline; 0 for none
-		want time.Duration // until the reads' deadline; 0 for already past
 	}{
-		{"no deadline", 0, limit},
-		{"a whole minute left", time.Minute, limit},
-		{"less than twice the limit left", 20 * time.Second, 5 * time.Second},
-		{"less than the limit left", 10 * time.Second, 0},
+		{"no deadline", 0},
+		{"a whole minute left", time.Minute},
+		{"less than twice the limit left", 20 * time.Second},
+		{"less than the limit left", 10 * time.Second},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -226,20 +225,27 @@ func TestReadFirstContextKeepsTheLogsTime(t *testing.T) {
 				ctx, cancel = context.WithTimeout(ctx, c.left)
 				defer cancel()
 			}
+			before := time.Now()
 			first, cancel := readFirstContext(ctx, limit)
 			defer cancel()
-			dl, ok := first.Deadline()
+			after := time.Now()
+			got, ok := first.Deadline()
 			if !ok {
 				t.Fatal("no deadline")
 			}
-			if c.want == 0 {
-				if first.Err() == nil {
-					t.Errorf("the reads have %s, want none", time.Until(dl).Round(time.Second))
+			if sync, ok := ctx.Deadline(); ok && sync.Add(-limit).Before(before.Add(limit)) {
+				// Less than twice the limit left: the reads end a limit before the sync does, which
+				// with less than one limit left is already past.
+				if want := sync.Add(-limit); !got.Equal(want) {
+					t.Errorf("the reads end %s before the sync, want %s", sync.Sub(got), limit)
+				}
+				if past := c.left < limit; past != (first.Err() != nil) {
+					t.Errorf("the reads' context is done: %v, want %v", first.Err() != nil, past)
 				}
 				return
 			}
-			if got := time.Until(dl); got > c.want || got < c.want-2*time.Second {
-				t.Errorf("the reads have %s, want %s", got.Round(time.Second), c.want)
+			if got.Before(before.Add(limit)) || got.After(after.Add(limit)) {
+				t.Errorf("the reads end %s from when they began, want %s", got.Sub(before), limit)
 			}
 		})
 	}
