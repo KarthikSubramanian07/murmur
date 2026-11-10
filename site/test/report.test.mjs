@@ -125,6 +125,13 @@ test("a repo listed after midnight is new to a run that began before it and ende
 });
 
 test("a repo's name is a link's label in the report, with what Markdown would read in it escaped", async () => {
-  const { md } = await report([row('github.com/a/one', ago(2)), row('github.com/a/__demo__', ago(30))]);
+  const { md } = await report([row('github.com/a/one', ago(2)), row('github.com/a/__demo__', ago(30)), row('github.com/x-1/v2.0_b-c', ago(30))]);
+  // In the census's table of repos it missed.
   assert.ok(section(md).includes('| [a/\\_\\_demo\\_\\_](https://github.com/a/__demo__) |'), section(md));
+  assert.ok(section(md).includes('| [x-1/v2.0\\_b-c](https://github.com/x-1/v2.0_b-c) |'), section(md));
+  // And in the table of every repo: letters, digits, dots and hyphens as they are, the URL untouched.
+  const main = md.slice(0, md.indexOf('## The census'));
+  assert.ok(main.includes('| [a/\\_\\_demo\\_\\_](https://github.com/a/__demo__) |'), main);
+  assert.ok(main.includes('| [x-1/v2.0\\_b-c](https://github.com/x-1/v2.0_b-c) |'), main);
+  assert.ok(main.includes('| [a/one](https://github.com/a/one) |'), main);
 });
