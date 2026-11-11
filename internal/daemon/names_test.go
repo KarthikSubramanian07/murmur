@@ -537,6 +537,9 @@ func TestSendByName(t *testing.T) {
 	an, bn, cn := a.named(alice), b.named(bob), b.named(cleo)
 	a.nameIs(bob, bn)
 	a.nameIs(cleo, cn)
+	// b names alice's agent in its notice, which is in a's encrypted presence: b reads it once it
+	// holds the team key, and a name alone, which the registry gives in the clear, comes sooner.
+	eventually(t, "b to read alice's presence", func() bool { return b.seesSession(alice) })
 
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bn, Subject: "by name", Body: "the body"})
 	if r.Error != "" || r.Note != "" || len(r.Messages) != 1 || r.Messages[0].To != bob || r.Messages[0].ToName != bn {
