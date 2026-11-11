@@ -80,6 +80,13 @@ func TestRestartDoesNotReplayToNewSessions(t *testing.T) {
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	eventually(t, "presence", func() bool { return a.seesDevices(2) && b.seesDevices(2) })
+	// Both hold the team key before b stops. A device still waiting for its grant reads what it
+	// missed late, once granted, and that can reach a session started within the minute after it was
+	// sent (docs/VISION.md, "The bus is encrypted"): another case than a restart's.
+	eventually(t, "both to hold the team key", func() bool {
+		ids := teamIDs(t, remote)
+		return len(ids) == 1 && ringOf(t, a)[ids[0]] != nil && ringOf(t, b)[ids[0]] != nil
+	})
 
 	b.stop()
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "sent while b was down"})
