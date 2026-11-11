@@ -75,14 +75,9 @@ body {
 }
 .back svg { flex: none; display: block; }
 .back .arrow { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .35s var(--ease); }
-.back .mark { width: 22px; height: 22px; }
-.back .mark rect:first-child { fill: var(--cream); transition: fill .35s var(--ease); }
-.back .mark rect + rect { fill: var(--blue); }
-.back .mark path { fill: none; stroke: var(--cream); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; transition: stroke .35s var(--ease); }
+.back .mark { width: 29px; height: 18px; fill: currentColor; }
 .back:hover { background: var(--butter); box-shadow: inset 0 0 0 1px var(--butter); color: var(--ink); }
 .back:hover .arrow { transform: translateX(-3px); }
-.back:hover .mark rect:first-child { fill: var(--ink); }
-.back:hover .mark path { stroke: var(--butter); }
 .back:active { transform: scale(.97); }
 .back:focus-visible { outline: 3px solid var(--cream); outline-offset: 3px; }
 
@@ -133,6 +128,10 @@ code { padding: 1px 6px; border-radius: 6px; background: var(--badge-bg); color:
 .site-foot a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
 .site-foot a[aria-current="page"] { color: var(--ink); font-weight: 600; }
 .site-foot a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; }
+.site-foot nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px; }
+.foot-logo { display: block; color: var(--ink); }
+.foot-logo svg { display: block; fill: currentColor; }
+.foot-logo:hover { color: var(--blue); }
 
 @media (max-width: 720px) {
   .fact { grid-template-columns: minmax(0, 1fr); row-gap: 8px; padding: 20px 0 22px; }
@@ -140,6 +139,6 @@ code { padding: 1px 6px; border-radius: 6px; background: var(--badge-bg); color:
   .cmd { font-size: 12.5px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .back, .back .arrow, .back .mark rect, .back .mark path, .button { transition: none; }
+  .back, .back .arrow, .button { transition: none; }
   .back:hover .arrow { transform: none; }
 }

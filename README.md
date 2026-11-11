@@ -1,8 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/logo.svg" alt="" width="72">
-
-# Murmur
+<img src="docs/assets/banner.svg" alt="Murmur" width="860">
 
 **Intra-repo agent communication.**<br>
 Your agents work better as a team.
@@ -185,7 +183,7 @@ Thank you as well to these people for their help and support:
 
 <div align="center">
 <br>
-<a href="https://murmur.afig.dev"><img src="docs/assets/logo.svg" alt="Murmur" width="28"></a>
+<a href="https://murmur.afig.dev"><img src="docs/assets/brand/icon.svg" alt="Murmur" width="28"></a>
 <br>
 <sub><a href="https://murmur.afig.dev">murmur.afig.dev</a></sub>
 </div>
