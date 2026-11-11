@@ -18,6 +18,7 @@ eyes; the right one's are slanted like a quotation mark.
 | `docs/assets/brand/lockup-stacked-on-blue.svg` | The mark over the wordmark, cream and butter |
 | `docs/assets/brand/icon.svg` | The cream mark on a blue tile: the tab icon and app icon |
 | `docs/assets/banner.svg` | The README's header |
+| `docs/assets/brand/social-preview.png` | 1280x640, for the GitHub repo's social preview, which is set by hand in the repo's settings |
 
 `site/favicon.svg` and `internal/web/static/assets/favicon.svg` are copies of `icon.svg`, because
 the site and the binary each serve their own files. `site/favicon-32.png` and
@@ -27,6 +28,20 @@ them.
 The Figma file's rules: leave one eye-width of clear space on every side, keep the mark at least
 24px wide and the inline lockup at least 96px wide, and never redraw or stretch either. Another
 color is a change of `fill`, not a new drawing.
+
+## Where the logo appears
+
+- README: the banner at the top, the icon at the foot.
+- Tab icons: the site's and the `mur ui` page's. `mur ui` also shows the icon in its sidebar and
+  on its sign-in gate.
+- Home page: the mark in the hero's top left corner on screens 1000px and wider, the mark before
+  "Murmur daemon" in the How it works diagram, and the lockup at the start of the footer.
+- About, Privacy and Contact: the mark in the back pill, the lockup in the footer.
+- The daemon page: the mark in the back pill, the lockup in the footer in cream and butter.
+- The stats pages: the mark on the header's blue tile.
+- `site/og.jpg`, the card a shared link shows: the lockup in its top left corner.
+
+The hero's big word stays "murmur" in Inter behind the glass; it is the site's look, not the logo.
 
 ## Color
 
@@ -86,6 +101,6 @@ The `mur ui` page keeps its own look: it is drawn as a sibling of T3 Code, with 
 
 `site/how-wide.mp4`, `site/how-tall.mp4` and their posters are rendered from
 `site/src/how-scene.html` by `site/src/render-video.mjs`. `site/og.jpg` and
-`docs/assets/murmur-demo.gif` come from the wide film: the card is its last frame, and the GIF is
-the film at about 14 frames a second, 960px wide. A change to the palette means rendering all of
-them again.
+`docs/assets/murmur-demo.gif` come from the wide film: the card is its last frame with the lockup
+set in the top left corner, and the GIF is the film at about 14 frames a second, 960px wide. A
+change to the palette means rendering all of them again.

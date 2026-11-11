@@ -128,6 +128,10 @@ code { padding: 1px 6px; border-radius: 6px; background: var(--badge-bg); color:
 .site-foot a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
 .site-foot a[aria-current="page"] { color: var(--ink); font-weight: 600; }
 .site-foot a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; }
+.site-foot nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px; }
+.foot-logo { display: block; color: var(--ink); }
+.foot-logo svg { display: block; fill: currentColor; }
+.foot-logo:hover { color: var(--blue); }
 
 @media (max-width: 720px) {
   .fact { grid-template-columns: minmax(0, 1fr); row-gap: 8px; padding: 20px 0 22px; }
