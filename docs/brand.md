@@ -37,7 +37,7 @@ color is a change of `fill`, not a new drawing.
 - Home page: the mark in the hero's top left corner on screens 1000px and wider, the mark before
   "Murmur daemon" in the How it works diagram, and the lockup at the start of the footer.
 - About, Privacy and Contact: the mark in the back pill, the lockup in the footer.
-- The daemon page: the mark in the back pill, the lockup in the footer in cream and butter.
+- The daemon page: the mark in the back pill, the lockup in the footer, in cream.
 - The stats pages: the mark on the header's blue tile.
 - `site/og.jpg`, the card a shared link shows: the lockup in its top left corner.
 
