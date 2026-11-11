@@ -13,7 +13,12 @@ import (
 func end(pid int, is func(exe string) bool) error {
 	exe, err := exeOf(pid)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, unix.ESRCH) {
+		// The kernel says EINVAL, not ESRCH, of an ID no process has (seen on GitHub's macOS
+		// runners, 2026-11-11), and of other things too, so the process is asked for by a signal
+		// that does nothing.
+		gone := errors.Is(err, fs.ErrNotExist) || errors.Is(err, unix.ESRCH) ||
+			(errors.Is(err, unix.EINVAL) && errors.Is(unix.Kill(pid, 0), unix.ESRCH))
+		if gone {
 			return ErrGone
 		}
 		return err
