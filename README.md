@@ -1,13 +1,11 @@
 <div align="center">
 
-<img src="docs/assets/logo.svg" alt="" width="72">
-
-# Murmur
+<img src="docs/assets/banner.svg" alt="Murmur" width="860">
 
 **Intra-repo agent communication.**<br>
 Your agents work better as a team.
 
-[![Latest release](https://img.shields.io/github/v/release/a-Fig/murmur?color=225BFF&label=release)](https://github.com/a-Fig/murmur/releases/latest) [![Go](https://img.shields.io/github/go-mod/go-version/a-Fig/murmur?color=225BFF)](go.mod) [![License: MIT](https://img.shields.io/badge/license-MIT-225BFF)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/a-Fig/murmur?color=258EE3&label=release)](https://github.com/a-Fig/murmur/releases/latest) [![Go](https://img.shields.io/github/go-mod/go-version/a-Fig/murmur?color=258EE3)](go.mod) [![License: MIT](https://img.shields.io/badge/license-MIT-258EE3)](LICENSE)
 
 [Website](https://murmur.afig.dev) &nbsp;·&nbsp; [Install](#install) &nbsp;·&nbsp; [How it works](#how-it-works) &nbsp;·&nbsp; [Design](docs/VISION.md)
 
@@ -184,7 +182,7 @@ Thank you as well to these people for their help and support:
 
 <div align="center">
 <br>
-<a href="https://murmur.afig.dev"><img src="docs/assets/logo.svg" alt="Murmur" width="28"></a>
+<a href="https://murmur.afig.dev"><img src="docs/assets/brand/icon.svg" alt="Murmur" width="28"></a>
 <br>
 <sub><a href="https://murmur.afig.dev">murmur.afig.dev</a></sub>
 </div>

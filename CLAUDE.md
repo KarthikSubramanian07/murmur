@@ -7,6 +7,8 @@ request runs it on macOS, Windows and Linux in CI (`docs/testing.md`).
 `docs/VISION.md` is the design and its reasons; read it before proposing architecture, and change
 it when a decision changes. The name lives in `internal/brand`, so a rename is that file plus the
 module path.
+The logo files, palette and type, and the renders a palette change means redoing, are in
+`docs/brand.md`.
 
 ## Writing for whoever comes next
 
