@@ -1,0 +1,231 @@
+package join
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/clones"
+	"github.com/a-Fig/murmur/internal/jsonedit"
+	"github.com/a-Fig/murmur/internal/skills"
+)
+
+// uninstallSandbox is newSandbox with the other agents and a record of clones of its own, and a
+// home of its own for anything that asks the process for one: nothing reaches the real user's.
+func uninstallSandbox(t *testing.T) (*sandbox, string) {
+	t.Helper()
+	sb := newSandbox(t, true)
+	withAgents(sb)
+	for _, k := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA", "CODEX_HOME", "GROK_HOME", "PI_CODING_AGENT_DIR"} {
+		t.Setenv(k, filepath.Join(sb.root, "home"))
+	}
+	record := filepath.Join(sb.root, "clones")
+	t.Setenv(clones.DirEnv, record)
+	return sb, record
+}
+
+// Everything join writes per user comes out again, in every agent, and the user's own entries stay:
+// another server, another allow rule, another hook, whose trust moves with it to its new place.
+func TestUninstallRemovesWhatJoinWrote(t *testing.T) {
+	sb, _ := uninstallSandbox(t)
+	withOpenCode(t, sb, "opencode v2.2.0")
+	ctx := context.Background()
+	for _, d := range []string{sb.ClaudeDir, sb.CodexHome, sb.OpenCodeDir, sb.MuseDir, sb.PiDir, sb.GrokHome} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, sb.ClaudeJSON, "{\n  \"mcpServers\": {\"other\": {\"type\": \"stdio\", \"command\": \"o\", \"args\": []}}\n}\n")
+	write(t, filepath.Join(sb.ClaudeDir, "settings.json"), "{\n  \"permissions\": {\"allow\": [\"Bash(ls)\"]}\n}\n")
+	write(t, filepath.Join(sb.CodexHome, "config.toml"), "model = \"o3\"\n\n[mcp_servers.other]\ncommand = \"o\"\n")
+	write(t, filepath.Join(sb.GrokHome, "config.toml"), "[permission]\nallow = [\"Bash(ls)\"]\n")
+	write(t, filepath.Join(sb.MuseDir, "settings.json"), "{\n  \"schema_version\": 1,\n  \"mcpServers\": {\"other\": {\"command\": \"o\"}}\n}\n")
+	write(t, filepath.Join(sb.OpenCodeDir, "opencode.json"), "{\n  // mine\n  \"model\": \"x/y\",\n}\n")
+	for _, a := range agents {
+		h := sb.defaultHome(a)
+		if _, _, err := a.register(sb.Env, ctx, h); err != nil {
+			t.Fatalf("%s: %v", a.label, err)
+		}
+		if dir := skillsDir(a, h); dir != "" {
+			if _, _, err := installSkills(dir, a.label); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// A hook of the user's after Murmur's in Codex, trusted at its place.
+	hooksPath := filepath.Join(sb.CodexHome, "hooks.json")
+	text := read(t, hooksPath)
+	text, _, err := jsonedit.AppendIn(text, []string{"hooks", "Stop"}, map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "lint"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, hooksPath, text)
+	key := codexKeyPath(hooksPath, false)
+	cfg := filepath.Join(sb.CodexHome, "config.toml")
+	write(t, cfg, read(t, cfg)+"\n[hooks.state."+tomlKey(key+":stop:1:0")+"]\ntrusted_hash = \"sha256:mine\"\n")
+
+	r, err := Uninstall(ctx, sb.Env, false)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if len(r.Problems) > 0 || len(r.Left) == 0 {
+		t.Errorf("report:\n%s", r)
+	}
+
+	claude := read(t, sb.ClaudeJSON)
+	if strings.Contains(claude, `"`+brand.MCPServer+`"`) || !strings.Contains(claude, `"other"`) {
+		t.Errorf(".claude.json:\n%s", claude)
+	}
+	if s := read(t, filepath.Join(sb.ClaudeDir, "settings.json")); strings.Contains(s, allowRule) || !strings.Contains(s, "Bash(ls)") {
+		t.Errorf("settings.json:\n%s", s)
+	}
+	codex := read(t, cfg)
+	if strings.Contains(codex, "mcp_servers."+brand.MCPServer) || strings.Contains(codex, ":user_prompt_submit:") || strings.Contains(codex, ":post_tool_use:") ||
+		!strings.Contains(codex, "[mcp_servers.other]") || !strings.Contains(codex, `model = "o3"`) {
+		t.Errorf("config.toml:\n%s", codex)
+	}
+	if !strings.Contains(codex, tomlKey(key+":stop:0:0")+"]\ntrusted_hash = \"sha256:mine\"") || strings.Contains(codex, ":stop:1:0") {
+		t.Errorf("the user's hook's trust didn't move to its new place:\n%s", codex)
+	}
+	if h := read(t, hooksPath); strings.Contains(h, hookName) || !strings.Contains(h, `"lint"`) || strings.Contains(h, "PostToolUse") {
+		t.Errorf("hooks.json:\n%s", h)
+	}
+	grok := read(t, filepath.Join(sb.GrokHome, "config.toml"))
+	if strings.Contains(grok, brand.MCPServer) || !strings.Contains(grok, `allow = ["Bash(ls)"]`) {
+		t.Errorf("Grok's config.toml:\n%s", grok)
+	}
+	if muse := read(t, filepath.Join(sb.MuseDir, "settings.json")); strings.Contains(muse, brand.MCPServer) || !strings.Contains(muse, `"other"`) {
+		t.Errorf("Muse's settings.json:\n%s", muse)
+	}
+	oc := read(t, filepath.Join(sb.OpenCodeDir, "opencode.json"))
+	if strings.Contains(oc, brand.MCPServer) || strings.Contains(oc, "permissions") || !strings.Contains(oc, "// mine") {
+		t.Errorf("opencode.json:\n%s", oc)
+	}
+	for _, gone := range []string{
+		piExtensionPath(sb.PiDir),
+		filepath.Join(sb.GrokHome, "hooks", grokHookFile),
+		filepath.Join(sb.ClaudeDir, "skills", skills.All()[0].Name),
+		filepath.Join(sb.CodexHome, "skills", skills.All()[0].Name),
+	} {
+		if exists(gone) {
+			t.Errorf("%s is still there", gone)
+		}
+	}
+
+	// Again, nothing is left to do, and nothing changes.
+	before := read(t, cfg)
+	r, err = Uninstall(ctx, sb.Env, false)
+	if err != nil || len(r.Did) != 1 || !strings.HasPrefix(r.Did[0], "Nothing to remove") || read(t, cfg) != before {
+		t.Errorf("second: %v\n%s", err, r)
+	}
+}
+
+// OpenCode 1's shape comes out too, and its "permission" keeps what the user had in it.
+func TestUninstallOpenCodeV1(t *testing.T) {
+	sb, _ := uninstallSandbox(t)
+	path := filepath.Join(sb.OpenCodeDir, "opencode.jsonc")
+	write(t, path, "{\n  \"mcp\": {\"murmur\": {\"type\": \"local\", \"command\": [\"mur\", \"mcp\"], \"enabled\": true}, \"other\": {\"type\": \"local\"}},\n  \"permission\": {\"*\": \"ask\", \"murmur_*\": \"allow\"}\n}\n")
+	did, _, err := sb.unregisterOpenCodeAt(context.Background(), []agentHome{openCodeHome(sb)})
+	if err != nil || len(did) != 2 {
+		t.Fatalf("did=%q err=%v", did, err)
+	}
+	got := read(t, path)
+	if strings.Contains(got, "murmur") || !strings.Contains(got, `"other"`) || !strings.Contains(got, `"*": "ask"`) {
+		t.Errorf("opencode.jsonc:\n%s", got)
+	}
+}
+
+// A clone still joined stops the uninstall, which names it and changes nothing; --leave leaves it
+// first, then removes the rest, the record of clones included.
+func TestUninstallLeavesJoinedClonesOnlyWhenAsked(t *testing.T) {
+	sb, record := uninstallSandbox(t)
+	ctx := context.Background()
+	write(t, filepath.Join(sb.CodexHome, "config.toml"), "[mcp_servers.murmur]\ncommand = \"mur\"\nargs = [\"mcp\"]\n")
+	p, _ := clone(t)
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	if err := clones.Add(record, clones.Clone{GitDir: p.GitDir, Name: "team-repo"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Uninstall(ctx, sb.Env, false)
+	if err == nil || !strings.Contains(err.Error(), "team-repo") || !strings.Contains(err.Error(), "--leave") {
+		t.Fatalf("err = %v", err)
+	}
+	if !p.Joined() || !strings.Contains(read(t, filepath.Join(sb.CodexHome, "config.toml")), "mcp_servers.murmur") {
+		t.Fatal("a refused uninstall changed something")
+	}
+
+	r, err := Uninstall(ctx, sb.Env, true)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if p.Joined() {
+		t.Error("the clone is still joined")
+	}
+	if strings.Contains(read(t, filepath.Join(sb.CodexHome, "config.toml")), "murmur") {
+		t.Error("Codex still has the server")
+	}
+	if exists(record) {
+		t.Error("the record of clones is still there")
+	}
+	if s := r.String(); !strings.Contains(s, "team-repo: ") || !strings.Contains(s, "Left for you:") {
+		t.Errorf("report:\n%s", s)
+	}
+}
+
+func TestEditTOMLTables(t *testing.T) {
+	server := []string{"mcp_servers", "murmur"}
+	drop := func(p []string) ([]string, bool) { return nil, hasPrefix(p, server) }
+	for _, c := range []struct{ name, in, want string }{
+		{"last", "a = 1\n\n[mcp_servers.murmur]\ncommand = \"mur\"\n", "a = 1\n"},
+		{"middle", "a = 1\n\n[mcp_servers.murmur]\ncommand = \"mur\"\n\n[x]\nb = 2\n", "a = 1\n\n[x]\nb = 2\n"},
+		{"first", "[mcp_servers.murmur]\ncommand = \"mur\"\n\n[x]\nb = 2\n", "[x]\nb = 2\n"},
+		{"only", "[mcp_servers.murmur]\ncommand = \"mur\"\n", ""},
+		{"subtable", "a = 1\n\n[mcp_servers.murmur]\ncommand = \"mur\"\n\n[mcp_servers.murmur.env]\nX = \"1\"\n\n[x]\n", "a = 1\n\n[x]\n"},
+		{"crlf", "a = 1\r\n\r\n[mcp_servers.murmur]\r\ncommand = \"mur\"\r\n\r\n[x]\r\n", "a = 1\r\n\r\n[x]\r\n"},
+		{"in a string", "a = \"\"\"\n[mcp_servers.murmur]\n\"\"\"\n", "a = \"\"\"\n[mcp_servers.murmur]\n\"\"\"\n"},
+		{"none", "a = 1\n", "a = 1\n"},
+	} {
+		got, _, err := editTOMLTables(c.in, "config.toml", [][]string{server}, drop)
+		if err != nil || got != c.want {
+			t.Errorf("%s: %q %v, want %q", c.name, got, err, c.want)
+		}
+	}
+	for _, in := range []string{
+		"mcp_servers.murmur.command = \"mur\"\n",
+		"[mcp_servers]\nmurmur = { command = \"mur\" }\n",
+		"mcp_servers = { murmur = { command = \"mur\" } }\n",
+	} {
+		if _, _, err := editTOMLTables(in, "config.toml", [][]string{server}, drop); err == nil {
+			t.Errorf("%q: no error", in)
+		}
+	}
+}
+
+func TestShiftTrust(t *testing.T) {
+	p := []string{`C:\h\.codex\hooks.json:`}
+	removed := map[string][]int{"stop": {1}, "post_tool_use": {0, 2}}
+	for _, c := range []struct {
+		key, want string
+		drop      bool
+	}{
+		{p[0] + "stop:0:0", p[0] + "stop:0:0", false},
+		{p[0] + "stop:1:0", "", true},
+		{p[0] + "stop:2:0", p[0] + "stop:1:0", false},
+		{p[0] + "post_tool_use:1:0", p[0] + "post_tool_use:0:0", false},
+		{p[0] + "post_tool_use:3:1", p[0] + "post_tool_use:1:1", false},
+		{p[0] + "user_prompt_submit:4:0", p[0] + "user_prompt_submit:4:0", false},
+		{`D:\other\hooks.json:stop:2:0`, `D:\other\hooks.json:stop:2:0`, false},
+	} {
+		got, drop := shiftTrust(c.key, p, removed)
+		if got != c.want && !drop || drop != c.drop {
+			t.Errorf("%s: %q %v, want %q %v", c.key, got, drop, c.want, c.drop)
+		}
+	}
+}

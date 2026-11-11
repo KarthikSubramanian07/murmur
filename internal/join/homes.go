@@ -34,26 +34,35 @@ type agent struct {
 	register   func(e Env, ctx context.Context, h agentHome) (did []string, fresh bool, err error)
 	// removal says how to take the server out of h by hand, "" where there is nothing to take out.
 	removal func(e Env, h agentHome) string
+	// unregister takes out of hs, homes in one directory, what register put there, the skills
+	// aside, for `mur uninstall` (uninstall.go).
+	unregister func(e Env, ctx context.Context, hs []agentHome) (did, notes []string, err error)
 }
 
 // agents are the agents join knows, in the order it reports them.
 var agents = []agent{
-	{driver: "claudeAgent", label: "Claude Code", t3Var: "CLAUDE_CONFIG_DIR", register: Env.registerClaudeAt, removal: Env.claudeRemoval},
+	{driver: "claudeAgent", label: "Claude Code", t3Var: "CLAUDE_CONFIG_DIR", register: Env.registerClaudeAt, removal: Env.claudeRemoval,
+		unregister: Env.unregisterClaudeAt},
 	{driver: "codex", label: "Codex", t3Var: "CODEX_HOME",
-		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerCodexAt(h) },
-		removal:  codexRemoval},
+		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerCodexAt(h) },
+		removal:    codexRemoval,
+		unregister: Env.unregisterCodexAt},
 	{driver: "opencode", label: "OpenCode", t3Var: "XDG_CONFIG_HOME", sub: "opencode",
-		register: Env.registerOpenCodeAt,
-		removal:  openCodeRemoval},
+		register:   Env.registerOpenCodeAt,
+		removal:    openCodeRemoval,
+		unregister: Env.unregisterOpenCodeAt},
 	{driver: "muse", label: "Muse Code", t3Var: "XDG_CONFIG_HOME", sub: "muse",
-		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerMuseAt(h) },
-		removal:  museRemoval},
+		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerMuseAt(h) },
+		removal:    museRemoval,
+		unregister: Env.unregisterMuseAt},
 	{driver: "pi", label: "Pi", t3Var: "PI_CODING_AGENT_DIR",
-		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerPiAt(h) },
-		removal:  piRemoval},
+		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerPiAt(h) },
+		removal:    piRemoval,
+		unregister: Env.unregisterPiAt},
 	{driver: "grok", label: "Grok", t3Var: "GROK_HOME",
-		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerGrokAt(h) },
-		removal:  grokRemoval},
+		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerGrokAt(h) },
+		removal:    grokRemoval,
+		unregister: Env.unregisterGrokAt},
 }
 
 // defaultHome is an agent's configuration as this process's environment says, "" Dir where the

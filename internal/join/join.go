@@ -115,6 +115,7 @@ type Report struct {
 	Notes    []string // what was passed over, and why
 	Tell     []string // what the agent tells its user, one paragraph each
 	Problems []string // what didn't work; the command fails if there are any
+	Left     []string // what an uninstall leaves for the user to remove
 }
 
 // String is the text the command prints.
@@ -136,6 +137,12 @@ func (r Report) String() string {
 		b.WriteString("\nProblems:\n")
 		for _, p := range r.Problems {
 			b.WriteString("  - " + p + "\n")
+		}
+	}
+	if len(r.Left) > 0 {
+		b.WriteString("\nLeft for you:\n")
+		for _, l := range r.Left {
+			b.WriteString("  - " + l + "\n")
 		}
 	}
 	if len(r.Tell) > 0 {
@@ -330,7 +337,8 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 		brand.Product + " is off for this repo. Agents already open here lose its tools within seconds in Claude Code; in Codex the tools stay listed until the session ends, and say they are off if called.",
 		"The " + brand.Product + " MCP server stays registered with the agents, and its skills installed, since that is per user. The server does nothing in a repo that hasn't joined; " +
 			"each skill costs every session of those agents a line of context, in any repo. " +
-			"To remove them: " + e.removal() + ".",
+			"`" + brand.Command + " uninstall` removes them, and the rest of " + brand.Product + ", from this machine once no repo here is joined. " +
+			"To remove them by hand: " + e.removal() + ".",
 	}
 	if len(r.Problems) > 0 {
 		return r, errors.New("not everything worked; see above")

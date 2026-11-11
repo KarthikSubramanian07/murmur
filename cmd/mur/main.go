@@ -47,6 +47,9 @@ Setup:
   mur join [--leave]            join Murmur in this repo, after the user agreed (an agent runs this);
                                 the agent's session joins too, even one that started outside the repo;
                                 --leave undoes it
+  mur uninstall [--leave]       remove Murmur from this machine for you: its server, hooks and skills from
+                                every agent, its daemons, its record of your clones; refuses while a repo
+                                here is joined, unless --leave leaves each first
 
 For humans:
   mur ui [--no-open]            open the page in a browser, to see sessions and messages and to message
@@ -100,6 +103,8 @@ func main() {
 		err = runJoin(ctx, args, os.Stdout)
 	case "stop":
 		err = runStop(ctx, args, os.Stdout)
+	case "uninstall":
+		err = runUninstall(ctx, args, os.Stdout)
 	case "ui":
 		err = runUI(ctx, args, os.Stdout, browse)
 	case "version", "--version":
@@ -444,6 +449,24 @@ func runJoin(ctx context.Context, args []string, out io.Writer) error {
 	if !*leave && err == nil {
 		bringCaller(ctx, *dir, &report)
 	}
+	fmt.Fprint(out, report.String())
+	return err
+}
+
+func runUninstall(ctx context.Context, args []string, out io.Writer) error {
+	fs := flag.NewFlagSet(brand.Command+" uninstall", flag.ExitOnError)
+	leave := fs.Bool("leave", false, "leave every repo on this machine that is still joined, first")
+	fs.Parse(args)
+	if fs.NArg() > 0 {
+		return errors.New("uninstall takes no arguments, only --leave")
+	}
+	env, err := join.EnvFromProcess()
+	if err != nil {
+		return err
+	}
+	env.Version = version
+	env.Progress = os.Stderr // a line while a leave waits for a daemon; stdout is the report
+	report, err := join.Uninstall(ctx, env, *leave)
 	fmt.Fprint(out, report.String())
 	return err
 }
