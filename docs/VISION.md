@@ -26,12 +26,13 @@ only collaborators can push, so only they can join and send (#72), but anyone ca
 An encrypted mode for teams that want it private is #156. Public repos were on the list below
 until Tyler took them off on 2026-11-03.
 
-Also for agents that do not share a repo for their work (Tyler, 2026-11-10, #404). The mesh lives on
-one repo's remote, but nothing needs the agents to work in that repo: a team can keep a repo just
-for Murmur, clone it on each machine, and have each session join that clone from wherever it works,
-with `mur join -C` (see "A session that started outside the repo" below). The design should keep
-this case in mind; what still assumes the agents share a repo (the branch `who` shows, commit
-credit, the busy notice for Claude Code, a new session having to join again) is #405.
+Beyond that: agents that do not share a repo for their work (Tyler, 2026-11-10, #404). The mesh
+lives on one repo's remote, but nothing needs the agents to work in it, so a team can keep a repo
+just for Murmur and have each session join its clone from wherever it works (`mur join -C`; see "A
+session that started outside the repo" below). It isn't what Murmur was built for, so it has its
+own page (`site/across-repos/`) and agent page (`docs/agents/across-repos.md`) and stays off the
+home page and the README's main path. The design keeps it in mind; what still assumes the agents
+share a repo is #405.
 
 Not for: large teams, long-lived projects, or anyone whose agents should not take
 input from teammates' agents. These limits are deliberate. Each one keeps the design simple, and
@@ -310,8 +311,8 @@ reads when it starts; an agent that has no Murmur tools asks its user whether to
 user says yes, the agent installs mur and runs `mur join`, which does the rest. Tyler also decided
 that messaging gets no command-line commands (`who`, `send`, `inbox`, `log` were removed): "If
 everyone is using the CLI, there will be no one to message." Agents message through MCP, humans look
-at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, `version` and
-`help`.
+at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, `uninstall`,
+`version` and `help`.
 
 - **The marker.** `mur init` writes a section between `<!-- murmur:start -->` and `<!-- murmur:end
   -->` into both files, creates either if it is missing, and rewrites the section in place on a
@@ -392,6 +393,33 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   `mur join --leave` removes the consent and the hooks and stops the daemon. It leaves the server
   registered, since that is per user and does nothing where the user hasn't joined; its output says
   how to remove it.
+- **`mur uninstall` removes Murmur from the machine** (Tyler, 2026-11-10, #399). A leave can't remove
+  the per-user entries, because one entry serves every repo the user joined and a leave can't tell
+  whether its repo was the last. Uninstall can, because it reads the record of this machine's clones
+  (`internal/clones`). It refuses while a clone on the record is still joined and names each, or
+  with `--leave` leaves each first, and stops if a leave didn't take the consent away. It then takes
+  out what join wrote per user in every agent configuration join registers in, T3's instances
+  included. That covers the server entry and allow rule in each agent, both OpenCode shapes, Codex's
+  hook groups and their trust entries, Grok's hook file, Pi's extension, the skills, and a notice hook
+  in Claude Code's own `settings.json`. The edits follow join's rules: files read as regular files
+  under jsonedit's cap, links written through, JSON re-parsed before it is written, a form join
+  wouldn't edit refused, and the user's other entries kept byte for byte. The Claude Code server
+  goes through `claude mcp remove` where the command exists, as join adds it through `claude mcp add`. Codex keys
+  a hook's trust by its group's place, so the user's own groups after Murmur's move up one and their
+  trust entries are renamed with them, so Codex doesn't ask about them again. Every Codex edit is
+  made before any is written, with each `hooks.json` or `config.toml` that two homes share edited
+  once, and `hooks.json` goes back as it was if a `config.toml` can't be written: once Murmur's
+  groups are out of it, nothing tells a rerun where they were. Uninstall then leaves again every
+  other clone on the record, which takes out a hook an earlier leave left and stops a daemon
+  through `client.Stop`. A daemon from before 0.3 can't be asked (#389), and the error names its
+  process ID. Last, it deletes the record's file of each clone whose cleanup finished. A clone whose
+  cleanup didn't finish, or whose folder isn't there now (deleted, or on a drive not mounted), stays
+  on the record, so a rerun finds it (Sol's reviews, 2026-11-10). It leaves what isn't one
+  user's or can't go while it runs: each repo's committed section, each clone's `.git/murmur` and
+  bus refs, and the binary itself, which Windows can't delete while it runs, so it prints the
+  command that does. A clone that joined before the record existed and whose daemon hasn't started
+  since isn't on the record, so uninstall can't see it. Its server entry is gone anyway, so nothing
+  runs there.
 - **What it prints.** What it did, what went wrong, and "Tell your user", chosen from which agent ran
   it (see Reloading MCP servers below), so the agent can say exactly what to do next.
 - **The server stays passive where it isn't invited.** The user-scope entry starts `mur mcp` in

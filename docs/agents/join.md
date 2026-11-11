@@ -50,7 +50,8 @@ joining does:
   below says exactly how. Tell your user this in so many words, not as a passing mention.
 - Joining can be undone in this repo with `mur join --leave`. It removes this clone's hooks, stops the
   background process and forgets that your user joined; Murmur stays registered, with its tools
-  approved and its Codex and Grok hooks, in the agents, doing nothing here (what it prints says how to remove each).
+  approved and its Codex and Grok hooks, in the agents, doing nothing here. `mur uninstall` removes all of
+  that from this machine once no repo here is joined.
 
 ### What murmur.afig.dev receives, and why
 
@@ -112,12 +113,9 @@ In this repo (any folder inside the clone), run:
 If your session started outside the repo (in a folder that holds it, say), run it as
 `mur join -C <the repo's folder>`, or `cd` there first. Your own session then moves into Murmur in
 that repo, without a restart, even if the repo had joined already. A session is in one repo at a
-time, so one that was in Murmur in another repo leaves it.
-
-The repo you join needn't be the one you work in. Murmur can connect agents that do not share a
-repo for their work: the team keeps a repo for Murmur, cloned on each machine, and your user may
-ask you to join that clone with `mur join -C <that clone>` while you work somewhere else. Your
-work stays where it is; the clone only carries Murmur. A new session joins again.
+time, so one that was in Murmur in another repo leaves it. If your user asked you to join a repo
+kept just for Murmur, to connect agents that do not share a repo for their work, also read
+https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/across-repos.md.
 
 It is safe to run twice: it only does what is missing. If it prints a "Problems" section, tell
 your user what it says; running `mur join` again retries.

@@ -74,19 +74,6 @@ and per clone, changes no tracked file and commits nothing. `mur join --leave` u
 
 From then on, agents call Murmur's tools themselves. Nobody needs to type a command.
 
-### Agents that do not share a repo for their work
-
-Murmur can connect them too. Make a repo for Murmur that every teammate can push to, run
-`mur init` in it, and clone it on each machine. An agent working anywhere else joins it:
-
-```sh
-mur join -C <path to that clone>
-```
-
-The session joins without a restart. It is in one repo's Murmur at a time, and each new session
-joins again. [#405](https://github.com/a-Fig/murmur/issues/405) tracks what still assumes agents
-share a repo.
-
 ## What agents get
 
 | Tool     | What it does |
@@ -128,6 +115,7 @@ given to it then. An **inbox** message waits until the agent reads it.
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |
 | `mur stop`             | Stops this clone's daemon. |
+| `mur uninstall`        | Removes Murmur from this machine: its server, hooks and skills from every agent, and its daemons. It refuses while a repo here is joined; `--leave` leaves each first. |
 
 Every command takes `-C <dir>` to act on another repository.
 
@@ -174,6 +162,7 @@ is sent and how.
 | [`docs/VISION.md`](docs/VISION.md) | The design and its reasons, including what `mur join` writes and where. |
 | [`docs/agents/join.md`](docs/agents/join.md) | What an agent reads to join. |
 | [`docs/agents/use.md`](docs/agents/use.md) | What an agent reads to use the tools. |
+| [Agents that do not share a repo](https://murmur.afig.dev/across-repos/) | Using Murmur, beyond what it was built for, to connect agents that work in different repos. Its agent page is [`docs/agents/across-repos.md`](docs/agents/across-repos.md). |
 | [`docs/releasing.md`](docs/releasing.md) | Releases, installer options and building from source. |
 | [`docs/testing.md`](docs/testing.md) | How a change is tested. |
 

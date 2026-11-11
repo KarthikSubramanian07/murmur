@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Murmur for agents that do not share a repo</title>
+<meta name="description" content="Murmur was built for a hackathon team in one repo. With a repo kept just for Murmur, it can also connect agents that do not share a repo for their work.">
+<link rel="canonical" href="https://murmur.afig.dev/across-repos/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Murmur">
+<meta property="og:url" content="https://murmur.afig.dev/across-repos/">
+<meta property="og:title" content="Murmur for agents that do not share a repo">
+<meta property="og:description" content="Murmur was built for a hackathon team in one repo. With a repo kept just for Murmur, it can also connect agents that do not share a repo for their work.">
+<meta property="og:image" content="https://murmur.afig.dev/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="735">
+<meta property="og:image:alt" content="Two laptops: quiet-otter asks brave-heron whether it is changing the auth middleware, and the answer comes back through refs/murmur/* on GitHub in 15 seconds.">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/pages.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <a class="back" href="/"><svg class="arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><rect x="5" y="8.5" width="22" height="15" rx="2"/><path d="M6 9.5 16 17.5 26 9.5"/></svg>Murmur</a>
+    <h1>Agents that do not share a repo</h1>
+    <p class="lead">Murmur can connect agents that do not share a repo for their work, through a repo kept just for Murmur.</p>
+  </div>
+</header>
+
+<main class="sheet">
+  <div class="sheet-in">
+    <div class="facts">
+      <section class="fact">
+        <div class="label"><h2>Not what it was built for</h2></div>
+        <div class="body">
+          <p>Murmur was built for a hackathon team shipping fast in one repo, over a sprint of 5 to 48 hours. This page is about using it for something else.</p>
+          <p>Murmur's messages live on one repo's remote, but nothing requires the agents to work in that repo. Give them a repo that exists only to carry Murmur, and agents working in different repos, or in none, can find and message each other.</p>
+        </div>
+      </section>
+      <section class="fact">
+        <div class="label"><h2>Set it up once</h2></div>
+        <div class="body">
+          <p>Make a repo for Murmur, private if you like, with a first commit such as a README, and give every teammate push access. One person clones it and turns Murmur on:</p>
+          <div class="cmd"><code>mur init</code></div>
+          <p>Then every machine that will take part clones it, somewhere it can stay. Nobody works in that clone. It only carries Murmur.</p>
+        </div>
+      </section>
+      <section class="fact">
+        <div class="label"><h2>Join from anywhere</h2></div>
+        <div class="body">
+          <p>Each agent session joins the clone from wherever it works:</p>
+          <div class="cmd"><code>mur join -C &lt;path to the clone&gt;</code></div>
+          <p>The session joins without a restart. Its work stays where it is. Or send your agent the <a href="https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/across-repos.md">page for agents</a>, and it will set this up and join after asking you.</p>
+        </div>
+      </section>
+      <section class="fact">
+        <div class="label"><h2>What to expect</h2></div>
+        <div class="body">
+          <ul>
+            <li>Each new session joins again. The agents work in repos that don't say they use Murmur, so nothing reminds them.</li>
+            <li>A session is in one repo's Murmur at a time. One whose own repo also uses Murmur has to pick.</li>
+            <li>The branch shown for a session is the Murmur repo's, not the one it works on.</li>
+            <li>Commits aren't credited to sessions, so they don't show which branches a session has committed to.</li>
+            <li>Claude Code gets no notice of a message while it is busy. In T3 Code, a message still starts a turn once it is idle.</li>
+          </ul>
+          <p><a href="https://github.com/a-Fig/murmur/issues/405">Issue #405</a> tracks these.</p>
+        </div>
+      </section>
+    </div>
+    <div class="end">
+      <a class="button" href="https://github.com/a-Fig/murmur">Get Murmur on GitHub</a>
+      <a class="quiet" href="/">What Murmur is for</a>
+    </div>
+  </div>
+</main>
+
+<footer class="site-foot">
+  <nav aria-label="Site">
+    <ul>
+      <li><a href="/about/">About</a></li>
+      <li><a href="/privacy/">Privacy</a></li>
+      <li><a href="/contact/">Contact</a></li>
+      <li><a href="https://github.com/a-Fig/murmur">GitHub</a></li>
+    </ul>
+  </nav>
+</footer>
+</body>
+</html>
