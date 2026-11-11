@@ -207,25 +207,35 @@ func (c *Client) replace(ctx context.Context) error {
 	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	c.roundTrip(sctx, proto.Request{Op: proto.OpStop}) // by the old address and token, never a newer daemon's
 	cancel()
-	lock := filepath.Join(StateDir(c.GitDir), "daemon.lock")
+	_, err := letGo(ctx, c.GitDir, old, "didn't exit when asked to")
+	return err
+}
+
+// letGo waits, up to replaceWait, until the daemon old names has let go of the clone, and reports
+// whether the lock was then free. It wasn't if another daemon has it already: another client may be
+// replacing the daemon too, and one that starts between two looks here holds the lock as the old
+// one did. So a daemon.json that isn't the old one's means the old daemon went, and the wait is
+// over. stayed is what the error says of a daemon still there at the end.
+func letGo(ctx context.Context, gitDir string, old proto.Info, stayed string) (free bool, err error) {
+	lock := filepath.Join(StateDir(gitDir), "daemon.lock")
 	for end := time.Now().Add(replaceWait); ; {
-		if info, ok := c.load(); ok && info.Token != old.Token {
-			return nil
+		if info, ok := (&Client{GitDir: gitDir}).load(); ok && info.Token != old.Token {
+			return false, nil
 		}
 		l, err := proc.LockShared(lock)
 		if err == nil {
 			l.Close()
-			return nil
+			return true, nil
 		}
 		if !errors.Is(err, proc.ErrLocked) {
-			return fmt.Errorf("replacing the daemon of an older version: %w", err)
+			return false, fmt.Errorf("replacing the daemon of an older version: %w", err)
 		}
 		if time.Now().After(end) {
-			return fmt.Errorf("the daemon of an older version (pid %d) didn't exit when asked to", old.PID)
+			return false, fmt.Errorf("the daemon of an older version (pid %d) %s", old.PID, stayed)
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return false, ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
@@ -391,11 +401,9 @@ func endOlder(ctx context.Context, gitDir string, info proto.Info) error {
 	if err := endProcess(info.PID, isCommand); err != nil {
 		return fmt.Errorf("%w (%s didn't end it itself: %w)", olderDaemon(info), brand.Command, err)
 	}
-	if _, err := WaitGone(ctx, gitDir, replaceWait); err != nil {
-		if errors.Is(err, ErrStillRunning) {
-			return fmt.Errorf("the daemon of an older version (pid %d) was ended and still holds the clone", info.PID)
-		}
-		return err
+	free, err := letGo(ctx, gitDir, info, "was ended and still holds the clone")
+	if err != nil || !free {
+		return err // not free: a daemon another client started has the clone already
 	}
 	// Ended without a word, it may not have removed its daemon.json, as one that crashed doesn't.
 	// As in running: no daemon can start to write a new one while the lock is held here.

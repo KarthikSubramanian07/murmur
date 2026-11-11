@@ -23,7 +23,8 @@ var ErrCantEnd = errors.New("ending a process by its ID isn't supported on this 
 // A process ID outlives its process only as a number, and the system gives it to another process
 // later. So End never ends by the number alone: it takes hold of the process, looks at what it
 // runs, and ends what it holds. On Windows that is a handle, and on Linux a pidfd, which both stay
-// with the one process whatever becomes of its ID. macOS has neither, so there the look and the
+// with the one process whatever becomes of its ID; a Linux that gives no pidfd (a kernel before
+// 5.3, or a sandbox that refuses the call) ends nothing, with ErrCantEnd. macOS has neither, so there the look and the
 // signal are two steps by ID, a few microseconds apart.
 //
 // On Unix the process is sent SIGTERM, which a daemon takes as a stop and shuts down from. Windows

@@ -2,10 +2,33 @@ package proc
 
 import (
 	"bytes"
+	"errors"
 	"io/fs"
 
 	"golang.org/x/sys/unix"
 )
+
+// end looks at what the process runs and then signals it, both by its number: macOS has nothing
+// that holds on to a process as a handle or a pidfd does, so the two are a few microseconds apart.
+func end(pid int, is func(exe string) bool) error {
+	exe, err := exeOf(pid)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, unix.ESRCH) {
+			return ErrGone
+		}
+		return err
+	}
+	if !is(exe) {
+		return ErrOther
+	}
+	if err := unix.Kill(pid, unix.SIGTERM); err != nil {
+		if errors.Is(err, unix.ESRCH) {
+			return ErrGone
+		}
+		return err
+	}
+	return nil
+}
 
 // exeOf is the path of the program pid runs, from the kernel's copy of the process's arguments:
 // a count of them in the first four bytes, then the path the program was started from, ended by a

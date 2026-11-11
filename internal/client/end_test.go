@@ -174,6 +174,34 @@ func TestAnEndedDaemonThatStillHoldsTheCloneIsAnError(t *testing.T) {
 	}
 }
 
+// Another client, a session's server reconnecting or a second join, may start a current daemon the
+// moment the old one lets go. That daemon holds the lock as the old one did, and isn't taken for it
+// (Sol's review of #425): the stop has done its work, and the new daemon's daemon.json stays.
+func TestADaemonStartedAsTheOldOneGoesIsNotTakenForIt(t *testing.T) {
+	wait := replaceWait
+	replaceWait = 2 * time.Second
+	t.Cleanup(func() { replaceWait = wait })
+	gitDir := stateOnly(t)
+	old := startLegacyStandIn(t, gitDir)
+	var fresh *standIn
+	endsWith(t, func(int, func(string) bool) error {
+		old.die()
+		os.Remove(filepath.Join(StateDir(gitDir), "daemon.json")) // as a daemon does once it holds the lock
+		fresh = startStandIn(t, gitDir, proto.Protocol)
+		return nil
+	})
+	if stopped, err := Stop(context.Background(), gitDir); !stopped || err != nil {
+		t.Fatalf("stop: stopped %v, err %v", stopped, err)
+	}
+	sentNothing(t, old)
+	if info, ok := (&Client{GitDir: gitDir}).load(); !ok || info.Token != fresh.token {
+		t.Errorf("the new daemon's daemon.json is gone or changed: %+v", info)
+	}
+	if !Running(context.Background(), gitDir) {
+		t.Error("the new daemon is no longer found")
+	}
+}
+
 // A daemon that started in the ended one's place keeps its daemon.json.
 func TestEndingADaemonLeavesANewDaemonsFileAlone(t *testing.T) {
 	gitDir := stateOnly(t)
