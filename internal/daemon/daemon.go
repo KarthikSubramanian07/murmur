@@ -5,6 +5,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -289,6 +291,8 @@ type Daemon struct {
 	repo    *bus.Repo
 	dir     string
 	device  string
+	signKey ed25519.PrivateKey // seals this device's presence (keys.go)
+	boxKey  *ecdh.PrivateKey   // opens what is encrypted for this device
 	host    string
 	owner   string
 	token   string // the sessions' secret, in daemon.json
@@ -393,6 +397,27 @@ type Daemon struct {
 	threads      map[threadKey]t3db.State
 	threadRead   map[threadKey]time.Time
 	threadWarned map[threadKey]bool
+
+	// refused is when a presence claiming each device was last refused (see checkPresenceLocked), to
+	// log it once a minute.
+	refused    map[string]time.Time
+	refusedSHA map[string]string // the presence last refused for each device, not read again; under mu
+
+	// The team key (team.go). teamKeys is the team private keys this device holds, by TeamID;
+	// teamChanged is closed and replaced when an epoch is read. Under mu. teamMu serializes the team
+	// ref's writes; teamKick wakes teamLoop.
+	teamKeys    bus.Keyring
+	teamChanged chan struct{}
+	teamMu      sync.Mutex
+	teamKick    chan struct{}
+	waitWarned  map[string]bool // logs already said to be waiting for the team key; under mu
+	// syncSeq counts the syncs that got a listing, and teamReadSeq is the last of them that read the
+	// team ref up to what it listed. unknownAt is, for each log stopped at a record encrypted for a
+	// team key the team ref doesn't show, that record and the sync it was first met in
+	// (openEventLocked). Under mu.
+	syncSeq     int64
+	teamReadSeq int64
+	unknownAt   map[string]unknownKey
 
 	polls atomic.Int64 // the remote listings tried, so a test can see the rate
 
@@ -522,6 +547,11 @@ type peer struct {
 	// machines' clocks.
 	listed     string
 	lastChange time.Time
+	// sealed says the presence read was sealed: only such a one earns a grant of the team keys
+	// (grantsDueLocked). locked says it was encrypted for a team key this device doesn't hold yet, to
+	// read again once it does.
+	sealed bool
+	locked bool
 }
 
 // fetchFail is a ref whose fetch failed: at which listed SHA, and when. It is fetched again on
@@ -656,6 +686,19 @@ type state struct {
 	// (#198). Derived tags aren't kept.
 	Tags map[string]*tags.State `json:"tags,omitempty"`
 
+	// Pins is each device's keys as this device first pinned them (keys.go), this device's own
+	// included, by device ID. A pin is never undone.
+	Pins map[string]*keyPin `json:"pins,omitempty"`
+	// PresenceAt is the time this device's last presence was signed with, which the next one's must
+	// pass (see nextPresenceAtLocked).
+	PresenceAt time.Time `json:"presenceAt,omitzero"`
+	// The team ref as read (team.go): its tip, its epochs in order, and the team keys each device
+	// has been given, by device ID. GrantMark is, for each device a grant was read for, the time its
+	// newest presence was signed with when this daemon read the grant (grantsDueLocked).
+	TeamTip     string               `json:"teamTip,omitempty"`
+	Epochs      []teamEpoch          `json:"epochs,omitempty"`
+	TeamGranted map[string][]string  `json:"teamGranted,omitempty"`
+	GrantMark   map[string]time.Time `json:"grantMark,omitempty"`
 	// Explained is, for each of this device's sessions, by its name as Tags is, the people whose
 	// first message to it said in full that they see only what the session sends (#345); their
 	// later messages end with the line an agent's do (see explained.go).
@@ -824,6 +867,11 @@ func Run(ctx context.Context, opt Options) error {
 		d.bg.Add(1)
 		go func() {
 			defer d.bg.Done()
+			d.teamLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
 			d.titleLoop(ctx)
 		}()
 		d.bg.Add(1)
@@ -924,12 +972,17 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
+		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
+		waitWarned: map[string]bool{}, unknownAt: map[string]unknownKey{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1),
 	}
-	device, err := loadDevice(dir)
+	device, signKey, boxKey, err := loadIdentity(dir, opt.Log, sealedLocally(ctx, gitx.Git{Dir: opt.GitDir}))
 	if err != nil {
 		return nil, err
 	}
-	d.device = device
+	d.device, d.signKey, d.boxKey = device, signKey, boxKey
+	if d.teamKeys, err = loadTeamKeys(dir); err != nil {
+		return nil, err
+	}
 	d.host, _ = os.Hostname()
 	d.repo = &bus.Repo{Git: gitx.Git{Dir: opt.GitDir}, Name: device, Email: device + "@" + brand.Name + ".invalid"}
 	if d.repo.Remote, err = bus.RemoteFor(ctx, d.repo.Git); err != nil {
@@ -940,6 +993,8 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}
+	d.pinSelfLocked() // nothing else runs yet
+	d.rereadTeamIfKeysLostLocked()
 	d.loadSettings()
 	d.loadPersonLog()
 	wall := now.Round(0)
@@ -1175,7 +1230,8 @@ func (d *Daemon) loadState() error {
 		TagsFrom: map[string]string{}, Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
-		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{}}
+		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{},
+		Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1234,6 +1290,15 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.People == nil {
 		d.st.People = map[string]string{}
+	}
+	if d.st.Pins == nil {
+		d.st.Pins = map[string]*keyPin{}
+	}
+	if d.st.TeamGranted == nil {
+		d.st.TeamGranted = map[string][]string{}
+	}
+	if d.st.GrantMark == nil {
+		d.st.GrantMark = map[string]time.Time{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

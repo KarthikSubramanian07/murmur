@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -20,14 +21,17 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/daemon"
+	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/logfile"
 	"github.com/a-Fig/murmur/internal/mcpserver"
 	"github.com/a-Fig/murmur/internal/proc"
+	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/publicrepo"
 	"github.com/a-Fig/murmur/internal/setup"
 	"github.com/a-Fig/murmur/internal/update"
@@ -56,6 +60,10 @@ For humans:
                                 agents; --no-open only prints its address (starts the clone's daemon
                                 if it isn't running)
   mur stop                      stop this clone's daemon
+  mur rotate [--force]          make a new team key if a collaborator has left the repo (listed with gh),
+                                so what is written from now on can't be read by them; --force always does.
+                                First remove every other way they can push (deploy keys they added, team
+                                access, Apps): whatever can still push is given the new key
 
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
@@ -103,6 +111,8 @@ func main() {
 		err = runJoin(ctx, args, os.Stdout)
 	case "stop":
 		err = runStop(ctx, args, os.Stdout)
+	case "rotate":
+		err = runRotate(ctx, args, os.Stdout)
 	case "uninstall":
 		err = runUninstall(ctx, args, os.Stdout)
 	case "ui":
@@ -451,6 +461,76 @@ func runJoin(ctx context.Context, args []string, out io.Writer) error {
 	}
 	fmt.Fprint(out, report.String())
 	return err
+}
+
+// runRotate asks the daemon for a new team key (#156) when the repo's collaborators, listed with gh,
+// have lost someone since the current key was made. gh is the GitHub CLI: Murmur makes no request to
+// GitHub of its own for this, and a repo that isn't on GitHub, or a gh that isn't signed in, leaves
+// only --force.
+func runRotate(ctx context.Context, args []string, out io.Writer) error {
+	fs, dir := flags("rotate")
+	force := fs.Bool("force", false, "make a new team key whoever the collaborators are")
+	fs.Parse(args)
+	gitDir, err := client.FindGitDir(ctx, *dir)
+	if err != nil {
+		return err
+	}
+	collab, why := listCollaborators(ctx, gitDir)
+	if collab == nil && !*force {
+		return fmt.Errorf("%s; with --force, %s rotate makes a new team key anyway", why, brand.Command)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	c, err := client.Connect(ctx, gitDir, true)
+	if err != nil {
+		return err
+	}
+	resp, err := c.Do(ctx, proto.Request{Op: proto.OpRotate, Collaborators: collab, Force: *force})
+	if err != nil {
+		return err
+	}
+	if resp.Error != "" {
+		return errors.New(resp.Error)
+	}
+	fmt.Fprintln(out, resp.Note)
+	return nil
+}
+
+// listCollaborators lists the GitHub logins of the people who can push to the bus's repo, with gh, or
+// says why it couldn't. Only push access counts: someone moved down to read access is still a
+// collaborator to GitHub, and has left as far as the bus goes.
+func listCollaborators(ctx context.Context, gitDir string) ([]string, string) {
+	g := gitx.Git{Dir: gitDir}
+	name, err := bus.RemoteFor(ctx, g)
+	if err != nil {
+		return nil, err.Error()
+	}
+	url, err := g.Run(ctx, "", "remote", "get-url", name)
+	if err != nil {
+		return nil, "couldn't read the remote's address"
+	}
+	addr := publicrepo.Address(strings.TrimSpace(url))
+	if addr == "" {
+		return nil, "the repo isn't on GitHub, so its collaborators can't be listed"
+	}
+	if _, err := exec.LookPath("gh"); err != nil {
+		return nil, "listing the collaborators needs the GitHub CLI, gh, which isn't installed"
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "api", "--paginate", "repos/"+strings.TrimPrefix(addr, "github.com/")+"/collaborators", "--jq", ".[] | select(.permissions.push) | .login")
+	b, err := cmd.Output()
+	if err != nil {
+		return nil, "gh couldn't list the collaborators (is it signed in, with access to the repo?)"
+	}
+	var logins []string
+	for _, l := range strings.Fields(string(b)) {
+		logins = append(logins, strings.ToLower(l))
+	}
+	if len(logins) == 0 {
+		return nil, "gh listed no collaborators who can push"
+	}
+	return logins, ""
 }
 
 func runUninstall(ctx context.Context, args []string, out io.Writer) error {

@@ -765,7 +765,9 @@ func TestPageMessagesAfterAFailedFirstSync(t *testing.T) {
 	b := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
 	b.start()
 	bob, _ := b.session("bbbbbb", "")
-	eventually(t, "a sees bob", func() bool { return a.seesSession(bob) })
+	// a sees b's device, not bob: b, never having read the team ref, encrypts its presence for
+	// itself alone (docs/VISION.md, "The bus is encrypted").
+	eventually(t, "a sees b", func() bool { return a.seesDevices(2) })
 
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast"})
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "direct"})

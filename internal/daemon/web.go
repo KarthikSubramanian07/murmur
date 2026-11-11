@@ -272,8 +272,8 @@ type pageMsg struct {
 }
 
 // recordMessageLocked keeps a message for the page. Every message this daemon reads goes in,
-// whoever it is for: anyone who can read the repo can read them all already. One to or from this
-// device's person goes on disk too. Caller holds mu.
+// whoever it is for: every record is encrypted for the whole team, which could read them all
+// before encryption too. One to or from this device's person goes on disk too. Caller holds mu.
 func (d *Daemon) recordMessageLocked(e bus.Event) {
 	if d.msgIDs[e.ID] {
 		return

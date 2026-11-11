@@ -80,6 +80,13 @@ func TestRestartDoesNotReplayToNewSessions(t *testing.T) {
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	eventually(t, "presence", func() bool { return a.seesDevices(2) && b.seesDevices(2) })
+	// Both hold the team key before b stops. A device still waiting for its grant reads what it
+	// missed late, once granted, and that can reach a session started within the minute after it was
+	// sent (docs/VISION.md, "The bus is encrypted"): another case than a restart's.
+	eventually(t, "both to hold the team key", func() bool {
+		ids := teamIDs(t, remote)
+		return len(ids) == 1 && ringOf(t, a)[ids[0]] != nil && ringOf(t, b)[ids[0]] != nil
+	})
 
 	b.stop()
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "sent while b was down"})
@@ -173,7 +180,7 @@ func TestNewDaemonShowsADeadDeviceStaleAtOnce(t *testing.T) {
 	b.offline(remote, true) // no more heartbeats, and no goodbye
 	time.Sleep(2 * b.stale)
 
-	c := newDevice(t, remote)
+	c := newDeviceWith(t, remote, func(d *device) { d.noKey = true }) // b is gone, so nobody grants it
 	var stale bool
 	eventually(t, "c lists b", func() bool {
 		for _, dv := range c.do(proto.Request{Op: proto.OpWho}).Devices {
@@ -197,6 +204,12 @@ func TestRestartCatchesUpReconnectingSessions(t *testing.T) {
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	bob, _ := b.session("bbbbbb", "")
 	eventually(t, "presence", func() bool { return a.seesSession(bob) })
+	// b holds the team key before it goes, as any device that has been up a few seconds does, so
+	// what it reads on its return isn't held back for a grant (docs/VISION.md, "The bus is encrypted").
+	eventually(t, "b holds the team key", func() bool {
+		ids := teamIDs(t, remote)
+		return len(ids) == 1 && ringOf(t, b)[ids[0]] != nil
+	})
 
 	b.stop()
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "direct, during the restart"})
@@ -297,7 +310,9 @@ func TestFirstSyncFailedStillQueues(t *testing.T) {
 	b := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
 	b.start()
 	bob, _ := b.session("bbbbbb", "")
-	eventually(t, "a sees bob", func() bool { return a.seesSession(bob) })
+	// a sees b's device, not bob: b, never having read the team ref, encrypts its presence for
+	// itself alone (docs/VISION.md, "The bus is encrypted").
+	eventually(t, "a sees b", func() bool { return a.seesDevices(2) })
 
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast"})
 	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "direct"})

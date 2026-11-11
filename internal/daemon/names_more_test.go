@@ -450,10 +450,7 @@ func TestNameOnlyInPresenceIsUsed(t *testing.T) {
 		if git(t, remote, "for-each-ref", "refs/murmur/presence/"+b.self()) == "" {
 			return false
 		}
-		work := t.TempDir()
-		git(t, work, "init", "-q")
-		git(t, work, "fetch", "-q", remote, "refs/murmur/presence/"+b.self())
-		return strings.Contains(git(t, work, "log", "-1", "--format=%B", "FETCH_HEAD"), pick.name)
+		return strings.Contains(openedPresence(t, remote, b), pick.name)
 	})
 	b.pushOffline(remote, true)
 	work, tree := junkTree(t)
@@ -461,8 +458,11 @@ func TestNameOnlyInPresenceIsUsed(t *testing.T) {
 
 	a := newDeviceWith(t, remote, func(d *device) {
 		d.names, d.stale = offering(seededNames(62), pick, pick, pick), time.Minute
+		d.noKey = true // b can't push, so nobody grants it
 	})
-	eventually(t, "b's name on a", func() bool { return a.nameOf(bob) == pick.name })
+	// b's presence was encrypted before a existed, so a can't open it, and sees b with no sessions;
+	// the names it carries in the clear are what a goes by.
+	eventually(t, "b on a", func() bool { return a.seesDevices(2) })
 	alice, _ := a.session("aaaaaa", "claude-alice")
 	an := a.named(alice)
 	if an == pick.name {
@@ -584,7 +584,7 @@ func TestSendByNameAcrossDevices(t *testing.T) {
 	}
 
 	// On the bus, every message is addressed: To is never a name.
-	for _, line := range strings.Split(busText(t, remote, a.self()), "\n") {
+	for _, line := range strings.Split(busText(t, remote, a), "\n") {
 		var e bus.Event
 		if !strings.HasPrefix(line, "{") || json.Unmarshal([]byte(line), &e) != nil || e.Type != bus.Message {
 			continue

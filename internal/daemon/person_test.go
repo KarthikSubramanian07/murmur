@@ -596,10 +596,13 @@ func TestANameHeldFromBeforeIsClaimedOnce(t *testing.T) {
 		return r.Lookup != nil && r.Lookup.Addr == selfA+"/"+bus.PersonSession && a.page().state().Account.Taken == ""
 	})
 	b.start()
-	b.session("bbbbbb", "")
+	bob, _ := b.session("bbbbbb", "")
+	// A whole address: a bare "bbbbbb" reads as a device, and a message to a device this one has
+	// never seen is refused, since there is no key to encrypt it for (#156).
+	send := `{"to":"` + bob + `","text":"hi"}`
 	pb := b.page()
 	eventually(t, "b to learn the name is a's", func() bool { return pb.state().Account.Taken == selfA })
-	if code, body := pb.call("POST", "/api/send", pb.token, `{"to":"bbbbbb","text":"hi"}`); code != http.StatusBadRequest || !strings.Contains(body, "choose another") {
+	if code, body := pb.call("POST", "/api/send", pb.token, send); code != http.StatusBadRequest || !strings.Contains(body, "choose another") {
 		t.Errorf("sending with a name someone else has: %d %s", code, body)
 	}
 	r := b.do(proto.Request{Op: proto.OpLookup, Name: "ada"})
@@ -610,7 +613,7 @@ func TestANameHeldFromBeforeIsClaimedOnce(t *testing.T) {
 	if got := pb.state().Account; got.Name != "ada-b" || got.Taken != "" {
 		t.Errorf("after choosing again: %+v", got)
 	}
-	if code, body := pb.call("POST", "/api/send", pb.token, `{"to":"bbbbbb","text":"hi"}`); code != http.StatusOK {
+	if code, body := pb.call("POST", "/api/send", pb.token, send); code != http.StatusOK {
 		t.Errorf("sending once renamed: %d %s", code, body)
 	}
 }

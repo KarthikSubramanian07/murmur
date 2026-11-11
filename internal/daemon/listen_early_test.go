@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -108,12 +109,10 @@ func TestDaemonAnswersBeforeItsFirstSync(t *testing.T) {
 	if got.err != nil || got.resp.Error != "" {
 		t.Fatalf("who: %v %q", got.err, got.resp.Error)
 	}
-	for _, dv := range got.resp.Devices {
-		for _, s := range dv.Sessions {
-			if s.Addr == bob {
-				return
-			}
-		}
+	// The first sync brought b's device. Its sessions are inside its encrypted presence, which a
+	// reads once b has granted it the team key (#156).
+	if !slices.ContainsFunc(got.resp.Devices, func(dv proto.Device) bool { return dv.ID == b.self() }) {
+		t.Fatalf("who, answered after the first sync, doesn't show b's device (%s): %+v", b.self(), got.resp.Devices)
 	}
-	t.Fatalf("who, answered after the first sync, doesn't show bob (%s): %+v", bob, got.resp.Devices)
+	eventually(t, "a to see bob once it is granted the team key", func() bool { return a.seesSession(bob) })
 }

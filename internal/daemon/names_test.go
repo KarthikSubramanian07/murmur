@@ -204,12 +204,9 @@ func (r registry) assigned() []string {
 }
 
 // busText is every commit message of device dev's log on the remote.
-func busText(t *testing.T, remote, dev string) string {
+func busText(t *testing.T, remote string, d *device) string {
 	t.Helper()
-	work := t.TempDir()
-	git(t, work, "init", "-q")
-	git(t, work, "fetch", "-q", remote, "refs/murmur/mesh/"+dev)
-	return git(t, work, "log", "--format=%B", "FETCH_HEAD")
+	return openedLog(t, remote, d)
 }
 
 // Two devices that pick the same name at the same moment can't both have it: the leased push of
@@ -350,7 +347,7 @@ func TestSameKeyKeepsItsName(t *testing.T) {
 	if reg := readRegistry(t, remote); strings.Contains(reg.text, "claude-alice") || len(reg.assigned()) != 1 {
 		t.Fatalf("the registry should hold her one assignment and not her client session ID:\n%s", reg.text)
 	}
-	if strings.Contains(busText(t, remote, a.self()), "claude-alice") {
+	if strings.Contains(busText(t, remote, a), "claude-alice") {
 		t.Fatal("the client's session ID is on the bus")
 	}
 }
@@ -540,6 +537,9 @@ func TestSendByName(t *testing.T) {
 	an, bn, cn := a.named(alice), b.named(bob), b.named(cleo)
 	a.nameIs(bob, bn)
 	a.nameIs(cleo, cn)
+	// b names alice's agent in its notice, which is in a's encrypted presence: b reads it once it
+	// holds the team key, and a name alone, which the registry gives in the clear, comes sooner.
+	eventually(t, "b to read alice's presence", func() bool { return b.seesSession(alice) })
 
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bn, Subject: "by name", Body: "the body"})
 	if r.Error != "" || r.Note != "" || len(r.Messages) != 1 || r.Messages[0].To != bob || r.Messages[0].ToName != bn {
@@ -571,7 +571,7 @@ func TestSendByName(t *testing.T) {
 	}
 
 	// On the bus the message is addressed, not named.
-	bus := busText(t, remote, a.self())
+	bus := busText(t, remote, a)
 	if !strings.Contains(bus, `"to":"`+bob+`"`) || strings.Contains(bus, `"to":"`+bn) {
 		t.Fatalf("the message on the bus:\n%s", bus)
 	}
@@ -656,15 +656,20 @@ func TestV1PeerWithoutNamesStillWorks(t *testing.T) {
 		}
 	}
 
-	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "old-0001/x", Subject: "hello old"})
-	if r.Error != "" || r.Note != "" {
-		t.Fatalf("send to the old session: %+v", r)
+	// It can't read what this device writes, which is encrypted (#156), so a message to it is
+	// refused rather than sent where it can't be read.
+	for _, to := range []string{"old-0001/x", "old-0001"} {
+		r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: to, Subject: "hello old"})
+		if !strings.Contains(r.Error, "before the bus was encrypted") {
+			t.Fatalf("send to %s: %+v", to, r)
+		}
 	}
-	if text := busText(t, remote, a.self()); !strings.Contains(text, `"to":"old-0001/x"`) {
-		t.Fatalf("the message on the bus:\n%s", text)
-	}
-	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "old-0001", Subject: "hello old device"}); r.Error != "" || r.Note != "" {
-		t.Fatalf("send to the old device: %+v", r)
+	// Its log is there once its session's start is written, which waits for the first team key.
+	eventually(t, "a's log on the remote", func() bool {
+		return strings.Contains(git(t, remote, "for-each-ref", "refs/murmur/mesh/"), a.self())
+	})
+	if text := busText(t, remote, a); strings.Contains(text, "hello old") {
+		t.Fatalf("the message went out:\n%s", text)
 	}
 
 	pushEvent(t, remote, "refs/murmur/mesh/old-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,

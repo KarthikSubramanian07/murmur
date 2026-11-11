@@ -31,6 +31,9 @@ const (
 	// page of the device whose log carries it. The session's device applies it; a daemon from before
 	// tags doesn't know the type and passes over it.
 	Tags = "tags"
+	// Boxed is an event encrypted for the team's devices (#156): it holds another event whole, and
+	// says nothing else. A daemon from before encryption doesn't know the type and passes over it.
+	Boxed = "box"
 )
 
 // PersonSession is the session ID of a device's person (#242), so a person's address is
@@ -75,7 +78,17 @@ type Event struct {
 	// tags: the tags the human added and removed. To is the session.
 	Add    []string `json:"add,omitempty"`
 	Remove []string `json:"remove,omitempty"`
+
+	// box: the event, encrypted. A boxed event carries nothing else but V and Type.
+	Box *Box `json:"box,omitempty"`
 }
+
+// Subjects of encrypted records. A commit's subject used to repeat its content, readable by anyone
+// who could read the repo; an encrypted record's says only what it is.
+const (
+	EventSubject    = "event"
+	PresenceSubject = "presence"
+)
 
 // Line is the event as one readable line, used as the commit subject so that `git log` on a
 // bus ref reads like a log.
@@ -138,6 +151,11 @@ func (e *Event) Clean() {
 // Murmur wouldn't write. A device has one person, at one address, so only the first is kept: the
 // others would only hold names their device can't be reached by.
 func (p *Presence) Clean() {
+	for name, id := range p.Names {
+		if !names.Valid(name) || !ValidName(id) {
+			delete(p.Names, name)
+		}
+	}
 	p.Host = OneLine(p.Host, 64)
 	p.Owner = OneLine(p.Owner, 64)
 	var keep []SessionInfo
@@ -256,7 +274,7 @@ func ValidTo(to string) bool {
 type Presence struct {
 	V        int           `json:"v"`
 	Device   string        `json:"device"`
-	Host     string        `json:"host"`
+	Host     string        `json:"host,omitempty"`  // absent when encrypted
 	Owner    string        `json:"owner,omitempty"` // git user.name on that clone
 	At       time.Time     `json:"at"`              // the writer's clock
 	Sessions []SessionInfo `json:"sessions"`
@@ -264,6 +282,21 @@ type Presence struct {
 	// not in Sessions, and a daemon that reads this refuses to send them a message; one from
 	// before the field sees them only as gone, and the writer drops what it sends them.
 	Offline []string `json:"offline,omitempty"`
+	// Epoch is the newest team key the device had read from the team ref when it wrote this, and
+	// Holds the team keys it held then, by TeamID (#156). A teammate grants the team keys by them.
+	// Both are inside the box, so they are absent from an encrypted presence until it is opened.
+	Epoch string   `json:"epoch,omitempty"`
+	Holds []string `json:"holds,omitempty"`
+	// BoxKey is the device's public box key, which its teammates encrypt to (#156). A presence
+	// that carries one is sealed, which makes the key the device's.
+	BoxKey string `json:"boxKey,omitempty"`
+	// Box holds Host, Owner, Sessions and Offline, encrypted for the team's devices; those fields
+	// are then empty. Opened, it is nil.
+	Box *Box `json:"box,omitempty"`
+	// Names is, beside a Box, each session's name with the session's ID, readable: a device that
+	// can't open the box (it joined while this one couldn't push) still knows those names are taken,
+	// and never gives one out again. The name registry holds the same in the clear.
+	Names map[string]string `json:"names,omitempty"`
 }
 
 // SessionInfo is one session as its device's presence describes it.

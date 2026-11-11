@@ -39,6 +39,9 @@ const (
 	// OpPageKey asks for a one-time key to the daemon's page, which another clone's daemon gives
 	// its own page so the tab can move to this one's (#348).
 	OpPageKey = "pagekey"
+	// OpRotate asks for a new team key (#156): when someone in the epoch's recorded collaborators
+	// is no longer in Collaborators, or always with Force.
+	OpRotate = "rotate"
 )
 
 // Protocol is the version of this protocol that the daemon speaks, reported in its ping reply. A
@@ -70,7 +73,9 @@ const (
 //	    the client may, and otherwise trusted only while it holds the clone's lock.
 //	13: MessageView's Explained: a person's message says in full that they see only what the
 //	    agent sends the first time a session has one from them, and ends as an agent's after (#345)
-const Protocol = 13
+//	14: OpRotate, and a bus encrypted for a team key (#156): a daemon of 13 or less writes in the
+//	    clear, so an upgraded mur replaces it where it may.
+const Protocol = 14
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
@@ -136,6 +141,11 @@ type Request struct {
 	Body    string `json:"body,omitempty"`
 	Doing   string `json:"doing,omitempty"`
 	Limit   int    `json:"limit,omitempty"`
+
+	// Collaborators is, for OpRotate, the repo's collaborators as the CLI listed them, or nil if it
+	// couldn't; Force rotates whatever the list says.
+	Collaborators []string `json:"collaborators,omitempty"`
+	Force         bool     `json:"force,omitempty"`
 
 	// ClaudeSession finds the session for the hook, which only knows Claude Code's ID for it.
 	ClaudeSession string `json:"claudeSession,omitempty"`

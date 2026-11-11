@@ -17,6 +17,11 @@ func TestAPresenceKeepsToTheSessionCapItsReadersHold(t *testing.T) {
 	writer.d.repo.Remote = reader.remote // the two share the reader's remote
 	now := time.Now()
 	writer.d.mu.Lock()
+	// Both hold the team key the presence is encrypted for; no daemon loop runs here to make one.
+	ep := withEpoch(writer.d, true)
+	reader.d.mu.Lock()
+	reader.d.st.Epochs, reader.d.teamKeys[ep.ID] = append(reader.d.st.Epochs, ep), writer.d.teamKeys[ep.ID]
+	reader.d.mu.Unlock()
 	for i := range bus.MaxSessions + 1 {
 		id := fmt.Sprintf("s%05d", i)
 		// s00000 is the least recently active.

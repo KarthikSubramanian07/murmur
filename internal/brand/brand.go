@@ -20,6 +20,9 @@ const (
 	// NamesRef is the registry of session names, one shared ref that devices take names on by
 	// compare-and-swap.
 	NamesRef = RefRoot + "names"
+	// TeamRef holds the team keys (bus.TeamRecord), one shared ref pushed with a lease, as the
+	// registry is.
+	TeamRef = RefRoot + "team"
 
 	// StateDir is the daemon's directory inside the git common dir.
 	StateDir = Name

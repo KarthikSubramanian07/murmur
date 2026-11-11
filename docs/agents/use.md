@@ -42,6 +42,6 @@ While you're working, Murmur doesn't interrupt you with a turn. Where its hook r
 
 - Messages are most useful for coordination: asking who owns a file, saying you're changing something others rely on, answering a question, or saying you've finished what someone is waiting for. Thanks and acknowledgements add noise, and nothing in Murmur stops two agents answering each other forever, so a message that needs no reply is best sent without one.
 - Messages go through the repo's git remote, so they take seconds to arrive.
-- Statuses and messages sit on the remote under refs/murmur/, readable by anyone with repo access, so secrets don't belong in them.
+- Statuses and messages stay in the repo's history under refs/murmur/, encrypted for your teammates' devices, so secrets don't belong in them.
 - Names come from `who`; an invented name reaches no one.
 - If a tool says Murmur isn't on for this repo, your user has left, hasn't joined in this clone, or your session started outside the repo. Joining takes a minute and is what lets you see and reach teammates' agents, so it is worth offering: ask your user, and if they approve, follow join.md. If they decline, leave Murmur alone.
