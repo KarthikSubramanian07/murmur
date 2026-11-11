@@ -13,12 +13,151 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/here"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
 )
+
+// The hook finds its session's MCP server among the records of this user's (package here). The
+// tests' are in a directory of their own, empty unless a test publishes one, so a hook here never
+// finds a real session's, and none takes the test's process for Claude Code's.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "hook-sessions")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv(brand.SessionsDirEnv, dir)
+	os.Unsetenv("CLAUDE_PID")
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// publish puts a server's record where the hook looks, for the length of the test.
+func publish(t *testing.T, s here.Session) {
+	t.Helper()
+	dir, err := here.DefaultDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := here.Publish(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { here.Withdraw(dir, s.ServerPID) })
+}
+
+// ops are the requests of one kind among those a fake daemon got.
+func ops(requests []proto.Request, op string) []proto.Request {
+	var out []proto.Request
+	for _, r := range requests {
+		if r.Op == op {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// A session that joined a clone it doesn't work in (`mur join -C`) has its hook speak to that
+// clone's daemon, wherever the hook runs: in another repo, whose own daemon hears nothing, or in no
+// repo at all (#422). A call is bracketed with the repository it ran in, which the daemon doesn't
+// watch.
+func TestTheHookFindsTheCloneItsSessionJoined(t *testing.T) {
+	joined, works := newRepo(t), newRepo(t)
+	theirs := fakeDaemon(t, filepath.Join(joined, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpTurnEnd {
+			b, _ := json.Marshal(proto.Response{OK: true, Read: []proto.MessageView{{From: "dev-0001/aaaaaa", Subject: "s", Body: "b"}}})
+			return string(b)
+		}
+		return `{"ok":true,"unread":2}`
+	})
+	own := fakeDaemon(t, filepath.Join(works, ".git"), okToAll)
+	publish(t, here.Session{ServerPID: os.Getpid(), ClientPID: 4242, GitDir: filepath.Join(joined, ".git"), On: true})
+	t.Setenv("CLAUDE_PID", "4242")
+
+	for _, cwd := range []string{works, t.TempDir()} {
+		if out, _ := run("PostToolUse", cwd); !strings.Contains(out, "2 messages unread") {
+			t.Errorf("in %s the hook printed %q, want the count", cwd, out)
+		}
+	}
+	if out, _ := run("Stop", works); !strings.Contains(out, `"decision":"block"`) {
+		t.Errorf("Stop printed %q, want the turn kept going", out)
+	}
+	if got := own(); len(got) != 0 {
+		t.Errorf("the daemon of the repo the session works in was asked %+v", got)
+	}
+	got := theirs()
+	if n := len(ops(got, proto.OpNotices)); n != 2 {
+		t.Errorf("the joined clone's daemon got %d notices requests, want 2: %+v", n, got)
+	}
+	ends := ops(got, proto.OpToolEnd)
+	if len(ends) != 2 {
+		t.Fatalf("the joined clone's daemon was told of %d calls ending, want 2: %+v", len(ends), got)
+	}
+	want, _ := os.Stat(filepath.Join(works, ".git"))
+	if at, err := os.Stat(ends[0].GitDir); err != nil || !os.SameFile(at, want) {
+		t.Errorf("the call in %s was bracketed with the clone %q", works, ends[0].GitDir)
+	}
+	if ends[1].GitDir != "" {
+		t.Errorf("the call outside any repo was bracketed with the clone %q", ends[1].GitDir)
+	}
+}
+
+// Claude Code runs the hook in every project. In a session whose server is in no repository it
+// asks no daemon, not even the one of a joined clone it happens to run in: the session isn't in
+// Murmur there. One with no record, as before servers published them, goes by where it runs.
+func TestTheHookDoesNothingForASessionInNoClone(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
+	publish(t, here.Session{ServerPID: os.Getpid(), ClientPID: 4242})
+	t.Setenv("CLAUDE_PID", "4242")
+	for _, event := range []string{"PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"} {
+		if out, _ := run(event, repo); out != "" {
+			t.Errorf("%s printed %q", event, out)
+		}
+	}
+	if got := requests(); len(got) != 0 {
+		t.Errorf("the daemon was asked %+v", got)
+	}
+	t.Setenv("CLAUDE_PID", "4243") // another process, with no server
+	run("PostToolUse", repo)
+	if got := ops(requests(), proto.OpNotices); len(got) != 1 {
+		t.Errorf("without a record the hook sent %d notices requests, want 1", len(got))
+	}
+}
+
+// Another agent's hook finds its session's record by the processes above it. One record is its
+// session's; several are a process that runs several sessions (T3's Codex app server), which
+// nothing tells apart, so the hook goes by where it runs.
+func TestAnotherAgentsHookFindsItsSessionsClone(t *testing.T) {
+	joined, works := newRepo(t), newRepo(t)
+	theirs := fakeDaemon(t, filepath.Join(joined, ".git"), okToAll)
+	own := fakeDaemon(t, filepath.Join(works, ".git"), okToAll)
+	payload, _ := json.Marshal(map[string]string{"session_id": "thread-1", "hook_event_name": "PostToolUse", "cwd": works, "tool_name": "Bash"})
+	asked := func(requests func() []proto.Request) int { return len(ops(requests(), proto.OpNotices)) }
+
+	hook.RunFor(hook.Codex, bytes.NewReader(payload), &bytes.Buffer{})
+	if asked(own) != 1 || asked(theirs) != 0 {
+		t.Fatalf("with no record: the repo it runs in was asked %d times, the other %d", asked(own), asked(theirs))
+	}
+
+	// The hook's parent stands in for the agent's process, and for its server, which has to be a
+	// process that is running.
+	publish(t, here.Session{ServerPID: os.Getppid(), ClientPID: os.Getppid(), Agent: "codex", GitDir: filepath.Join(joined, ".git"), On: true})
+	hook.RunFor(hook.Codex, bytes.NewReader(payload), &bytes.Buffer{})
+	if asked(theirs) != 1 || asked(own) != 1 {
+		t.Fatalf("with one record: the clone it joined was asked %d times, the repo it runs in %d", asked(theirs), asked(own))
+	}
+
+	publish(t, here.Session{ServerPID: os.Getpid(), ClientPID: os.Getppid(), Agent: "codex", GitDir: filepath.Join(joined, ".git"), On: true})
+	hook.RunFor(hook.Codex, bytes.NewReader(payload), &bytes.Buffer{})
+	if asked(theirs) != 1 || asked(own) != 2 {
+		t.Errorf("with two records of one process: the clone they are in was asked %d times, the repo the hook runs in %d", asked(theirs), asked(own))
+	}
+}
 
 // fakeDaemon serves the daemon's protocol for the clone at gitDir: answer gives the response line
 // to each request, or "" to hold the connection open without one. It returns the requests so far.

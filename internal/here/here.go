@@ -150,6 +150,35 @@ func Caller(sessions []Session, ancestors []int, claudePID int, claudeSession st
 	return nil
 }
 
+// Of are the records of the servers still running that the nearest of pids started: an agent's
+// process, or a command's ancestors with its parent first. The hook asks on every tool call, so
+// unlike Sessions it removes nothing, and asks whether a process is alive only of the servers it
+// would return.
+func Of(dir string, pids []int) []Session {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(pids) == 0 {
+		return nil
+	}
+	byClient := map[int][]Session{}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, "server-") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		var s Session
+		if readJSON(filepath.Join(dir, name), &s) == nil && slices.Contains(pids, s.ClientPID) {
+			byClient[s.ClientPID] = append(byClient[s.ClientPID], s)
+		}
+	}
+	for _, pid := range pids {
+		found := slices.DeleteFunc(byClient[pid], func(s Session) bool { return !alive(s.ServerPID) })
+		if len(found) > 0 {
+			return found
+		}
+	}
+	return nil
+}
+
 // Ask leaves the move for the session's server to find.
 func Ask(dir string, s Session, workDir string, now time.Time) error {
 	return writeJSON(movePath(dir, s.ClientPID), Move{ClientPID: s.ClientPID, ClientStarted: s.ClientStarted,

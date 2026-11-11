@@ -43,6 +43,9 @@ func TestMain(m *testing.M) {
 	os.Setenv("HOME", home)
 	os.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	os.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	// The hook looks for its session's MCP server among the records of this user's (#422): none
+	// here, so it finds its clone from its working directory, and never a real session's.
+	os.Setenv(brand.SessionsDirEnv, filepath.Join(home, "sessions"))
 	testgit.Isolate() // HOME keeps out ~/.gitconfig, but not the system's, or a GIT_CONFIG_GLOBAL set already
 	code := m.Run()
 	os.RemoveAll(home)

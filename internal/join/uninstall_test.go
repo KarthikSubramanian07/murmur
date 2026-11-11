@@ -313,9 +313,7 @@ func TestRemoveRecordKeepsWhatIsUnfinished(t *testing.T) {
 func TestUninstallFinishesALeaveThatDidNot(t *testing.T) {
 	sb, record := uninstallSandbox(t)
 	p, other := clone(t)
-	if _, _, err := installHooks(context.Background(), p, sb.Exe); err != nil {
-		t.Fatal(err)
-	}
+	oldHooks(t, p, sb.Exe)
 	if err := clones.Add(record, clones.Clone{GitDir: p.GitDir}); err != nil {
 		t.Fatal(err)
 	}
