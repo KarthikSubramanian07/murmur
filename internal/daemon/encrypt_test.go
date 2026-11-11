@@ -52,43 +52,43 @@ func (d *device) doing(addr string) (string, bool) {
 // messages, and the remote holds none of what they said or are doing.
 func TestBusIsEncrypted(t *testing.T) {
 	remote := newRemote(t)
-	a := newOwnedDevice(t, remote, "Alice Secretowner")
-	b := newOwnedDevice(t, remote, "Bob Secretowner")
+	a := newOwnedDevice(t, remote, "Alice Hiddenowner7")
+	b := newOwnedDevice(t, remote, "Bob Hiddenowner7")
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.session("bbbbbb", "")
-	a.do(proto.Request{Op: proto.OpStatus, Session: "aaaaaa", Doing: "status-alpha-secret"})
-	b.do(proto.Request{Op: proto.OpStatus, Session: "bbbbbb", Doing: "status-bravo-secret"})
+	a.do(proto.Request{Op: proto.OpStatus, Session: "aaaaaa", Doing: "status-alpha-hidden7"})
+	b.do(proto.Request{Op: proto.OpStatus, Session: "bbbbbb", Doing: "status-bravo-hidden7"})
 	eventually(t, "each sees the other's status", func() bool {
 		da, _ := b.doing(alice)
 		db, _ := a.doing(bob)
-		return da == "status-alpha-secret" && db == "status-bravo-secret"
+		return da == "status-alpha-hidden7" && db == "status-bravo-hidden7"
 	})
 
-	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "subject-direct-secret", Body: "body-direct-secret"}); r.Error != "" {
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "subject-direct-hidden7", Body: "body-direct-hidden7"}); r.Error != "" {
 		t.Fatalf("send: %+v", r)
 	}
 	eventually(t, "bob gets it", func() bool {
 		in := b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages
-		return len(in) == 1 && in[0].Body == "body-direct-secret" && in[0].FromOwner == "Alice Secretowner"
+		return len(in) == 1 && in[0].Body == "body-direct-hidden7" && in[0].FromOwner == "Alice Hiddenowner7"
 	})
 
 	// A device that joins later reads the others' presence once they see it and push theirs again,
 	// and their messages from then on.
-	c := newOwnedDevice(t, remote, "Carol Secretowner")
+	c := newOwnedDevice(t, remote, "Carol Hiddenowner7")
 	carol, _ := c.session("cccccc", "")
 	eventually(t, "c reads a's and b's presence", func() bool {
 		da, _ := c.doing(alice)
 		db, _ := c.doing(bob)
-		return da == "status-alpha-secret" && db == "status-bravo-secret"
+		return da == "status-alpha-hidden7" && db == "status-bravo-hidden7"
 	})
 	eventually(t, "a reads c's presence", func() bool { return a.seesSession(carol) })
-	if r := b.do(proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: "*", Subject: "subject-broadcast-secret", Body: "body-broadcast-secret"}); r.Error != "" {
+	if r := b.do(proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: "*", Subject: "subject-broadcast-hidden7", Body: "body-broadcast-hidden7"}); r.Error != "" {
 		t.Fatalf("broadcast: %+v", r)
 	}
 	for _, d := range []*device{a, c} {
 		eventually(t, "the broadcast", func() bool {
 			for _, m := range d.do(proto.Request{Op: proto.OpInbox}).Messages {
-				if m.Body == "body-broadcast-secret" {
+				if m.Body == "body-broadcast-hidden7" {
 					return true
 				}
 			}
@@ -98,7 +98,9 @@ func TestBusIsEncrypted(t *testing.T) {
 
 	all := remoteObjects(t, remote)
 	// The name registry, which stays in the clear, holds session IDs and names; nothing else does.
-	for _, s := range []string{"secret", "Secretowner", `"host"`, `"to"`, `"subject"`, `"doing"`, `"agent"`,
+	// The markers end in a digit so no session's name can hold one: "secret" is one of the
+	// adjectives names are made from, and a session named secret-otter failed this test.
+	for _, s := range []string{"hidden7", "Hiddenowner7", `"host"`, `"to"`, `"subject"`, `"doing"`, `"agent"`,
 		"started (", " sessions\n"} {
 		if strings.Contains(all, s) {
 			t.Errorf("the remote holds %q", s)
