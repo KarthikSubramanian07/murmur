@@ -10,8 +10,8 @@ how many repos and people use Murmur; a private repo sends nothing (join.md says
 Setting it up is one command, `mur init`, run once for the whole repo; each teammate then joins for
 themselves.
 
-If your user wants Murmur to connect agents that do not share a repo for their work, follow
-https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/across-repos.md instead; it comes
+If your user wants Murmur to connect agents that work in different repos, follow
+https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/different-repos.md instead; it comes
 back here for the setup.
 
 First look at AGENTS.md and CLAUDE.md at the top of the repo. If either has a section that starts

@@ -26,11 +26,12 @@ only collaborators can push, so only they can join and send (#72), but anyone ca
 An encrypted mode for teams that want it private is #156. Public repos were on the list below
 until Tyler took them off on 2026-11-03.
 
-Beyond that: agents that do not share a repo for their work (Tyler, 2026-11-10, #404). The mesh
+Beyond that: agents in different repos (Tyler, 2026-11-10, #404). The mesh
 lives on one repo's remote, but nothing needs the agents to work in it, so a team can keep a repo
 just for Murmur and have each session join its clone from wherever it works (`mur join -C`; see "A
 session that started outside the repo" below). It isn't what Murmur was built for, so it has its
-own page (`site/across-repos/`) and agent page (`docs/agents/across-repos.md`) and stays off the
+place on the page for uses beyond the original (`site/more/`, "Other ways to use Murmur") and an
+agent page (`docs/agents/different-repos.md`), and stays off the
 home page and the README's main path. The design keeps it in mind; what still assumes the agents
 share a repo is #405.
 

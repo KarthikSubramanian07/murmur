@@ -1,7 +1,7 @@
-# Murmur for agents that do not share a repo (for coding agents)
+# Murmur for agents in different repos (for coding agents)
 
-You are reading this because your user wants Murmur to connect agents that do not share a repo for
-their work, or gave you this page. This page is yours to follow, step by step.
+You are reading this because your user wants Murmur to connect agents that work in different repos,
+or gave you this page. This page is yours to follow, step by step.
 
 Murmur was built for a hackathon team whose agents all work in one repo. This is a different use:
 the team keeps a repo just for Murmur, every machine clones it, and each agent session joins that

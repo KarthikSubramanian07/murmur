@@ -162,7 +162,7 @@ is sent and how.
 | [`docs/VISION.md`](docs/VISION.md) | The design and its reasons, including what `mur join` writes and where. |
 | [`docs/agents/join.md`](docs/agents/join.md) | What an agent reads to join. |
 | [`docs/agents/use.md`](docs/agents/use.md) | What an agent reads to use the tools. |
-| [Agents that do not share a repo](https://murmur.afig.dev/across-repos/) | Using Murmur, beyond what it was built for, to connect agents that work in different repos. Its agent page is [`docs/agents/across-repos.md`](docs/agents/across-repos.md). |
+| [Other ways to use Murmur](https://murmur.afig.dev/more/) | Uses beyond what Murmur was built for, such as connecting agents in different repos ([`docs/agents/different-repos.md`](docs/agents/different-repos.md) for agents). |
 | [`docs/releasing.md`](docs/releasing.md) | Releases, installer options and building from source. |
 | [`docs/testing.md`](docs/testing.md) | How a change is tested. |
 

@@ -44,7 +44,7 @@ test('the sitemap follows the sitemaps.org protocol and lists pages that exist',
     assert.match(lastmod ?? '', /^\d{4}-\d{2}-\d{2}$/, `${loc}'s lastmod`);
     assert.ok(!Number.isNaN(Date.parse(lastmod)) && lastmod <= today, `${loc}'s lastmod ${lastmod}`);
   }
-  for (const page of ['/', '/daemon/', '/across-repos/', '/about/', '/privacy/', '/contact/', '/setup', '/join', '/use']) assert.ok(seen.has(SITE + page), `${page} missing`);
+  for (const page of ['/', '/daemon/', '/more/', '/about/', '/privacy/', '/contact/', '/setup', '/join', '/use']) assert.ok(seen.has(SITE + page), `${page} missing`);
 });
 
 test('robots.txt allows crawling and names the sitemap', () => {
@@ -88,7 +88,7 @@ function visibleText(html) {
 }
 
 // About, Privacy and Contact: what an agent or a person checks before trusting the site.
-for (const [page, title] of [['about', /About/], ['privacy', /Privacy/], ['contact', /Contact/], ['across-repos', /do not share a repo/]]) {
+for (const [page, title] of [['about', /About/], ['privacy', /Privacy/], ['contact', /Contact/], ['more', /Other ways/]]) {
   test(`the ${page} page exists, has its metadata, and says something`, () => {
     const file = `${page}/index.html`;
     assert.ok(existsSync(join(root, file)), `${file} missing`);
@@ -114,7 +114,7 @@ test('the privacy page dates itself and points at join.md as the full account', 
 });
 
 test('every page ends with the same links, and each one leads somewhere', () => {
-  const pages = ['index.html', 'daemon/index.html', 'across-repos/index.html', 'about/index.html', 'privacy/index.html', 'contact/index.html'];
+  const pages = ['index.html', 'daemon/index.html', 'more/index.html', 'about/index.html', 'privacy/index.html', 'contact/index.html'];
   for (const file of pages) {
     const html = read(file);
     const foot = /<footer class="site-foot">([\s\S]*?)<\/footer>/.exec(html)?.[1];
