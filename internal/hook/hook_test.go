@@ -129,10 +129,10 @@ func TestTheHookDoesNothingForASessionInNoClone(t *testing.T) {
 	}
 }
 
-// Another agent's hook finds its session's record by the processes above it. Outside T3 a process
-// runs one session, and its one record is the session's. In T3 one process runs several (Codex's
-// app server), so a record counts only once it carries the hook's own session ID: until then, or
-// with a sibling's record alone, the hook goes by where it runs.
+// Another agent's hook finds its session's record among those of the processes above it, by the
+// session's own ID. A record without it isn't taken: it may be a sibling's in a process that runs
+// several sessions, or that of an agent that started this one. The hook then goes by where it
+// runs (Sol's reviews of #426).
 func TestAnotherAgentsHookFindsItsSessionsClone(t *testing.T) {
 	joined, works := newRepo(t), newRepo(t)
 	theirs := fakeDaemon(t, filepath.Join(joined, ".git"), okToAll)
@@ -148,13 +148,11 @@ func TestAnotherAgentsHookFindsItsSessionsClone(t *testing.T) {
 		joined  bool // the hook speaks to the clone the record names, not the repo it runs in
 	}{
 		{"no record", nil, false},
-		{"one record, in a terminal", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex", GitDir: there, On: true}}, true},
-		{"one record in T3, of a session whose ID isn't known", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex in T3", GitDir: there, On: true}}, false},
-		{"one record in T3, a sibling's", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex in T3", Native: "thread-2", GitDir: there, On: true}}, false},
-		{"one record in T3, the session's", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex in T3", Native: "thread-1", GitDir: there, On: true}}, true},
-		{"two records in a terminal, neither with an ID", []here.Session{
-			{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex", GitDir: there, On: true},
-			{ServerPID: os.Getppid(), ClientPID: agent, Agent: "codex", GitDir: there, On: true}}, false},
+		{"the session's record", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex", Native: "thread-1", GitDir: there, On: true}}, true},
+		{"a record of a session whose ID isn't known", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex", GitDir: there, On: true}}, false},
+		{"a sibling's record", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex in T3", Native: "thread-2", GitDir: there, On: true}}, false},
+		{"the record of the Claude Code that started the agent", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "claude-code", ClaudeSession: "thread-1", GitDir: there, On: true}}, false},
+		{"that agent's record, in no repository", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "claude-code"}}, false},
 		{"the session's record beside a sibling's", []here.Session{
 			{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex in T3", Native: "thread-1", GitDir: there, On: true},
 			{ServerPID: os.Getppid(), ClientPID: agent, Agent: "codex in T3", Native: "thread-2", GitDir: filepath.Join(works, ".git"), On: true}}, true},

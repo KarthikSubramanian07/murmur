@@ -192,14 +192,16 @@ func sessionClone(ctx context.Context, agent string, in input, who proto.Request
 // ownRecord picks, from the records of the servers the agent's process started, the one of the
 // hook's session, whose ID is native.
 //
-// Claude Code's process runs one session, so its one record is the session's. Another agent's
-// process can run several, each with a server (T3 runs every Codex thread in one app server), and
-// a record alone doesn't say whose it is: a thread whose server hasn't published would take a
-// sibling's, speak to the wrong clone's daemon, and could be taken there for the sibling, getting
-// its messages (internal/daemon, agentHookSessionsLocked). So there the record has to carry the
-// hook's own session ID, which Codex's server learns from the first call to one of Murmur's tools
-// and Grok's has from the start. Outside T3 an agent's process runs one session, and its one
-// record is taken before it has an ID too.
+// Claude Code names its own process (CLAUDE_PID), which runs one session, so its one record is the
+// session's. Another agent's hook has only its ancestors to go by, and a record found among them
+// doesn't say whose it is. The nearest may be the process of an agent that started this one (a
+// Codex run from Claude Code's shell, whose own server has published nothing); or the agent's own
+// process with several sessions, each with a server (Codex's app server, in T3 and outside it), of
+// which this session's hasn't published. Taking such a record would send the hook to the wrong
+// clone's daemon, where it could be taken for the record's session and given its messages
+// (internal/daemon, agentHookSessionsLocked), or stop it where that session is in no repository.
+// So for another agent the record has to carry the hook's own session ID: Grok's server has it
+// from the start, and Codex's learns it from the first call to one of Murmur's tools.
 func ownRecord(agent, native string, recs []here.Session) (here.Session, bool) {
 	if agent == "" {
 		if len(recs) == 1 {
@@ -209,15 +211,12 @@ func ownRecord(agent, native string, recs []here.Session) (here.Session, bool) {
 	}
 	var mine []here.Session
 	for _, r := range recs {
-		if r.Native != "" && r.Native == native {
+		if native != "" && r.Native == native {
 			mine = append(mine, r)
 		}
 	}
-	switch {
-	case len(mine) == 1:
+	if len(mine) == 1 {
 		return mine[0], true
-	case len(mine) == 0 && len(recs) == 1 && recs[0].Native == "" && !recs[0].InT3():
-		return recs[0], true
 	}
 	return here.Session{}, false
 }

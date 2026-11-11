@@ -714,14 +714,15 @@ the session runs.
   Codex and Grok by the nearest of the hook's ancestors that started a server. The record names
   the clone, or says the session is in no repository, and the hook then asks nothing. Where no
   record is surely the session's, it goes by its working directory as before.
-- **Whose record.** Claude Code's process runs one session, so its one record is the session's.
-  Under T3 one Codex app server runs every thread, each with a server, and a thread whose server
-  hadn't published would take a sibling's record, speak to the wrong daemon, and could be given the
-  sibling's messages there. So the record now carries the agent's own session ID (Codex's thread
-  ID, which its server learns from the first call to one of Murmur's tools; Grok's, from its
-  environment), and a T3 agent's record counts only when it has the hook's ID. Outside T3 an
-  agent's process runs one session, and its one record counts before it has an ID. A Codex thread
-  in T3 that joined from elsewhere so gets its notices from its first Murmur tool call on.
+- **Whose record.** Claude Code names its own process, which runs one session, so its one record
+  is the session's. Another agent's hook has only its ancestors to go by, and a record found there
+  may not be its session's: it may be a sibling's in a process that runs several sessions, each
+  with a server (Codex's app server), or that of an agent that started this one (a Codex run from
+  Claude Code's shell). Taking it would send the hook to the wrong daemon, where it could be given
+  that session's messages. So the record now carries the agent's own session ID (Grok's, from its
+  environment; Codex's thread ID, which its server learns from the first call to one of Murmur's
+  tools), and another agent's record counts only when it has the hook's ID. A Codex session that
+  joined from elsewhere so gets its notices from its first Murmur tool call on.
 - **Not covered.** Pi: its extension runs the hook only where the working directory's clone is
   joined, so a Pi session joined from elsewhere gets turns through its socket and no notice while
   busy. Commits made in the other repo aren't credited: the daemon watches only its own clone

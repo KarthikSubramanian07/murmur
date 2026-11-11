@@ -45,10 +45,6 @@ type Session struct {
 	Fixed bool `json:"fixed,omitempty"`
 }
 
-// InT3 says the session's agent runs under T3 Code, as its server named it ("codex in T3"). There
-// one agent process can run several sessions, each with a server of its own (Codex's app server).
-func (s Session) InT3() bool { return strings.HasSuffix(s.Agent, " in T3") }
-
 // Move asks the server of the agent process ClientPID to work in Dir.
 type Move struct {
 	ClientPID int `json:"clientPid"`
