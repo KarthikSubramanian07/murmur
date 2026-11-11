@@ -92,10 +92,16 @@ The wordmark is Fredoka One and ships as outlines, so nothing loads the font. Th
 Inter, and its hero word is "murmur" in Inter behind the reeded glass, not the wordmark. The Figma
 file proposes Rubik for text and JetBrains Mono for commands; neither was adopted.
 
-## Where the brand is not applied
+## The mur ui page
 
-The `mur ui` page keeps its own look: it is drawn as a sibling of T3 Code, with T3 Code's tokens
-(`internal/web/static/assets/style.css`). It takes the icon only.
+The `mur ui` page is drawn as a sibling of T3 Code, and its Dark, Dim and Light themes are T3
+Code's tokens (`internal/web/static/assets/style.css`). They take the icon only.
+
+Its fourth theme, Murmur, is the brand: a cream page, ink text, blue for what is picked or
+pressed, and butter for a person's own messages. The sidebar is ink, not blue. Cream on blue is
+5.1:1, which leaves no room for quieter text, and the sidebar is mostly quieter text; on ink the
+quiet step (`#A9B6E6`) is still 8:1. The greens, ambers and reds of session states stay Light's,
+a step darker for cream. Dark stays the default.
 
 ## Renders
 
