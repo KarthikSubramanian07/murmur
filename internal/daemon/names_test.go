@@ -347,6 +347,11 @@ func TestSameKeyKeepsItsName(t *testing.T) {
 	if reg := readRegistry(t, remote); strings.Contains(reg.text, "claude-alice") || len(reg.assigned()) != 1 {
 		t.Fatalf("the registry should hold her one assignment and not her client session ID:\n%s", reg.text)
 	}
+	// b learns her name from a's presence, which is pushed before her session's start, so a's log
+	// may not be on the remote yet, and busText fails on a ref that isn't there (#410).
+	eventually(t, "a's log on the remote", func() bool {
+		return git(t, remote, "for-each-ref", "refs/murmur/mesh/"+a.self()) != ""
+	})
 	if strings.Contains(busText(t, remote, a), "claude-alice") {
 		t.Fatal("the client's session ID is on the bus")
 	}
