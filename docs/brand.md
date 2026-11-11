@@ -10,10 +10,10 @@ eyes; the right one's are slanted like a quotation mark.
 
 | File | What it is |
 | --- | --- |
-| `docs/assets/brand/mark.svg` | The mark, filled, navy |
-| `docs/assets/brand/mark-outline.svg` | The mark, outlined, navy |
-| `docs/assets/brand/wordmark.svg` | "murmur" in Fredoka One, as outlines, navy |
-| `docs/assets/brand/lockup.svg` | The mark as the M of "murmur", outlined, navy, for light grounds |
+| `docs/assets/brand/mark.svg` | The mark, filled, ink |
+| `docs/assets/brand/mark-outline.svg` | The mark, outlined, ink |
+| `docs/assets/brand/wordmark.svg` | "murmur" in Fredoka One, as outlines, ink |
+| `docs/assets/brand/lockup.svg` | The mark as the M of "murmur", outlined, ink, for light grounds |
 | `docs/assets/brand/lockup-on-blue.svg` | The same, filled: cream mark, butter letters |
 | `docs/assets/brand/lockup-stacked-on-blue.svg` | The mark over the wordmark, cream and butter |
 | `docs/assets/brand/icon.svg` | The cream mark on a blue tile: the tab icon and app icon |
@@ -30,37 +30,31 @@ color is a change of `fill`, not a new drawing.
 
 ## Color
 
+The site's four colors, which the logo files use too:
+
 | Name | Hex | Use |
 | --- | --- | --- |
-| cream/100 | `#FFFDF4` | Page ground, text on blue and navy |
-| cream/200 | `#FBF5DE` | Surfaces on cream |
-| cream/300 | `#EFE7C7` | Borders and rules |
-| butter/500 | `#FFEF8C` | The one loud accent |
-| blue/300 | `#9CCBF3` | Quiet labels on navy |
-| blue/500 | `#258EE3` | The brand blue: tiles and page grounds |
-| blue/700 | `#1767B0` | Blue as text, and under cream text, on cream |
-| navy/500 | `#3A4F73` | Secondary text |
-| navy/900 | `#05224D` | Ink |
+| blue | `#225BFF` | Page grounds, the icon's tile, links on cream |
+| cream | `#FFFBEA` | The sheets, text on blue, the mark on blue |
+| butter | `#FDEE8C` | The one loud accent: the hero word, the primary button, message cards |
+| ink | `#0E1B45` | Text, and the logo on light grounds |
 
-Contrast, measured 2026-11-10, decides which blue goes where:
-
-- Cream on blue/500 is 3.4:1 and butter on it is 3.0:1. That passes WCAG AA for large text and
-  fails it for body text (4.5:1). The site still sets body text on blue/500, because the brand
-  blue is the ground the design asks for; the earlier blue, `#225BFF`, gave 5.1:1.
-- Cream on blue/700 is 5.7:1. Links, step numbers and buttons on the cream sheets use it
-  (`--blue-ink` in the site's CSS).
-- Navy on blue/500 is 4.5:1, and navy on butter is 13.4:1.
+The Figma file proposes a different palette: a lighter blue `#258EE3`, cream `#FFFDF4`, butter
+`#FFEF8C` and navy `#05224D`. The site was built in it on 2026-11-10 and Tyler preferred the look
+it already had, so the palette above stayed and the logo files were colored to match. Two numbers
+from that trial: cream on `#258EE3` is 3.4:1, below WCAG AA for body text, where cream on
+`#225BFF` is 5.1:1.
 
 ## Type
 
-Fredoka One is the wordmark only, and ships as outlines, so nothing loads it. Rubik carries
-everything people read on the site, and JetBrains Mono carries commands; the site loads both from
-Google Fonts.
+The wordmark is Fredoka One and ships as outlines, so nothing loads the font. The site is set in
+Inter, and its hero word is "murmur" in Inter behind the reeded glass, not the wordmark. The Figma
+file proposes Rubik for text and JetBrains Mono for commands; neither was adopted.
 
 ## Where the brand is not applied
 
 The `mur ui` page keeps its own look: it is drawn as a sibling of T3 Code, with T3 Code's tokens
-and Inter (`internal/web/static/assets/style.css`). It takes the icon only.
+(`internal/web/static/assets/style.css`). It takes the icon only.
 
 ## Renders
 

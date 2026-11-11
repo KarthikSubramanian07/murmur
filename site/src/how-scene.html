@@ -8,23 +8,23 @@
 <meta name="description" content="Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --blue: #258EE3;
-    --butter: #FFEF8C;
-    --cream: #FFFDF4;
-    --ink: #05224D;
-    --ink-soft: #3A4F73;
-    --badge-bg: #D9EBFA;
-    --badge-ink: #155A9A;
+    --blue: #225BFF;
+    --butter: #FDEE8C;
+    --cream: #FFFBEA;
+    --ink: #0E1B45;
+    --ink-soft: #3A4670;
+    --badge-bg: #DCE6FF;
+    --badge-ink: #1640BF;
     --green: #17A34A;
-    --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    --mono: ui-monospace, Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; margin: 0; }
   html, body { background: var(--blue); color: var(--cream); }
   body {
-    font-family: Rubik, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -148,7 +148,7 @@
     --px: clamp(24px, 5cqw, 96px);
     --py: clamp(24px, 7.2cqh, 80px);
     --u: min(calc((100cqw - 2 * var(--px)) / var(--dw)), calc((100cqh - 2 * var(--py)) / var(--dh)));
-    --shade: #1767B0;
+    --shade: #1A47CF;
     position: absolute;
     left: 50%; top: 50%;
     width: calc(var(--u) * var(--dw));
@@ -160,7 +160,7 @@
   /* Route lines sit under the laptops and the panel, so they only show between them. */
   .wires { inset: 0; width: 100%; height: 100%; z-index: 1; overflow: visible; }
   .wires path { fill: none; }
-  .wires .base { stroke: rgba(255, 253, 244, .42); stroke-width: 2.5; stroke-dasharray: 3 8; stroke-linecap: round; }
+  .wires .base { stroke: rgba(255, 251, 234, .42); stroke-width: 2.5; stroke-dasharray: 3 8; stroke-linecap: round; }
   .wires .fl { stroke: var(--butter); stroke-width: var(--ln); stroke-linejoin: round; }
   .scene { --ln: 5; }
   .tall-only { display: none; }
@@ -195,7 +195,7 @@
     gap: calc(var(--u) * 9);
     height: calc(var(--u) * 36);
     padding: 0 calc(var(--u) * 26);
-    background: #1A3560;
+    background: #16265C;
     color: #C3C9DC;
     font-size: calc(var(--u) * 18);
   }
@@ -264,7 +264,7 @@
   }
   .hd b { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
   .hd-r { color: var(--ink); font: 700 calc(var(--u) * var(--lab))/1.2 var(--mono); }
-  .hd-r b { color: var(--badge-ink); font-family: Rubik, system-ui, sans-serif; }
+  .hd-r b { color: var(--badge-ink); font-family: Inter, system-ui, sans-serif; }
   .graph { display: block; width: calc(100% - var(--u) * var(--pad) * 2); margin: 0 auto; }
   .graph path { fill: none; stroke: #A5A9B4; stroke-width: 2.5; }
   .graph circle { fill: #A5A9B4; }
@@ -418,7 +418,7 @@
   /* ---------- Page 2, first: the route, one static figure ---------- */
   .route {
     --panel: #F7F4E4;
-    --line: rgba(5, 34, 77, .13);
+    --line: rgba(14, 27, 69, .13);
     --node: #E8E5D6;
     --node-mute: #EFECDD;
     --mute: #A5A9B4;
@@ -433,7 +433,7 @@
   .route svg { display: block; width: 100%; height: auto; }
   .route .tall { display: none; }
   .route figcaption { margin-top: 16px; font-size: 17px; line-height: 1.45; text-align: center; text-wrap: balance; }
-  .route svg text { font-family: Rubik, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: var(--ink); }
+  .route svg text { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: var(--ink); }
   .route .ct { fill: #FBF8EA; stroke: var(--line); stroke-width: 1; }
   .route .ct-h { fill: var(--node); }
   .route .ct-t { font-size: 14px; font-weight: 500; }
@@ -481,13 +481,13 @@
   .inst { margin-top: 22px; display: grid; gap: 8px; }
   .inst-h { font-size: 14px; font-weight: 600; color: var(--ink-soft); }
   .cmd { display: grid; grid-template-columns: 6.4em minmax(0, 1fr) auto; align-items: center; column-gap: 12px; padding: 11px 14px; border-radius: 10px; background: var(--ink); color: var(--cream); font: 13px/1.45 var(--mono); }
-  .cmd > span { color: #9CCBF3; font-family: Rubik, system-ui, sans-serif; font-size: 13px; }
+  .cmd > span { color: #A9B6E6; font-family: Inter, system-ui, sans-serif; font-size: 13px; }
   .cmd code { overflow-wrap: anywhere; font: inherit; }
-  .copy { font: 600 12.5px/1 Rubik, system-ui, sans-serif; color: var(--ink); background: var(--butter); border: 0; border-radius: 999px; padding: 7px 11px; cursor: pointer; }
+  .copy { font: 600 12.5px/1 Inter, system-ui, sans-serif; color: var(--ink); background: var(--butter); border: 0; border-radius: 999px; padding: 7px 11px; cursor: pointer; }
   .copy:hover { background: var(--cream); }
   .copy:focus-visible { outline: 3px solid var(--butter); outline-offset: 2px; }
   .steps { list-style: none; padding: 0; margin-top: 28px; border-top: 2px solid var(--ink); }
-  .steps > li { display: grid; grid-template-columns: 2em minmax(0, 13em) minmax(0, 1fr); column-gap: 14px; padding: 18px 0; border-bottom: 1px solid #EFE7C7; }
+  .steps > li { display: grid; grid-template-columns: 2em minmax(0, 13em) minmax(0, 1fr); column-gap: 14px; padding: 18px 0; border-bottom: 1px solid #DDD7B8; }
   .n { font-size: 18px; font-weight: 700; color: var(--blue); line-height: 1.35; }
   .actor { font-size: 18px; font-weight: 700; letter-spacing: -.015em; line-height: 1.35; }
   .do p { font-size: 15.5px; line-height: 1.5; max-width: 62ch; }
@@ -561,7 +561,7 @@
 
     <div class="pill" id="pill" aria-hidden="true" data-artifact><svg class="flap" id="flap" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M0 0L50 40L100 0"/></svg><span id="pillM">message</span><span id="pillT">commit</span></div>
 
-    <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><g id="deckArt"><rect x="22" y="0" width="536" height="5" fill="#C9C5AC"/><path d="M22 0H558L580 106H0Z" fill="#F7F4E4"/><rect x="22" y="0" width="536" height="3" fill="#C9C5AC"/><path d="M63.4 7.0L91.3 7.0L89.8 16.5L61.7 16.5ZM96.1 7.0L124.0 7.0L122.8 16.5L94.7 16.5ZM128.8 7.0L156.7 7.0L155.7 16.5L127.6 16.5ZM161.5 7.0L189.4 7.0L188.7 16.5L160.6 16.5ZM194.3 7.0L222.1 7.0L221.6 16.5L193.6 16.5ZM227.0 7.0L254.9 7.0L254.6 16.5L226.5 16.5ZM259.7 7.0L287.6 7.0L287.6 16.5L259.5 16.5ZM292.4 7.0L320.3 7.0L320.5 16.5L292.4 16.5ZM325.1 7.0L353.0 7.0L353.5 16.5L325.4 16.5ZM357.9 7.0L385.7 7.0L386.4 16.5L358.4 16.5ZM390.6 7.0L418.5 7.0L419.4 16.5L391.3 16.5ZM423.3 7.0L451.2 7.0L452.4 16.5L424.3 16.5ZM456.0 7.0L483.9 7.0L485.3 16.5L457.2 16.5ZM488.7 7.0L516.6 7.0L518.3 16.5L490.2 16.5ZM61.3 18.7L99.6 18.7L98.1 29.3L59.5 29.3ZM104.5 18.7L130.4 18.7L129.1 29.3L103.0 29.3ZM135.3 18.7L161.2 18.7L160.2 29.3L134.0 29.3ZM166.1 18.7L192.0 18.7L191.2 29.3L165.1 29.3ZM196.9 18.7L222.8 18.7L222.3 29.3L196.2 29.3ZM227.7 18.7L253.7 18.7L253.4 29.3L227.2 29.3ZM258.6 18.7L284.5 18.7L284.4 29.3L258.3 29.3ZM289.4 18.7L315.3 18.7L315.5 29.3L289.4 29.3ZM320.2 18.7L346.1 18.7L346.6 29.3L320.4 29.3ZM351.0 18.7L376.9 18.7L377.6 29.3L351.5 29.3ZM381.8 18.7L407.7 18.7L408.7 29.3L382.5 29.3ZM412.6 18.7L438.5 18.7L439.7 29.3L413.6 29.3ZM443.4 18.7L469.4 18.7L470.8 29.3L444.7 29.3ZM474.2 18.7L518.7 18.7L520.5 29.3L475.7 29.3ZM59.1 31.5L107.1 31.5L105.4 43.2L57.1 43.2ZM112.0 31.5L138.2 31.5L136.8 43.2L110.4 43.2ZM143.1 31.5L169.3 31.5L168.2 43.2L141.8 43.2ZM174.2 31.5L200.4 31.5L199.6 43.2L173.2 43.2ZM205.4 31.5L231.5 31.5L231.0 43.2L204.6 43.2ZM236.5 31.5L262.6 31.5L262.4 43.2L236.0 43.2ZM267.6 31.5L293.8 31.5L293.8 43.2L267.4 43.2ZM298.7 31.5L324.9 31.5L325.2 43.2L298.8 43.2ZM329.8 31.5L356.0 31.5L356.6 43.2L330.2 43.2ZM360.9 31.5L387.1 31.5L388.0 43.2L361.5 43.2ZM392.0 31.5L418.2 31.5L419.3 43.2L392.9 43.2ZM423.2 31.5L449.3 31.5L450.7 43.2L424.3 43.2ZM454.3 31.5L520.9 31.5L522.9 43.2L455.7 43.2ZM56.7 45.4L120.9 45.4L119.2 58.2L54.5 58.2ZM125.9 45.4L152.3 45.4L151.0 58.2L124.3 58.2ZM157.3 45.4L183.7 45.4L182.7 58.2L156.0 58.2ZM188.7 45.4L215.2 45.4L214.5 58.2L187.8 58.2ZM220.2 45.4L246.6 45.4L246.2 58.2L219.5 58.2ZM251.6 45.4L278.1 45.4L278.0 58.2L251.3 58.2ZM283.1 45.4L309.5 45.4L309.7 58.2L283.0 58.2ZM314.5 45.4L341.0 45.4L341.4 58.2L314.7 58.2ZM345.9 45.4L372.4 45.4L373.2 58.2L346.5 58.2ZM377.4 45.4L403.8 45.4L404.9 58.2L378.2 58.2ZM408.8 45.4L435.3 45.4L436.7 58.2L410.0 58.2ZM440.3 45.4L523.3 45.4L525.5 58.2L441.7 58.2ZM54.1 60.4L83.1 60.4L81.0 74.3L51.6 74.3ZM88.1 60.4L117.1 60.4L115.4 74.3L86.1 74.3ZM122.2 60.4L158.0 60.4L156.7 74.3L120.5 74.3ZM163.1 60.4L348.8 60.4L349.4 74.3L161.8 74.3ZM353.8 60.4L389.7 60.4L390.7 74.3L354.5 74.3ZM394.7 60.4L423.7 60.4L425.1 74.3L395.8 74.3ZM428.8 60.4L457.8 60.4L459.5 74.3L430.2 74.3ZM462.9 60.4L491.9 60.4L493.9 74.3L464.6 74.3ZM496.9 60.4L525.9 60.4L528.4 74.3L499.0 74.3Z" fill="#05224D"/><path d="M216.0 79.5L364.0 79.5L365.2 103.0L214.8 103.0Z" fill="#E4E0CA"/><path d="M0 106H580V110Q580 118 572 118H8Q0 118 0 110Z" fill="#D5D1B8"/><path d="M254 106H326V109Q326 112 323 112H257Q254 112 254 109Z" fill="#BDB99F"/></g></defs></svg>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><g id="deckArt"><rect x="22" y="0" width="536" height="5" fill="#C9C5AC"/><path d="M22 0H558L580 106H0Z" fill="#F7F4E4"/><rect x="22" y="0" width="536" height="3" fill="#C9C5AC"/><path d="M63.4 7.0L91.3 7.0L89.8 16.5L61.7 16.5ZM96.1 7.0L124.0 7.0L122.8 16.5L94.7 16.5ZM128.8 7.0L156.7 7.0L155.7 16.5L127.6 16.5ZM161.5 7.0L189.4 7.0L188.7 16.5L160.6 16.5ZM194.3 7.0L222.1 7.0L221.6 16.5L193.6 16.5ZM227.0 7.0L254.9 7.0L254.6 16.5L226.5 16.5ZM259.7 7.0L287.6 7.0L287.6 16.5L259.5 16.5ZM292.4 7.0L320.3 7.0L320.5 16.5L292.4 16.5ZM325.1 7.0L353.0 7.0L353.5 16.5L325.4 16.5ZM357.9 7.0L385.7 7.0L386.4 16.5L358.4 16.5ZM390.6 7.0L418.5 7.0L419.4 16.5L391.3 16.5ZM423.3 7.0L451.2 7.0L452.4 16.5L424.3 16.5ZM456.0 7.0L483.9 7.0L485.3 16.5L457.2 16.5ZM488.7 7.0L516.6 7.0L518.3 16.5L490.2 16.5ZM61.3 18.7L99.6 18.7L98.1 29.3L59.5 29.3ZM104.5 18.7L130.4 18.7L129.1 29.3L103.0 29.3ZM135.3 18.7L161.2 18.7L160.2 29.3L134.0 29.3ZM166.1 18.7L192.0 18.7L191.2 29.3L165.1 29.3ZM196.9 18.7L222.8 18.7L222.3 29.3L196.2 29.3ZM227.7 18.7L253.7 18.7L253.4 29.3L227.2 29.3ZM258.6 18.7L284.5 18.7L284.4 29.3L258.3 29.3ZM289.4 18.7L315.3 18.7L315.5 29.3L289.4 29.3ZM320.2 18.7L346.1 18.7L346.6 29.3L320.4 29.3ZM351.0 18.7L376.9 18.7L377.6 29.3L351.5 29.3ZM381.8 18.7L407.7 18.7L408.7 29.3L382.5 29.3ZM412.6 18.7L438.5 18.7L439.7 29.3L413.6 29.3ZM443.4 18.7L469.4 18.7L470.8 29.3L444.7 29.3ZM474.2 18.7L518.7 18.7L520.5 29.3L475.7 29.3ZM59.1 31.5L107.1 31.5L105.4 43.2L57.1 43.2ZM112.0 31.5L138.2 31.5L136.8 43.2L110.4 43.2ZM143.1 31.5L169.3 31.5L168.2 43.2L141.8 43.2ZM174.2 31.5L200.4 31.5L199.6 43.2L173.2 43.2ZM205.4 31.5L231.5 31.5L231.0 43.2L204.6 43.2ZM236.5 31.5L262.6 31.5L262.4 43.2L236.0 43.2ZM267.6 31.5L293.8 31.5L293.8 43.2L267.4 43.2ZM298.7 31.5L324.9 31.5L325.2 43.2L298.8 43.2ZM329.8 31.5L356.0 31.5L356.6 43.2L330.2 43.2ZM360.9 31.5L387.1 31.5L388.0 43.2L361.5 43.2ZM392.0 31.5L418.2 31.5L419.3 43.2L392.9 43.2ZM423.2 31.5L449.3 31.5L450.7 43.2L424.3 43.2ZM454.3 31.5L520.9 31.5L522.9 43.2L455.7 43.2ZM56.7 45.4L120.9 45.4L119.2 58.2L54.5 58.2ZM125.9 45.4L152.3 45.4L151.0 58.2L124.3 58.2ZM157.3 45.4L183.7 45.4L182.7 58.2L156.0 58.2ZM188.7 45.4L215.2 45.4L214.5 58.2L187.8 58.2ZM220.2 45.4L246.6 45.4L246.2 58.2L219.5 58.2ZM251.6 45.4L278.1 45.4L278.0 58.2L251.3 58.2ZM283.1 45.4L309.5 45.4L309.7 58.2L283.0 58.2ZM314.5 45.4L341.0 45.4L341.4 58.2L314.7 58.2ZM345.9 45.4L372.4 45.4L373.2 58.2L346.5 58.2ZM377.4 45.4L403.8 45.4L404.9 58.2L378.2 58.2ZM408.8 45.4L435.3 45.4L436.7 58.2L410.0 58.2ZM440.3 45.4L523.3 45.4L525.5 58.2L441.7 58.2ZM54.1 60.4L83.1 60.4L81.0 74.3L51.6 74.3ZM88.1 60.4L117.1 60.4L115.4 74.3L86.1 74.3ZM122.2 60.4L158.0 60.4L156.7 74.3L120.5 74.3ZM163.1 60.4L348.8 60.4L349.4 74.3L161.8 74.3ZM353.8 60.4L389.7 60.4L390.7 74.3L354.5 74.3ZM394.7 60.4L423.7 60.4L425.1 74.3L395.8 74.3ZM428.8 60.4L457.8 60.4L459.5 74.3L430.2 74.3ZM462.9 60.4L491.9 60.4L493.9 74.3L464.6 74.3ZM496.9 60.4L525.9 60.4L528.4 74.3L499.0 74.3Z" fill="#0E1B45"/><path d="M216.0 79.5L364.0 79.5L365.2 103.0L214.8 103.0Z" fill="#E4E0CA"/><path d="M0 106H580V110Q580 118 572 118H8Q0 118 0 110Z" fill="#D5D1B8"/><path d="M254 106H326V109Q326 112 323 112H257Q254 112 254 109Z" fill="#BDB99F"/></g></defs></svg>
   </div></div></div></div>
 </section>
 
@@ -755,12 +755,12 @@
       const split = (x, w) => clamp(((leftSide ? shape.edge[0] : shape.edge[1]) - (x - w / 2)) / w) * 100;
       const two = (out, inn, s) => `linear-gradient(90deg, ${leftSide ? out : inn} ${s}%, ${leftSide ? inn : out} ${s}%)`;
       const white = msg * k, mix = (a, b) => Math.round(a + (255 - a) * white);
-      pill.style.background = onRoute ? two('#FFEF8C', '#258EE3', split(at.x, wide)) : `rgb(${mix(253)}, ${mix(238)}, ${mix(140)})`;
+      pill.style.background = onRoute ? two('#FDEE8C', '#225BFF', split(at.x, wide)) : `rgb(${mix(253)}, ${mix(238)}, ${mix(140)})`;
       // On a node's cream, or off the route, it needs an edge.
       const overNode = shape.nodes.some(([x0, y0, x1, y1]) => at.x + wide / 2 > x0 && at.x - wide / 2 < x1 && at.y + high / 2 > y0 && at.y - high / 2 < y1);
       pill.style.boxShadow = onRoute && !overNode ? 'none' : `0 0 0 calc(var(--u) * 2) ${msg > .5 ? '#000' : 'var(--ink)'}`;
       const label = $('pillT'), tw = label.offsetWidth * shape.dw / scene.offsetWidth;
-      label.style.backgroundImage = onRoute ? two('#05224D', '#FFFDF4', split(at.x, tw)) : 'linear-gradient(#05224D, #05224D)';
+      label.style.backgroundImage = onRoute ? two('#0E1B45', '#FFFBEA', split(at.x, tw)) : 'linear-gradient(#0E1B45, #0E1B45)';
       // The swap: one word fades most of the way out, the other takes over from there, never both.
       label.style.opacity = copy ? 0 : onRoute ? clamp(1 - m * 2.2) : msg < .5 ? .2 + .8 * (1 - 2 * msg) : 0;
       // While the pill grows from a dot the word grows with it, so it is never clipped or missing.

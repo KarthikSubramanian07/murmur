@@ -51,19 +51,16 @@
 <link rel="alternate" type="text/markdown" href="/setup" title="Setting Murmur up, for coding agents">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   /* Three colors and one neutral. Blue and cream carry the page; butter is the one loud accent
      (primary button, message cards, the side ref); ink is the text. Everything else is a tint or
      shade of these four, mixed here so no other hue can creep in. */
   :root {
-    --blue: #258EE3;
-    /* Blue as text, or under cream text, on the cream sheets: the brand blue is 3.4:1 against cream,
-       this step of it (blue/700) is 5.7:1. */
-    --blue-ink: #1767B0;
-    --cream: #FFFDF4;
-    --butter: #FFEF8C;
-    --ink: #05224D;
+    --blue: #225BFF;
+    --cream: #FFFBEA;
+    --butter: #FDEE8C;
+    --ink: #0E1B45;
     --ink-soft: color-mix(in srgb, var(--ink) 78%, var(--cream));
     --ink-mute: color-mix(in srgb, var(--ink) 62%, var(--cream));
     --cream-2: color-mix(in srgb, var(--cream) 96%, var(--ink));   /* panel */
@@ -71,11 +68,11 @@
     --rule: color-mix(in srgb, var(--ink) 12%, transparent);
     --blue-tint: color-mix(in srgb, var(--blue) 10%, var(--cream));
     --blue-deep: color-mix(in srgb, var(--blue) 78%, var(--ink));
-    --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    --mono: ui-monospace, Menlo, Consolas, monospace;
     --r-sm: 6px;
     --r-md: 12px;
     --r-lg: 16px;
-    --shadow: 0 1px 2px rgba(5, 34, 77, .10), 0 10px 28px -10px rgba(5, 34, 77, .38);
+    --shadow: 0 1px 2px rgba(14, 27, 69, .10), 0 10px 28px -10px rgba(14, 27, 69, .38);
     /* Grain: fractal noise, grey, tiled. Kept faint; it is there to be felt more than seen. */
     --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     /* The face of each 12px reed: a bright hairline on its left edge, a dark one on its right, and
@@ -84,14 +81,14 @@
       rgba(255, 255, 255, 0.16) 0px,
       rgba(255, 255, 255, 0.05) 1px,
       rgba(255, 255, 255, 0) 5px,
-      rgba(5, 34, 77, 0.05) 9px,
-      rgba(5, 34, 77, 0.22) 11px,
-      rgba(5, 34, 77, 0.3) 12px);
+      rgba(14, 27, 69, 0.05) 9px,
+      rgba(14, 27, 69, 0.22) 11px,
+      rgba(14, 27, 69, 0.3) 12px);
   }
   * { box-sizing: border-box; margin: 0; }
   html, body { background: var(--blue); color: var(--cream); }
   body {
-    font-family: Rubik, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -110,7 +107,7 @@
   h1 {
     font-size: clamp(min(38px, 11vw), 5.4vw, 74px);
     font-weight: 700;
-    letter-spacing: -.025em;
+    letter-spacing: -.035em;
     line-height: 1.05;
     color: var(--cream);
   }
@@ -123,7 +120,7 @@
     font-size: 18px;
     line-height: 1.55;
     text-wrap: balance;
-    color: var(--cream);
+    color: color-mix(in srgb, var(--cream) 90%, var(--blue));
   }
   .button {
     display: inline-block;
@@ -136,13 +133,13 @@
     font-weight: 600;
     letter-spacing: -.005em;
     text-decoration: none;
-    box-shadow: 0 1px 2px rgba(5, 34, 77, .14), 0 6px 18px -8px rgba(5, 34, 77, .45);
+    box-shadow: 0 1px 2px rgba(14, 27, 69, .14), 0 6px 18px -8px rgba(14, 27, 69, .45);
     transition: background-color .15s ease, transform .15s ease;
   }
   .button:hover { background: var(--cream); transform: translateY(-1px); }
   .button:focus-visible { outline: 2px solid var(--cream); outline-offset: 3px; }
   /* For whoever hands the page to an agent, and for the agent: first in the text, one line above the cards. */
-  .agent-note { position: absolute; top: 16px; left: 0; right: 0; padding: 0 24px; text-align: center; font-size: 13px; line-height: 1.4; color: var(--cream); }
+  .agent-note { position: absolute; top: 16px; left: 0; right: 0; padding: 0 24px; text-align: center; font-size: 13px; line-height: 1.4; color: color-mix(in srgb, var(--cream) 80%, var(--blue)); }
   .agent-note a { color: var(--cream); font-weight: 600; text-decoration-color: color-mix(in srgb, var(--cream) 45%, transparent); text-underline-offset: 3px; }
   .agent-note a:hover { text-decoration-color: var(--cream); }
 
@@ -226,7 +223,7 @@
   .film { display: block; width: 100%; max-height: 100vh; max-height: 100svh; aspect-ratio: 1600 / 980; object-fit: contain; background: var(--blue); }
   @media (max-aspect-ratio: 1/1), (max-width: 999px) { .film { aspect-ratio: 392 / 800; } }
   .film-wrap { position: relative; }
-  .film-btn { position: absolute; right: clamp(16px, 2vw, 28px); bottom: clamp(16px, 2vw, 28px); font: 600 13px/1 Rubik, system-ui, sans-serif; color: var(--ink); background: var(--cream); border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer; box-shadow: 0 1px 2px rgba(5, 34, 77, .14), 0 6px 16px -8px rgba(5, 34, 77, .45); }
+  .film-btn { position: absolute; right: clamp(16px, 2vw, 28px); bottom: clamp(16px, 2vw, 28px); font: 600 13px/1 Inter, system-ui, sans-serif; color: var(--ink); background: var(--cream); border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer; box-shadow: 0 1px 2px rgba(14, 27, 69, .14), 0 6px 16px -8px rgba(14, 27, 69, .45); }
   .film-btn:hover { background: var(--butter); }
   .film-btn:focus-visible { outline: 2px solid var(--cream); outline-offset: 3px; }
 
@@ -248,14 +245,14 @@
     padding: clamp(64px, 10vh, 104px) 24px clamp(56px, 9vh, 88px);
   }
   .route-in { max-width: 960px; margin: 0 auto; }
-  #how .route h2, #setup h2 { font-size: clamp(30px, 3.2vw, 42px); font-weight: 600; letter-spacing: -.02em; line-height: 1.1; color: var(--ink); }
+  #how .route h2, #setup h2 { font-size: clamp(30px, 3.2vw, 42px); font-weight: 600; letter-spacing: -.03em; line-height: 1.1; color: var(--ink); }
   #how .route h2 { margin-bottom: 36px; }
   .route figure { margin: 0; }
   .route .fig-panel { background: var(--cream-2); border: 1px solid var(--rule); border-radius: var(--r-lg); padding: 8px; }
   .route svg { display: block; width: 100%; height: auto; }
   .route .tall { display: none; }
   .route figcaption { margin-top: 20px; font-size: 16.5px; line-height: 1.45; text-align: center; text-wrap: balance; color: var(--ink-soft); }
-  .route svg text { font-family: Rubik, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: var(--ink); }
+  .route svg text { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: var(--ink); }
   .route .ct { fill: var(--cream); stroke: var(--line); stroke-width: 1; }
   .route .ct-h { fill: var(--cream-3); }
   .route .ct-t { font-size: 14px; font-weight: 500; }
@@ -287,7 +284,7 @@
   .route .srv-d { fill: var(--ink-soft); }
   /* The server Murmur doesn't need, struck through in ink rather than an alarm color. */
   .route .x-big { fill: none; stroke: var(--ink); stroke-width: 9; stroke-linecap: round; opacity: .88; }
-  .route svg .lk-blue-t { fill: var(--blue-ink); }
+  .route svg .lk-blue-t { fill: var(--blue); }
   .route svg .lk-mute-t { fill: var(--ink-mute); }
   @media (max-width: 759px) {
     .route { padding: 56px 12px 48px; }
@@ -300,7 +297,7 @@
 
   /* ---------- Page 3 ---------- */
   /* As on the page before the reeded-glass hero: its own ink and badge colours. */
-  #setup { --ink-soft: #3A4F73; --badge-bg: #D9EBFA; --badge-ink: #155A9A; }
+  #setup { --ink-soft: #3A4670; --badge-bg: #DCE6FF; --badge-ink: #1640BF; }
   #setup { background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) clamp(56px, 9vh, 96px); }
   .setup-in { max-width: 1040px; margin: 0 auto; }
   #setup h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
@@ -308,27 +305,27 @@
   .inst { margin-top: 22px; display: grid; gap: 8px; }
   .inst-h { font-size: 14px; font-weight: 600; color: var(--ink-soft); }
   .cmd { display: grid; grid-template-columns: 6.4em minmax(0, 1fr) auto; align-items: center; column-gap: 12px; padding: 11px 14px; border-radius: 10px; background: var(--ink); color: var(--cream); font: 13px/1.45 var(--mono); }
-  .cmd > span { color: #9CCBF3; font-family: Rubik, system-ui, sans-serif; font-size: 13px; }
+  .cmd > span { color: #A9B6E6; font-family: Inter, system-ui, sans-serif; font-size: 13px; }
   .cmd code { overflow-wrap: anywhere; font: inherit; }
-  .copy { font: 600 12.5px/1 Rubik, system-ui, sans-serif; color: var(--ink); background: var(--butter); border: 0; border-radius: 999px; padding: 7px 11px; cursor: pointer; }
+  .copy { font: 600 12.5px/1 Inter, system-ui, sans-serif; color: var(--ink); background: var(--butter); border: 0; border-radius: 999px; padding: 7px 11px; cursor: pointer; }
   .copy:hover { background: var(--cream); }
   .copy:focus-visible { outline: 3px solid var(--butter); outline-offset: 2px; }
   .steps { list-style: none; padding: 0; margin-top: 28px; border-top: 2px solid var(--ink); }
-  .steps > li { display: grid; grid-template-columns: 2em minmax(0, 13em) minmax(0, 1fr); column-gap: 14px; padding: 18px 0; border-bottom: 1px solid #EFE7C7; }
-  .n { font-size: 18px; font-weight: 700; color: var(--blue-ink); line-height: 1.35; }
+  .steps > li { display: grid; grid-template-columns: 2em minmax(0, 13em) minmax(0, 1fr); column-gap: 14px; padding: 18px 0; border-bottom: 1px solid #DDD7B8; }
+  .n { font-size: 18px; font-weight: 700; color: var(--blue); line-height: 1.35; }
   .actor { font-size: 18px; font-weight: 700; letter-spacing: -.015em; line-height: 1.35; }
   .do p { font-size: 15.5px; line-height: 1.5; max-width: 62ch; }
   .do p + .cmds, .do .cmds + p, .do .cmds + .cmds { margin-top: 8px; }
   .cmds { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
   .cmds code { padding: 3px 8px; border-radius: 6px; background: var(--badge-bg); color: var(--badge-ink); font: 600 14px/1.4 var(--mono); }
   .cmds span { font-size: 14px; color: var(--ink-soft); }
-  .do a { color: var(--blue-ink); font-weight: 600; text-underline-offset: 3px; }
+  .do a { color: var(--blue); font-weight: 600; text-underline-offset: 3px; }
   .setup-end { margin-top: 28px; }
   .credit { margin-top: 40px; font-size: 13.5px; color: var(--ink-soft); }
   .credit a { color: inherit; text-underline-offset: 3px; }
-  #setup .button { margin-top: 0; background: var(--blue-ink); color: var(--cream); }
+  #setup .button { margin-top: 0; background: var(--blue); color: var(--cream); }
   #setup .button:hover { background: var(--ink); }
-  #setup .button:focus-visible { outline: 3px solid var(--blue-ink); }
+  #setup .button:focus-visible { outline: 3px solid var(--blue); }
   /* The hero's shared .button and h2 rules gained a shadow, tracking, padding and line height;
      Setup keeps the values it had before. */
   #setup h2 { line-height: normal; }
@@ -336,10 +333,10 @@
   #setup .button:hover { transform: none; }
   /* The foot: the same four links as at the end of every page, quiet, on Setup's cream. */
   .site-foot { background: var(--cream); padding: 0 clamp(16px, 4vw, 48px); }
-  .site-foot nav { max-width: 1040px; margin: 0 auto; padding: 20px 0 max(28px, env(safe-area-inset-bottom)); border-top: 1px solid #EFE7C7; }
+  .site-foot nav { max-width: 1040px; margin: 0 auto; padding: 20px 0 max(28px, env(safe-area-inset-bottom)); border-top: 1px solid #DDD7B8; }
   .site-foot ul { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; padding: 0; list-style: none; }
-  .site-foot li + li::before { content: "\00B7"; padding: 0 12px; color: #3A4F73; opacity: .6; }
-  .site-foot a { color: #3A4F73; font-size: 14px; font-weight: 500; text-decoration: none; }
+  .site-foot li + li::before { content: "\00B7"; padding: 0 12px; color: #3A4670; opacity: .6; }
+  .site-foot a { color: #3A4670; font-size: 14px; font-weight: 500; text-decoration: none; }
   .site-foot a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
   .site-foot a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; }
   @media (max-width: 720px) {
@@ -353,7 +350,7 @@
   /* The light behind the glass: a butter figure smeared sideways, with deep blue and ink shapes beside it and over its edge. It is an inline SVG drawn once: the shapes are blurred more across than down, then an
      feDisplacementMap pushes each 12px strip sideways by a sawtooth ramp, which is what reeded glass
      does to what is behind it. Nothing moves, so the filter runs once; the text sits above it, untouched. */
-  .page { isolation: isolate; background: linear-gradient(180deg, #3698E8 0%, #2B92E5 55%, var(--blue) 100%); }
+  .page { isolation: isolate; background: linear-gradient(180deg, #3369FF 0%, #2A61FF 55%, var(--blue) 100%); }
   .glass { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
     /* It fades out at the foot of the hero, so the ground runs on into page 2 without a seam. */
     -webkit-mask-image: linear-gradient(180deg, #000 82%, transparent 100%); mask-image: linear-gradient(180deg, #000 82%, transparent 100%); }
@@ -390,8 +387,8 @@
     pointer-events: none;
     background:
       var(--flutes),
-      radial-gradient(30% 26% at 12% 70%, rgba(5, 34, 77, .3), rgba(5, 34, 77, 0) 75%),
-      radial-gradient(30% 26% at 90% 64%, rgba(5, 34, 77, .26), rgba(5, 34, 77, 0) 75%),
+      radial-gradient(30% 26% at 12% 70%, rgba(14, 27, 69, .3), rgba(14, 27, 69, 0) 75%),
+      radial-gradient(30% 26% at 90% 64%, rgba(14, 27, 69, .26), rgba(14, 27, 69, 0) 75%),
       var(--blue);
     background-blend-mode: soft-light, normal, normal, normal;
   }
@@ -401,7 +398,7 @@
      through the reeds by a filter whose map is a lens per reed (a triangle ramp, not the sawtooth),
      so the letters ripple rather than shatter. It spans the top of the hero; the corner cards float
      over it on the glass, and the headline steps down a little to clear it. */
-  .glass .word { font: 700 19vw/1 Rubik, system-ui, sans-serif; letter-spacing: -.06em; transform: translateY(330px); }
+  .glass .word { font: 700 19vw/1 Inter, system-ui, sans-serif; letter-spacing: -.06em; transform: translateY(330px); }
   .center { margin-top: 190px; }
   .cards { --drop: max(120px, 50% - 330px); }
   @media (max-width: 1099px) {
@@ -421,12 +418,12 @@
      everything you read sits crisp on the near side. The name sits mid-screen. */
   .st { position: relative; min-height: max(820px, 100vh); min-height: max(820px, 100svh); overflow: clip; isolation: isolate;
     display: flex; flex-direction: column; align-items: center; padding: 0 24px 56px; text-align: center;
-    background: linear-gradient(180deg, #2F94E6 0%, #2189DD 100%); }
+    background: linear-gradient(180deg, #2E64FF 0%, #2257F7 100%); }
   .st .st-behind { position: absolute; inset: 0; z-index: 0; pointer-events: none; filter: url(#st-reeds); }
   .st .st-light { position: absolute; inset: 0; width: 100%; height: 100%; }
   .st .st-mark { position: absolute; left: 0; right: 0; top: var(--mark-top, 45%); transform: translateY(-50%);
-    font: 700 min(24vw, 50vh)/.8 Rubik, system-ui, sans-serif; letter-spacing: -.06em; text-indent: -.06em;
-    white-space: nowrap; color: rgba(255, 253, 244, .88); filter: blur(2.5px); }
+    font: 700 min(24vw, 50vh)/.8 Inter, system-ui, sans-serif; letter-spacing: -.06em; text-indent: -.06em;
+    white-space: nowrap; color: rgba(255, 251, 234, .88); filter: blur(2.5px); }
   .st .st-mark span { display: inline-block; }
   /* The glass: reed faces and grain in soft light, then the reed faces again, plain. */
   .st .st-glass { position: absolute; inset: 0; z-index: 1; pointer-events: none; background: var(--grain), var(--flutes);
@@ -434,12 +431,12 @@
   .st::after { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: var(--flutes); opacity: .5; }
   /* It fades into the blue of page 2 at the foot. */
   .st::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 90px; z-index: 1; pointer-events: none;
-    background: linear-gradient(180deg, transparent, #258EE3); }
+    background: linear-gradient(180deg, transparent, #225BFF); }
   .st .agent-note { position: relative; z-index: 2; top: auto; margin: 0; padding-top: 18px; max-width: 640px; text-wrap: balance; }
   .st .st-copy { position: relative; z-index: 2; margin-top: auto; }
-  .st h1 { font-size: clamp(34px, 4.3vw, 62px); text-shadow: 0 1px 2px rgba(5, 34, 77, .25), 0 4px 18px rgba(5, 34, 77, .3), 0 10px 60px rgba(5, 34, 77, .35); }
+  .st h1 { font-size: clamp(34px, 4.3vw, 62px); text-shadow: 0 1px 2px rgba(14, 27, 69, .25), 0 4px 18px rgba(14, 27, 69, .3), 0 10px 60px rgba(14, 27, 69, .35); }
   .st .st-copy p { max-width: 600px; margin: 22px auto 0; font-size: 18px; line-height: 1.55; text-wrap: balance;
-    color: var(--cream); text-shadow: 0 1px 16px rgba(5, 34, 77, .45); }
+    color: color-mix(in srgb, #FFFBEA 92%, #225BFF); text-shadow: 0 1px 16px rgba(14, 27, 69, .45); }
   .st .button { margin-top: 30px; }
   .st .st-bubbles { position: relative; z-index: 2; display: flex; gap: 20px; justify-content: center; margin-top: 34px; }
   .st .st-bubbles .card { position: static; text-align: left; width: 300px; }
@@ -449,7 +446,7 @@
   /* Overlap: the copy centred over the word; the word dimmed so the headline leads. */
   .st-overlap { justify-content: flex-start; }
   .st-overlap .st-copy { margin: auto 0; padding-top: 12vh; }
-  .st-overlap .st-mark { color: rgba(5, 34, 77, .42); filter: blur(3px); }
+  .st-overlap .st-mark { color: rgba(14, 27, 69, .42); filter: blur(3px); }
 
   /* Split: mur over mur on the left, the copy on the right. */
   @media (min-width: 1000px) {
@@ -470,7 +467,7 @@
   /* Wider tracking than the others: at this size the refraction smears each edge by ~12px, and at
      -.06em the r's arm ran into the next m. */
   .st-big .st-mark { font-size: min(23.5vw, 50vh); letter-spacing: .01em; text-indent: .01em; }
-  .st-butter .st-mark { color: rgba(255, 239, 140, .92); }
+  .st-butter .st-mark { color: rgba(253, 238, 140, .92); }
   .st-trim .st-mark { font-size: min(19vw, 42vh); }
   /* The inline word: in the copy's flow but still under the glass. The copy stops being its own
      stacking context, so the word can sit under the reeds (z 0) while the text sits over them (z 2). */
@@ -503,14 +500,6 @@
   /* Both headline lines in the same white, as Tyler asked. */
   .st-trim h1 span + span { color: var(--cream); }
 
-  /* The name is the wordmark's own letters (Fredoka One, as outlines: docs/assets/brand/wordmark.svg),
-     one "mur" to a span so a phone can stack them. They are sized in em, so the font sizes above
-     still set the scale, and the box is the letters' own, with no line box around them. */
-  .st .st-mark.st-inline { display: flex; justify-content: center; gap: .057em; margin: .1em 0 .2em; line-height: 0; letter-spacing: 0; text-indent: 0; }
-  .st .st-mark.st-inline span { display: block; }
-  .st .st-mark svg { display: block; width: 1.922em; height: .55em; fill: currentColor; }
-  @media (max-width: 600px) { .st .st-mark.st-inline { flex-direction: column; align-items: center; gap: .15em; } }
-
   /* ---------- The hero on a phone ---------- */
   /* "murmur" stacked, mur over mur, so it stays poster-sized. The 12px reeds are coarse against
      phone-sized letters, so the refraction is gentler here (#st-reeds-sm, and the glint's
@@ -521,7 +510,7 @@
     .st-trim .agent-note { padding-top: 14px; max-width: 320px; font-size: 12.5px; line-height: 1.45; opacity: .85; }
     .st-trim .st-mark { font-size: 39vw; line-height: .74; letter-spacing: .01em; text-indent: .01em; }
     .st-trim .st-mark.st-inline { margin: 0 0 .14em; filter: blur(1.3px) url(#st-reeds-sm); }
-    .st-trim h1 { font-size: clamp(27px, 8.2vw, 34px); line-height: 1.08; letter-spacing: -.025em; }
+    .st-trim h1 { font-size: clamp(27px, 8.2vw, 34px); line-height: 1.08; letter-spacing: -.035em; }
     .st-trim .st-copy p { font-size: 15.5px; line-height: 1.55; max-width: 34ch; margin-top: 16px; }
     .st-trim .button { margin-top: 26px; padding: 14px 24px; font-size: 15.5px; }
     .st-trim .st-glass { opacity: .5; }
@@ -547,7 +536,7 @@
   <div class="st-glass" aria-hidden="true"></div>
   <p class="agent-note" data-prose>Setting this up with a coding agent? Send it this link. Agents: follow <a href="https://murmur.afig.dev/setup">https://murmur.afig.dev/setup</a>, and ask your user first.</p>
   <div class="st-copy">
-    <div class="st-mark st-inline" aria-hidden="true"><span><svg viewBox="0 0 349.43 100" focusable="false"><path d="M32.33 14.09C38.22 5.2 45.3 0.74 53.57 0.74C66.35 0.74 75.87 6.21 82.14 17.1C83.52 15.2 85.15 13.27 87.03 11.26C89.03 9.14 92.16 6.88 96.42 4.5C100.68 2.01 105.07 0.74 109.58 0.74C119.61 0.74 128 4.65 134.77 12.42C141.54 20.04 144.92 32.75 144.92 50.56V83.46C144.92 86.32 144.8 88.51 144.54 90.04C144.42 91.41 143.86 93.05 142.85 94.91C141.22 98.29 136.4 100 128.38 100C120.48 100 115.66 98.25 113.91 94.72C113.03 92.86 112.46 91.23 112.22 89.85C112.09 88.33 112.03 86.13 112.03 83.27V50.37C112.03 39.48 108.14 34.01 100.37 34.01C95.99 34.01 92.98 35.46 91.35 38.33C89.85 41.23 89.09 45.28 89.09 50.56V83.46C89.09 86.47 88.97 88.66 88.72 90.04C88.59 91.41 88.03 93.05 87.03 94.91C85.27 98.29 80.39 100 72.36 100C64.47 100 59.65 98.25 57.89 94.72C57.01 92.86 56.45 91.23 56.2 89.85C56.07 88.33 56.01 86.13 56.01 83.27V50.37C56.01 39.48 52.13 34.01 44.36 34.01C36.84 34.01 33.08 39.48 33.08 50.37V83.64C33.08 86.51 32.96 88.7 32.7 90.22C32.58 91.6 32.01 93.23 31.01 95.09C29.13 98.36 24.25 100 16.35 100C8.46 100 3.63 98.29 1.88 94.91C1 93.05 0.43 91.41 0.19 90.04C0.06 88.66 0 86.47 0 83.46V17.29C0 14.42 0.06 12.27 0.19 10.89C0.43 9.41 1.06 7.77 2.07 6.02C3.94 2.64 8.39 0.93 15.41 0.93C22.43 0.93 27 2.08 29.13 4.31C31.26 6.58 32.33 9.85 32.33 14.09ZM203.86 99.63C191.21 99.63 180.68 94.87 172.29 85.32C164.01 75.69 159.88 63.98 159.88 50.19V17.29C159.88 14.28 159.94 12.08 160.07 10.71C160.32 9.33 160.88 7.7 161.76 5.84C163.51 2.45 168.4 0.74 176.42 0.74C185.19 0.74 190.33 3.12 191.83 7.88C192.59 9.89 192.96 13.09 192.96 17.47V50.37C192.96 55.5 194.4 59.52 197.29 62.42C200.29 65.28 204.24 66.73 209.13 66.73C214.14 66.73 218.15 65.2 221.16 62.23C224.29 59.22 225.86 55.24 225.86 50.37V17.1C225.86 14.24 225.92 12.08 226.04 10.71C226.29 9.22 226.92 7.51 227.92 5.65C229.55 2.38 234.38 0.74 242.4 0.74C250.29 0.74 255.12 2.45 256.87 5.84C257.75 7.7 258.25 9.41 258.38 10.89C258.62 12.27 258.75 14.42 258.75 17.29V83.83C258.75 86.58 258.62 88.7 258.38 90.22C258.25 91.6 257.68 93.16 256.68 94.91C254.8 98.18 249.98 99.81 242.21 99.81C234.57 99.81 229.87 98.29 228.11 95.28C226.86 93.16 226.23 90.59 226.23 87.58C225.73 88.48 224.6 89.7 222.85 91.34C221.09 92.97 219.4 94.35 217.77 95.5C213.51 98.25 208.88 99.63 203.86 99.63ZM341.16 2.08C343.54 2.83 345.49 4.13 346.99 6.02C348.62 7.77 349.43 10.63 349.43 14.65C349.43 18.66 348.24 23.05 345.86 27.81C343.48 32.57 340.03 34.94 335.52 34.94C333.27 34.94 331.07 34.46 328.94 33.46C326.94 32.45 324.25 31.93 320.86 31.93C317.48 31.93 314.28 33.16 311.28 35.54C308.39 37.92 306.95 40.78 306.95 44.16V83.64C306.95 86.51 306.83 88.7 306.58 90.22C306.45 91.6 305.89 93.23 304.88 95.09C303 98.36 298.12 100 290.22 100C284.21 100 279.88 98.92 277.25 96.8C275.25 95.06 274.12 92.34 273.87 88.7C273.87 87.47 273.87 85.65 273.87 83.27V17.29C273.87 14.42 273.93 12.27 274.06 10.89C274.31 9.41 274.87 7.77 275.75 6.02C277.51 2.64 282.39 0.93 290.41 0.93C297.93 0.93 302.63 2.38 304.51 5.24C305.89 7.25 306.58 9.33 306.58 11.45C307.2 10.59 308.08 9.52 309.21 8.25C310.46 7.03 313.03 5.32 316.91 3.2C320.8 1.08 324.18 0 327.07 0C330.07 0 332.58 0.19 334.58 0.56C336.59 0.82 338.78 1.3 341.16 2.08Z"/></svg></span><span><svg viewBox="0 0 349.43 100" focusable="false"><path d="M32.33 14.09C38.22 5.2 45.3 0.74 53.57 0.74C66.35 0.74 75.87 6.21 82.14 17.1C83.52 15.2 85.15 13.27 87.03 11.26C89.03 9.14 92.16 6.88 96.42 4.5C100.68 2.01 105.07 0.74 109.58 0.74C119.61 0.74 128 4.65 134.77 12.42C141.54 20.04 144.92 32.75 144.92 50.56V83.46C144.92 86.32 144.8 88.51 144.54 90.04C144.42 91.41 143.86 93.05 142.85 94.91C141.22 98.29 136.4 100 128.38 100C120.48 100 115.66 98.25 113.91 94.72C113.03 92.86 112.46 91.23 112.22 89.85C112.09 88.33 112.03 86.13 112.03 83.27V50.37C112.03 39.48 108.14 34.01 100.37 34.01C95.99 34.01 92.98 35.46 91.35 38.33C89.85 41.23 89.09 45.28 89.09 50.56V83.46C89.09 86.47 88.97 88.66 88.72 90.04C88.59 91.41 88.03 93.05 87.03 94.91C85.27 98.29 80.39 100 72.36 100C64.47 100 59.65 98.25 57.89 94.72C57.01 92.86 56.45 91.23 56.2 89.85C56.07 88.33 56.01 86.13 56.01 83.27V50.37C56.01 39.48 52.13 34.01 44.36 34.01C36.84 34.01 33.08 39.48 33.08 50.37V83.64C33.08 86.51 32.96 88.7 32.7 90.22C32.58 91.6 32.01 93.23 31.01 95.09C29.13 98.36 24.25 100 16.35 100C8.46 100 3.63 98.29 1.88 94.91C1 93.05 0.43 91.41 0.19 90.04C0.06 88.66 0 86.47 0 83.46V17.29C0 14.42 0.06 12.27 0.19 10.89C0.43 9.41 1.06 7.77 2.07 6.02C3.94 2.64 8.39 0.93 15.41 0.93C22.43 0.93 27 2.08 29.13 4.31C31.26 6.58 32.33 9.85 32.33 14.09ZM203.86 99.63C191.21 99.63 180.68 94.87 172.29 85.32C164.01 75.69 159.88 63.98 159.88 50.19V17.29C159.88 14.28 159.94 12.08 160.07 10.71C160.32 9.33 160.88 7.7 161.76 5.84C163.51 2.45 168.4 0.74 176.42 0.74C185.19 0.74 190.33 3.12 191.83 7.88C192.59 9.89 192.96 13.09 192.96 17.47V50.37C192.96 55.5 194.4 59.52 197.29 62.42C200.29 65.28 204.24 66.73 209.13 66.73C214.14 66.73 218.15 65.2 221.16 62.23C224.29 59.22 225.86 55.24 225.86 50.37V17.1C225.86 14.24 225.92 12.08 226.04 10.71C226.29 9.22 226.92 7.51 227.92 5.65C229.55 2.38 234.38 0.74 242.4 0.74C250.29 0.74 255.12 2.45 256.87 5.84C257.75 7.7 258.25 9.41 258.38 10.89C258.62 12.27 258.75 14.42 258.75 17.29V83.83C258.75 86.58 258.62 88.7 258.38 90.22C258.25 91.6 257.68 93.16 256.68 94.91C254.8 98.18 249.98 99.81 242.21 99.81C234.57 99.81 229.87 98.29 228.11 95.28C226.86 93.16 226.23 90.59 226.23 87.58C225.73 88.48 224.6 89.7 222.85 91.34C221.09 92.97 219.4 94.35 217.77 95.5C213.51 98.25 208.88 99.63 203.86 99.63ZM341.16 2.08C343.54 2.83 345.49 4.13 346.99 6.02C348.62 7.77 349.43 10.63 349.43 14.65C349.43 18.66 348.24 23.05 345.86 27.81C343.48 32.57 340.03 34.94 335.52 34.94C333.27 34.94 331.07 34.46 328.94 33.46C326.94 32.45 324.25 31.93 320.86 31.93C317.48 31.93 314.28 33.16 311.28 35.54C308.39 37.92 306.95 40.78 306.95 44.16V83.64C306.95 86.51 306.83 88.7 306.58 90.22C306.45 91.6 305.89 93.23 304.88 95.09C303 98.36 298.12 100 290.22 100C284.21 100 279.88 98.92 277.25 96.8C275.25 95.06 274.12 92.34 273.87 88.7C273.87 87.47 273.87 85.65 273.87 83.27V17.29C273.87 14.42 273.93 12.27 274.06 10.89C274.31 9.41 274.87 7.77 275.75 6.02C277.51 2.64 282.39 0.93 290.41 0.93C297.93 0.93 302.63 2.38 304.51 5.24C305.89 7.25 306.58 9.33 306.58 11.45C307.2 10.59 308.08 9.52 309.21 8.25C310.46 7.03 313.03 5.32 316.91 3.2C320.8 1.08 324.18 0 327.07 0C330.07 0 332.58 0.19 334.58 0.56C336.59 0.82 338.78 1.3 341.16 2.08Z"/></svg></span></div>
+    <div class="st-mark st-inline" aria-hidden="true"><span>mur</span><span>mur</span></div>
     <h1><span>Intra-repo agent communication.</span> <span>Your agents work better as a team.</span></h1>
     <p>Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.</p>
     <a class="button" href="https://github.com/a-Fig/murmur">Get Murmur on GitHub</a>
@@ -607,8 +596,8 @@ vec4 light(vec2 q, vec2 s, float f) {
 
   const FS = `precision highp float;
 uniform vec2 uRes; uniform float uDpr, uT, uK, uSc; uniform vec4 uWord;
-const vec3 BUT = vec3(1., .937, .549);
-const vec3 CRM = vec3(1., .992, .957);
+const vec3 BUT = vec3(.992, .933, .549);
+const vec3 CRM = vec3(1., .984, .918);
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 ${LIGHT}
 void main() {
@@ -658,7 +647,8 @@ void main() {
     const mk = hero.querySelector('.st-mark');
     const mb = mk && mk.getBoundingClientRect();
     if (mb && mb.width) {
-      const top = mb.top - r.top, bot = mb.bottom - r.top;
+      const em = parseFloat(getComputedStyle(mk).fontSize) || mb.height / .8;
+      const top = mb.top - r.top + .19 * em, bot = mb.bottom - r.top - .04 * em;
       view.word = [mb.left - r.left + mb.width / 2, (top + bot) / 2, mb.width / 2, (bot - top) / 2];
     }
     // The headline, the line and the button as one box, and the note's text, as centre and half-size.
