@@ -30,20 +30,46 @@ color is a change of `fill`, not a new drawing.
 
 ## Color
 
-The site's four colors, which the logo files use too:
+Three colors and one neutral: blue and cream carry the page, butter is the one loud accent, ink is
+the text. Every other step is a tint or shade of these four, and each is a value the site already
+uses. `docs/brand.html` shows them all, with the logo on each ground; open it in a browser.
 
 | Name | Hex | Use |
 | --- | --- | --- |
-| blue | `#225BFF` | Page grounds, the icon's tile, links on cream |
-| cream | `#FFFBEA` | The sheets, text on blue, the mark on blue |
-| butter | `#FDEE8C` | The one loud accent: the hero word, the primary button, message cards |
-| ink | `#0E1B45` | Text, and the logo on light grounds |
+| blue/100 | `#DCE6FF` | Chips behind code on cream |
+| blue/500 | `#225BFF` | The brand blue: page grounds, the icon's tile, links on cream |
+| blue/700 | `#1640BF` | Text on blue/100, pressed states |
+| butter/300 | `#FEF6C4` | A quiet highlight |
+| butter/500 | `#FDEE8C` | The accent: the hero word, the primary button, message cards |
+| butter/700 | `#E6CC3F` | Butter where it needs an edge on cream |
+| cream/100 | `#FFFBEA` | The sheets, text on blue and ink, the mark on blue |
+| cream/200 | `#F5F2E3` | Surfaces on cream |
+| cream/300 | `#DDD7B8` | Borders and rules |
+| ink/500 | `#3A4670` | Secondary text |
+| ink/700 | `#16265C` | Surfaces on ink |
+| ink/900 | `#0E1B45` | Text, dark grounds, the logo on light grounds |
+
+| Token | Light | Dark |
+| --- | --- | --- |
+| bg/canvas | cream/100 | ink/900 |
+| bg/surface | cream/200 | ink/700 |
+| bg/brand | blue/500 | blue/500 |
+| bg/highlight | butter/500 | butter/500 |
+| text/primary | ink/900 | cream/100 |
+| text/secondary | ink/500 | cream/300 |
+| text/link | blue/500 | butter/500 |
+| logo/ink | ink/900 | cream/100 |
+| logo/accent | blue/500 | butter/500 |
+| border/default | cream/300 | ink/500 |
+
+Contrast, measured 2026-11-10: cream on blue/500 is 5.1:1 and blue/500 on cream is the same, so
+either carries body text. Butter on blue/500 is 4.4:1, which is right for the logo and large text
+and just short of the 4.5:1 a sentence needs. Ink on butter is 14.1:1.
 
 The Figma file proposes a different palette: a lighter blue `#258EE3`, cream `#FFFDF4`, butter
 `#FFEF8C` and navy `#05224D`. The site was built in it on 2026-11-10 and Tyler preferred the look
-it already had, so the palette above stayed and the logo files were colored to match. Two numbers
-from that trial: cream on `#258EE3` is 3.4:1, below WCAG AA for body text, where cream on
-`#225BFF` is 5.1:1.
+it already had, so this palette stayed and the logo files were colored to match. Cream on
+`#258EE3` is 3.4:1, below what body text needs.
 
 ## Type
 
