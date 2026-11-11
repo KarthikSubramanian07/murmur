@@ -50,7 +50,8 @@ joining does:
   below says exactly how. Tell your user this in so many words, not as a passing mention.
 - Joining can be undone in this repo with `mur join --leave`. It removes this clone's hooks, stops the
   background process and forgets that your user joined; Murmur stays registered, with its tools
-  approved and its Codex and Grok hooks, in the agents, doing nothing here (what it prints says how to remove each).
+  approved and its Codex and Grok hooks, in the agents, doing nothing here. `mur uninstall` removes all of
+  that from this machine once no repo here is joined.
 
 ### What murmur.afig.dev receives, and why
 
