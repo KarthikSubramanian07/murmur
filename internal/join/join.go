@@ -238,7 +238,8 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		}
 	}
 	// A daemon left running by an older mur answers, but can't do what this one does (hand a message
-	// over as a turn, for one): it is replaced, which Connect does for a client that may start daemons.
+	// over as a turn, for one): it is replaced. One from before proof (0.2) can't be asked to stop,
+	// and Replace ends it by its process (#394).
 	c, err := client.Connect(ctx, p.GitDir, false)
 	switch {
 	case errors.Is(err, client.ErrNoDaemon):
@@ -248,7 +249,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 			r.Did = append(r.Did, "Started this clone's daemon")
 		}
 	case err == nil && c.Outdated():
-		if _, err := client.Connect(ctx, p.GitDir, true); err != nil {
+		if _, err := client.Replace(ctx, p.GitDir); err != nil {
 			problem("replacing the daemon of an older version", err)
 		} else {
 			r.Did = append(r.Did, "Replaced this clone's daemon, which was left running by an older version of "+brand.Product)

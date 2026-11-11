@@ -40,12 +40,14 @@ func ageLastSync(t *testing.T, d *device, ago time.Duration) {
 }
 
 // keptFor is the subjects in session id's inbox in state.json, sorted. It reads the file rather
-// than asking the daemon, as asking by registering the session would change what it is given.
-func keptFor(t *testing.T, d *device, id string) []string {
+// than asking the daemon, as asking by registering the session would change what it is given. ok is
+// false while the daemon is replacing the file, which on Windows fails a read made just then: an
+// inbox read then isn't an empty one (#427).
+func keptFor(t *testing.T, d *device, id string) (subjects []string, ok bool) {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(d.gitDir, brand.StateDir, "state.json"))
 	if err != nil {
-		return nil // being replaced; look again
+		return nil, false
 	}
 	var st struct {
 		Inbox map[string][]struct {
@@ -62,7 +64,7 @@ func keptFor(t *testing.T, d *device, id string) []string {
 		out = append(out, m.Event.Subject)
 	}
 	sort.Strings(out)
-	return out
+	return out, true
 }
 
 // forgedMessage is a message from a session of the device whose log it is pushed onto.
@@ -105,12 +107,23 @@ func TestKeptInboxCatchesUpAfterALongOutage(t *testing.T) {
 	b.start()
 
 	want := []string{"broadcast, while the daemon was down", "direct, while the daemon was down", "forged, while the daemon was down"}
-	eventually(t, "bob's inbox is kept", func() bool { return len(keptFor(t, b, "bbbbbb")) >= len(want) })
-	if got := keptFor(t, b, "bbbbbb"); strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("bob's kept inbox: %q, want %q", got, want)
+	// The inbox that ended the wait is the one judged. A second read of the file could fall while
+	// the daemon replaces it, and came back empty on Windows CI (#427).
+	var kept []string
+	eventually(t, "bob's inbox is kept", func() bool {
+		kept, _ = keptFor(t, b, "bbbbbb")
+		return len(kept) >= len(want)
+	})
+	if strings.Join(kept, "|") != strings.Join(want, "|") {
+		t.Fatalf("bob's kept inbox: %q, want %q", kept, want)
 	}
-	if got := keptFor(t, b, "cccccc"); len(got) != 0 {
-		t.Errorf("a session that wasn't kept has %q", got)
+	var other []string
+	eventually(t, "state.json to be read", func() (ok bool) {
+		other, ok = keptFor(t, b, "cccccc")
+		return ok
+	})
+	if len(other) != 0 {
+		t.Errorf("a session that wasn't kept has %q", other)
 	}
 
 	// What was kept was read, so the page lists it; history that was skipped is not. (The page also
