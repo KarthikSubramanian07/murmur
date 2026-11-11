@@ -64,7 +64,10 @@ func TestUninstallRemovesWhatJoinWrote(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, hooksPath, text)
-	key := codexKeyPath(hooksPath, false)
+	// The sandbox's Codex home is named (CODEX_HOME), so Codex keys its trust by the home's
+	// canonical path, as join wrote Murmur's: /private/var on macOS, long names on Windows (#332).
+	h := sb.defaultHome(agents[agentIndex("codex")])
+	key := codexKeyPath(hooksPath, h.Named)
 	cfg := filepath.Join(sb.CodexHome, "config.toml")
 	write(t, cfg, read(t, cfg)+"\n[hooks.state."+tomlKey(key+":stop:1:0")+"]\ntrusted_hash = \"sha256:mine\"\n")
 
