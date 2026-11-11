@@ -453,10 +453,14 @@ func TestHistoryIsNotReplayed(t *testing.T) {
 func TestBusNeverTouchesWorkingTree(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
-	a := newDevice(t, remote)
-	work := filepath.Dir(a.gitDir)
-	before := git(t, work, "status", "--porcelain", "--ignored")
-	head := git(t, work, "rev-parse", "HEAD")
+	// The checkout as it is before the daemon starts: starting makes the first team key and pushes
+	// presence, which are bus writes like any other (Sol's review, 2026-11-11).
+	var work, before, head string
+	a := newDeviceWith(t, remote, func(d *device) {
+		work = filepath.Dir(d.gitDir)
+		before = git(t, work, "status", "--porcelain", "--ignored")
+		head = git(t, work, "rev-parse", "HEAD")
+	})
 	a.session("aaaaaa", "")
 	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "hello"}); r.Error != "" {
 		t.Fatalf("send: %s", r.Error)
