@@ -131,7 +131,11 @@ var userDefault = map[string][]string{
 
 // homes lists, for each agent, every configuration join registers in: the default first, then the
 // ones T3's instances run in, each once. notes says what was passed over, and why.
-func (e Env) homes() (byAgent [][]agentHome, notes []string) {
+func (e Env) homes() (byAgent [][]agentHome, notes []string) { return e.homesWith(false) }
+
+// homesWith is homes, with the configurations of T3's instances that are turned off too when off
+// is set: an uninstall takes Murmur out of one that join registered in before it was turned off.
+func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 	byAgent = make([][]agentHome, len(agents))
 	for i, a := range agents {
 		byAgent[i] = []agentHome{e.defaultHome(a)}
@@ -150,7 +154,7 @@ func (e Env) homes() (byAgent [][]agentHome, notes []string) {
 		if !ok {
 			continue
 		}
-		if !in.On {
+		if !in.On && !off {
 			// Said only of a configuration that nothing else registers in: one that is the agent's
 			// default gets the server whatever T3 does with it.
 			if !samePath(h.Dir, byAgent[i][0].Dir) || !samePath(h.JSON, byAgent[i][0].JSON) {

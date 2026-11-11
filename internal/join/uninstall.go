@@ -53,7 +53,9 @@ func Uninstall(ctx context.Context, e Env, leave bool) (Report, error) {
 
 	// Each clone is left first, so that nothing still joined is left with no server to serve it.
 	// A clone whose leave didn't take its consent away stops the uninstall there.
-	left := map[string]bool{}
+	// keep are the clones whose cleanup didn't finish, by ID: they stay on the record, so that
+	// running uninstall again finds them (Sol's review of #409).
+	left, keep := map[string]bool{}, map[string]bool{}
 	for _, c := range joined {
 		lr, err := Leave(ctx, e, c.Top())
 		for _, d := range lr.Did {
@@ -69,11 +71,17 @@ func Uninstall(ctx context.Context, e Env, leave bool) (Report, error) {
 		if Joined(c.GitDir) {
 			return r, fmt.Errorf("%s is still joined in %s, so nothing else was removed; see above", brand.Product, c.Top())
 		}
-		left[clones.ID(c.GitDir)] = true
+		left[c.ID()] = true
+		if len(lr.Problems) > 0 || err != nil {
+			keep[c.ID()] = true
+			if err := clones.Add(record, c); err != nil { // the leave took it off
+				problem("keeping "+c.Top()+" on the record of this machine's clones", err)
+			}
+		}
 	}
 
 	// Per user: every agent configuration join registers in.
-	byAgent, notes := e.homes()
+	byAgent, notes := e.homesWith(true)
 	r.Notes = append(r.Notes, notes...)
 	for i, a := range agents {
 		for _, hs := range sameDir(byAgent[i]) {
@@ -109,14 +117,18 @@ func Uninstall(ctx context.Context, e Env, leave bool) (Report, error) {
 		switch {
 		case err != nil:
 			problem("the daemon of "+c.Top(), err)
+			keep[c.ID()] = true
 		case stopped:
 			r.Did = append(r.Did, "Stopped the daemon of "+c.Top())
 		}
 	}
 
-	if removed, err := removeRecord(record); err != nil {
+	switch removed, err := removeRecord(record, keep); {
+	case err != nil:
 		problem("removing the record of this machine's clones ("+record+")", err)
-	} else if removed {
+	case len(keep) > 0:
+		r.Notes = append(r.Notes, "Kept the clones whose cleanup didn't finish on the record of this machine's clones ("+record+"), so that running uninstall again finds them")
+	case removed:
 		r.Did = append(r.Did, "Removed the record of this machine's clones ("+record+")")
 	}
 
@@ -139,14 +151,15 @@ func plural(n int, one, many string) string {
 
 // sameDir groups homes by their configuration: two homes in one directory are one file to edit.
 // Codex's can be (a home named by CODEX_HOME that is also the default, see sameCodexKey), and its
-// hook's trust is then under both spellings.
+// hook's trust is then under both spellings. The directory is compared as the file system sees it,
+// so that a link, a junction or a short name to the same home groups with it (Sol's review of #409).
 func sameDir(hs []agentHome) [][]agentHome {
 	var out [][]agentHome
 	for _, h := range hs {
 		if h.Dir == "" {
 			continue
 		}
-		i := slices.IndexFunc(out, func(g []agentHome) bool { return samePath(g[0].Dir, h.Dir) && samePath(g[0].JSON, h.JSON) })
+		i := slices.IndexFunc(out, func(g []agentHome) bool { return sameEntry(g[0].Dir, h.Dir) && sameEntry(g[0].JSON, h.JSON) })
 		if i < 0 {
 			out = append(out, []agentHome{h})
 		} else {
@@ -154,6 +167,22 @@ func sameDir(hs []agentHome) [][]agentHome {
 		}
 	}
 	return out
+}
+
+// sameEntry says two paths name one file or directory: the same path, or the same one on disk.
+func sameEntry(a, b string) bool {
+	if samePath(a, b) {
+		return true
+	}
+	if a == "" || b == "" {
+		return false
+	}
+	x, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	y, err := os.Stat(b)
+	return err == nil && os.SameFile(x, y)
 }
 
 // leftovers are what an uninstall leaves for the user, and how to remove each.
@@ -174,9 +203,10 @@ func (e Env) leftovers() []string {
 		"Agent sessions already open keep "+brand.Product+"'s server running until they end, and it does nothing; new ones don't start it.")
 }
 
-// removeRecord deletes the record of this machine's clones, the files clones writes, and the folder
-// once it is empty, with the folder above it when that is the default one, Murmur's, and empty too.
-func removeRecord(dir string) (bool, error) {
+// removeRecord deletes the record of this machine's clones: the files clones writes, but those of
+// the clones keep names by ID, and the folder once it is empty, with the folder above it when that
+// is the default one, Murmur's, and empty too.
+func removeRecord(dir string, keep map[string]bool) (bool, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -186,12 +216,15 @@ func removeRecord(dir string) (bool, error) {
 	}
 	for _, en := range entries {
 		name := en.Name()
-		if !en.Type().IsRegular() || !(strings.HasSuffix(name, ".json") || strings.HasPrefix(name, ".clone-")) {
+		if !en.Type().IsRegular() || !(strings.HasSuffix(name, ".json") || strings.HasPrefix(name, ".clone-")) || keep[strings.TrimSuffix(name, ".json")] {
 			continue
 		}
 		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return false, err
 		}
+	}
+	if len(keep) > 0 {
+		return true, nil
 	}
 	if err := os.Remove(dir); err != nil {
 		return false, err
@@ -318,37 +351,36 @@ func (e Env) unregisterClaudeAt(ctx context.Context, hs []agentHome) (did, notes
 	return did, nil, nil
 }
 
-// unregisterCodexAt takes Murmur's server, hook and the hook's trust out of a Codex home. The hook
-// goes first: Codex keys a hook's trust by its group's place in its event's list, so taking
-// Murmur's group out moves the user's own groups after it up one, and their trust entries are moved
-// with them, as join keeps its group in place for the same reason (editCodexHooks). If the trust
-// can't be written after the hook went, the user's moved hooks ask once more in Codex, which is
-// all a stale key costs.
+// unregisterCodexAt takes Murmur's server, hook and the hook's trust out of a Codex home. Codex keys
+// a hook's trust by its group's place in its event's list, so taking Murmur's group out moves the
+// user's own groups after it up one, and their trust entries are moved with them, as join keeps its
+// group in place for the same reason (editCodexHooks). Both files are edited before either is
+// written, and hooks.json goes back as it was if config.toml can't be written: without Murmur's
+// groups in it, nothing would tell a rerun where they were, and the user's trust entries would
+// never be moved (Sol's review of #409).
 func (e Env) unregisterCodexAt(_ context.Context, hs []agentHome) (did, notes []string, err error) {
 	h := hs[0]
 	hooksPath := filepath.Join(h.Dir, "hooks.json")
-	removed, err := removeCodexHooks(hooksPath)
+	hooksText, hooksOut, removed, err := removeCodexHooks(hooksPath)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(removed) > 0 {
-		did = append(did, h.Label+": removed "+brand.Product+"'s hook ("+hooksPath+")")
-	}
+	// Every spelling of hooks.json that a home of the group gives Codex, each home by its own path.
 	var prefixes []string
 	for _, x := range hs {
-		if p := codexKeyPath(hooksPath, x.Named) + ":"; !slices.Contains(prefixes, p) {
+		if p := codexKeyPath(filepath.Join(x.Dir, "hooks.json"), x.Named) + ":"; !slices.Contains(prefixes, p) {
 			prefixes = append(prefixes, p)
 		}
 	}
 	path := filepath.Join(h.Dir, "config.toml")
 	text, err := readConfig(path)
-	if err != nil || text == "" {
-		return did, nil, err
+	if err != nil {
+		return nil, nil, err
 	}
 	server, state := []string{"mcp_servers", brand.MCPServer}, []string{"hooks", "state"}
 	targets := [][]string{server}
 	if len(removed) > 0 {
-		targets = append(targets, append(state, "*"))
+		targets = append(targets, []string{"hooks", "state", "*"})
 	}
 	out, gone, err := editTOMLTables(text, "config.toml", targets, func(p []string) ([]string, bool) {
 		if hasPrefix(p, server) {
@@ -366,13 +398,25 @@ func (e Env) unregisterCodexAt(_ context.Context, hs []agentHome) (did, notes []
 		return nil, false
 	})
 	if err != nil {
-		return did, nil, fmt.Errorf("%s: %w", path, err)
+		return nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	if out == text {
-		return did, nil, nil
+	if hooksOut != nil {
+		if err := writeAtomic(hooksPath, hooksOut, 0o600); err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", hooksPath, err)
+		}
 	}
-	if err := writeAtomic(path, []byte(out), 0o600); err != nil {
-		return did, nil, fmt.Errorf("%s: %w", path, err)
+	if out != text {
+		if err := writeAtomic(path, []byte(out), 0o600); err != nil {
+			if hooksOut != nil {
+				if rerr := writeAtomic(hooksPath, []byte(hooksText), 0o600); rerr != nil {
+					return nil, nil, fmt.Errorf("%s: %w; and %s couldn't be put back as it was (%v), so Codex may ask again about your own hooks after %s's", path, err, hooksPath, rerr, brand.Product)
+				}
+			}
+			return nil, nil, fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	if hooksOut != nil {
+		did = append(did, h.Label+": removed "+brand.Product+"'s hook ("+hooksPath+")")
 	}
 	if slices.ContainsFunc(gone, func(p []string) bool { return hasPrefix(p, server) }) {
 		did = append(did, h.Label+": removed the "+brand.MCPServer+" MCP server ("+path+")")
@@ -383,20 +427,21 @@ func (e Env) unregisterCodexAt(_ context.Context, hs []agentHome) (did, notes []
 	return did, nil, nil
 }
 
-// removeCodexHooks takes every group of Murmur's (isMurmurGroup) out of the hooks.json at path, an
-// event left with none taken out too, and returns the places they had, by event as Codex names it
-// in trust keys (post_tool_use).
-func removeCodexHooks(path string) (map[string][]int, error) {
-	text, err := readConfig(path)
+// removeCodexHooks reads the hooks.json at path. It returns the file's text, and the text without
+// every group of Murmur's (isMurmurGroup), an event left with none taken out too; out is nil where
+// it has none. removed are the places the groups had, by event as Codex names it in trust keys
+// (post_tool_use). It writes nothing.
+func removeCodexHooks(path string) (text string, out []byte, removed map[string][]int, err error) {
+	text, err = readConfig(path)
 	if err != nil || text == "" {
-		return nil, err
+		return text, nil, nil, err
 	}
 	doc, err := jsonedit.Parse([]byte(text))
 	if err != nil {
-		return nil, fmt.Errorf("%s isn't a JSON object (%v), so it was left alone", path, err)
+		return "", nil, nil, fmt.Errorf("%s isn't a JSON object (%v), so it was left alone", path, err)
 	}
 	hooks := doc.Object("hooks")
-	removed := map[string][]int{}
+	removed = map[string][]int{}
 	for _, ev := range hooks.Keys() {
 		v, _ := hooks.Get(ev)
 		groups, ok := v.([]any)
@@ -420,16 +465,13 @@ func removeCodexHooks(path string) (map[string][]int, error) {
 		}
 	}
 	if len(removed) == 0 {
-		return nil, nil
+		return text, nil, nil, nil
 	}
-	out, err := jsonedit.Format(doc, []byte(text))
-	if err == nil {
-		err = writeAtomic(path, out, 0o600)
-	}
+	out, err = jsonedit.Format(doc, []byte(text))
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return "", nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	return removed, nil
+	return text, out, removed, nil
 }
 
 // snakeCase is an event's name as Codex writes it in a trust key: PostToolUse is post_tool_use.

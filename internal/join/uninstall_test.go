@@ -229,3 +229,78 @@ func TestShiftTrust(t *testing.T) {
 		}
 	}
 }
+
+// A T3 instance turned off still has what join wrote while it was on, and uninstall takes it out
+// (Sol's review of #409): homes passes it over, for join.
+func TestUninstallReachesAnInstanceTurnedOff(t *testing.T) {
+	sb, _ := uninstallSandbox(t)
+	sb.Home = sb.root
+	t.Setenv("HOME", sb.root)
+	t.Setenv("USERPROFILE", sb.root)
+	sb.T3Settings = filepath.Join(sb.root, ".t3", "userdata", "settings.json")
+	write(t, sb.T3Settings, t3Settings(sb.root))
+	ext := piExtensionPath(filepath.Join(sb.root, "pi-t3")) // the "pi" instance, which is off
+	write(t, ext, piExtension(sb.Exe))
+	if r, err := Uninstall(context.Background(), sb.Env, false); err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if exists(ext) {
+		t.Error("the extension in the turned-off instance's home is still there")
+	}
+}
+
+// Codex's two files change together or not at all: a config.toml uninstall won't edit leaves
+// hooks.json as it was, so that a rerun still finds Murmur's groups (Sol's review of #409).
+func TestUninstallCodexChangesNothingWhenTheTrustCannotBeEdited(t *testing.T) {
+	sb, _ := uninstallSandbox(t)
+	if err := os.MkdirAll(sb.CodexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := sb.registerCodex(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(sb.CodexHome, "config.toml")
+	write(t, cfg, "[hooks]\nstate = {}\n\n"+read(t, cfg))
+	hooks := read(t, filepath.Join(sb.CodexHome, "hooks.json"))
+	if _, _, err := sb.unregisterCodexAt(context.Background(), []agentHome{sb.defaultHome(agents[agentIndex("codex")])}); err == nil {
+		t.Fatal("no error")
+	}
+	if read(t, filepath.Join(sb.CodexHome, "hooks.json")) != hooks {
+		t.Error("hooks.json changed")
+	}
+}
+
+// Homes that are one directory on disk, through a link, are one group, with every spelling kept.
+func TestSameDirFollowsLinks(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "codex")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "alias")
+	linkOrSkip(t, real, link)
+	got := sameDir([]agentHome{{Dir: real}, {Dir: link, Named: true}, {Dir: filepath.Join(root, "other")}})
+	if len(got) != 2 || len(got[0]) != 2 {
+		t.Errorf("groups: %v", got)
+	}
+}
+
+// A clone whose cleanup didn't finish stays on the record, so a rerun finds it.
+func TestRemoveRecordKeepsWhatIsUnfinished(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "clones")
+	a, b := clones.Clone{GitDir: filepath.Join(dir, "a", ".git")}, clones.Clone{GitDir: filepath.Join(dir, "b", ".git")}
+	for _, c := range []clones.Clone{a, b} {
+		if err := clones.Add(dir, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := removeRecord(dir, map[string]bool{b.ID(): true}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(filepath.Join(dir, a.ID()+".json")) || !exists(filepath.Join(dir, b.ID()+".json")) {
+		t.Error("the wrong clone's file went")
+	}
+	if _, err := removeRecord(dir, nil); err != nil || exists(dir) {
+		t.Errorf("err=%v; the folder is still there: %v", err, exists(dir))
+	}
+}
