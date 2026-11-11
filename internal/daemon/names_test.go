@@ -347,6 +347,13 @@ func TestSameKeyKeepsItsName(t *testing.T) {
 	if reg := readRegistry(t, remote); strings.Contains(reg.text, "claude-alice") || len(reg.assigned()) != 1 {
 		t.Fatalf("the registry should hold her one assignment and not her client session ID:\n%s", reg.text)
 	}
+	// a's log may not be on the remote yet: b learns her name from the registry and a's presence,
+	// and a session's start is pushed after its presence, so busText would fail on a ref the remote
+	// doesn't have (#410). Waiting for a start also gives the check below something to look at.
+	mesh := "refs/murmur/mesh/" + a.self()
+	eventually(t, "a session's start on a's log", func() bool {
+		return git(t, remote, "for-each-ref", mesh) != "" && strings.Contains(busText(t, remote, a), " started (")
+	})
 	if strings.Contains(busText(t, remote, a), "claude-alice") {
 		t.Fatal("the client's session ID is on the bus")
 	}
