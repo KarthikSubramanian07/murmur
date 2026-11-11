@@ -159,11 +159,12 @@
   .site-foot a { color: var(--cream); font-size: 14px; font-weight: 500; text-decoration: none; }
   .site-foot a:hover { text-decoration: underline; text-underline-offset: 4px; }
   .site-foot a:focus-visible { outline: 2px solid var(--cream); outline-offset: 3px; border-radius: 3px; }
-  .site-foot nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 14px 28px; }
-  .foot-logo { display: block; }
-  .foot-logo svg { display: block; }
-  .foot-logo .m { fill: var(--cream); }
-  .foot-logo .l { fill: var(--butter); }
+  /* The lockup at one end and the links at the other, in the one cream, so the row reads as a line. */
+  .site-foot nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 28px; }
+  .foot-logo { display: block; color: var(--cream); }
+  .foot-logo svg { display: block; fill: currentColor; }
+  .foot-logo:hover { color: var(--butter); }
+  .foot-logo:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 4px; }
 
   .progress { position: fixed; left: 0; right: 0; top: 0; height: 3px; z-index: 5; background: var(--butter); transform: scaleX(0); transform-origin: 0 0; opacity: .85; pointer-events: none; }
 
