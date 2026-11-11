@@ -115,6 +115,7 @@ given to it then. An **inbox** message waits until the agent reads it.
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |
 | `mur stop`             | Stops this clone's daemon. |
+| `mur uninstall`        | Removes Murmur from this machine: its server, hooks and skills from every agent, and its daemons. It refuses while a repo here is joined; `--leave` leaves each first. |
 
 Every command takes `-C <dir>` to act on another repository.
 

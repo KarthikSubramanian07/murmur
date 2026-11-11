@@ -34,26 +34,35 @@ type agent struct {
 	register   func(e Env, ctx context.Context, h agentHome) (did []string, fresh bool, err error)
 	// removal says how to take the server out of h by hand, "" where there is nothing to take out.
 	removal func(e Env, h agentHome) string
+	// unregister takes out of hs, homes in one directory, what register put there, the skills
+	// aside, for `mur uninstall` (uninstall.go).
+	unregister func(e Env, ctx context.Context, hs []agentHome) (did, notes []string, err error)
 }
 
 // agents are the agents join knows, in the order it reports them.
 var agents = []agent{
-	{driver: "claudeAgent", label: "Claude Code", t3Var: "CLAUDE_CONFIG_DIR", register: Env.registerClaudeAt, removal: Env.claudeRemoval},
+	{driver: "claudeAgent", label: "Claude Code", t3Var: "CLAUDE_CONFIG_DIR", register: Env.registerClaudeAt, removal: Env.claudeRemoval,
+		unregister: Env.unregisterClaudeAt},
 	{driver: "codex", label: "Codex", t3Var: "CODEX_HOME",
-		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerCodexAt(h) },
-		removal:  codexRemoval},
+		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerCodexAt(h) },
+		removal:    codexRemoval,
+		unregister: Env.unregisterCodexAt},
 	{driver: "opencode", label: "OpenCode", t3Var: "XDG_CONFIG_HOME", sub: "opencode",
-		register: Env.registerOpenCodeAt,
-		removal:  openCodeRemoval},
+		register:   Env.registerOpenCodeAt,
+		removal:    openCodeRemoval,
+		unregister: Env.unregisterOpenCodeAt},
 	{driver: "muse", label: "Muse Code", t3Var: "XDG_CONFIG_HOME", sub: "muse",
-		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerMuseAt(h) },
-		removal:  museRemoval},
+		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerMuseAt(h) },
+		removal:    museRemoval,
+		unregister: Env.unregisterMuseAt},
 	{driver: "pi", label: "Pi", t3Var: "PI_CODING_AGENT_DIR",
-		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerPiAt(h) },
-		removal:  piRemoval},
+		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerPiAt(h) },
+		removal:    piRemoval,
+		unregister: Env.unregisterPiAt},
 	{driver: "grok", label: "Grok", t3Var: "GROK_HOME",
-		register: func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerGrokAt(h) },
-		removal:  grokRemoval},
+		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerGrokAt(h) },
+		removal:    grokRemoval,
+		unregister: Env.unregisterGrokAt},
 }
 
 // defaultHome is an agent's configuration as this process's environment says, "" Dir where the
@@ -122,7 +131,11 @@ var userDefault = map[string][]string{
 
 // homes lists, for each agent, every configuration join registers in: the default first, then the
 // ones T3's instances run in, each once. notes says what was passed over, and why.
-func (e Env) homes() (byAgent [][]agentHome, notes []string) {
+func (e Env) homes() (byAgent [][]agentHome, notes []string) { return e.homesWith(false) }
+
+// homesWith is homes, with the configurations of T3's instances that are turned off too when off
+// is set: an uninstall takes Murmur out of one that join registered in before it was turned off.
+func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 	byAgent = make([][]agentHome, len(agents))
 	for i, a := range agents {
 		byAgent[i] = []agentHome{e.defaultHome(a)}
@@ -141,7 +154,7 @@ func (e Env) homes() (byAgent [][]agentHome, notes []string) {
 		if !ok {
 			continue
 		}
-		if !in.On {
+		if !in.On && !off {
 			// Said only of a configuration that nothing else registers in: one that is the agent's
 			// default gets the server whatever T3 does with it.
 			if !samePath(h.Dir, byAgent[i][0].Dir) || !samePath(h.JSON, byAgent[i][0].JSON) {
