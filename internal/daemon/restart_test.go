@@ -180,7 +180,7 @@ func TestNewDaemonShowsADeadDeviceStaleAtOnce(t *testing.T) {
 	b.offline(remote, true) // no more heartbeats, and no goodbye
 	time.Sleep(2 * b.stale)
 
-	c := newDevice(t, remote)
+	c := newDeviceWith(t, remote, func(d *device) { d.noKey = true }) // b is gone, so nobody grants it
 	var stale bool
 	eventually(t, "c lists b", func() bool {
 		for _, dv := range c.do(proto.Request{Op: proto.OpWho}).Devices {

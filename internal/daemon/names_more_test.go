@@ -458,6 +458,7 @@ func TestNameOnlyInPresenceIsUsed(t *testing.T) {
 
 	a := newDeviceWith(t, remote, func(d *device) {
 		d.names, d.stale = offering(seededNames(62), pick, pick, pick), time.Minute
+		d.noKey = true // b can't push, so nobody grants it
 	})
 	// b's presence was encrypted before a existed, so a can't open it, and sees b with no sessions;
 	// the names it carries in the clear are what a goes by.

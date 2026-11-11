@@ -3,6 +3,7 @@ package daemon_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -117,9 +118,12 @@ type device struct {
 	logTo          io.Writer
 	// threadState, if set, stands in for T3's database (the daemon's ThreadState).
 	threadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
-	c           *client.Client
-	stop        func()
-	done        chan struct{} // closed when the daemon's Run has returned
+	// noKey starts the device without waiting for it to hold the team key (awaitTeamKey), for a test
+	// about a device that doesn't, or can't, hold it.
+	noKey bool
+	c     *client.Client
+	stop  func()
+	done  chan struct{} // closed when the daemon's Run has returned
 }
 
 // newDevice clones remote and starts a daemon for the clone. stale, if given, overrides the
@@ -206,6 +210,7 @@ func (d *device) start() {
 		c, err := client.Connect(context.Background(), d.gitDir, false)
 		if err == nil {
 			d.c = c
+			d.awaitTeamKey()
 			return
 		}
 		if time.Now().After(deadline) {
@@ -213,6 +218,73 @@ func (d *device) start() {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// awaitTeamKey waits until the device holds the newest team key on its remote (#156), so a test
+// starts where a device is a few seconds after it joins: able to read its teammates' presence and
+// logs. Before that it sees their devices with no sessions and reads none of their messages, and a
+// test that asked at once would be asking about the wait for a grant, not about what it is for.
+// Tests were fixed for that one at a time, each after a slow CI run found it; this is the one place.
+//
+// The first device on a remote makes the key at its first sync; a later one is granted it by a
+// device that is running. That takes six or so git commands across two daemons: about four seconds
+// on Windows with nothing else running, and over thirty with twenty tests' daemons at once.
+//
+// Where it can't happen the wait is skipped: the test says so (noKey), or the daemon is set up not
+// to get that far (no consent, an idle limit that ends it first, a first sync held back, a poll
+// slowed to nothing), or its remote isn't there. Where it runs out, the test goes on as it would
+// have. Nothing fails here.
+func (d *device) awaitTeamKey() {
+	if d.noKey || d.consent != nil || d.idle > 0 || d.firstSync != 0 || d.quietPoll != 0 {
+		return
+	}
+	remote := gitOK(d.gitDir, "config", "--get", "remote.origin.url")
+	if remote == "" || gitOK(remote, "rev-parse", "--git-dir") == "" {
+		return
+	}
+	deadline := time.Now().Add(teamKeyWait)
+	for time.Now().Before(deadline) {
+		if ids := teamIDsOK(remote); len(ids) > 0 && d.holdsTeamKey(ids[len(ids)-1]) {
+			return
+		}
+		select {
+		case <-d.done:
+			return
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	if f := os.Getenv("MURMUR_TEST_NOKEY_LOG"); f != "" {
+		if w, err := os.OpenFile(f, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintln(w, d.t.Name())
+			w.Close()
+		}
+	}
+}
+
+// teamKeyWait is how long a starting device is given to hold the team key.
+const teamKeyWait = 60 * time.Second
+
+// holdsTeamKey says whether the device's daemon has saved the team key with this ID.
+func (d *device) holdsTeamKey(id string) bool {
+	b, err := os.ReadFile(filepath.Join(d.gitDir, "murmur", "team-keys"))
+	if err != nil {
+		return false
+	}
+	var held map[string]string
+	return json.Unmarshal(b, &held) == nil && held[id] != ""
+}
+
+// teamIDsOK is the IDs of the team keys on the remote's team ref, oldest first, and none where the
+// ref can't be read.
+func teamIDsOK(remote string) []string {
+	var ids []string
+	for _, msg := range strings.Split(gitOK(remote, "log", "--reverse", "--format=%B%x1e", "refs/murmur/team"), "") {
+		var r bus.TeamRecord
+		if msg = strings.TrimSpace(msg); msg != "" && bus.Decode(msg, &r) == nil && r.Type == bus.TeamEpoch {
+			ids = append(ids, r.ID)
+		}
+	}
+	return ids
 }
 
 func (d *device) do(req proto.Request) proto.Response {
