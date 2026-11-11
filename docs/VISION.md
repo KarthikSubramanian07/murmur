@@ -398,9 +398,15 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   wouldn't edit refused, and the user's other entries kept byte for byte. The Claude Code server
   goes through `claude mcp remove` where the command exists, as join adds it through `claude mcp add`. Codex keys
   a hook's trust by its group's place, so the user's own groups after Murmur's move up one and their
-  trust entries are renamed with them, so Codex doesn't ask about them again. Uninstall then stops the daemons
-  of the clones on the record through `client.Stop`. A daemon from before 0.3 can't be asked
-  (#389), and the error names its process ID. Last, it deletes the record. It leaves what isn't one
+  trust entries are renamed with them, so Codex doesn't ask about them again. Every Codex edit is
+  made before any is written, with each `hooks.json` or `config.toml` that two homes share edited
+  once, and `hooks.json` goes back as it was if a `config.toml` can't be written: once Murmur's
+  groups are out of it, nothing tells a rerun where they were. Uninstall then leaves again every
+  other clone on the record, which takes out a hook an earlier leave left and stops a daemon
+  through `client.Stop`. A daemon from before 0.3 can't be asked (#389), and the error names its
+  process ID. Last, it deletes the record's file of each clone whose cleanup finished. A clone whose
+  cleanup didn't finish, or whose folder isn't there now (deleted, or on a drive not mounted), stays
+  on the record, so a rerun finds it (Sol's reviews, 2026-11-10). It leaves what isn't one
   user's or can't go while it runs: each repo's committed section, each clone's `.git/murmur` and
   bus refs, and the binary itself, which Windows can't delete while it runs, so it prints the
   command that does. A clone that joined before the record existed and whose daemon hasn't started

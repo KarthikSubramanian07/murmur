@@ -294,13 +294,89 @@ func TestRemoveRecordKeepsWhatIsUnfinished(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := removeRecord(dir, map[string]bool{b.ID(): true}); err != nil {
+	if _, err := removeRecord(dir, map[string]bool{a.ID(): true, b.ID(): false}); err != nil {
 		t.Fatal(err)
 	}
 	if exists(filepath.Join(dir, a.ID()+".json")) || !exists(filepath.Join(dir, b.ID()+".json")) {
 		t.Error("the wrong clone's file went")
 	}
-	if _, err := removeRecord(dir, nil); err != nil || exists(dir) {
+	if _, err := removeRecord(dir, map[string]bool{b.ID(): true}); err != nil || exists(dir) {
 		t.Errorf("err=%v; the folder is still there: %v", err, exists(dir))
+	}
+}
+
+// A clone that left without finishing (its hook stayed) and is still on the record is left again,
+// which takes the hook out, and only then comes off the record (Sol's second review of #409).
+func TestUninstallFinishesALeaveThatDidNot(t *testing.T) {
+	sb, record := uninstallSandbox(t)
+	p, other := clone(t)
+	if _, _, err := installHooks(context.Background(), p, sb.Exe); err != nil {
+		t.Fatal(err)
+	}
+	if err := clones.Add(record, clones.Clone{GitDir: p.GitDir}); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := Uninstall(context.Background(), sb.Env, false); err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if exists(filepath.Join(other, filepath.FromSlash(hookFile))) || exists(filepath.Join(p.Top, filepath.FromSlash(hookFile))) {
+		t.Error("the hook is still there")
+	}
+	if exists(record) {
+		t.Error("the record is still there")
+	}
+}
+
+// A clone whose folder isn't there now (a drive not mounted) keeps its record, and says so: it may
+// come back with its consent and hooks in it (Sol's second review of #409).
+func TestUninstallKeepsTheRecordOfAMissingClone(t *testing.T) {
+	sb, record := uninstallSandbox(t)
+	gone := clones.Clone{GitDir: filepath.Join(sb.root, "unmounted", ".git")}
+	if err := clones.Add(record, gone); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Uninstall(context.Background(), sb.Env, false)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if !exists(filepath.Join(record, gone.ID()+".json")) || !strings.Contains(r.String(), "Kept 1 clone") {
+		t.Errorf("record dropped, or not said:\n%s", r)
+	}
+}
+
+// Two Codex homes whose hooks.json is one file (links to a dotfiles repository's) each get their
+// own trust moved, though the first edit takes Murmur's groups out of the file both read (Sol's
+// second review of #409).
+func TestUninstallCodexHomesSharingAHooksFile(t *testing.T) {
+	sb, _ := uninstallSandbox(t)
+	if err := os.MkdirAll(sb.CodexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := sb.registerCodex(); err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(sb.CodexHome, "hooks.json")
+	text, _, err := jsonedit.AppendIn(read(t, shared), []string{"hooks", "Stop"}, map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "lint"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, shared, text)
+	second := filepath.Join(sb.root, "codex-work")
+	// A hard link, which needs no privilege on Windows, is one file to os.SameFile as a symbolic one is.
+	if err := os.MkdirAll(second, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(shared, filepath.Join(second, "hooks.json")); err != nil {
+		t.Fatal(err)
+	}
+	key := codexKeyPath(filepath.Join(second, "hooks.json"), true)
+	write(t, filepath.Join(second, "config.toml"), "[hooks.state."+tomlKey(key+":stop:0:0")+"]\ntrusted_hash = \"sha256:m\"\n\n[hooks.state."+tomlKey(key+":stop:1:0")+"]\ntrusted_hash = \"sha256:mine\"\n")
+	groups := [][]agentHome{{sb.defaultHome(agents[agentIndex("codex")])}, {{Dir: second, Label: "Codex (work)", Named: true}}}
+	if _, _, err := sb.unregisterCodex(context.Background(), groups); err != nil {
+		t.Fatal(err)
+	}
+	got := read(t, filepath.Join(second, "config.toml"))
+	if got != "[hooks.state."+tomlKey(key+":stop:0:0")+"]\ntrusted_hash = \"sha256:mine\"\n" {
+		t.Errorf("the second home's config.toml:\n%s", got)
 	}
 }
