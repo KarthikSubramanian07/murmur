@@ -158,16 +158,15 @@ func findClone(ctx context.Context, cwd string) (string, error) {
 // The session's MCP server publishes where it is (package here), and `mur join -C` can have moved
 // it to a clone the session doesn't work in (#200), so the working directory doesn't say. The
 // record is found by the agent's process: Claude Code's CLAUDE_PID, or for another agent the
-// nearest of the hook's ancestors that started a server. One record settles it, with no git
+// nearest of the hook's ancestors that started a server (ownRecord). It settles it with no git
 // process and no daemon asked: its clone, or nothing for a server outside any repository, which is
 // every tool call in a folder that isn't one. A server in a repo that hasn't joined names its
 // clone, and the hook stops at the daemon that isn't there.
 //
-// Several records are a process that runs several sessions (T3's Codex app server), and nothing
-// here tells the hook's apart: none of them was moved, as join refuses to (cmd/mur, pickMove), so
-// each is in the clone it works in, and the working directory answers. It answers too where there
-// is no record: no directory for them, a server from before they were written, or one that isn't
-// running. Pi's extension runs the hook only in a clone its user joined, by its working directory.
+// Where no record is surely the session's, the working directory answers, as it did before #422:
+// no directory for records, a server from before they were written or one that isn't running, or
+// a process whose sessions can't be told apart. Pi's extension runs the hook only in a clone its
+// user joined, by its working directory.
 func sessionClone(ctx context.Context, agent string, in input, who proto.Request) (gitDir string, placed bool) {
 	if agent != Pi {
 		if dir, err := here.DefaultDir(); err == nil {
@@ -178,8 +177,8 @@ func sessionClone(ctx context.Context, agent string, in input, who proto.Request
 					pids = []int{who.ClientPID}
 				}
 			}
-			if recs := here.Of(dir, pids); len(recs) == 1 {
-				return recs[0].GitDir, true
+			if rec, ok := ownRecord(agent, in.SessionID, here.Of(dir, pids)); ok {
+				return rec.GitDir, true
 			}
 		}
 	}
@@ -188,6 +187,39 @@ func sessionClone(ctx context.Context, agent string, in input, who proto.Request
 		return "", false
 	}
 	return gitDir, false
+}
+
+// ownRecord picks, from the records of the servers the agent's process started, the one of the
+// hook's session, whose ID is native.
+//
+// Claude Code's process runs one session, so its one record is the session's. Another agent's
+// process can run several, each with a server (T3 runs every Codex thread in one app server), and
+// a record alone doesn't say whose it is: a thread whose server hasn't published would take a
+// sibling's, speak to the wrong clone's daemon, and could be taken there for the sibling, getting
+// its messages (internal/daemon, agentHookSessionsLocked). So there the record has to carry the
+// hook's own session ID, which Codex's server learns from the first call to one of Murmur's tools
+// and Grok's has from the start. Outside T3 an agent's process runs one session, and its one
+// record is taken before it has an ID too.
+func ownRecord(agent, native string, recs []here.Session) (here.Session, bool) {
+	if agent == "" {
+		if len(recs) == 1 {
+			return recs[0], true
+		}
+		return here.Session{}, false
+	}
+	var mine []here.Session
+	for _, r := range recs {
+		if r.Native != "" && r.Native == native {
+			mine = append(mine, r)
+		}
+	}
+	switch {
+	case len(mine) == 1:
+		return mine[0], true
+	case len(mine) == 0 && len(recs) == 1 && recs[0].Native == "" && !recs[0].InT3():
+		return recs[0], true
+	}
+	return here.Session{}, false
 }
 
 // Run reads a hook payload from stdin and writes the hook's answer, if any, to stdout. It is

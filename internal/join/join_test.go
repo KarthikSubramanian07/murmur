@@ -331,7 +331,7 @@ func TestAnOlderJoinsHooksComeOutOfEveryWorktree(t *testing.T) {
 	write(t, filepath.Join(other, ".claude", "settings.local.json"), "{\n  \"permissions\": {\"allow\": [\"Bash(ls)\"]}\n}\n")
 	oldHooks(t, p, filepath.Join(t.TempDir(), "bin", "mur"))
 
-	removed, _, err := removeHooks(ctx, p)
+	removed, _, err := removeHooks(ctx, p, nil)
 	if err != nil || len(removed) != 2 {
 		t.Fatalf("removed %q, err %v", removed, err)
 	}
@@ -342,8 +342,29 @@ func TestAnOlderJoinsHooksComeOutOfEveryWorktree(t *testing.T) {
 	if strings.Contains(left, "hook") || !strings.Contains(left, "Bash(ls)") {
 		t.Errorf("what is left in the worktree with its own settings:\n%s", left)
 	}
-	if again, _, err := removeHooks(ctx, p); err != nil || len(again) != 0 {
+	if again, _, err := removeHooks(ctx, p, nil); err != nil || len(again) != 0 {
 		t.Errorf("a second removal changed %q (err %v)", again, err)
+	}
+}
+
+// A working tree's hook file that is the user's own link to Claude Code's settings holds the
+// per-user hook, not an older join's: taking the older hooks out passes it over (Sol's review of
+// #426).
+func TestTheNewHookStaysWhereAWorktreesFileLinksToTheHome(t *testing.T) {
+	p, _ := clone(t)
+	home := t.TempDir()
+	settings := filepath.Join(home, "settings.json")
+	if _, err := installClaudeHook(home, filepath.Join(t.TempDir(), "bin", "mur")); err != nil {
+		t.Fatal(err)
+	}
+	linkOrSkip(t, settings, filepath.Join(p.Top, ".claude", "settings.local.json"))
+
+	removed, notes, err := removeHooks(context.Background(), p, []string{settings})
+	if err != nil || len(removed) != 0 || len(notes) != 0 {
+		t.Errorf("removed %q, notes %q, err %v", removed, notes, err)
+	}
+	if !hasClaudeHook(settings) {
+		t.Errorf("the per-user hook went with the older ones:\n%s", read(t, settings))
 	}
 }
 

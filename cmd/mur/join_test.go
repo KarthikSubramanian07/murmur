@@ -253,6 +253,32 @@ func TestJoinKeepsTheUsersConfig(t *testing.T) {
 	}
 }
 
+// A join that can't write the hook in Claude Code's settings leaves the older one in the clone's
+// working tree, which is then the only hook the user's sessions have (Sol's review of #426). The
+// next join, with the settings mended, moves it.
+func TestJoinKeepsTheOlderHookWhereTheNewOneFailed(t *testing.T) {
+	b := newBox(t)
+	b.mustRun(b.clone, "init")
+	local := filepath.Join(b.clone, ".claude", "settings.local.json")
+	writeFile(t, local, "{\n  \"hooks\": {\"PostToolUse\": [{\"matcher\": \"*\", \"hooks\": [{\"type\": \"command\", \"command\": \"\\\"/old/bin/mur\\\" hook\"}]}]}\n}\n")
+	writeFile(t, b.claudeSettings(), "{\"hooks\": 1}\n") // not an object: join won't replace it
+
+	out, code := b.run(b.clone, "join")
+	if code == 0 || !strings.Contains(out, "Problems:") || !strings.Contains(out, `"hooks" isn't an object`) {
+		t.Errorf("join over settings it can't edit: exit %d\n%s", code, out)
+	}
+	if got := readFile(t, local); !strings.Contains(got, " hook") {
+		t.Errorf("the older hook went though the new one isn't in:\n%s", got)
+	}
+
+	writeFile(t, b.claudeSettings(), "{}\n")
+	out = b.mustRun(b.clone, "join")
+	if exists(local) || !strings.Contains(out, "Removed the hook an older") || !strings.Contains(readFile(t, b.claudeSettings()), " hook") {
+		t.Errorf("the next join didn't move the hook:\n%s", out)
+	}
+	b.mustRun(b.clone, "join", "--leave")
+}
+
 // A repo that commits .claude/settings.local.json is nothing to a join, which writes no hook in
 // the repo (#422): it says nothing about the file and leaves it as it is.
 func TestJoinLeavesAHookFileTheRepoTracksAlone(t *testing.T) {

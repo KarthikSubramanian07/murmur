@@ -176,12 +176,14 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	r.Notes = append(r.Notes, notes...)
 	var claudeFresh, codexFresh bool
 	var othersFresh []string
+	claudeOK := true // no Claude Code home failed to take what join writes there, the hook included
 	for i, a := range agents {
 		for j, h := range byAgent[i] {
 			did, fresh, err := a.register(e, ctx, h)
 			r.Did = append(r.Did, did...)
 			if err != nil {
 				problem(h.Label, err)
+				claudeOK = claudeOK && a.driver != "claudeAgent"
 			}
 			// The home exists once registering found the agent installed, even where it then
 			// reported a problem (Pi's conflicting mcp.json, say): the skills don't depend on it.
@@ -205,14 +207,17 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 
 	// Claude Code's hook is per user now, written above; one an older join put in the clone's
-	// working trees comes out, or Claude Code would run both (#422).
-	trees, hookNotes, err := removeHooks(ctx, p)
-	r.Notes = append(r.Notes, hookNotes...)
-	for _, t := range trees {
-		r.Did = append(r.Did, "Removed the hook an older "+brand.Command+" put in "+filepath.Join(t, filepath.FromSlash(hookFile))+": it is in Claude Code's own settings now")
-	}
-	if err != nil {
-		problem("hook", err)
+	// working trees comes out, or Claude Code would run both (#422). Not where a home couldn't be
+	// written: the older hook is then the only one its sessions have, and stays for the next join.
+	if claudeOK {
+		trees, hookNotes, err := removeHooks(ctx, p, e.claudeSettings())
+		r.Notes = append(r.Notes, hookNotes...)
+		for _, t := range trees {
+			r.Did = append(r.Did, "Removed the hook an older "+brand.Command+" put in "+filepath.Join(t, filepath.FromSlash(hookFile))+": it is in Claude Code's own settings now")
+		}
+		if err != nil {
+			problem("hook", err)
+		}
 	}
 
 	// Consent comes before the daemon: the daemon refuses to run in a clone that hasn't joined.
@@ -299,7 +304,7 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 			problem("taking this clone off the record of this machine's clones", err)
 		}
 	}
-	trees, notes, err := removeHooks(ctx, p)
+	trees, notes, err := removeHooks(ctx, p, e.claudeSettings())
 	r.Notes = append(r.Notes, notes...)
 	for _, t := range trees {
 		r.Did = append(r.Did, "Removed the hook from "+filepath.Join(t, filepath.FromSlash(hookFile)))

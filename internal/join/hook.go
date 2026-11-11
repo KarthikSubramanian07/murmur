@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -27,6 +28,18 @@ const hookFile = ".claude/settings.local.json"
 // whether it was new there.
 func installClaudeHook(dir, exe string) (bool, error) {
 	return installHook(filepath.Join(dir, "settings.json"), setup.HookCommand(exe))
+}
+
+// claudeSettings are the settings.json of every Claude Code home join registers in.
+func (e Env) claudeSettings() []string {
+	byAgent, _ := e.homes()
+	var out []string
+	for _, h := range byAgent[0] {
+		if h.Dir != "" {
+			out = append(out, filepath.Join(h.Dir, "settings.json"))
+		}
+	}
+	return out
 }
 
 // hasClaudeHook says the Claude Code settings file at path runs Murmur's hook.
@@ -179,7 +192,10 @@ func hasCommand(groups []any, command string) bool {
 // the trees it changed. A file that held only the hook is deleted, with its directory if that is
 // then empty. A link the repo tracks is not written through, as that join didn't, and notes say so;
 // a plain file it tracks is edited, since taking out a hook a join put there only undoes that join.
-func removeHooks(ctx context.Context, p Place) (changed, notes []string, err error) {
+//
+// keep are the settings files the per-user hook is in. A working tree's hook file that is one of
+// them, through a link of the user's own, is passed over: the hook there is the per-user one.
+func removeHooks(ctx context.Context, p Place, keep []string) (changed, notes []string, err error) {
 	for _, top := range worktrees(ctx, p) {
 		tracked, link, terr := trackedHookPath(ctx, top)
 		if terr != nil {
@@ -193,6 +209,9 @@ func removeHooks(ctx context.Context, p Place) (changed, notes []string, err err
 			continue
 		}
 		path := filepath.Join(top, filepath.FromSlash(hookFile))
+		if slices.ContainsFunc(keep, func(k string) bool { return sameEntry(resolveLinks(path), resolveLinks(k)) }) {
+			continue
+		}
 		cfg, raw, rerr := jsonedit.ReadFile(path)
 		if rerr != nil {
 			err = errors.Join(err, fmt.Errorf("%s: %w", path, rerr)) // unreadable: leave it, go on

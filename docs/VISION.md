@@ -704,15 +704,24 @@ the session runs.
 
 - **Where it is.** Join writes the hook in `settings.json` of each Claude Code home, beside the
   allow rule, so Claude Code runs it in every project, as Codex and Grok run theirs. Join and leave
-  take the older hook out of the clone's worktrees, since Claude Code would run both. A leave keeps
-  the per-user hook, like the server; `mur uninstall` removes it.
+  take the older hook out of the clone's worktrees, since Claude Code would run both. A join that
+  couldn't write a Claude Code home's settings leaves the older hook, which is then the only one;
+  and a worktree's file that is the user's own link to those settings is passed over, since the
+  hook in it is the new one. A leave keeps the per-user hook, like the server; `mur uninstall`
+  removes it.
 - **Which clone.** The hook used to take its clone from its working directory. Now it reads the
   record its session's MCP server publishes (`murmur/sessions/`), found by `CLAUDE_PID`, or for
-  Codex and Grok by the nearest of the hook's ancestors that started a server. One record names the
-  clone, or says the session is in no repository, and the hook then asks nothing. With no record,
-  or several for one process (T3's Codex app server, whose sessions join can't move), it goes by its
-  working directory as before. So a Codex or Grok session moved with `mur join -C` gets its notices
-  too; one of several in a single T3 app server can't be moved in the first place.
+  Codex and Grok by the nearest of the hook's ancestors that started a server. The record names
+  the clone, or says the session is in no repository, and the hook then asks nothing. Where no
+  record is surely the session's, it goes by its working directory as before.
+- **Whose record.** Claude Code's process runs one session, so its one record is the session's.
+  Under T3 one Codex app server runs every thread, each with a server, and a thread whose server
+  hadn't published would take a sibling's record, speak to the wrong daemon, and could be given the
+  sibling's messages there. So the record now carries the agent's own session ID (Codex's thread
+  ID, which its server learns from the first call to one of Murmur's tools; Grok's, from its
+  environment), and a T3 agent's record counts only when it has the hook's ID. Outside T3 an
+  agent's process runs one session, and its one record counts before it has an ID. A Codex thread
+  in T3 that joined from elsewhere so gets its notices from its first Murmur tool call on.
 - **Not covered.** Pi: its extension runs the hook only where the working directory's clone is
   joined, so a Pi session joined from elsewhere gets turns through its socket and no notice while
   busy. Commits made in the other repo aren't credited: the daemon watches only its own clone

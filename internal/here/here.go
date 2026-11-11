@@ -32,14 +32,22 @@ type Session struct {
 	ClientPID     int    `json:"clientPid"`               // its parent: the agent's process
 	ClientStarted string `json:"clientStarted,omitempty"` // when that process started, to tell it from a later one with its PID
 	ClaudeSession string `json:"claudeSession,omitempty"` // Claude Code's session ID, as the server started with it
-	Agent         string `json:"agent,omitempty"`
-	GitDir        string `json:"gitDir,omitempty"` // the clone it is placed in, "" if none
-	On            bool   `json:"on,omitempty"`     // registered with that clone's daemon, tools listed
+	// Native is the agent's own ID for the session, where the server knows it: Codex's thread ID
+	// once one of Murmur's tools has been called, Grok's session ID from the start. A hook carries
+	// the same ID, which is how it tells its session's record from another's of its process.
+	Native string `json:"native,omitempty"`
+	Agent  string `json:"agent,omitempty"`
+	GitDir string `json:"gitDir,omitempty"` // the clone it is placed in, "" if none
+	On     bool   `json:"on,omitempty"`     // registered with that clone's daemon, tools listed
 	// Fixed says the server can't be moved: one OpenCode server serves every session in its
 	// directory, so moving it for one would move them all. Its record still stops the search up
 	// the process tree, or join would move an agent further up (a Claude Code that started it).
 	Fixed bool `json:"fixed,omitempty"`
 }
+
+// InT3 says the session's agent runs under T3 Code, as its server named it ("codex in T3"). There
+// one agent process can run several sessions, each with a server of its own (Codex's app server).
+func (s Session) InT3() bool { return strings.HasSuffix(s.Agent, " in T3") }
 
 // Move asks the server of the agent process ClientPID to work in Dir.
 type Move struct {

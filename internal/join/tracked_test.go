@@ -24,7 +24,7 @@ func TestHookFileTheRepoTracksAsALinkIsLeftAlone(t *testing.T) {
 	commitLink(t, p.Top, ".claude/settings.local.json", outside)
 
 	write(t, outside, "{\"keep\": true}\n")
-	_, notes, err := removeHooks(context.Background(), p)
+	_, notes, err := removeHooks(context.Background(), p, nil)
 	if err != nil || len(notes) != 1 || !strings.Contains(notes[0], "wasn't written through") {
 		t.Errorf("on a tracked link: notes %q, err %v", notes, err)
 	}
@@ -46,7 +46,7 @@ func TestLinksTheRepoTracksAreFoundWhateverTheirCase(t *testing.T) {
 				target = filepath.Join(outside, "settings.json")
 			}
 			commitLink(t, p.Top, name, target)
-			_, notes, err := removeHooks(context.Background(), p)
+			_, notes, err := removeHooks(context.Background(), p, nil)
 			if err != nil || len(notes) != 1 || !strings.Contains(notes[0], "symbolic link the repo tracks") {
 				t.Errorf("on a tracked %s link: notes %q, err %v", name, notes, err)
 			}
@@ -67,7 +67,7 @@ func TestHookComesOutOfAHookFileTheRepoTracks(t *testing.T) {
 	git(t, p.Top, "commit", "-q", "-m", "settings")
 
 	oldHooks(t, p, filepath.Join(t.TempDir(), "bin", "mur"))
-	removed, notes, err := removeHooks(context.Background(), p)
+	removed, notes, err := removeHooks(context.Background(), p, nil)
 	if err != nil || len(notes) != 0 || len(removed) != 2 {
 		t.Fatalf("removed %q, notes %q, err %v", removed, notes, err)
 	}
@@ -111,7 +111,7 @@ func TestTrackedHookLinkIsFoundWithLiteralPathspecs(t *testing.T) {
 	if err == nil && path == "" {
 		t.Fatal("a tracked hook link went unseen with GIT_LITERAL_PATHSPECS set")
 	}
-	if _, _, err := removeHooks(context.Background(), p); err == nil && exists(outside) {
+	if _, _, err := removeHooks(context.Background(), p, nil); err == nil && exists(outside) {
 		t.Errorf("the tracked link was written through:\n%s", read(t, outside))
 	}
 }

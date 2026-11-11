@@ -66,7 +66,7 @@ func TestHookFileThatIsALinkIsKeptWhenTheHookComesOut(t *testing.T) {
 		t.Errorf("the file the link points to has the hook on %v", events)
 	}
 
-	if _, _, err := removeHooks(context.Background(), p); err != nil {
+	if _, _, err := removeHooks(context.Background(), p, nil); err != nil {
 		t.Fatal(err)
 	}
 	mustBeLink(t, link)
