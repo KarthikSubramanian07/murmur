@@ -186,7 +186,15 @@ func (s *server) publish() {
 	s.mu.Lock()
 	rec := s.self
 	rec.GitDir, rec.On = s.place.GitDir, s.on
+	l := s.link
 	s.mu.Unlock()
+	if l != nil {
+		// The agent's own ID for the session, once known: the hook finds its session's record by
+		// it (#422).
+		l.mu.Lock()
+		rec.Native = l.native
+		l.mu.Unlock()
+	}
 	// Written again if it went missing: a command that couldn't tell it from a dead server's may
 	// have removed it.
 	if s.published != nil && *s.published == rec && here.Exists(s.hereDir, rec.ServerPID) {

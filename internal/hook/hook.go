@@ -8,6 +8,9 @@
 // during the turn, and if there is any it keeps the turn going with it, as each message's turn
 // would read; if not, the session is idle (#202).
 //
+// The agents run it in every project, whatever repo the session works in, so it first finds the
+// clone the session is in Murmur in (sessionClone), and does nothing where there is none (#422).
+//
 // Pi has no hooks of this kind, so Murmur's Pi extension runs this one (`mur hook --agent pi`) at
 // the same moments, with a payload of Claude Code's shape whose session_id is the Pi session's
 // file, and reads its answer as Claude Code would (internal/join/pi.go, #205).
@@ -28,6 +31,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/here"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
@@ -137,15 +141,84 @@ func bracketOp(in input) string {
 	return ""
 }
 
-// findClone is the git common dir of the repository the hook runs in, which is what names its
-// daemon. It is read from the repository's files where it can be (gitx.Discover): a git process
-// here would add a tenth of a second or more to every tool call on Windows. Git is asked where it
-// can't.
+// findClone is the git common dir of the repository the hook runs in. It is read from the
+// repository's files where it can be (gitx.Discover): a git process here would add a tenth of a
+// second or more to every tool call on Windows. Git is asked where it can't.
 func findClone(ctx context.Context, cwd string) (string, error) {
 	if _, common, ok := gitx.Discover(cwd); ok {
 		return common, nil
 	}
 	return client.FindGitDir(ctx, cwd)
+}
+
+// sessionClone is the git common dir of the clone the hook's session is in Murmur in, which names
+// its daemon; "" where there is none, and the hook does nothing. placed says it came from the
+// session's own record, and so may not be the repository the hook runs in.
+//
+// The session's MCP server publishes where it is (package here), and `mur join -C` can have moved
+// it to a clone the session doesn't work in (#200), so the working directory doesn't say. The
+// record is found by the agent's process: Claude Code's CLAUDE_PID, or for another agent the
+// nearest of the hook's ancestors that started a server (ownRecord). It settles it with no git
+// process and no daemon asked: its clone, or nothing for a server outside any repository, which is
+// every tool call in a folder that isn't one. A server in a repo that hasn't joined names its
+// clone, and the hook stops at the daemon that isn't there.
+//
+// Where no record is surely the session's, the working directory answers, as it did before #422:
+// no directory for records, a server from before they were written or one that isn't running, or
+// a process whose sessions can't be told apart. Pi's extension runs the hook only in a clone its
+// user joined, by its working directory.
+func sessionClone(ctx context.Context, agent string, in input, who proto.Request) (gitDir string, placed bool) {
+	if agent != Pi {
+		if dir, err := here.DefaultDir(); err == nil {
+			pids := who.Ancestors
+			if agent == "" {
+				pids = nil
+				if who.ClientPID != 0 {
+					pids = []int{who.ClientPID}
+				}
+			}
+			if rec, ok := ownRecord(agent, in.SessionID, here.Of(dir, pids)); ok {
+				return rec.GitDir, true
+			}
+		}
+	}
+	gitDir, err := findClone(ctx, in.Cwd)
+	if err != nil {
+		return "", false
+	}
+	return gitDir, false
+}
+
+// ownRecord picks, from the records of the servers the agent's process started, the one of the
+// hook's session, whose ID is native.
+//
+// Claude Code names its own process (CLAUDE_PID), which runs one session, so its one record is the
+// session's. Another agent's hook has only its ancestors to go by, and a record found among them
+// doesn't say whose it is. The nearest may be the process of an agent that started this one (a
+// Codex run from Claude Code's shell, whose own server has published nothing); or the agent's own
+// process with several sessions, each with a server (Codex's app server, in T3 and outside it), of
+// which this session's hasn't published. Taking such a record would send the hook to the wrong
+// clone's daemon, where it could be taken for the record's session and given its messages
+// (internal/daemon, agentHookSessionsLocked), or stop it where that session is in no repository.
+// So for another agent the record has to carry the hook's own session ID: Grok's server has it
+// from the start, and Codex's learns it from the first call to one of Murmur's tools.
+func ownRecord(agent, native string, recs []here.Session) (here.Session, bool) {
+	if agent == "" {
+		if len(recs) == 1 {
+			return recs[0], true
+		}
+		return here.Session{}, false
+	}
+	var mine []here.Session
+	for _, r := range recs {
+		if native != "" && r.Native == native {
+			mine = append(mine, r)
+		}
+	}
+	if len(mine) == 1 {
+		return mine[0], true
+	}
+	return here.Session{}, false
 }
 
 // Run reads a hook payload from stdin and writes the hook's answer, if any, to stdout. It is
@@ -190,7 +263,7 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 	}
 	who := identify(agent, in)
 	if in.Event == stop {
-		turnEnd(in, who, stdout)
+		turnEnd(agent, in, who, stdout)
 		return
 	}
 	op := bracketOp(in)
@@ -209,13 +282,19 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	gitDir, err := findClone(ctx, in.Cwd)
-	if err != nil {
+	gitDir, placed := sessionClone(ctx, agent, in, who)
+	if gitDir == "" {
 		return
 	}
 	c, err := client.Connect(ctx, gitDir, false)
 	if err != nil {
 		return
+	}
+	// A bracket names the repository the call ran in, which the daemon watches only if it is its
+	// own: a session moved into this clone works in another, and its commits there aren't credited.
+	callDir := gitDir
+	if op != "" && placed {
+		callDir, _ = findClone(ctx, in.Cwd)
 	}
 	// The end of a call is sent alongside the notices request. The daemon answers it at once and
 	// finds the call's commits after, so neither holds up the notices or the agent.
@@ -226,7 +305,7 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 			defer wg.Done()
 			defer func() { recover() }()
 			r := who
-			r.Op, r.ToolUseID, r.Cwd, r.GitDir = op, in.ToolUseID, in.Cwd, gitDir
+			r.Op, r.ToolUseID, r.Cwd, r.GitDir = op, in.ToolUseID, in.Cwd, callDir
 			c.Do(ctx, r)
 		}()
 	}
@@ -259,11 +338,11 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 // back, if any, unless it was interrupted: then the daemon gives none back. They are read once
 // the daemon answers: a hook that gave up waiting (NoticeTimeout) just before the answer came loses
 // them, the risk #204's whole messages take too.
-func turnEnd(in input, who proto.Request, stdout io.Writer) {
+func turnEnd(agent string, in input, who proto.Request, stdout io.Writer) {
 	ctx, cancel := context.WithTimeout(context.Background(), NoticeTimeout)
 	defer cancel()
-	gitDir, err := findClone(ctx, in.Cwd)
-	if err != nil {
+	gitDir, _ := sessionClone(ctx, agent, in, who)
+	if gitDir == "" {
 		return
 	}
 	c, err := client.Connect(ctx, gitDir, false)

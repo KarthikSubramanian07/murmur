@@ -35,22 +35,20 @@ joining does:
   and ask in T3 unless the thread runs in full-access mode. For Pi it is a small extension file of
   Murmur's in Pi's extensions folder, which in a joined repo also brings messages into the
   session. Two short skills on using Murmur well go into the skills folder of Claude Code, Codex,
-  OpenCode and Pi. In Codex and Grok, Murmur also adds a hook, for every project: a command the
-  agent runs after each tool call and when it finishes, so a busy session is told when a message
-  comes. In Codex, join also marks the hook as approved, so Codex runs it without asking. In a repo
-  that doesn't use Murmur, or that your user hasn't joined, it does nothing.
-- In every worktree of this clone, a hook goes into .claude/settings.local.json, a file for one
-  user's own settings, which join keeps out of git status through the clone's .git/info/exclude.
-  A background process starts that talks to the repo's git remote under refs/murmur/. No tracked
+  OpenCode and Pi. In Claude Code, Codex and Grok, Murmur also adds a hook, for every project: a
+  command the agent runs around each tool call and when it finishes, so a busy session is told when
+  a message comes. In Codex, join also marks the hook as approved, so Codex runs it without asking.
+  In a session that isn't in Murmur, it does nothing.
+- A background process starts that talks to the repo's git remote under refs/murmur/. No tracked
   file changes, and nothing is committed or pushed to a branch. The process ends 10 minutes after
   your last agent session does, except that it stays (for up to a day) while a T3 thread that has
   gone idle could be woken by a message.
 - If this repo is public, Murmur sends its address to murmur.afig.dev, once for the whole repo.
   That is the only thing Murmur ever sends us, and a private repo sends nothing at all; the section
   below says exactly how. Tell your user this in so many words, not as a passing mention.
-- Joining can be undone in this repo with `mur join --leave`. It removes this clone's hooks, stops the
+- Joining can be undone in this repo with `mur join --leave`. It stops the
   background process and forgets that your user joined; Murmur stays registered, with its tools
-  approved and its Codex and Grok hooks, in the agents, doing nothing here. `mur uninstall` removes all of
+  approved and its hooks, in the agents, doing nothing here. `mur uninstall` removes all of
   that from this machine once no repo here is joined.
 
 ### What murmur.afig.dev receives, and why

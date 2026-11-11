@@ -176,12 +176,14 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	r.Notes = append(r.Notes, notes...)
 	var claudeFresh, codexFresh bool
 	var othersFresh []string
+	claudeOK := true // no Claude Code home failed to take what join writes there, the hook included
 	for i, a := range agents {
 		for j, h := range byAgent[i] {
 			did, fresh, err := a.register(e, ctx, h)
 			r.Did = append(r.Did, did...)
 			if err != nil {
 				problem(h.Label, err)
+				claudeOK = claudeOK && a.driver != "claudeAgent"
 			}
 			// The home exists once registering found the agent installed, even where it then
 			// reported a problem (Pi's conflicting mcp.json, say): the skills don't depend on it.
@@ -204,14 +206,18 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		}
 	}
 
-	// Per repo: the hook that shows incoming messages, in every working tree of the clone.
-	trees, hookNotes, err := installHooks(ctx, p, e.Exe)
-	r.Notes = append(r.Notes, hookNotes...)
-	for _, t := range trees {
-		r.Did = append(r.Did, "Installed the hook in "+filepath.Join(t, filepath.FromSlash(hookFile))+" (not committed)")
-	}
-	if err != nil {
-		problem("hook", err)
+	// Claude Code's hook is per user now, written above; one an older join put in the clone's
+	// working trees comes out, or Claude Code would run both (#422). Not where a home couldn't be
+	// written: the older hook is then the only one its sessions have, and stays for the next join.
+	if claudeOK {
+		trees, hookNotes, err := removeHooks(ctx, p, e.claudeSettings())
+		r.Notes = append(r.Notes, hookNotes...)
+		for _, t := range trees {
+			r.Did = append(r.Did, "Removed the hook an older "+brand.Command+" put in "+filepath.Join(t, filepath.FromSlash(hookFile))+": it is in Claude Code's own settings now")
+		}
+		if err != nil {
+			problem("hook", err)
+		}
 	}
 
 	// Consent comes before the daemon: the daemon refuses to run in a clone that hasn't joined.
@@ -276,9 +282,9 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	return r, nil
 }
 
-// Leave undoes a join for the clone containing dir: the consent, the hook in each working
-// tree, and the daemon. The MCP server stays registered with the agents, which is per user, and does
-// nothing in a repo that hasn't joined.
+// Leave undoes a join for the clone containing dir: the consent, the daemon, and the hook an older
+// join put in each working tree. The MCP server and the hooks stay with the agents, which is per
+// user, and do nothing in a repo that hasn't joined.
 func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	var r Report
 	p, err := Locate(ctx, dir)
@@ -299,7 +305,7 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 			problem("taking this clone off the record of this machine's clones", err)
 		}
 	}
-	trees, notes, err := removeHooks(ctx, p)
+	trees, notes, err := removeHooks(ctx, p, e.claudeSettings())
 	r.Notes = append(r.Notes, notes...)
 	for _, t := range trees {
 		r.Did = append(r.Did, "Removed the hook from "+filepath.Join(t, filepath.FromSlash(hookFile)))
@@ -336,7 +342,7 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 	r.Tell = []string{
 		brand.Product + " is off for this repo. Agents already open here lose its tools within seconds in Claude Code; in Codex the tools stay listed until the session ends, and say they are off if called.",
-		"The " + brand.Product + " MCP server stays registered with the agents, and its skills installed, since that is per user. The server does nothing in a repo that hasn't joined; " +
+		"The " + brand.Product + " MCP server stays registered with the agents, with its hook and its skills, since that is per user. The server and the hook do nothing in a repo that hasn't joined; " +
 			"each skill costs every session of those agents a line of context, in any repo. " +
 			"`" + brand.Command + " uninstall` removes them, and the rest of " + brand.Product + ", from this machine once no repo here is joined. " +
 			"To remove them by hand: " + e.removal() + ".",

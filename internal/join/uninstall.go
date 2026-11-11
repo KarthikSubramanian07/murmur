@@ -367,8 +367,7 @@ func (e Env) unregisterClaudeAt(ctx context.Context, hs []agentHome) (did, notes
 	if err != nil {
 		return did, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	// A notice hook here is none of join's (it writes the hook per working tree), but one a user
-	// copied from a worktree's file runs `mur hook`, which won't be there.
+	// The notice hook join wrote here (#422).
 	hooked := false
 	if cfg, perr := jsonedit.Parse([]byte(out)); perr == nil && setup.RemoveHooks(cfg) {
 		b, err := jsonedit.Format(cfg, []byte(out))

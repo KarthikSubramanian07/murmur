@@ -523,7 +523,7 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   | The MCP server, for Codex | a `[mcp_servers.murmur]` table in `$CODEX_HOME/config.toml`, else `~/.codex/config.toml`: the command, `args = ["mcp", "--agent", "codex"]`, `env_vars = ["T3CODE_CLI_PATH", "CODEX_HOME"]` and `default_tools_approval_mode = "approve"` | user |
   | The MCP server, for OpenCode, Muse Code, Pi and Grok | see "Other agents", below | user |
   | The skills, `murmur` and `murmur-pro` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode and Pi; Muse Code and Grok document no skills folder (2026-11-08) | user |
-  | The hook, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit` and `Stop` (`setup.HookEvents`) | `.claude/settings.local.json` in each worktree of the clone, kept out of `git status` through the clone's `info/exclude` | clone |
+  | The hook for Claude Code, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit` and `Stop` (`setup.HookEvents`) | `settings.json` in each Claude Code home (see "Claude Code's hook is per user", below) | user |
   | The hook for Codex, on `UserPromptSubmit`, `PostToolUse` and `Stop`, approved (see "Codex's and Grok's hook") | `hooks.json` in each Codex home, its trust in `config.toml` there | user |
   | The hook for Grok, on `PostToolUse` and `Stop` | `hooks/murmur.json` in Grok's home | user |
   | The daemon | started, if none is running | clone |
@@ -700,6 +700,47 @@ since it wasn't installed). The details, and where each came from, are in the co
 - **Tool approval.** OpenCode and Grok have a rule for it, which join writes; Muse and Pi have none.
   In T3 outside full-access mode, Muse and T3's Pi extension ask before each call.
 
+#### Claude Code's hook is per user
+
+Changed 2026-11-11 (#422). Until then join wrote Claude Code's hook in
+`.claude/settings.local.json` in each worktree of the joined clone. A session that joined a clone it
+doesn't work in (`mur join -C`, "A session that started outside the repo") never read that file, so
+it got no notice while busy, no `Stop` to keep its turn going, and the daemon never saw it at work
+or idle. Tyler's rule (2026-11-11): every harness behaves as closely to T3 Code as it can, wherever
+the session runs.
+
+- **Where it is.** Join writes the hook in `settings.json` of each Claude Code home, beside the
+  allow rule, so Claude Code runs it in every project, as Codex and Grok run theirs. Join and leave
+  take the older hook out of the clone's worktrees, since Claude Code would run both. A join that
+  couldn't write a Claude Code home's settings leaves the older hook, which is then the only one;
+  and a worktree's file that is the user's own link to those settings is passed over, since the
+  hook in it is the new one. A leave keeps the per-user hook, like the server; `mur uninstall`
+  removes it.
+- **Which clone.** The hook used to take its clone from its working directory. Now it reads the
+  record its session's MCP server publishes (`murmur/sessions/`), found by `CLAUDE_PID`, or for
+  Codex and Grok by the nearest of the hook's ancestors that started a server. The record names
+  the clone, or says the session is in no repository, and the hook then asks nothing. Where no
+  record is surely the session's, it goes by its working directory as before.
+- **Whose record.** Claude Code names its own process, which runs one session, so its one record
+  is the session's. Another agent's hook has only its ancestors to go by, and a record found there
+  may not be its session's: it may be a sibling's in a process that runs several sessions, each
+  with a server (Codex's app server), or that of an agent that started this one (a Codex run from
+  Claude Code's shell). Taking it would send the hook to the wrong daemon, where it could be given
+  that session's messages. So the record now carries the agent's own session ID (Grok's, from its
+  environment; Codex's thread ID, which its server learns from the first call to one of Murmur's
+  tools), and another agent's record counts only when it has the hook's ID. A Codex session that
+  joined from elsewhere so gets its notices from its first Murmur tool call on.
+- **Not covered.** Pi: its extension runs the hook only where the working directory's clone is
+  joined, so a Pi session joined from elsewhere gets turns through its socket and no notice while
+  busy. Commits made in the other repo aren't credited: the daemon watches only its own clone
+  (#405).
+- **What it costs.** Every Claude Code tool call on the machine now starts `mur hook` up to twice,
+  in repos that never use Murmur too. Measured on the Windows laptop, 2026-11-11, 30 runs each,
+  with 41 records in the directory: 14 ms for a call the hook skips before looking anywhere (a
+  `Read`'s `PreToolUse`), 19 ms where it reads the records and finds its session in no repository.
+  Claude Code's own shell for the hook comes on top and wasn't measured. With no record and a
+  working directory outside any repo it asks git, 55 ms.
+
 #### Codex's and Grok's hook
 
 Added 2026-11-09 (#225, part of #205): the hook that tells Claude Code of messages mid-turn and
@@ -736,10 +777,8 @@ keeps its turn going at Stop (#202) runs in Codex and Grok too, as `mur hook cod
   `murmur.json` there, on `PostToolUse` and `Stop`. Not on a prompt: Grok discards what that hook
   prints, so notices handed to it would be marked delivered and lost. Grok also fires `Stop` when a
   session closes (`reason` other than `end_turn`) and ignores the answer, so the hook doesn't ask to
-  keep that one going, and what the daemon holds is handed over as a turn instead. Grok also runs a
-  trusted project's `.claude/settings.local.json` hooks, Murmur's Claude Code hook among them; that
-  one ignores Grok's payload. From Grok's documentation and source only: Grok isn't installed on
-  the laptop, so none of it has run.
+  keep that one going, and what the daemon holds is handed over as a turn instead. From Grok's
+  documentation and source only: Grok isn't installed on the laptop, so none of it has run.
 - **The command line.** These agents run a hook through a shell. On Windows Codex's is PowerShell
   (cmd where there is none), and PowerShell won't run a quoted path followed by arguments
   ("Unexpected token", so the Claude Code hook's form exited 1 under Codex 0.166.0). So the path is
@@ -996,7 +1035,7 @@ which session made a commit, so the daemon watches tool calls for them.
   `PostToolUseFailure` as well as `UserPromptSubmit` and `Stop` (the end of a turn, #202), with
   matcher `*` on the three tool events, and run again adds what an older join lacks. A repo set up by an `init` from before #55 had the hook
   in its committed `.claude/settings.json`; `mur init` removes it there, and the user's `mur join`
-  installs it in `.claude/settings.local.json`. On `PreToolUse` the daemon snapshots the worktree
+  installs it in Claude Code's own settings (#422). On `PreToolUse` the daemon snapshots the worktree
   of the hook's working directory (`attrib.Head`: HEAD, branch and every ref tip). On the call's end it
   snapshots again and credits `attrib.NewCommits` between the two to the sessions the hook speaks
   for, the ones its notices go to. A commit made in that worktree during the call by a human or
