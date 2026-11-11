@@ -149,8 +149,12 @@ func TestOlderDevice(t *testing.T) {
 		}
 		pushMessage(t, remote, "refs/murmur/presence/"+old, msg)
 	}
-	pushOld()
-	eventually(t, "a sees the older device's session", func() bool { return a.seesSession(old + "/oooooo") })
+	// Pushed until a sees it: one presence is fresh for three seconds here, and a slow machine can
+	// take longer than that to read it (Windows CI on 43ee91c3).
+	eventually(t, "a sees the older device's session", func() bool {
+		pushOld()
+		return a.seesSession(old + "/oooooo")
+	})
 
 	pushEvent(t, remote, "refs/murmur/mesh/"+old, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
 		From: old + "/oooooo", To: alice, Subject: "from the older device", At: time.Now().UTC()})
