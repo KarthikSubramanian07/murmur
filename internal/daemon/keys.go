@@ -246,8 +246,9 @@ func short(sha string) string {
 // errOldDevice says a device can't read what this one writes.
 func errOldDevice(dev string) error {
 	return fmt.Errorf("%s runs a version of Murmur from before the bus was encrypted, so it couldn't read this. "+
-		"It can once it is updated. Versions after 0.2.3 update themselves within the hour, unless updates are turned off there; "+
-		"0.2.3 and older don't, so that teammate runs Murmur's installer again (https://murmur.afig.dev)", dev)
+		"It can once it runs Murmur 0.3 or later. Versions after 0.2.3 check for a newer release on their channel every hour, "+
+		"unless updates are turned off there; 0.2.3 and older don't, so that teammate runs Murmur's installer again "+
+		"(https://murmur.afig.dev)", dev)
 }
 
 // encryptEventLocked returns e as this device writes it: encrypted for the current team key
