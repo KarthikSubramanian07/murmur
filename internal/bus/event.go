@@ -31,6 +31,11 @@ const (
 	// page of the device whose log carries it. The session's device applies it; a daemon from before
 	// tags doesn't know the type and passes over it.
 	Tags = "tags"
+	// GroupAdd is an agent adding another session to groups (#184): Add is the groups' tags and To
+	// the session, whose device applies it as the session's own tags. It is a type of its own
+	// because every daemon applies Tags as a human's choice, which the session can't undo. A daemon
+	// from before groups doesn't know the type and passes over it.
+	GroupAdd = "group.add"
 	// Boxed is an event encrypted for the team's devices (#156): it holds another event whole, and
 	// says nothing else. A daemon from before encryption doesn't know the type and passes over it.
 	Boxed = "box"
@@ -72,14 +77,15 @@ type Event struct {
 	Agent  string `json:"agent,omitempty"`  // session.started
 	Branch string `json:"branch,omitempty"` // session.started
 
-	To      string `json:"to,omitempty"` // message: device/session, device, or "*"
+	To      string `json:"to,omitempty"` // message: device/session, device, "*", or a group's tag
 	Subject string `json:"subject,omitempty"`
 	Body    string `json:"body,omitempty"`
 	// Person is a person's name on a message they sent, so that a daemon that never saw their
 	// presence still calls them by it.
 	Person string `json:"person,omitempty"`
 
-	// tags: the tags the human added and removed. To is the session.
+	// tags: the tags the human added and removed. To is the session. group.add: Add is the groups
+	// an agent added the session to.
 	Add    []string `json:"add,omitempty"`
 	Remove []string `json:"remove,omitempty"`
 
@@ -113,6 +119,8 @@ func (e Event) Line() string {
 			ch = append(ch, "-"+t)
 		}
 		return fmt.Sprintf("%s tags %s: %s", e.From, e.To, strings.Join(ch, " "))
+	case GroupAdd:
+		return fmt.Sprintf("%s added %s to %s", e.From, e.To, strings.Join(e.Add, ", "))
 	}
 	return e.From + " " + e.Type
 }
@@ -132,6 +140,16 @@ func (e Event) Valid() bool {
 		return true
 	case Message:
 		return ValidTo(e.To) && e.Subject != ""
+	case GroupAdd:
+		if !strings.Contains(e.To, "/") || !validAddr(e.To) || IsPerson(e.To) || len(e.Add) == 0 || len(e.Remove) > 0 || !validTags(e.Add) {
+			return false
+		}
+		for _, t := range e.Add {
+			if !tags.IsGroup(t) {
+				return false
+			}
+		}
+		return true
 	case Tags:
 		return strings.Contains(e.To, "/") && validAddr(e.To) && len(e.Add)+len(e.Remove) > 0 &&
 			validTags(e.Add) && validTags(e.Remove)
@@ -279,9 +297,12 @@ func validAddr(a string) bool {
 	return ValidDevice(dev) && ValidName(sess)
 }
 
-// ValidTo accepts a recipient: everyone, a device, or a session.
+// IsGroup says to is a group's address: its tag, such as group:ui (#184).
+func IsGroup(to string) bool { return tags.IsGroup(to) }
+
+// ValidTo accepts a recipient: everyone, a group, a device, or a session.
 func ValidTo(to string) bool {
-	if to == "*" {
+	if to == "*" || IsGroup(to) {
 		return true
 	}
 	if !strings.Contains(to, "/") {
@@ -305,6 +326,9 @@ type Presence struct {
 	// not in Sessions, and a daemon that reads this refuses to send them a message; one from
 	// before the field sees them only as gone, and the writer drops what it sends them.
 	Offline []string `json:"offline,omitempty"`
+	// Groups says the device's daemon gives its sessions what is sent to a group they are in, and
+	// takes an agent's add to one (#184). A sender is told of a member whose device doesn't.
+	Groups bool `json:"groups,omitempty"`
 	// Epoch is the newest team key the device had read from the team ref when it wrote this, and
 	// Holds the team keys it held then, by TeamID (#156). A teammate grants the team keys by them.
 	// Both are inside the box, so they are absent from an encrypted presence until it is opened.
@@ -313,7 +337,7 @@ type Presence struct {
 	// BoxKey is the device's public box key, which its teammates encrypt to (#156). A presence
 	// that carries one is sealed, which makes the key the device's.
 	BoxKey string `json:"boxKey,omitempty"`
-	// Box holds Host, Owner, Nick, Sessions and Offline, encrypted for the team's devices; those fields
+	// Box holds Host, Owner, Nick, Sessions, Offline and Groups, encrypted for the team's devices; those fields
 	// are then empty. Opened, it is nil.
 	Box *Box `json:"box,omitempty"`
 	// Names is, beside a Box, each session's name with the session's ID, readable: a device that

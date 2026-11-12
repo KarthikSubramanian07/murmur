@@ -376,6 +376,8 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 		switch {
 		case m.e.To == "*":
 			msg.To, msg.ToKind = "*", web.ToAll
+		case bus.IsGroup(m.e.To):
+			msg.To, msg.ToKind = m.e.To, web.ToGroup
 		case !strings.Contains(m.e.To, "/"):
 			msg.To, msg.ToKind = m.e.To, web.ToDevice
 		default:

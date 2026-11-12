@@ -87,6 +87,12 @@ func TestAMutedSessionReachesNobodyWhoMutedIt(t *testing.T) {
 			t.Errorf("a send to %s says %q", to, r.Note)
 		}
 	}
+	// A group is the same: bob is in it, the message goes out, and alice is told he didn't get it.
+	b.tagSelf("bbbbbb", []string{"group:ui"}, nil)
+	eventually(t, "bob in the group, as alice's device sees it", func() bool { return a.inGroup("aaaaaa", bob, "group:ui") })
+	if r := a.send("aaaaaa", "group:ui", "to the group", ""); !strings.Contains(r.Note, bobName+" did not get this message: they have muted you.") {
+		t.Errorf("a send to the group says %q", r.Note)
+	}
 	if r := b.send("dddddd", "*", "from dave to everyone", ""); r.Note != "" {
 		t.Errorf("dave, whom nobody muted, is told %q", r.Note)
 	}
