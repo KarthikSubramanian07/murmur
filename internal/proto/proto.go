@@ -75,7 +75,9 @@ const (
 //	    agent sends the first time a session has one from them, and ends as an agent's after (#345)
 //	14: OpRotate, and a bus encrypted for a team key (#156): a daemon of 13 or less writes in the
 //	    clear, so an upgraded mur replaces it where it may.
-const Protocol = 14
+//	15: the route's CodexCLI and OpenCodeCLI: a Codex or OpenCode session outside T3 is handed a
+//	    message as a turn by its client's own command line (#135)
+const Protocol = 15
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
@@ -229,6 +231,13 @@ type Route struct {
 	// Codex home. A server names one, ~/.codex where it has no CODEX_HOME; only a server from before
 	// #88 leaves it empty, and the daemon then takes its own CODEX_HOME, else ~/.codex.
 	CodexHome string `json:"codexHome,omitempty"`
+	// CodexCLI and OpenCodeCLI are the client's own program, where its command line can put a
+	// message in the session as a turn outside T3 (package clientcli): the Codex that runs the
+	// thread Native names, or the OpenCode whose background server has the session Native names.
+	// The session's MCP server names the program that started it, and only one it takes for that
+	// client. At most one of the two is set.
+	CodexCLI    string `json:"codexCli,omitempty"`
+	OpenCodeCLI string `json:"openCodeCli,omitempty"`
 }
 
 // Hello registers a session.

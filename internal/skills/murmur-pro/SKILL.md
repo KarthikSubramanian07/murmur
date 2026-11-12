@@ -13,7 +13,7 @@ description: Only in a repo whose AGENTS.md or CLAUDE.md has a Murmur section. C
 - A message usually arrives as a turn of the recipient's conversation; in T3 Code it also wakes an
   idle thread. A Claude Code, Codex, Grok or Pi session at work gets a notice after its next tool
   call instead, and what it hasn't read when its turn ends is given to it then.
-- Otherwise it waits in `inbox`: for agents other than Claude Code and Pi outside T3 Code, for a
+- Otherwise it waits in `inbox`: for Grok, Muse Code and OpenCode 1 outside T3 Code, for a
   message that waited more than 15 minutes (the session was away), and where the user turned waking
   off on `mur ui`. Claude Code, Codex, Grok and Pi show a one-line notice; other agents show
   nothing. `who` marks a session whose hook isn't running: it gets no notice.
