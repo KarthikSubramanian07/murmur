@@ -60,8 +60,8 @@ For humans:
                                 agents; --no-open only prints its address (starts the clone's daemon
                                 if it isn't running)
   mur nickname [NAME|--clear]   call this clone's device NAME, such as your own name: teammates see it
-                                beside the device's ID, and NAME/<session> reaches a session on it;
-                                --clear takes it off; alone, says what the device is called
+                                beside the device's ID; --clear takes it off; alone, says what the
+                                device is called
   mur stop                      stop this clone's daemon
   mur rotate [--force]          make a new team key if a collaborator has left the repo (listed with gh),
                                 so what is written from now on can't be read by them; --force always does.

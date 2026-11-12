@@ -8,8 +8,8 @@ import (
 	"github.com/a-Fig/murmur/internal/view"
 )
 
-// Tests of a device's nickname (#190): its user sets it, teammates see it beside the device's ID,
-// and it stands in for the ID in an address.
+// Tests of a device's nickname (#190): its user sets it, and teammates see it beside the device's
+// ID. It is a label, and no address.
 
 // nickOf is what device d's who says the device id is called.
 func (d *device) nickOf(id string) string {
@@ -30,7 +30,7 @@ func (d *device) setNick(nick string) proto.Response {
 	return r
 }
 
-func TestADevicesNicknameIsSeenAndIsAnAddress(t *testing.T) {
+func TestADevicesNicknameIsSeenBesideItsID(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -50,37 +50,24 @@ func TestADevicesNicknameIsSeenAndIsAnAddress(t *testing.T) {
 	if got := view.Who(a.do(proto.Request{Op: proto.OpWho})); !strings.Contains(got, "\ntyler  "+b.self()+" (") {
 		t.Errorf("who doesn't show the nickname beside the ID:\n%s", got)
 	}
-
-	// The nickname stands in for the device's ID; what is sent, and shown as sent, is the ID.
-	r := a.do(proto.Request{Op: proto.OpSend, To: "tyler/bbbbbb", Subject: "by nickname"})
-	if r.Error != "" || len(r.Messages) != 1 || r.Messages[0].To != bob {
-		t.Fatalf("a send to tyler/bbbbbb: %+v", r)
-	}
-	eventually(t, "the message to arrive", func() bool { return len(inboxOf(b, "bbbbbb")) == 1 })
-	if r := a.do(proto.Request{Op: proto.OpSend, To: "tyler", Subject: "to the device"}); r.Error != "" || r.Messages[0].To != b.self() {
-		t.Errorf("a send to the device by nickname: %+v", r)
-	}
-	l := a.do(proto.Request{Op: proto.OpLookup, Name: "tyler/bbbbbb"})
-	if l.Error != "" || l.Lookup.Addr != bob || l.Lookup.Nick != "tyler" {
-		t.Fatalf("lookup by nickname: %+v", l)
+	l := a.do(proto.Request{Op: proto.OpLookup, Name: bob})
+	if l.Error != "" || l.Lookup.Nick != "tyler" {
+		t.Fatalf("lookup: %+v", l)
 	}
 	if got := view.Lookup(l); !strings.Contains(got, "  device tyler  "+b.self()+" (") {
 		t.Errorf("lookup doesn't show the nickname:\n%s", got)
 	}
 
-	// Two devices may have one nickname. The session then says which is meant, and an address
-	// that could mean either is refused.
-	if r := a.setNick("tyler"); !strings.Contains(r.Note, b.self()+" is called tyler too") {
-		t.Errorf("taking a nickname another device has: %+v", r)
+	// It is no address: a message goes to a device by its ID, whatever any device is called.
+	if r := a.do(proto.Request{Op: proto.OpSend, To: "tyler/bbbbbb", Subject: "by nickname"}); r.Error == "" && r.Messages[0].To != "tyler/bbbbbb" {
+		t.Errorf("a send to tyler/bbbbbb went to %s", r.Messages[0].To)
 	}
-	if r := a.do(proto.Request{Op: proto.OpSend, To: "tyler/bbbbbb", Subject: "still b's"}); r.Error != "" || r.Messages[0].To != bob {
-		t.Errorf("a session only one of the two has: %+v", r)
-	}
-	r = a.do(proto.Request{Op: proto.OpSend, To: "tyler", Subject: "which?"})
-	if !strings.Contains(r.Error, "2 devices are called tyler") || !strings.Contains(r.Error, a.self()) || !strings.Contains(r.Error, b.self()) {
-		t.Errorf("a send to a nickname two devices have: %+v", r)
+	if l := a.do(proto.Request{Op: proto.OpLookup, Name: "tyler/bbbbbb"}); l.Error == "" {
+		t.Errorf("lookup took a nickname for a device: %+v", l.Lookup)
 	}
 
+	// Two devices may have one nickname: the ID beside it says which is which.
+	a.setNick("tyler")
 	if r := a.do(proto.Request{Op: proto.OpNick, Clear: true}); r.Error != "" || a.nickOf(a.self()) != "" {
 		t.Errorf("taking it off: %+v, and who says %q", r, a.nickOf(a.self()))
 	}
@@ -105,9 +92,6 @@ func TestADeviceIsCalledByItsPersonsName(t *testing.T) {
 		_, ok := b.whoEntry(alice)
 		return ok && b.nickOf(a.self()) == "ada-lovelace"
 	})
-	if r := b.do(proto.Request{Op: proto.OpSend, To: "ada-lovelace/aaaaaa", Subject: "hi"}); r.Error != "" || r.Messages[0].To != alice {
-		t.Errorf("a send to a session by its device's person: %+v", r)
-	}
 	if r := b.do(proto.Request{Op: proto.OpNick, Nick: "ada-lovelace"}); !strings.Contains(r.Error, "the name of the person on "+a.self()) {
 		t.Errorf("taking another device's person's name: %+v", r)
 	}

@@ -53,15 +53,10 @@ func (d *Daemon) lookupAddrLocked(target string) (string, error) {
 		if !bus.ValidDevice(dev) || !bus.ValidName(sess) || sess == proto.CLISession {
 			return "", fmt.Errorf("%q isn't a session's address; lookup takes a name or device/session", target)
 		}
-		// The device may be given by its nickname (#190).
-		addr, err := d.resolveNickLocked(target)
-		if err != nil {
-			return "", err
-		}
-		if dev, sess = bus.SplitAddr(addr); !d.sessionKnownLocked(dev, sess) {
+		if !d.sessionKnownLocked(dev, sess) {
 			return "", fmt.Errorf("no session is known at %q. who shows the names and addresses in use.", target)
 		}
-		return addr, nil
+		return target, nil
 	case names.Valid(target):
 		addr, ok := d.resolveNameLocked(target)
 		if !ok {

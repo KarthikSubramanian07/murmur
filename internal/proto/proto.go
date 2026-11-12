@@ -78,7 +78,7 @@ const (
 //	14: OpRotate, and a bus encrypted for a team key (#156): a daemon of 13 or less writes in the
 //	    clear, so an upgraded mur replaces it where it may.
 //	15: OpNick, a device's nickname (#190): a daemon of 14 or less answers `mur nickname` with
-//	    "unknown op", so the command replaces it.
+//	    "unknown op", so the command replaces it where it may.
 const Protocol = 15
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).

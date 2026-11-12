@@ -57,8 +57,8 @@ func ValidPerson(name string) bool {
 	return names.ValidPerson(name) && ValidDevice(name)
 }
 
-// ValidNick accepts a device's nickname (#190). It takes the place of a device's ID in an address,
-// and is shown beside a session's name, so it has the form of a person's name: never a session's.
+// ValidNick accepts a device's nickname (#190). It is shown where sessions' names are, and is
+// often a person's name, so it has that form: never a session's name.
 func ValidNick(nick string) bool { return ValidPerson(nick) }
 
 // Event is one entry in a device's log. Fields beyond the first five depend on Type.

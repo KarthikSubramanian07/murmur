@@ -488,7 +488,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		return proto.Response{OK: true, Note: note}
 
 	case proto.OpNick:
-		return d.nick(req)
+		return d.nick(ctx, req)
 
 	case proto.OpPageKey:
 		// Another clone's daemon asks, to send its page's tab here (#348). It has the sessions'
@@ -767,29 +767,12 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		// the name, which takes no device's ID when it is chosen.
 		d.mu.Lock()
 		addr, ok := d.resolvePersonLocked(to)
-		isDevice := d.isDeviceLocked(to)
-		var err error
-		if !ok && !isDevice {
-			addr, err = d.resolveNickLocked(to) // a device's nickname, for all its sessions (#190)
-		}
+		_, isDevice := d.peers[to]
+		isDevice = isDevice || to == d.device
 		d.mu.Unlock()
-		switch {
-		case err != nil:
-			return fail("not sent: " + err.Error())
-		case ok && !isDevice:
+		if ok && !isDevice {
 			to, toName = addr, to
-		case !isDevice:
-			to = addr
 		}
-	} else if strings.Contains(to, "/") {
-		// The device may be given by its nickname (#190). What goes on the bus is its ID.
-		d.mu.Lock()
-		addr, err := d.resolveNickLocked(to)
-		d.mu.Unlock()
-		if err != nil {
-			return fail("not sent: " + err.Error())
-		}
-		to = addr
 	}
 	var note string
 	if to != "*" {
