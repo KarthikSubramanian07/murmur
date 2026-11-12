@@ -46,6 +46,13 @@ const ui = {
   messages: [], // oldest first
   ids: new Set(),
   cursor: "",
+  // What sessions did other than send messages (#448): the daemon's, oldest first, and GitHub's.
+  acts: [],
+  actIds: new Set(),
+  actCursor: "",
+  github: [],
+  recentKind: "all", // Recent shows all of it, or only "messages" or "activity"
+  recentWho: "", // or only one session's, by name
   settings: null,
   settingsError: "",
   rowErrors: {},
@@ -1551,22 +1558,74 @@ function emptyState(iconName, title, line) {
   return h("div", { class: "empty" }, h("span", { class: "empty-ico" }, icon(iconName)), h("p", { class: "empty-title" }, title), line && h("p", { class: "empty-line" }, line));
 }
 
-// Recent: the newest messages first, as many as a render can build quickly. One opens its
-// conversation.
+// Recent: what agents have been doing, newest first, as much as a render can build quickly (#448).
+// A message opens its conversation. Between the messages are the things sessions did: joined or
+// left, changed their status or tags, committed, and what GitHub says became of pull requests and
+// issues. It is a feed, not a log, so what repeats is one line: a session's status changes close
+// together show the last, and its commits to one branch are counted.
 const RECENT_MAX = 300;
+const RECENT_RUN = 30 * 60 * 1000; // how far apart two of a kind may be and still be one line
+
+// The session a pull request is from: the one on its branch, or that committed to it.
+function sessionOnBranch(branch) {
+  if (!branch) return "";
+  let committed = "";
+  for (const d of ui.state?.devices || []) {
+    for (const s of d.sessions || []) {
+      if (s.branch === branch && branch !== "main" && branch !== "master") return s.name;
+      if (!committed && (s.committed || []).includes(branch)) committed = s.name;
+    }
+  }
+  return committed;
+}
+
+// Everything Recent can show, as { t, who, group, ... }, in no order.
+function recentEntries() {
+  const out = [];
+  for (const m of ui.messages) out.push({ t: m.sortAt, group: "messages", m, who: [fromName(m), m.toKind === "session" ? toName(m) : ""] });
+  // A session's status changes, and its commits to a branch, that follow each other closely are one entry.
+  const runs = new Map();
+  const acts = [...ui.acts].sort((a, b) => a.t - b.t);
+  for (const a of acts) {
+    const who = nameOf(a.addr, a.who);
+    const key = a.kind === "status" ? "status " + who : a.kind === "commits" ? "commits " + who + " " + (a.branch || "") : "";
+    const run = key && runs.get(key);
+    if (run && a.t - run.t <= RECENT_RUN) {
+      run.t = a.t;
+      run.n++;
+      run.commits += a.commits || 0;
+      run.a = a;
+      continue;
+    }
+    const e = { t: a.t, group: "activity", a, who: [who], n: 1, commits: a.commits || 0 };
+    if (key) runs.set(key, e);
+    out.push(e);
+  }
+  for (const g of ui.github) {
+    const t = when(g.at);
+    if (t) out.push({ t: Math.min(t, Date.now()), group: "activity", g, who: [sessionOnBranch(g.branch)] });
+  }
+  return out;
+}
+
 function recentPage() {
-  const list = [...ui.messages].sort((a, b) => b.sortAt - a.sortAt).slice(0, RECENT_MAX);
+  const all = recentEntries();
+  const names = [...new Set(all.flatMap((e) => e.who).filter(Boolean))].sort();
+  if (ui.recentWho && !names.includes(ui.recentWho)) names.push(ui.recentWho);
+  const shown = all.filter((e) => (ui.recentKind === "all" || e.group === ui.recentKind) && (!ui.recentWho || e.who.includes(ui.recentWho)));
+  const list = shown.sort((a, b) => b.t - a.t).slice(0, RECENT_MAX);
   const out = [];
   let day = null;
-  for (const m of list) {
-    const at = when(m.at);
-    const d = at && new Date(at).toDateString();
+  for (const e of list) {
+    const d = e.t && new Date(e.t).toDateString();
     if (d && d !== day) {
-      out.push(h("div", { class: "chat-day" }, h("span", null, dayLabel(at))));
+      out.push(h("div", { class: "chat-day" }, h("span", null, dayLabel(e.t))));
       day = d;
     }
-    out.push(openable(recentItem(m, at), m, at));
+    out.push(e.m ? openable(recentItem(e.m, when(e.m.at)), e.m, when(e.m.at)) : e.a ? activityItem(e) : githubItem(e));
   }
+  const count = (kind) => all.filter((e) => kind === "all" || e.group === kind).length;
+  const filtered = ui.recentKind !== "all" || !!ui.recentWho;
   return h(
     "div",
     { class: "g-page g-recent" },
@@ -1574,11 +1633,122 @@ function recentPage() {
     h(
       "header",
       { class: "g-page-head" },
-      h("h1", null, "Recent messages"),
-      h("p", null, ui.messages.length > RECENT_MAX ? "Newest " + RECENT_MAX + " of " + ui.messages.length : plural(ui.messages.length, "message")),
+      h("h1", null, "Recent activity"),
+      h("p", null, shown.length > RECENT_MAX ? "Newest " + RECENT_MAX + " of " + shown.length : plural(shown.length, "item") + (filtered ? " shown" : "") + ", newest first"),
     ),
-    list.length ? h("div", { class: "g-feed" }, out) : emptyState("clock", "No messages yet", "Messages between sessions show here as this daemon reads them."),
+    h(
+      "div",
+      { class: "g-recent-filters" },
+      h(
+        "div",
+        { class: "segmented", role: "tablist", "aria-label": "What to show" },
+        [
+          ["all", "All"],
+          ["messages", "Messages"],
+          ["activity", "Activity"],
+        ].map(([id, label]) =>
+          h(
+            "button",
+            {
+              role: "tab",
+              "aria-selected": ui.recentKind === id ? "true" : "false",
+              "data-key": "recent-" + id,
+              onclick: () => {
+                ui.recentKind = id;
+                render();
+              },
+            },
+            label,
+            h("span", { class: "g-tab-n" }, count(id)),
+          ),
+        ),
+      ),
+      h(
+        "label",
+        { class: "g-recent-who" },
+        h("span", { class: "sr-only" }, "Whose"),
+        h(
+          "select",
+          {
+            class: "select",
+            "data-key": "recent-who",
+            onchange: (ev) => {
+              ui.recentWho = ev.target.value;
+              render();
+            },
+          },
+          h("option", { value: "", selected: !ui.recentWho }, "Everyone"),
+          names.map((n) => h("option", { value: n, selected: ui.recentWho === n }, n)),
+        ),
+      ),
+    ),
+    list.length
+      ? h("div", { class: "g-feed" }, out)
+      : filtered
+        ? emptyState("clock", "Nothing matches", "Show everything, or pick another session.")
+        : emptyState("clock", "Nothing yet", "Messages between sessions, and what the sessions do, show here as this daemon learns of them."),
   );
+}
+
+// One line of activity: an icon where a message has its sender's face, who, what, and when.
+function activityLine(iconName, t, key, ...what) {
+  return h(
+    "div",
+    { class: "g-act", "data-id": key },
+    h("span", { class: "g-act-ico" }, icon(iconName)),
+    h("p", { class: "g-act-text" }, what),
+    h("time", { class: "chat-msg-time", title: t ? new Date(t).toLocaleString() : "" }, clockTime(t)),
+  );
+}
+
+function actWho(name) {
+  return h("span", { class: "g-act-who" }, name);
+}
+
+function actBranch(branch) {
+  return h("span", { class: "g-act-branch" }, icon("branch"), branch);
+}
+
+function activityItem(e) {
+  const a = e.a;
+  const who = actWho(e.who[0]);
+  switch (a.kind) {
+    case "started":
+      return activityLine("logIn", e.t, a.id, who, " joined", a.agent && [" as ", a.agent], a.branch && [" on ", actBranch(a.branch)]);
+    case "stopped":
+      return activityLine("logOut", e.t, a.id, who, " left");
+    case "status":
+      return activityLine("activity", e.t, a.id, who, " is now ", h("span", { class: "g-act-quote" }, a.doing), e.n > 1 && h("span", { class: "g-act-more" }, " after " + plural(e.n - 1, "earlier update")));
+    case "tags": {
+      const added = (a.added || []).map((t) => h("span", { class: "g-act-tag" }, t));
+      const removed = (a.removed || []).map((t) => h("span", { class: "g-act-tag g-act-tag-off" }, t));
+      return activityLine("tag", e.t, a.id, who, added.length ? [" is tagged ", added] : null, removed.length ? [added.length ? " and no longer " : " is no longer tagged ", removed] : null);
+    }
+    case "commits":
+      return activityLine(
+        "commit",
+        e.t,
+        a.id,
+        who,
+        e.commits ? " made " + plural(e.commits, "commit") : " committed",
+        a.branch ? [e.commits ? " on " : " to ", actBranch(a.branch)] : null,
+        a.subject && h("span", { class: "g-act-more" }, e.commits > 1 ? ", the last: " : ": ", a.subject),
+      );
+  }
+  return activityLine("activity", e.t, a.id, who, " ", a.kind);
+}
+
+function githubItem(e) {
+  const g = e.g;
+  const pr = g.kind === "pr";
+  const what = pr ? "pull request" : "issue";
+  const num = g.url ? h("a", { href: g.url, target: "_blank", rel: "noopener noreferrer" }, "#" + g.number) : "#" + g.number;
+  const who = e.who[0] ? actWho(e.who[0]) : g.author ? h("span", { class: "g-act-login" }, g.author) : "Someone";
+  const title = h("span", { class: "g-act-more" }, ": ", g.title);
+  if (g.what === "opened") return activityLine(pr ? "pr" : "issue", e.t, g.id, who, pr ? " opened pull request " : " filed issue ", num, title);
+  // GitHub's list says who opened it, not who merged or closed it.
+  const verb = g.what === "merged" ? " was merged" : " was closed";
+  return activityLine(g.what === "merged" ? "merge" : pr ? "pr" : "issue", e.t, g.id, e.who[0] ? [who, "'s " + what + " "] : what[0].toUpperCase() + what.slice(1) + " ", num, verb, title);
 }
 
 function recentItem(m, at) {
@@ -4072,6 +4242,35 @@ function trimMessages() {
   });
 }
 
+// What sessions did, from the daemon, and what GitHub says of pull requests and issues. A daemon
+// from before the feed has no such call, and a failure here leaves the page its messages.
+async function fetchActivity() {
+  try {
+    for (let pages = 0; pages < 20; pages++) {
+      const r = await api("/api/activity?cursor=" + encodeURIComponent(ui.actCursor));
+      let added = 0;
+      for (const a of r.activity || []) {
+        learn(a.addr, a.who);
+        if (ui.actIds.has(a.id)) continue;
+        ui.actIds.add(a.id);
+        a.t = Math.min(when(a.at) || Date.now(), Date.now());
+        ui.acts.push(a);
+        added++;
+      }
+      ui.github = r.github || [];
+      const moved = r.cursor !== ui.actCursor;
+      ui.actCursor = r.cursor || ui.actCursor;
+      if (!added || !moved) break;
+    }
+    if (ui.acts.length > MAX_ACTS) {
+      for (const a of ui.acts.splice(0, ui.acts.length - MAX_ACTS)) ui.actIds.delete(a.id);
+    }
+  } catch (e) {
+    if (e instanceof AuthError) throw e;
+  }
+}
+const MAX_ACTS = 1000;
+
 let last = "";
 let timer;
 let inflight = false;
@@ -4095,7 +4294,7 @@ async function poll() {
   if (!heldIds) heldIds = new Set(ui.messages.map((m) => m.id));
   try {
     const asked = Date.now();
-    const [state] = await Promise.all([api("/api/state"), fetchMessages()]);
+    const [state] = await Promise.all([api("/api/state"), fetchMessages(), fetchActivity()]);
     const arrived = loaded ? ui.messages.filter((m) => !heldIds.has(m.id)) : []; // the first fetch brings the history
     heldIds = null;
     loaded = true;
@@ -4144,7 +4343,7 @@ async function poll() {
   inflight = false;
   // Rebuild only when something changed, and leave alone a minutes field being typed in, text being
   // selected, and a pane being scrolled: a rebuild would drop the selection or stop the scroll.
-  const sig = JSON.stringify([ui.state, ui.cursor, ui.conn, ui.restarting > 0, restartStuck(), ui.outbox.length, Math.floor(Date.now() / 15000)]);
+  const sig = JSON.stringify([ui.state, ui.cursor, ui.actCursor, ui.github, ui.conn, ui.restarting > 0, restartStuck(), ui.outbox.length, Math.floor(Date.now() / 15000)]);
   // A composer keeps its own element, so what is being typed there survives a rebuild, unless an
   // input method is partway through a character. On a phone it wouldn't: refocusing it isn't a tap,
   // so the keyboard would drop. There the thread catches up when the composer loses focus.

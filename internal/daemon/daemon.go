@@ -363,6 +363,13 @@ type Daemon struct {
 	// ownMsgs is how many of msgs are to or from this device's person, which PageMessages doesn't
 	// count (see keepMessageLocked).
 	ownMsgs int
+	// acts is what sessions did other than send messages, for the page (activity.go), oldest
+	// first; actSeq the number of the newest, actIDs the IDs in acts, and actSeen what each
+	// session's presence last said of it, by address.
+	acts    []pageAct
+	actSeq  uint64
+	actIDs  map[string]bool
+	actSeen map[string]sessSeen
 	// brackets holds the tool calls in flight whose start was snapshotted, by Claude session and
 	// tool-use ID (see toolStart). snapLogged is when a failed snapshot was last logged.
 	brackets   map[string]*bracket
@@ -971,6 +978,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
 		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
+		actIDs: map[string]bool{}, actSeen: map[string]sessSeen{},
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
 		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},

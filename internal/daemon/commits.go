@@ -316,8 +316,10 @@ func (d *Daemon) creditLocked(sessions []*session, commits []attrib.Commit, at t
 	for _, id := range d.creditedLocked(sessions) {
 		before := d.committedLocked(id)
 		recs := d.st.Commits[id]
+		var fresh []attrib.Commit // those not credited to it before, which the page's Recent view shows
 		for _, c := range commits {
 			if !slices.ContainsFunc(recs, func(r commitRec) bool { return r.SHA == c.SHA }) {
+				fresh = append(fresh, c)
 				i := len(recs)
 				for i > 0 && recs[i-1].At.After(at) {
 					i--
@@ -329,6 +331,7 @@ func (d *Daemon) creditLocked(sessions []*session, commits []attrib.Commit, at t
 			recs = slices.Clone(recs[len(recs)-maxCommits:])
 		}
 		d.st.Commits[id] = recs
+		d.recordCommitsLocked(id, fresh, at)
 		if !slices.Equal(before, d.committedLocked(id)) {
 			branchesChanged = true
 		}

@@ -350,19 +350,7 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 
 	after = min(after, d.msgSeq)
 	first := sort.Search(len(d.msgs), func(i int) bool { return d.msgs[i].seq > after })
-	var byAddr map[string]string // the registry's names, for a session no longer in presence
-	label := func(addr string) string {
-		if name, _, _ := d.sessionInfoLocked(addr); name != "" {
-			return name
-		}
-		if name := d.personNameOfLocked(addr); name != "" {
-			return name
-		}
-		if byAddr == nil {
-			byAddr = d.namesByAddrLocked()
-		}
-		return nameOr(byAddr[addr], addr)
-	}
+	label := d.labelerLocked()
 	out := make([]web.Message, 0, len(d.msgs)-first)
 	for _, m := range d.msgs[first:] {
 		msg := web.Message{ID: m.e.ID, From: label(m.e.From), Subject: m.e.Subject, Body: m.e.Body, At: m.e.At,

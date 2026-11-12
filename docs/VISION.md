@@ -928,6 +928,36 @@ call.
   soft greys the page had before it followed T3 Code), Light (T3 Code's light theme) and, since 2026-11-10, Murmur (the website's blue, butter and cream, with an ink sidebar; `docs/brand.md`). Each is a
   set of color tokens over one design, so a theme costs only its palette. Started times, worktrees and committed branches left the page with the old
   Sessions view; `lookup` still has the branches.
+- **Recent is a feed of what agents did** (2026-11-12, #448, Tyler's request), not only of what
+  they said. Between the messages it shows a session joining or leaving, its status or tags
+  changing, its commits, and pull requests and issues opened, merged or closed. The issue left
+  three questions open; what was chosen, and why:
+  - *Where the rest comes from.* Nothing new goes on the bus. A session's start and stop are
+    events every device already writes. A status or a tag changing is the difference between two
+    presences of its device, this one's own included, which the daemon sees anyway. Pull requests
+    and issues are asked of GitHub with `gh` when the page is viewed (`gh pr list` and
+    `gh issue list`, the thirty updated most recently of each, kept two minutes), as the pull
+    request a branch heads already is: only people read them, so they cost the bus nothing and an
+    agent has nothing to post. Commits come from the hook's credit (#21) on the session's own
+    device, with their count; from another device only the branch shows, as presence carries the
+    branches a session committed to and not the commits. Reading pushes off fetched refs (#178
+    wants the same) would give counts for every device, and wasn't built.
+  - *What is noise.* A feed, not a log, so what repeats is one line. A session's status changes
+    less than 30 minutes apart show the last one, with how many came before; its commits to one
+    branch in that time are added up, with the last subject. A session's first status isn't a
+    change. A tag's line names what was added and removed. Heartbeats, `lastActive` and the
+    branch a session is on are left out.
+  - *Filtering.* All, Messages or Activity, and one session's or everyone's. Messages alone is
+    the page as it was. Neither choice is kept over a reload.
+  - *Who did it.* Agents on one machine share their user's GitHub login, so a pull request is
+    named for the session on its branch (or that committed to it), and for the login only when
+    no session is. GitHub's list says who opened one, not who merged or closed it, so those
+    lines name nobody but the session whose branch it was. An issue is the login's.
+  - *What it doesn't have.* The daemon keeps the newest 600 in memory, so a daemon that has just
+    started knows of nothing before it, as with messages (Open questions), except pull requests
+    and issues, which GitHub remembers. A change seen only as a difference between presences is
+    one per presence write: two status lines set within a write show as one. A repository with
+    no `gh`, or one that isn't logged in, shows no pull requests or issues, and says nothing.
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
   `.git/murmur/settings.json`, replaced whole; "Delivering a message as a turn" says what they do.
   Mutes (#27) aren't built, so the page shows none and refuses to unmute.
