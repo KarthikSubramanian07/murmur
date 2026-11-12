@@ -81,9 +81,9 @@ const (
 //	    "unknown op", so the command replaces it where it may.
 //	16: the route's CodexCLI and OpenCodeCLI: a Codex or OpenCode session outside T3 is handed a
 //	    message as a turn by its client's own command line (#135)
-//	17: a hook's Child and ParentNative: the session is one another session started, and goes
+//	19: a hook's Child and ParentNative: the session is one another session started, and goes
 //	    through it (#452)
-const Protocol = 17
+const Protocol = 19
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12

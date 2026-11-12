@@ -1886,7 +1886,7 @@ A body past the limit is cut, as in `inbox`.
     call. A child found late keeps the name it took; nobody sees it. Not run against a live
     codex-sub thread: the reads were checked against the laptop's real Codex state, and the
     rest with stand-ins.
-- **A hook can say its session is a child** (2026-11-12, #452). Where the client knows a
+- **A hook can say its session is a child** (2026-11-12, #452, protocol 19). Where the client knows a
   session's parent and Murmur has a hook in it (OpenCode's plugin, #455), the hook's request
   carries `child` and, if it knows, `parentNative`, the client's own ID of the session that
   started it. The daemon keeps that by the session's own ID, so it holds for a session whose MCP
