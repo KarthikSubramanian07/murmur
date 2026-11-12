@@ -34,8 +34,8 @@ color is a change of `fill`, not a new drawing.
 - README: the banner at the top, the icon at the foot.
 - Tab icons: the site's and the `mur ui` page's. `mur ui` also shows the icon in its sidebar and
   on its sign-in gate.
-- Home page: the lockup behind the hero's reeded glass, the mark in the hero's top left corner on
-  screens 1000px and wider, the mark before "Murmur daemon" in the How it works diagram, and the
+- Home page: the wordmark behind the hero's reeded glass and the mark at the hero's foot, the mark
+  in the hero's top left corner on screens 1000px and wider, the mark before "Murmur daemon" in the How it works diagram, and the
   lockup at the start of the footer.
 - About, Privacy, Contact and Other ways to use Murmur: the mark in the back pill, the lockup in
   the footer.
@@ -43,13 +43,12 @@ color is a change of `fill`, not a new drawing.
 - The stats pages: the mark on the header's blue tile.
 - `site/og.jpg`, the card a shared link shows: the home page's hero.
 
-The hero's lockup (2026-11-12, #488) is the one place the logo is changed, and Tyler chose each
-change from drafts. It took the place of the word "murmur" in Inter. The mark is drawn at 85% of its
-size in `lockup-on-blue.svg` and the letters at 145%, on the same base line: at the file's
-proportions the letters were small enough that the glass broke them apart. Both are blurred and bent
-by the glass, at under half the strength the Inter word had (11 against 24), which is the most the
-mark's eyes survive. The eyes of that mark, and of the one in the corner, follow the pointer by a few
-units; they stay holes cut from the designer's shapes, and nothing moves on a touch screen or with
+The hero (2026-11-12, #497) has the wordmark in butter where the word "murmur" in Inter was, blurred
+and bent by the glass at the same strength, and the mark in cream at its foot, with its lower third
+below the hero's edge. Tyler chose both from drafts, and asked for the mark to be large. The mark
+sits behind glass at under half that strength (11 against 24), which is the most its eyes survive.
+The hero holds only the headline and the button; the sentence that explains Murmur opens How it
+works. The eyes of that mark, and of the one in the corner, follow the pointer by a few units; they stay holes cut from the designer's shapes, and nothing moves on a touch screen or with
 reduced motion.
 
 ## Color
@@ -119,7 +118,7 @@ a step darker for cream. Dark stays the default.
 the wide film, at about 14 frames a second, 960px wide. A change to the palette means rendering all
 of them again.
 
-`site/og.jpg` is a capture of the home page's hero (2026-11-12, #488; before that it was the film's
+`site/og.jpg` is a capture of the home page's hero (2026-11-12, #497; before that it was the film's
 last frame). It was taken in Chromium at 1200x735 and twice the pixel density, with the hero's
 minimum height set to 735px and the line for agents hidden, at a moment the glint was crossing, and
 scaled down to 1200x735. All six pages share it, so a change to the hero means taking it again.
