@@ -959,7 +959,7 @@ func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
 			}
 			continue
 		}
-		if d.mutedHereLocked(id, e.From) {
+		if d.mutedHereLocked(id, e) {
 			if mode == modeNormal && !held {
 				d.log.Printf("message %s is from %s, which session %s has muted; dropped", e.ID, e.From, id)
 			}

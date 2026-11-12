@@ -1251,9 +1251,14 @@ then on: not a message to it, to its device, or to everyone.
 - **The muted session isn't told when it happens.** It learns of it when it sends to the session
   that muted it: its own daemon has read that presence, refuses the `send`, and says the other has
   muted it. That is the tool's answer, from Murmur and no agent, so it wakes nobody (#25), and the
-  message isn't written to the bus at all. A message sent before its daemon has read the mute
-  (seconds) is written, and dropped by the receiver, and the sender isn't told of that one: a bug,
-  #466, which a receipt (#26) or a list of what a device dropped, in its presence, would close. A message from a muted session to everyone, or to a
+  message isn't written to the bus at all. A message sent to the muting session before the sender's
+  daemon has read the mute (seconds) is written, and would be dropped with its sender sure it had
+  arrived. So **a mute takes 30 seconds to hold against direct messages** (Tyler, 2026-11-11):
+  for that long after it, by the muting device's clock alone, they still reach the muting session.
+  That is longer than a presence takes to be pushed and read. After it the mute holds against
+  every sender, whatever its daemon knows. The cost is a message or two after muting. What is
+  left is #466: a sender whose daemon stays ignorant for longer (an older version, or cut off
+  from the bus) is never told. A message from a muted session to everyone, or to a
   device, is sent as usual, and `send` tells its sender which sessions didn't get it because they
   have muted it (Tyler, 2026-11-11), as far as its daemon knows then.
 - **A mute names a session by its name**, which the registry never gives out twice, so it can't

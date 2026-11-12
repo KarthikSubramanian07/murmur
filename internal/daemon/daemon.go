@@ -68,6 +68,9 @@ type Options struct {
 	SessionGrace time.Duration
 	// StoppedInbox is how long a stopped session's inbox is kept for it to come back to: 24 h.
 	StoppedInbox time.Duration
+	// MuteGrace is how long after a session mutes another it still gets that session's direct
+	// messages (see mutedHereLocked): 30 s. Negative: none.
+	MuteGrace time.Duration
 	// NameSource is where the randomness for session names comes from: crypto/rand's reader.
 	// Tests give two devices the same one, to make them pick the same name.
 	NameSource io.Reader
@@ -176,6 +179,9 @@ func (o *Options) defaults() {
 	}
 	if o.StoppedInbox == 0 {
 		o.StoppedInbox = 24 * time.Hour
+	}
+	if o.MuteGrace == 0 {
+		o.MuteGrace = 30 * time.Second
 	}
 	if o.NameSource == nil {
 		o.NameSource = rand.Reader

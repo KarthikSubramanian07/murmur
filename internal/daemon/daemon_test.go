@@ -83,8 +83,11 @@ type device struct {
 	poll   time.Duration
 	grace  time.Duration // SessionGrace; zero takes the daemon's default
 	keep   time.Duration // StoppedInbox; likewise
-	names  io.Reader     // NameSource; nil takes crypto/rand's
-	retry  time.Duration // NameRetry; zero takes 200 ms
+	// muteGrace is MuteGrace. Zero takes none (-1): a mute holds from the first moment, so a test
+	// doesn't wait half a minute to see one work.
+	muteGrace time.Duration
+	names     io.Reader     // NameSource; nil takes crypto/rand's
+	retry     time.Duration // NameRetry; zero takes 200 ms
 	// pool is NamePool. Zero takes none (-1), so the tests written before the pool see each session
 	// wait for its name to land, one assignment at a time, as they were written to.
 	pool int
@@ -188,6 +191,10 @@ func (d *device) start() {
 	if d.logTo != nil {
 		logger = log.New(d.logTo, "", 0)
 	}
+	muteGrace := d.muteGrace
+	if muteGrace == 0 {
+		muteGrace = -1
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	d.done = done
@@ -195,7 +202,7 @@ func (d *device) start() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
 			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll, FetchLimit: d.fetchLimit, FirstSyncLimit: d.firstSync,
-			SessionGrace: d.grace, StoppedInbox: d.keep, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
+			SessionGrace: d.grace, StoppedInbox: d.keep, MuteGrace: muteGrace, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState, Log: logger})
 		if err != nil {

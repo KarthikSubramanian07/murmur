@@ -63,15 +63,28 @@ func (d *Daemon) nameOfLocked(addr string) string {
 	return ""
 }
 
-// mutedHereLocked says session id of this device has muted whoever sent from addr, so nothing
-// from there is queued for it. Caller holds mu.
-func (d *Daemon) mutedHereLocked(id, from string) bool {
+// mutedHereLocked says session id of this device has muted whoever sent e, so e isn't queued for
+// it.
+//
+// A message sent to the session itself still reaches it for MuteGrace after the mute (#466,
+// Tyler, 2026-11-11). The sender's daemon refuses such a message once it has read of the mute in
+// presence, which takes seconds; one sent before that would otherwise be dropped here with its
+// sender sure it had arrived. The grace is longer than a presence takes to be pushed and read,
+// and goes by this device's clock alone: when the mute was made, and now. After it, the mute
+// holds against every sender, whatever its daemon knows or its version. A message to everyone or
+// to the device is dropped from the first moment: its sender is never refused, so there is
+// nothing for a grace to keep true. Caller holds mu.
+func (d *Daemon) mutedHereLocked(id string, e bus.Event) bool {
 	m := d.st.Mutes[d.tagKeyLocked(id)]
 	if len(m) == 0 {
 		return false
 	}
-	_, muted := m[d.nameOfLocked(from)]
-	return muted
+	at, muted := m[d.nameOfLocked(e.From)]
+	if !muted {
+		return false
+	}
+	direct := strings.Contains(e.To, "/")
+	return !direct || time.Since(at) >= d.opt.MuteGrace
 }
 
 // hasMutedLocked says the session at dev/sess, here or in another device's presence, has muted
