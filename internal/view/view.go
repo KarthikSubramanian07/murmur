@@ -462,11 +462,12 @@ func Tags(r proto.Response) string {
 	return b.String()
 }
 
-// Muted renders the outcome of mute: what changed, then whom the caller has muted.
+// Muted renders the outcome of mute: what changed or, when the caller only asked, whom it has
+// muted.
 func Muted(r proto.Response) string {
 	var b strings.Builder
 	if r.Note != "" {
-		b.WriteString(r.Note + "\n")
+		return r.Note + "\n"
 	}
 	if len(r.Muted) == 0 {
 		b.WriteString("You have muted nobody.\n")

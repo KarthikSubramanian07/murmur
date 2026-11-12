@@ -54,8 +54,11 @@ func TestAMutedSessionReachesNobodyWhoMutedIt(t *testing.T) {
 	if r.Error != "" || !slices.Equal(r.Muted, []string{aliceName}) {
 		t.Fatalf("bob mutes alice: %+v", r)
 	}
-	if got := view.Muted(r); !strings.Contains(got, "Muted "+aliceName) || !strings.Contains(got, "You have muted: "+aliceName) {
+	if got, want := view.Muted(r), "You have muted "+aliceName+". Nothing it sends will reach you, until you unmute it.\n"; got != want {
 		t.Errorf("what bob is told:\n%s", got)
+	}
+	if got := view.Muted(b.mute("bbbbbb", "", false)); got != "You have muted: "+aliceName+"\n" {
+		t.Errorf("what bob has muted, when he asks:\n%s", got)
 	}
 
 	// To everyone: bob's device drops it for bob and queues it for dave. The device decides, so

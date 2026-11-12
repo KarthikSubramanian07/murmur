@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/proto"
@@ -157,7 +156,7 @@ func (d *Daemon) mute(id string, req proto.Request) proto.Response {
 		}
 		d.dropMuteLocked(key, name)
 		d.log.Printf("session %s unmuted %s", from, name)
-		note = "Unmuted " + name + ": what it sends from now on reaches you."
+		note = "You have unmuted " + name + ". What it sends from now on will reach you."
 	case name == s.name:
 		return fail("that is your own name")
 	default:
@@ -179,8 +178,9 @@ func (d *Daemon) mute(id string, req proto.Request) proto.Response {
 			d.kickPresence()
 			d.log.Printf("session %s muted %s", from, name)
 		}
-		note = "Muted " + name + ": nothing it sends reaches you, until you unmute it. It isn't told, unless it sends to you. " +
-			"Your user can see the mute on " + brand.Product + "'s page, and undo it."
+		// The words are Tyler's (2026-11-11): the first version also said who is told and who can
+		// undo it, which was more than the caller needs.
+		note = "You have muted " + name + ". Nothing it sends will reach you, until you unmute it."
 	}
 	return proto.Response{OK: true, Self: from, Note: note, Muted: sortedKeys(d.st.Mutes[key])}
 }
