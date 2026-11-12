@@ -999,7 +999,14 @@ func (e Env) unregisterOpenCodeAt(_ context.Context, hs []agentHome) (did, notes
 			did = append(did, h.Label+": removed the rule that allowed "+brand.Product+"'s tools ("+path+")")
 		}
 	}
-	return did, notes, nil
+	gone, note, err := removeOpenCodePlugin(h.Dir)
+	if gone {
+		did = append(did, h.Label+": removed "+brand.Product+"'s plugin, its hook there ("+openCodePluginPath(h.Dir)+")")
+	}
+	if note != "" {
+		notes = append(notes, h.Label+": "+note)
+	}
+	return did, notes, err
 }
 
 // unregisterMuseAt takes Murmur's server out of Muse's settings.json.

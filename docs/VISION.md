@@ -697,10 +697,34 @@ since it wasn't installed). The details, and where each came from, are in the co
   a Muse thread each took a message as a turn and answered it with `send`, nobody typing
   (2026-11-01). Outside T3, Muse and Grok have no way in that Murmur uses yet (Muse's session
   messaging isn't on Windows, and no way to start a turn in Grok was found), so a message waits in
-  the inbox. OpenCode and Muse have no hook of Murmur's, so no notice either; Grok has one (below). Pi
+  the inbox. OpenCode 1 and Muse have no hook of Murmur's, so no notice either; Grok has one (below). Pi
   has both since 2026-11-09 (#205), and OpenCode 2 takes a turn through its server since
   2026-11-11 (#135): see "Pi's extension" and "The client's command line" under "Delivering a
   message as a turn".
+- **OpenCode 2's plugin (2026-11-12, #431, #455).** OpenCode 2 has no hooks of Claude Code's kind,
+  so join writes `plugins/murmur.js` into its config directory, which OpenCode loads with no entry
+  in `opencode.json`. The plugin runs `mur hook --agent opencode` after each tool call, when a turn
+  starts and when it ends, with OpenCode's session ID, so an OpenCode 2 session is told of a
+  message while it works and handed what is unread at its turn's end, as Claude Code is.
+  - *How the words go in.* `ctx.session.synthetic` with `delivery: "steer"` puts the notice after
+    the tool's result and before the next model request, as a message of its own. Appended to the
+    tool's result instead, a model took it for text planted in the file it had read and refused it.
+    At a turn's end the same call without `delivery` starts another turn. What it costs: OpenCode's
+    terminal UI shows the answer to a synthetic message and not the message.
+  - *Children.* A session the `subagent` tool started carries `parentID`. The plugin says so on
+    every hook request of that session (`child`, `parentNative`, #473), and once as the session is
+    made, before its first call to one of Murmur's tools registers it; the daemon marks a session
+    named so as it registers. So an OpenCode child is never listed, and its `send` is refused with
+    its parent's name (the gap #487 describes for Codex doesn't open here).
+  - *Tried* on OpenCode 2.2.0 against a private `opencode serve` in a joined scratch clone
+    (2026-11-12): a message sent mid-turn came as a notice after the next tool call; at the turn's
+    end the session was handed it whole, read a file and answered with `send`, nobody typing; a
+    subagent that called `who` and `send` never showed in another session's `who`, and its `send`
+    was refused. Not tried: a thread T3 started, the terminal UI on the shared background server,
+    and whether T3's sidebar shows a child session as a thread of its own (Tyler's rule, #452,
+    keeps such a one on the mesh; the plugin would take it off).
+  - *Not covered.* `opencode run` exits when its turn ends, so what the hook hands over there is
+    marked read and never acted on. OpenCode 1 loads plugins of another shape and gets none.
 - **Titles.** Inside T3 the thread's title is read as for any thread. Outside T3 none is read for
   these agents: their IDs aren't Codex threads.
 - **Tool approval.** OpenCode and Grok have a rule for it, which join writes; Muse and Pi have none.
@@ -1618,7 +1642,7 @@ hook has the session at work (see "A session at work", below):
 | T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing. A busy session the hook runs in (Claude Code, Codex, Grok, and Pi through its extension) is not handed the message: the hook tells it | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
 | Claude Code outside T3 | the session's messaging socket | Unverified: a message Murmur's code wrote to a session's socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle one has not been tried |
 | Pi outside T3 | the socket Murmur's extension opens in the session | Yes (2026-11-09, Pi 1.5.0 in RPC mode with a stand-in model: an idle session took a message as a turn, nobody typing) |
-| Codex, OpenCode, Muse or Grok outside T3, or any handoff that fails | the hook's notice where the hook runs (Claude Code, Codex, Grok, Pi), and `inbox` | No |
+| Codex, OpenCode, Muse or Grok outside T3, or any handoff that fails | the hook's notice where the hook runs (Claude Code, Codex, Grok, Pi, OpenCode 2), and `inbox` | No |
 
 What the agent reads:
 
@@ -1723,9 +1747,10 @@ A body past the limit is cut, as in `inbox`.
     older, it stays a notice, as it would have without the turn.
   - *Why not hand it to T3 as well*: T3 can't take back a queued message, so the agent could read
     it with `inbox` mid-turn and then get it again as a turn.
-  - *Where the hook doesn't run* (OpenCode and Muse in T3, as of 2026-11-09, and OpenCode 2
-    outside it), nothing tells the daemon the session is at work, and a message goes to T3, or to
-    OpenCode's server, as before: without the handoff the session would hear nothing at all. Codex and Grok have the hook since #225, and Pi since #205.
+  - *Where the hook doesn't run* (OpenCode 1 and Muse in T3, as of 2026-11-12), nothing tells the
+    daemon the session is at work, and a message goes to T3 as before: without the handoff the
+    session would hear nothing at all. Codex and Grok have the hook since #225, Pi since #205, and
+    OpenCode 2 since #431.
   - *Subagents.* A subagent's tool call carries the parent's `session_id`, with `agent_id` set
     (Claude Code 2.1.312, 2026-10-29). The hook tells it nothing, as its notice would land in the
     subagent's context, not the session's (inferred, not seen; #188), and it doesn't mark the
@@ -1855,8 +1880,9 @@ A body past the limit is cut, as in `inbox`.
   - *OpenCode 2:* `opencode api session.prompt --param sessionID=<session>` with the body
     `{"text": ..., "delivery": "queue"}`, which asks the background server that every OpenCode 2
     client on the machine shares. `"queue"` waits behind a running turn (the default, `"steer"`,
-    goes into it): OpenCode has no hook of Murmur's, so the daemon can't tell a busy session, and
-    it is handed the message either way, as an OpenCode thread in T3 is. Seen on OpenCode 2.2.0
+    goes into it). When this was built OpenCode had no hook of Murmur's, so the daemon couldn't
+    tell a busy session and handed it the message either way; since 2026-11-12 its plugin runs the
+    hook (#431), and a busy session gets the notice and its turn's end, as Codex does. Seen on OpenCode 2.2.0
     the same day: the turn ran, and the terminal UI open on the session showed the message and the
     answer. `session.synthetic` starts a turn too, and the terminal UI then shows the answer and
     not what was asked, so it isn't used.

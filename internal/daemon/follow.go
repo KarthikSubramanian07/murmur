@@ -291,9 +291,10 @@ func isAgent(sessionAgent, agent string) bool {
 var toolOps = map[string]bool{proto.OpWho: true, proto.OpLookup: true, proto.OpStatus: true, proto.OpTags: true, proto.OpMute: true,
 	proto.OpSend: true, proto.OpInbox: true}
 
-// hookedAgents are the agents Murmur's hook runs in: those join installs it in (#202, #225), and Pi,
-// whose extension join writes runs it (#205).
-var hookedAgents = []string{"claude-code", "codex", "grok", "pi"}
+// hookedAgents are the agents Murmur's hook runs in: those join installs it in (#202, #225), and Pi
+// and OpenCode, where the extension or plugin join writes runs it (#205, #431). OpenCode 1 gets no
+// plugin, so its sessions show as ones the hook doesn't run in, which is so.
+var hookedAgents = []string{"claude-code", "codex", "grok", "pi", "opencode"}
 
 // hookOffLocked says Murmur's hook doesn't run for session s (#225): its agent is one join installs
 // the hook in, it called one of Murmur's tools more than hookGrace ago, and no hook of it has

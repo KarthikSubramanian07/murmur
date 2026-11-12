@@ -139,11 +139,11 @@ func TestAHookNamesItsSessionAChild(t *testing.T) {
 	// A request that doesn't say so changes nothing.
 	b.do(proto.Request{Op: proto.OpNotices, Native: "ses-early"})
 
+	// One named before it registered is a child as it registers, with no refresh between (#487).
 	late, _ := b.agentSession("dddddd", "opencode", 700, proto.Route{Native: "ses-late"})
-	eventually(t, "a child named before it registered to be refused", func() bool {
-		resp := b.trySend("dddddd", mainName, "from the late child")
-		return !resp.OK && strings.Contains(resp.Error, mainName)
-	})
+	if resp := b.trySend("dddddd", mainName, "from the late child"); resp.OK || !strings.Contains(resp.Error, mainName) {
+		t.Errorf("the first send of a child named before it registered: ok %v, error %q", resp.OK, resp.Error)
+	}
 	if b.listsSession(late) || b.listsSession(early) || !b.listsSession(main) {
 		t.Errorf("who lists late %v, early %v, main %v; want only main", b.listsSession(late), b.listsSession(early), b.listsSession(main))
 	}
