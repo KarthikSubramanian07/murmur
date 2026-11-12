@@ -120,3 +120,70 @@ func TestEventCleanDropsFormatCharacters(t *testing.T) {
 		t.Errorf("format characters kept: %+q", []string{e.Subject, e.Agent, e.Branch, e.Body})
 	}
 }
+
+// Invisible characters that aren't format characters go too (#349): a run of variation selectors,
+// which can spell a byte each after one character, the combining grapheme joiner, and Hangul fillers
+// outside Hangul. What emoji, CJK variants and Korean are written with stays.
+func TestCleaningDropsOtherInvisibleCharacters(t *testing.T) {
+	keep := []string{
+		"❤️",          // a red heart, drawn as an emoji
+		"↔︎",          // an arrow, drawn as text
+		"1️⃣ #️⃣",     // keycaps
+		"🏳️‍🌈",        // a rainbow flag
+		"葛\U000E0100", // an ideograph's variant glyph
+		"가 ᅟᅡ",       // conjoining jamo, then the same syllable with its first part filled
+		"ㅤ가 가ﾠ",       // fillers next to Hangul
+		"ok ✅ done",
+	}
+	for _, s := range keep {
+		if got := bus.OneLine(s, 120); got != s {
+			t.Errorf("OneLine(%+q) = %+q, want it unchanged", s, got)
+		}
+		if got := bus.Text(s, bus.MaxBody); got != s {
+			t.Errorf("Text(%+q) = %+q, want it unchanged", s, got)
+		}
+	}
+
+	drop := map[string]string{
+		"a\U000E0100\U000E0101\U000E0102b": "ab",          // the supplement after ASCII
+		"葛\U000E0100\U000E0101\U000E0102":  "葛\U000E0100", // only one after an ideograph
+		"❤️️︎︀":                            "❤️",          // only one after an emoji
+		"️ship":                            "ship",
+		"ship️it":                          "shipit", // after ASCII, outside a keycap
+		"ship ️it":                         "ship it",
+		"ship͏it":                          "shipit",
+		"aㅤb":                              "ab",
+		"aᅟᅠb":                             "ab",
+		"ﾠ":                                "",
+		"가ㅤㅤㅤㅤ나":                           "가ㅤㅤ나", // a run between syllables keeps only its ends
+	}
+	for in, want := range drop {
+		if got := bus.OneLine(in, 120); got != want {
+			t.Errorf("OneLine(%+q) = %+q, want %+q", in, got, want)
+		}
+		if got := bus.Text(in, bus.MaxBody); !strings.Contains(in, " ") && got != want {
+			t.Errorf("Text(%+q) = %+q, want %+q", in, got, want)
+		}
+	}
+
+	// Every selector of both blocks after one letter: none is left.
+	var run strings.Builder
+	run.WriteString("x")
+	for r := rune(0xFE00); r <= 0xFE0F; r++ {
+		run.WriteRune(r)
+	}
+	for r := rune(0xE0100); r <= 0xE01EF; r++ {
+		run.WriteRune(r)
+	}
+	if got := bus.Text(run.String(), bus.MaxBody); got != "x" {
+		t.Errorf("a run of selectors after a letter came through as %+q", got)
+	}
+
+	// A key split by one of them is whole once cleaned, so scrub, which reads the cleaned text, sees it.
+	for _, r := range []rune{0x034F, 0xFE0F, 0xE0100, 0x3164} {
+		in := "AKIAIOSF" + string(r) + "ODNN7EXAMPLE"
+		if got := bus.Text(in, bus.MaxBody); got != "AKIAIOSFODNN7EXAMPLE" {
+			t.Errorf("a key split by U+%04X came through as %+q", r, got)
+		}
+	}
+}

@@ -353,10 +353,10 @@ func Decode(msg string, v any) error {
 const MaxBody = 32 << 10
 
 // OneLine collapses whitespace, line breaks of every kind included, turns other control
-// characters (a terminal escape, say) into spaces, drops invisible format characters (see
-// dropFormat), and cuts s to at most max runes.
+// characters (a terminal escape, say) into spaces, drops invisible characters (see dropFormat and
+// dropInvisible), and cuts s to at most max runes.
 func OneLine(s string, max int) string {
-	s = dropFormat(s)
+	s = dropInvisible(dropFormat(s))
 	s = strings.Join(strings.FieldsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " ")
 	if r := []rune(s); len(r) > max {
 		s = string(r[:max-1]) + "…"
@@ -365,10 +365,11 @@ func OneLine(s string, max int) string {
 }
 
 // Text keeps a text's lines but writes every kind of line break as "\n", turns other control
-// characters but tabs into spaces, drops invisible format characters (see dropFormat), and cuts it
-// to at most max bytes. Whoever shows it line by line then sees the same lines everyone else does.
+// characters but tabs into spaces, drops invisible characters (see dropFormat and dropInvisible),
+// and cuts it to at most max bytes. Whoever shows it line by line then sees the same lines everyone
+// else does.
 func Text(s string, max int) string {
-	s = dropFormat(s)
+	s = dropInvisible(dropFormat(s))
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.Map(func(r rune) rune {
 		switch {
@@ -406,8 +407,7 @@ func Text(s string, max int) string {
 // signs (U+0600 to U+0605); and a Malayalam chillu in the old encoding, a virama and a joiner at the
 // end of a word, loses its joiner.
 //
-// Other invisible characters aren't format characters and still pass: runs of variation selectors,
-// the combining grapheme joiner (U+034F) and the Hangul fillers.
+// Other invisible characters aren't format characters: dropInvisible takes those.
 func dropFormat(s string) string {
 	if !strings.ContainsFunc(s, isFormat) {
 		return s
@@ -428,6 +428,74 @@ func dropFormat(s string) string {
 }
 
 func isFormat(r rune) bool { return unicode.Is(unicode.Cf, r) }
+
+// dropInvisible removes the characters that show nothing but aren't format characters, so
+// dropFormat keeps them (#349). It runs on dropFormat's output.
+//
+//   - Variation selectors (U+FE00 to U+FE0F) are marks. One after an emoji or a symbol picks how it
+//     is drawn, and stays. A run of them after one character would encode a byte each, so only the
+//     first stays. One after ASCII stays only in a keycap (1, #, * and U+20E3, which draws the key),
+//     and one after a space, a line break or nothing is dropped: no emoji is spelled so, and a key
+//     split by one would hide from scrub, as the joiners would (see dropFormat).
+//   - The supplement (U+E0100 to U+E01EF) picks among a CJK ideograph's variant glyphs, so one stays
+//     after a Han character and none anywhere else.
+//   - The combining grapheme joiner (U+034F) changes only how text is sorted and searched, never
+//     what is drawn, so it always goes.
+//   - The Hangul fillers (U+115F, U+1160, U+3164, U+FFA0) stand in for a missing part of a Korean
+//     syllable, and are kept only next to Hangul that isn't a filler. Elsewhere one shows as a blank
+//     that isn't a space, and a run of them as nothing a reader can count.
+//
+// What that costs: a standardized variant after an ASCII character, such as a zero with a slash
+// (U+0030 U+FE00), loses its selector and shows as a plain zero; so does an ideograph's variant
+// after a character that isn't Han.
+func dropInvisible(s string) string {
+	if !strings.ContainsFunc(s, invisible) {
+		return s
+	}
+	rs := []rune(s)
+	out := make([]rune, 0, len(rs))
+	for i, r := range rs {
+		prev, next := rune(-1), rune(-1)
+		if len(out) > 0 {
+			prev = out[len(out)-1]
+		}
+		if i+1 < len(rs) {
+			next = rs[i+1]
+		}
+		switch {
+		case r == '\u034f':
+			continue
+		case isSelector(r):
+			if prev < 0 || isSelector(prev) || isIdeographSelector(prev) || unicode.IsSpace(prev) || unicode.IsControl(prev) {
+				continue
+			}
+			if prev <= unicode.MaxASCII && next != '\u20e3' {
+				continue
+			}
+		case isIdeographSelector(r):
+			if prev < 0 || !unicode.Is(unicode.Han, prev) {
+				continue
+			}
+		case isFiller(r):
+			if !hangul(prev) && !hangul(next) {
+				continue
+			}
+		}
+		out = append(out, r)
+	}
+	return string(out)
+}
+
+func invisible(r rune) bool {
+	return r == '\u034f' || isSelector(r) || isIdeographSelector(r) || isFiller(r)
+}
+
+func isSelector(r rune) bool          { return r >= 0xFE00 && r <= 0xFE0F }
+func isIdeographSelector(r rune) bool { return r >= 0xE0100 && r <= 0xE01EF }
+func isFiller(r rune) bool            { return r == 0x115F || r == 0x1160 || r == 0x3164 || r == 0xFFA0 }
+
+// hangul says whether r is Hangul a filler may stand next to: a syllable or a jamo, not a filler.
+func hangul(r rune) bool { return r >= 0 && unicode.Is(unicode.Hangul, r) && !isFiller(r) }
 
 // joinable says whether r is a visible character outside ASCII that a joiner may stand next to: a
 // letter, a mark (a vowel sign, an emoji's variation selector), a digit or a symbol (an emoji).
