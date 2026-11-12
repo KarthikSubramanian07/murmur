@@ -1676,8 +1676,10 @@ function membersButton(c) {
 function membersPanel(c, rows) {
   const groups = new Map();
   for (const r of rows) {
-    const key = r.person ? "People" : r.d ? deviceLabel(r.d) : "Not running";
-    if (!groups.has(key)) groups.set(key, { d: r.person ? null : r.d, host: r.d && !r.person ? host(r.d.id) : "", rows: [] });
+    // By device, not by what it is called: two devices may have one nickname or one owner (#190).
+    const title = r.person ? "People" : r.d ? deviceLabel(r.d) : "Not running";
+    const key = !r.person && r.d ? "device " + r.d.id : title;
+    if (!groups.has(key)) groups.set(key, { title, d: r.person ? null : r.d, host: r.d && !r.person ? host(r.d.id) : "", rows: [] });
     groups.get(key).rows.push(r);
   }
   return h(
@@ -1685,8 +1687,8 @@ function membersPanel(c, rows) {
     // A disclosure: the list follows its button, and Escape folds it back onto the button.
     { class: "g-members-panel", id: "members-panel", role: "group", "aria-label": "Members", onclick: (e) => e.stopPropagation() },
     h("div", { class: "g-mp-head" }, c.kind === "all" ? "Everyone in this repo" : "Every session on " + host(c.title)),
-    [...groups].map(([title, g]) => [
-      h("div", { class: "g-mp-sec" }, g.d && deviceDot(g.d), title, g.host && h("span", null, g.host), h("span", { class: "g-mp-n" }, g.rows.length)),
+    [...groups.values()].map((g) => [
+      h("div", { class: "g-mp-sec" }, g.d && deviceDot(g.d), g.title, g.host && h("span", null, g.host), h("span", { class: "g-mp-n" }, g.rows.length)),
       g.rows.map((r) =>
         h(
           "button",
