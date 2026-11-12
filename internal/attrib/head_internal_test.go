@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -162,6 +163,36 @@ func TestHeadRunsOneGitProcess(t *testing.T) {
 		}
 		if n := gitStarts(t, trace); n != 2 {
 			t.Errorf("Head and NewCommits after a call in %s ran %d git processes, want 2", wt, n)
+		}
+	}
+}
+
+// Every worktree's detached HEAD is a tip, read from its HEAD file or by git: for-each-ref lists
+// none, and a call judged in another worktree than the one it started in would otherwise count
+// what only that HEAD reaches as new (#60).
+func TestDetachedHeadsOfEveryWorktreeAreTips(t *testing.T) {
+	dir := t.TempDir()
+	hgit(t, dir, "init", "-q", "-b", "main")
+	hgit(t, dir, "commit", "-q", "--allow-empty", "-m", "root")
+	other := filepath.Join(t.TempDir(), "other")
+	hgit(t, dir, "worktree", "add", "-q", "--detach", other)
+	hgit(t, other, "commit", "-q", "--allow-empty", "-m", "on no ref")
+	linkedOnly := hgit(t, other, "rev-parse", "HEAD")
+	hgit(t, dir, "switch", "-q", "--detach")
+	hgit(t, dir, "commit", "-q", "--allow-empty", "-m", "on no ref either")
+	mainOnly := hgit(t, dir, "rev-parse", "HEAD")
+	third := filepath.Join(t.TempDir(), "third")
+	hgit(t, dir, "worktree", "add", "-q", "-b", "third", third)
+
+	for _, wt := range []string{third, other, dir} {
+		fast := sameHead(t, "worktree "+filepath.Base(wt), wt)
+		if fast.gitDir == "" {
+			t.Errorf("%s: HEAD was read by git", wt)
+		}
+		for _, sha := range []string{linkedOnly, mainOnly} {
+			if !slices.Contains(fast.tips, sha) {
+				t.Errorf("Head in %s: the detached HEAD at %s is not among the tips %v", wt, sha, fast.tips)
+			}
 		}
 	}
 }

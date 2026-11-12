@@ -1065,7 +1065,7 @@ which session made a commit, so the daemon watches tool calls for them.
   matcher `*` on the three tool events, and run again adds what an older join lacks. A repo set up by an `init` from before #55 had the hook
   in its committed `.claude/settings.json`; `mur init` removes it there, and the user's `mur join`
   installs it in Claude Code's own settings (#422). On `PreToolUse` the daemon snapshots the worktree
-  of the hook's working directory (`attrib.Head`: HEAD, branch and every ref tip). On the call's end it
+  of the hook's working directory (`attrib.Head`: HEAD, branch, every ref tip and every worktree's detached HEAD). On the call's end it
   snapshots again and credits `attrib.NewCommits` between the two to the sessions the hook speaks
   for, the ones its notices go to. A commit made in that worktree during the call by a human or
   another session is credited too: git can't say who made it, and this was accepted. Package
@@ -1077,8 +1077,8 @@ which session made a commit, so the daemon watches tool calls for them.
   dropped after an hour, and the oldest goes once 128 are held, so a call whose end never comes (it
   was cancelled, the hook crashed) can't pile them up. A call with no snapshot credits nothing.
 - **Which worktree.** The one the call started in, and the one it ended in if that is another
-  worktree of the clone: the start's ref tips are the whole clone's, so they keep either
-  worktree's history out, all but a detached HEAD's in the other (#60). A `cd` inside a Bash call leaves the hook's working directory where it
+  worktree of the clone: the start's tips are the whole clone's, every worktree's detached HEAD
+  among them, so they keep either worktree's history out (#60). A `cd` inside a Bash call leaves the hook's working directory where it
   was (seen on 2.1.312, 2026-10-29), so a call ends elsewhere only when Claude Code itself has
   moved, and what `cd ../other && git commit`, or `git -C ../other commit`, makes in another
   worktree isn't credited. The hook finds the clone from its working directory, and a call in
@@ -1087,8 +1087,8 @@ which session made a commit, so the daemon watches tool calls for them.
 - **What it costs.** A call that cannot run a command (`Read`, `Glob`, `Grep`, `Edit`, `Write`
   and the like, named in `internal/hook`) isn't bracketed. Any other tool is, MCP tools and
   subagents included. The start is one `git` process: the hook finds the clone from its files, and
-  `attrib.Head` reads HEAD from the worktree's git directory and asks git only for the refs (a
-  reftable repository, or one git might find differently, takes three). It can't be made to run
+  `attrib.Head` reads HEAD from the worktree's git directory and the other worktrees' HEAD files, and asks git only for the refs (a
+  reftable repository, or one git might find differently, takes four). It can't be made to run
   without the call waiting: a commit made before the snapshot would count as old history. The end
   is answered at once, and the daemon finds the commits after, with two more; a `lookup` waits for
   that, and so does the next call's start for the end's snapshot, as that call could otherwise
