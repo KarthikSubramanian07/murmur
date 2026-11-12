@@ -44,6 +44,7 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 		return
 	}
 	d.adoptTagsLocked(s)
+	d.adoptMutesLocked(s)
 	d.adoptExplainedLocked(s)
 	adopted := d.adoptLocked(s, name)
 	if !adopted && d.st.NameHolders[name] == s.id && d.st.SessionNames[s.id] == name {
@@ -290,7 +291,7 @@ func isAgent(sessionAgent, agent string) bool {
 }
 
 // toolOps are the requests an MCP server makes only when the agent calls one of Murmur's tools.
-var toolOps = map[string]bool{proto.OpWho: true, proto.OpLookup: true, proto.OpStatus: true, proto.OpTags: true,
+var toolOps = map[string]bool{proto.OpWho: true, proto.OpLookup: true, proto.OpStatus: true, proto.OpTags: true, proto.OpMute: true,
 	proto.OpSend: true, proto.OpInbox: true}
 
 // hookedAgents are the agents Murmur's hook runs in: those join installs it in (#202, #225), and Pi,

@@ -28,6 +28,9 @@ const (
 	OpLookup  = "lookup"
 	// OpTags adds and removes the calling session's own tags (#198).
 	OpTags = "tags"
+	// OpMute mutes the session called Name for the calling session, or with Unmute undoes that
+	// (#27). With no Name it only lists whom the caller has muted.
+	OpMute = "mute"
 	// OpToolStart and OpToolEnd bracket one tool call, for the hook: the daemon snapshots the
 	// worktree at the start and credits the commits that appeared by the end (#21).
 	OpToolStart = "toolstart"
@@ -83,8 +86,9 @@ const (
 //	    message as a turn by its client's own command line (#135)
 //	17: groups (#184): OpSend to a group's tag, and OpTags's For. A daemon of 16 or less refuses
 //	    the first and, not knowing For, would put the tags meant for others on the caller.
+//	18: OpMute (#27): a session's MCP server from this version on asks it of the daemon.
 //	19: a hook's Child and ParentNative: the session is one another session started, and goes
-//	    through it (#452). 18 is #444's.
+//	    through it (#452)
 const Protocol = 19
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
@@ -215,7 +219,9 @@ type Request struct {
 	For    []string `json:"for,omitempty"`
 
 	// Name is the session OpLookup describes: a name, or device/session. Limit caps the messages.
-	Name string `json:"name,omitempty"`
+	// For OpMute it is the name of the session to mute, or with Unmute to unmute.
+	Name   string `json:"name,omitempty"`
+	Unmute bool   `json:"unmute,omitempty"`
 
 	// For OpToolStart and OpToolEnd, which carry ClaudeSession and ClientPID too. ToolUseID pairs
 	// the two ends of one call; Claude Code gives both the same one, and calls run in parallel.
@@ -320,6 +326,8 @@ type Response struct {
 	// caller's tags after an OpTags.
 	Filter string     `json:"filter,omitempty"`
 	Tags   []tags.Tag `json:"tags,omitempty"`
+	// Muted is, after an OpMute, the names of the sessions the caller has muted.
+	Muted []string `json:"muted,omitempty"`
 
 	// PageKey is OpPageKey's key: the page trades it once, within a minute, for its token.
 	PageKey string `json:"pageKey,omitempty"`
@@ -380,7 +388,8 @@ type SessionDetail struct {
 	Committed []string   `json:"committed,omitempty"` // branches it has committed to, most recent first
 	Doing     string     `json:"doing,omitempty"`
 	Started   time.Time  `json:"started,omitzero"`
-	Tags      []tags.Tag `json:"tags,omitempty"` // in order of name (#198)
+	Tags      []tags.Tag `json:"tags,omitempty"`  // in order of name (#198)
+	Muted     []string   `json:"muted,omitempty"` // the sessions it has muted, by name (#27)
 
 	// Running says the session is in a device's presence (or registered here), or in its grace.
 	// Reachable says a message sent now will be queued in the session's inbox: it is connected, and its device's

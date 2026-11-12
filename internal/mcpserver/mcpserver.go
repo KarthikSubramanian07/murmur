@@ -661,6 +661,10 @@ type (
 		Remove []string `json:"remove,omitempty" jsonschema:"tags to take off yourself"`
 		For    []string `json:"for,omitempty" jsonschema:"other sessions to add to a group, by name from who: add then holds group: tags only, and goes to them, not to you unless you list your own name too"`
 	}
+	muteIn struct {
+		Name   string `json:"name,omitempty" jsonschema:"the name of the session to mute (quiet-otter, from who); leave it out to list whom you have muted"`
+		Unmute bool   `json:"unmute,omitempty" jsonschema:"true to undo your mute of that session"`
+	}
 	statusIn struct {
 		Doing string `json:"doing" jsonschema:"what you are working on now, in one line"`
 	}
@@ -676,7 +680,7 @@ type (
 )
 
 // toolNames are the tools tools lists, for taking them away again.
-var toolNames = []string{"who", "lookup", "status", "tags", "send", "inbox"}
+var toolNames = []string{"who", "lookup", "status", "tags", "send", "inbox", "mute"}
 
 func (s *server) tools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "who", Description: "Show the agents working in this repo across the team: each device and " +
@@ -729,6 +733,13 @@ func (s *server) tools(srv *mcp.Server) {
 		func(ctx context.Context, req *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, any, error) {
 			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpInbox})
 			return result(view.Inbox, resp, err)
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "mute", Description: "Stop getting anything another session sends: its messages to you, to your device and to everyone. " +
+		"For a session whose messages keep interrupting your work after you have asked it to stop; do-not-disturb (tags) is for holding everyone's for a while. " +
+		"It isn't told, unless it sends to you again, when " + brand.Product + " tells it you have muted it. Mutes show in lookup and on the page, where your user can undo one."},
+		func(ctx context.Context, req *mcp.CallToolRequest, in muteIn) (*mcp.CallToolResult, any, error) {
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpMute, Name: in.Name, Unmute: in.Unmute})
+			return result(view.Muted, resp, err)
 		})
 }
 

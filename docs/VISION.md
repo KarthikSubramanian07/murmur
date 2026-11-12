@@ -932,7 +932,7 @@ call.
   Sessions view; `lookup` still has the branches.
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
   `.git/murmur/settings.json`, replaced whole; "Delivering a message as a turn" says what they do.
-  Mutes (#27) aren't built, so the page shows none and refuses to unmute.
+  Settings also lists every mute (see "Mutes"), with a button to undo those of this device's sessions.
 - **Open page, running daemon.** The page asks for its state every 3 s, 15 s in a hidden tab. A
   call that carries the token, from a page someone can see, counts as an open page for 2 minutes,
   and an open page stops the 10-minute countdown the way a session does: a daemon with no sessions
@@ -1235,6 +1235,42 @@ tag with behaviour, below.
   still carries it, for daemons from before it, which show presence's tags as they are. `who human`
   lists the people and `who -human` the agents.
 
+### Mutes
+
+Tyler decided (2026-10-28, #27) that a session can mute another, by name, and that there is mute
+only, no separate block. Built 2026-11-11. The muting session gets nothing the other sends from
+then on: not a message to it, to its device, or to everyone.
+
+- **The muting session's device decides.** It keeps the mutes (`state.json`, by the session's name
+  as tags are, so they outlast a resume or a restart) and doesn't queue a message from a muted
+  session for the one that muted it. Other sessions on the device still get a broadcast. Because
+  the receiver drops it, a mute holds whatever the sender's daemon knows, its version included.
+- **Mutes are on the bus, in presence.** Each session's presence lists the names it has muted, at
+  most 50, inside the box. Presence is the device's current state, so a mute needs no event to
+  replay, and a device back after a week shows its mutes as they are. Anyone on the team sees who
+  muted whom: `lookup` says "has muted", and the page lists every mute.
+- **The muted session isn't told when it happens.** It learns of it when it sends to the session
+  that muted it: its own daemon has read that presence, refuses the `send`, and says the other has
+  muted it. That is the tool's answer, from Murmur and no agent, so it wakes nobody (#25), and the
+  message isn't written to the bus at all. A message sent to the muting session before the sender's
+  daemon has read the mute (seconds) is written, and would be dropped with its sender sure it had
+  arrived. So **a mute takes 30 seconds to hold against direct messages** (Tyler, 2026-11-11):
+  for that long after it, by the muting device's clock alone, they still reach the muting session.
+  That is longer than a presence takes to be pushed and read. After it the mute holds against
+  every sender, whatever its daemon knows. The cost is a message or two after muting. What is
+  left is #466: a sender whose daemon stays ignorant for longer (an older version, or cut off
+  from the bus) is never told. A message from a muted session to everyone, or to a
+  device, is sent as usual, and `send` tells its sender which sessions didn't get it because they
+  have muted it (Tyler, 2026-11-11), as far as its daemon knows then.
+- **A mute names a session by its name**, which the registry never gives out twice, so it can't
+  land on another session, and it follows the conversation across session IDs. It lasts until it
+  is undone. A person can't be muted, nor a session that has no name yet.
+- **A human can undo one, on the page of the muting session's device.** An agent can't silence a
+  teammate's agent without its human able to see it and undo it. The page of another device lists
+  the mute and can't undo it: that would take an event to the muting device, as a human's tags on
+  another device's session do, and nobody has needed it. The session can mute again afterwards;
+  a human's undo doesn't stand over it as a human's tag does.
+
 ### Groups
 
 #184, built 2026-11-11. #198 first had a "group" type that a repo declared in a tag file; with tags
@@ -1285,7 +1321,9 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   refused.
 - **On the page** a group is a conversation, as a device's and everyone's are, with the sessions
   that have the tag as its members, and a person can write to it.
-- **Left open.** Whether a mute (#27) covers what a muted session sends through a group.
+- **A mute covers a group** (#27): what a muted session sends to a group is dropped for a member
+  that has muted it, as its message to everyone is, and its `send` names that member as not
+  having got it.
 
 ### When a session stays the same session
 
