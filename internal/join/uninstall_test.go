@@ -514,4 +514,31 @@ func TestUninstallLeavesALinkedFolder(t *testing.T) {
 	if s := r.String(); !strings.Contains(s, "which is a link or a file rather than a folder") {
 		t.Errorf("report:\n%s", s)
 	}
+
+	// The same for its sessions folder, which holds a running server's record (from the second review).
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	sessions := filepath.Join(sb.root, "sessions-elsewhere")
+	if err := here.Publish(sessions, here.Session{ServerPID: os.Getpid()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sessions, filepath.Join(dir, "sessions")); err != nil {
+		t.Fatal(err)
+	}
+	if r, err = Uninstall(context.Background(), sb.Env, false); err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if fi, err := os.Lstat(filepath.Join(dir, "sessions")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the sessions link is gone or changed: %v", err)
+	}
+	if left, _ := here.Sessions(sessions); len(left) != 1 {
+		t.Errorf("the running server's record = %+v", left)
+	}
+	if s := r.String(); !strings.Contains(s, "whose sessions ("+filepath.Join(dir, "sessions")+") is a link or a file") || strings.Contains(s, "Removed "+brand.Product+"'s folder") {
+		t.Errorf("report:\n%s", s)
+	}
 }

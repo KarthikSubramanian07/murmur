@@ -300,11 +300,20 @@ func removeUserFolder(r *Report) (left []string) {
 			"so it wasn't touched. Delete what it points to once no agent session is using " + brand.Product + "."}
 	}
 	sessions := filepath.Join(dir, "sessions")
-	live, err := here.Sessions(sessions) // removes the records of servers that have exited
-	if err != nil {
-		r.Problems = append(r.Problems, "reading the records of agent sessions ("+sessions+"): "+err.Error())
+	var live []here.Session
+	switch fi, err := os.Lstat(sessions); {
+	case err != nil:
+	case !fi.IsDir():
+		// A link too: removing it would leave what it points to, a running server's record and all.
+		return []string{brand.Product + "'s folder in your config directory (" + dir + "), whose sessions (" + sessions + ") is a link or a file " +
+			"rather than a folder, so neither was touched. Delete them, and what they point to, once no agent session is using " + brand.Product + "."}
+	default:
+		live, err = here.Sessions(sessions) // removes the records of servers that have exited
+		if err != nil {
+			r.Problems = append(r.Problems, "reading the records of agent sessions ("+sessions+"): "+err.Error())
+		}
+		os.Remove(sessions)
 	}
-	os.Remove(sessions)
 	id := filepath.Join(dir, "id")
 	removedID := false
 	if fi, err := os.Lstat(id); err == nil && fi.Mode().IsRegular() {
