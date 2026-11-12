@@ -691,10 +691,12 @@ since it wasn't installed). The details, and where each came from, are in the co
   after 30 minutes without one, as a stopped session is; its T3 route outlives that as any does.
 - **Delivery.** Inside T3 the existing `t3 thread send` handoff needed nothing new: an OpenCode and
   a Muse thread each took a message as a turn and answered it with `send`, nobody typing
-  (2026-11-01). Outside T3, OpenCode, Muse and Grok have no way in that Murmur uses yet (OpenCode
-  has an HTTP API and plugins, Muse's session messaging isn't on Windows), so a message waits in the
-  inbox. OpenCode and Muse have no hook of Murmur's, so no notice either; Grok has one (below). Pi
-  has both since 2026-11-09 (#205): see "Pi's extension" under "Delivering a message as a turn".
+  (2026-11-01). Outside T3, Muse and Grok have no way in that Murmur uses yet (Muse's session
+  messaging isn't on Windows, and no way to start a turn in Grok was found), so a message waits in
+  the inbox. OpenCode and Muse have no hook of Murmur's, so no notice either; Grok has one (below). Pi
+  has both since 2026-11-09 (#205), and OpenCode 2 takes a turn through its server since
+  2026-11-11 (#135): see "Pi's extension" and "The client's command line" under "Delivering a
+  message as a turn".
 - **Titles.** Inside T3 the thread's title is read as for any thread. Outside T3 none is read for
   these agents: their IDs aren't Codex threads.
 - **Tool approval.** OpenCode and Grok have a rule for it, which join writes; Muse and Pi have none.
@@ -1206,8 +1208,9 @@ agents that mattered.
 
 ### Session tags
 
-#198, first part built 2026-11-08: tags set by hand, the model, and search by tags. Groups, rules in
-a tag file, subscriptions and the lifecycle state come later, in the issue's order. The first
+#198, first part built 2026-11-08: tags set by hand, the model, and search by tags. Groups followed
+(#184, 2026-11-11; see Groups, below). Rules in a tag file and subscriptions are put off, perhaps for
+good (#441), and the lifecycle state was dropped (#185). The first
 version also had an availability state (#186): `unavailable` made `send` refuse a session and
 broadcasts skip it. Tyler had it taken out before merging (2026-11-08), so no tag carries behaviour:
 `unavailable` is a label like any other. Tyler then asked for `do-not-disturb` (2026-11-08), the one
@@ -1261,6 +1264,58 @@ tag with behaviour, below.
   daemon drops it from anything else's tags in presence or in `state.json`. A person's presence
   still carries it, for daemons from before it, which show presence's tags as they are. `who human`
   lists the people and `who -human` the agents.
+
+### Groups
+
+#184, built 2026-11-11. #198 first had a "group" type that a repo declared in a tag file; with tags
+free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a group.
+
+- **A group is a tag**, such as `group:ui`, with no slash in it. Its members are the sessions that
+  have the tag, and it exists while it has members. Nothing declares it.
+- **The tag is the address.** `send` to `group:ui` reaches every member but the sender. No session
+  name, device ID or `*` has a colon, so a group shadows none of them. Only `group:` tags are
+  addresses: a chat has members who know they are in it, which `reviewing` or `model:opus-5.5`
+  doesn't promise (Tyler, 2026-11-11). `send` takes one tag, not `who`'s filter, because a filter
+  has no name to answer to.
+- **A session joins by setting the tag and leaves by removing it**, as with any tag, and can be in
+  several groups. So a group can stand for a topic: sessions that want to hear of changes to `main`
+  join `group:main-changes`, and whoever lands one sends to it (Tyler, 2026-11-11). That is #178's
+  ping done by hand.
+- **An agent can add other sessions to a group**, with `tags` and their names in `for`. It is the
+  only tag one agent can give another: without that limit any agent could put `do-not-disturb` on
+  another, or change its `model:`. It can't take a session out. The add goes to each session's
+  device as a `group.add` event on the adder's log, and that device makes the tag the session's
+  own, so the session can remove it and a human's mark stands over it. It is a type of its own
+  because every daemon applies a `tags` event as a human's choice, which the session can't undo.
+  An add more than an hour old when it is read isn't applied, nor one from history a daemon passes
+  over unless it was sent since the session started: an add carries no order against the session's
+  own changes, so an old one read late (its log waited for a team key, or a daemon restarted) could
+  put back a member who has left. An add that would take a session past its 12 tags is refused to
+  the adder, since the groups become the session's own tags.
+- **Each receiving device decides who is in.** A message to a group goes on the bus addressed to
+  the tag, and each daemon gives it to those of its sessions that have the tag when it reads the
+  message. A device is the only authority on its sessions' tags, so no sender's view of the members
+  can be out of date, and an add followed at once by a message, both on the adder's log, reaches
+  the session added. The sender is told who it reaches as far as presence shows.
+- **How a member learns it is in a group.** #184 first asked for a notice from Murmur when a
+  session is added. Murmur has no notice of its own to give, only messages, so the group's message
+  says it: its first line is "Message sent in group:ui from quiet-otter" (Tyler's wording,
+  2026-11-12), and its last says the session is in the group, offers the
+  group or the sender to answer and says that removing the tag leaves. That long line comes once: a
+  session's later messages from the same group end "Reply with Murmur's `send` to group:ui or
+  quiet-otter, if a reply is needed" (Tyler, 2026-11-12), kept as a person's explanation is (#345).
+  A session added to a group nobody writes to sees it only in its own tags.
+- **No loop guard**, as for any message (Tyler, 2026-10-29), though an answer to a group gives
+  every member a turn. The instructions ask agents to answer the group only with what the others
+  need. If groups prove noisy, the next step is a group message that never extends a running turn.
+- **Older daemons.** Presence says whether a device's daemon knows groups (`groups`, inside the
+  box). One that doesn't takes a message addressed to a group as not valid and passes over it, and
+  passes over `group.add`. Its sessions can still carry a `group:` tag, set by themselves or by a
+  human, so a sender is told which members won't get the message, and an add to such a device is
+  refused.
+- **On the page** a group is a conversation, as a device's and everyone's are, with the sessions
+  that have the tag as its members, and a person can write to it.
+- **Left open.** Whether a mute (#27) covers what a muted session sends through a group.
 
 ### When a session stays the same session
 
@@ -1485,8 +1540,9 @@ was made so that a person's inbox and an agent's use one pair of words. The word
 message meets them:
 
 - *Queued:* the recipient's daemon has put it in the session's inbox. The daemon knows.
-- *Handed over:* the daemon has passed it to the session's client, by `t3 thread send` or the
-  messaging socket. Still queued, in the client now, and out of the daemon's inbox.
+- *Handed over:* the daemon has passed it to the session's client, by `t3 thread send`, the
+  messaging socket, or the client's own command line. Still queued, in the client now, and out of
+  the daemon's inbox.
 - *Delivered:* the recipient knows it is waiting. For an agent, the hook's notice (sender and
   subject) is in its context. For a person, it is in their inbox on the page, counted as unread;
   the page can't tell whether they looked.
@@ -1504,6 +1560,7 @@ whole then says a notice told of it, so the agent doesn't take it for a second m
 |---|---|---|
 | `t3 thread send` | read when the turn carrying it starts: at once in an idle thread, after the running turn in a busy one (a busy one only where the hook doesn't run, #202) | No. The daemon sees `t3` accept the message, not the turn start; T3's database would show it (`orchestration_v2_projection_messages`), but those tables are T3's own and may change |
 | The messaging socket (Claude Code outside T3; Pi's extension's, outside T3) | read when the client takes it as a turn | No: the socket answers nothing |
+| The client's command line (`codex queue`, `opencode api`; Codex and OpenCode 2 outside T3, #135) | read when the turn carrying it starts: at once in an idle session, after the running turn in a busy one | No. The daemon sees the command accept the message, not the turn start |
 | The hook's notice (Claude Code, and Pi through its extension) | delivered when the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt, with the sender and subject. Where the page's busy setting says whole message (#204), it is read then instead. So is a message with no body, whatever the setting: its notice would show all of it, and until 2026-11-09 it stayed unread and came again as a turn (#355). A message told of is read later by `inbox`, by the `Stop` hook keeping the turn going with it, or as a turn handed over when the turn ends | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
 | `inbox` | read when the tool's result returns to the agent | Partly: the daemon sees the messages leave in its answer, not the answer reach the agent through MCP |
 
@@ -1624,9 +1681,9 @@ A body past the limit is cut, as in `inbox`.
     older, it stays a notice, as it would have without the turn.
   - *Why not hand it to T3 as well*: T3 can't take back a queued message, so the agent could read
     it with `inbox` mid-turn and then get it again as a turn.
-  - *Where the hook doesn't run* (OpenCode and Muse in T3, as of 2026-11-09), nothing tells the
-    daemon the session is at work, and a message goes to T3 as before: without the handoff the
-    session would hear nothing at all. Codex and Grok have the hook since #225, and Pi since #205.
+  - *Where the hook doesn't run* (OpenCode and Muse in T3, as of 2026-11-09, and OpenCode 2
+    outside it), nothing tells the daemon the session is at work, and a message goes to T3, or to
+    OpenCode's server, as before: without the handoff the session would hear nothing at all. Codex and Grok have the hook since #225, and Pi since #205.
   - *Subagents.* A subagent's tool call carries the parent's `session_id`, with `agent_id` set
     (Claude Code 2.1.312, 2026-10-29). The hook tells it nothing, as its notice would land in the
     subagent's context, not the session's (inferred, not seen; #188), and it doesn't mark the
@@ -1734,6 +1791,70 @@ A body past the limit is cut, as in `inbox`.
   tried: Windows' named pipe, and Pi inside T3 (where the hook now runs too, and the socket is
   unused). Not covered: Pi's commits aren't credited, as no call is bracketed, and a session
   without a file (`--no-session`) gets turns and no notices.
+- **The client's command line (2026-11-11, #135)** is for Codex and OpenCode 2 outside T3, which
+  until then got a message only through `inbox` (and Codex a notice, where its hook runs). Each
+  has a command that does what `t3 thread send` does, so the daemon runs it:
+  - *Codex:* `codex queue --thread <thread> --message <text>`, with `CODEX_HOME` set to the
+    session's. The message goes to the thread's queue, and a thread that is open takes it as its
+    next turn. Seen on Codex 0.167.0 (2026-11-11): a terminal session that sat idle showed the
+    message as a prompt and ran the turn about 3 s later. Codex's hook runs there, so the daemon
+    knows when the session is at work, and a busy one gets the notice and its turn's end as before.
+  - *OpenCode 2:* `opencode api session.prompt --param sessionID=<session>` with the body
+    `{"text": ..., "delivery": "queue"}`, which asks the background server that every OpenCode 2
+    client on the machine shares. `"queue"` waits behind a running turn (the default, `"steer"`,
+    goes into it): OpenCode has no hook of Murmur's, so the daemon can't tell a busy session, and
+    it is handed the message either way, as an OpenCode thread in T3 is. Seen on OpenCode 2.2.0
+    the same day: the turn ran, and the terminal UI open on the session showed the message and the
+    answer. `session.synthetic` starts a turn too, and the terminal UI then shows the answer and
+    not what was asked, so it isn't used.
+  - *Which program.* The session's MCP server names the program that started it (its parent
+    process), if that is a `codex` or an `opencode`, and the daemon runs that one. Neither
+    command reads the text from standard input or a file, so it goes on the command line, and
+    the name on `PATH` won't do: on Windows it is npm's `.cmd` shim, which can't carry a newline,
+    and it may be another install. On Windows a message whose command line would pass 32,767
+    characters (a body near its 32 KiB limit) isn't handed over, and stays in the inbox.
+  - *Only while the session's MCP server is connected*, as for the socket. A Codex thread nobody
+    has open keeps a queued message until it is next resumed, and by then it has left Murmur's
+    inbox. Connected doesn't mean watched: Codex's background app server kept a thread, and its
+    MCP server, after the terminal on it closed, and 40 minutes later a queued message ran a turn
+    there with no window open (seen 2026-11-11; the answer was in the thread). The page's wake
+    setting is what limits that, as it does for an idle T3 thread. For OpenCode this is stricter than it need be: its server would run the turn with no
+    window open, but a session of the shared server is dropped after 30 minutes without a tool
+    call, and a message after that waits in the inbox.
+  - *OpenCode's shared server only.* The server names OpenCode's program only when the process
+    that started it is the one registered in `service.json` in OpenCode's state directory
+    (`~/.local/state/opencode`, `"pid"`). A session of a private server (`--standalone`,
+    `--server`) is left to the inbox: `opencode api` would start the shared server to ask it
+    about a session it doesn't have. So is OpenCode 1, which has no `api` command; its terminal UI
+    serves HTTP on a port of its own that nothing tells Murmur. If a later OpenCode keeps the
+    registration elsewhere, its sessions go back to the inbox, silently.
+  - *A failure* is handled as `t3 thread send`'s is: tried once more only if the command never
+    started, and otherwise left to the inbox and the hook's notice. A Codex from before `queue`
+    fails every time, and the daemon's log says so once per session.
+  - *When it is a turn.* A Codex session has no way in until it has called one of Murmur's
+    tools, which is how its server learns the thread. And the wake setting counts for these as
+    for every session: by default one idle more than a few minutes isn't woken. For OpenCode,
+    with no hook, "last at work" is its last call to a Murmur tool, and with no hook there is no
+    notice either, so a message that comes after that waits in the inbox unannounced.
+  - *On the command line.* The text is an argument of the command for the second or so it runs,
+    where the machine's other users can read it (`/proc/<pid>/cmdline` on Linux) and where
+    process auditing records it. Every other way in passes it over a pipe or a socket. OpenCode's
+    HTTP API (the `url` and `password` in `service.json`) and Codex's app server
+    (`thread/queue/add`) would avoid that, and the Windows length limit; both are more of each
+    client's insides than the documented command.
+  - *Whoever runs the client.* The way in is there for any session whose MCP server a `codex`
+    started, not only a terminal's: Codex's desktop app, `codex exec`, a thread another tool
+    drives through `codex app-server` (Claude Code's codex-sub plugin does), and a subagent's
+    thread once it calls a Murmur tool. An OpenCode child session likewise. Each can be handed a
+    turn its driver didn't start, within the wake setting; before, they had the inbox only. Not
+    tried.
+  - *Not covered (#446).* Muse and Grok outside T3 (neither was installed where this was built). A Codex
+    session run by T3 whose config doesn't forward `T3CODE_CLI_PATH` reads as one outside T3, and
+    gets `codex queue` (not tried). OpenCode's one MCP process per directory has the environment
+    of whoever started the shared server, so a T3 thread on a server a terminal started reads as
+    outside T3, and a terminal session on one T3 started as inside (not tried). Whether Codex's desktop app shows a queued message as the
+    terminal does wasn't looked at. macOS and Linux were not tried with the real programs, only
+    Windows.
 - **A thread that is idle (#87).** T3 stops an idle thread's provider process, and with it Murmur's
   MCP server, after about 30 minutes (seen live on 2026-10-30: both threads' sessions stopped at
   03:30, half an hour after their last turn), so the session of a thread that is idle is the normal

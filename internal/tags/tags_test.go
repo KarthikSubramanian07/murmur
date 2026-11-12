@@ -354,3 +354,53 @@ func TestAFailedChangeLeavesTheKeptStateAlone(t *testing.T) {
 		t.Errorf("the kept marks changed: %v", kept.Human)
 	}
 }
+
+func TestIsGroup(t *testing.T) {
+	for name, want := range map[string]bool{
+		"group:ui":           true,
+		"group:main-changes": true,
+		"group:a.b_c:d":      true,
+		"group:":             false,
+		"group":              false,
+		"group:ui/web":       false, // a slash parts a device from its session in an address
+		"groups:ui":          false,
+		"model:opus-5.5":     false,
+		"Group:ui":           false,
+		"group:UI":           false,
+	} {
+		if got := IsGroup(name); got != want {
+			t.Errorf("IsGroup(%q) = %v; want %v", name, got, want)
+		}
+	}
+}
+
+func TestOnlyGroupsAreGiven(t *testing.T) {
+	st := &State{Self: []string{"reviewing"}}
+	if err := st.Given([]string{"Group:UI", "group:bus"}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"group:bus", "group:ui", "reviewing"}; !slices.Equal(st.Self, want) {
+		t.Errorf("Self is %q; want %q", st.Self, want)
+	}
+	// The session can take a group it was given off again, as any tag of its own.
+	if err := st.SetSelf(nil, []string{"group:ui"}); err != nil || slices.Contains(st.Self, "group:ui") {
+		t.Errorf("after removing group:ui: %q, %v", st.Self, err)
+	}
+	for _, bad := range [][]string{{DoNotDisturb}, {"model:opus-5.5"}, {"group:ui", "reviewing"}, {"group:"}, {Human}} {
+		before := slices.Clone(st.Self)
+		if err := st.Given(bad); err == nil {
+			t.Errorf("Given(%q) was allowed", bad)
+		}
+		if !slices.Equal(st.Self, before) {
+			t.Errorf("a refused Given(%q) changed Self to %q", bad, st.Self)
+		}
+	}
+	// A human's mark stands over what another agent gives.
+	st = &State{Human: map[string]Mark{"group:ui": {On: false, At: time.Now()}}}
+	if err := st.Given([]string{"group:ui"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := Effective(st.Self, nil, st.Human); Has(got, "group:ui") {
+		t.Errorf("the session has %v; want group:ui kept off, as a human took it off", got)
+	}
+}

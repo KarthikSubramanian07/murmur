@@ -783,6 +783,9 @@ func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode sy
 		if (e.Type == bus.SessionStarted || e.Type == bus.SessionStopped) && (mode != modeSkip || !e.At.Before(d.started.Add(-time.Minute))) {
 			d.recordSessionEventLocked(e) // for the page's Recent view; history from before this run isn't
 		}
+		if e.Type == bus.GroupAdd {
+			d.applyGroupAddLocked(e, mode) // unless it is old: the session may have left the group since
+		}
 		if e.Type == bus.Message {
 			// The name a message carries is shown only if it is its sender's (personSenderLocked),
 			// and never recorded: see notePersonLocked.
@@ -1054,8 +1057,9 @@ func (d *Daemon) sentSinceLocked(e bus.Event, id string, mode syncMode) bool {
 	return !e.At.Before(from.Add(-time.Minute))
 }
 
-// addressedLocked says whether e is for session id on this device: sent to it, to this device,
-// or to everyone, and not by it. A message to a session that no longer holds its name is for the
+// addressedLocked says whether e is for session id on this device: sent to it, to this device, to
+// a group it is in, or to everyone, and not by it. Who is in a group is decided here, by the tags
+// the session has when the message is read: its own device is the one that knows them (#184). A message to a session that no longer holds its name is for the
 // session that does instead (see forwardLocked). Caller holds mu.
 func (d *Daemon) addressedLocked(e bus.Event, id string) bool {
 	addr := bus.Addr(d.device, id)
@@ -1064,6 +1068,9 @@ func (d *Daemon) addressedLocked(e bus.Event, id string) bool {
 	}
 	if id == bus.PersonSession {
 		return e.To == addr // agents' broadcasts show in their group chats, not as a person's unread
+	}
+	if bus.IsGroup(e.To) {
+		return d.hasTagLocked(id, e.To)
 	}
 	if e.To == addr {
 		return d.forwardLocked(e.To) == ""
@@ -1151,6 +1158,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	// Only what was inside the box says which epoch a device has read and which keys it holds.
 	pres.Epoch, pres.Holds = "", nil
 	if pres.Box != nil {
+		pres.Groups = false
 		open, err := bus.DecryptPresence(pres, d.keyringLocked())
 		if err != nil {
 			// Encrypted for a team key this device hasn't been granted yet, or for its writer alone
@@ -1524,7 +1532,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 	}
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick, At: d.nextPresenceAtLocked(),
-		Sessions: []bus.SessionInfo{}}
+		Sessions: []bus.SessionInfo{}, Groups: true}
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must
 	// reach the live one, not the one about to stop.

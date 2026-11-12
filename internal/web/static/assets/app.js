@@ -1754,7 +1754,7 @@ function githubItem(e) {
 function recentItem(m, at) {
   const from = fromName(m);
   const c = conversationOf(m);
-  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "device" ? [icon("laptop"), host(m.to)] : [avatar(toName(m)), toName(m)];
+  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "group" ? [icon("tag"), m.to] : m.toKind === "device" ? [icon("laptop"), host(m.to)] : [avatar(toName(m)), toName(m)];
   const open = () => {
     ui.filter = null;
     ui.conversation = c.key;
@@ -1785,7 +1785,7 @@ function recentItem(m, at) {
 // it (WCAG 2.5.3), Space works as well as Enter, and a link in its text is left to the conversation
 // it opens, since a button can't hold another control.
 function openable(el, m, at) {
-  const to = m.toKind === "all" ? "Everyone" : m.toKind === "device" ? host(m.to) : toName(m);
+  const to = m.toKind === "all" ? "Everyone" : m.toKind === "group" ? m.to : m.toKind === "device" ? host(m.to) : toName(m);
   el.setAttribute("aria-label", fromName(m) + " to " + to + ", " + clockTime(at) + ": " + (m.subject || ""));
   const space = (e) => {
     if (e.key !== " ") return;
@@ -1798,8 +1798,8 @@ function openable(el, m, at) {
   return el;
 }
 
-// Everyone reaches every session in the repo; a device's chat reaches every session on it. Anyone
-// who has posted is in it too, running or not.
+// Everyone reaches every session in the repo; a device's chat reaches every session on it, and a
+// group's every session that has its tag (#184). Anyone who has posted is in it too, running or not.
 function groupMembers(c) {
   const posted = new Map();
   const addrs = new Map(); // where each sender posted from, for one that isn't running
@@ -1810,10 +1810,30 @@ function groupMembers(c) {
   const rows = [];
   for (const d of devices()) {
     if (c.kind === "device" && d.id !== c.title) continue;
-    for (const s of d.sessions) rows.push({ name: s.name, d, s, posted: posted.get(s.name) || 0 });
+    for (const s of d.sessions) {
+      if (c.kind === "group" && !inGroup(s, c.title)) continue;
+      rows.push({ name: s.name, d, s, posted: posted.get(s.name) || 0 });
+    }
   }
   for (const [name, n] of posted) if (!rows.some((r) => r.name === name)) rows.push({ name, addr: addrs.get(name), d: findPerson(name)?.device || null, s: null, posted: n, person: isPerson(name) });
   return rows;
+}
+
+// A session is in a group while it has the group's tag.
+function inGroup(s, group) {
+  return (s.tags || []).some((t) => t.name === group);
+}
+
+// The groups some session is in now, by their tags.
+function liveGroups() {
+  const out = new Set();
+  for (const d of devices()) for (const s of d.sessions) for (const t of s.tags || []) if (isGroupTag(t.name)) out.add(t.name);
+  return [...out].sort();
+}
+
+// As tags.IsGroup has it: group: and a name, with no slash.
+function isGroupTag(name) {
+  return name.startsWith("group:") && name.length > 6 && !name.includes("/");
 }
 
 function membersButton(c) {
@@ -1856,7 +1876,7 @@ function membersPanel(c, rows) {
     "div",
     // A disclosure: the list follows its button, and Escape folds it back onto the button.
     { class: "g-members-panel", id: "members-panel", role: "group", "aria-label": "Members", onclick: (e) => e.stopPropagation() },
-    h("div", { class: "g-mp-head" }, c.kind === "all" ? "Everyone in this repo" : "Every session on " + host(c.title)),
+    h("div", { class: "g-mp-head" }, c.kind === "all" ? "Everyone in this repo" : c.kind === "group" ? "Every session tagged " + c.title : "Every session on " + host(c.title)),
     [...groups.values()].map((g) => [
       h("div", { class: "g-mp-sec" }, g.d && deviceDot(g.d), g.title, g.host && h("span", null, g.host), h("span", { class: "g-mp-n" }, g.rows.length)),
       g.rows.map((r) =>
@@ -2575,9 +2595,15 @@ function messageDetail(m) {
 // a session that came back under a new session ID stays in the same one.
 function conversationOf(m) {
   if (m.toKind === "all") return { key: "all", kind: "all", title: "Everyone" };
+  if (m.toKind === "group") return groupConversation(m.to);
   if (m.toKind === "device") return { key: "device:" + m.to, kind: "device", title: m.to };
   const pair = [...new Set([fromName(m), toName(m)])].sort();
   return { key: "dm:" + JSON.stringify(pair), kind: "dm", title: pair.join(" & "), pair };
+}
+
+// A group's conversation: what was sent to its tag.
+function groupConversation(group) {
+  return { key: "tag:" + group, kind: "group", title: group };
 }
 
 // Newest conversation first, and each one's messages oldest first. The page holds messages as they
@@ -2598,9 +2624,17 @@ function conversations() {
   if (!ui.filter || isMyFilter()) {
     for (const item of ui.outbox) if (!byKey.has(item.key)) byKey.set(item.key, { ...item.conversation, messages: [] });
   }
+  // A group with members is listed before anyone writes to it, so a person can be the first; it
+  // sits below the conversations that have messages.
+  if (!ui.filter) {
+    for (const g of liveGroups()) {
+      const c = groupConversation(g);
+      if (!byKey.has(c.key)) byKey.set(c.key, { ...c, messages: [], quiet: true });
+    }
+  }
   const list = [...byKey.values()];
   for (const c of list) c.messages.sort((a, b) => a.sortAt - b.sortAt);
-  const latest = (c) => (c.messages.length ? c.messages[c.messages.length - 1].sortAt : Infinity);
+  const latest = (c) => (c.messages.length ? c.messages[c.messages.length - 1].sortAt : c.quiet ? 0 : Infinity);
   return list.sort((a, b) => latest(b) - latest(a) || 0); // two with no messages subtract to NaN
 }
 
@@ -2627,6 +2661,7 @@ function avatar(name) {
 // A group chat is named for whose it is, and its face is its members'.
 function groupName(c) {
   if (c.kind === "all") return "Everyone";
+  if (c.kind === "group") return c.title;
   const d = (ui.state?.devices || []).find((x) => x.id === c.title);
   if (!d) return host(c.title);
   if (d.self) return "This device";
@@ -3558,6 +3593,7 @@ function pendingIn(c) {
 function targetOf(c) {
   if (!me()) return null;
   if (c.kind === "all") return { to: "*", label: "everyone", count: sessionCount() };
+  if (c.kind === "group") return { to: c.title, label: c.title, count: groupMembers({ ...c, messages: [] }).length };
   if (c.kind === "device") {
     const d = (ui.state?.devices || []).find((x) => x.id === c.title);
     return { to: c.title, label: groupName(c), count: d ? d.sessions.length : 0 };
@@ -3607,7 +3643,7 @@ function composer(c, target) {
   const who =
     c.kind === "dm"
       ? [statusDot(target.to), h("span", { class: "truncate" }, target.to)]
-      : [icon(c.kind === "all" ? "broadcast" : "laptop"), h("span", { class: "truncate" }, c.kind === "all" ? "Everyone" : target.label), h("span", { class: "composer-chip-n" }, plural(target.count, "session"))];
+      : [icon(c.kind === "all" ? "broadcast" : c.kind === "group" ? "tag" : "laptop"), h("span", { class: "truncate" }, c.kind === "all" ? "Everyone" : target.label), h("span", { class: "composer-chip-n" }, plural(target.count, "session"))];
   return h(
     "div",
     { class: "composer-wrap" },

@@ -79,7 +79,11 @@ const (
 //	    clear, so an upgraded mur replaces it where it may.
 //	15: OpNick, a device's nickname (#190): a daemon of 14 or less answers `mur nickname` with
 //	    "unknown op", so the command replaces it where it may.
-const Protocol = 15
+//	16: the route's CodexCLI and OpenCodeCLI: a Codex or OpenCode session outside T3 is handed a
+//	    message as a turn by its client's own command line (#135)
+//	17: groups (#184): OpSend to a group's tag, and OpTags's For. A daemon of 16 or less refuses
+//	    the first and, not knowing For, would put the tags meant for others on the caller.
+const Protocol = 17
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
@@ -193,9 +197,13 @@ type Request struct {
 	// Add and Remove are the tags OpTags adds to the caller and takes from it. Tags is what OpWho
 	// searches by: a session is listed when it has every tag named, and none named after a dash
 	// (see tags.ParseFilter).
+	//
+	// For is the sessions OpTags adds to groups in place of the caller (#184), by name or address:
+	// Add then holds group tags only, and nothing is removed.
 	Add    []string `json:"add,omitempty"`
 	Remove []string `json:"remove,omitempty"`
 	Tags   []string `json:"tags,omitempty"`
+	For    []string `json:"for,omitempty"`
 
 	// Name is the session OpLookup describes: a name, or device/session. Limit caps the messages.
 	Name string `json:"name,omitempty"`
@@ -238,6 +246,13 @@ type Route struct {
 	// Codex home. A server names one, ~/.codex where it has no CODEX_HOME; only a server from before
 	// #88 leaves it empty, and the daemon then takes its own CODEX_HOME, else ~/.codex.
 	CodexHome string `json:"codexHome,omitempty"`
+	// CodexCLI and OpenCodeCLI are the client's own program, where its command line can put a
+	// message in the session as a turn outside T3 (package clientcli): the Codex that runs the
+	// thread Native names, or the OpenCode whose background server has the session Native names.
+	// The session's MCP server names the program that started it, and only one it takes for that
+	// client. At most one of the two is set.
+	CodexCLI    string `json:"codexCli,omitempty"`
+	OpenCodeCLI string `json:"openCodeCli,omitempty"`
 }
 
 // Hello registers a session.
@@ -418,6 +433,10 @@ type MessageView struct {
 	// person, before, which said in full that the person sees only what the session sends: this one
 	// ends with an agent's line (#345). Always false for an agent's message.
 	Explained bool `json:"explained,omitempty"`
+	// GroupKnown says the session this goes to has been given a message sent to the same group
+	// before, which said in full that it is in the group, how to answer and how to leave: this one
+	// ends with a short line (#184). Always false for a message that wasn't sent to a group.
+	GroupKnown bool `json:"groupKnown,omitempty"`
 	// Told is when the hook's notice told the session of this message, for one given whole after:
 	// its turn says so (#355). Zero for a message no notice told of.
 	Told time.Time `json:"told,omitzero"`

@@ -79,8 +79,8 @@ From then on, agents call Murmur's tools themselves. Nobody needs to type a comm
 | `who`    | Every session in the repo, on every machine: its name (like `quiet-otter`), agent, branch, status and last activity. |
 | `lookup` | One session in depth: the branches it has committed to, whether a message would reach it, and its recent messages. |
 | `status` | Sets the line others see next to your name. |
-| `tags`   | Short labels others can filter by, like `reviewing` or `model:opus-5.5`. `do-not-disturb` holds messages until you're ready. |
-| `send`   | Messages one session by name, every session on a device, or everyone. |
+| `tags`   | Short labels others can filter by, like `reviewing` or `model:opus-5.5`. `do-not-disturb` holds messages until you're ready. A `group:` tag puts a session in a group chat. |
+| `send`   | Messages one session by name, a group such as `group:ui`, every session on a device, or everyone. |
 | `inbox`  | Messages that couldn't be handed over as a turn. |
 
 `mur join` also installs two skills for the agents that read them (Claude Code, Codex, OpenCode
@@ -93,16 +93,19 @@ source is in [`internal/skills`](internal/skills).
 | ----------------------- | --------------------- | --------- | -------------------------------------- |
 | Claude Code             | T3 Code or a terminal | turn      | notice after its next tool call        |
 | Pi                      | a terminal            | turn      | notice after its next tool call        |
-| Codex, Grok (untested)  | T3 Code               | turn      | notice after its next tool call        |
-| Codex, Grok             | a terminal            | inbox     | notice after its next tool call        |
+| Codex                   | T3 Code or a terminal | turn      | notice after its next tool call        |
+| Grok (untested)         | T3 Code               | turn      | notice after its next tool call        |
+| Grok (untested)         | a terminal            | inbox     | notice after its next tool call        |
 | OpenCode, Muse Code     | T3 Code               | turn      | waits for the turn to end, then a turn |
+| OpenCode 2              | a terminal            | turn      | waits for the turn to end, then a turn |
 | Pi (untested)           | T3 Code               | turn      | waits for the turn to end, then a turn |
-| OpenCode, Muse Code     | a terminal            | inbox     | inbox                                  |
+| OpenCode 1, Muse Code   | a terminal            | inbox     | inbox                                  |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes an idle T3
 thread. A **notice** is one line with the sender and subject, added after the agent's next tool
 call; the agent reads the message with `inbox`, and anything still unread when its turn ends is
-given to it then. An **inbox** message waits until the agent reads it.
+given to it then. An **inbox** message waits until the agent reads it. Codex and OpenCode in a
+terminal take a turn once the session has used one of Murmur's tools.
 
 ## For humans
 

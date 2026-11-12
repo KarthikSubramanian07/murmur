@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/clientcli"
 	"github.com/a-Fig/murmur/internal/msgsock"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3"
@@ -19,13 +20,15 @@ import (
 // between T3 threads is, so an idle agent starts working on it and nobody has to type. Where that
 // can't be done the message waits for the hook's notice and `inbox`, as it did before.
 //
-// There are two ways in, by what the session's MCP server found out about its client (proto.Route):
+// There are three ways in, by what the session's MCP server found out about its client (proto.Route):
 //   - inside T3, `t3 thread send <thread>`: an idle thread starts a turn, a busy one takes the
 //     message as its next turn, nothing is interrupted, and it works for a thread whose MCP server
 //     T3 has stopped (idle threads lose theirs after 30 minutes), which is the thread most worth
 //     waking;
 //   - in Claude Code outside T3, the session's messaging socket (package msgsock), and in Pi
-//     outside T3 the socket Murmur's extension opens in the session, which speaks the same lines.
+//     outside T3 the socket Murmur's extension opens in the session, which speaks the same lines;
+//   - in Codex and OpenCode 2 outside T3, the client's own command line (package clientcli, #135):
+//     `codex queue` and `opencode api session.prompt`, which do as `t3 thread send` does.
 //
 // A session Murmur's hook runs in (Claude Code, and Pi through its extension) is not given a turn
 // while it is at work (#202): T3 would queue it behind the running turn, and nothing could take it
@@ -56,8 +59,10 @@ var errNotNow = errors.New("the session may not be woken now")
 
 // How a message goes into a session.
 const (
-	viaT3     = "T3"
-	viaSocket = "the messaging socket"
+	viaT3       = "T3"
+	viaSocket   = "the messaging socket"
+	viaCodex    = "Codex's queue"
+	viaOpenCode = "OpenCode's server"
 )
 
 // kickPush wakes pushLoop, which finds messages to hand over. Any lock may be held.
@@ -176,13 +181,21 @@ func (d *Daemon) routeOfLocked(id string) proto.Route {
 // viaOf is the way to hand a message over to a session with route r, "" if there is none. A session in T3
 // is reached through T3 only: its messaging socket is T3's to use, and T3 may not take a turn it
 // didn't start. live says the session's MCP server is connected, which the socket needs, as the
-// token dies with the server's process.
+// token dies with the server's process. The client's command line is used only then too: a Codex
+// thread nobody has open keeps a queued message until it is next resumed, which may be days on,
+// and by then the message has left the inbox.
 func viaOf(r proto.Route, live bool) string {
 	switch {
 	case r.T3CLI != "" && r.T3Thread != "":
 		return viaT3
-	case r.T3CLI == "" && live && r.MsgSocket != "" && r.MsgToken != "":
+	case r.T3CLI != "" || !live:
+		return ""
+	case r.MsgSocket != "" && r.MsgToken != "":
 		return viaSocket
+	case r.CodexCLI != "" && r.Native != "":
+		return viaCodex
+	case r.OpenCodeCLI != "" && r.Native != "":
+		return viaOpenCode
 	}
 	return ""
 }
@@ -468,8 +481,12 @@ func noWay(r proto.Route, live bool) string {
 	switch {
 	case r.T3CLI != "":
 		return "inside T3, but its thread isn't known"
+	case (r.CodexCLI != "" || r.OpenCodeCLI != "") && r.Native == "":
+		return "its client hasn't named its conversation yet"
+	case r.CodexCLI != "" || r.OpenCodeCLI != "":
+		return "its MCP server has gone"
 	case r.MsgSocket == "" || r.MsgToken == "":
-		return "not inside T3, and no messaging socket"
+		return "not inside T3, and no messaging socket or client command line"
 	case !live:
 		return "its MCP server has gone"
 	}
@@ -499,6 +516,7 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 	if bus.IsPerson(m.Event.From) {
 		views[0].Explained = d.explainedLocked(id, m.Event.From) // recorded once it is handed over
 	}
+	views[0].GroupKnown = bus.IsGroup(m.Event.To) && d.explainedLocked(id, m.Event.To) // likewise
 	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, conv: d.conversationLocked(id), explainKey: d.explainKeyLocked(id), msg: m, via: via,
 		route: route, text: view.Turn(views[0])}
 }
@@ -538,7 +556,7 @@ func (d *Daemon) handOver(ctx context.Context, j *pushJob) error {
 // notReached says an attempt failed before it could have put the message anywhere: the command
 // didn't start, or the socket couldn't be connected to.
 func notReached(err error) bool {
-	return errors.Is(err, t3.ErrNotStarted) || errors.Is(err, msgsock.ErrNotConnected)
+	return errors.Is(err, t3.ErrNotStarted) || errors.Is(err, msgsock.ErrNotConnected) || errors.Is(err, clientcli.ErrNotStarted)
 }
 
 // sendTurn makes one attempt, by the route's way in, unless the user has left. No lock is held: it
@@ -566,9 +584,23 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 		return d.attempt(j.msg, func() error {
 			return msgsock.Send(ctx, j.route.MsgSocket, j.route.MsgToken, j.text)
 		})
+	case viaCodex:
+		return d.attempt(j.msg, func() error {
+			return codexQueue(ctx, j.route.CodexCLI, j.route.CodexHome, j.route.Native, j.text)
+		})
+	case viaOpenCode:
+		return d.attempt(j.msg, func() error {
+			return openCodePrompt(ctx, j.route.OpenCodeCLI, j.route.Native, j.text)
+		})
 	}
 	return fmt.Errorf("no way to hand a message over by %s", j.via)
 }
+
+// The client's command lines, as variables so that tests needn't have a Codex or an OpenCode.
+var (
+	codexQueue     = clientcli.CodexQueue
+	openCodePrompt = clientcli.OpenCodePrompt
+)
 
 // attempt runs send, the handoff of message m, after marking m Attempted and saving the mark: the
 // daemon may stop at any point of the call, and the next one has to know the message may be there.
@@ -640,6 +672,7 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.outOfInboxLocked(j.id, j.msg, "handed", "as a turn, through "+j.via)
 	d.introduceLocked(j.key, j.msg.Event.From)
 	d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), j.msg.Event.From)
+	d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), j.msg.Event.To)
 	d.saveLocked()
 	delete(d.pushWarned, j.id)
 }
@@ -873,6 +906,11 @@ func (d *Daemon) setRouteLocked(s *session, r proto.Route) {
 		// Another conversation: the title of the last one must not stay if this one's can't be read.
 		s.title = ""
 		d.kickPresence()
+	}
+	if live := s.dropped.IsZero(); viaOf(r, live) != viaOf(s.route, live) {
+		// Another way in, or a first one: what the log said of the last no longer holds, and a
+		// failure of this one is worth its own line.
+		delete(d.pushWarned, s.id)
 	}
 	s.route = r
 	d.rememberRouteLocked(s)
