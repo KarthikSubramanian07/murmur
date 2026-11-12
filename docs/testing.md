@@ -19,11 +19,14 @@ parallel test), replaces a package variable, writes into the `HOME` or
 could upset; those last say why in a comment. The stand-in `t3` is no reason to: `useFakeT3` puts
 the test binary in the test's own directory, as a hard link or, on Windows, a copy, and the stand-in
 reads its calls file and its fail and sleep settings from files beside it, not from the environment
-(#282). That made 55 tests parallel; `TestASessionWhoseMessageDidntFitGoesOnWithTheTurn` uses the
-stand-in and stays serial, as it replaces a package variable. As of 2026-11-11, 100 of the package's
-362 tests are serial, 54 of them in its `_internal_test.go` files. `go test -race -count=1
-./internal/daemon` took 1,354 s and 1,199 s before the change and 1,013 s and 1,015 s after it, on
-an 8-core Mac that other work was loading heavily throughout (2026-11-11, main at 3c275e4).
+(#282). That made 53 tests parallel. Three that use the stand-in stay serial:
+`TestASessionWhoseMessageDidntFitGoesOnWithTheTurn` replaces a package variable, and
+`TestDaemonLeavesOnceTheThreadIsNoLongerKept` and `TestDaemonWithAThreadToWakeStaysUpAndHandsOver`
+time the daemon's own exit, which the first of them missed once when run in parallel.
+`go test -race -count=1 ./internal/daemon` took 1,354 s and 1,199 s before the change and 1,013 s
+and 1,015 s with 55 parallel, on an 8-core Mac that other work was loading heavily throughout
+(2026-11-11, main at 3c275e4); with 53, on main at 6c1ca2e and as loaded, it took 1,352 s, so the
+gain on a quiet machine is still to be measured, in CI's timings.
 
 A parallel test meets more load than it did alone, so a wait it took for granted may come late. A
 call's end, for one, is answered before its after-snapshot is taken: a test that commits right
