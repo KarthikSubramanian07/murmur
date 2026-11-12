@@ -69,8 +69,7 @@ Tyler's rules:
   - **UI, styling or assets** (2026-11-10): skip review. CI still runs, because the page in
     `internal/web/static` is built into the binary and tested.
   - **A merge of main that only resolves conflicts:** skip review of that commit.
-  - **Tyler has waived reviews for a stretch of work:** skip review. The PR body says it wasn't
-    reviewed.
+  - **With permission from Tyler.**
 
   Anything else waits for both. `README.md` (a setup test reads it), `internal/skills`, `site/`,
   `go.mod` and `.github/workflows` are tested, so even a small change to them waits for CI.
