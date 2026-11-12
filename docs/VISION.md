@@ -1882,10 +1882,11 @@ A body past the limit is cut, as in `inbox`.
     client's insides than the documented command.
   - *Whoever runs the client.* The way in is there for any session whose MCP server a `codex`
     started, not only a terminal's: Codex's desktop app, `codex exec`, a thread another tool
-    drives through `codex app-server` (Claude Code's codex-sub plugin does), and a subagent's
-    thread once it calls a Murmur tool. An OpenCode child session likewise. Each can be handed a
-    turn its driver didn't start, within the wake setting; before, they had the inbox only. Not
-    tried.
+    drives through `codex app-server` (Claude Code's codex-sub plugin does). An OpenCode child
+    session likewise. Each can be handed a turn its driver didn't start, within the wake
+    setting; before, they had the inbox only. Not tried. A subagent Codex itself spawned was
+    one of them until #454: its first Murmur tool call now takes it off the mesh (see "The
+    subagents Codex spawns are delegates too").
   - *Not covered (#446).* Muse and Grok outside T3 (neither was installed where this was built). A Codex
     session run by T3 whose config doesn't forward `T3CODE_CLI_PATH` reads as one outside T3, and
     gets `codex queue` (not tried). OpenCode's one MCP process per directory has the environment
@@ -1985,8 +1986,12 @@ A body past the limit is cut, as in `inbox`.
     ancestors of its Codex process; that was special handling in a shared tool for one person's
     plugin, and came out before the merge. Such a thread is on the mesh like any Codex session.
   - *What is left.* A subagent that never calls a Murmur tool is on the mesh, with no way in but
-    its inbox. Nothing is saved, so after a daemon restart a child is back until its next tool
-    call. A child found late keeps the name it took; nobody sees it. Not run against a live
+    its inbox. Its parent is named only if the thread that spawned it has called a Murmur tool
+    too, since that is how a session's thread is known; otherwise the refusal names no one and
+    the child's commits stay its own. Nothing is saved: after a daemon restart a Codex child is
+    marked again at the first read, as its MCP server still gives its thread, and a child a hook
+    named is back until its next hook. A child found late keeps the name it took; nobody sees
+    it. A thread Codex doesn't keep has no row to read, and is on the mesh. Not run against a live
     Codex subagent: the reads were checked against the laptop's real Codex state, and the rest
     with a stand-in.
 - **A hook can say its session is a child** (2026-11-12, #452, protocol 19). Where the client knows a

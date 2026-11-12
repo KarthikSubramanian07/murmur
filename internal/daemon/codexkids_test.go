@@ -18,7 +18,7 @@ import (
 // stand-in for Codex's state.
 
 // fakeCodex is the stand-in for Codex's state: who started each thread, as the test sets it. A
-// thread it doesn't have is one Codex hasn't written yet.
+// thread it doesn't have is one Codex hasn't written yet, or doesn't keep.
 type fakeCodex struct {
 	mu  sync.Mutex
 	lin map[string]title.Lineage
@@ -69,12 +69,12 @@ func codexIn(thread string) proto.Route { return proto.Route{Native: thread, Cod
 // A subagent Codex spawned leaves who, takes no messages and can't send, on both devices; the
 // refusals name the session in the thread that spawned it. Only the thread its own MCP server
 // names marks a session: a thread ID that came from a hook's pairing doesn't, since a subagent's
-// hook can be paired with the session that spawned it. Inside T3 it is T3's to say. A thread a
-// person started stays, whichever program asked Codex for it.
+// hook can be paired with the session that spawned it. Inside T3 it is T3's to say.
 func TestCodexSubagentIsReachedThroughTheThreadThatSpawnedIt(t *testing.T) {
 	remote := newRemote(t)
 	exe, _ := useFakeT3(t)
-	codex := &fakeCodex{lin: map[string]title.Lineage{"th-main": {}, "th-spawned": {Subagent: true, Parent: "th-x"}}}
+	codex := &fakeCodex{lin: map[string]title.Lineage{"th-main": {}, "th-spawned": {Subagent: true, Parent: "th-x"},
+		"th-hooked": {Subagent: true, Parent: "th-y"}}}
 	a, b := newDevice(t, remote), newCodexDevice(t, remote, codex)
 	alice, _ := a.session("aaaaaa", "")
 	main, _ := b.agentSession("bbbbbb", "codex", 300, codexIn("th-main"))
@@ -89,7 +89,7 @@ func TestCodexSubagentIsReachedThroughTheThreadThatSpawnedIt(t *testing.T) {
 	})
 
 	// The lone session of its process is paired with the hook of a subagent it spawned.
-	b.do(proto.Request{Op: proto.OpNotices, Agent: "codex", ClaudeSession: "th-spawned", Ancestors: []int{921, 920, 600, 1}})
+	b.do(proto.Request{Op: proto.OpNotices, Agent: "codex", ClaudeSession: "th-hooked", Ancestors: []int{921, 920, 600, 1}})
 	codex.set("th-kid", title.Lineage{Subagent: true, Parent: "th-main"})
 	eventually(t, "the subagent to leave both devices' who", func() bool {
 		return a.seesSession(main) && !a.listsSession(sub) && !b.listsSession(sub)

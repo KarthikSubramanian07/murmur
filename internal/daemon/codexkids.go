@@ -142,7 +142,7 @@ func (d *Daemon) refreshKids(ctx context.Context) (changed bool) {
 		switch {
 		case err == nil:
 			read[k] = l
-		case !errors.Is(err, title.ErrNoThread): // Codex writes the row a moment after the thread starts
+		case !errors.Is(err, title.ErrNoThread): // Codex writes the row a moment after the thread starts, or never
 			failed[k] = err
 		}
 	}
