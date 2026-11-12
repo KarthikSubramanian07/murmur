@@ -24,6 +24,7 @@ func shortLine(who string) string {
 // The first turn from ada explains, the second doesn't, grace's first does, and what bob has been
 // told outlasts its daemon restarting.
 func TestAPersonIsExplainedOnlyInTheirFirstTurn(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b, c := newDevice(t, remote), newDevice(t, remote), newDevice(t, remote)

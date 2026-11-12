@@ -139,7 +139,7 @@ func TestSessionInT3IsNotReachedByItsClientCommandLine(t *testing.T) {
 func TestFailedClientCommandFallsBackToTheNotice(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	t.Setenv(fakeT3FailEnv, "1")
+	setFakeT3(t, exe, fakeT3Fail, "1")
 	var out syncBuf
 	a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
 	alice, _ := a.session("aaaaaa", "")
