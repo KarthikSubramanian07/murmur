@@ -178,6 +178,12 @@ func detachedHeadsByGit(ctx context.Context, worktree string) ([]string, error) 
 func addTips(ref *Ref, shas []string) {
 	slices.Sort(shas)
 	for _, sha := range slices.Compact(shas) {
+		// git before 2.44 writes the all-zero ID into a new worktree's HEAD for a moment during
+		// `git worktree add`. It names no commit, and as a tip it would make NewCommits's git log
+		// fail with "bad object", so the call would be credited nothing.
+		if strings.Trim(sha, "0") == "" {
+			continue
+		}
 		if !slices.Contains(ref.tips, sha) {
 			ref.tips = append(ref.tips, sha)
 		}

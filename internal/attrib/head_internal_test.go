@@ -196,3 +196,13 @@ func TestDetachedHeadsOfEveryWorktreeAreTips(t *testing.T) {
 		}
 	}
 }
+
+// A new worktree's HEAD holds the all-zero ID for a moment under git before 2.44; it is no
+// commit, and as a tip it would make NewCommits's git log fail.
+func TestAddTipsSkipsTheZeroID(t *testing.T) {
+	var ref Ref
+	addTips(&ref, []string{strings.Repeat("0", 40), strings.Repeat("a", 40)})
+	if len(ref.tips) != 1 || ref.tips[0] != strings.Repeat("a", 40) {
+		t.Fatalf("tips = %v, want only the real one", ref.tips)
+	}
+}
