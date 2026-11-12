@@ -597,7 +597,9 @@ vec4 light(vec2 q, vec2 s, float f) {
   float hair = edge * band(dq, c + 10. * uSc, 120. * uSc);
   // A second, fainter run just behind, so the passing light reads as a sheen with depth.
   float hair2 = edge * band(dq, c - 150. * uSc, 70. * uSc) * .45;
-  float a = .15 * wash + .24 * core + .6 * (hair + hair2);
+  // About a third of the brightness it first had (.15, .24, .6), which read as harsh; the hairlines
+  // were the harshest part and come down the most.
+  float a = .07 * wash + .09 * core + .18 * (hair + hair2);
   vec3 col = mix(BUT, CRM, clamp(.35 + core * .5 + hair, 0., 1.));
   return vec4(col * a, a);
 }`;
