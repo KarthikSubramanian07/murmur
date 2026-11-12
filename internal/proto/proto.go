@@ -75,7 +75,9 @@ const (
 //	    agent sends the first time a session has one from them, and ends as an agent's after (#345)
 //	14: OpRotate, and a bus encrypted for a team key (#156): a daemon of 13 or less writes in the
 //	    clear, so an upgraded mur replaces it where it may.
-const Protocol = 14
+//	15: groups (#184): OpSend to a group's tag, and OpTags's For. A daemon of 14 or less refuses
+//	    the first and, not knowing For, would put the tags meant for others on the caller.
+const Protocol = 15
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
