@@ -1250,8 +1250,8 @@ then on: not a message to it, to its device, or to everyone.
   that muted it: its own daemon has read that presence, refuses the `send`, and says the other has
   muted it. That is the tool's answer, from Murmur and no agent, so it wakes nobody (#25), and the
   message isn't written to the bus at all. A message sent before its daemon has read the mute
-  (seconds) is written, and dropped by the receiver, and the sender isn't told of that one. A
-  receipt (#26) could say so; receipts aren't built. A broadcast from a muted session is sent as
+  (seconds) is written, and dropped by the receiver, and the sender isn't told of that one: a bug,
+  #466, which a receipt (#26) or a list of what a device dropped, in its presence, would close. A broadcast from a muted session is sent as
   usual, and its sender isn't told who won't get it.
 - **A mute names a session by its name**, which the registry never gives out twice, so it can't
   land on another session, and it follows the conversation across session IDs. It lasts until it
