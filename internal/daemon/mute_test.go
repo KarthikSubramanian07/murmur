@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
@@ -140,4 +141,69 @@ func TestAMutedSessionReachesNobodyWhoMutedIt(t *testing.T) {
 	if r := b.mute("bbbbbb", aliceName, true); r.Error == "" {
 		t.Errorf("unmuting a session that isn't muted: %+v", r)
 	}
+}
+
+// A session that reconnects after its daemon restarted is given what arrived while the daemon
+// was down, and not what a session it has muted sent (#482): the catch-up left the mute out.
+func TestAMuteHoldsWhenASessionReconnects(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	dave, _ := b.session("dddddd", "")
+	aliceName := b.named(alice)
+	b.named(bob)
+	b.named(dave)
+	if r := b.mute("bbbbbb", aliceName, false); r.Error != "" {
+		t.Fatalf("bob mutes alice: %+v", r)
+	}
+
+	b.stop()
+	a.send("aaaaaa", "*", "while b was down", "")
+	b.start()
+	b.helloAgain("bbbbbb", true)
+	b.helloAgain("dddddd", true)
+
+	// Dave, who muted nobody, gets it, so it was there for bob's catch-up to give.
+	eventually(t, "dave to be caught up", func() bool { return slices.Contains(inboxOf(b, "dddddd"), "while b was down") })
+	if got := b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages; len(got) != 0 {
+		t.Errorf("bob was caught up with a message from the session he muted: %+v", got)
+	}
+	if got := b.mute("bbbbbb", "", false).Muted; !slices.Equal(got, []string{aliceName}) {
+		t.Errorf("after the restart bob has muted %v", got)
+	}
+}
+
+// A session that another has muted can't add it to a group (#483): the adder is refused once its
+// daemon has read of the mute, and an add that goes out anyway isn't applied by the muter's device.
+func TestAMutedSessionCantAddItsMuterToAGroup(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	aliceName, bobName := b.named(alice), a.named(bob)
+	b.named(bob)
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+	add := func() proto.Response {
+		return a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"group:ui"}, For: []string{bobName}})
+	}
+
+	if r := b.mute("bbbbbb", aliceName, false); r.Error != "" {
+		t.Fatalf("bob mutes alice: %+v", r)
+	}
+	// Until alice's daemon reads of the mute, her add goes out, and bob's device leaves it.
+	var refusal string
+	eventually(t, "alice's add to be refused", func() bool { refusal = add().Error; return refusal != "" })
+	if !strings.Contains(refusal, bobName+" has muted you") {
+		t.Errorf("the refusal: %s", refusal)
+	}
+	holds(t, "bob out of the group", 2*time.Second, func() bool { return !b.inGroup("bbbbbb", bob, "group:ui") })
+
+	if r := b.mute("bbbbbb", aliceName, true); r.Error != "" {
+		t.Fatalf("bob unmutes alice: %+v", r)
+	}
+	eventually(t, "alice's add to go through", func() bool { return add().Error == "" })
+	eventually(t, "bob in the group", func() bool { return b.inGroup("bbbbbb", bob, "group:ui") })
 }

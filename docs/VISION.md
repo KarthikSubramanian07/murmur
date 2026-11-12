@@ -1298,7 +1298,16 @@ then on: not a message to it, to its device, or to everyone.
   have muted it (Tyler, 2026-11-11), as far as its daemon knows then.
 - **A mute names a session by its name**, which the registry never gives out twice, so it can't
   land on another session, and it follows the conversation across session IDs. It lasts until it
-  is undone. A person can't be muted, nor a session that has no name yet.
+  is undone. A person can't be muted, nor a session that has no name yet. A sender that isn't in
+  presence is known by the names the registry gave its address, which are two or more after its
+  client started a new conversation in the same session; a mute of any of them holds (#483,
+  2026-11-12), since which it had when it sent can't be known.
+- **Fixed 2026-11-12, from a four-model review of main (#482, #483).** A session reconnecting
+  after its daemon restarted was given a muted session's messages: the catch-up left the mute
+  out. Mutes made while a name was pending were dropped when the name already had some; they are
+  added now. A muted session could still add its muter to groups, each add using one of the
+  muter's tags: its `tags` call is refused, as its `send` is, and the muter's device applies no
+  add from it.
 - **A human can undo one, on the page of the muting session's device.** An agent can't silence a
   teammate's agent without its human able to see it and undo it. The page of another device lists
   the mute and can't undo it: that would take an event to the muting device, as a human's tags on
