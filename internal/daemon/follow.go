@@ -263,6 +263,9 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 			byID = append(byID, s)
 		case s.clientPID != 0 && slices.Contains(req.Ancestors, s.clientPID):
 			byProcess = append(byProcess, s)
+			if req.Agent == "codex" {
+				d.noteCodexHookLocked(s.clientPID, req.ClaudeSession) // which may be all that says whose the process is (#454)
+			}
 		}
 	}
 	if len(byID) > 0 {

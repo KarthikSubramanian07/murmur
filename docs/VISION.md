@@ -1842,6 +1842,37 @@ A body past the limit is cut, as in `inbox`.
   commits are credited to the session of its parent thread, if that is on the mesh here. It may
   have taken a name in the seconds before its thread was read; nobody sees the name. A Claude Code
   subagent inside one session never registered (see Crediting commits, Subagents).
+- **Codex's subagent threads are delegates too** (Tyler, 2026-11-12, #454), outside T3 Code, where
+  T3's database knows nothing of them. It matters more since #447: such a thread could be handed
+  a turn its driver never started.
+  - *The mark is Codex's own.* Its state database (`state_N.sqlite`, `threads`) says who started
+    a thread. `source` is a JSON object with a `subagent` key for a thread Codex made for another
+    (one a thread spawned, a review, a guardian), and a plain word for one a person's client
+    started. `originator` is the name the program that asked for the thread gave Codex's app
+    server, so a tool that runs Codex as another agent's subagents is known by its name:
+    `codex-sub`, the Claude Code plugin. On the laptop that day, of 1,299 threads, 598 were
+    codex-sub's and 61 were spawned by a Codex thread. Codex has no mark for "a subagent tool",
+    so the names are a list (`title.CodexDrivers`), and another such tool is on the mesh until
+    its name is added. The process that started the MCP server was the other candidate and was
+    not used: Codex's shared daemon, once started from an agent's shell, would make every later
+    terminal thread look like that agent's.
+  - *The thread's ID.* A Codex MCP server learns it only from a call to a Murmur tool, which a
+    driven thread often never makes. Codex's hook runs at the thread's first prompt and reports
+    it, so the daemon takes it from there too. Where the hook can't be paired with one session
+    (several in one Codex process), a driven thread it reports marks every session of that
+    process: a subagent tool runs a Codex app server of its own. That holds for codex-sub
+    0.7.0 (`codex app-server` over stdio) and would be wrong for a tool that used Codex's shared
+    daemon. A subagent Codex spawned shares its parent's process, so only its own ID marks it.
+  - *The parent.* For a spawned thread, the session in the thread that spawned it. Otherwise
+    the nearest session whose agent is an ancestor of the child's Codex process, which for
+    codex-sub is the Claude Code session running the plugin. With neither, the refusal names
+    no one.
+  - *What is left.* Until a hook or a tool call gives the ID, the session is on the mesh, as a
+    T3 delegate is until its thread is read; it has no way in but its inbox then. A Codex
+    whose hook was never trusted, in a thread that never calls a Murmur tool, stays there. A
+    driven thread found late keeps the name it took; nobody sees it. Not run against a live
+    codex-sub thread: the reads were checked against the laptop's real Codex state, and the
+    rest with stand-ins.
 - **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
   decision, 2026-10-29). A message to a busy thread never steers the turn running mid-task: it is
   queued as the next turn, or, where the hook runs, announced, and given at the turn's end, which

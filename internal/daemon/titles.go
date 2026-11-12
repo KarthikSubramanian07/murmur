@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -118,13 +117,7 @@ func readTitle(ctx context.Context, j titleJob) (raw string, known bool, err err
 		// server when the session has one, else Codex's default (#88). The daemon's own CODEX_HOME
 		// is the home of whichever session started it, so it is taken only for a route that names
 		// no home, which comes from a server older than #88's, as such a server expects.
-		dir := r.CodexHome
-		if !filepath.IsAbs(dir) {
-			if dir = os.Getenv("CODEX_HOME"); !filepath.IsAbs(dir) {
-				dir = title.DefaultCodexDir()
-			}
-		}
-		raw, err = title.Codex(ctx, dir, r.Native)
+		raw, err = title.Codex(ctx, codexDir(r), r.Native)
 		return raw, true, err
 	case j.transcript != "":
 		raw, err = title.Claude(j.transcript)
