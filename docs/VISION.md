@@ -1902,7 +1902,11 @@ a random ID is still data from a private repo).
    GitHub spells it, with no version in the User-Agent. The site stores it only once GitHub
    confirms the repo public (when GitHub can't say, it answers 503 and the daemon sends it again
    later): one row per repo, its address and first day, no IP addresses (`site/src/usage.js`,
-   `site/migrations`).
+   `site/migrations`). A repo already stored is answered 200 from that row, without asking GitHub
+   again, and a body not sent as `application/json` is refused with 415, so a web page can't have
+   its visitors' browsers send these POSTs without a CORS preflight, which the site doesn't answer
+   (#299). Rate limits per IP, and which token the site asks GitHub with, are set in Cloudflare,
+   not here.
 5. Once the site has answered 200, note in `publicrepo.json` that this address was sent, then push
    `refs/murmur/reported`, a root commit whose body is `{"v":1,"at":...}`, leased so it is created
    only if absent. A push that fails is retried at every later look, without sending the address
