@@ -1933,57 +1933,32 @@ A body past the limit is cut, as in `inbox`.
   commits are credited to the session of its parent thread, if that is on the mesh here. It may
   have taken a name in the seconds before its thread was read; nobody sees the name. A Claude Code
   subagent inside one session never registered (see Crediting commits, Subagents).
-- **Codex's subagent threads are delegates too** (Tyler, 2026-11-12, #454), outside T3 Code, where
-  T3's database knows nothing of them. It matters more since #447: such a thread could be handed
-  a turn its driver never started.
+- **The subagents Codex spawns are delegates too** (Tyler, 2026-11-12, #454), outside T3 Code,
+  where T3's database knows nothing of them. It matters more since #447: such a thread could be
+  handed a turn nobody asked for.
   - *The mark is Codex's own.* Its state database (`state_N.sqlite`, `threads`) says who started
-    a thread. `source` is a JSON object with a `subagent` key for a thread Codex made for another
+    a thread: `source` is a JSON object with a `subagent` key for a thread Codex made for another
     (one a thread spawned, a review, a guardian), and a plain word for one a person's client
-    started. `originator` is the name the program that asked for the thread gave Codex's app
-    server, so a tool that runs Codex as another agent's subagents is known by its name:
-    `codex-sub`, the Claude Code plugin. On the laptop that day, of 1,299 threads, 598 were
-    codex-sub's and 61 were spawned by a Codex thread. Codex has no mark for "a subagent tool",
-    so the names are a list (`title.CodexDrivers`), and another such tool is on the mesh until
-    its name is added. The process that started the MCP server was the other candidate and was
-    not used: Codex's shared daemon, once started from an agent's shell, would make every later
-    terminal thread look like that agent's.
-  - *The thread's ID.* A Codex MCP server learns it only from a call to a Murmur tool, which a
-    driven thread often never makes. Codex's hook runs at the thread's first prompt and reports
-    it, so the daemon takes it from there too. That pairing is by process and can be wrong (a
-    spawned subagent's hook, run before its MCP server registers, pairs with the session that
-    spawned it), so an ID from a hook counts only for a driven thread, in a process another
-    session's agent is above.
-  - *A driven process.* Where the hook is paired with no session (several in one Codex
-    process), a driven thread it reports marks the process, for good, if another session's agent
-    is among the process's ancestors: a subagent tool runs a Codex app server of its own
-    (codex-sub 0.7.0: `codex app-server` over stdio), under the agent it works for. A session
-    there is a child unless its own thread was read and is a person's. The ancestor is required
-    because Codex's desktop app can open a thread codex-sub made, and one such thread must not
-    take the app's other threads off the mesh. Marking for good is because a thread that isn't
-    kept (codex-sub's `persist=false`) has no row in Codex's state, and its hook would otherwise
-    put the process back.
-  - *Inside T3.* codex-sub passes T3's variables on to its Codex, so a thread it drives for a
-    Claude Code session in T3 has T3's command line and never a T3 thread. A Codex session is
-    therefore looked at until its T3 thread is found. Only a driven thread is marked there:
-    Tyler's rule (2026-11-12, #452) is that a thread shown in the user's list of sessions is on
-    the mesh, and whether a subagent that a Codex thread of T3's spawned shows there is T3's to
-    say (#188).
-  - *The parent.* For a spawned thread, the session in the thread that spawned it. Otherwise
-    the nearest session whose agent is an ancestor of the child's Codex process, which for
-    codex-sub is the Claude Code session running the plugin. With neither, the refusal names
-    no one.
-  - *What is left.* Until a hook or a tool call gives the ID, the session is on the mesh, as a
-    T3 delegate is until its thread is read; it has no way in but its inbox then. A Codex
-    whose hook was never trusted, in a thread that never calls a Murmur tool, stays there. A
-    subagent Codex spawned is marked only once it calls a Murmur tool. A thread codex-sub made
-    and a person later opens in Codex's own app is still a child: `originator` is who made it
-    (#474). Inside T3 a session's own `CODEX_HOME` isn't known to the daemon, so a T3 instance
-    with a Codex home of its own has its codex-sub threads looked up in the wrong database, and
-    they stay on the mesh. A process whose threads Codex doesn't keep is never marked.
-    Nothing is saved, so after a daemon restart a child is back until its next hook or tool
+    started. For a spawned thread it names the thread that spawned it, which is the parent the
+    refusal points to and the commits are credited to.
+  - *The thread's ID* comes only from a call to a Murmur tool, which is where a Codex MCP server
+    learns it. Codex's hook reports an ID earlier, at the first prompt, but it is paired with a
+    session by process, and a subagent runs in its parent's process: its hook can be paired
+    with the session that spawned it. So a hook's ID marks nobody.
+  - *Inside T3* nothing is read from Codex. Tyler's rule (2026-11-12, #452) is that a thread
+    shown in the user's list of sessions is on the mesh, and for T3's own threads T3's database
+    says which those are (#188).
+  - *No handling for subagent tools* (Tyler, 2026-11-12, #481). A tool that runs Codex as another
+    agent's subagents, such as Tyler's own Claude Code plugin codex-sub, asks Codex for threads
+    as any client does, and Codex records them as it does a terminal's. #473 first recognised
+    codex-sub by the name it gives Codex (`threads.originator`) and found its parent among the
+    ancestors of its Codex process; that was special handling in a shared tool for one person's
+    plugin, and came out before the merge. Such a thread is on the mesh like any Codex session.
+  - *What is left.* A subagent that never calls a Murmur tool is on the mesh, with no way in but
+    its inbox. Nothing is saved, so after a daemon restart a child is back until its next tool
     call. A child found late keeps the name it took; nobody sees it. Not run against a live
-    codex-sub thread: the reads were checked against the laptop's real Codex state, and the
-    rest with stand-ins.
+    Codex subagent: the reads were checked against the laptop's real Codex state, and the rest
+    with a stand-in.
 - **A hook can say its session is a child** (2026-11-12, #452, protocol 19). Where the client knows a
   session's parent and Murmur has a hook in it (OpenCode's plugin, #455), the hook's request
   carries `child` and, if it knows, `parentNative`, the client's own ID of the session that

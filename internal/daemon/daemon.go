@@ -114,11 +114,9 @@ type Options struct {
 	// long it has been idle (see threads.go): t3db.StateOf. Tests put a stand-in here. It is read
 	// every TitleEvery.
 	ThreadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
-	// CodexLineage reads who started a Codex thread from Codex's state (title.CodexLineage), and
-	// Ancestors a process's ancestors (proc.Ancestors), for the sessions another session started
-	// (codexkids.go). Tests put stand-ins here.
+	// CodexLineage reads who started a Codex thread from Codex's state (title.CodexLineage), for
+	// the sessions another session started (codexkids.go). Tests put a stand-in here.
 	CodexLineage func(ctx context.Context, dir, thread string) (title.Lineage, error)
-	Ancestors    func(pid, max int) []int
 	// Consent says whether the user has joined Murmur in this clone (nil: always). A daemon exists
 	// only for a user who did: it won't start without it, refuses requests once it is gone, and
 	// stops within ConsentPoll of it going, so a leave that races a daemon still starting ends that
@@ -221,9 +219,6 @@ func (o *Options) defaults() {
 	}
 	if o.CodexLineage == nil {
 		o.CodexLineage = title.CodexLineage
-	}
-	if o.Ancestors == nil {
-		o.Ancestors = proc.Ancestors
 	}
 	if o.ConsentPoll == 0 {
 		o.ConsentPoll = time.Second
@@ -417,17 +412,12 @@ type Daemon struct {
 	threadWarned map[threadKey]bool
 	// The sessions another session started, where T3 doesn't say so (codexkids.go): kids the
 	// sessions here that are one, kidNative the children a hook named, by their client's ID,
-	// with their parent's. For Codex: codexLin who started each thread read so far, codexWarned
-	// the threads whose read failed, logged once, codexProc a thread Codex's hook reported from
-	// each Codex process, and codexDriven the processes a subagent tool runs. procAnc is each
-	// client process's ancestors, itself first. All are made where they are first written.
+	// with their parent's, codexLin who started each Codex thread read so far, and codexWarned
+	// the threads whose read failed, logged once. All are made where they are first written.
 	kids        map[string]kid
 	kidNative   map[string]string
 	codexLin    map[codexThread]title.Lineage
 	codexWarned map[codexThread]bool
-	codexProc   map[int]string
-	codexDriven map[int]bool
-	procAnc     map[int][]int
 
 	// refused is when a presence claiming each device was last refused (see checkPresenceLocked), to
 	// log it once a minute.

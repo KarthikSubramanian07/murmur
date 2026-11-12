@@ -1,12 +1,10 @@
 package daemon
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
@@ -23,46 +21,31 @@ import (
 // server registers after the hook spoke is a child from its first refresh.
 //
 // Codex says so in its state (#454): no hook of Murmur's can ask Codex for a thread's parent, but
-// Codex's database records who started each thread (title.CodexLineage). Its source is a
-// subagent's (one a Codex thread spawned, a review, a guardian), or the program that asked for it
-// is one that runs Codex as another agent's subagents (title.CodexDrivers: Claude Code's
-// codex-sub). That needs the thread's ID, which a Codex session's MCP server learns only from a
-// call to one of Murmur's tools, and a thread a subagent tool drives often never calls one. So:
+// Codex's database records a thread Codex started for another (title.CodexLineage): one a thread
+// spawned, a review, a guardian. That needs the thread's ID, which a Codex session's MCP server
+// learns only from a call to one of Murmur's tools (the route's Native), so a subagent that never
+// calls one is on the mesh, with no way in but its inbox. The ID Codex's hook reports isn't used:
+// it is paired with a session by process, and a subagent runs in its parent's process, so its
+// hook can be paired with the session that spawned it.
 //
-//   - The ID is taken from Codex's hook too, which runs at the thread's first prompt (hookNative).
-//     That pairing is by process and can be wrong where a subagent's hook runs before its MCP
-//     server registers: it pairs with the session that started the subagent. So an ID from a
-//     hook counts only for a driven thread, not a spawned one, and only in a process that
-//     another session's agent is above, which a person's Codex isn't.
-//   - Where the hook is paired with no session (several in one Codex process), the thread it
-//     reported still says something about the process (codexProc): a subagent tool starts a Codex
-//     app server of its own, so every thread there is its. A process is marked driven, for good,
-//     when a hook reports a driven thread from it and one of its ancestors is another session's
-//     agent, which for codex-sub is the Claude Code that runs the plugin. The second condition
-//     keeps a person's Codex out: its desktop app can open a thread codex-sub made, and nothing
-//     above the desktop app is an agent. A session of a driven process is a child unless its own
-//     thread was read and is a person's.
+// Only a Codex session outside T3 is looked at. Inside T3, whether a thread is a delegate is
+// T3's to say (#188): Tyler's rule (2026-11-12, #452) is that a thread shown in the user's list
+// of sessions is on the mesh, and T3 knows which of its threads those are.
 //
-// A Codex session inside T3 is looked at here until its T3 thread is found: codex-sub passes
-// T3's variables on to its Codex, so a thread it drives for a Claude Code session in T3 has
-// T3's command line and never a T3 thread. Only a driven thread is marked there. A subagent
-// that a Codex thread of T3's spawned is T3's to judge (#188): Tyler's rule (2026-11-12, #452)
-// is that a thread shown in the user's list of sessions is on the mesh, and T3 knows which of
-// its threads those are.
-//
-// The parent, for the refusal's pointer and for crediting commits: the session whose client's ID
-// is the one the hook or Codex named, else the nearest session whose agent is an ancestor of the
-// child's client process. With neither the child is off the mesh and its parent unnamed.
+// The parent, for the refusal's pointer and for crediting commits, is the session whose client's
+// ID is the one the hook or Codex named. With none the child is off the mesh and its parent
+// unnamed.
 //
 // Once a child, always: a session is never put back on the mesh, and stays a child while it is
 // stopped with its inbox kept. Nothing is saved, so a daemon that restarts learns it again.
+//
+// Tools that run Codex as another agent's subagents (Claude Code's codex-sub plugin) get no
+// handling of their own (Tyler, 2026-11-12, #481): to Codex their threads are a client's, like a
+// terminal's, and so they are to Murmur.
 
-// kid is a session another started: the client's ID of the session that started it, if anything
-// named one, and its client process's ancestors, nearest first, without the process itself.
-type kid struct {
-	parentNative string
-	ancestors    []int
-}
+// kid is a session another started: the client's ID of the session that started it, "" if
+// nothing named one.
+type kid struct{ parentNative string }
 
 // codexThread is a Codex thread, by Codex's state directory and its ID.
 type codexThread struct{ dir, thread string }
@@ -118,11 +101,6 @@ func (d *Daemon) markKidLocked(id, parentNative string) bool {
 	if parentNative != "" {
 		k.parentNative = parentNative
 	}
-	if s := d.sessions[id]; s != nil && k.ancestors == nil {
-		if anc := d.procAnc[s.clientPID]; len(anc) > 1 {
-			k.ancestors = anc[1:]
-		}
-	}
 	d.kids[id] = k
 	if !was {
 		d.log.Printf("session %s was started by another session, so it is off the mesh", bus.Addr(d.device, id))
@@ -130,66 +108,25 @@ func (d *Daemon) markKidLocked(id, parentNative string) bool {
 	return !was
 }
 
-// noteCodexHookLocked keeps the thread a Codex hook reported from the Codex process that ran it:
-// the nearest of the hook's ancestors that is a Codex session's client. Caller holds mu.
-func (d *Daemon) noteCodexHookLocked(ancestors []int, thread string) {
-	if thread == "" {
-		return
-	}
-	for _, pid := range ancestors {
-		for _, s := range d.sessions {
-			if pid != 0 && s.clientPID == pid && isAgent(s.agent, "codex") {
-				if d.codexProc == nil {
-					d.codexProc = map[int]string{}
-				}
-				d.codexProc[pid] = thread
-				return
-			}
-		}
-	}
-}
-
 // refreshKids finds the sessions another session started: those a hook named, whose MCP server
-// has since registered, and the Codex sessions whose thread Codex's state says is another's. It
-// says whether any session became a child. A lineage read once stands, since Codex doesn't
-// change who started a thread, and so do a process's ancestors. Codex's database and the
-// system's processes are read outside the lock.
+// has since registered, and the Codex sessions outside T3 whose thread Codex's state says is a
+// subagent's. It says whether any session became a child. A lineage read once stands, since
+// Codex doesn't change who started a thread. Codex's database is read outside the lock.
 func (d *Daemon) refreshKids(ctx context.Context) (changed bool) {
 	type cand struct {
-		id       string
-		pid      int
-		own, any codexThread // the session's own thread, and one a hook reported from its process
-		fromHook bool        // own is hookNative: the hook's pairing, not the MCP server's word
-		inT3     bool        // the session has T3's command line, and no T3 thread yet
+		id     string
+		thread codexThread
 	}
 	d.mu.Lock()
 	var cands []cand
-	need := map[codexThread]bool{}
-	needAnc := map[int]bool{}
-	pids := map[int]bool{}
+	var need []codexThread
 	for _, s := range d.sortedSessionsLocked() {
-		if !s.dropped.IsZero() {
-			continue // its process may be gone, and its number another's by now
-		}
-		pids[s.clientPID] = true
-		if s.clientPID != 0 && d.procAnc[s.clientPID] == nil {
-			needAnc[s.clientPID] = true
-		}
-		if !isAgent(s.agent, "codex") || s.route.T3Thread != "" {
+		if !s.dropped.IsZero() || !isAgent(s.agent, "codex") || s.route.T3CLI != "" || s.route.Native == "" {
 			continue
 		}
-		c := cand{id: s.id, pid: s.clientPID, inT3: s.route.T3CLI != ""}
-		dir := codexDir(s.route)
-		if id := cmp.Or(s.route.Native, s.hookNative); id != "" {
-			c.own, c.fromHook = codexThread{dir, id}, s.route.Native == ""
-		}
-		if id := d.codexProc[s.clientPID]; id != "" && !d.codexDriven[s.clientPID] {
-			c.any = codexThread{dir, id}
-		}
-		for _, k := range []codexThread{c.own, c.any} {
-			if _, known := d.codexLin[k]; !known && k.thread != "" {
-				need[k] = true
-			}
+		c := cand{s.id, codexThread{codexDir(s.route), s.route.Native}}
+		if _, known := d.codexLin[c.thread]; !known {
+			need = append(need, c.thread)
 		}
 		cands = append(cands, c)
 	}
@@ -197,7 +134,7 @@ func (d *Daemon) refreshKids(ctx context.Context) (changed bool) {
 
 	read := map[codexThread]title.Lineage{}
 	failed := map[codexThread]error{}
-	for k := range need {
+	for _, k := range need {
 		if ctx.Err() != nil {
 			return false
 		}
@@ -205,17 +142,8 @@ func (d *Daemon) refreshKids(ctx context.Context) (changed bool) {
 		switch {
 		case err == nil:
 			read[k] = l
-		case !errors.Is(err, title.ErrNoThread): // Codex writes the row a moment after the thread starts, or never
+		case !errors.Is(err, title.ErrNoThread): // Codex writes the row a moment after the thread starts
 			failed[k] = err
-		}
-	}
-	anc := map[int][]int{}
-	for pid := range needAnc {
-		// Once for each client process: on Windows each step is a snapshot of every process.
-		if a := d.opt.Ancestors(pid, 16); len(a) > 0 {
-			anc[pid] = a
-		} else {
-			anc[pid] = []int{pid}
 		}
 	}
 
@@ -223,53 +151,21 @@ func (d *Daemon) refreshKids(ctx context.Context) (changed bool) {
 	defer d.mu.Unlock()
 	if d.codexLin == nil {
 		d.codexLin, d.codexWarned = map[codexThread]title.Lineage{}, map[codexThread]bool{}
-		d.codexDriven, d.procAnc = map[int]bool{}, map[int][]int{}
 	}
 	for k, l := range read {
 		d.codexLin[k] = l
 		delete(d.codexWarned, k)
 	}
-	for pid, a := range anc {
-		d.procAnc[pid] = a
-	}
-	for pid := range d.codexDriven {
-		if !pids[pid] {
-			delete(d.codexDriven, pid)
-		}
-	}
-	for pid := range d.procAnc {
-		if !pids[pid] {
-			delete(d.procAnc, pid)
-		}
-	}
-	for pid := range d.codexProc {
-		if !pids[pid] {
-			delete(d.codexProc, pid)
-		}
-	}
-
 	used := map[codexThread]bool{}
 	for _, c := range cands {
-		used[c.own], used[c.any] = true, true
-		if l, ok := d.codexLin[c.any]; ok && l.Driven && d.agentAboveLocked(c.pid) {
-			d.codexDriven[c.pid] = true
+		used[c.thread] = true
+		if l, known := d.codexLin[c.thread]; known && l.Subagent {
+			changed = d.markKidLocked(c.id, l.Parent) || changed
 		}
-	}
-	for _, c := range cands {
-		own, known := d.codexLin[c.own]
-		switch {
-		case known && own.Driven && (!c.fromHook || d.agentAboveLocked(c.pid)),
-			known && own.Subagent && !c.fromHook && !c.inT3:
-			changed = d.markKidLocked(c.id, own.Parent) || changed
-		case !known && d.codexDriven[c.pid]:
-			changed = d.markKidLocked(c.id, "") || changed
-		}
-		for _, k := range []codexThread{c.own, c.any} {
-			if err := failed[k]; err != nil && !d.codexWarned[k] {
-				d.codexWarned[k] = true
-				d.log.Printf("can't read who started the Codex thread of session %s (%v); it stays on the mesh until that is read",
-					bus.Addr(d.device, c.id), err)
-			}
+		if err := failed[c.thread]; err != nil && !d.codexWarned[c.thread] {
+			d.codexWarned[c.thread] = true
+			d.log.Printf("can't read who started the Codex thread of session %s (%v); it stays on the mesh until that is read",
+				bus.Addr(d.device, c.id), err)
 		}
 	}
 	for k := range d.codexLin {
@@ -288,54 +184,24 @@ func (d *Daemon) refreshKids(ctx context.Context) (changed bool) {
 			changed = d.markKidLocked(s.id, parent) || changed
 		}
 	}
-	for id, k := range d.kids {
-		s := d.sessions[id]
-		if s == nil && !d.receivesLocked(id) {
+	for id := range d.kids {
+		if d.sessions[id] == nil && !d.receivesLocked(id) {
 			delete(d.kids, id)
-			continue
-		}
-		if s != nil && k.ancestors == nil {
-			if a := d.procAnc[s.clientPID]; len(a) > 1 {
-				k.ancestors = a[1:]
-				d.kids[id] = k
-			}
 		}
 	}
 	return changed
 }
 
-// agentAboveLocked says one of the ancestors of client process pid is the client of a session
-// here: an agent started the process, or started what did. Caller holds mu.
-func (d *Daemon) agentAboveLocked(pid int) bool {
-	anc := d.procAnc[pid]
-	if len(anc) < 2 {
-		return false
-	}
-	for _, s := range d.sessions {
-		if s.clientPID != 0 && s.clientPID != pid && s.dropped.IsZero() && slices.Contains(anc[1:], s.clientPID) {
-			return true
-		}
-	}
-	return false
-}
-
-// kidParentLocked is the session here that the child id answers to, "" if none is found: the one
-// whose client's ID is the one named as its parent, else the one whose agent is the nearest
-// ancestor of its client process. Caller holds mu.
+// kidParentLocked is the session here that the child id answers to: the live one whose client's
+// ID is the one named as its parent, "" if nothing named one or no such session is here. Caller
+// holds mu.
 func (d *Daemon) kidParentLocked(id string, k kid) string {
-	live := func(s *session) bool { return s.id != id && s.dropped.IsZero() }
-	if k.parentNative != "" {
-		for _, s := range d.sortedSessionsLocked() {
-			if live(s) && cmp.Or(s.route.Native, s.hookNative) == k.parentNative {
-				return s.id
-			}
-		}
+	if k.parentNative == "" {
+		return ""
 	}
-	for _, pid := range k.ancestors {
-		for _, s := range d.sortedSessionsLocked() {
-			if _, kid := d.kids[s.id]; live(s) && !kid && s.clientPID == pid {
-				return s.id
-			}
+	for _, s := range d.sortedSessionsLocked() {
+		if s.id != id && s.dropped.IsZero() && s.route.Native == k.parentNative {
+			return s.id
 		}
 	}
 	return ""
