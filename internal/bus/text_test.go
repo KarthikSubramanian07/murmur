@@ -163,6 +163,10 @@ func TestCleaningDropsOtherInvisibleCharacters(t *testing.T) {
 		"AKIAIOSF\u17b4ODNN7":                   "AKIAIOSFODNN7",
 		"a\u17b5b\u2065c\ufff0d":                "abcd",
 		"AKIAIOSF\U000E01F0\U000E0080ODNN7":     "AKIAIOSFODNN7",
+		// From the third review: a selector after the vowel separator, and two more unused ranges.
+		"AKIAIOSF\u180e\u180bODNN7":                   "AKIAIOSFODNN7",
+		"ᠮ\u180e\u180b\u180e\u180c":                   "ᠮ",
+		"AKIAIOSF\U000E0000\U000E0002\U000E001FODNN7": "AKIAIOSFODNN7",
 		// From the review: selectors after a joiner, after a mark, and in a keycap of a letter.
 		"👨\u200d\ufe00👩\u200d\ufe01👧":             "👨\u200d👩\u200d👧",
 		"👨\u200d\ufe00\u200d\ufe01👩":              "👨👩", // the joiners, left in a run, go too

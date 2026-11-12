@@ -446,7 +446,8 @@ func isFormat(r rune) bool { return unicode.Is(unicode.Cf, r) }
 //   - The combining grapheme joiner (U+034F) changes only how text is sorted and searched, never
 //     what is drawn, so it always goes. So do the Khmer inherent vowels (U+17B4, U+17B5), which
 //     Unicode advises against using, and the code points set aside to show as nothing that have no
-//     meaning yet (U+2065, U+FFF0 to U+FFF8, U+E0080 to U+E00FF, U+E01F0 to U+E0FFF).
+//     meaning yet (U+2065, U+FFF0 to U+FFF8, U+E0000, U+E0002 to U+E001F, U+E0080 to U+E00FF,
+//     U+E01F0 to U+E0FFF).
 //   - The Hangul fillers (U+115F, U+1160, U+3164, U+FFA0) stand in for a missing part of a Korean
 //     syllable, and are kept only next to Hangul that isn't a filler. Elsewhere one shows as a blank
 //     that isn't a space, and a run of them as nothing a reader can count.
@@ -483,7 +484,9 @@ func dropInvisible(s string) string {
 				continue
 			}
 		case isMongolianSelector(r):
-			if prev < 0 || !unicode.Is(unicode.Mongolian, prev) || isMongolianSelector(prev) {
+			// Not after the vowel separator (U+180E), which is Mongolian but a format character:
+			// dropFormat takes it afterwards, and would leave the selector next to whatever came before.
+			if prev < 0 || !unicode.Is(unicode.Mongolian, prev) || isMongolianSelector(prev) || isFormat(prev) {
 				continue
 			}
 		case unusedInvisible(r):
@@ -510,8 +513,8 @@ func isMongolianSelector(r rune) bool { return r >= 0x180B && r <= 0x180D || r =
 // inherent vowels, which Unicode advises against using, and code points set aside as invisible but
 // not yet given a meaning.
 func unusedInvisible(r rune) bool {
-	return r == 0x17B4 || r == 0x17B5 || r == 0x2065 || r >= 0xFFF0 && r <= 0xFFF8 ||
-		r >= 0xE0080 && r <= 0xE00FF || r >= 0xE01F0 && r <= 0xE0FFF
+	return r == 0x17B4 || r == 0x17B5 || r == 0x2065 || r >= 0xFFF0 && r <= 0xFFF8 || r == 0xE0000 ||
+		r >= 0xE0002 && r <= 0xE001F || r >= 0xE0080 && r <= 0xE00FF || r >= 0xE01F0 && r <= 0xE0FFF
 }
 
 // selectable says whether a variation selector may follow r: a character that starts what is drawn,
