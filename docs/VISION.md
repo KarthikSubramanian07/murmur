@@ -1226,8 +1226,11 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   device as a `group.add` event on the adder's log, and that device makes the tag the session's
   own, so the session can remove it and a human's mark stands over it. It is a type of its own
   because every daemon applies a `tags` event as a human's choice, which the session can't undo.
-  An add in history a daemon passes over (a skipped backlog) isn't applied: the group may be long
-  done with.
+  An add more than an hour old when it is read isn't applied, nor one from history a daemon passes
+  over unless it was sent since the session started: an add carries no order against the session's
+  own changes, so an old one read late (its log waited for a team key, or a daemon restarted) could
+  put back a member who has left. An add that would take a session past its 12 tags is refused to
+  the adder, since the groups become the session's own tags.
 - **Each receiving device decides who is in.** A message to a group goes on the bus addressed to
   the tag, and each daemon gives it to those of its sessions that have the tag when it reads the
   message. A device is the only authority on its sessions' tags, so no sender's view of the members

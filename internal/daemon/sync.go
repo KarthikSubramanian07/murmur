@@ -780,10 +780,8 @@ func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode sy
 		if e.Type == bus.Tags {
 			d.applyTagsEventLocked(e)
 		}
-		if e.Type == bus.GroupAdd && mode != modeSkip {
-			// Not from history passed over: a group someone made days ago may be long done with,
-			// and the session may have left it since.
-			d.applyGroupAddLocked(e)
+		if e.Type == bus.GroupAdd {
+			d.applyGroupAddLocked(e, mode) // unless it is old: the session may have left the group since
 		}
 		if e.Type == bus.Message {
 			// The name a message carries is shown only if it is its sender's (personSenderLocked),

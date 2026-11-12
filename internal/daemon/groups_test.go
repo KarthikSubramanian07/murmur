@@ -91,11 +91,12 @@ func TestAnAddFollowedAtOnceByAMessageReachesTheSessionAdded(t *testing.T) {
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.session("bbbbbb", "")
+	dave, _ := a.session("dddddd", "") // on alice's own device, which reads its own log
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	// Both are on alice's log, in order, so bob's device has made him a member by the time it
 	// reads the message, whatever alice's device has seen of his presence.
-	if r := a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"group:rush"}, For: []string{bob}}); r.Error != "" {
+	if r := a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"group:rush"}, For: []string{bob, dave}}); r.Error != "" {
 		t.Fatalf("adding bob: %s", r.Error)
 	} else if !strings.Contains(r.Note, "You aren't in group:rush") {
 		t.Errorf("the note is %q; want alice told she isn't in the group herself", r.Note)
@@ -103,6 +104,28 @@ func TestAnAddFollowedAtOnceByAMessageReachesTheSessionAdded(t *testing.T) {
 	a.send("aaaaaa", "group:rush", "straight after", "")
 	if got := inboxOf(b, "bbbbbb"); !slices.Equal(got, []string{"straight after"}) {
 		t.Errorf("bob's inbox is %q; want the message sent straight after he was added", got)
+	}
+	if got := inboxOf(a, "dddddd"); !slices.Equal(got, []string{"straight after"}) {
+		t.Errorf("dave's inbox is %q; want the message too, on the adder's own device", got)
+	}
+}
+
+func TestAnAddPastASessionsTagsIsRefusedToTheAdder(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+
+	full := []string{"t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11", "group:ui"}
+	b.tagSelf("bbbbbb", full, nil)
+	eventually(t, "bob's twelve tags, as alice's device sees them", func() bool { return a.inGroup("aaaaaa", bob, "t11") })
+	if r := a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"group:bus"}, For: []string{bob}}); r.Error == "" {
+		t.Errorf("a thirteenth tag was allowed: %+v", r)
+	}
+	// A group he is in already takes no room.
+	if r := a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"group:ui"}, For: []string{bob}}); r.Error != "" {
+		t.Errorf("adding bob to a group he is in: %s", r.Error)
 	}
 }
 

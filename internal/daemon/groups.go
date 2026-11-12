@@ -27,6 +27,12 @@ import (
 // maxGroupAdd caps the sessions one call adds to groups: each is an event, and a push.
 const maxGroupAdd = 12
 
+// groupAddMaxAge is how old an add can be, by its sender's clock, and still be applied. An add is
+// read late when its log waited for a team key, or was caught up on after a restart, and the
+// session may have left the group since: an add carries no order against the session's own
+// changes, so one from long ago is taken as done with.
+const groupAddMaxAge = time.Hour
+
 // groupMembersLocked is who a message to group would reach, as far as this device can see, less the
 // session at except: the names (or addresses) of its sessions here and in live peers' presence that
 // have the tag. old lists those of them on a device whose daemon is from before groups, which won't
@@ -134,6 +140,27 @@ func (d *Daemon) addToGroups(ctx context.Context, id string, req proto.Request) 
 			why = who + " isn't in any device's presence right now, so it can't be added. Check `who`."
 		case dev != d.device && !d.peers[dev].pres.Groups:
 			why = fmt.Sprintf("%s is on a device whose %s is from before groups, so it can't be added to one until that device updates", who, brand.Product)
+		default:
+			// A session's tags are capped, and the groups would be its own: past the cap its device
+			// refuses the add, or what others see of it loses another tag. Refused here, the adder
+			// is told, which that device can't do.
+			var has []tags.Tag
+			if dev == d.device {
+				if t := d.sessions[sess]; t != nil {
+					has = d.tagsOfLocked(t)
+				}
+			} else {
+				has = peerTagsLocked(d.peers[dev], sess)
+			}
+			n := len(has)
+			for _, grp := range groups {
+				if !tags.Has(has, grp) {
+					n++
+				}
+			}
+			if n > tags.MaxPerSession {
+				why = fmt.Sprintf("%s has %d tags, and a session has at most %d, so it has no room for more: it can drop one, or join the group itself", who, len(has), tags.MaxPerSession)
+			}
 		}
 		if why != "" {
 			d.mu.Unlock()
@@ -178,18 +205,24 @@ func (d *Daemon) addToGroups(ctx context.Context, id string, req proto.Request) 
 	}
 	for _, g := range groups {
 		if !tags.Has(mine, g) {
-			notes = append(notes, fmt.Sprintf("You aren't in %s yourself: add it to your own tags to get what is sent to it.", g))
+			notes = append(notes, fmt.Sprintf("You aren't in %s yourself, so what is sent to it won't reach you.", g))
 		}
 	}
 	return proto.Response{OK: true, Self: from, Note: strings.TrimSuffix(strings.Join(notes, " "), "."), Tags: mine}
 }
 
-// applyGroupAddLocked applies an agent's add of a session here to groups: the tags become the
-// session's own, so it can take them off again, and a human's mark still stands over them. Caller
-// holds mu.
-func (d *Daemon) applyGroupAddLocked(e bus.Event) {
+// applyGroupAddLocked applies an agent's add of a session here to groups, read in a sync of this
+// mode: the tags become the session's own, so it can take them off again, and a human's mark still
+// stands over them. An add older than groupAddMaxAge isn't applied, and from history a skip passes
+// over, only one sent since the session started, as a message from there would be queued for it.
+// Caller holds mu.
+func (d *Daemon) applyGroupAddLocked(e bus.Event, mode syncMode) {
 	dev, sess := bus.SplitAddr(e.To)
 	if dev != d.device {
+		return
+	}
+	if time.Since(e.At) > groupAddMaxAge || mode == modeSkip && !d.sentSinceLocked(e, sess, mode) {
+		d.log.Printf("%s added %s to %s at %s, too long ago to apply", e.From, e.To, strings.Join(e.Add, ", "), e.At.Format(time.RFC3339))
 		return
 	}
 	key := d.tagKeyLocked(sess)
@@ -204,5 +237,5 @@ func (d *Daemon) applyGroupAddLocked(e bus.Event) {
 	}
 	d.putTagStateLocked(key, next)
 	d.kickPresence()
-	d.log.Printf("%s added session %s to %s", e.From, e.To, strings.Join(e.Add, ", "))
+	d.log.Printf("%s gave session %s the tags %s", e.From, e.To, strings.Join(e.Add, ", "))
 }
