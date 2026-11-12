@@ -126,7 +126,8 @@ func TestPiExtensionTurnsOnWhenItsCloneIsJoined(t *testing.T) {
 // piLoadHarness loads the extension with a stand-in for Pi's API and prints how many servers it
 // registered and how many of Pi's events it listens for.
 const piLoadHarness = `
-const { default: load } = await import(process.argv[2]);
+import { pathToFileURL } from "node:url";
+const { default: load } = await import(pathToFileURL(process.argv[2]).href);
 let regs = 0, events = 0;
 load({ registerMcpServer: () => regs++, on: () => events++, sendMessage: () => {} });
 console.log("registered " + regs + ", listening for " + events);
@@ -159,13 +160,8 @@ func TestPiExtensionStaysOutOfASubagent(t *testing.T) {
 	if err := os.WriteFile(harness, []byte(piLoadHarness), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Node takes a file's address, which a Windows path isn't.
-	url := "file://" + filepath.ToSlash(ext)
-	if runtime.GOOS == "windows" {
-		url = "file:///" + filepath.ToSlash(ext)
-	}
 	run := func(child string) string {
-		cmd := exec.Command(node, "--experimental-strip-types", "--no-warnings", harness, url)
+		cmd := exec.Command(node, "--experimental-strip-types", "--no-warnings", harness, ext)
 		cmd.Env = append(os.Environ(), "PI_SUBAGENT_CHILD="+child)
 		b, err := cmd.CombinedOutput()
 		if err != nil {

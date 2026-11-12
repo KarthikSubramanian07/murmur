@@ -66,8 +66,8 @@ import (
 // child `pi --mode json -p`, with the user's extensions unless the agent's definition lists its
 // own, and PI_SUBAGENT_CHILD=1 in its environment: such a child would load this extension,
 // register Murmur's server, and show in who as a session, one per subagent (#457). The extension
-// does nothing in a process with that variable, so the child has no Murmur tools, hook or socket,
-// as a T3 delegate has none (#188). Not covered: @gotgenes/pi-subagents (16.6.0), which makes its
+// does nothing in a process with that variable, so the child has no Murmur tools, hook or socket
+// and never reaches the daemon; a T3 delegate does, and the daemon keeps it off (#188). Not covered: @gotgenes/pi-subagents (16.6.0), which makes its
 // subagents inside the parent's process with Pi's SDK and binds the parent's extensions to each.
 // Nothing in the environment tells such a session from its parent, and the parentSession its file
 // records is what a /fork records too.

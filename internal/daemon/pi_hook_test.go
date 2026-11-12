@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3db"
 )
 
 // Pi sessions get #202's delivery through Murmur's extension (#205): it runs the hook, which names
@@ -198,12 +199,14 @@ func TestBusyPiSessionGetsTheWholeMessage(t *testing.T) {
 // as Pi is in a terminal, and not given it as a turn T3 would queue behind its work. The message
 // arrives once: whole at the end of the work, which reads it, and never as a T3 turn after. Once
 // the session is idle a message goes in through T3, not the extension's socket, which is there
-// under T3 too and unused.
+// under T3 too and unused. T3's database says the thread is at work for as long as Pi is, the
+// work its end goes on with included, as T3 ends a Pi run only when Pi has settled.
 func TestPiSessionInT3GetsNoticesWhileBusy(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	sock := useFakeSocket(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
+	threads := &fakeThreads{st: map[string]t3db.State{"thread-pi": {LastRun: time.Now()}}}
+	a, b := newDevice(t, remote), newT3Device(t, remote, threads)
 	alice, _ := a.session("aaaaaa", "")
 	const file = `C:\Users\u\.t3\userdata\pi\sessions\thread-pi.jsonl`
 	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "bbbbbb", Agent: "pi in T3",
@@ -219,6 +222,7 @@ func TestPiSessionInT3GetsNoticesWhileBusy(t *testing.T) {
 	b.piHook(proto.OpNotices, file)
 	b.piHook(proto.OpTurnEnd, file)
 
+	threads.set("thread-pi", t3db.State{Busy: true, LastRun: time.Now()})
 	b.piHook(proto.OpNotices, file) // a prompt: at work
 	a.send("aaaaaa", bob, "while busy", "the body")
 	var r proto.Response
@@ -237,6 +241,7 @@ func TestPiSessionInT3GetsNoticesWhileBusy(t *testing.T) {
 	if got := b.piHook(proto.OpTurnEnd, file).Read; len(got) != 0 {
 		t.Fatalf("the next end gave %v", viewSubjects(got))
 	}
+	threads.set("thread-pi", t3db.State{LastRun: time.Now()})
 	holds(t, "the message it has read isn't sent again as a turn", 2*time.Second, func() bool {
 		return len(calls()) == 0 && len(sock.lines()) == 0
 	})
