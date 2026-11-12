@@ -34,15 +34,23 @@ color is a change of `fill`, not a new drawing.
 - README: the banner at the top, the icon at the foot.
 - Tab icons: the site's and the `mur ui` page's. `mur ui` also shows the icon in its sidebar and
   on its sign-in gate.
-- Home page: the mark in the hero's top left corner on screens 1000px and wider, the mark before
-  "Murmur daemon" in the How it works diagram, and the lockup at the start of the footer.
+- Home page: the lockup behind the hero's reeded glass, the mark in the hero's top left corner on
+  screens 1000px and wider, the mark before "Murmur daemon" in the How it works diagram, and the
+  lockup at the start of the footer.
 - About, Privacy, Contact and Other ways to use Murmur: the mark in the back pill, the lockup in
   the footer.
 - The daemon page: the mark in the back pill, the lockup in the footer, in cream.
 - The stats pages: the mark on the header's blue tile.
 - `site/og.jpg`, the card a shared link shows: the lockup in its top left corner.
 
-The hero's big word stays "murmur" in Inter behind the glass; it is the site's look, not the logo.
+The hero's lockup (2026-11-12, #488) is the one place the logo is changed, and Tyler chose each
+change from drafts. It took the place of the word "murmur" in Inter. The mark is drawn at 85% of its
+size in `lockup-on-blue.svg` and the letters at 145%, on the same base line: at the file's
+proportions the letters were small enough that the glass broke them apart. Both are blurred and bent
+by the glass, at under half the strength the Inter word had (11 against 24), which is the most the
+mark's eyes survive. The eyes of that mark, and of the one in the corner, follow the pointer by a few
+units; they stay holes cut from the designer's shapes, and nothing moves on a touch screen or with
+reduced motion.
 
 ## Color
 
@@ -90,7 +98,7 @@ it already had, so this palette stayed and the logo files were colored to match.
 ## Type
 
 The wordmark is Fredoka One and ships as outlines, so nothing loads the font. The site is set in
-Inter, and its hero word is "murmur" in Inter behind the reeded glass, not the wordmark. The Figma
+Inter; the only Fredoka on it is the logo's own letters. The Figma
 file proposes Rubik for text and JetBrains Mono for commands; neither was adopted.
 
 ## The mur ui page
