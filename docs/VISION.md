@@ -709,13 +709,17 @@ since it wasn't installed). The details, and where each came from, are in the co
   - *How the words go in.* `ctx.session.synthetic` with `delivery: "steer"` puts the notice after
     the tool's result and before the next model request, as a message of its own. Appended to the
     tool's result instead, a model took it for text planted in the file it had read and refused it.
-    At a turn's end the same call without `delivery` starts another turn. What it costs: OpenCode's
-    terminal UI shows the answer to a synthetic message and not the message.
+    At a turn's end the session is idle, and the same call starts another turn. What it costs:
+    OpenCode's terminal UI shows the answer to a synthetic message and not the message.
+  - *Order.* Each hook is a process, so the plugin runs one session's hooks one after another. A
+    turn's start that reached the daemon after its end would leave an idle session looking busy.
   - *Children.* A session the `subagent` tool started carries `parentID`. The plugin says so on
     every hook request of that session (`child`, `parentNative`, #473), and once as the session is
     made, before its first call to one of Murmur's tools registers it; the daemon marks a session
     named so as it registers. So an OpenCode child is never listed, and its `send` is refused with
-    its parent's name (the gap #487 describes for Codex doesn't open here).
+    its parent's name. The gap #487 describes for Codex is left only where the daemon didn't hear
+    the plugin: a child made while no daemon ran, or before a daemon restart, is on the mesh from
+    its first call to one of Murmur's tools until its next tool call ends.
   - *Tried* on OpenCode 2.2.0 against a private `opencode serve` in a joined scratch clone
     (2026-11-12): a message sent mid-turn came as a notice after the next tool call; at the turn's
     end the session was handed it whole, read a file and answered with `send`, nobody typing; a

@@ -97,7 +97,8 @@ source is in [`internal/skills`](internal/skills).
 | Codex                   | T3 Code or a terminal | turn      | notice after its next tool call        |
 | Grok (untested)         | T3 Code               | turn      | notice after its next tool call        |
 | Grok (untested)         | a terminal            | inbox     | notice after its next tool call        |
-| OpenCode 2              | T3 Code or a terminal | turn      | notice after its next tool call        |
+| OpenCode 2              | a terminal            | turn      | notice after its next tool call        |
+| OpenCode 2 (untested)   | T3 Code               | turn      | notice after its next tool call        |
 | OpenCode 1, Muse Code   | T3 Code               | turn      | waits for the turn to end, then a turn |
 | OpenCode 1, Muse Code   | a terminal            | inbox     | inbox                                  |
 

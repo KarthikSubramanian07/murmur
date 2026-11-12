@@ -28,12 +28,15 @@ import (
 //   - ctx.event.subscribe({}) gives every event of the server, each with data.sessionID.
 //     session.execution.started is UserPromptSubmit: the session is at work. So is every turn the
 //     plugin itself starts.
-//   - session.execution.succeeded is Stop. What the hook gives back goes in with
-//     ctx.session.synthetic, which starts another execution, so the session goes on with it.
+//   - session.execution.succeeded is Stop. What the hook gives back goes in with the same call,
+//     which in an idle session starts another execution, so the session goes on with it.
 //     session.execution.interrupted (Escape, ctx.session.interrupt) is a Stop that was interrupted,
 //     as Pi's is: the daemon takes the session for idle and hands over what is unread as a turn.
 //     Any other session.execution.* event is taken the same way, a failed one among them, whose
-//     name wasn't seen.
+//     name wasn't seen; one whose reason is "shutdown" is the server closing, and is left out.
+//   - Each hook is a process, so the plugin runs one session's hooks one after another: a turn's
+//     start that reached the daemon after its end (Escape pressed at once) would leave an idle
+//     session looking busy until its next turn.
 //   - session.created carries parentID for a session the `subagent` tool started (called `task`
 //     before 2.2), and ctx.session.get gives it for one made before the plugin loaded. The plugin
 //     says so on each request of that session's hook (child, parent_native), and at once when the
@@ -114,9 +117,21 @@ export default {
     };
 
     // hook runs {{product}}'s hook for one of Claude Code's events and gives what it printed, parsed;
-    // null on any trouble, or when the server isn't in a joined clone.
-    const hook = async (event, sessionID, extra = {}) => {
-      if (stopped || !sessionID) return null;
+    // null on any trouble, or when the server isn't in a joined clone. One session's hooks run one
+    // after another, in the order of their events: each is a process of its own, and a turn's start
+    // that reached {{product}} after its end would leave an idle session looking busy.
+    const chains = new Map();
+    const hook = (event, sessionID, extra = {}) => {
+      if (stopped || !sessionID) return Promise.resolve(null);
+      const next = (chains.get(sessionID) ?? Promise.resolve()).then(() => run(event, sessionID, extra), () => null);
+      chains.set(sessionID, next);
+      next.then(() => {
+        if (chains.get(sessionID) === next) chains.delete(sessionID);
+      });
+      return next;
+    };
+    const run = async (event, sessionID, extra) => {
+      if (stopped) return null;
       if (!on && !(on = joined(dir))) return null;
       const parent = await parentOf(sessionID);
       return new Promise((done) => {
@@ -144,46 +159,52 @@ export default {
       });
     };
     const notice = (r) => String(r?.hookSpecificOutput?.additionalContext ?? "");
-    // say puts {{product}}'s words in the session as a message of their own. Steered, they go in after
-    // the tool calls of a session at work, before its next model request.
-    const say = async (sessionID, text, delivery) => {
+    // say puts {{product}}'s words in the session as a message of their own, steered: in a session at
+    // work they go in after its tool calls, before its next model request, and in an idle one they
+    // start a turn.
+    const say = async (sessionID, text) => {
       try {
-        await ctx.session.synthetic(delivery ? { sessionID, text, delivery } : { sessionID, text });
+        await ctx.session.synthetic({ sessionID, text, delivery: "steer" });
       } catch {}
     };
 
     ctx.tool.hook("execute.after", async (ev) => {
       const text = notice(await hook("PostToolUse", ev?.sessionID));
-      if (text) await say(ev.sessionID, text, "steer");
+      if (text) await say(ev.sessionID, text);
     });
 
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     (async () => {
-      try {
-        for await (const ev of ctx.event.subscribe({})) {
-          if (stopped) return;
-          const type = String(ev?.type ?? "");
-          const id = ev?.data?.sessionID;
-          if (!id) continue;
-          if (type === "session.created") {
-            const parent = String(ev.data.parentID ?? "");
-            parents.set(id, parent);
-            // Said at once, before the session's first call to a tool of {{product}}'s registers it.
-            if (parent) hook("SessionStart", id);
-          } else if (type === "session.execution.started") {
-            hook("UserPromptSubmit", id).then((r) => {
-              const text = notice(r);
-              if (text) return say(id, text, "steer");
-            });
-          } else if (type === "session.execution.succeeded") {
-            hook("Stop", id).then((r) => {
-              if (r?.decision === "block" && r?.reason) return say(id, String(r.reason));
-            });
-          } else if (type.startsWith("session.execution.")) {
-            // Interrupted, or failed: the work ended with no chance to go on.
-            hook("Stop", id, { interrupted: true });
+      // A stream that ends or fails is asked for again: without it no turn's end is seen.
+      for (; !stopped; await sleep(5000)) {
+        try {
+          for await (const ev of ctx.event.subscribe({})) {
+            if (stopped) return;
+            const type = String(ev?.type ?? "");
+            const id = ev?.data?.sessionID;
+            if (!id) continue;
+            if (type === "session.created") {
+              const parent = String(ev.data.parentID ?? "");
+              parents.set(id, parent);
+              // Said at once, before the session's first call to a tool of {{product}}'s registers it.
+              if (parent) hook("SessionStart", id);
+            } else if (type === "session.execution.started") {
+              hook("UserPromptSubmit", id).then((r) => {
+                const text = notice(r);
+                if (text) return say(id, text);
+              });
+            } else if (type === "session.execution.succeeded") {
+              hook("Stop", id).then((r) => {
+                if (r?.decision === "block" && r?.reason) return say(id, String(r.reason));
+              });
+            } else if (type.startsWith("session.execution.") && ev.data.reason !== "shutdown") {
+              // Interrupted, or failed: the work ended with no chance to go on. A server that is
+              // closing interrupts too, and that session isn't idle: it is gone.
+              hook("Stop", id, { interrupted: true });
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      }
     })();
 
     return () => {

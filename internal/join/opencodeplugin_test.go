@@ -89,6 +89,9 @@ func TestRefreshOpenCode(t *testing.T) {
 		t.Fatalf("with no plugin: did=%v err=%v", did, err)
 	}
 	old := strings.Replace(openCodePlugin(exe), `"steer"`, `"queue"`, 1)
+	if old == openCodePlugin(exe) {
+		t.Fatal("the stand-in for an older plugin is the plugin")
+	}
 	write(t, path, old)
 	if did, err := refreshOpenCodeAt(dir, exe); !did || err != nil || read(t, path) != openCodePlugin(exe) {
 		t.Fatalf("an old one: did=%v err=%v", did, err)
@@ -157,12 +160,15 @@ emit("session.execution.succeeded", { sessionID: "ses_a" });
 emit("session.execution.interrupted", { sessionID: "ses_a", reason: "user" });
 emit("session.created", { sessionID: "ses_child", parentID: "ses_a" });
 emit("session.created", { sessionID: "ses_b" });
+emit("session.execution.interrupted", { sessionID: "ses_b", reason: "shutdown" });
 emit("mcp.status.changed", {});
-await sleep(1500);
+for (let i = 0; i < 100 && calls().length < 5; i++) await sleep(100);
+await sleep(300);
 console.log("after the events:", JSON.stringify(said.splice(0)));
 await hooks["execute.after"]({ sessionID: "ses_child", tool: "read", status: "completed" });
 await hooks["execute.after"]({ sessionID: "ses_old_child", tool: "read", status: "completed" });
 console.log("calls:", JSON.stringify(calls().map((c) => [c.hook_event_name, c.session_id, c.child, c.parent_native, Boolean(c.interrupted)])));
+console.log("order of ses_a's:", calls().filter((c) => c.session_id === "ses_a").map((c) => c.hook_event_name + (c.interrupted ? "!" : "")).join(" "));
 console.log("cwd:", calls().every((c) => c.cwd === repo));
 stop();
 await hooks["execute.after"]({ sessionID: "ses_a", tool: "read", status: "completed" });
@@ -190,8 +196,9 @@ process.stdin.on("end", () => {
 
 // The plugin, run under Node with a stand-in for OpenCode (#431, #455): it runs no hook until its
 // clone is joined; after a tool call it steers the hook's notice into the session; a turn's end
-// that the hook keeps going is said without steering, which starts another turn; an interrupted
-// one is told as interrupted and says nothing; and a session another session started is named a
+// that the hook keeps going is said the same way, which starts another turn; an interrupted one
+// is told as interrupted and says nothing, and a closing server's isn't told; one session's hooks
+// reach mur in the order of their events; and a session another session started is named a
 // child with its parent on every request, at once when it is made, and when it was made before the
 // plugin loaded.
 func TestOpenCodePluginRunsTheHook(t *testing.T) {
@@ -224,7 +231,8 @@ func TestOpenCodePluginRunsTheHook(t *testing.T) {
 		"id: murmur",
 		"hook runs before the join: 0",
 		`after a tool call: [{"sessionID":"ses_a","text":"a notice","delivery":"steer"}]`,
-		`after the events: [{"sessionID":"ses_a","text":"read this"}]`,
+		`after the events: [{"sessionID":"ses_a","text":"read this","delivery":"steer"}]`,
+		"order of ses_a's: PostToolUse UserPromptSubmit Stop Stop!",
 		`["PostToolUse","ses_a",false,"",false]`,
 		`["UserPromptSubmit","ses_a",false,"",false]`,
 		`["Stop","ses_a",false,"",false]`,
@@ -239,7 +247,7 @@ func TestOpenCodePluginRunsTheHook(t *testing.T) {
 			t.Errorf("the harness didn't say %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, `"SessionStart","ses_b"`) {
-		t.Errorf("a session a person started was reported as it was made:\n%s", got)
+	if strings.Contains(got, `"ses_b"`) {
+		t.Errorf("a session a person started was reported as it was made, or a closing server's interrupt as a turn's end:\n%s", got)
 	}
 }

@@ -267,7 +267,9 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		// A hook named this session a child before its server registered (an OpenCode child's
 		// plugin does as the session is made, #455): it is one from here, not from the next
 		// refresh, so it is never listed (#487).
-		d.markKidLocked(s.id, parent)
+		if d.markKidLocked(s.id, parent) && taken {
+			d.kickPresence() // one back from its grace, named while it was away, was listed
+		}
 	}
 	d.lastActive = time.Now()
 	d.kickPoll() // a session is live: look at the remote at once, and at the faster rate
