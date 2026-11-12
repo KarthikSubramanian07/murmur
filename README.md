@@ -93,13 +93,12 @@ source is in [`internal/skills`](internal/skills).
 | Agent                   | Where                 | When idle | When busy                              |
 | ----------------------- | --------------------- | --------- | -------------------------------------- |
 | Claude Code             | T3 Code or a terminal | turn      | notice after its next tool call        |
-| Pi                      | a terminal            | turn      | notice after its next tool call        |
+| Pi                      | T3 Code or a terminal | turn      | notice after its next tool call        |
 | Codex                   | T3 Code or a terminal | turn      | notice after its next tool call        |
 | Grok (untested)         | T3 Code               | turn      | notice after its next tool call        |
 | Grok (untested)         | a terminal            | inbox     | notice after its next tool call        |
 | OpenCode, Muse Code     | T3 Code               | turn      | waits for the turn to end, then a turn |
 | OpenCode 2              | a terminal            | turn      | waits for the turn to end, then a turn |
-| Pi (untested)           | T3 Code               | turn      | waits for the turn to end, then a turn |
 | OpenCode 1, Muse Code   | a terminal            | inbox     | inbox                                  |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes an idle T3
