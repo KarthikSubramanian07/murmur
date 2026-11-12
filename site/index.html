@@ -247,8 +247,10 @@
   .route-in { max-width: 960px; margin: 0 auto; }
   #how .route h2, #setup h2 { font-size: clamp(30px, 3.2vw, 42px); font-weight: 600; letter-spacing: -.03em; line-height: 1.1; color: var(--ink); }
   #how .route h2 { margin-bottom: 14px; }
-  /* What Murmur is, in one line. It was the hero's third sentence until #488. */
-  .how-lead { max-width: 60ch; margin: 0 0 36px; font-size: clamp(17px, 1.5vw, 20px); line-height: 1.5; text-wrap: pretty; color: var(--ink-soft); }
+  @media (min-width: 920px) { .how-lead span { display: block; } }
+  /* What Murmur is. It was the hero's third sentence until #488. Each of its two sentences has a
+     line of its own where the first fits on one, which reads as less text (Tyler, 2026-11-12). */
+  .how-lead { margin: 0 0 36px; font-size: clamp(17px, 1.5vw, 20px); line-height: 1.5; text-wrap: pretty; color: var(--ink-soft); }
   .route figure { margin: 0; }
   .route .fig-panel { background: var(--cream-2); border: 1px solid var(--rule); border-radius: var(--r-lg); padding: 8px; }
   .route svg { display: block; width: 100%; height: auto; }
@@ -780,7 +782,7 @@ void main() {
 <section id="how">
   <div class="route"><div class="route-in">
     <h2>How it works</h2>
-    <p class="how-lead">Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.</p>
+    <p class="how-lead"><span>Murmur lets coding agents on different machines, in the same repo, find and message each other.</span> <span>No server, no accounts: if they can push, they can talk.</span></p>
     <figure>
       <div class="fig-panel">
         <svg class="wide" viewBox="16 -118 788 419" role="img" aria-labelledby="f3-t f3-d" xmlns="http://www.w3.org/2000/svg"><title id="f3-t">A message through a side ref on GitHub</title><desc id="f3-d">A message server in the cloud, with a big X through it, is the route Murmur doesn't use. quiet-otter calls send. Bob's Murmur daemon pushes a commit to the side ref refs/murmur/mesh/* on the GitHub remote, beside the branches. Alice's daemon fetches it and delivers it to brave-heron.</desc><g><rect class="ct" x="28" y="32" width="190" height="257" rx="12"/>
