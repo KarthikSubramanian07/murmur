@@ -343,7 +343,13 @@ func Turn(m proto.MessageView) string {
 		about = append(about, "from device "+m.FromDevice)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Message from %s", who)
+	if bus.IsGroup(m.To) {
+		// The group goes first (Tyler, 2026-11-12): which conversation this is in is what the
+		// agent needs before who wrote it.
+		fmt.Fprintf(&b, "Message sent in %s from %s", m.To, who)
+	} else {
+		fmt.Fprintf(&b, "Message from %s", who)
+	}
 	if isPerson(m) {
 		fmt.Fprintf(&b, " [%s]", tags.Human) // on every message, as who shows it, introduced or not (#267)
 	}
@@ -353,8 +359,6 @@ func Turn(m proto.MessageView) string {
 	fmt.Fprintf(&b, " via %s", brand.Product)
 	if m.To == "*" {
 		b.WriteString(", sent to everyone")
-	} else if bus.IsGroup(m.To) {
-		fmt.Fprintf(&b, ", sent to %s, a group you are in", m.To)
 	}
 	if !m.Told.IsZero() {
 		fmt.Fprintf(&b, ", which a notice told you of %s", Ago(m.Told))
@@ -370,8 +374,8 @@ func Turn(m proto.MessageView) string {
 	if bus.IsGroup(m.To) {
 		// A group's message is answered to the group, so the others see it; the tag is how a member
 		// leaves, and a session another agent added learns here that it is in the group.
-		fmt.Fprintf(&b, "\nReply with %s's `send` to %s for the whole group, or to %s alone, if a reply is needed. Removing the tag %s from yourself leaves the group.\n",
-			brand.Product, m.To, who, m.To)
+		fmt.Fprintf(&b, "\nYou are in %s. Reply with %s's `send` to %s for the whole group, or to %s alone, if a reply is needed. Removing the tag %s from yourself leaves the group.\n",
+			m.To, brand.Product, m.To, who, m.To)
 		return b.String()
 	}
 	fmt.Fprintf(&b, "\nReply with %s's `send` to %s if a reply is needed.\n", brand.Product, who)

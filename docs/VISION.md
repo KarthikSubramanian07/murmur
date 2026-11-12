@@ -1269,7 +1269,8 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   the session added. The sender is told who it reaches as far as presence shows.
 - **How a member learns it is in a group.** #184 first asked for a notice from Murmur when a
   session is added. Murmur has no notice of its own to give, only messages, so the group's message
-  says it: its first line ends "sent to group:ui, a group you are in", and its last offers the
+  says it: its first line is "Message sent in group:ui from quiet-otter" (Tyler's wording,
+  2026-11-12), and its last says the session is in the group, offers the
   group or the sender to answer and says that removing the tag leaves. A session added to a group
   nobody writes to sees it only in its own tags.
 - **No loop guard**, as for any message (Tyler, 2026-10-29), though an answer to a group gives
