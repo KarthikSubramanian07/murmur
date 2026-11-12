@@ -82,8 +82,9 @@ const (
 //	    clear, so an upgraded mur replaces it where it may.
 //	15: OpNick, a device's nickname (#190): a daemon of 14 or less answers `mur nickname` with
 //	    "unknown op", so the command replaces it where it may.
-//	16: OpMute (#27): a session's MCP server from this version on asks it of the daemon.
-const Protocol = 16
+//	18: OpMute (#27): a session's MCP server from this version on asks it of the daemon. (16 and
+//	    17 are #447's and #443's, which merge before this.)
+const Protocol = 18
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
