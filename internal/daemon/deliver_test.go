@@ -39,7 +39,13 @@ const (
 )
 
 func TestMain(m *testing.M) {
-	if exe, err := os.Executable(); err == nil && strings.TrimSuffix(filepath.Base(exe), filepath.Ext(exe)) == fakeT3Name {
+	// By the path it was started at when the executable's can't be read (Linux without /proc), so a
+	// stand-in never runs the whole suite instead: the daemon starts it by that path (the route's T3CLI).
+	exe, err := os.Executable()
+	if err != nil {
+		exe = os.Args[0]
+	}
+	if strings.TrimSuffix(filepath.Base(exe), filepath.Ext(exe)) == fakeT3Name {
 		os.Exit(fakeT3(filepath.Dir(exe)))
 	}
 	// The daemon reads conversation titles from the clients' state under the user's home (#66): in
