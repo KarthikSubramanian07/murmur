@@ -566,8 +566,9 @@ func (f *fixtures) Restart(ctx context.Context) error {
 	return nil
 }
 
-// SetTags applies a human's change as the session's device would, with no derived tags to
-// account for.
+// SetTags applies a human's change as the session's device would. The fixtures keep only the
+// session's current tags, so its state is rebuilt from them, each by where it came from: a derived
+// tag counted as the session's own would show as set by the session after any change (#224).
 func (f *fixtures) SetTags(ctx context.Context, addr string, add, remove []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -577,20 +578,23 @@ func (f *fixtures) SetTags(ctx context.Context, addr string, add, remove []strin
 			if s.Addr != addr && s.Name != addr {
 				continue
 			}
-			var self []string
+			var self, derived []string
 			human := map[string]tags.Mark{}
 			for _, t := range s.Tags {
-				if t.Src == tags.SrcHuman {
+				switch t.Src {
+				case tags.SrcHuman:
 					human[t.Name] = tags.Mark{On: true}
-				} else {
+				case tags.SrcDerived:
+					derived = append(derived, t.Name)
+				default:
 					self = append(self, t.Name)
 				}
 			}
 			st := tags.State{Self: self, Human: human}
-			if err := st.SetHuman(self, add, remove, "Tyler", time.Now()); err != nil {
+			if err := st.SetHuman(tags.Base(self, derived), add, remove, "Tyler", time.Now()); err != nil {
 				return err
 			}
-			s.Tags = tags.Effective(st.Self, nil, st.Human)
+			s.Tags = tags.Effective(st.Self, derived, st.Human)
 			return nil
 		}
 	}
