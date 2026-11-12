@@ -170,8 +170,8 @@ func TestCodexSubagentIsReachedThroughTheThreadThatSpawnedIt(t *testing.T) {
 	remote := newRemote(t)
 	exe, _ := useFakeT3(t)
 	codex := &fakeCodex{
-		lin:   map[string]title.Lineage{"th-main": {}, "th-spawned": {Subagent: true, Parent: "th-x"}},
-		above: map[int][]int{300: {300, 1}, 600: {600, 1}},
+		lin:   map[string]title.Lineage{"th-main": {}, "th-spawned": {Subagent: true, Parent: "th-x"}, "th-driven-below": {Driven: true}},
+		above: map[int][]int{300: {300, 1}, 600: {600, 1}, 650: {650, 1}},
 	}
 	b := newCodexDevice(t, remote, codex)
 	main, _ := b.agentSession("bbbbbb", "codex", 300, "", codexIn("th-main"))
@@ -186,12 +186,17 @@ func TestCodexSubagentIsReachedThroughTheThreadThatSpawnedIt(t *testing.T) {
 
 	// The lone session of its process is paired with the hook of a subagent it spawned.
 	b.do(proto.Request{Op: proto.OpNotices, Agent: "codex", ClaudeSession: "th-spawned", Ancestors: []int{921, 920, 600, 1}})
+	// Or of a driven thread started below it (it ran an agent that runs codex-sub), whose hook
+	// came before that thread's own MCP server registered.
+	solo, _ := b.agentSession("ffffff", "codex", 650, "", proto.Route{CodexCLI: "codex"})
+	eventually(t, "the session to be listed", func() bool { return b.listsSession(solo) })
+	b.do(proto.Request{Op: proto.OpNotices, Agent: "codex", ClaudeSession: "th-driven-below", Ancestors: []int{931, 930, 650, 1}})
 	codex.set("th-kid", title.Lineage{Subagent: true, Parent: "th-main"})
 	eventually(t, "the subagent to leave who", func() bool { return !b.listsSession(kid) })
 	if !b.listsSession(main) {
 		t.Error("the thread that spawned the subagent left who")
 	}
-	if !b.listsSession(lone) {
+	if !b.listsSession(lone) || !b.listsSession(solo) {
 		t.Error("a session left who on the word of a hook's pairing")
 	}
 	if !b.listsSession(inT3) {

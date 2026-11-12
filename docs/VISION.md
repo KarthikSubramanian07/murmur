@@ -1860,7 +1860,8 @@ A body past the limit is cut, as in `inbox`.
     driven thread often never makes. Codex's hook runs at the thread's first prompt and reports
     it, so the daemon takes it from there too. That pairing is by process and can be wrong (a
     spawned subagent's hook, run before its MCP server registers, pairs with the session that
-    spawned it), so an ID from a hook counts only for a driven thread.
+    spawned it), so an ID from a hook counts only for a driven thread, in a process another
+    session's agent is above.
   - *A driven process.* Where the hook is paired with no session (several in one Codex
     process), a driven thread it reports marks the process, for good, if another session's agent
     is among the process's ancestors: a subagent tool runs a Codex app server of its own
@@ -1884,7 +1885,10 @@ A body past the limit is cut, as in `inbox`.
     T3 delegate is until its thread is read; it has no way in but its inbox then. A Codex
     whose hook was never trusted, in a thread that never calls a Murmur tool, stays there. A
     subagent Codex spawned is marked only once it calls a Murmur tool. A thread codex-sub made
-    and a person later opens in Codex's own app is still a child: `originator` is who made it.
+    and a person later opens in Codex's own app is still a child: `originator` is who made it
+    (#474). Inside T3 a session's own `CODEX_HOME` isn't known to the daemon, so a T3 instance
+    with a Codex home of its own has its codex-sub threads looked up in the wrong database, and
+    they stay on the mesh. A process whose threads Codex doesn't keep is never marked.
     Nothing is saved, so after a daemon restart a child is back until its next hook or tool
     call. A child found late keeps the name it took; nobody sees it. Not run against a live
     codex-sub thread: the reads were checked against the laptop's real Codex state, and the

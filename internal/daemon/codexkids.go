@@ -31,7 +31,9 @@ import (
 //
 //   - The ID is taken from Codex's hook too, which runs at the thread's first prompt (hookNative).
 //     That pairing is by process and can be wrong where a subagent's hook runs before its MCP
-//     server registers, so an ID from a hook counts only for a driven thread, not a spawned one.
+//     server registers: it pairs with the session that started the subagent. So an ID from a
+//     hook counts only for a driven thread, not a spawned one, and only in a process that
+//     another session's agent is above, which a person's Codex isn't.
 //   - Where the hook is paired with no session (several in one Codex process), the thread it
 //     reported still says something about the process (codexProc): a subagent tool starts a Codex
 //     app server of its own, so every thread there is its. A process is marked driven, for good,
@@ -166,6 +168,9 @@ func (d *Daemon) refreshKids(ctx context.Context) (changed bool) {
 	needAnc := map[int]bool{}
 	pids := map[int]bool{}
 	for _, s := range d.sortedSessionsLocked() {
+		if !s.dropped.IsZero() {
+			continue // its process may be gone, and its number another's by now
+		}
 		pids[s.clientPID] = true
 		if s.clientPID != 0 && d.procAnc[s.clientPID] == nil {
 			needAnc[s.clientPID] = true
@@ -253,7 +258,8 @@ func (d *Daemon) refreshKids(ctx context.Context) (changed bool) {
 	for _, c := range cands {
 		own, known := d.codexLin[c.own]
 		switch {
-		case known && (own.Driven || own.Subagent && !c.fromHook && !c.inT3):
+		case known && own.Driven && (!c.fromHook || d.agentAboveLocked(c.pid)),
+			known && own.Subagent && !c.fromHook && !c.inT3:
 			changed = d.markKidLocked(c.id, own.Parent) || changed
 		case !known && d.codexDriven[c.pid]:
 			changed = d.markKidLocked(c.id, "") || changed
@@ -269,6 +275,10 @@ func (d *Daemon) refreshKids(ctx context.Context) (changed bool) {
 	for k := range d.codexLin {
 		if !used[k] {
 			delete(d.codexLin, k)
+		}
+	}
+	for k := range d.codexWarned {
+		if !used[k] {
 			delete(d.codexWarned, k)
 		}
 	}
