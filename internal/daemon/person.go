@@ -68,6 +68,21 @@ func (d *Daemon) resolvePersonLocked(name string) (string, bool) {
 	return "", false
 }
 
+// listedPersonNameLocked is the name who and the page list a peer's person under: the one its
+// presence gives, if that name reaches them, and "" otherwise, when they are listed by address. Any
+// device can say its person has any name, so one whose presence says ada while ada is someone
+// else's would be listed as a second ada (#350); sending to ada reaches whoever holds the name, the
+// way a message's name counts only if its sender holds it (personSenderLocked). Caller holds mu.
+func (d *Daemon) listedPersonNameLocked(addr, name string) string {
+	if name == "" {
+		return ""
+	}
+	if got, ok := d.resolvePersonLocked(name); ok && got != addr {
+		return ""
+	}
+	return name
+}
+
 // personNameOfLocked is the name of the person at addr, "" if addr isn't a person's or their name
 // isn't known. A person who changed their name has the earlier one in People too, so presence, which
 // has only the current one, goes first. Caller holds mu.

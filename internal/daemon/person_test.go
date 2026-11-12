@@ -17,6 +17,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
+	"github.com/a-Fig/murmur/internal/view"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -729,6 +730,45 @@ func TestAnotherDeviceCantSpeakAsAPerson(t *testing.T) {
 	}
 	if r := b.do(proto.Request{Op: proto.OpLookup, Name: "ada"}); r.Lookup == nil || r.Lookup.Addr != ada {
 		t.Errorf("ada after the forgery: %+v", r.Lookup)
+	}
+
+	// who and the page list evil-0001's person by address, not as a second ada (#350).
+	evil := "evil-0001/" + bus.PersonSession
+	eventually(t, "b's who to list evil-0001", func() bool {
+		for _, dv := range b.do(proto.Request{Op: proto.OpWho}).Devices {
+			if dv.ID == "evil-0001" {
+				return true
+			}
+		}
+		return false
+	})
+	var listed []proto.SessionView
+	adas := 0
+	for _, dv := range b.do(proto.Request{Op: proto.OpWho}).Devices {
+		for _, s := range dv.Sessions {
+			if s.Addr == evil {
+				listed = append(listed, s)
+			}
+			if s.Name == "ada" {
+				adas++
+			}
+		}
+	}
+	if len(listed) != 1 || listed[0].Name != "" || adas != 1 {
+		t.Errorf("b's who lists evil-0001's person as %+v, and %d sessions as ada", listed, adas)
+	}
+	if out := view.Who(b.do(proto.Request{Op: proto.OpWho})); strings.Count(out, "ada") != 1 || !strings.Contains(out, "  "+evil+"  person") {
+		t.Errorf("b's who:\n%s", out)
+	}
+	for _, dv := range b.page().state().Devices {
+		switch {
+		case dv.ID == "evil-0001" && (dv.Person == nil || dv.Person.Name != evil):
+			t.Errorf("b's page shows evil-0001's person as %+v", dv.Person)
+		case dv.ID != "evil-0001" && dv.ID != a.self() && dv.Person != nil:
+			t.Errorf("b's page shows a person on %s: %+v", dv.ID, dv.Person)
+		case dv.ID == a.self() && (dv.Person == nil || dv.Person.Name != "ada"):
+			t.Errorf("b's page shows ada as %+v", dv.Person)
+		}
 	}
 
 	// ada's own message says where it is from, while another presence says ada too.
