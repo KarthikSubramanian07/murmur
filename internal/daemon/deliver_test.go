@@ -52,18 +52,19 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// t3Call is one run of the stand-in `t3`.
+// t3Call is one run of the stand-in `t3`, which also stands in for `codex` and `opencode` (#135).
 type t3Call struct {
-	Args  []string `json:"args"`
-	Stdin string   `json:"stdin"`
-	Home  string   `json:"home"`
+	Args      []string `json:"args"`
+	Stdin     string   `json:"stdin"`
+	Home      string   `json:"home"`
+	CodexHome string   `json:"codexHome"`
 }
 
-// fakeT3 is the stand-in `t3`: it records its arguments, standard input and T3CODE_HOME, and
-// fails if told to.
+// fakeT3 is the stand-in `t3`: it records its arguments, standard input, T3CODE_HOME and
+// CODEX_HOME, and fails if told to.
 func fakeT3(path string) int {
 	in, _ := io.ReadAll(os.Stdin)
-	line, _ := json.Marshal(t3Call{Args: os.Args[1:], Stdin: string(in), Home: os.Getenv("T3CODE_HOME")})
+	line, _ := json.Marshal(t3Call{Args: os.Args[1:], Stdin: string(in), Home: os.Getenv("T3CODE_HOME"), CodexHome: os.Getenv("CODEX_HOME")})
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return 3
