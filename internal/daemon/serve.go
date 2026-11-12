@@ -487,6 +487,9 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 		return proto.Response{OK: true, Note: note}
 
+	case proto.OpNick:
+		return d.nick(req)
+
 	case proto.OpPageKey:
 		// Another clone's daemon asks, to send its page's tab here (#348). It has the sessions'
 		// token, from this clone's daemon.json, so it could do more than this already.
@@ -764,12 +767,29 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		// the name, which takes no device's ID when it is chosen.
 		d.mu.Lock()
 		addr, ok := d.resolvePersonLocked(to)
-		_, isDevice := d.peers[to]
-		isDevice = isDevice || to == d.device
-		d.mu.Unlock()
-		if ok && !isDevice {
-			to, toName = addr, to
+		isDevice := d.isDeviceLocked(to)
+		var err error
+		if !ok && !isDevice {
+			addr, err = d.resolveNickLocked(to) // a device's nickname, for all its sessions (#190)
 		}
+		d.mu.Unlock()
+		switch {
+		case err != nil:
+			return fail("not sent: " + err.Error())
+		case ok && !isDevice:
+			to, toName = addr, to
+		case !isDevice:
+			to = addr
+		}
+	} else if strings.Contains(to, "/") {
+		// The device may be given by its nickname (#190). What goes on the bus is its ID.
+		d.mu.Lock()
+		addr, err := d.resolveNickLocked(to)
+		d.mu.Unlock()
+		if err != nil {
+			return fail("not sent: " + err.Error())
+		}
+		to = addr
 	}
 	var note string
 	if to != "*" {
@@ -914,7 +934,7 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 // whoLocked lists every device and session, or with a filter the sessions whose tags match it and
 // the devices they are on. The CLI shows only when it is the one asking.
 func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
-	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Self: true, LastSeen: time.Now()}
+	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Nick: d.nickOfLocked(d.device), Self: true, LastSeen: time.Now()}
 	for _, s := range d.sortedSessionsLocked() {
 		if d.offMeshLocked(s.id) && s.id != you {
 			continue // offline (#189)
@@ -937,7 +957,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	devices := []proto.Device{self}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
-		dv := proto.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, LastSeen: p.lastChange,
+		dv := proto.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), LastSeen: p.lastChange,
 			Stale: d.staleLocked(p)}
 		for _, s := range p.pres.Sessions {
 			if s.ID == proto.CLISession {

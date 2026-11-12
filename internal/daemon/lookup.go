@@ -53,10 +53,15 @@ func (d *Daemon) lookupAddrLocked(target string) (string, error) {
 		if !bus.ValidDevice(dev) || !bus.ValidName(sess) || sess == proto.CLISession {
 			return "", fmt.Errorf("%q isn't a session's address; lookup takes a name or device/session", target)
 		}
-		if !d.sessionKnownLocked(dev, sess) {
+		// The device may be given by its nickname (#190).
+		addr, err := d.resolveNickLocked(target)
+		if err != nil {
+			return "", err
+		}
+		if dev, sess = bus.SplitAddr(addr); !d.sessionKnownLocked(dev, sess) {
 			return "", fmt.Errorf("no session is known at %q. who shows the names and addresses in use.", target)
 		}
-		return target, nil
+		return addr, nil
 	case names.Valid(target):
 		addr, ok := d.resolveNameLocked(target)
 		if !ok {
@@ -106,7 +111,7 @@ func (d *Daemon) sessionKnownLocked(dev, sess string) bool {
 func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail {
 	dev, sess := bus.SplitAddr(addr)
 	byAddr := d.namesByAddrLocked()
-	det := &proto.SessionDetail{Addr: addr, Device: dev, You: dev == d.device && sess == you}
+	det := &proto.SessionDetail{Addr: addr, Device: dev, Nick: d.nickOfLocked(dev), You: dev == d.device && sess == you}
 	if dev == d.device {
 		det.Local, det.Host, det.Owner = true, d.host, d.owner
 		det.Committed = d.committedLocked(sess)

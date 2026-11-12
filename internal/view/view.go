@@ -163,11 +163,12 @@ func Who(r proto.Response) string {
 			continue // every one of its sessions is among the hidden
 		}
 		sort.SliceStable(sessions, func(a, b int) bool { return activeAt(sessions[a]).After(activeAt(sessions[b])) })
+		id := device(d.Nick, d.ID)
 		switch {
 		case d.Self:
-			fmt.Fprintf(&b, "\n%s (%s, this device)\n", d.ID, who)
+			fmt.Fprintf(&b, "\n%s (%s, this device)\n", id, who)
 		case d.Stale:
-			fmt.Fprintf(&b, "\n%s (%s) STALE: last seen %s; messages may not reach it", d.ID, who, Ago(d.LastSeen))
+			fmt.Fprintf(&b, "\n%s (%s) STALE: last seen %s; messages may not reach it", id, who, Ago(d.LastSeen))
 			if n := len(d.Sessions); n == 1 {
 				b.WriteString("; its 1 session is not listed")
 			} else if n > 1 {
@@ -175,7 +176,7 @@ func Who(r proto.Response) string {
 			}
 			b.WriteString("\n")
 		default:
-			fmt.Fprintf(&b, "\n%s (%s, seen %s)\n", d.ID, who, Ago(d.LastSeen))
+			fmt.Fprintf(&b, "\n%s (%s, seen %s)\n", id, who, Ago(d.LastSeen))
 		}
 		if len(d.Sessions) == 0 && r.Filter == "" {
 			b.WriteString("  no sessions\n")
@@ -223,6 +224,15 @@ func Who(r proto.Response) string {
 	}
 	note(&b, r)
 	return b.String()
+}
+
+// device renders a device as a session is rendered: what it is called (#190), if anything, then
+// its ID, which is its address.
+func device(nick, id string) string {
+	if nick != "" {
+		return nick + "  " + id
+	}
+	return id
 }
 
 func from(m proto.MessageView) string {
@@ -485,12 +495,13 @@ func Lookup(r proto.Response) string {
 	if d.Owner != "" {
 		who = d.Owner + " on " + d.Host
 	}
+	id := device(d.Nick, d.Device)
 	if d.Local {
-		fmt.Fprintf(&b, "  device %s (%s, this device)\n", d.Device, who)
+		fmt.Fprintf(&b, "  device %s (%s, this device)\n", id, who)
 	} else if who != "" {
-		fmt.Fprintf(&b, "  device %s (%s)\n", d.Device, who)
+		fmt.Fprintf(&b, "  device %s (%s)\n", id, who)
 	} else {
-		fmt.Fprintf(&b, "  device %s\n", d.Device)
+		fmt.Fprintf(&b, "  device %s\n", id)
 	}
 
 	if d.Branch != "" {
