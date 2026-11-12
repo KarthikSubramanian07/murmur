@@ -48,9 +48,15 @@ func (d *Daemon) adoptMutesLocked(s *session) {
 		d.st.Mutes[s.name] = m
 	} else {
 		for _, name := range sortedKeys(m) {
-			if _, ok := have[name]; !ok && len(have) < bus.MaxMuted {
-				have[name] = m[name]
+			if _, ok := have[name]; ok {
+				continue
 			}
+			if len(have) >= bus.MaxMuted {
+				d.log.Printf("session %s muted %s before its name %s landed, and the name has %d mutes already; not kept",
+					bus.Addr(d.device, s.id), name, s.name, len(have))
+				continue
+			}
+			have[name] = m[name]
 		}
 	}
 	d.saveLocked()

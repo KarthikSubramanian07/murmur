@@ -151,9 +151,11 @@ func TestAMuteHoldsWhenASessionReconnects(t *testing.T) {
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.session("bbbbbb", "")
+	carol, _ := b.session("cccccc", "")
 	dave, _ := b.session("dddddd", "")
 	aliceName := b.named(alice)
 	b.named(bob)
+	b.named(carol)
 	b.named(dave)
 	if r := b.mute("bbbbbb", aliceName, false); r.Error != "" {
 		t.Fatalf("bob mutes alice: %+v", r)
@@ -162,11 +164,19 @@ func TestAMuteHoldsWhenASessionReconnects(t *testing.T) {
 	b.stop()
 	a.send("aaaaaa", "*", "while b was down", "")
 	b.start()
-	b.helloAgain("bbbbbb", true)
+	// The order makes it the catch-up that decides for bob, every run. Dave, back first, has the
+	// message only once the daemon has read it, so bob, back after that, isn't given it as it is
+	// read, which checked mutes already. Carol, back last, can only be given it by a catch-up, so
+	// the daemon was still catching sessions up when bob came back.
 	b.helloAgain("dddddd", true)
-
-	// Dave, who muted nobody, gets it, so it was there for bob's catch-up to give.
-	eventually(t, "dave to be caught up", func() bool { return slices.Contains(inboxOf(b, "dddddd"), "while b was down") })
+	if got := inboxOf(b, "dddddd"); !slices.Contains(got, "while b was down") {
+		t.Fatalf("dave, who muted nobody, got %q", got)
+	}
+	b.helloAgain("bbbbbb", true)
+	b.helloAgain("cccccc", true)
+	if got := inboxOf(b, "cccccc"); !slices.Contains(got, "while b was down") {
+		t.Fatalf("carol, who muted nobody and came back after bob, got %q", got)
+	}
 	if got := b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages; len(got) != 0 {
 		t.Errorf("bob was caught up with a message from the session he muted: %+v", got)
 	}
