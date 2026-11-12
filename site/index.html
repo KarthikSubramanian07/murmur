@@ -526,6 +526,14 @@
     .st .st-lock { --w: 88vw; margin-bottom: 30px; }
     .st .st-lock > span { filter: blur(.6px) url(#st-reeds-xs); }
   }
+  /* WebKit, which is Safari and every browser on an iPhone, draws nothing at all for an element
+     whose filter uses feImage or feTile (seen 2026-11-12 in Playwright's WebKit: the logo was
+     missing, and so was the Inter word before it). There the logo is only blurred, behind the reed
+     faces, which are plain gradients. -webkit-nbsp-mode is a property only WebKit has. */
+  @supports (-webkit-nbsp-mode: space) {
+    .st .st-lock > span { filter: blur(1.2px); }
+    @media (max-width: 600px) { .st .st-lock > span { filter: blur(.6px); } }
+  }
 
   /* ---------- The hero on a phone ---------- */
   /* The 12px reeds are coarse against a phone-sized logo, so the refraction is gentler here (the
