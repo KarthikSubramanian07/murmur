@@ -59,6 +59,9 @@ func (d *Daemon) recordActLocked(a web.Activity) {
 		d.acts = slices.Delete(d.acts, 0, 1)
 	}
 	d.acts = append(d.acts, pageAct{d.actSeq, a})
+	if d.actIDs == nil { // a Daemon a test built by hand
+		d.actIDs = map[string]bool{}
+	}
 	d.actIDs[a.ID] = true
 }
 
@@ -94,6 +97,9 @@ func (d *Daemon) noteSessionsLocked(dev string, sessions []bus.SessionInfo, at t
 		}
 		sort.Strings(now.tags)
 		was, known := d.actSeen[addr]
+		if d.actSeen == nil {
+			d.actSeen = map[string]sessSeen{}
+		}
 		d.actSeen[addr] = now
 		if !known {
 			continue
