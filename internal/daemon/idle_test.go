@@ -15,6 +15,7 @@ import (
 // A daemon whose only session was a T3 thread that stopped stays up past the idle time, and
 // hands over a message that comes then, through `t3`.
 func TestDaemonWithAThreadToWakeStaysUpAndHandsOver(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a := newDevice(t, remote)
@@ -50,6 +51,7 @@ func TestDaemonWithNothingToWakeStillExits(t *testing.T) {
 // A thread's route is kept for as long as its inbox is (StoppedInbox); when that is over, so is the
 // daemon's reason to stay.
 func TestDaemonLeavesOnceTheThreadIsNoLongerKept(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, _ := useFakeT3(t)
 	b := newDeviceWith(t, remote, func(d *device) { d.idle, d.grace, d.keep = time.Second, 300*time.Millisecond, 8*time.Second })

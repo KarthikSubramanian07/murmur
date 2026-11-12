@@ -15,6 +15,7 @@ import (
 // as a line with its subject, the default, or whole, as its turn would read. A message given whole
 // is read: it leaves the inbox and the count, and doesn't go in as a turn when the turn ends.
 func TestBusySessionGetsTheWholeMessageThroughTheHook(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	var out syncBuf
@@ -133,6 +134,7 @@ func TestBusySessionGetsTheWholeMessageThroughTheHook(t *testing.T) {
 // A message whose handoff to T3 failed may be in T3's queue all the same: with whole messages set,
 // it still gets only its subject, as after any failed handoff, not a second telling in full.
 func TestAFailedHandoffIsNotGivenWhole(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	setFakeT3(t, exe, fakeT3Fail, "1")

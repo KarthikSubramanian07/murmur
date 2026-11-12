@@ -28,6 +28,7 @@ func lateT3(t *testing.T) (exe string, install func(), calls func() []t3Call) {
 // after T3 accepted it, is not run again: the message may be in the thread already, and it would
 // be there twice. It waits for the hook's notice instead, and is never handed over a second time.
 func TestAHandoffThatMayHaveLandedIsNotRepeated(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	setFakeT3(t, exe, fakeT3Fail, "1") // the stand-in records the call, which is T3 having it, and then fails
@@ -54,6 +55,7 @@ func TestAHandoffThatMayHaveLandedIsNotRepeated(t *testing.T) {
 // sent the same turn again. The mark is saved before the handoff, so it is there whether the daemon
 // stopped after the call failed or in the middle of it, and the message is left to the notice.
 func TestAHandoffThatMayHaveLandedIsNotRepeatedAfterARestart(t *testing.T) {
+	t.Parallel()
 	route := func(exe string) proto.Route { return proto.Route{T3CLI: exe, T3Thread: "thread-bob"} }
 	for _, tc := range []struct {
 		name    string
@@ -106,6 +108,7 @@ func TestAHandoffThatMayHaveLandedIsNotRepeatedAfterARestart(t *testing.T) {
 // would leave a restart nothing to find, and the turn would be sent again. It is left to the notice,
 // as after any failed handoff (#82).
 func TestAMessageIsNotHandedOverWhenTheMarkCannotBeSaved(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	var out syncBuf
@@ -139,6 +142,7 @@ func TestAMessageIsNotHandedOverWhenTheMarkCannotBeSaved(t *testing.T) {
 // An attempt that never started anything is the one kind that is tried again, once: no `t3` is
 // there yet when the first attempt is made, and the retry finds it.
 func TestAHandoffThatNeverStartedIsTriedOnceMore(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, install, calls := lateT3(t)
 	var out syncBuf
@@ -165,6 +169,7 @@ func TestAHandoffThatNeverStartedIsTriedOnceMore(t *testing.T) {
 
 // A retry that fails to start too leaves the message to the notice, after two attempts and no more.
 func TestAHandoffThatNeverStartsFallsBackToTheNotice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, _, calls := lateT3(t)
 	var out syncBuf

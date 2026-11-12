@@ -232,6 +232,7 @@ func (d *device) unread(id, claude string) (inbox, notices []string) {
 // A message for a session in T3 runs `t3 thread send <thread> -` with the text on standard input,
 // once, and is no longer unread: not in the inbox, not in the hook's notices.
 func TestMessageForAT3SessionIsHandedOverAsATurn(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	var out syncBuf
@@ -274,6 +275,7 @@ func TestMessageForAT3SessionIsHandedOverAsATurn(t *testing.T) {
 
 // Messages for one session go in one at a time, in the order they came, and each once.
 func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -297,6 +299,7 @@ func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 // Only a session's first turn from a sender says what agent the sender is and whose machine it is
 // on; later ones name it alone (#216). Another sender is introduced in its own first turn.
 func TestASenderIsDescribedOnlyInItsFirstTurn(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -327,6 +330,7 @@ func TestASenderIsDescribedOnlyInItsFirstTurn(t *testing.T) {
 // A session that isn't in T3 and has no messaging socket can't be put a turn into, so its
 // messages are the hook's notices, as they were, and the daemon says so once.
 func TestWithNoWayInMessagesStayNotices(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	_, calls := useFakeT3(t)
 	var out syncBuf
@@ -355,6 +359,7 @@ func TestWithNoWayInMessagesStayNotices(t *testing.T) {
 // once per session however many messages fail. It is not tried again: the failure may have come
 // after T3 took the message (see deliver_repeat_test.go).
 func TestFailedHandoffFallsBackToTheNotice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	setFakeT3(t, exe, fakeT3Fail, "1")
@@ -396,6 +401,7 @@ func TestFailedHandoffFallsBackToTheNotice(t *testing.T) {
 // The page's wake setting "never" keeps messages as notices, for the device or for one session; a
 // message that waited is handed over when the setting is lifted.
 func TestWakeNeverKeepsTheNotice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -437,6 +443,7 @@ func TestWakeNeverKeepsTheNotice(t *testing.T) {
 // still reached, through its thread, which the daemon remembers; a restart of the daemon doesn't
 // forget it.
 func TestMessageForAStoppedT3SessionStillReachesItsThread(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
@@ -475,6 +482,7 @@ func TestMessageForAStoppedT3SessionStillReachesItsThread(t *testing.T) {
 // A session's name follows its T3 thread: a new MCP server in the same thread, with another
 // Claude session ID (/clear, a restart, another account), has the name the thread had.
 func TestNameFollowsTheT3Thread(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, _ := useFakeT3(t)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
@@ -498,6 +506,7 @@ func TestNameFollowsTheT3Thread(t *testing.T) {
 // background) keeps its name, and from then on takes messages as turns, including one that came
 // while the thread was unknown.
 func TestSessionThatFindsItsThreadLaterIsHandedItsMessages(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -524,6 +533,7 @@ func TestSessionThatFindsItsThreadLaterIsHandedItsMessages(t *testing.T) {
 // token are in state.json at most (the thread, so that a message can still find it), and never in
 // the log, on the page or on the bus.
 func TestRouteStaysOnTheDevice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	var out syncBuf
