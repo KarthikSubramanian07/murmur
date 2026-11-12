@@ -757,8 +757,22 @@ func TestAnotherDeviceCantSpeakAsAPerson(t *testing.T) {
 	if len(listed) != 1 || listed[0].Name != "" || adas != 1 {
 		t.Errorf("b's who lists evil-0001's person as %+v, and %d sessions as ada", listed, adas)
 	}
-	if out := view.Who(b.do(proto.Request{Op: proto.OpWho})); strings.Count(out, "ada") != 1 || !strings.Contains(out, "  "+evil+"  person") {
+	// Nor is its device called ada, as a device with no nickname is called by its person's (#439).
+	out := view.Who(b.do(proto.Request{Op: proto.OpWho}))
+	evilLines := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "evil-0001") {
+			evilLines++
+			if strings.Contains(line, "ada") {
+				t.Errorf("b's who shows evil-0001 as ada: %q", line)
+			}
+		}
+	}
+	if evilLines != 2 || !strings.Contains(out, "  "+evil+"  person") {
 		t.Errorf("b's who:\n%s", out)
+	}
+	if r := b.do(proto.Request{Op: proto.OpLookup, Name: evil}); r.Lookup == nil || r.Lookup.Nick != "" {
+		t.Errorf("lookup of %s calls its device: %+v", evil, r.Lookup)
 	}
 	// So do lookup and the page's messages: one sent to evil-0001's person is to its address, and
 	// doesn't join the conversation with the real ada.
@@ -775,6 +789,9 @@ func TestAnotherDeviceCantSpeakAsAPerson(t *testing.T) {
 		t.Errorf("the message to %s on b's page: %+v", evil, m)
 	}
 	for _, dv := range b.page().state().Devices {
+		if dv.ID == "evil-0001" && dv.Nick != "" {
+			t.Errorf("b's page calls evil-0001 %q", dv.Nick)
+		}
 		switch {
 		case dv.ID == "evil-0001" && (dv.Person == nil || dv.Person.Name != evil):
 			t.Errorf("b's page shows evil-0001's person as %+v", dv.Person)

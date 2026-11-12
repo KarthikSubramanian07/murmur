@@ -993,7 +993,8 @@ in its own session.
   which claims it. Until then, messages to the name go to the old device, and theirs show from their
   address. `who` and the page list another device's person the same way (#350): under the name its
   presence gives only if that name reaches them, and otherwise by their address, so a presence that
-  says `ada` while `ada` is someone else's doesn't show as a second `ada`.
+  says `ada` while `ada` is someone else's doesn't show as a second `ada`. Nor is its device called
+  `ada` by default ("Device nicknames"); a nickname it sets for itself is still only a label.
 - **A person's direct message wakes a session past the "Within" window**, because they are waiting
   for an answer. It doesn't wake past Never or do not disturb, which a person also chose. A broadcast
   from a person wakes nothing extra: one sentence shouldn't wake every idle session on the mesh. The
