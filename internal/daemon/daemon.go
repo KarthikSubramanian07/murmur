@@ -397,6 +397,9 @@ type Daemon struct {
 	threads      map[threadKey]t3db.State
 	threadRead   map[threadKey]time.Time
 	threadWarned map[threadKey]bool
+	// handedTo is, for each T3 thread, the messages lately handed to it as a turn, oldest first, so
+	// another session's copy of one is not handed to it again (see noteHandedLocked).
+	handedTo map[threadKey][]handed
 
 	// refused is when a presence claiming each device was last refused (see checkPresenceLocked), to
 	// log it once a minute.
@@ -973,7 +976,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
-		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
+		handedTo: map[threadKey][]handed{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
 		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
 		waitWarned: map[string]bool{}, unknownAt: map[string]unknownKey{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1),
 	}
