@@ -516,6 +516,7 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 	if bus.IsPerson(m.Event.From) {
 		views[0].Explained = d.explainedLocked(id, m.Event.From) // recorded once it is handed over
 	}
+	views[0].GroupKnown = bus.IsGroup(m.Event.To) && d.explainedLocked(id, m.Event.To) // likewise
 	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, conv: d.conversationLocked(id), explainKey: d.explainKeyLocked(id), msg: m, via: via,
 		route: route, text: view.Turn(views[0])}
 }
@@ -671,6 +672,7 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.outOfInboxLocked(j.id, j.msg, "handed", "as a turn, through "+j.via)
 	d.introduceLocked(j.key, j.msg.Event.From)
 	d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), j.msg.Event.From)
+	d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), j.msg.Event.To)
 	d.saveLocked()
 	delete(d.pushWarned, j.id)
 }

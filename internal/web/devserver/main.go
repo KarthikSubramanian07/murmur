@@ -215,10 +215,10 @@ func newFixtures(now time.Time) *fixtures {
 			Sessions: []web.Session{
 				{Name: "quiet-otter", Agent: "claude-code", Branch: "web-page", Worktree: "agent-a5adaaef",
 					Doing: "Building the settings view of the web page", Started: ago(52 * time.Minute), LastActive: ago(20 * time.Second),
-					Tags: []tags.Tag{{Name: "model:opus-5.5", Src: tags.SrcDerived}, {Name: "ui"}}},
+					Tags: []tags.Tag{{Name: "group:ui"}, {Name: "model:opus-5.5", Src: tags.SrcDerived}, {Name: "ui"}}},
 				{Name: "brave-heron", Agent: "codex", Branch: "remove-claims", Worktree: "remove-claims",
 					Doing: "Deleting claims from the daemon and the MCP tools", Started: ago(2*time.Hour + 4*time.Minute), LastActive: ago(3 * time.Minute),
-					Tags: []tags.Tag{{Name: "model:gpt-5.1-codex"}, {Name: "release", Src: tags.SrcHuman}}},
+					Tags: []tags.Tag{{Name: "group:ui"}, {Name: "model:gpt-5.1-codex"}, {Name: "release", Src: tags.SrcHuman}}},
 				{Name: "amber-finch", Agent: "claude-code", Branch: "main", Worktree: "murmur",
 					Started: ago(5 * time.Hour), LastActive: ago(26 * time.Minute)},
 				// Left open in a terminal for days: the page folds it away as quiet.
@@ -447,6 +447,10 @@ func (f *fixtures) Send(ctx context.Context, to, text string) (web.Sent, error) 
 	case "*":
 		m.To, m.ToAddr, m.ToKind = "*", "*", web.ToAll
 	default:
+		if tags.IsGroup(to) {
+			m.To, m.ToAddr, m.ToKind = to, to, web.ToGroup
+			break
+		}
 		m.To, m.ToAddr, m.ToKind = to, to, web.ToSession
 		isDevice := false
 		for _, d := range f.devices {
