@@ -203,12 +203,12 @@ func TestAMutedSessionCantAddItsMuterToAGroup(t *testing.T) {
 	if r := b.mute("bbbbbb", aliceName, false); r.Error != "" {
 		t.Fatalf("bob mutes alice: %+v", r)
 	}
-	// Until alice's daemon reads of the mute, her add goes out, and bob's device leaves it.
-	var refusal string
-	eventually(t, "alice's add to be refused", func() bool { refusal = add().Error; return refusal != "" })
-	if !strings.Contains(refusal, bobName+" has muted you") {
-		t.Errorf("the refusal: %s", refusal)
-	}
+	// Until alice's daemon reads of the mute, her add goes out, and bob's device leaves it. An add
+	// can be refused for another reason meanwhile, as when the tests' load holds b's heartbeat back
+	// and a takes its sessions for gone (#387), so the wait is for this refusal.
+	eventually(t, "alice's add to be refused for the mute", func() bool {
+		return strings.Contains(add().Error, bobName+" has muted you")
+	})
 	holds(t, "bob out of the group", 2*time.Second, func() bool { return !b.inGroup("bbbbbb", bob, "group:ui") })
 
 	if r := b.mute("bbbbbb", aliceName, true); r.Error != "" {
