@@ -1872,7 +1872,10 @@ A body past the limit is cut, as in `inbox`.
     put the process back.
   - *Inside T3.* codex-sub passes T3's variables on to its Codex, so a thread it drives for a
     Claude Code session in T3 has T3's command line and never a T3 thread. A Codex session is
-    therefore looked at until its T3 thread is found.
+    therefore looked at until its T3 thread is found. Only a driven thread is marked there:
+    Tyler's rule (2026-11-12, #452) is that a thread shown in the user's list of sessions is on
+    the mesh, and whether a subagent that a Codex thread of T3's spawned shows there is T3's to
+    say (#188).
   - *The parent.* For a spawned thread, the session in the thread that spawned it. Otherwise
     the nearest session whose agent is an ancestor of the child's Codex process, which for
     codex-sub is the Claude Code session running the plugin. With neither, the refusal names

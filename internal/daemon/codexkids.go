@@ -43,7 +43,10 @@ import (
 //
 // A Codex session inside T3 is looked at here until its T3 thread is found: codex-sub passes
 // T3's variables on to its Codex, so a thread it drives for a Claude Code session in T3 has
-// T3's command line and never a T3 thread.
+// T3's command line and never a T3 thread. Only a driven thread is marked there. A subagent
+// that a Codex thread of T3's spawned is T3's to judge (#188): Tyler's rule (2026-11-12, #452)
+// is that a thread shown in the user's list of sessions is on the mesh, and T3 knows which of
+// its threads those are.
 //
 // The parent, for the refusal's pointer and for crediting commits: the session whose client's ID
 // is the one the hook or Codex named, else the nearest session whose agent is an ancestor of the
@@ -155,6 +158,7 @@ func (d *Daemon) refreshKids(ctx context.Context) (changed bool) {
 		pid      int
 		own, any codexThread // the session's own thread, and one a hook reported from its process
 		fromHook bool        // own is hookNative: the hook's pairing, not the MCP server's word
+		inT3     bool        // the session has T3's command line, and no T3 thread yet
 	}
 	d.mu.Lock()
 	var cands []cand
@@ -169,7 +173,7 @@ func (d *Daemon) refreshKids(ctx context.Context) (changed bool) {
 		if !isAgent(s.agent, "codex") || s.route.T3Thread != "" {
 			continue
 		}
-		c := cand{id: s.id, pid: s.clientPID}
+		c := cand{id: s.id, pid: s.clientPID, inT3: s.route.T3CLI != ""}
 		dir := codexDir(s.route)
 		if id := cmp.Or(s.route.Native, s.hookNative); id != "" {
 			c.own, c.fromHook = codexThread{dir, id}, s.route.Native == ""
@@ -249,7 +253,7 @@ func (d *Daemon) refreshKids(ctx context.Context) (changed bool) {
 	for _, c := range cands {
 		own, known := d.codexLin[c.own]
 		switch {
-		case known && (own.Driven || own.Subagent && !c.fromHook):
+		case known && (own.Driven || own.Subagent && !c.fromHook && !c.inT3):
 			changed = d.markKidLocked(c.id, own.Parent) || changed
 		case !known && d.codexDriven[c.pid]:
 			changed = d.markKidLocked(c.id, "") || changed

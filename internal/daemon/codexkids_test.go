@@ -168,6 +168,7 @@ func TestCodexThreadsAreMarkedByAHookFromTheirProcess(t *testing.T) {
 // doesn't: the hook of a subagent can be paired with the session that spawned it.
 func TestCodexSubagentIsReachedThroughTheThreadThatSpawnedIt(t *testing.T) {
 	remote := newRemote(t)
+	exe, _ := useFakeT3(t)
 	codex := &fakeCodex{
 		lin:   map[string]title.Lineage{"th-main": {}, "th-spawned": {Subagent: true, Parent: "th-x"}},
 		above: map[int][]int{300: {300, 1}, 600: {600, 1}},
@@ -176,9 +177,11 @@ func TestCodexSubagentIsReachedThroughTheThreadThatSpawnedIt(t *testing.T) {
 	main, _ := b.agentSession("bbbbbb", "codex", 300, "", codexIn("th-main"))
 	kid, _ := b.agentSession("cccccc", "codex", 300, "", codexIn("th-kid"))
 	lone, _ := b.agentSession("dddddd", "codex", 600, "", proto.Route{CodexCLI: "codex"})
+	// In T3, whether a spawned thread is a delegate is T3's to say, once its thread is found.
+	inT3, _ := b.agentSession("eeeeee", "codex in T3", 300, "", proto.Route{T3CLI: exe, Native: "th-spawned"})
 	mainName, kidName := b.named(main), b.named(kid)
 	eventually(t, "the sessions to be listed", func() bool {
-		return b.listsSession(main) && b.listsSession(kid) && b.listsSession(lone)
+		return b.listsSession(main) && b.listsSession(kid) && b.listsSession(lone) && b.listsSession(inT3)
 	})
 
 	// The lone session of its process is paired with the hook of a subagent it spawned.
@@ -190,6 +193,9 @@ func TestCodexSubagentIsReachedThroughTheThreadThatSpawnedIt(t *testing.T) {
 	}
 	if !b.listsSession(lone) {
 		t.Error("a session left who on the word of a hook's pairing")
+	}
+	if !b.listsSession(inT3) {
+		t.Error("a spawned thread in T3 left who on Codex's word, before T3 said what it is")
 	}
 	if resp := b.trySend("bbbbbb", kidName, "to my subagent"); resp.OK || !strings.Contains(resp.Error, "Message "+mainName+" instead") {
 		t.Errorf("a send to the subagent: ok %v, error %q", resp.OK, resp.Error)
