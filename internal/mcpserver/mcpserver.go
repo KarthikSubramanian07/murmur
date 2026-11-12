@@ -7,10 +7,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +24,7 @@ import (
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/here"
 	"github.com/a-Fig/murmur/internal/join"
+	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/title"
@@ -284,9 +287,10 @@ func nativeID(native string) string {
 
 // routeFromEnv is what this process's environment says about reaching its client: inside T3, T3's
 // command line; in Claude Code, the messaging socket and the token for it; in Pi, the socket
-// Murmur's extension opens in the session, which takes the same lines (internal/join/pi.go). T3's
-// thread isn't in the environment: link.seek finds it. The daemon keeps all of this to itself (see
-// proto.Route).
+// Murmur's extension opens in the session, which takes the same lines (internal/join/pi.go); for
+// Codex and OpenCode outside T3, the client's own program, whose command line takes a message
+// (#135, package clientcli). T3's thread isn't in the environment: link.seek finds it. The daemon
+// keeps all of this to itself (see proto.Route).
 func routeFromEnv(agent string) proto.Route {
 	r := proto.Route{T3CLI: os.Getenv("T3CODE_CLI_PATH"), T3Home: os.Getenv("T3CODE_HOME")}
 	switch {
@@ -294,8 +298,76 @@ func routeFromEnv(agent string) proto.Route {
 		r.MsgSocket, r.MsgToken = os.Getenv("CLAUDE_CODE_MESSAGING_SOCKET"), os.Getenv("CLAUDE_CODE_MESSAGING_TOKEN")
 	case agent == "pi":
 		r.MsgSocket, r.MsgToken = os.Getenv("MURMUR_PI_MESSAGING_SOCKET"), os.Getenv("MURMUR_PI_MESSAGING_TOKEN")
+	case agent == "codex" && r.T3CLI == "":
+		r.CodexCLI = clientProgram("codex")
+	case agent == "opencode" && r.T3CLI == "":
+		r.OpenCodeCLI = openCodeService()
 	}
 	return r
+}
+
+// parentProgram is the process that started this server and the program it runs. A variable, for
+// tests.
+var parentProgram = func() (pid int, exe string) {
+	pid = os.Getppid()
+	exe, _ = proc.Exe(pid)
+	return pid, exe
+}
+
+// clientProgram is the program that started this server, if it is the client name: the Codex or
+// OpenCode that runs the session, which is the one whose command line reaches it. The name on
+// PATH may be another install, and on Windows it is npm's .cmd shim, which can't carry a
+// message's text. "" for a server started by anything else (a wrapper, a shell): the session then
+// has no such way in, as before.
+func clientProgram(name string) string {
+	_, exe := parentProgram()
+	return programNamed(exe, name)
+}
+
+// programNamed is exe if it is a program called name, and "" otherwise. The name is matched whole:
+// Codex's helpers (codex-command-runner, codex-code-mode-host) sit beside it and take no `queue`.
+// Linux marks the path of a program replaced while it runs with " (deleted)", after an update,
+// say; the path without it is the program that replaced it.
+func programNamed(exe, name string) string {
+	exe = strings.TrimSuffix(exe, " (deleted)")
+	base := strings.TrimSuffix(strings.ToLower(filepath.Base(exe)), ".exe")
+	if exe == "" || !filepath.IsAbs(exe) || base != name {
+		return ""
+	}
+	return exe
+}
+
+// openCodeService is the OpenCode that started this server, if it is the background server every
+// OpenCode 2 client shares, which is the one `opencode api` asks. OpenCode 2 registers that
+// server's process in service.json in its state directory ($XDG_STATE_HOME/opencode, else
+// ~/.local/state/opencode, on Windows too; {"pid": ...}, seen on 2.2.0, 2026-11-11). A session of
+// any other server gets "": one started with --standalone or --server, where `opencode api` would
+// start the shared server only to be told it has no such session, and OpenCode 1, which has no
+// `api` command. If a later OpenCode keeps the file elsewhere, its sessions are back to the inbox.
+func openCodeService() string {
+	pid, exe := parentProgram()
+	if exe = programNamed(exe, "opencode"); exe == "" {
+		return ""
+	}
+	dir := os.Getenv("XDG_STATE_HOME")
+	if dir == "" || !filepath.IsAbs(dir) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		dir = filepath.Join(home, ".local", "state")
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "opencode", "service.json"))
+	if err != nil {
+		return ""
+	}
+	var reg struct {
+		PID int `json:"pid"`
+	}
+	if json.Unmarshal(b, &reg) != nil || reg.PID == 0 || reg.PID != pid {
+		return ""
+	}
+	return exe
 }
 
 // sessionID derives the session's ID from Claude Code's, when there is one, so the ID stays

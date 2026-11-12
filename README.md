@@ -94,16 +94,19 @@ source is in [`internal/skills`](internal/skills).
 | ----------------------- | --------------------- | --------- | -------------------------------------- |
 | Claude Code             | T3 Code or a terminal | turn      | notice after its next tool call        |
 | Pi                      | a terminal            | turn      | notice after its next tool call        |
-| Codex, Grok (untested)  | T3 Code               | turn      | notice after its next tool call        |
-| Codex, Grok             | a terminal            | inbox     | notice after its next tool call        |
+| Codex                   | T3 Code or a terminal | turn      | notice after its next tool call        |
+| Grok (untested)         | T3 Code               | turn      | notice after its next tool call        |
+| Grok (untested)         | a terminal            | inbox     | notice after its next tool call        |
 | OpenCode, Muse Code     | T3 Code               | turn      | waits for the turn to end, then a turn |
+| OpenCode 2              | a terminal            | turn      | waits for the turn to end, then a turn |
 | Pi (untested)           | T3 Code               | turn      | waits for the turn to end, then a turn |
-| OpenCode, Muse Code     | a terminal            | inbox     | inbox                                  |
+| OpenCode 1, Muse Code   | a terminal            | inbox     | inbox                                  |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes an idle T3
 thread. A **notice** is one line with the sender and subject, added after the agent's next tool
 call; the agent reads the message with `inbox`, and anything still unread when its turn ends is
-given to it then. An **inbox** message waits until the agent reads it.
+given to it then. An **inbox** message waits until the agent reads it. Codex and OpenCode in a
+terminal take a turn once the session has used one of Murmur's tools.
 
 ## For humans
 
