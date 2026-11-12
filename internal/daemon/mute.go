@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -92,6 +93,45 @@ func (d *Daemon) hasMutedLocked(dev, sess, name string) bool {
 		}
 	}
 	return false
+}
+
+// mutersLocked lists, by name, the sessions that have muted the session called name: on device
+// dev, or on every device this daemon knows if dev is "". Caller holds mu.
+func (d *Daemon) mutersLocked(name, dev string) []string {
+	if name == "" {
+		return nil
+	}
+	var out []string
+	if dev == "" || dev == d.device {
+		for _, s := range d.sortedSessionsLocked() {
+			if _, muted := d.st.Mutes[tagKeyOf(s.name, s.id)][name]; muted {
+				out = append(out, nameOr(s.name, bus.Addr(d.device, s.id)))
+			}
+		}
+	}
+	for _, id := range sortedKeys(d.peers) {
+		if dev != "" && dev != id {
+			continue
+		}
+		for _, s := range d.peers[id].pres.Sessions {
+			if slices.Contains(s.Muted, name) {
+				out = append(out, nameOr(s.Name, bus.Addr(id, s.ID)))
+			}
+		}
+	}
+	return out
+}
+
+// mutersNote tells the sender of a message to many which of them didn't get it, "" if all did.
+func mutersNote(muters []string) string {
+	switch len(muters) {
+	case 0:
+		return ""
+	case 1:
+		return muters[0] + " did not get this message: they have muted you."
+	}
+	return strings.Join(muters[:len(muters)-1], ", ") + " and " + muters[len(muters)-1] +
+		" did not get this message: they have muted you."
 }
 
 // mute is OpMute: session id mutes the session called req.Name, or with Unmute undoes that. With

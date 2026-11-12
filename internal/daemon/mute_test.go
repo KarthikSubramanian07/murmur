@@ -77,9 +77,19 @@ func TestAMutedSessionReachesNobodyWhoMutedIt(t *testing.T) {
 	if !strings.Contains(refusal, bobName+" has muted you") {
 		t.Errorf("the refusal: %s", refusal)
 	}
+	// What alice now sends to everyone, or to bob's device, goes out, and she is told bob didn't
+	// get it.
+	for _, to := range []string{"*", b.self()} {
+		if r := a.send("aaaaaa", to, "to many, again", ""); r.Note != bobName+" did not get this message: they have muted you." {
+			t.Errorf("a send to %s says %q", to, r.Note)
+		}
+	}
+	if r := b.send("dddddd", "*", "from dave to everyone", ""); r.Note != "" {
+		t.Errorf("dave, whom nobody muted, is told %q", r.Note)
+	}
 	// Others still reach bob, and alice still reaches others.
 	b.send("dddddd", bobName, "from dave", "")
-	if got := inboxOf(b, "bbbbbb"); !slices.Equal(got, []string{"from dave"}) {
+	if got := inboxOf(b, "bbbbbb"); !slices.Equal(got, []string{"from dave to everyone", "from dave"}) {
 		t.Errorf("bob has %v, want only dave's: nothing alice sent before the refusal", got)
 	}
 

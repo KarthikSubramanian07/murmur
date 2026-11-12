@@ -832,6 +832,17 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		return fail("not sent: " + err.Error())
 	}
 	note = strings.TrimSpace(renamed + " " + note)
+	// To everyone, or to a device: it went out, and the sender is told which of the sessions it
+	// was for won't get it, as they have muted it (#27).
+	if dev, sess := bus.SplitAddr(to); to == "*" || sess == "" {
+		if to == "*" {
+			dev = ""
+		}
+		d.mu.Lock()
+		muters := d.mutersLocked(d.nameOfLocked(from), dev)
+		d.mu.Unlock()
+		note = strings.TrimSpace(note + " " + mutersNote(muters))
+	}
 	return proto.Response{OK: true, Self: from, Note: note,
 		Messages: []proto.MessageView{{ID: e.ID, From: from, To: to, ToName: toName, Subject: subject, At: e.At}}}
 }
