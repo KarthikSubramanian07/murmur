@@ -579,7 +579,11 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   through `client.Stop`. A daemon from before 0.3 can't be asked (#389), and the error names its
   process ID. Last, it deletes the record's file of each clone whose cleanup finished. A clone whose
   cleanup didn't finish, or whose folder isn't there now (deleted, or on a drive not mounted), stays
-  on the record, so a rerun finds it (Sol's reviews, 2026-11-10). It leaves what isn't one
+  on the record, so a rerun finds it (Sol's reviews, 2026-11-10). Then it deletes Murmur's folder in
+  the user's config directory, which also holds the records MCP servers publish of themselves
+  (`internal/here`) and `id`, the random user ID the check-ins of 0.2.3 sent, which nothing reads
+  since #199 (#430). A server still running keeps its record, since it reads its moves there until
+  its session ends, so the folder stays with it, and the report names it and says why. It leaves what isn't one
   user's or can't go while it runs: each repo's committed section, each clone's `.git/murmur` and
   bus refs, and the binary itself, which Windows can't delete while it runs, so it prints the
   command that does. A clone that joined before the record existed and whose daemon hasn't started
@@ -1825,9 +1829,20 @@ A body past the limit is cut, as in `inbox`.
   an update still has the old one. Seen with Pi 1.5.0 against a stand-in model, in RPC mode and in
   its terminal UI (driven in a pty by Opus's review, then here): a notice after a tool call, the
   message whole at the end of the work, a turn when idle, a turn right after an abort, a new socket
-  and session after `/new`, no socket in a repo not joined, and an old extension rewritten. Not
-  tried: Windows' named pipe, and Pi inside T3 (where the hook now runs too, and the socket is
-  unused). Not covered: Pi's commits aren't credited, as no call is bracketed, and a session
+  and session after `/new`, no socket in a repo not joined, and an old extension rewritten.
+  *Pi in T3 Code (2026-11-11, #462)* gets the same, with nothing added for it. T3 starts Pi as
+  `pi --mode rpc`, which loads the extension, and Pi gives its MCP servers its own environment,
+  T3's `T3CODE_CLI_PATH` in it; T3 records the session's file as the thread's native ID, the same
+  path the extension gives the server, so the session finds its thread. Seen with Pi 0.99.0 on
+  Windows, started as T3 starts it, against a stand-in for the rest of T3 (the rows T3 writes to
+  its database, and a `t3` that hands what it is given to Pi as a prompt): a notice after the tool
+  call, the message whole at the end of the work, and an idle message as one turn through
+  `t3 thread send`, each once. The same run with no T3 in the environment took the idle turn
+  through the named pipe, the first time that was tried. Not seen in T3 itself: Pi was switched
+  off in T3's settings on the machine. T3's Pi adapter has no case for Pi's `custom_message`
+  (T3 0.1.x, read 2026-11-11), so the notice and the message at the end of the work reach the
+  model and likely don't show in the thread; a turn through T3 shows as any message does.
+  Not covered: Pi's commits aren't credited, as no call is bracketed, and a session
   without a file (`--no-session`) gets turns and no notices.
 - **The client's command line (2026-11-11, #135)** is for Codex and OpenCode 2 outside T3, which
   until then got a message only through `inbox` (and Codex a notice, where its hook runs). Each
@@ -1964,6 +1979,14 @@ A body past the limit is cut, as in `inbox`.
   commits are credited to the session of its parent thread, if that is on the mesh here. It may
   have taken a name in the seconds before its thread was read; nobody sees the name. A Claude Code
   subagent inside one session never registered (see Crediting commits, Subagents).
+  *Pi (2026-11-11, #457)* has no subagents of its own; packages add them. `pi-subagents` (0.31.0)
+  runs each as a child `pi` that loads the user's extensions, Murmur's among them, and so
+  registered as a session. It sets `PI_SUBAGENT_CHILD=1` in the child, and Murmur's extension
+  does nothing in a process that has it: no server, hook or socket (seen with Pi 0.99.0: such a
+  process never reached the daemon). This is not the daemon's delegate path, as the child never
+  registers. Not covered: `@gotgenes/pi-subagents` (16.6.0) makes its subagents inside the
+  parent's process and binds the parent's extensions to each; nothing in the environment tells
+  such a session from its parent, and nobody has run one to see whether it registers.
 - **The subagents Codex spawns are delegates too** (Tyler, 2026-11-12, #454), outside T3 Code,
   where T3's database knows nothing of them. It matters more since #447: such a thread could be
   handed a turn nobody asked for.

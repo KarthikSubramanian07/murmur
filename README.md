@@ -93,13 +93,12 @@ source is in [`internal/skills`](internal/skills).
 | Agent                   | Where                 | When idle | When busy                              |
 | ----------------------- | --------------------- | --------- | -------------------------------------- |
 | Claude Code             | T3 Code or a terminal | turn      | notice after its next tool call        |
-| Pi                      | a terminal            | turn      | notice after its next tool call        |
+| Pi                      | T3 Code or a terminal | turn      | notice after its next tool call        |
 | Codex                   | T3 Code or a terminal | turn      | notice after its next tool call        |
 | Grok (untested)         | T3 Code               | turn      | notice after its next tool call        |
 | Grok (untested)         | a terminal            | inbox     | notice after its next tool call        |
 | OpenCode, Muse Code     | T3 Code               | turn      | waits for the turn to end, then a turn |
 | OpenCode 2              | a terminal            | turn      | waits for the turn to end, then a turn |
-| Pi (untested)           | T3 Code               | turn      | waits for the turn to end, then a turn |
 | OpenCode 1, Muse Code   | a terminal            | inbox     | inbox                                  |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes an idle T3
@@ -119,7 +118,7 @@ terminal take a turn once the session has used one of Murmur's tools.
 | `mur nickname [NAME]`  | Calls this clone's device NAME, such as your own name: teammates see it beside the device's ID in `who` and on the page. `--clear` takes it off. A device with none is called by the name you picked on the page. |
 | `mur stop`             | Stops this clone's daemon. |
 | `mur rotate [--force]` | Makes a new team key if a collaborator has left the repo (listed with `gh`), so they can't read what is written from then on. `--force` always does. Remove every other way they can push first (deploy keys they added, team access, Apps), or the new key reaches them too. |
-| `mur uninstall`        | Removes Murmur from this machine: its server, hooks and skills from every agent, and its daemons. It refuses while a repo here is joined; `--leave` leaves each first. |
+| `mur uninstall`        | Removes Murmur from this machine: its server, hooks and skills from every agent, its daemons, and its folder in your config directory. It refuses while a repo here is joined; `--leave` leaves each first. |
 
 Every command takes `-C <dir>` to act on another repository.
 
