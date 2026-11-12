@@ -114,7 +114,7 @@ given to it then. An **inbox** message waits until the agent reads it.
 | `mur join --leave`     | Undoes joining. |
 | `mur stop`             | Stops this clone's daemon. |
 | `mur rotate [--force]` | Makes a new team key if a collaborator has left the repo (listed with `gh`), so they can't read what is written from then on. `--force` always does. Remove every other way they can push first (deploy keys they added, team access, Apps), or the new key reaches them too. |
-| `mur uninstall`        | Removes Murmur from this machine: its server, hooks and skills from every agent, and its daemons. It refuses while a repo here is joined; `--leave` leaves each first. |
+| `mur uninstall`        | Removes Murmur from this machine: its server, hooks and skills from every agent, its daemons, and its folder in your config directory. It refuses while a repo here is joined; `--leave` leaves each first. |
 
 Every command takes `-C <dir>` to act on another repository.
 

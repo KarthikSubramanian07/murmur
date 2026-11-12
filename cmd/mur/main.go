@@ -52,8 +52,8 @@ Setup:
                                 the agent's session joins too, even one that started outside the repo;
                                 --leave undoes it
   mur uninstall [--leave]       remove Murmur from this machine for you: its server, hooks and skills from
-                                every agent, its daemons, its record of your clones; refuses while a repo
-                                here is joined, unless --leave leaves each first
+                                every agent, its daemons, its folder in your config directory; refuses
+                                while a repo here is joined, unless --leave leaves each first
 
 For humans:
   mur ui [--no-open]            open the page in a browser, to see sessions and messages and to message

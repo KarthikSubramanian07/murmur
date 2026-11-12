@@ -579,7 +579,11 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   through `client.Stop`. A daemon from before 0.3 can't be asked (#389), and the error names its
   process ID. Last, it deletes the record's file of each clone whose cleanup finished. A clone whose
   cleanup didn't finish, or whose folder isn't there now (deleted, or on a drive not mounted), stays
-  on the record, so a rerun finds it (Sol's reviews, 2026-11-10). It leaves what isn't one
+  on the record, so a rerun finds it (Sol's reviews, 2026-11-10). Then it deletes Murmur's folder in
+  the user's config directory, which also holds the records MCP servers publish of themselves
+  (`internal/here`) and `id`, the random user ID the check-ins of 0.2.3 sent, which nothing reads
+  since #199 (#430). A server still running keeps its record, since it reads its moves there until
+  its session ends, so the folder stays with it, and the report names it and says why. It leaves what isn't one
   user's or can't go while it runs: each repo's committed section, each clone's `.git/murmur` and
   bus refs, and the binary itself, which Windows can't delete while it runs, so it prints the
   command that does. A clone that joined before the record existed and whose daemon hasn't started
