@@ -325,9 +325,11 @@ export function repoReport(n, origin) {
     ? table(['Repo', 'Contributors', 'Devices', 'People', 'Sessions', 'Messages', 'Bus records', 'Days active of the last 7', 'First on the bus', 'Last on the bus'],
       n.repoList.map(r => [`[${short(r.name)}](https://${r.name})`, r.contributors, r.devices, r.people, r.sessions, r.messages, r.records, r.week, r.start, r.last ?? '–']))
     : 'None yet.';
+  // A count with its noun, so one repo or user doesn't read as "1 public repos use".
+  const count = (k, one, many = one + 's') => `${k} ${k === 1 ? one : many}`;
   return `# Public repos using Murmur, ${n.today}
 
-**${n.repos} public repos** use Murmur; ${n.activeRepos} had bus activity in the last ${n.week} days, and ${n.newRepos} started in them. About **${n.users} users** have run it there; ${n.activeUsers} in the last ${n.week} days.
+**${count(n.repos, 'public repo')}** ${n.repos === 1 ? 'uses' : 'use'} Murmur; ${n.activeRepos} had bus activity in the last ${n.week} days, and ${n.newRepos} started in them. About **${count(n.users, 'user')}** ${n.users === 1 ? 'has' : 'have'} run it there; ${n.activeUsers} in the last ${n.week} days.
 
 ${table(['Measure', 'Count'], [
     ['Public repos using Murmur', n.repos],
@@ -362,7 +364,7 @@ ${repos}
 
 - A **repo** is listed once one of its clones reports it: Murmur sends a public repo's address, once per repo, and nothing else.
 - Everything else is read by the census from what each repo shows anyone, once a day${n.counted ? ` (last at ${n.counted})` : ''}: its bus, \`refs/murmur/*\`, and its default branch's commits.
-- A **user** is approximate: Murmur sends nothing that names a person. The census matches the git user name each device's presence shows to a commit author of that name in the repo, and takes that author's GitHub account; each account counts once across repos. Where no commit matches, the git name counts instead, and where no name was ever seen, the device. Of ${n.users} users, ${n.usersBy.account} were matched to an account, ${n.usersBy.name} counted by git name, and ${n.usersBy.device} by device.
+- A **user** is approximate: Murmur sends nothing that names a person. The census matches the git user name each device's presence shows to a commit author of that name in the repo, and takes that author's GitHub account; each account counts once across repos. Where no commit matches, the git name counts instead, and where no name was ever seen, the device. Of ${count(n.users, 'user')}, ${n.usersBy.account} ${n.usersBy.account === 1 ? 'was' : 'were'} matched to an account, ${n.usersBy.name} counted by git name, and ${n.usersBy.device} by device.
 - A **contributor** has committed to a repo's default branch, at any time; one person in two repos counts once. A **device** is one clone running Murmur; a **person**, one git user name among a repo's devices, as their presence shows it, so one person in two repos counts twice. A daemon deletes its presence when it stops, so a device whose owner the census never saw counts as a person of its own.
 - A **session** is an agent session, counted once on the day it started, however often its daemon restarts; a **message**, one agent's message to another. A **bus record** is anything a device wrote to its log. Once the bus is encrypted (#257), a record's kind is hidden and only records are counted.
 - A count is only ever raised. Days are UTC.

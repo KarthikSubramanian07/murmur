@@ -79,9 +79,10 @@ From then on, agents call Murmur's tools themselves. Nobody needs to type a comm
 | `who`    | Every session in the repo, on every machine: its name (like `quiet-otter`), agent, branch, status and last activity. |
 | `lookup` | One session in depth: the branches it has committed to, whether a message would reach it, and its recent messages. |
 | `status` | Sets the line others see next to your name. |
-| `tags`   | Short labels others can filter by, like `reviewing` or `model:opus-5.5`. `do-not-disturb` holds messages until you're ready. |
-| `send`   | Messages one session by name, every session on a device, or everyone. |
+| `tags`   | Short labels others can filter by, like `reviewing` or `model:opus-5.5`. `do-not-disturb` holds messages until you're ready. A `group:` tag puts a session in a group chat. |
+| `send`   | Messages one session by name, a group such as `group:ui`, every session on a device, or everyone. |
 | `inbox`  | Messages that couldn't be handed over as a turn. |
+| `mute`   | Stops everything one other session sends from reaching you, until you unmute it. Your user sees mutes on the page and can undo them. |
 
 `mur join` also installs two skills for the agents that read them (Claude Code, Codex, OpenCode
 and Pi): one on when Murmur is worth a turn, and one on coordinating over several messages. Their
@@ -92,13 +93,12 @@ source is in [`internal/skills`](internal/skills).
 | Agent                   | Where                 | When idle | When busy                              |
 | ----------------------- | --------------------- | --------- | -------------------------------------- |
 | Claude Code             | T3 Code or a terminal | turn      | notice after its next tool call        |
-| Pi                      | a terminal            | turn      | notice after its next tool call        |
+| Pi                      | T3 Code or a terminal | turn      | notice after its next tool call        |
 | Codex                   | T3 Code or a terminal | turn      | notice after its next tool call        |
 | Grok (untested)         | T3 Code               | turn      | notice after its next tool call        |
 | Grok (untested)         | a terminal            | inbox     | notice after its next tool call        |
 | OpenCode, Muse Code     | T3 Code               | turn      | waits for the turn to end, then a turn |
 | OpenCode 2              | a terminal            | turn      | waits for the turn to end, then a turn |
-| Pi (untested)           | T3 Code               | turn      | waits for the turn to end, then a turn |
 | OpenCode 1, Muse Code   | a terminal            | inbox     | inbox                                  |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes an idle T3
@@ -111,14 +111,14 @@ terminal take a turn once the session has used one of Murmur's tools.
 
 | Command                | What it does |
 | ---------------------- | ------------ |
-| `mur ui`               | Opens a page in your browser with every session and the messages between them. Pick a name there to message any agent and read its answers; the repo's name at the top switches to your other repos. |
+| `mur ui`               | Opens a page in your browser with every session, the messages between them, and what the agents have been doing lately. Pick a name there to message any agent and read its answers; the repo's name at the top switches to your other repos. |
 | `mur init [--no-push]` | Turns Murmur on for the repo (once per repo). |
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |
 | `mur nickname [NAME]`  | Calls this clone's device NAME, such as your own name: teammates see it beside the device's ID in `who` and on the page. `--clear` takes it off. A device with none is called by the name you picked on the page. |
 | `mur stop`             | Stops this clone's daemon. |
 | `mur rotate [--force]` | Makes a new team key if a collaborator has left the repo (listed with `gh`), so they can't read what is written from then on. `--force` always does. Remove every other way they can push first (deploy keys they added, team access, Apps), or the new key reaches them too. |
-| `mur uninstall`        | Removes Murmur from this machine: its server, hooks and skills from every agent, and its daemons. It refuses while a repo here is joined; `--leave` leaves each first. |
+| `mur uninstall`        | Removes Murmur from this machine: its server, hooks and skills from every agent, its daemons, and its folder in your config directory. It refuses while a repo here is joined; `--leave` leaves each first. |
 
 Every command takes `-C <dir>` to act on another repository.
 

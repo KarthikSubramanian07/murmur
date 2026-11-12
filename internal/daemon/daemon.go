@@ -30,6 +30,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
+	"github.com/a-Fig/murmur/internal/title"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -68,6 +69,9 @@ type Options struct {
 	SessionGrace time.Duration
 	// StoppedInbox is how long a stopped session's inbox is kept for it to come back to: 24 h.
 	StoppedInbox time.Duration
+	// MuteGrace is how long after a session mutes another it still gets that session's direct
+	// messages (see mutedHereLocked): 30 s. Negative: none.
+	MuteGrace time.Duration
 	// NameSource is where the randomness for session names comes from: crypto/rand's reader.
 	// Tests give two devices the same one, to make them pick the same name.
 	NameSource io.Reader
@@ -110,6 +114,9 @@ type Options struct {
 	// long it has been idle (see threads.go): t3db.StateOf. Tests put a stand-in here. It is read
 	// every TitleEvery.
 	ThreadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
+	// CodexLineage reads who started a Codex thread from Codex's state (title.CodexLineage), for
+	// the sessions another session started (codexkids.go). Tests put a stand-in here.
+	CodexLineage func(ctx context.Context, dir, thread string) (title.Lineage, error)
 	// Consent says whether the user has joined Murmur in this clone (nil: always). A daemon exists
 	// only for a user who did: it won't start without it, refuses requests once it is gone, and
 	// stops within ConsentPoll of it going, so a leave that races a daemon still starting ends that
@@ -177,6 +184,9 @@ func (o *Options) defaults() {
 	if o.StoppedInbox == 0 {
 		o.StoppedInbox = 24 * time.Hour
 	}
+	if o.MuteGrace == 0 {
+		o.MuteGrace = 30 * time.Second
+	}
 	if o.NameSource == nil {
 		o.NameSource = rand.Reader
 	}
@@ -206,6 +216,9 @@ func (o *Options) defaults() {
 	}
 	if o.ThreadState == nil {
 		o.ThreadState = t3db.StateOf
+	}
+	if o.CodexLineage == nil {
+		o.CodexLineage = title.CodexLineage
 	}
 	if o.ConsentPoll == 0 {
 		o.ConsentPoll = time.Second
@@ -363,6 +376,13 @@ type Daemon struct {
 	// ownMsgs is how many of msgs are to or from this device's person, which PageMessages doesn't
 	// count (see keepMessageLocked).
 	ownMsgs int
+	// acts is what sessions did other than send messages, for the page (activity.go), oldest
+	// first; actSeq the number of the newest, actIDs the IDs in acts, and actSeen what each
+	// session's presence last said of it, by address.
+	acts    []pageAct
+	actSeq  uint64
+	actIDs  map[string]bool
+	actSeen map[string]sessSeen
 	// brackets holds the tool calls in flight whose start was snapshotted, by Claude session and
 	// tool-use ID (see toolStart). snapLogged is when a failed snapshot was last logged.
 	brackets   map[string]*bracket
@@ -400,6 +420,14 @@ type Daemon struct {
 	// handedTo is, for each T3 thread, the messages lately handed to it as a turn, oldest first, so
 	// another session's copy of one is not handed to it again (see noteHandedLocked).
 	handedTo map[threadKey][]handed
+	// The sessions another session started, where T3 doesn't say so (codexkids.go): kids the
+	// sessions here that are one, kidNative the children a hook named, by their client's ID,
+	// with their parent's, codexLin who started each Codex thread read so far, and codexWarned
+	// the threads whose read failed, logged once. All are made where they are first written.
+	kids        map[string]kid
+	kidNative   map[string]string
+	codexLin    map[codexThread]title.Lineage
+	codexWarned map[codexThread]bool
 
 	// refused is when a presence claiming each device was last refused (see checkPresenceLocked), to
 	// log it once a minute.
@@ -690,6 +718,9 @@ type state struct {
 	// and its ID while the name is pending): the tags each set for itself and a human's marks
 	// (#198). Derived tags aren't kept.
 	Tags map[string]*tags.State `json:"tags,omitempty"`
+	// Mutes is, for each of this device's sessions, by its name as Tags is, the sessions it has
+	// muted (#27): their names, and when.
+	Mutes map[string]map[string]time.Time `json:"mutes,omitempty"`
 
 	// Pins is each device's keys as this device first pinned them (keys.go), this device's own
 	// included, by device ID. A pin is never undone.
@@ -707,6 +738,7 @@ type state struct {
 	// Explained is, for each of this device's sessions, by its name as Tags is, the people whose
 	// first message to it said in full that they see only what the session sends (#345); their
 	// later messages end with the line an agent's do (see explained.go).
+	// So are the groups whose messages have told it, in full, that it is in them (#184).
 	Explained map[string][]string `json:"explained,omitempty"`
 }
 
@@ -974,6 +1006,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
 		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
+		actIDs: map[string]bool{}, actSeen: map[string]sessSeen{},
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
 		handedTo: map[threadKey][]handed{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
@@ -1289,6 +1322,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Tags == nil {
 		d.st.Tags = map[string]*tags.State{}
+	}
+	if d.st.Mutes == nil {
+		d.st.Mutes = map[string]map[string]time.Time{}
 	}
 	if d.st.PersonClaims == nil {
 		d.st.PersonClaims = map[string]string{}

@@ -61,7 +61,7 @@ func main() {
 		src.account = web.Account{Name: "maya", Addr: src.self + "/human", Taken: "maya-mbp-91c0"}
 	}
 	go src.run()
-	page := web.NewWithPRs(src, token, fixturePRs)
+	page := web.NewWithGitHub(src, token, fixturePRs, fixtureGitHub(time.Now()))
 	if *repos != "" {
 		serveRepos(strings.Split(*repos, ","), ln, src, page)
 	}
@@ -140,7 +140,7 @@ func serveRepos(names []string, ln net.Listener, first *fixtures, firstPage *web
 			src.devices = src.devices[:1+i%2]
 			src.messages = src.messages[len(src.messages)/(i+1):]
 			go src.run()
-			d.addr, d.page = l.Addr().String(), web.NewWithPRs(src, randomHex(16), fixturePRs)
+			d.addr, d.page = l.Addr().String(), web.NewWithGitHub(src, randomHex(16), fixturePRs, fixtureGitHub(time.Now()))
 			srv := &http.Server{Handler: d.page, ReadHeaderTimeout: 10 * time.Second}
 			go func() { log.Fatal(srv.Serve(l)) }()
 		}
@@ -187,6 +187,7 @@ type fixtures struct {
 	self     string
 	devices  []web.Device
 	messages []web.Message
+	activity []web.Activity
 	mutes    []web.Mute
 	settings web.Settings
 	version  web.Version
@@ -208,6 +209,7 @@ func newFixtures(now time.Time) *fixtures {
 			DefaultMinutes: 3,
 		},
 	}
+	f.activity = fixtureActivity(now)
 	f.devices = []web.Device{
 		{
 			ID: "tyler-laptop-3f2a", Host: "tyler-laptop", Owner: "Tyler", Self: true, Reachable: true,
@@ -215,10 +217,10 @@ func newFixtures(now time.Time) *fixtures {
 			Sessions: []web.Session{
 				{Name: "quiet-otter", Agent: "claude-code", Branch: "web-page", Worktree: "agent-a5adaaef",
 					Doing: "Building the settings view of the web page", Started: ago(52 * time.Minute), LastActive: ago(20 * time.Second),
-					Tags: []tags.Tag{{Name: "model:opus-5.5", Src: tags.SrcDerived}, {Name: "ui"}}},
+					Tags: []tags.Tag{{Name: "group:ui"}, {Name: "model:opus-5.5", Src: tags.SrcDerived}, {Name: "ui"}}},
 				{Name: "brave-heron", Agent: "codex", Branch: "remove-claims", Worktree: "remove-claims",
 					Doing: "Deleting claims from the daemon and the MCP tools", Started: ago(2*time.Hour + 4*time.Minute), LastActive: ago(3 * time.Minute),
-					Tags: []tags.Tag{{Name: "model:gpt-5.1-codex"}, {Name: "release", Src: tags.SrcHuman}}},
+					Tags: []tags.Tag{{Name: "group:ui"}, {Name: "model:gpt-5.1-codex"}, {Name: "release", Src: tags.SrcHuman}}},
 				{Name: "amber-finch", Agent: "claude-code", Branch: "main", Worktree: "murmur",
 					Started: ago(5 * time.Hour), LastActive: ago(26 * time.Minute)},
 				// Left open in a terminal for days: the page folds it away as quiet.
@@ -447,6 +449,10 @@ func (f *fixtures) Send(ctx context.Context, to, text string) (web.Sent, error) 
 	case "*":
 		m.To, m.ToAddr, m.ToKind = "*", "*", web.ToAll
 	default:
+		if tags.IsGroup(to) {
+			m.To, m.ToAddr, m.ToKind = to, to, web.ToGroup
+			break
+		}
 		m.To, m.ToAddr, m.ToKind = to, to, web.ToSession
 		isDevice := false
 		for _, d := range f.devices {

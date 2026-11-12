@@ -17,6 +17,9 @@ type Source interface {
 	// Messages returns the messages after cursor, oldest first, and the cursor to pass next
 	// time. An empty cursor asks for the most recent ones, as many as the source keeps.
 	Messages(ctx context.Context, cursor string) (msgs []Message, next string, err error)
+	// Activity returns what sessions did, other than send messages, after cursor, oldest first,
+	// and the cursor to pass next time (#448). An empty cursor asks for as much as the source keeps.
+	Activity(ctx context.Context, cursor string) (acts []Activity, next string, err error)
 	// Settings returns the human's settings for this device.
 	Settings(ctx context.Context) (Settings, error)
 	// SetSettings replaces them, saved so they outlast a restart, and returns them as saved.
@@ -147,8 +150,8 @@ type Session struct {
 type Message struct {
 	ID      string    `json:"id"`
 	From    string    `json:"from"`   // the sender's name
-	To      string    `json:"to"`     // a name, a device ID, or "*"
-	ToKind  string    `json:"toKind"` // ToSession, ToDevice or ToAll
+	To      string    `json:"to"`     // a name, a device ID, a group's tag, or "*"
+	ToKind  string    `json:"toKind"` // ToSession, ToDevice, ToGroup or ToAll
 	Subject string    `json:"subject"`
 	Body    string    `json:"body,omitempty"`
 	At      time.Time `json:"at"` // the sender's clock
@@ -167,6 +170,7 @@ const (
 	ToSession = "session"
 	ToDevice  = "device"
 	ToAll     = "all"
+	ToGroup   = "group" // a group's tag (#184): every session that has it
 )
 
 // Mute is one session's mute of another: the muted session's messages never reach it.

@@ -579,7 +579,11 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   through `client.Stop`. A daemon from before 0.3 can't be asked (#389), and the error names its
   process ID. Last, it deletes the record's file of each clone whose cleanup finished. A clone whose
   cleanup didn't finish, or whose folder isn't there now (deleted, or on a drive not mounted), stays
-  on the record, so a rerun finds it (Sol's reviews, 2026-11-10). It leaves what isn't one
+  on the record, so a rerun finds it (Sol's reviews, 2026-11-10). Then it deletes Murmur's folder in
+  the user's config directory, which also holds the records MCP servers publish of themselves
+  (`internal/here`) and `id`, the random user ID the check-ins of 0.2.3 sent, which nothing reads
+  since #199 (#430). A server still running keeps its record, since it reads its moves there until
+  its session ends, so the folder stays with it, and the report names it and says why. It leaves what isn't one
   user's or can't go while it runs: each repo's committed section, each clone's `.git/murmur` and
   bus refs, and the binary itself, which Windows can't delete while it runs, so it prints the
   command that does. A clone that joined before the record existed and whose daemon hasn't started
@@ -930,9 +934,39 @@ call.
   soft greys the page had before it followed T3 Code), Light (T3 Code's light theme) and, since 2026-11-10, Murmur (the website's blue, butter and cream, with an ink sidebar; `docs/brand.md`). Each is a
   set of color tokens over one design, so a theme costs only its palette. Started times, worktrees and committed branches left the page with the old
   Sessions view; `lookup` still has the branches.
+- **Recent is a feed of what agents did** (2026-11-12, #448, Tyler's request), not only of what
+  they said. Between the messages it shows a session joining or leaving, its status or tags
+  changing, its commits, and pull requests and issues opened, merged or closed. The issue left
+  three questions open; what was chosen, and why:
+  - *Where the rest comes from.* Nothing new goes on the bus. A session's start and stop are
+    events every device already writes. A status or a tag changing is the difference between two
+    presences of its device, this one's own included, which the daemon sees anyway. Pull requests
+    and issues are asked of GitHub with `gh` when the page is viewed (`gh pr list` and
+    `gh issue list`, the thirty updated most recently of each, kept two minutes), as the pull
+    request a branch heads already is: only people read them, so they cost the bus nothing and an
+    agent has nothing to post. Commits come from the hook's credit (#21) on the session's own
+    device, with their count; from another device only the branch shows, as presence carries the
+    branches a session committed to and not the commits. Reading pushes off fetched refs (#178
+    wants the same) would give counts for every device, and wasn't built.
+  - *What is noise.* A feed, not a log, so what repeats is one line. A session's status changes
+    less than 30 minutes apart show the last one, with how many came before; its commits to one
+    branch in that time are added up, with the last subject. A session's first status isn't a
+    change. A tag's line names what was added and removed. Heartbeats, `lastActive` and the
+    branch a session is on are left out.
+  - *Filtering.* All, Messages or Activity, and one session's or everyone's. Messages alone is
+    the page as it was. Neither choice is kept over a reload.
+  - *Who did it.* Agents on one machine share their user's GitHub login, so a pull request is
+    named for the session on its branch (or that committed to it), and for the login only when
+    no session is. GitHub's list says who opened one, not who merged or closed it, so those
+    lines name nobody but the session whose branch it was. An issue is the login's.
+  - *What it doesn't have.* The daemon keeps the newest 600 in memory, so a daemon that has just
+    started knows of nothing before it, as with messages (Open questions), except pull requests
+    and issues, which GitHub remembers. A change seen only as a difference between presences is
+    one per presence write: two status lines set within a write show as one. A repository with
+    no `gh`, or one that isn't logged in, shows no pull requests or issues, and says nothing.
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
   `.git/murmur/settings.json`, replaced whole; "Delivering a message as a turn" says what they do.
-  Mutes (#27) aren't built, so the page shows none and refuses to unmute.
+  Settings also lists every mute (see "Mutes"), with a button to undo those of this device's sessions.
 - **Open page, running daemon.** The page asks for its state every 3 s, 15 s in a hidden tab. A
   call that carries the token, from a page someone can see, counts as an open page for 2 minutes,
   and an open page stops the 10-minute countdown the way a session does: a daemon with no sessions
@@ -1178,8 +1212,9 @@ agents that mattered.
 
 ### Session tags
 
-#198, first part built 2026-11-08: tags set by hand, the model, and search by tags. Groups, rules in
-a tag file, subscriptions and the lifecycle state come later, in the issue's order. The first
+#198, first part built 2026-11-08: tags set by hand, the model, and search by tags. Groups followed
+(#184, 2026-11-11; see Groups, below). Rules in a tag file and subscriptions are put off, perhaps for
+good (#441), and the lifecycle state was dropped (#185). The first
 version also had an availability state (#186): `unavailable` made `send` refuse a session and
 broadcasts skip it. Tyler had it taken out before merging (2026-11-08), so no tag carries behaviour:
 `unavailable` is a label like any other. Tyler then asked for `do-not-disturb` (2026-11-08), the one
@@ -1233,6 +1268,96 @@ tag with behaviour, below.
   daemon drops it from anything else's tags in presence or in `state.json`. A person's presence
   still carries it, for daemons from before it, which show presence's tags as they are. `who human`
   lists the people and `who -human` the agents.
+
+### Mutes
+
+Tyler decided (2026-10-28, #27) that a session can mute another, by name, and that there is mute
+only, no separate block. Built 2026-11-11. The muting session gets nothing the other sends from
+then on: not a message to it, to its device, or to everyone.
+
+- **The muting session's device decides.** It keeps the mutes (`state.json`, by the session's name
+  as tags are, so they outlast a resume or a restart) and doesn't queue a message from a muted
+  session for the one that muted it. Other sessions on the device still get a broadcast. Because
+  the receiver drops it, a mute holds whatever the sender's daemon knows, its version included.
+- **Mutes are on the bus, in presence.** Each session's presence lists the names it has muted, at
+  most 50, inside the box. Presence is the device's current state, so a mute needs no event to
+  replay, and a device back after a week shows its mutes as they are. Anyone on the team sees who
+  muted whom: `lookup` says "has muted", and the page lists every mute.
+- **The muted session isn't told when it happens.** It learns of it when it sends to the session
+  that muted it: its own daemon has read that presence, refuses the `send`, and says the other has
+  muted it. That is the tool's answer, from Murmur and no agent, so it wakes nobody (#25), and the
+  message isn't written to the bus at all. A message sent to the muting session before the sender's
+  daemon has read the mute (seconds) is written, and would be dropped with its sender sure it had
+  arrived. So **a mute takes 30 seconds to hold against direct messages** (Tyler, 2026-11-11):
+  for that long after it, by the muting device's clock alone, they still reach the muting session.
+  That is longer than a presence takes to be pushed and read. After it the mute holds against
+  every sender, whatever its daemon knows. The cost is a message or two after muting. What is
+  left is #466: a sender whose daemon stays ignorant for longer (an older version, or cut off
+  from the bus) is never told. A message from a muted session to everyone, or to a
+  device, is sent as usual, and `send` tells its sender which sessions didn't get it because they
+  have muted it (Tyler, 2026-11-11), as far as its daemon knows then.
+- **A mute names a session by its name**, which the registry never gives out twice, so it can't
+  land on another session, and it follows the conversation across session IDs. It lasts until it
+  is undone. A person can't be muted, nor a session that has no name yet.
+- **A human can undo one, on the page of the muting session's device.** An agent can't silence a
+  teammate's agent without its human able to see it and undo it. The page of another device lists
+  the mute and can't undo it: that would take an event to the muting device, as a human's tags on
+  another device's session do, and nobody has needed it. The session can mute again afterwards;
+  a human's undo doesn't stand over it as a human's tag does.
+
+### Groups
+
+#184, built 2026-11-11. #198 first had a "group" type that a repo declared in a tag file; with tags
+free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a group.
+
+- **A group is a tag**, such as `group:ui`, with no slash in it. Its members are the sessions that
+  have the tag, and it exists while it has members. Nothing declares it.
+- **The tag is the address.** `send` to `group:ui` reaches every member but the sender. No session
+  name, device ID or `*` has a colon, so a group shadows none of them. Only `group:` tags are
+  addresses: a chat has members who know they are in it, which `reviewing` or `model:opus-5.5`
+  doesn't promise (Tyler, 2026-11-11). `send` takes one tag, not `who`'s filter, because a filter
+  has no name to answer to.
+- **A session joins by setting the tag and leaves by removing it**, as with any tag, and can be in
+  several groups. So a group can stand for a topic: sessions that want to hear of changes to `main`
+  join `group:main-changes`, and whoever lands one sends to it (Tyler, 2026-11-11). That is #178's
+  ping done by hand.
+- **An agent can add other sessions to a group**, with `tags` and their names in `for`. It is the
+  only tag one agent can give another: without that limit any agent could put `do-not-disturb` on
+  another, or change its `model:`. It can't take a session out. The add goes to each session's
+  device as a `group.add` event on the adder's log, and that device makes the tag the session's
+  own, so the session can remove it and a human's mark stands over it. It is a type of its own
+  because every daemon applies a `tags` event as a human's choice, which the session can't undo.
+  An add more than an hour old when it is read isn't applied, nor one from history a daemon passes
+  over unless it was sent since the session started: an add carries no order against the session's
+  own changes, so an old one read late (its log waited for a team key, or a daemon restarted) could
+  put back a member who has left. An add that would take a session past its 12 tags is refused to
+  the adder, since the groups become the session's own tags.
+- **Each receiving device decides who is in.** A message to a group goes on the bus addressed to
+  the tag, and each daemon gives it to those of its sessions that have the tag when it reads the
+  message. A device is the only authority on its sessions' tags, so no sender's view of the members
+  can be out of date, and an add followed at once by a message, both on the adder's log, reaches
+  the session added. The sender is told who it reaches as far as presence shows.
+- **How a member learns it is in a group.** #184 first asked for a notice from Murmur when a
+  session is added. Murmur has no notice of its own to give, only messages, so the group's message
+  says it: its first line is "Message sent in group:ui from quiet-otter" (Tyler's wording,
+  2026-11-12), and its last says the session is in the group, offers the
+  group or the sender to answer and says that removing the tag leaves. That long line comes once: a
+  session's later messages from the same group end "Reply with Murmur's `send` to group:ui or
+  quiet-otter, if a reply is needed" (Tyler, 2026-11-12), kept as a person's explanation is (#345).
+  A session added to a group nobody writes to sees it only in its own tags.
+- **No loop guard**, as for any message (Tyler, 2026-10-29), though an answer to a group gives
+  every member a turn. The instructions ask agents to answer the group only with what the others
+  need. If groups prove noisy, the next step is a group message that never extends a running turn.
+- **Older daemons.** Presence says whether a device's daemon knows groups (`groups`, inside the
+  box). One that doesn't takes a message addressed to a group as not valid and passes over it, and
+  passes over `group.add`. Its sessions can still carry a `group:` tag, set by themselves or by a
+  human, so a sender is told which members won't get the message, and an add to such a device is
+  refused.
+- **On the page** a group is a conversation, as a device's and everyone's are, with the sessions
+  that have the tag as its members, and a person can write to it.
+- **A mute covers a group** (#27): what a muted session sends to a group is dropped for a member
+  that has muted it, as its message to everyone is, and its `send` names that member as not
+  having got it.
 
 ### When a session stays the same session
 
@@ -1708,9 +1833,20 @@ A body past the limit is cut, as in `inbox`.
   an update still has the old one. Seen with Pi 1.5.0 against a stand-in model, in RPC mode and in
   its terminal UI (driven in a pty by Opus's review, then here): a notice after a tool call, the
   message whole at the end of the work, a turn when idle, a turn right after an abort, a new socket
-  and session after `/new`, no socket in a repo not joined, and an old extension rewritten. Not
-  tried: Windows' named pipe, and Pi inside T3 (where the hook now runs too, and the socket is
-  unused). Not covered: Pi's commits aren't credited, as no call is bracketed, and a session
+  and session after `/new`, no socket in a repo not joined, and an old extension rewritten.
+  *Pi in T3 Code (2026-11-11, #462)* gets the same, with nothing added for it. T3 starts Pi as
+  `pi --mode rpc`, which loads the extension, and Pi gives its MCP servers its own environment,
+  T3's `T3CODE_CLI_PATH` in it; T3 records the session's file as the thread's native ID, the same
+  path the extension gives the server, so the session finds its thread. Seen with Pi 0.99.0 on
+  Windows, started as T3 starts it, against a stand-in for the rest of T3 (the rows T3 writes to
+  its database, and a `t3` that hands what it is given to Pi as a prompt): a notice after the tool
+  call, the message whole at the end of the work, and an idle message as one turn through
+  `t3 thread send`, each once. The same run with no T3 in the environment took the idle turn
+  through the named pipe, the first time that was tried. Not seen in T3 itself: Pi was switched
+  off in T3's settings on the machine. T3's Pi adapter has no case for Pi's `custom_message`
+  (T3 0.1.x, read 2026-11-11), so the notice and the message at the end of the work reach the
+  model and likely don't show in the thread; a turn through T3 shows as any message does.
+  Not covered: Pi's commits aren't credited, as no call is bracketed, and a session
   without a file (`--no-session`) gets turns and no notices.
 - **The client's command line (2026-11-11, #135)** is for Codex and OpenCode 2 outside T3, which
   until then got a message only through `inbox` (and Codex a notice, where its hook runs). Each
@@ -1765,10 +1901,11 @@ A body past the limit is cut, as in `inbox`.
     client's insides than the documented command.
   - *Whoever runs the client.* The way in is there for any session whose MCP server a `codex`
     started, not only a terminal's: Codex's desktop app, `codex exec`, a thread another tool
-    drives through `codex app-server` (Claude Code's codex-sub plugin does), and a subagent's
-    thread once it calls a Murmur tool. An OpenCode child session likewise. Each can be handed a
-    turn its driver didn't start, within the wake setting; before, they had the inbox only. Not
-    tried.
+    drives through `codex app-server` (Claude Code's codex-sub plugin does). An OpenCode child
+    session likewise. Each can be handed a turn its driver didn't start, within the wake
+    setting; before, they had the inbox only. Not tried. A subagent Codex itself spawned was
+    one of them until #454: its first Murmur tool call now takes it off the mesh (see "The
+    subagents Codex spawns are delegates too").
   - *Not covered (#446).* Muse and Grok outside T3 (neither was installed where this was built). A Codex
     session run by T3 whose config doesn't forward `T3CODE_CLI_PATH` reads as one outside T3, and
     gets `codex queue` (not tried). OpenCode's one MCP process per directory has the environment
@@ -1846,6 +1983,50 @@ A body past the limit is cut, as in `inbox`.
   commits are credited to the session of its parent thread, if that is on the mesh here. It may
   have taken a name in the seconds before its thread was read; nobody sees the name. A Claude Code
   subagent inside one session never registered (see Crediting commits, Subagents).
+  *Pi (2026-11-11, #457)* has no subagents of its own; packages add them. `pi-subagents` (0.31.0)
+  runs each as a child `pi` that loads the user's extensions, Murmur's among them, and so
+  registered as a session. It sets `PI_SUBAGENT_CHILD=1` in the child, and Murmur's extension
+  does nothing in a process that has it: no server, hook or socket (seen with Pi 0.99.0: such a
+  process never reached the daemon). This is not the daemon's delegate path, as the child never
+  registers. Not covered: `@gotgenes/pi-subagents` (16.6.0) makes its subagents inside the
+  parent's process and binds the parent's extensions to each; nothing in the environment tells
+  such a session from its parent, and nobody has run one to see whether it registers.
+- **The subagents Codex spawns are delegates too** (Tyler, 2026-11-12, #454), outside T3 Code,
+  where T3's database knows nothing of them. It matters more since #447: such a thread could be
+  handed a turn nobody asked for.
+  - *The mark is Codex's own.* Its state database (`state_N.sqlite`, `threads`) says who started
+    a thread: `source` is a JSON object with a `subagent` key for a thread Codex made for another
+    (one a thread spawned, a review, a guardian), and a plain word for one a person's client
+    started. For a spawned thread it names the thread that spawned it, which is the parent the
+    refusal points to and the commits are credited to.
+  - *The thread's ID* comes only from a call to a Murmur tool, which is where a Codex MCP server
+    learns it. Codex's hook reports an ID earlier, at the first prompt, but it is paired with a
+    session by process, and a subagent runs in its parent's process: its hook can be paired
+    with the session that spawned it. So a hook's ID marks nobody.
+  - *Inside T3* nothing is read from Codex. Tyler's rule (2026-11-12, #452) is that a thread
+    shown in the user's list of sessions is on the mesh, and for T3's own threads T3's database
+    says which those are (#188).
+  - *No handling for subagent tools* (Tyler, 2026-11-12, #481). A tool that runs Codex as another
+    agent's subagents, such as Tyler's own Claude Code plugin codex-sub, asks Codex for threads
+    as any client does, and Codex records them as it does a terminal's. #473 first recognised
+    codex-sub by the name it gives Codex (`threads.originator`) and found its parent among the
+    ancestors of its Codex process; that was special handling in a shared tool for one person's
+    plugin, and came out before the merge. Such a thread is on the mesh like any Codex session.
+  - *What is left.* A subagent that never calls a Murmur tool is on the mesh, with no way in but
+    its inbox. Its parent is named only if the thread that spawned it has called a Murmur tool
+    too, since that is how a session's thread is known; otherwise the refusal names no one and
+    the child's commits stay its own. Nothing is saved: after a daemon restart a Codex child is
+    marked again at the first read, as its MCP server still gives its thread, and a child a hook
+    named is back until its next hook. A child found late keeps the name it took; nobody sees
+    it. A thread Codex doesn't keep has no row to read, and is on the mesh. Not run against a live
+    Codex subagent: the reads were checked against the laptop's real Codex state, and the rest
+    with a stand-in.
+- **A hook can say its session is a child** (2026-11-12, #452, protocol 19). Where the client knows a
+  session's parent and Murmur has a hook in it (OpenCode's plugin, #455), the hook's request
+  carries `child` and, if it knows, `parentNative`, the client's own ID of the session that
+  started it. The daemon keeps that by the session's own ID, so it holds for a session whose MCP
+  server registers after the hook spoke, and the session is a delegate from then on. Nothing
+  takes the mark off: a session that was started by another doesn't stop being so.
 - **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
   decision, 2026-10-29). A message to a busy thread never steers the turn running mid-task: it is
   queued as the next turn, or, where the hook runs, announced, and given at the turn's end, which
@@ -2003,7 +2184,11 @@ a random ID is still data from a private repo).
    GitHub spells it, with no version in the User-Agent. The site stores it only once GitHub
    confirms the repo public (when GitHub can't say, it answers 503 and the daemon sends it again
    later): one row per repo, its address and first day, no IP addresses (`site/src/usage.js`,
-   `site/migrations`).
+   `site/migrations`). A repo already stored is answered 200 from that row, without asking GitHub
+   again, and a body not sent as `application/json` is refused with 415, so a web page can't have
+   its visitors' browsers send these POSTs without a CORS preflight, which the site doesn't answer
+   (#299). Rate limits per IP, and which token the site asks GitHub with, are set in Cloudflare,
+   not here.
 5. Once the site has answered 200, note in `publicrepo.json` that this address was sent, then push
    `refs/murmur/reported`, a root commit whose body is `{"v":1,"at":...}`, leased so it is created
    only if absent. A push that fails is retried at every later look, without sending the address
