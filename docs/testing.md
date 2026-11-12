@@ -14,11 +14,12 @@ longest, so it decides when a pull request is green.
 
 Go runs a package's serial tests first, one at a time, and the parallel ones after them, so the
 two never overlap. A daemon test stays serial if it sets the environment (`t.Setenv` panics in a
-parallel test; `useFakeT3` calls it), replaces a package variable, writes into the `HOME` or
+parallel test), replaces a package variable, writes into the `HOME` or
 `CODEX_HOME` that `TestMain` sets, or counts on timing or a port number that the other tests' load
-could upset; those last say why in a comment. As of 2026-11-09 that is 77 of 276 tests, 50 of them
-only because the stand-in `t3` is configured through the environment, which #282 is about. Run one
-at a time, the serial tests were about 45% of the package's time.
+could upset; those last say why in a comment. The stand-in `t3` is no reason to: `useFakeT3` puts
+the test binary in the test's own directory, as a hard link or, on Windows, a copy, and the stand-in
+reads its calls file and its fail and sleep settings from files beside it, not from the environment
+(#282).
 
 A parallel test meets more load than it did alone, so a wait it took for granted may come late. A
 call's end, for one, is answered before its after-snapshot is taken: a test that commits right

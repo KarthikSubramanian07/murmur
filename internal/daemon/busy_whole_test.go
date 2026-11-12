@@ -135,7 +135,7 @@ func TestBusySessionGetsTheWholeMessageThroughTheHook(t *testing.T) {
 func TestAFailedHandoffIsNotGivenWhole(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	t.Setenv(fakeT3FailEnv, "1")
+	setFakeT3(t, exe, fakeT3Fail, "1")
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})

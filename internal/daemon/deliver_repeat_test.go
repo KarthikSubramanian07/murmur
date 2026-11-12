@@ -1,7 +1,6 @@
 package daemon_test
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,31 +20,8 @@ import (
 // the stand-in in its place. A handoff to it fails before anything starts.
 func lateT3(t *testing.T) (exe string, install func(), calls func() []t3Call) {
 	t.Helper()
-	stand, calls := useFakeT3(t)
-	exe = filepath.Join(t.TempDir(), "t3"+filepath.Ext(stand))
-	install = func() {
-		src, err := os.Open(stand)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer src.Close()
-		tmp := exe + ".tmp"
-		dst, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = io.Copy(dst, src)
-		if cerr := dst.Close(); err == nil {
-			err = cerr
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Rename(tmp, exe); err != nil { // whole, or not there: never half a command
-			t.Fatal(err)
-		}
-	}
-	return exe, install, calls
+	exe, calls = fakeT3Path(t)
+	return exe, func() { installFakeT3(t, exe) }, calls
 }
 
 // A `t3` that took the message and then failed, as one does that times out or has its output lost
@@ -54,7 +30,7 @@ func lateT3(t *testing.T) (exe string, install func(), calls func() []t3Call) {
 func TestAHandoffThatMayHaveLandedIsNotRepeated(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	t.Setenv(fakeT3FailEnv, "1") // the stand-in records the call, which is T3 having it, and then fails
+	setFakeT3(t, exe, fakeT3Fail, "1") // the stand-in records the call, which is T3 having it, and then fails
 	a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.pushRetry = 300 * time.Millisecond })
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
@@ -80,19 +56,19 @@ func TestAHandoffThatMayHaveLandedIsNotRepeated(t *testing.T) {
 func TestAHandoffThatMayHaveLandedIsNotRepeatedAfterARestart(t *testing.T) {
 	route := func(exe string) proto.Route { return proto.Route{T3CLI: exe, T3Thread: "thread-bob"} }
 	for _, tc := range []struct {
-		name string
-		env  string // what makes the stand-in fail, or take its time, the first time
-		val  string
+		name    string
+		setting string // what makes the stand-in fail, or take its time, the first time
+		val     string
 		// failed says the daemon is restarted after the call has failed, not while it runs.
 		failed bool
 	}{
-		{"after the call failed", fakeT3FailEnv, "1", true},
-		{"in the middle of the call", fakeT3SleepEnv, "30s", false},
+		{"after the call failed", fakeT3Fail, "1", true},
+		{"in the middle of the call", fakeT3Sleep, "30s", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			remote := newRemote(t)
 			exe, calls := useFakeT3(t)
-			t.Setenv(tc.env, tc.val)
+			setFakeT3(t, exe, tc.setting, tc.val)
 			var out syncBuf
 			a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
 			alice, _ := a.session("aaaaaa", "")
@@ -110,7 +86,7 @@ func TestAHandoffThatMayHaveLandedIsNotRepeatedAfterARestart(t *testing.T) {
 				t.Errorf("state.json doesn't say the message was handed over (%v):\n%s", err, st)
 			}
 
-			t.Setenv(tc.env, "") // T3 would take the message now, if it were sent again
+			setFakeT3(t, exe, tc.setting, "") // T3 would take the message now, if it were sent again
 			b.restart()
 			b.sessionRoute("bbbbbb", "claude-bob", route(exe)) // the session's MCP server reconnects
 			holds(t, "no second call after the restart", 2*time.Second, func() bool { return len(calls()) == 1 })

@@ -40,7 +40,7 @@ func TestMessagesKeptOverARestartAreHandedOverWhenTheDaemonIsBack(t *testing.T) 
 func TestHookLeavesMessagesWaitingForAHandoffAlone(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	t.Setenv(fakeT3SleepEnv, "1500ms")
+	setFakeT3(t, exe, fakeT3Sleep, "1500ms")
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
@@ -125,7 +125,7 @@ func TestClientSessionIDDoesNotBringBackTheNameOfASessionInT3(t *testing.T) {
 func TestReplacementOfAThreadTakesWhatTheOldSessionHadUnread(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	t.Setenv(fakeT3SleepEnv, "4s")
+	setFakeT3(t, exe, fakeT3Sleep, "4s")
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 20*time.Second, time.Hour)
 	alice, _ := a.session("aaaaaa", "")
 	route := proto.Route{T3CLI: exe, T3Thread: "thread-bob"}
