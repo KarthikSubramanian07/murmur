@@ -131,7 +131,7 @@ func Uninstall(ctx context.Context, e Env, leave bool) (Report, error) {
 
 	left := removeUserFolder(&r)
 
-	if len(r.Did) == 0 && len(r.Problems) == 0 {
+	if len(r.Did) == 0 && len(r.Problems) == 0 && len(left) == 0 {
 		r.Did = []string{"Nothing to remove: " + brand.Product + " wasn't set up for any agent here"}
 	}
 	r.Left = append(e.leftovers(), left...)
@@ -290,8 +290,14 @@ func removeUserFolder(r *Report) (left []string) {
 		return nil
 	}
 	dir := filepath.Join(config, brand.Name)
-	if _, err := os.Lstat(dir); err != nil {
+	switch fi, err := os.Lstat(dir); {
+	case err != nil:
 		return nil
+	case !fi.IsDir():
+		// A link, most likely, which removing would take away and leave what it points to, sessions'
+		// records and all. It is the user's to deal with.
+		return []string{brand.Product + "'s folder in your config directory (" + dir + "), which is a link or a file rather than a folder, " +
+			"so it wasn't touched. Delete what it points to once no agent session is using " + brand.Product + "."}
 	}
 	sessions := filepath.Join(dir, "sessions")
 	live, err := here.Sessions(sessions) // removes the records of servers that have exited
@@ -299,14 +305,21 @@ func removeUserFolder(r *Report) (left []string) {
 		r.Problems = append(r.Problems, "reading the records of agent sessions ("+sessions+"): "+err.Error())
 	}
 	os.Remove(sessions)
-	if fi, err := os.Lstat(filepath.Join(dir, "id")); err == nil && fi.Mode().IsRegular() {
-		if err := os.Remove(filepath.Join(dir, "id")); err != nil {
-			r.Problems = append(r.Problems, "removing the old check-ins' user ID ("+filepath.Join(dir, "id")+"): "+err.Error())
+	id := filepath.Join(dir, "id")
+	removedID := false
+	if fi, err := os.Lstat(id); err == nil && fi.Mode().IsRegular() {
+		if err := os.Remove(id); err != nil {
+			r.Problems = append(r.Problems, "removing the old check-ins' user ID ("+id+"): "+err.Error())
+		} else {
+			removedID = true
 		}
 	}
 	if os.Remove(dir) == nil {
 		r.Did = append(r.Did, "Removed "+brand.Product+"'s folder in your config directory ("+dir+")")
 		return nil
+	}
+	if removedID {
+		r.Did = append(r.Did, "Removed the user ID that "+brand.Product+"'s old daily check-ins sent ("+id+")")
 	}
 	entries, _ := os.ReadDir(dir)
 	var names []string

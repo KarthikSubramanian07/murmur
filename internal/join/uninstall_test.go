@@ -428,8 +428,8 @@ func TestUninstallRemovesTheUserFolder(t *testing.T) {
 		t.Errorf("the record of clones is still there: %v", err)
 	}
 	want := brand.Product + "'s folder in your config directory (" + dir + "), which still holds sessions (the records of 1 agent session whose " + brand.Product + " server still runs"
-	if s := r.String(); !strings.Contains(s, want) {
-		t.Errorf("the report doesn't name the folder that stayed:\n%s", s)
+	if s := r.String(); !strings.Contains(s, want) || !strings.Contains(s, "Removed the user ID") || strings.Contains(s, "Nothing to remove") {
+		t.Errorf("the report doesn't say what went and what stayed:\n%s", s)
 	}
 
 	// Once that server has exited, uninstall again takes the rest.
@@ -480,4 +480,38 @@ func exitedPID(t *testing.T) int {
 		t.Fatal(err)
 	}
 	return cmd.Process.Pid
+}
+
+// A config folder that is a link isn't removed: that would take the link away and leave what it
+// points to, a running server's record and all (from the review).
+func TestUninstallLeavesALinkedFolder(t *testing.T) {
+	sb, _ := uninstallSandbox(t)
+	t.Setenv(clones.DirEnv, "")
+	t.Setenv(brand.SessionsDirEnv, "")
+	config, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(sb.root, "elsewhere")
+	write(t, filepath.Join(real, "id"), "0123456789abcdef0123456789abcdef\n")
+	if err := os.MkdirAll(config, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(config, brand.Name)
+	if err := os.Symlink(real, dir); err != nil {
+		t.Skipf("can't make a link here: %v", err)
+	}
+	r, err := Uninstall(context.Background(), sb.Env, false)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if fi, err := os.Lstat(dir); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the link is gone or changed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(real, "id")); err != nil {
+		t.Errorf("what the link points to was touched: %v", err)
+	}
+	if s := r.String(); !strings.Contains(s, "which is a link or a file rather than a folder") {
+		t.Errorf("report:\n%s", s)
+	}
 }
