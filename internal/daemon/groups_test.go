@@ -31,7 +31,7 @@ func TestAnAgentStartsAGroupAndItsMembersTalk(t *testing.T) {
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.session("bbbbbb", "")
 	carol, _ := b.session("cccccc", "")
-	bobName := b.named(bob)
+	bobName := a.named(bob) // as alice's device knows it: a name lands in presence after the session does
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && a.seesSession(carol) && b.seesSession(alice) })
 
 	// Alice starts the group with herself and bob in it, by name and by address.

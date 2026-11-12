@@ -227,7 +227,7 @@ func newFixtures(now time.Time) *fixtures {
 			},
 		},
 		{
-			ID: "maya-mbp-91c0", Host: "maya-mbp", Owner: "Maya", Reachable: true, LastSeen: ago(40 * time.Second),
+			ID: "maya-mbp-91c0", Host: "maya-mbp", Owner: "Maya", Nick: "maya", Reachable: true, LastSeen: ago(40 * time.Second),
 			Sessions: []web.Session{
 				{Name: "lucid-badger", Agent: "claude-code", Branch: "session-names",
 					Doing: "Taking names by compare-and-swap on refs/murmur/names", Started: ago(80 * time.Minute), LastActive: ago(50 * time.Second),
@@ -249,7 +249,7 @@ func newFixtures(now time.Time) *fixtures {
 			},
 		},
 		{
-			ID: "mac-mini-c4d1", Host: "mac-mini", Owner: "Tyler", Reachable: false, LastSeen: ago(47 * time.Minute),
+			ID: "mac-mini-c4d1", Host: "mac-mini", Owner: "Tyler", Nick: "tyler-mini", Reachable: false, LastSeen: ago(47 * time.Minute),
 			Sessions: []web.Session{
 				{Name: "dusty-lynx", Agent: "codex", Branch: "macos-ci",
 					Doing: "Running the test suite on macOS", Started: ago(6 * time.Hour), LastActive: ago(48 * time.Minute)},

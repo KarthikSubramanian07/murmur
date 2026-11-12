@@ -203,7 +203,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	now := time.Now()
 	d.pageSeenLocked(ctx, now)
 
-	self := web.Device{ID: d.device, Host: d.host, Owner: d.owner, Self: true, Reachable: true, LastSeen: now}
+	self := web.Device{ID: d.device, Host: d.host, Owner: d.owner, Nick: d.nickOfLocked(d.device), Self: true, Reachable: true, LastSeen: now}
 	if d.st.Person != "" {
 		self.Person = &web.Person{Name: d.st.Person, Addr: d.personAddr(), LastActive: d.lastPage, Tags: tags.Person()}
 	}
@@ -224,7 +224,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked()}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
-		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Reachable: !d.staleLocked(p),
+		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), Reachable: !d.staleLocked(p),
 			LastSeen: p.lastChange}
 		for _, ps := range p.pres.Sessions {
 			if ps.ID == proto.CLISession {

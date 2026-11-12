@@ -236,6 +236,7 @@ func DecryptEvent(e Event, device string, keys Keyring) (Event, error) {
 type presenceSecret struct {
 	Host     string        `json:"host"`
 	Owner    string        `json:"owner,omitempty"`
+	Nick     string        `json:"nick,omitempty"`
 	Sessions []SessionInfo `json:"sessions"`
 	Offline  []string      `json:"offline,omitempty"`
 	Groups   bool          `json:"groups,omitempty"`
@@ -245,10 +246,10 @@ type presenceSecret struct {
 
 func presenceAAD(device string) []byte { return []byte("presence\x00" + device) }
 
-// EncryptPresence returns p with its host, owner, sessions, offline sessions, epoch and held team
+// EncryptPresence returns p with its host, owner, nickname, sessions, offline sessions, epoch and held team
 // keys encrypted for recipients. A daemon from before encryption reads it as a device with no sessions.
 func EncryptPresence(p Presence, recipients map[string]string) (Presence, error) {
-	plain, err := json.Marshal(presenceSecret{Host: p.Host, Owner: p.Owner, Sessions: p.Sessions, Offline: p.Offline,
+	plain, err := json.Marshal(presenceSecret{Host: p.Host, Owner: p.Owner, Nick: p.Nick, Sessions: p.Sessions, Offline: p.Offline,
 		Groups: p.Groups, Epoch: p.Epoch, Holds: p.Holds})
 	if err != nil {
 		return Presence{}, err
@@ -279,7 +280,7 @@ func DecryptPresence(p Presence, keys Keyring) (Presence, error) {
 	if err := json.Unmarshal(plain, &s); err != nil {
 		return Presence{}, errBadBox
 	}
-	p.Host, p.Owner, p.Sessions, p.Offline, p.Box = s.Host, s.Owner, s.Sessions, s.Offline, nil
+	p.Host, p.Owner, p.Nick, p.Sessions, p.Offline, p.Box = s.Host, s.Owner, s.Nick, s.Sessions, s.Offline, nil
 	p.Groups, p.Epoch, p.Holds = s.Groups, s.Epoch, s.Holds
 	return p, nil
 }

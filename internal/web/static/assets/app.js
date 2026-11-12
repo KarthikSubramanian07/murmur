@@ -1238,7 +1238,7 @@ function settledRow(r) {
 
 // Who a device belongs to, for its heading; its host name goes beside it.
 function deviceLabel(d) {
-  return d.self ? "This device" : d.owner || d.id;
+  return d.self ? "This device" : d.nick || d.owner || d.id;
 }
 
 // A device ID ends in four hex digits that tell two clones on one machine apart.
@@ -1696,8 +1696,10 @@ function membersButton(c) {
 function membersPanel(c, rows) {
   const groups = new Map();
   for (const r of rows) {
-    const key = r.person ? "People" : r.d ? (r.d.self ? "This device" : r.d.owner || r.d.id) : "Not running";
-    if (!groups.has(key)) groups.set(key, { d: r.person ? null : r.d, host: r.d && !r.person ? host(r.d.id) : "", rows: [] });
+    // By device, not by what it is called: two devices may have one nickname or one owner (#190).
+    const title = r.person ? "People" : r.d ? deviceLabel(r.d) : "Not running";
+    const key = !r.person && r.d ? "device " + r.d.id : title;
+    if (!groups.has(key)) groups.set(key, { title, d: r.person ? null : r.d, host: r.d && !r.person ? host(r.d.id) : "", rows: [] });
     groups.get(key).rows.push(r);
   }
   return h(
@@ -1705,8 +1707,8 @@ function membersPanel(c, rows) {
     // A disclosure: the list follows its button, and Escape folds it back onto the button.
     { class: "g-members-panel", id: "members-panel", role: "group", "aria-label": "Members", onclick: (e) => e.stopPropagation() },
     h("div", { class: "g-mp-head" }, c.kind === "all" ? "Everyone in this repo" : c.kind === "group" ? "Every session tagged " + c.title : "Every session on " + host(c.title)),
-    [...groups].map(([title, g]) => [
-      h("div", { class: "g-mp-sec" }, g.d && deviceDot(g.d), title, g.host && h("span", null, g.host), h("span", { class: "g-mp-n" }, g.rows.length)),
+    [...groups.values()].map((g) => [
+      h("div", { class: "g-mp-sec" }, g.d && deviceDot(g.d), g.title, g.host && h("span", null, g.host), h("span", { class: "g-mp-n" }, g.rows.length)),
       g.rows.map((r) =>
         h(
           "button",
@@ -2493,6 +2495,7 @@ function groupName(c) {
   const d = (ui.state?.devices || []).find((x) => x.id === c.title);
   if (!d) return host(c.title);
   if (d.self) return "This device";
+  if (d.nick) return d.nick;
   const o = d.owner || "";
   return o ? o[0].toUpperCase() + o.slice(1) + "'s " + (devices().filter((x) => x.owner === d.owner).length > 1 ? host(d.id) : "device") : d.id;
 }
@@ -3260,7 +3263,7 @@ function reachable() {
 
 function matches(r, q) {
   if (!q) return true;
-  return [r.name, r.line, r.s?.branch, r.s?.agent, r.d.owner, r.d.id].some((x) => (x || "").toLowerCase().includes(q));
+  return [r.name, r.line, r.s?.branch, r.s?.agent, r.d.nick, r.d.owner, r.d.id].some((x) => (x || "").toLowerCase().includes(q));
 }
 
 // In the new-message list a row is an option of its combobox, picked with the arrow keys while the
@@ -3278,7 +3281,7 @@ function personRow(r, cur, onclick, option) {
       h("span", { class: "name-line" }, h("span", { class: "pick-name truncate" }, r.name), r.person && humanTag()),
       h("span", { class: "pick-line truncate" }, r.line),
     ),
-    h("span", { class: "pick-where truncate" }, r.person ? "" : r.d.self ? "This device" : r.d.owner || host(r.d.id)),
+    h("span", { class: "pick-where truncate" }, r.person ? "" : r.d.self ? "This device" : r.d.nick || r.d.owner || host(r.d.id)),
   );
 }
 

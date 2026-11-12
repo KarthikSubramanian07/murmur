@@ -108,7 +108,9 @@ type Device struct {
 	ID    string `json:"id"`
 	Host  string `json:"host"`
 	Owner string `json:"owner,omitempty"`
-	Self  bool   `json:"self,omitempty"`
+	// Nick is what the device is called (#190): the nickname its user gave it, else its person's name.
+	Nick string `json:"nick,omitempty"`
+	Self bool   `json:"self,omitempty"`
 	// Reachable says the device's heartbeat is current, so its sessions can get messages now.
 	Reachable bool      `json:"reachable"`
 	LastSeen  time.Time `json:"lastSeen"` // when this daemon last saw the device's presence change
