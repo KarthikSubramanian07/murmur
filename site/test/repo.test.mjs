@@ -46,15 +46,17 @@ test('a repo already stored is answered from D1, without asking GitHub again', {
 test("a repo D1 can't look up is checked with GitHub, as a new one is", async t => {
   const gh = gitHub();
   t.after(gh.restore);
-  const stored = [];
+  const stored = [], looked = [];
   const statement = sql => ({
     bind: (...args) => ({
-      async first() { throw new Error('D1 is down'); },
+      async first() { looked.push(sql); throw new Error('D1 is down'); },
       async run() { stored.push({ sql, args }); return { success: true }; },
     }),
   });
   const res = await post({ prepare: statement }, JSON.stringify({ repo: 'github.com/ada/engine' }));
   assert.equal(res.status, 200);
+  // It looked in D1 first, and that failing didn't stop it.
+  assert.deepEqual(looked, ['SELECT 1 FROM repos WHERE repo = ?1']);
   assert.equal(gh.calls.length, 1);
   assert.equal(stored.length, 1);
   assert.match(stored[0].sql, /^\s*INSERT INTO repos/);
