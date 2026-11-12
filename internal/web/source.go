@@ -17,6 +17,9 @@ type Source interface {
 	// Messages returns the messages after cursor, oldest first, and the cursor to pass next
 	// time. An empty cursor asks for the most recent ones, as many as the source keeps.
 	Messages(ctx context.Context, cursor string) (msgs []Message, next string, err error)
+	// Activity returns what sessions did, other than send messages, after cursor, oldest first,
+	// and the cursor to pass next time (#448). An empty cursor asks for as much as the source keeps.
+	Activity(ctx context.Context, cursor string) (acts []Activity, next string, err error)
 	// Settings returns the human's settings for this device.
 	Settings(ctx context.Context) (Settings, error)
 	// SetSettings replaces them, saved so they outlast a restart, and returns them as saved.

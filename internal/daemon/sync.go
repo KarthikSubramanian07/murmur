@@ -780,6 +780,9 @@ func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode sy
 		if e.Type == bus.Tags {
 			d.applyTagsEventLocked(e)
 		}
+		if (e.Type == bus.SessionStarted || e.Type == bus.SessionStopped) && (mode != modeSkip || !e.At.Before(d.started.Add(-time.Minute))) {
+			d.recordSessionEventLocked(e) // for the page's Recent view; history from before this run isn't
+		}
 		if e.Type == bus.GroupAdd {
 			d.applyGroupAddLocked(e, mode) // unless it is old: the session may have left the group since
 		}
@@ -1192,6 +1195,9 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		d.newPresenceLocked(dev, pres.At) // the high-water mark of its presence times
 	}
 	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, sealed: sealed, locked: locked}
+	if !locked {
+		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
+	}
 	// A name in another device's presence is in use, whether or not the registry shows it yet.
 	seen := false
 	for _, s := range pres.Sessions {
@@ -1554,6 +1560,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 		pres.Sessions = append(pres.Sessions, info)
 	}
+	d.noteSessionsLocked(d.device, pres.Sessions, time.Now())
 	room := bus.MaxSessions
 	if d.st.Person != "" {
 		room--

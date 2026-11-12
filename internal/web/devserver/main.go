@@ -61,7 +61,7 @@ func main() {
 		src.account = web.Account{Name: "maya", Addr: src.self + "/human", Taken: "maya-mbp-91c0"}
 	}
 	go src.run()
-	page := web.NewWithPRs(src, token, fixturePRs)
+	page := web.NewWithGitHub(src, token, fixturePRs, fixtureGitHub(time.Now()))
 	if *repos != "" {
 		serveRepos(strings.Split(*repos, ","), ln, src, page)
 	}
@@ -140,7 +140,7 @@ func serveRepos(names []string, ln net.Listener, first *fixtures, firstPage *web
 			src.devices = src.devices[:1+i%2]
 			src.messages = src.messages[len(src.messages)/(i+1):]
 			go src.run()
-			d.addr, d.page = l.Addr().String(), web.NewWithPRs(src, randomHex(16), fixturePRs)
+			d.addr, d.page = l.Addr().String(), web.NewWithGitHub(src, randomHex(16), fixturePRs, fixtureGitHub(time.Now()))
 			srv := &http.Server{Handler: d.page, ReadHeaderTimeout: 10 * time.Second}
 			go func() { log.Fatal(srv.Serve(l)) }()
 		}
@@ -187,6 +187,7 @@ type fixtures struct {
 	self     string
 	devices  []web.Device
 	messages []web.Message
+	activity []web.Activity
 	mutes    []web.Mute
 	settings web.Settings
 	version  web.Version
@@ -208,6 +209,7 @@ func newFixtures(now time.Time) *fixtures {
 			DefaultMinutes: 3,
 		},
 	}
+	f.activity = fixtureActivity(now)
 	f.devices = []web.Device{
 		{
 			ID: "tyler-laptop-3f2a", Host: "tyler-laptop", Owner: "Tyler", Self: true, Reachable: true,
