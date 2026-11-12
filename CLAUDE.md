@@ -68,11 +68,16 @@ Tyler's rules:
     `.github/` templates, images): skip both. No check reads these files.
   - **UI, styling or assets** (2026-11-10): skip review. CI still runs, because the page in
     `internal/web/static` is built into the binary and tested.
+  - **The website only** (`site/`, plus anything in the first item): skip review, and skip the
+    macOS and Windows jobs. They run only the Go tests, which never read `site/`. The site's own
+    tests run in `test-linux`, or locally in seconds:
+    `node --test --import ./site/test/register.mjs site/test/*.test.mjs`. Either one passing is
+    enough.
   - **A merge of main that only resolves conflicts:** skip review of that commit.
   - **With permission from Tyler.**
 
-  Anything else waits for both. `README.md` (a setup test reads it), `internal/skills`, `site/`,
-  `go.mod` and `.github/workflows` are tested, so even a small change to them waits for CI.
+  Anything else waits for both. `README.md` (a setup test reads it), `internal/skills`, `go.mod`
+  and `.github/workflows` are tested, so even a small change to them waits for CI.
 - A PR that changes something a person sees (the `mur ui` page, the site, terminal output) shows
   it in its body: before and after screenshots, and a GIF when it moves or is interactive.
   `gh` can't upload images; `scripts/pr-media.sh` can (`docs/pr-media.md`).
