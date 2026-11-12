@@ -265,6 +265,8 @@ func Inbox(r proto.Response) string {
 		fmt.Fprintf(&b, "\n[%s message from %s, %s]\n", brand.Product, from(m), Ago(m.At))
 		if m.To == "*" {
 			b.WriteString("To: everyone\n")
+		} else if bus.IsGroup(m.To) && m.GroupKnown {
+			fmt.Fprintf(&b, "To: %s\n", m.To)
 		} else if bus.IsGroup(m.To) {
 			fmt.Fprintf(&b, "To: %s, a group you are in\n", m.To)
 		}
@@ -281,8 +283,10 @@ func Inbox(r proto.Response) string {
 		}
 		if isPerson(m) && !m.Explained {
 			fmt.Fprintf(&b, "(%s is a person, and sees only what you send them. Reply to %s.)\n", reply, reply)
+		} else if bus.IsGroup(m.To) && m.GroupKnown {
+			fmt.Fprintf(&b, "(Reply to %s or %s.)\n", m.To, reply)
 		} else if bus.IsGroup(m.To) {
-			fmt.Fprintf(&b, "(Reply to %s for the whole group, or to %s alone.)\n", m.To, reply)
+			fmt.Fprintf(&b, "(Reply to %s for the whole group, or to %s alone. Removing the tag %s from yourself leaves the group.)\n", m.To, reply, m.To)
 		} else {
 			fmt.Fprintf(&b, "(Reply to %s.)\n", reply)
 		}
@@ -371,9 +375,15 @@ func Turn(m proto.MessageView) string {
 		fmt.Fprintf(&b, "\n%s sees only what you `send`, not this conversation. Answer with %s's `send` to %s.\n", who, brand.Product, who)
 		return b.String()
 	}
+	if bus.IsGroup(m.To) && m.GroupKnown {
+		// The session has had the long line below from this group (Tyler, 2026-11-12).
+		fmt.Fprintf(&b, "\nReply with %s's `send` to %s or %s, if a reply is needed.\n", brand.Product, m.To, who)
+		return b.String()
+	}
 	if bus.IsGroup(m.To) {
-		// A group's message is answered to the group, so the others see it; the tag is how a member
-		// leaves, and a session another agent added learns here that it is in the group.
+		// The first message a session has from a group. A group's message is answered to the
+		// group, so the others see it; the tag is how a member leaves, and a session another agent
+		// added learns here that it is in the group.
 		fmt.Fprintf(&b, "\nYou are in %s. Reply with %s's `send` to %s for the whole group, or to %s alone, if a reply is needed. Removing the tag %s from yourself leaves the group.\n",
 			m.To, brand.Product, m.To, who, m.To)
 		return b.String()

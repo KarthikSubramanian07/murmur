@@ -433,6 +433,10 @@ type MessageView struct {
 	// person, before, which said in full that the person sees only what the session sends: this one
 	// ends with an agent's line (#345). Always false for an agent's message.
 	Explained bool `json:"explained,omitempty"`
+	// GroupKnown says the session this goes to has been given a message sent to the same group
+	// before, which said in full that it is in the group, how to answer and how to leave: this one
+	// ends with a short line (#184). Always false for a message that wasn't sent to a group.
+	GroupKnown bool `json:"groupKnown,omitempty"`
 	// Told is when the hook's notice told the session of this message, for one given whole after:
 	// its turn says so (#355). Zero for a message no notice told of.
 	Told time.Time `json:"told,omitzero"`

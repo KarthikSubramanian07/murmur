@@ -186,3 +186,54 @@ func TestAHumansChoiceStandsOverAnAgentsAdd(t *testing.T) {
 		t.Errorf("bob's inbox is %q; want only what was sent to him, as a human took him out of the group", got)
 	}
 }
+
+// The first message a session is given from a group says in full that it is in the group, how to
+// answer and how to leave; later ones from that group end with one short line (Tyler, 2026-11-12).
+// A second group explains itself afresh, and inbox goes by the same record as a turn.
+func TestAGroupExplainsItselfOnce(t *testing.T) {
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	carol, _ := b.session("cccccc", "")
+	aliceName := b.named(alice)
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && a.seesSession(carol) && b.seesSession(alice) })
+	b.tagSelf("bbbbbb", []string{"group:ui", "group:bus"}, nil)
+	b.tagSelf("cccccc", []string{"group:ui"}, nil)
+
+	long := func(g string) string {
+		return "You are in " + g + ". Reply with Murmur's `send` to " + g + " for the whole group, or to " + aliceName + " alone, if a reply is needed. Removing the tag " + g + " from yourself leaves the group."
+	}
+	short := func(g string) string {
+		return "Reply with Murmur's `send` to " + g + " or " + aliceName + ", if a reply is needed."
+	}
+	turn := func(n int, group, subject string) string {
+		t.Helper()
+		a.send("aaaaaa", group, subject, "")
+		eventually(t, "handoff of "+subject, func() bool { return len(calls()) >= n })
+		return calls()[n-1].Stdin
+	}
+	check := func(got, group string, wantLong bool) {
+		t.Helper()
+		if !strings.HasPrefix(got, "Message sent in "+group+" from "+aliceName) {
+			t.Errorf("the turn doesn't start with the group:\n%s", got)
+		}
+		if strings.Contains(got, long(group)) != wantLong || strings.Contains(got, short(group)) == wantLong {
+			t.Errorf("want the long line %v, got:\n%s", wantLong, got)
+		}
+	}
+	check(turn(1, "group:ui", "first to ui"), "group:ui", true)
+	check(turn(2, "group:ui", "second to ui"), "group:ui", false)
+	check(turn(3, "group:bus", "first to bus"), "group:bus", true)
+
+	// Carol has no turns: she reads all of group:ui's with inbox, and only the first explains.
+	var got []proto.MessageView
+	eventually(t, "carol's two messages", func() bool {
+		got = append(got, b.do(proto.Request{Op: proto.OpInbox, Session: "cccccc"}).Messages...)
+		return len(got) >= 2
+	})
+	if got[0].GroupKnown || !got[1].GroupKnown {
+		t.Errorf("carol's messages say the group is known %v, then %v; want false, then true", got[0].GroupKnown, got[1].GroupKnown)
+	}
+}

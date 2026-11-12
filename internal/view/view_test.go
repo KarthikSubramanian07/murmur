@@ -38,6 +38,10 @@ func TestTurn(t *testing.T) {
 			proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", FromAgent: "Codex", To: "group:ui", Subject: "who has the nav?"},
 			"Message sent in group:ui from quiet-otter (Codex) via " + name + ":\n\nwho has the nav?\n\nYou are in group:ui. Reply with " + name +
 				"'s `send` to group:ui for the whole group, or to quiet-otter alone, if a reply is needed. Removing the tag group:ui from yourself leaves the group.\n"},
+		{"to a group the session has heard from",
+			proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", FromAgent: "Codex", To: "group:ui", Subject: "nav is merged", GroupKnown: true},
+			"Message sent in group:ui from quiet-otter (Codex) via " + name + ":\n\nnav is merged\n\nReply with " + name +
+				"'s `send` to group:ui or quiet-otter, if a reply is needed.\n"},
 		{"to everyone",
 			proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", FromAgent: "Codex", To: "*", Subject: "using zustand"},
 			"Message from quiet-otter (Codex) via " + name + ", sent to everyone:\n\nusing zustand\n\nReply with " + name +
