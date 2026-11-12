@@ -414,6 +414,9 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		return d.send(ctx, from, req)
 
 	case proto.OpTags:
+		if len(req.For) > 0 {
+			return d.addToGroups(ctx, sess, req)
+		}
 		return d.setOwnTags(sess, req)
 
 	case proto.OpInbox:
@@ -716,9 +719,15 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 
 func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto.Response {
 	to := strings.TrimSpace(req.To)
+	if g := tags.Normalize(to); bus.IsGroup(g) {
+		to = g
+	}
 	subject := bus.OneLine(req.Subject, 120)
 	if !bus.ValidTo(to) || subject == "" {
-		return fail("a message needs a recipient (a session's name, device/session, a device, or * for everyone; see who) and a subject")
+		if strings.HasPrefix(tags.Normalize(to), tags.GroupPrefix) {
+			return fail(fmt.Sprintf("not sent: %q isn't a group. A group's tag is %s and a name of lowercase letters, digits and . _ : -, such as %sui", to, tags.GroupPrefix, tags.GroupPrefix))
+		}
+		return fail("a message needs a recipient (a session's name, device/session, a device, a group such as group:ui, or * for everyone; see who) and a subject")
 	}
 	if len(req.Body) > maxBody {
 		return fail(fmt.Sprintf("not sent: the body is over %d KB, and the bus keeps everything forever", maxBody>>10))
@@ -772,7 +781,11 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		}
 	}
 	var note string
-	if to != "*" {
+	if bus.IsGroup(to) {
+		d.mu.Lock()
+		note = d.groupNoteLocked(to, from)
+		d.mu.Unlock()
+	} else if to != "*" {
 		d.mu.Lock()
 		at := d.queuedAtLocked(to)
 		dev, sess := bus.SplitAddr(at)

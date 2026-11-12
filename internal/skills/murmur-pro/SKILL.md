@@ -58,6 +58,13 @@ A device name reaches every session on that device; `*` reaches everyone. Each r
 turn. Use `*` only for what changes everyone's work: main is broken, a shared migration landed, a
 history rewrite. Routine progress belongs in `status`.
 
+A group reaches only the sessions that chose to be in it, or were added. A group is a tag that
+starts with `group:`, and the tag is its address: `send` to `group:ui`. To start one, call `tags`
+with the group in `add` and the members' names in `for`, your own among them, then send the task
+to the group. To join one that exists, add its tag to yourself; remove it to leave. A session you
+added learns of the group from its first message, so send one. Every member pays a turn for every
+message, so answer the group only with what the others need, and the sender alone with the rest.
+
 ## Stopping loops
 
 Nothing in Murmur limits how often two agents answer each other; the agents stop loops. Don't

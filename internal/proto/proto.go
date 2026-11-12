@@ -184,9 +184,13 @@ type Request struct {
 	// Add and Remove are the tags OpTags adds to the caller and takes from it. Tags is what OpWho
 	// searches by: a session is listed when it has every tag named, and none named after a dash
 	// (see tags.ParseFilter).
+	//
+	// For is the sessions OpTags adds to groups in place of the caller (#184), by name or address:
+	// Add then holds group tags only, and nothing is removed.
 	Add    []string `json:"add,omitempty"`
 	Remove []string `json:"remove,omitempty"`
 	Tags   []string `json:"tags,omitempty"`
+	For    []string `json:"for,omitempty"`
 
 	// Name is the session OpLookup describes: a name, or device/session. Limit caps the messages.
 	Name string `json:"name,omitempty"`

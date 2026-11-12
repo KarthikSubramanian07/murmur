@@ -255,6 +255,8 @@ func Inbox(r proto.Response) string {
 		fmt.Fprintf(&b, "\n[%s message from %s, %s]\n", brand.Product, from(m), Ago(m.At))
 		if m.To == "*" {
 			b.WriteString("To: everyone\n")
+		} else if bus.IsGroup(m.To) {
+			fmt.Fprintf(&b, "To: %s, a group you are in\n", m.To)
 		}
 		fmt.Fprintf(&b, "Subject: %s\n", m.Subject)
 		if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
@@ -269,6 +271,8 @@ func Inbox(r proto.Response) string {
 		}
 		if isPerson(m) && !m.Explained {
 			fmt.Fprintf(&b, "(%s is a person, and sees only what you send them. Reply to %s.)\n", reply, reply)
+		} else if bus.IsGroup(m.To) {
+			fmt.Fprintf(&b, "(Reply to %s for the whole group, or to %s alone.)\n", m.To, reply)
 		} else {
 			fmt.Fprintf(&b, "(Reply to %s.)\n", reply)
 		}
@@ -339,6 +343,8 @@ func Turn(m proto.MessageView) string {
 	fmt.Fprintf(&b, " via %s", brand.Product)
 	if m.To == "*" {
 		b.WriteString(", sent to everyone")
+	} else if bus.IsGroup(m.To) {
+		fmt.Fprintf(&b, ", sent to %s, a group you are in", m.To)
 	}
 	if !m.Told.IsZero() {
 		fmt.Fprintf(&b, ", which a notice told you of %s", Ago(m.Told))
@@ -349,6 +355,13 @@ func Turn(m proto.MessageView) string {
 	}
 	if isPerson(m) && !m.Explained {
 		fmt.Fprintf(&b, "\n%s sees only what you `send`, not this conversation. Answer with %s's `send` to %s.\n", who, brand.Product, who)
+		return b.String()
+	}
+	if bus.IsGroup(m.To) {
+		// A group's message is answered to the group, so the others see it; the tag is how a member
+		// leaves, and a session another agent added learns here that it is in the group.
+		fmt.Fprintf(&b, "\nReply with %s's `send` to %s for the whole group, or to %s alone, if a reply is needed. Removing the tag %s from yourself leaves the group.\n",
+			brand.Product, m.To, who, m.To)
 		return b.String()
 	}
 	fmt.Fprintf(&b, "\nReply with %s's `send` to %s if a reply is needed.\n", brand.Product, who)

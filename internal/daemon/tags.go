@@ -57,16 +57,20 @@ func (d *Daemon) adoptTagsLocked(s *session) {
 // dndLocked says session id on this device is on do not disturb: its messages stay queued in its
 // inbox, none is handed over as a turn, and the hook tells of none (see wakesLocked and notices). A session that
 // isn't registered at the moment goes by the tags kept for its name. Caller holds mu.
-func (d *Daemon) dndLocked(id string) bool {
+func (d *Daemon) dndLocked(id string) bool { return d.hasTagLocked(id, tags.DoNotDisturb) }
+
+// hasTagLocked says session id on this device has tag name. A session that isn't registered at
+// the moment goes by the tags kept for its name. Caller holds mu.
+func (d *Daemon) hasTagLocked(id, name string) bool {
 	if s := d.sessions[id]; s != nil {
-		return tags.Has(d.tagsOfLocked(s), tags.DoNotDisturb)
+		return tags.Has(d.tagsOfLocked(s), name)
 	}
 	key := d.tagKeyLocked(id)
 	st := d.st.Tags[key]
 	if key == "" || st == nil {
 		return false
 	}
-	return tags.Has(tags.Effective(st.Self, d.derivedTagsLocked(id), st.Human), tags.DoNotDisturb)
+	return tags.Has(tags.Effective(st.Self, d.derivedTagsLocked(id), st.Human), name)
 }
 
 // peerDNDLocked says the session at dev/sess is on do not disturb: by this device's own tags, or
