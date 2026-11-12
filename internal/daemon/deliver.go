@@ -962,8 +962,10 @@ func (d *Daemon) noteHandedLocked(r proto.Route, id string) {
 }
 
 // dropHandedLocked takes out of session id's inbox each message its T3 thread was already handed,
-// through another session's copy. A copy on its way in stays: it is the one being handed over (see
-// takeInboxLocked), and leaves the inbox when it has been. Caller holds mu.
+// through another session's copy. A copy on its way in stays: usually it is the one being handed
+// over (see takeInboxLocked), and leaves the inbox when it has been. It can also be a second session
+// of the thread handing over its own copy at the same moment, when both already hold the thread's
+// route; that repeat is #99's, which this doesn't cover. Caller holds mu.
 func (d *Daemon) dropHandedLocked(id string) {
 	r := d.routeOfLocked(id)
 	list := d.handedTo[threadKey{r.T3Home, r.T3Thread}]

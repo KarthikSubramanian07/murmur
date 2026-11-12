@@ -266,6 +266,9 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	d.kickPoll() // a session is live: look at the remote at once, and at the faster rate
 	if h.Reconnect {
 		d.catchUpLocked(h.ID)
+		// A catch-up can put back a copy another session of the thread has already handed over
+		// (#70), so the thread's handed messages are taken out again after it.
+		d.dropHandedLocked(h.ID)
 	}
 	name, live := s.name, s.claudeSession
 	d.mu.Unlock()
