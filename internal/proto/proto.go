@@ -81,7 +81,9 @@ const (
 //	    "unknown op", so the command replaces it where it may.
 //	16: the route's CodexCLI and OpenCodeCLI: a Codex or OpenCode session outside T3 is handed a
 //	    message as a turn by its client's own command line (#135)
-const Protocol = 16
+//	17: a hook's Child and ParentNative: the session is one another session started, and goes
+//	    through it (#452)
+const Protocol = 17
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
@@ -191,6 +193,13 @@ type Request struct {
 	// the hook is the parent of its MCP server too.
 	Agent     string `json:"agent,omitempty"`
 	Ancestors []int  `json:"ancestors,omitempty"`
+	// Child says, on a hook's request that names its session by Native, that another session
+	// started this one (an OpenCode child session, #455): it is off the mesh from then on, as a T3
+	// delegate is (#188), and nothing puts it back. ParentNative is the client's own ID of the
+	// session that started it, "" if the hook doesn't know; messages for the child are refused
+	// with that session's name, and the child's commits are credited to it.
+	Child        bool   `json:"child,omitempty"`
+	ParentNative string `json:"parentNative,omitempty"`
 
 	// Add and Remove are the tags OpTags adds to the caller and takes from it. Tags is what OpWho
 	// searches by: a session is listed when it has every tag named, and none named after a dash

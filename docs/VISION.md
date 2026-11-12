@@ -1858,11 +1858,21 @@ A body past the limit is cut, as in `inbox`.
     terminal thread look like that agent's.
   - *The thread's ID.* A Codex MCP server learns it only from a call to a Murmur tool, which a
     driven thread often never makes. Codex's hook runs at the thread's first prompt and reports
-    it, so the daemon takes it from there too. Where the hook can't be paired with one session
-    (several in one Codex process), a driven thread it reports marks every session of that
-    process: a subagent tool runs a Codex app server of its own. That holds for codex-sub
-    0.7.0 (`codex app-server` over stdio) and would be wrong for a tool that used Codex's shared
-    daemon. A subagent Codex spawned shares its parent's process, so only its own ID marks it.
+    it, so the daemon takes it from there too. That pairing is by process and can be wrong (a
+    spawned subagent's hook, run before its MCP server registers, pairs with the session that
+    spawned it), so an ID from a hook counts only for a driven thread.
+  - *A driven process.* Where the hook is paired with no session (several in one Codex
+    process), a driven thread it reports marks the process, for good, if another session's agent
+    is among the process's ancestors: a subagent tool runs a Codex app server of its own
+    (codex-sub 0.7.0: `codex app-server` over stdio), under the agent it works for. A session
+    there is a child unless its own thread was read and is a person's. The ancestor is required
+    because Codex's desktop app can open a thread codex-sub made, and one such thread must not
+    take the app's other threads off the mesh. Marking for good is because a thread that isn't
+    kept (codex-sub's `persist=false`) has no row in Codex's state, and its hook would otherwise
+    put the process back.
+  - *Inside T3.* codex-sub passes T3's variables on to its Codex, so a thread it drives for a
+    Claude Code session in T3 has T3's command line and never a T3 thread. A Codex session is
+    therefore looked at until its T3 thread is found.
   - *The parent.* For a spawned thread, the session in the thread that spawned it. Otherwise
     the nearest session whose agent is an ancestor of the child's Codex process, which for
     codex-sub is the Claude Code session running the plugin. With neither, the refusal names
@@ -1870,9 +1880,18 @@ A body past the limit is cut, as in `inbox`.
   - *What is left.* Until a hook or a tool call gives the ID, the session is on the mesh, as a
     T3 delegate is until its thread is read; it has no way in but its inbox then. A Codex
     whose hook was never trusted, in a thread that never calls a Murmur tool, stays there. A
-    driven thread found late keeps the name it took; nobody sees it. Not run against a live
+    subagent Codex spawned is marked only once it calls a Murmur tool. A thread codex-sub made
+    and a person later opens in Codex's own app is still a child: `originator` is who made it.
+    Nothing is saved, so after a daemon restart a child is back until its next hook or tool
+    call. A child found late keeps the name it took; nobody sees it. Not run against a live
     codex-sub thread: the reads were checked against the laptop's real Codex state, and the
     rest with stand-ins.
+- **A hook can say its session is a child** (2026-11-12, #452). Where the client knows a
+  session's parent and Murmur has a hook in it (OpenCode's plugin, #455), the hook's request
+  carries `child` and, if it knows, `parentNative`, the client's own ID of the session that
+  started it. The daemon keeps that by the session's own ID, so it holds for a session whose MCP
+  server registers after the hook spoke, and the session is a delegate from then on. Nothing
+  takes the mark off: a session that was started by another doesn't stop being so.
 - **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
   decision, 2026-10-29). A message to a busy thread never steers the turn running mid-task: it is
   queued as the next turn, or, where the hook runs, announced, and given at the turn's end, which

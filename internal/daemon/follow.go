@@ -118,6 +118,9 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 // commits, but none follows it, as that would take the session back to the conversation it left,
 // with that one's name, tags and holds (#231). Caller holds mu.
 func (d *Daemon) hookSessionsLocked(req proto.Request) []*session {
+	if req.Child {
+		d.noteHookChildLocked(req.Native, req.ParentNative)
+	}
 	if req.Native != "" && req.ClaudeSession == "" {
 		return d.nativeSessionsLocked(req.Native) // Pi's, by its session's file (#205)
 	}
@@ -250,6 +253,9 @@ func (d *Daemon) queuedAtLocked(to string) string {
 // session of that process. An ID the MCP server learns overrides one taken from a hook. Caller
 // holds mu.
 func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
+	if req.Agent == "codex" {
+		d.noteCodexHookLocked(req.Ancestors, req.ClaudeSession) // which may be all that says whose the process is (#454)
+	}
 	var byID, byProcess []*session
 	for _, s := range d.sortedSessionsLocked() {
 		if !s.dropped.IsZero() || !isAgent(s.agent, req.Agent) {
@@ -263,9 +269,6 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 			byID = append(byID, s)
 		case s.clientPID != 0 && slices.Contains(req.Ancestors, s.clientPID):
 			byProcess = append(byProcess, s)
-			if req.Agent == "codex" {
-				d.noteCodexHookLocked(s.clientPID, req.ClaudeSession) // which may be all that says whose the process is (#454)
-			}
 		}
 	}
 	if len(byID) > 0 {

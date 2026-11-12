@@ -112,8 +112,8 @@ type Options struct {
 	// every TitleEvery.
 	ThreadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
 	// CodexLineage reads who started a Codex thread from Codex's state (title.CodexLineage), and
-	// Ancestors a process's ancestors (proc.Ancestors), for the Codex threads another agent
-	// started (codexkids.go). Tests put stand-ins here.
+	// Ancestors a process's ancestors (proc.Ancestors), for the sessions another session started
+	// (codexkids.go). Tests put stand-ins here.
 	CodexLineage func(ctx context.Context, dir, thread string) (title.Lineage, error)
 	Ancestors    func(pid, max int) []int
 	// Consent says whether the user has joined Murmur in this clone (nil: always). A daemon exists
@@ -409,14 +409,19 @@ type Daemon struct {
 	threads      map[threadKey]t3db.State
 	threadRead   map[threadKey]time.Time
 	threadWarned map[threadKey]bool
-	// The Codex threads another agent or thread started (codexkids.go): codexKids the sessions
-	// here in one, codexLin who started each thread read so far, codexWarned the threads whose
-	// read failed, logged once, and codexProc a thread Codex's hook reported from each Codex
-	// process. All are made where they are first written.
-	codexKids   map[string]codexKid
+	// The sessions another session started, where T3 doesn't say so (codexkids.go): kids the
+	// sessions here that are one, kidNative the children a hook named, by their client's ID,
+	// with their parent's. For Codex: codexLin who started each thread read so far, codexWarned
+	// the threads whose read failed, logged once, codexProc a thread Codex's hook reported from
+	// each Codex process, and codexDriven the processes a subagent tool runs. procAnc is each
+	// client process's ancestors, itself first. All are made where they are first written.
+	kids        map[string]kid
+	kidNative   map[string]string
 	codexLin    map[codexThread]title.Lineage
 	codexWarned map[codexThread]bool
 	codexProc   map[int]string
+	codexDriven map[int]bool
+	procAnc     map[int][]int
 
 	// refused is when a presence claiming each device was last refused (see checkPresenceLocked), to
 	// log it once a minute.
