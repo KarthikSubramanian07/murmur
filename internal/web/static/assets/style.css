@@ -3929,6 +3929,26 @@ a.g-pr:hover {
   }
 }
 
+/* The flash of going from a dark theme to Light (app.js flashbang): the whole page white for a
+ * moment, then the page fading back in. Clicks pass through it. */
+.flashbang {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: #fff;
+  pointer-events: none;
+  animation: flashbang 1.8s ease-out forwards;
+}
+@keyframes flashbang {
+  0%,
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 /* Motion only for those who want it. */
 @media (prefers-reduced-motion: reduce) {
   *,

@@ -29,7 +29,29 @@ try {
 } catch {}
 document.documentElement.dataset.theme = theme;
 
+// An easter egg (#499), after the old Discord joke about light mode: going from a dark theme to
+// Light flashes the screen white. It happens the first time in this browser and one time in twenty
+// after that, so it stays a surprise. Someone who asked for reduced motion never gets it.
+const FLASH_KEY = NAME + ":flashbanged";
+const FLASH_ODDS = 0.05;
+function flashbang() {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  let seen = false;
+  try {
+    seen = localStorage.getItem(FLASH_KEY) !== null;
+    localStorage.setItem(FLASH_KEY, "1");
+  } catch {
+    seen = true; // nowhere to remember the first time, so every time takes its chances
+  }
+  if (seen && Math.random() >= FLASH_ODDS) return;
+  document.querySelector(".flashbang")?.remove();
+  const flash = h("div", { class: "flashbang", "aria-hidden": "true" });
+  flash.addEventListener("animationend", () => flash.remove());
+  document.body.append(flash);
+}
+
 function setTheme(t) {
+  if (t === "light" && (theme === "dark" || theme === "dim")) flashbang();
   theme = t;
   document.documentElement.dataset.theme = t;
   try {
