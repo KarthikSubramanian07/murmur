@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strings"
 	"time"
 
@@ -370,7 +371,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		return fail("this session isn't registered with the daemon (it may have just restarted); try again in a few seconds")
 	}
 	from := bus.Addr(d.device, sess)
-	if req.Op == proto.OpStatus || req.Op == proto.OpSend || req.Op == proto.OpTags {
+	if req.Op == proto.OpStatus || req.Op == proto.OpSend || req.Op == proto.OpTags || req.Op == proto.OpMute {
 		if why := d.childRefusal(sess); why != "" {
 			return fail(why)
 		}
@@ -418,6 +419,10 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 			return d.addToGroups(ctx, sess, req)
 		}
 		return d.setOwnTags(sess, req)
+
+	case proto.OpMute:
+		req.Name = strings.TrimSpace(req.Name)
+		return d.mute(sess, req)
 
 	case proto.OpInbox:
 		d.mu.Lock()
@@ -801,8 +806,14 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		if offline {
 			why = d.offlineWhyLocked(dev, sess, nameOr(toName, at))
 		}
+		// The recipient has muted the sender (#27): its device would drop the message, so it isn't
+		// sent, and this is where the sender learns of the mute.
+		muted := d.hasMutedLocked(dev, sess, d.nameOfLocked(from))
 		d.mu.Unlock()
 		switch {
+		case muted:
+			// The words are Tyler's (2026-11-11).
+			return fail(fmt.Sprintf("your message to %[1]s was not delivered. %[1]s has muted you. Nothing you send can reach them until they unmute you.", nameOr(toName, at)))
 		case offline:
 			return fail("not sent: " + why)
 		case known && dnd:
@@ -835,6 +846,22 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		return fail("not sent: " + err.Error())
 	}
 	note = strings.TrimSpace(renamed + " " + note)
+	// To everyone, to a device or to a group: it went out, and the sender is told which of the
+	// sessions it was for won't get it, as they have muted it (#27).
+	if dev, sess := bus.SplitAddr(to); to == "*" || sess == "" {
+		group := bus.IsGroup(to)
+		if to == "*" || group {
+			dev = ""
+		}
+		d.mu.Lock()
+		muters := d.mutersLocked(d.nameOfLocked(from), dev)
+		if group {
+			members, _ := d.groupMembersLocked(to, from)
+			muters = slices.DeleteFunc(muters, func(m string) bool { return !slices.Contains(members, m) })
+		}
+		d.mu.Unlock()
+		note = strings.TrimSpace(note + " " + mutersNote(muters))
+	}
 	return proto.Response{OK: true, Self: from, Note: note,
 		Messages: []proto.MessageView{{ID: e.ID, From: from, To: to, ToName: toName, Subject: subject, At: e.At}}}
 }

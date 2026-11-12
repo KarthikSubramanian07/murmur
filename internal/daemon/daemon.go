@@ -68,6 +68,9 @@ type Options struct {
 	SessionGrace time.Duration
 	// StoppedInbox is how long a stopped session's inbox is kept for it to come back to: 24 h.
 	StoppedInbox time.Duration
+	// MuteGrace is how long after a session mutes another it still gets that session's direct
+	// messages (see mutedHereLocked): 30 s. Negative: none.
+	MuteGrace time.Duration
 	// NameSource is where the randomness for session names comes from: crypto/rand's reader.
 	// Tests give two devices the same one, to make them pick the same name.
 	NameSource io.Reader
@@ -176,6 +179,9 @@ func (o *Options) defaults() {
 	}
 	if o.StoppedInbox == 0 {
 		o.StoppedInbox = 24 * time.Hour
+	}
+	if o.MuteGrace == 0 {
+		o.MuteGrace = 30 * time.Second
 	}
 	if o.NameSource == nil {
 		o.NameSource = rand.Reader
@@ -687,6 +693,9 @@ type state struct {
 	// and its ID while the name is pending): the tags each set for itself and a human's marks
 	// (#198). Derived tags aren't kept.
 	Tags map[string]*tags.State `json:"tags,omitempty"`
+	// Mutes is, for each of this device's sessions, by its name as Tags is, the sessions it has
+	// muted (#27): their names, and when.
+	Mutes map[string]map[string]time.Time `json:"mutes,omitempty"`
 
 	// Pins is each device's keys as this device first pinned them (keys.go), this device's own
 	// included, by device ID. A pin is never undone.
@@ -1287,6 +1296,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Tags == nil {
 		d.st.Tags = map[string]*tags.State{}
+	}
+	if d.st.Mutes == nil {
+		d.st.Mutes = map[string]map[string]time.Time{}
 	}
 	if d.st.PersonClaims == nil {
 		d.st.PersonClaims = map[string]string{}

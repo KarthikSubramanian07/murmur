@@ -489,6 +489,21 @@ func Tags(r proto.Response) string {
 	return b.String()
 }
 
+// Muted renders the outcome of mute: what changed or, when the caller only asked, whom it has
+// muted.
+func Muted(r proto.Response) string {
+	var b strings.Builder
+	if r.Note != "" {
+		return r.Note + "\n"
+	}
+	if len(r.Muted) == 0 {
+		b.WriteString("You have muted nobody.\n")
+	} else {
+		fmt.Fprintf(&b, "You have muted: %s\n", strings.Join(r.Muted, ", "))
+	}
+	return b.String()
+}
+
 // Note renders a bare acknowledgement.
 func Note(r proto.Response) string {
 	if r.Note == "" {
@@ -544,6 +559,9 @@ func Lookup(r proto.Response) string {
 	}
 	if len(d.Tags) > 0 {
 		fmt.Fprintf(&b, "  tags: %s\n", TagList(d.Tags))
+	}
+	if len(d.Muted) > 0 {
+		fmt.Fprintf(&b, "  has muted: %s (it gets nothing they send)\n", strings.Join(d.Muted, ", "))
 	}
 
 	switch {
