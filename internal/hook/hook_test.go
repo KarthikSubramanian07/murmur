@@ -585,13 +585,79 @@ func TestAnInterruptedPiStopKeepsNothingGoing(t *testing.T) {
 	}
 }
 
+// Murmur's OpenCode plugin runs the hook with OpenCode's session ID (#431), as Pi's extension does
+// with the session's file: the requests name the session by it. For a session another session
+// started, each request says so and names the parent (#455), the one sent as the session is made
+// included; no other agent's hook can say that. An interrupted Stop keeps nothing going.
+func TestOpenCodeHookNamesItsSessionAndItsParent(t *testing.T) {
+	t.Setenv("CLAUDE_PID", "4242")
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		switch r.Op {
+		case proto.OpNotices:
+			return `{"ok":true,"self":"fake-0001/aaaaaa","unread":1,"messages":[{"id":"m1","from":"other-0001/bbbbbb","subject":"hi"}]}`
+		case proto.OpTurnEnd:
+			return `{"ok":true,"delivered":[{"id":"m2","from":"other-0001/bbbbbb","subject":"at the end"}]}`
+		}
+		return `{"ok":true}`
+	})
+	run := func(agent string, payload map[string]any) string {
+		payload["cwd"] = repo
+		b, _ := json.Marshal(payload)
+		var out bytes.Buffer
+		hook.RunFor(agent, bytes.NewReader(b), &out)
+		return out.String()
+	}
+	if out := run("opencode", map[string]any{"session_id": "ses_a", "hook_event_name": "PostToolUse"}); !strings.Contains(out, `\"hi\"`) {
+		t.Errorf("PostToolUse printed %q", out)
+	}
+	if out := run("opencode", map[string]any{"session_id": "ses_a", "hook_event_name": "Stop"}); !strings.Contains(out, `"decision":"block"`) {
+		t.Errorf("Stop printed %q", out)
+	}
+	if out := run("opencode", map[string]any{"session_id": "ses_a", "hook_event_name": "Stop", "interrupted": true}); out != "" {
+		t.Errorf("an interrupted Stop printed %q", out)
+	}
+	run("opencode", map[string]any{"session_id": "ses_kid", "hook_event_name": "SessionStart", "child": true, "parent_native": "ses_a"})
+	run("pi", map[string]any{"session_id": "/s/a.jsonl", "hook_event_name": "PostToolUse", "child": true, "parent_native": "ses_a"})
+	var reqs []proto.Request
+	for _, r := range requests() {
+		if r.Op != proto.OpPing {
+			reqs = append(reqs, r)
+		}
+	}
+	if len(reqs) != 5 {
+		t.Fatalf("requests: %+v", reqs)
+	}
+	for i, r := range reqs[:4] {
+		want := "ses_a"
+		if i == 3 {
+			want = "ses_kid"
+		}
+		if r.Native != want || r.ClaudeSession != "" || r.ClientPID != 0 || r.Agent != "" || len(r.Ancestors) != 0 {
+			t.Errorf("%s named its session %q, Claude %q, pid %d, agent %q", r.Op, r.Native, r.ClaudeSession, r.ClientPID, r.Agent)
+		}
+	}
+	if !reqs[1].Continues || reqs[2].Continues {
+		t.Errorf("Continues is %v on the Stop and %v on the interrupted one; want true, false", reqs[1].Continues, reqs[2].Continues)
+	}
+	if reqs[0].Child || reqs[0].ParentNative != "" {
+		t.Errorf("a session a person started was named a child: %+v", reqs[0])
+	}
+	if !reqs[3].Child || reqs[3].ParentNative != "ses_a" || reqs[3].Op != proto.OpNotices {
+		t.Errorf("the child's request: %+v", reqs[3])
+	}
+	if reqs[4].Child || reqs[4].ParentNative != "" {
+		t.Errorf("Pi's hook named a child: %+v", reqs[4])
+	}
+}
+
 // An agent the hook doesn't know gets nothing, and the daemon isn't asked.
 func TestHookForAnUnknownAgentDoesNothing(t *testing.T) {
 	repo := newRepo(t)
 	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
 	payload, _ := json.Marshal(map[string]string{"session_id": "x", "hook_event_name": "PostToolUse", "cwd": repo})
 	var out bytes.Buffer
-	hook.RunFor("opencode", bytes.NewReader(payload), &out)
+	hook.RunFor("muse", bytes.NewReader(payload), &out)
 	if out.Len() != 0 || len(requests()) != 0 {
 		t.Errorf("printed %q, asked %+v", out.String(), requests())
 	}
