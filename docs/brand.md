@@ -43,7 +43,7 @@ color is a change of `fill`, not a new drawing.
 - The stats pages: the mark on the header's blue tile.
 - `site/og.jpg`, the card a shared link shows: the home page's hero.
 
-The hero (2026-11-12, #497) has the wordmark in butter where the word "murmur" in Inter was, blurred
+The hero (2026-11-12, #488) has the wordmark in butter where the word "murmur" in Inter was, blurred
 and bent by the glass at the same strength, and the mark in cream at its foot, with its lower third
 below the hero's edge. Tyler chose both from drafts, and asked for the mark to be large. The mark
 sits behind glass at under half that strength (11 against 24), which is the most its eyes survive.
@@ -118,7 +118,7 @@ a step darker for cream. Dark stays the default.
 the wide film, at about 14 frames a second, 960px wide. A change to the palette means rendering all
 of them again.
 
-`site/og.jpg` is a capture of the home page's hero (2026-11-12, #497; before that it was the film's
+`site/og.jpg` is a capture of the home page's hero (2026-11-12, #488; before that it was the film's
 last frame). It was taken in Chromium at 1200x735 and twice the pixel density, with the hero's
 minimum height set to 735px and the line for agents hidden, at a moment the glint was crossing, and
 scaled down to 1200x735. All six pages share it, so a change to the hero means taking it again.
