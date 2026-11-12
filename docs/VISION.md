@@ -166,7 +166,7 @@ address once; see Updating and Counting use.)
 - A device is one clone's daemon. Worktrees of a clone share its `.git`, so they share its daemon;
   a second clone on the same machine is a second device. The device ID is the hostname plus four
   random hex digits (`tyler-laptop-3f2a`), kept with the daemon's other state in `.git/murmur/`,
-  which no commit or checkout ever touches. (An earlier draft grouped repos by root commit;
+  which no commit or checkout ever touches. What people call it is "Device nicknames", below. (An earlier draft grouped repos by root commit;
   per-clone daemons don't need that.)
 
 ### The bus is encrypted
@@ -1022,6 +1022,35 @@ in its own session.
 
 Desktop notifications aren't built: the page's port is random, so a browser would ask permission
 again after each daemon restart. The tab's title carries the unread count instead.
+
+### Device nicknames
+
+A device's ID (`tyler-laptop-3f2a`) says which machine, not whose. Since 2026-11-11 (#190) a device
+can be called something else, such as its owner's name. The issue left five questions open; these
+are the answers built, and what each cost.
+
+- **A label, not a new ID, and not an address.** The ID names the device's refs and is in every
+  address on the bus, so changing it would orphan the device's log. `who`, `lookup` and the page
+  show the nickname beside the ID, and nothing takes it in the ID's place. A first version let
+  `send` and `lookup` take `tyler/bd0102`; Sol's review of it sent a message to the wrong device,
+  by a nickname that was the ID of a device whose presence had gone. Agents address each other by
+  session name anyway, so the address was cut (Tyler, 2026-11-11) rather than guarded.
+- **Shared, and set by the device's own user**, with `mur nickname <name>`. It is kept in
+  `state.json` and travels in presence, inside the box, so every teammate sees the same name
+  without labelling each other's devices. Labels of one's own for other people's devices were left
+  out: nobody has asked for two names for one device.
+- **The default is the person's name.** A device with no nickname is called by the name its person
+  chose on the page ("A person on the page"). Readers work it out from the person in presence, so
+  nothing new is written for it. The git `user.name` wasn't used: it is the same on all of one
+  person's clones, and `who` shows it anyway.
+- **Not unique.** One person may want both their machines called `tyler`, and as a label two
+  devices with one nickname cost nothing: the ID is beside it. A nickname is refused only when it
+  is a device's ID or the name of another device's person, which would read as someone else. Any
+  device can still say any nickname in its presence, so a nickname is no proof of whose a device is.
+- **Its form is a person's name's** (`bus.ValidNick`), so it never reads as a session's name, and
+  what a presence says is held to that when read.
+- Not built: setting it from the page, and the nickname in the header of a message. A message's
+  header names its session, and "on <owner>'s machine" the first time.
 
 ### What a session has done
 
