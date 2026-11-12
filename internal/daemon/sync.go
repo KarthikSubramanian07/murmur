@@ -1517,7 +1517,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			s.branch = b
 		}
 	}
-	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, At: d.nextPresenceAtLocked(),
+	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick, At: d.nextPresenceAtLocked(),
 		Sessions: []bus.SessionInfo{}}
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must

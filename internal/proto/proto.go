@@ -42,6 +42,8 @@ const (
 	// OpRotate asks for a new team key (#156): when someone in the epoch's recorded collaborators
 	// is no longer in Collaborators, or always with Force.
 	OpRotate = "rotate"
+	// OpNick shows this device's nickname (#190), sets it to Nick, or with Clear takes it off.
+	OpNick = "nick"
 )
 
 // Protocol is the version of this protocol that the daemon speaks, reported in its ping reply. A
@@ -75,9 +77,11 @@ const (
 //	    agent sends the first time a session has one from them, and ends as an agent's after (#345)
 //	14: OpRotate, and a bus encrypted for a team key (#156): a daemon of 13 or less writes in the
 //	    clear, so an upgraded mur replaces it where it may.
-//	15: the route's CodexCLI and OpenCodeCLI: a Codex or OpenCode session outside T3 is handed a
+//	15: OpNick, a device's nickname (#190): a daemon of 14 or less answers `mur nickname` with
+//	    "unknown op", so the command replaces it where it may.
+//	16: the route's CodexCLI and OpenCodeCLI: a Codex or OpenCode session outside T3 is handed a
 //	    message as a turn by its client's own command line (#135)
-const Protocol = 15
+const Protocol = 16
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
@@ -148,6 +152,11 @@ type Request struct {
 	// couldn't; Force rotates whatever the list says.
 	Collaborators []string `json:"collaborators,omitempty"`
 	Force         bool     `json:"force,omitempty"`
+
+	// Nick is, for OpNick, the nickname to give this device; Clear takes the one it has off. With
+	// neither, OpNick only says what the device is called.
+	Nick  string `json:"nick,omitempty"`
+	Clear bool   `json:"clear,omitempty"`
 
 	// ClaudeSession finds the session for the hook, which only knows Claude Code's ID for it.
 	ClaudeSession string `json:"claudeSession,omitempty"`
@@ -303,9 +312,12 @@ type Response struct {
 
 // Device is one device as `who` shows it.
 type Device struct {
-	ID       string        `json:"id"`
-	Host     string        `json:"host"`
-	Owner    string        `json:"owner,omitempty"`
+	ID    string `json:"id"`
+	Host  string `json:"host"`
+	Owner string `json:"owner,omitempty"`
+	// Nick is what the device is called (#190): the nickname its user gave it, else the name of its
+	// person. "" if it has neither.
+	Nick     string        `json:"nick,omitempty"`
 	Self     bool          `json:"self,omitempty"`
 	Stale    bool          `json:"stale,omitempty"`
 	LastSeen time.Time     `json:"lastSeen"` // when this daemon last saw its presence change
@@ -345,6 +357,7 @@ type SessionDetail struct {
 	Device string `json:"device"`
 	Host   string `json:"host,omitempty"`
 	Owner  string `json:"owner,omitempty"`
+	Nick   string `json:"nick,omitempty"` // what the device is called, as Device.Nick
 	Agent  string `json:"agent,omitempty"`
 	You    bool   `json:"you,omitempty"`
 

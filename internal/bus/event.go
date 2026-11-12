@@ -57,6 +57,10 @@ func ValidPerson(name string) bool {
 	return names.ValidPerson(name) && ValidDevice(name)
 }
 
+// ValidNick accepts a device's nickname (#190). It is shown where sessions' names are, and is
+// often a person's name, so it has that form: never a session's name.
+func ValidNick(nick string) bool { return ValidPerson(nick) }
+
 // Event is one entry in a device's log. Fields beyond the first five depend on Type.
 type Event struct {
 	V    int       `json:"v"`
@@ -158,6 +162,9 @@ func (p *Presence) Clean() {
 	}
 	p.Host = OneLine(p.Host, 64)
 	p.Owner = OneLine(p.Owner, 64)
+	if !ValidNick(p.Nick) || p.Nick == p.Device {
+		p.Nick = ""
+	}
 	var keep []SessionInfo
 	person := false
 	for _, s := range p.Sessions {
@@ -272,11 +279,14 @@ func ValidTo(to string) bool {
 
 // Presence is a device's current state, the whole of its presence ref.
 type Presence struct {
-	V        int           `json:"v"`
-	Device   string        `json:"device"`
-	Host     string        `json:"host,omitempty"`  // absent when encrypted
-	Owner    string        `json:"owner,omitempty"` // git user.name on that clone
-	At       time.Time     `json:"at"`              // the writer's clock
+	V      int    `json:"v"`
+	Device string `json:"device"`
+	Host   string `json:"host,omitempty"`  // absent when encrypted
+	Owner  string `json:"owner,omitempty"` // git user.name on that clone
+	// Nick is the nickname the device's user gave it (#190), "" if none. Nothing keeps two devices
+	// from saying the same one: it is a label, and the ID stays the device's address.
+	Nick     string        `json:"nick,omitempty"`
+	At       time.Time     `json:"at"` // the writer's clock
 	Sessions []SessionInfo `json:"sessions"`
 	// Offline lists the IDs of the device's sessions whose T3 thread is settled (#189). They are
 	// not in Sessions, and a daemon that reads this refuses to send them a message; one from
@@ -290,7 +300,7 @@ type Presence struct {
 	// BoxKey is the device's public box key, which its teammates encrypt to (#156). A presence
 	// that carries one is sealed, which makes the key the device's.
 	BoxKey string `json:"boxKey,omitempty"`
-	// Box holds Host, Owner, Sessions and Offline, encrypted for the team's devices; those fields
+	// Box holds Host, Owner, Nick, Sessions and Offline, encrypted for the team's devices; those fields
 	// are then empty. Opened, it is nil.
 	Box *Box `json:"box,omitempty"`
 	// Names is, beside a Box, each session's name with the session's ID, readable: a device that

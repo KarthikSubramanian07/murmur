@@ -627,7 +627,9 @@ type state struct {
 	// or the registry: the first address seen with it, unless the registry gives the name to another
 	// (see notePersonLocked). A message's name never goes in it. It only grows, so a person's earlier
 	// name still reaches them.
-	Person      string            `json:"person,omitempty"`
+	Person string `json:"person,omitempty"`
+	// Nick is the nickname this device's user gave it (#190), "" if none.
+	Nick        string            `json:"nick,omitempty"`
 	PersonSince time.Time         `json:"personSince,omitzero"`
 	People      map[string]string `json:"people,omitempty"`
 	// PersonClaims is every person's name in the names registry, to the address that claimed it
