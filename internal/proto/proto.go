@@ -87,7 +87,9 @@ const (
 //	17: groups (#184): OpSend to a group's tag, and OpTags's For. A daemon of 16 or less refuses
 //	    the first and, not knowing For, would put the tags meant for others on the caller.
 //	18: OpMute (#27): a session's MCP server from this version on asks it of the daemon.
-const Protocol = 18
+//	19: a hook's Child and ParentNative: the session is one another session started, and goes
+//	    through it (#452)
+const Protocol = 19
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
@@ -197,6 +199,13 @@ type Request struct {
 	// the hook is the parent of its MCP server too.
 	Agent     string `json:"agent,omitempty"`
 	Ancestors []int  `json:"ancestors,omitempty"`
+	// Child says, on a hook's request that names its session by Native, that another session
+	// started this one (an OpenCode child session, #455): it is off the mesh from then on, as a T3
+	// delegate is (#188), and nothing puts it back. ParentNative is the client's own ID of the
+	// session that started it, "" if the hook doesn't know; messages for the child are refused
+	// with that session's name, and the child's commits are credited to it.
+	Child        bool   `json:"child,omitempty"`
+	ParentNative string `json:"parentNative,omitempty"`
 
 	// Add and Remove are the tags OpTags adds to the caller and takes from it. Tags is what OpWho
 	// searches by: a session is listed when it has every tag named, and none named after a dash

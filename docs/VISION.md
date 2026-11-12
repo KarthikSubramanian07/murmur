@@ -1897,10 +1897,11 @@ A body past the limit is cut, as in `inbox`.
     client's insides than the documented command.
   - *Whoever runs the client.* The way in is there for any session whose MCP server a `codex`
     started, not only a terminal's: Codex's desktop app, `codex exec`, a thread another tool
-    drives through `codex app-server` (Claude Code's codex-sub plugin does), and a subagent's
-    thread once it calls a Murmur tool. An OpenCode child session likewise. Each can be handed a
-    turn its driver didn't start, within the wake setting; before, they had the inbox only. Not
-    tried.
+    drives through `codex app-server` (Claude Code's codex-sub plugin does). An OpenCode child
+    session likewise. Each can be handed a turn its driver didn't start, within the wake
+    setting; before, they had the inbox only. Not tried. A subagent Codex itself spawned was
+    one of them until #454: its first Murmur tool call now takes it off the mesh (see "The
+    subagents Codex spawns are delegates too").
   - *Not covered (#446).* Muse and Grok outside T3 (neither was installed where this was built). A Codex
     session run by T3 whose config doesn't forward `T3CODE_CLI_PATH` reads as one outside T3, and
     gets `codex queue` (not tried). OpenCode's one MCP process per directory has the environment
@@ -1986,6 +1987,42 @@ A body past the limit is cut, as in `inbox`.
   registers. Not covered: `@gotgenes/pi-subagents` (16.6.0) makes its subagents inside the
   parent's process and binds the parent's extensions to each; nothing in the environment tells
   such a session from its parent, and nobody has run one to see whether it registers.
+- **The subagents Codex spawns are delegates too** (Tyler, 2026-11-12, #454), outside T3 Code,
+  where T3's database knows nothing of them. It matters more since #447: such a thread could be
+  handed a turn nobody asked for.
+  - *The mark is Codex's own.* Its state database (`state_N.sqlite`, `threads`) says who started
+    a thread: `source` is a JSON object with a `subagent` key for a thread Codex made for another
+    (one a thread spawned, a review, a guardian), and a plain word for one a person's client
+    started. For a spawned thread it names the thread that spawned it, which is the parent the
+    refusal points to and the commits are credited to.
+  - *The thread's ID* comes only from a call to a Murmur tool, which is where a Codex MCP server
+    learns it. Codex's hook reports an ID earlier, at the first prompt, but it is paired with a
+    session by process, and a subagent runs in its parent's process: its hook can be paired
+    with the session that spawned it. So a hook's ID marks nobody.
+  - *Inside T3* nothing is read from Codex. Tyler's rule (2026-11-12, #452) is that a thread
+    shown in the user's list of sessions is on the mesh, and for T3's own threads T3's database
+    says which those are (#188).
+  - *No handling for subagent tools* (Tyler, 2026-11-12, #481). A tool that runs Codex as another
+    agent's subagents, such as Tyler's own Claude Code plugin codex-sub, asks Codex for threads
+    as any client does, and Codex records them as it does a terminal's. #473 first recognised
+    codex-sub by the name it gives Codex (`threads.originator`) and found its parent among the
+    ancestors of its Codex process; that was special handling in a shared tool for one person's
+    plugin, and came out before the merge. Such a thread is on the mesh like any Codex session.
+  - *What is left.* A subagent that never calls a Murmur tool is on the mesh, with no way in but
+    its inbox. Its parent is named only if the thread that spawned it has called a Murmur tool
+    too, since that is how a session's thread is known; otherwise the refusal names no one and
+    the child's commits stay its own. Nothing is saved: after a daemon restart a Codex child is
+    marked again at the first read, as its MCP server still gives its thread, and a child a hook
+    named is back until its next hook. A child found late keeps the name it took; nobody sees
+    it. A thread Codex doesn't keep has no row to read, and is on the mesh. Not run against a live
+    Codex subagent: the reads were checked against the laptop's real Codex state, and the rest
+    with a stand-in.
+- **A hook can say its session is a child** (2026-11-12, #452, protocol 19). Where the client knows a
+  session's parent and Murmur has a hook in it (OpenCode's plugin, #455), the hook's request
+  carries `child` and, if it knows, `parentNative`, the client's own ID of the session that
+  started it. The daemon keeps that by the session's own ID, so it holds for a session whose MCP
+  server registers after the hook spoke, and the session is a delegate from then on. Nothing
+  takes the mark off: a session that was started by another doesn't stop being so.
 - **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
   decision, 2026-10-29). A message to a busy thread never steers the turn running mid-task: it is
   queued as the next turn, or, where the hook runs, announced, and given at the turn's end, which

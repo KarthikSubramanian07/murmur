@@ -23,6 +23,7 @@ import (
 	"github.com/a-Fig/murmur/internal/daemon"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
+	"github.com/a-Fig/murmur/internal/title"
 	"github.com/a-Fig/murmur/internal/view"
 )
 
@@ -121,6 +122,8 @@ type device struct {
 	logTo          io.Writer
 	// threadState, if set, stands in for T3's database (the daemon's ThreadState).
 	threadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
+	// codexLineage, if set, stands in for Codex's state (the daemon's CodexLineage).
+	codexLineage func(ctx context.Context, dir, thread string) (title.Lineage, error)
 	// noKey starts the device without waiting for it to hold the team key (awaitTeamKey), for a test
 	// about a device that doesn't, or can't, hold it.
 	noKey bool
@@ -204,7 +207,8 @@ func (d *device) start() {
 			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll, FetchLimit: d.fetchLimit, FirstSyncLimit: d.firstSync,
 			SessionGrace: d.grace, StoppedInbox: d.keep, MuteGrace: muteGrace, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
-			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState, Log: logger})
+			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState,
+			CodexLineage: d.codexLineage, Log: logger})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)
 		}

@@ -119,6 +119,9 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 // commits, but none follows it, as that would take the session back to the conversation it left,
 // with that one's name, tags and holds (#231). Caller holds mu.
 func (d *Daemon) hookSessionsLocked(req proto.Request) []*session {
+	if req.Child {
+		d.noteHookChildLocked(req.Native, req.ParentNative)
+	}
 	if req.Native != "" && req.ClaudeSession == "" {
 		return d.nativeSessionsLocked(req.Native) // Pi's, by its session's file (#205)
 	}

@@ -30,6 +30,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
+	"github.com/a-Fig/murmur/internal/title"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -113,6 +114,9 @@ type Options struct {
 	// long it has been idle (see threads.go): t3db.StateOf. Tests put a stand-in here. It is read
 	// every TitleEvery.
 	ThreadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
+	// CodexLineage reads who started a Codex thread from Codex's state (title.CodexLineage), for
+	// the sessions another session started (codexkids.go). Tests put a stand-in here.
+	CodexLineage func(ctx context.Context, dir, thread string) (title.Lineage, error)
 	// Consent says whether the user has joined Murmur in this clone (nil: always). A daemon exists
 	// only for a user who did: it won't start without it, refuses requests once it is gone, and
 	// stops within ConsentPoll of it going, so a leave that races a daemon still starting ends that
@@ -212,6 +216,9 @@ func (o *Options) defaults() {
 	}
 	if o.ThreadState == nil {
 		o.ThreadState = t3db.StateOf
+	}
+	if o.CodexLineage == nil {
+		o.CodexLineage = title.CodexLineage
 	}
 	if o.ConsentPoll == 0 {
 		o.ConsentPoll = time.Second
@@ -410,6 +417,14 @@ type Daemon struct {
 	threads      map[threadKey]t3db.State
 	threadRead   map[threadKey]time.Time
 	threadWarned map[threadKey]bool
+	// The sessions another session started, where T3 doesn't say so (codexkids.go): kids the
+	// sessions here that are one, kidNative the children a hook named, by their client's ID,
+	// with their parent's, codexLin who started each Codex thread read so far, and codexWarned
+	// the threads whose read failed, logged once. All are made where they are first written.
+	kids        map[string]kid
+	kidNative   map[string]string
+	codexLin    map[codexThread]title.Lineage
+	codexWarned map[codexThread]bool
 
 	// refused is when a presence claiming each device was last refused (see checkPresenceLocked), to
 	// log it once a minute.
