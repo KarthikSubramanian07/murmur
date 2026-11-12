@@ -140,6 +140,10 @@ func (d *Daemon) addToGroups(ctx context.Context, id string, req proto.Request) 
 			why = who + " isn't in any device's presence right now, so it can't be added. Check `who`."
 		case dev != d.device && !d.peers[dev].pres.Groups:
 			why = fmt.Sprintf("%s is on a device whose %s is from before groups, so it can't be added to one until that device updates", who, brand.Product)
+		case d.hasMutedLocked(dev, sess, d.nameOfLocked(from)):
+			// Its device wouldn't apply the add (applyGroupAddLocked); the adder learns of the mute
+			// here, as a send to it does.
+			why = who + " has muted you, so you can't add it to a group"
 		default:
 			// A session's tags are capped, and the groups would be its own: past the cap its device
 			// refuses the add, or what others see of it loses another tag. Refused here, the adder
@@ -228,6 +232,13 @@ func (d *Daemon) applyGroupAddLocked(e bus.Event, mode syncMode) {
 	key := d.tagKeyLocked(sess)
 	if key == "" || d.offMeshLocked(sess) {
 		d.log.Printf("%s added %s to %s, but that session isn't known here; not applied", e.From, e.To, strings.Join(e.Add, ", "))
+		return
+	}
+	// A session the target has muted can't put it in a group (#483): what it sent there would be
+	// dropped anyway, and each add would use up one of the target's tags. From the first moment,
+	// with no grace: nobody is told an add arrived.
+	if _, muted := d.mutedAtLocked(sess, e.From); muted {
+		d.log.Printf("%s added %s to %s, but that session has muted it; not applied", e.From, e.To, strings.Join(e.Add, ", "))
 		return
 	}
 	next := d.st.Tags[key].Clone()
