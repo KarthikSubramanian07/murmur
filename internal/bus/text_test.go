@@ -156,6 +156,11 @@ func TestCleaningDropsOtherInvisibleCharacters(t *testing.T) {
 		"aᅟᅠb":                             "ab",
 		"ﾠ":                                "",
 		"가ㅤㅤㅤㅤ나":                           "가ㅤㅤ나", // a run between syllables keeps only its ends
+		// From the review: selectors after a joiner, after a mark, and in a keycap of a letter.
+		"👨\u200d\ufe00👩\u200d\ufe01👧":             "👨\u200d👩\u200d👧",
+		"👨\u200d\ufe00\u200d\ufe01👩":              "👨👩", // the joiners, left in a run, go too
+		"x" + strings.Repeat("\u0301\ufe00", 100): "x" + strings.Repeat("\u0301", 100),
+		"AKIA\ufe0f\u20e3IOSF":                    "AKIA\u20e3IOSF",
 	}
 	for in, want := range drop {
 		if got := bus.OneLine(in, 120); got != want {

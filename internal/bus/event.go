@@ -356,7 +356,7 @@ const MaxBody = 32 << 10
 // characters (a terminal escape, say) into spaces, drops invisible characters (see dropFormat and
 // dropInvisible), and cuts s to at most max runes.
 func OneLine(s string, max int) string {
-	s = dropInvisible(dropFormat(s))
+	s = dropFormat(dropInvisible(s))
 	s = strings.Join(strings.FieldsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " ")
 	if r := []rune(s); len(r) > max {
 		s = string(r[:max-1]) + "…"
@@ -369,7 +369,7 @@ func OneLine(s string, max int) string {
 // and cuts it to at most max bytes. Whoever shows it line by line then sees the same lines everyone
 // else does.
 func Text(s string, max int) string {
-	s = dropInvisible(dropFormat(s))
+	s = dropFormat(dropInvisible(s))
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.Map(func(r rune) rune {
 		switch {
@@ -430,13 +430,15 @@ func dropFormat(s string) string {
 func isFormat(r rune) bool { return unicode.Is(unicode.Cf, r) }
 
 // dropInvisible removes the characters that show nothing but aren't format characters, so
-// dropFormat keeps them (#349). It runs on dropFormat's output.
+// dropFormat keeps them (#349). It runs before dropFormat, so a joiner that stood next to a selector
+// is judged by what is left around it.
 //
 //   - Variation selectors (U+FE00 to U+FE0F) are marks. One after an emoji or a symbol picks how it
 //     is drawn, and stays. A run of them after one character would encode a byte each, so only the
-//     first stays. One after ASCII stays only in a keycap (1, #, * and U+20E3, which draws the key),
-//     and one after a space, a line break or nothing is dropped: no emoji is spelled so, and a key
-//     split by one would hide from scrub, as the joiners would (see dropFormat).
+//     first stays. One after ASCII stays only in a keycap (a digit, # or *, then U+20E3, which draws
+//     the key), and one after a mark, a joiner, a space, a line break or nothing is dropped: no
+//     emoji is spelled so, and a key split by one would hide from scrub, as the joiners would (see
+//     dropFormat).
 //   - The supplement (U+E0100 to U+E01EF) picks among a CJK ideograph's variant glyphs, so one stays
 //     after a Han character and none anywhere else.
 //   - The combining grapheme joiner (U+034F) changes only how text is sorted and searched, never
@@ -466,10 +468,10 @@ func dropInvisible(s string) string {
 		case r == '\u034f':
 			continue
 		case isSelector(r):
-			if prev < 0 || isSelector(prev) || isIdeographSelector(prev) || unicode.IsSpace(prev) || unicode.IsControl(prev) {
+			if !selectable(prev) {
 				continue
 			}
-			if prev <= unicode.MaxASCII && next != '\u20e3' {
+			if prev <= unicode.MaxASCII && !(keycap(prev) && next == '\u20e3') {
 				continue
 			}
 		case isIdeographSelector(r):
@@ -489,6 +491,17 @@ func dropInvisible(s string) string {
 func invisible(r rune) bool {
 	return r == '\u034f' || isSelector(r) || isIdeographSelector(r) || isFiller(r)
 }
+
+// selectable says whether a variation selector may follow r: a character that starts what is drawn,
+// not a mark, a joiner or another selector. Only one may follow it, and a mark between would let a
+// run through as mark, selector, mark, selector; no emoji or standardized variant is spelled so,
+// and the selector of an emoji joined to another comes before the joiner (U+2764 U+FE0F U+200D).
+func selectable(r rune) bool {
+	return r >= 0 && !unicode.IsSpace(r) && !unicode.IsControl(r) && !isFormat(r) && !unicode.Is(unicode.M, r)
+}
+
+// keycap says whether r is one of the ASCII characters a keycap emoji is made of: 0 to 9, # and *.
+func keycap(r rune) bool { return r >= '0' && r <= '9' || r == '#' || r == '*' }
 
 func isSelector(r rune) bool          { return r >= 0xFE00 && r <= 0xFE0F }
 func isIdeographSelector(r rune) bool { return r >= 0xE0100 && r <= 0xE01EF }
