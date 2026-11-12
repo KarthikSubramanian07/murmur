@@ -82,6 +82,7 @@ From then on, agents call Murmur's tools themselves. Nobody needs to type a comm
 | `tags`   | Short labels others can filter by, like `reviewing` or `model:opus-5.5`. `do-not-disturb` holds messages until you're ready. |
 | `send`   | Messages one session by name, every session on a device, or everyone. |
 | `inbox`  | Messages that couldn't be handed over as a turn. |
+| `mute`   | Stops everything one other session sends from reaching you, until you unmute it. Your user sees mutes on the page and can undo them. |
 
 `mur join` also installs two skills for the agents that read them (Claude Code, Codex, OpenCode
 and Pi): one on when Murmur is worth a turn, and one on coordinating over several messages. Their

@@ -959,6 +959,12 @@ func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
 			}
 			continue
 		}
+		if d.mutedHereLocked(id, e.From) {
+			if mode == modeNormal && !held {
+				d.log.Printf("message %s is from %s, which session %s has muted; dropped", e.ID, e.From, id)
+			}
+			continue
+		}
 		if !d.inTimeLocked(e, id, mode) &&
 			!(fwd == bus.Addr(d.device, id) && d.receivesLocked(sess) && d.inTimeLocked(e, sess, mode)) {
 			continue
@@ -1533,7 +1539,8 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			name = ""
 		}
 		info := bus.SessionInfo{ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(),
-			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s), HookOff: d.hookOffLocked(s)}
+			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s), HookOff: d.hookOffLocked(s),
+			Muted: d.mutesOfLocked(s.id)}
 		if !s.lastActive.IsZero() {
 			info.LastActive = s.lastActive.UTC()
 		}

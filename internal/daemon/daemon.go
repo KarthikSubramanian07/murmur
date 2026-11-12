@@ -685,6 +685,9 @@ type state struct {
 	// and its ID while the name is pending): the tags each set for itself and a human's marks
 	// (#198). Derived tags aren't kept.
 	Tags map[string]*tags.State `json:"tags,omitempty"`
+	// Mutes is, for each of this device's sessions, by its name as Tags is, the sessions it has
+	// muted (#27): their names, and when.
+	Mutes map[string]map[string]time.Time `json:"mutes,omitempty"`
 
 	// Pins is each device's keys as this device first pinned them (keys.go), this device's own
 	// included, by device ID. A pin is never undone.
@@ -1284,6 +1287,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Tags == nil {
 		d.st.Tags = map[string]*tags.State{}
+	}
+	if d.st.Mutes == nil {
+		d.st.Mutes = map[string]map[string]time.Time{}
 	}
 	if d.st.PersonClaims == nil {
 		d.st.PersonClaims = map[string]string{}

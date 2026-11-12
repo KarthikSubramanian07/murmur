@@ -242,6 +242,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 		}
 		st.Devices = append(st.Devices, dv)
 	}
+	st.Mutes = d.muteViewsLocked()
 	return st, nil
 }
 
@@ -465,12 +466,6 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	d.settings = next
 	d.kickPush() // a session that was set to never may be woken now, for what it has waiting
 	return next.view(), nil
-}
-
-// Unmute is for mutes (#27), which don't exist yet.
-func (s pageSource) Unmute(ctx context.Context, by, muted string) error {
-	s.d.pageCalled(ctx)
-	return errors.New("mutes aren't built yet (#27), so there is nothing to unmute")
 }
 
 func (d *Daemon) pageCalled(ctx context.Context) {

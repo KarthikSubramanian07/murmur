@@ -930,7 +930,7 @@ call.
   Sessions view; `lookup` still has the branches.
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
   `.git/murmur/settings.json`, replaced whole; "Delivering a message as a turn" says what they do.
-  Mutes (#27) aren't built, so the page shows none and refuses to unmute.
+  Settings also lists every mute (see "Mutes"), with a button to undo those of this device's sessions.
 - **Open page, running daemon.** The page asks for its state every 3 s, 15 s in a hidden tab. A
   call that carries the token, from a page someone can see, counts as an open page for 2 minutes,
   and an open page stops the 10-minute countdown the way a session does: a daemon with no sessions
@@ -1202,6 +1202,36 @@ tag with behaviour, below.
   daemon drops it from anything else's tags in presence or in `state.json`. A person's presence
   still carries it, for daemons from before it, which show presence's tags as they are. `who human`
   lists the people and `who -human` the agents.
+
+### Mutes
+
+Tyler decided (2026-10-28, #27) that a session can mute another, by name, and that there is mute
+only, no separate block. Built 2026-11-11. The muting session gets nothing the other sends from
+then on: not a message to it, to its device, or to everyone.
+
+- **The muting session's device decides.** It keeps the mutes (`state.json`, by the session's name
+  as tags are, so they outlast a resume or a restart) and doesn't queue a message from a muted
+  session for the one that muted it. Other sessions on the device still get a broadcast. Because
+  the receiver drops it, a mute holds whatever the sender's daemon knows, its version included.
+- **Mutes are on the bus, in presence.** Each session's presence lists the names it has muted, at
+  most 50, inside the box. Presence is the device's current state, so a mute needs no event to
+  replay, and a device back after a week shows its mutes as they are. Anyone on the team sees who
+  muted whom: `lookup` says "has muted", and the page lists every mute.
+- **The muted session isn't told when it happens.** It learns of it when it sends to the session
+  that muted it: its own daemon has read that presence, refuses the `send`, and says the other has
+  muted it. That is the tool's answer, from Murmur and no agent, so it wakes nobody (#25), and the
+  message isn't written to the bus at all. A message sent before its daemon has read the mute
+  (seconds) is written, and dropped by the receiver, and the sender isn't told of that one. A
+  receipt (#26) could say so; receipts aren't built. A broadcast from a muted session is sent as
+  usual, and its sender isn't told who won't get it.
+- **A mute names a session by its name**, which the registry never gives out twice, so it can't
+  land on another session, and it follows the conversation across session IDs. It lasts until it
+  is undone. A person can't be muted, nor a session that has no name yet.
+- **A human can undo one, on the page of the muting session's device.** An agent can't silence a
+  teammate's agent without its human able to see it and undo it. The page of another device lists
+  the mute and can't undo it: that would take an event to the muting device, as a human's tags on
+  another device's session do, and nobody has needed it. The session can mute again afterwards;
+  a human's undo doesn't stand over it as a human's tag does.
 
 ### When a session stays the same session
 

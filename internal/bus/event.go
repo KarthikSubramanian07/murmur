@@ -176,6 +176,7 @@ func (p *Presence) Clean() {
 			s.Doing = OneLine(s.Doing, 120)
 			s.Committed = cleanBranches(s.Committed)
 			s.Tags = tags.CleanRead(s.Tags)
+			s.Muted = cleanMuted(s.Muted)
 			if s.ID == PersonSession {
 				s.Tags = tags.Person() // by the address, whatever the presence says (#267)
 			}
@@ -183,6 +184,18 @@ func (p *Presence) Clean() {
 		}
 	}
 	p.Sessions = keep
+}
+
+// cleanMuted holds a session's mutes to what Murmur writes: sessions' names, none repeated, at
+// most MaxMuted.
+func cleanMuted(in []string) []string {
+	var out []string
+	for _, n := range in {
+		if names.Valid(n) && !slices.Contains(out, n) && len(out) < MaxMuted {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // cleanBranches holds a list of branch names to what Murmur writes: each on one line, none empty or
@@ -320,7 +333,14 @@ type SessionInfo struct {
 	// HookOff says Murmur's hook doesn't run for the session (proto.SessionView.HookOff, #225). A
 	// daemon from before it ignores it.
 	HookOff bool `json:"hookOff,omitempty"`
+	// Muted is the names of the sessions this one has muted (#27), at most MaxMuted: it gets
+	// nothing they send. A daemon from before mutes ignores it, and still delivers to this
+	// session's device, which is the one that drops the message.
+	Muted []string `json:"muted,omitempty"`
 }
+
+// MaxMuted caps SessionInfo.Muted.
+const MaxMuted = 50
 
 // MaxCommitted caps SessionInfo.Committed.
 const MaxCommitted = 5

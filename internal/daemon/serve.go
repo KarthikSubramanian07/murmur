@@ -370,7 +370,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		return fail("this session isn't registered with the daemon (it may have just restarted); try again in a few seconds")
 	}
 	from := bus.Addr(d.device, sess)
-	if req.Op == proto.OpStatus || req.Op == proto.OpSend || req.Op == proto.OpTags {
+	if req.Op == proto.OpStatus || req.Op == proto.OpSend || req.Op == proto.OpTags || req.Op == proto.OpMute {
 		if why := d.childRefusal(sess); why != "" {
 			return fail(why)
 		}
@@ -415,6 +415,10 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 
 	case proto.OpTags:
 		return d.setOwnTags(sess, req)
+
+	case proto.OpMute:
+		req.Name = strings.TrimSpace(req.Name)
+		return d.mute(sess, req)
 
 	case proto.OpInbox:
 		d.mu.Lock()
@@ -785,8 +789,14 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		if offline {
 			why = d.offlineWhyLocked(dev, sess, nameOr(toName, at))
 		}
+		// The recipient has muted the sender (#27): its device would drop the message, so it isn't
+		// sent, and this is where the sender learns of the mute.
+		muted := d.hasMutedLocked(dev, sess, d.nameOfLocked(from))
 		d.mu.Unlock()
 		switch {
+		case muted:
+			return fail(fmt.Sprintf("not sent: %s has muted you, so nothing you send reaches it. %s says so, not %s: it wasn't told of this message.",
+				nameOr(toName, at), brand.Product, nameOr(toName, at)))
 		case offline:
 			return fail("not sent: " + why)
 		case known && dnd:

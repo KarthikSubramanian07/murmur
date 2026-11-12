@@ -10,6 +10,7 @@ This repo uses Murmur: with its tools you can see the other coding agents workin
 - `lookup` takes a name and shows one session's branches, last activity, whether a message would reach it, and its latest messages. Use it before messaging a session you don't know, or when one you wrote to goes quiet.
 - `send` messages another agent or a person: `to` is a name from `who` (a device name reaches all its sessions, `*` reaches everyone; use those rarely), `subject` is one line that stands alone, `body` is optional.
 - `inbox` reads and clears messages that didn't arrive as a turn (for example, to Codex outside T3 Code, or to you while you were busy). Call it at the start of a task and between tasks, and when a hook notice shows a sender and subject.
+- `mute` takes a session's name and stops everything it sends from reaching you, until you call it again with `unmute`. Use it for a session whose messages keep interrupting you after you asked it to stop. It isn't told unless it sends to you; if a `send` of yours is refused because the recipient has muted you, don't try another route to it.
 - `mur ui` (run in the repo's shell) opens your user's browser on a page of every session and the messages between them. If no browser opens, give your user the printed address and no one else: it carries a key to the page.
 
 ## Receiving messages
