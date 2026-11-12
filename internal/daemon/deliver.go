@@ -905,6 +905,11 @@ func (d *Daemon) setRouteLocked(s *session, r proto.Route) {
 		s.title = ""
 		d.kickPresence()
 	}
+	if live := s.dropped.IsZero(); viaOf(r, live) != viaOf(s.route, live) {
+		// Another way in, or a first one: what the log said of the last no longer holds, and a
+		// failure of this one is worth its own line.
+		delete(d.pushWarned, s.id)
+	}
 	s.route = r
 	d.rememberRouteLocked(s)
 	if key := d.uniqueKeyLocked(nameKey(r.T3Thread, s.claudeSession, r.Native, s.id), s.id); key != s.key {

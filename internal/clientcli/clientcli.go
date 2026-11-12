@@ -20,6 +20,10 @@
 // `-d @file` were tried), so it goes on the command line. That is why the program has to be the
 // client's real one (proc.Exe of the process that started the MCP server) and not the name on
 // PATH: npm's Windows shims are .cmd files, and cmd.exe has no quoting that carries a newline.
+//
+// A command line can be read by the machine's other users while the command runs (about a second;
+// /proc/<pid>/cmdline on Linux), and is recorded by process auditing where that is on. The other
+// ways in give the text to the client over a pipe or a socket.
 package clientcli
 
 import (
@@ -56,7 +60,7 @@ const startLimit = 30 * time.Second
 // the thread is in (CODEX_HOME).
 //
 // It returns once Codex has queued the message, not when a turn has run. The error says what Codex
-// printed, in a line; it never holds the text.
+// printed, in a line, unless that line quotes the start of the text.
 func CodexQueue(ctx context.Context, exe, home, thread, text string) error {
 	if exe == "" || thread == "" || strings.HasPrefix(thread, "-") {
 		return errors.New("no Codex command or thread to queue for")
@@ -71,7 +75,7 @@ func CodexQueue(ctx context.Context, exe, home, thread, text string) error {
 // OpenCodePrompt sends text to session through the background server of the OpenCode at exe.
 //
 // It returns once the server has taken the message, not when a turn has run. The error is the
-// HTTP status the command printed; it never holds the text.
+// HTTP status the command printed.
 func OpenCodePrompt(ctx context.Context, exe, session, text string) error {
 	if exe == "" || !strings.HasPrefix(session, "ses") {
 		return errors.New("no OpenCode command or session to send to")
@@ -100,6 +104,10 @@ func run(parent context.Context, name, exe string, args, env []string, text stri
 	// text. Standard error is where both commands say what went wrong.
 	var errOut bytes.Buffer
 	cmd.Stderr = &errOut
+	// Without a WaitDelay, Wait also waits for whatever the command started that still holds
+	// standard error: `opencode api` starts the shared server when none is running, and a handoff
+	// that never came back would hold its session's messages behind it for good.
+	cmd.WaitDelay = 5 * time.Second
 	hideWindow(cmd)
 	if err := proc.StartWithin(cmd, startLimit, cancel); err != nil {
 		if errors.Is(err, proc.ErrStartHung) {
@@ -112,7 +120,7 @@ func run(parent context.Context, name, exe string, args, env []string, text stri
 		}
 		return fmt.Errorf("%s: %w: %v", name, ErrNotStarted, err)
 	}
-	if err := cmd.Wait(); err != nil {
+	if err := cmd.Wait(); err != nil && !errors.Is(err, exec.ErrWaitDelay) { // that one: it exited cleanly, and something it started kept the pipe
 		switch {
 		case parent.Err() != nil:
 			return fmt.Errorf("%s: %w", name, parent.Err())
@@ -128,7 +136,8 @@ func run(parent context.Context, name, exe string, args, env []string, text stri
 }
 
 // firstLine is the first line of what the command printed that isn't blank, kept short, and "" if
-// it quotes text: an error is logged, and a message's text never is.
+// it quotes the start of text: an error is logged, and a message's text shouldn't be. A line that
+// quoted only a later part of the text would get through; neither command was seen to quote any.
 func firstLine(s, text string) string {
 	for _, line := range strings.Split(s, "\n") {
 		if line = strings.TrimSpace(line); line != "" {

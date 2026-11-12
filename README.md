@@ -104,7 +104,8 @@ source is in [`internal/skills`](internal/skills).
 A **turn** means the message starts a new turn in the agent's conversation, and wakes an idle T3
 thread. A **notice** is one line with the sender and subject, added after the agent's next tool
 call; the agent reads the message with `inbox`, and anything still unread when its turn ends is
-given to it then. An **inbox** message waits until the agent reads it.
+given to it then. An **inbox** message waits until the agent reads it. Codex and OpenCode in a
+terminal take a turn once the session has used one of Murmur's tools.
 
 ## For humans
 

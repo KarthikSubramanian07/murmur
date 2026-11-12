@@ -57,10 +57,22 @@ func TestCodexRouteNamesTheCodexThatStartedTheServer(t *testing.T) {
 	}
 }
 
+// A program replaced while it runs reads on Linux with " (deleted)" after its path, which names
+// no file: the route has the path itself, where the new program is.
+func TestRouteNamesTheProgramThatReplacedARunningOne(t *testing.T) {
+	t.Setenv("T3CODE_CLI_PATH", "")
+	codex := abs(t, "codex")
+	startedBy(t, 4242, codex+" (deleted)")
+	if r := routeFromEnv("codex"); r.CodexCLI != codex {
+		t.Errorf("the route names %q, want %q", r.CodexCLI, codex)
+	}
+}
+
 // A server started by anything but the client, or whose parent can't be told, names no program.
 func TestRouteNamesNoProgramThatIsntTheClient(t *testing.T) {
 	t.Setenv("T3CODE_CLI_PATH", "")
-	for _, exe := range []string{"", abs(t, "node.exe"), abs(t, "bash"), "codex", abs(t, "my-codex-wrapper")} {
+	for _, exe := range []string{"", abs(t, "node.exe"), abs(t, "bash"), "codex", abs(t, "my-codex-wrapper"),
+		abs(t, "codex-command-runner.exe"), abs(t, "codex-code-mode-host")} {
 		startedBy(t, 4242, exe)
 		if r := routeFromEnv("codex"); r.CodexCLI != "" {
 			t.Errorf("started by %q, the route names %q", exe, r.CodexCLI)

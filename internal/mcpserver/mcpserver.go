@@ -324,9 +324,14 @@ func clientProgram(name string) string {
 	return programNamed(exe, name)
 }
 
+// programNamed is exe if it is a program called name, and "" otherwise. The name is matched whole:
+// Codex's helpers (codex-command-runner, codex-code-mode-host) sit beside it and take no `queue`.
+// Linux marks the path of a program replaced while it runs with " (deleted)", after an update,
+// say; the path without it is the program that replaced it.
 func programNamed(exe, name string) string {
-	base := strings.ToLower(filepath.Base(exe))
-	if exe == "" || !filepath.IsAbs(exe) || !strings.HasPrefix(base, name) {
+	exe = strings.TrimSuffix(exe, " (deleted)")
+	base := strings.TrimSuffix(strings.ToLower(filepath.Base(exe)), ".exe")
+	if exe == "" || !filepath.IsAbs(exe) || base != name {
 		return ""
 	}
 	return exe

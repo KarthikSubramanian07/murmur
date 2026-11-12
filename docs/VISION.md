@@ -1719,9 +1719,28 @@ A body past the limit is cut, as in `inbox`.
   - *A failure* is handled as `t3 thread send`'s is: tried once more only if the command never
     started, and otherwise left to the inbox and the hook's notice. A Codex from before `queue`
     fails every time, and the daemon's log says so once per session.
+  - *When it is a turn.* A Codex session has no way in until it has called one of Murmur's
+    tools, which is how its server learns the thread. And the wake setting counts for these as
+    for every session: by default one idle more than a few minutes isn't woken. For OpenCode,
+    with no hook, "last at work" is its last call to a Murmur tool, and with no hook there is no
+    notice either, so a message that comes after that waits in the inbox unannounced.
+  - *On the command line.* The text is an argument of the command for the second or so it runs,
+    where the machine's other users can read it (`/proc/<pid>/cmdline` on Linux) and where
+    process auditing records it. Every other way in passes it over a pipe or a socket. OpenCode's
+    HTTP API (the `url` and `password` in `service.json`) and Codex's app server
+    (`thread/queue/add`) would avoid that, and the Windows length limit; both are more of each
+    client's insides than the documented command.
+  - *Whoever runs the client.* The way in is there for any session whose MCP server a `codex`
+    started, not only a terminal's: Codex's desktop app, `codex exec`, a thread another tool
+    drives through `codex app-server` (Claude Code's codex-sub plugin does), and a subagent's
+    thread once it calls a Murmur tool. An OpenCode child session likewise. Each can be handed a
+    turn its driver didn't start, within the wake setting; before, they had the inbox only. Not
+    tried.
   - *Not covered (#446).* Muse and Grok outside T3 (neither was installed where this was built). A Codex
     session run by T3 whose config doesn't forward `T3CODE_CLI_PATH` reads as one outside T3, and
-    gets `codex queue` (not tried). Whether Codex's desktop app shows a queued message as the
+    gets `codex queue` (not tried). OpenCode's one MCP process per directory has the environment
+    of whoever started the shared server, so a T3 thread on a server a terminal started reads as
+    outside T3, and a terminal session on one T3 started as inside (not tried). Whether Codex's desktop app shows a queued message as the
     terminal does wasn't looked at. macOS and Linux were not tried with the real programs, only
     Windows.
 - **A thread that is idle (#87).** T3 stops an idle thread's provider process, and with it Murmur's
