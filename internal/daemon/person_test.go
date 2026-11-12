@@ -760,6 +760,20 @@ func TestAnotherDeviceCantSpeakAsAPerson(t *testing.T) {
 	if out := view.Who(b.do(proto.Request{Op: proto.OpWho})); strings.Count(out, "ada") != 1 || !strings.Contains(out, "  "+evil+"  person") {
 		t.Errorf("b's who:\n%s", out)
 	}
+	// So do lookup and the page's messages: one sent to evil-0001's person is to its address, and
+	// doesn't join the conversation with the real ada.
+	if r := b.do(proto.Request{Op: proto.OpLookup, Name: evil}); r.Lookup == nil || r.Lookup.Name != "" {
+		t.Errorf("lookup of %s: %+v", evil, r.Lookup)
+	}
+	pushEvent(t, remote, "refs/murmur/mesh/evil-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
+		From: "evil-0001/aaaaaa", At: time.Now().UTC(), To: evil, Subject: "which ada are you"})
+	eventually(t, "b's page to show the message to "+evil, func() bool {
+		_, ok := b.page().messageWith("which ada are you")
+		return ok
+	})
+	if m, _ := b.page().messageWith("which ada are you"); m.To != evil || m.ToAddr != evil {
+		t.Errorf("the message to %s on b's page: %+v", evil, m)
+	}
 	for _, dv := range b.page().state().Devices {
 		switch {
 		case dv.ID == "evil-0001" && (dv.Person == nil || dv.Person.Name != evil):

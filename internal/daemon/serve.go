@@ -857,6 +857,9 @@ func (d *Daemon) sessionInfoLocked(addr string) (name, agent, branch string) {
 	}
 	if p := d.peers[dev]; p != nil {
 		for _, s := range p.pres.Sessions {
+			if s.ID == sess && sess == bus.PersonSession {
+				return d.listedPersonNameLocked(addr, s.Name), s.Agent, s.Branch // only a name that reaches them (#350)
+			}
 			if s.ID == sess {
 				return s.Name, s.Agent, s.Branch
 			}

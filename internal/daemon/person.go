@@ -85,7 +85,9 @@ func (d *Daemon) listedPersonNameLocked(addr, name string) string {
 
 // personNameOfLocked is the name of the person at addr, "" if addr isn't a person's or their name
 // isn't known. A person who changed their name has the earlier one in People too, so presence, which
-// has only the current one, goes first. Caller holds mu.
+// has only the current one, goes first. Another device's person has a name only if it reaches them
+// (listedPersonNameLocked), so a lookup, a turn or the page never labels them, or a message to
+// them, with a name that is someone else's (#350). Caller holds mu.
 func (d *Daemon) personNameOfLocked(addr string) string {
 	if !bus.IsPerson(addr) {
 		return ""
@@ -97,13 +99,15 @@ func (d *Daemon) personNameOfLocked(addr string) string {
 	if p := d.peers[dev]; p != nil {
 		for _, s := range p.pres.Sessions {
 			if s.ID == bus.PersonSession {
-				return s.Name
+				if name := d.listedPersonNameLocked(addr, s.Name); name != "" {
+					return name
+				}
 			}
 		}
 	}
 	found := ""
 	for name, a := range d.st.People {
-		if a == addr && (found == "" || name < found) {
+		if a == addr && (found == "" || name < found) && d.listedPersonNameLocked(addr, name) != "" {
 			found = name
 		}
 	}
