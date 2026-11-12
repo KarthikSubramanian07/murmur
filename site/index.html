@@ -595,17 +595,19 @@ float band(float d, float c, float w) { float x = (d - c) / w; return exp(-x * x
 vec4 light(vec2 q, vec2 s, float f) {
   vec2 n = normalize(vec2(1., .72));
   float span = dot(uRes, n);
-  float m = 300. * uSc;
+  float m = 400. * uSc;
   float c = mix(-m, span + m, uP);
   float dq = dot(q, n), ds = dot(s, n);
-  float wash = band(ds, c, 190. * uSc);
-  float core = band(ds, c + 30. * uSc, 46. * uSc);
+  float wash = band(ds, c, 255. * uSc);
+  float core = band(ds, c + 40. * uSc, 62. * uSc);
   // The hairline is the reed's own left edge, so it is not refracted; it lights with the band.
   float edge = 1. - smoothstep(0., 1.8 / 12., f);
-  float hair = edge * band(dq, c + 10. * uSc, 120. * uSc);
+  float hair = edge * band(dq, c + 14. * uSc, 160. * uSc);
   // A second, fainter run just behind, so the passing light reads as a sheen with depth.
-  float hair2 = edge * band(dq, c - 150. * uSc, 70. * uSc) * .45;
-  float a = .15 * wash + .24 * core + .6 * (hair + hair2);
+  float hair2 = edge * band(dq, c - 200. * uSc, 95. * uSc) * .45;
+  // A little over half the brightness it first had (.15, .24, .6), which read as harsh, and a
+  // third wider (the wash was 190, the core 46, the hairlines 120 and 70).
+  float a = .10 * wash + .15 * core + .32 * (hair + hair2);
   vec3 col = mix(BUT, CRM, clamp(.35 + core * .5 + hair, 0., 1.));
   return vec4(col * a, a);
 }`;
@@ -613,14 +615,14 @@ vec4 light(vec2 q, vec2 s, float f) {
   const DPR_CAP = 1.5;
   const T0 = 0;
   const STILL_T = -1;  // reduced motion: the band held where it crosses the wordmark
-  const DUR = 4.2;
+  const DUR = 5.6;  // was 4.2: the pass is slower, and the wait between passes is as it was
   const ease = x => x < 0 ? 0 : x > 1 ? 1 : .5 * x + .5 * x * x * (3 - 2 * x);
   const hash = n => { const x = Math.sin(n * 127.1 + 31.7) * 43758.5453; return x - Math.floor(x); };
-  // Pass n starts at start(n): the first right away, then every 7 to 9 s.
+  // Pass n starts at start(n): the first right away, then 2.8 to 4.8 s after the one before ends.
   const progress = t => {
     if (t < 0) return .46;
     let s = -.8, n = 0;
-    while (s + DUR < t) { s += 7 + 2 * hash(n++); }
+    while (s + DUR < t) { s += DUR + 2.8 + 2 * hash(n++); }
     return t < s ? -1 : ease((t - s) / DUR);
   };
   const IDLE = t => { const p = progress(t); return p <= 0 || p >= 1; };
