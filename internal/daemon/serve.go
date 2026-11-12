@@ -798,7 +798,8 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		d.mu.Unlock()
 		switch {
 		case muted:
-			return fail(fmt.Sprintf("not sent: %s has muted you, so nothing you send reaches it.", nameOr(toName, at)))
+			// The words are Tyler's (2026-11-11).
+			return fail(fmt.Sprintf("your message to %[1]s was not delivered. %[1]s has muted you. Nothing you send can reach them until they unmute you.", nameOr(toName, at)))
 		case offline:
 			return fail("not sent: " + why)
 		case known && dnd:
