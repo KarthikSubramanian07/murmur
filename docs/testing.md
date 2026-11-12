@@ -39,6 +39,13 @@ hand. Three jobs run them at once, `test-macos`, `test-windows` and `test-linux`
 own runners, which are free for a public repo and start fresh for every job. A pull request from a
 fork runs on them the same way.
 
+`internal/daemon` is most of the Windows time: on 2026-11-12 it took 2,975 s of a 50-minute budget
+(the rest of the suite together about 8 minutes), and runs from #489, #500 and #501 died at the
+`-timeout 50m` with no test hung (#496). So `test-windows` runs every other package, and
+`test-windows-daemon` runs the daemon's tests on four runners at once, each taking the tests whose
+position in the sorted `go test -list` output is its shard number modulo 4. A test added later falls
+into some shard by itself. Linux and macOS finish in 15 to 30 minutes and run the package whole.
+
 Until 2026-11-01 some jobs ran on self-hosted machines, because GitHub's runners didn't start on
 this account while the repo was private: the macOS job on a machine of Tyler's that also did other
 work (until 2026-10-31), and the Linux job on a Spot VM in Google Cloud (project `t4-ci-3690`) that
