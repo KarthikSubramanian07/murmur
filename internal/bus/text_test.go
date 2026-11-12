@@ -156,6 +156,13 @@ func TestCleaningDropsOtherInvisibleCharacters(t *testing.T) {
 		"aᅟᅠb":                             "ab",
 		"ﾠ":                                "",
 		"가ㅤㅤㅤㅤ나":                           "가ㅤㅤ나", // a run between syllables keeps only its ends
+		// From the second review: the other characters Unicode says to show as nothing.
+		"ᠮ\u180b":                               "ᠮ\u180b", // one selector after a Mongolian letter stays
+		"AKIAIOSF\u180b\u180c\u180d\u180fODNN7": "AKIAIOSFODNN7",
+		"ᠮ\u180b\u180c":                         "ᠮ\u180b",
+		"AKIAIOSF\u17b4ODNN7":                   "AKIAIOSFODNN7",
+		"a\u17b5b\u2065c\ufff0d":                "abcd",
+		"AKIAIOSF\U000E01F0\U000E0080ODNN7":     "AKIAIOSFODNN7",
 		// From the review: selectors after a joiner, after a mark, and in a keycap of a letter.
 		"👨\u200d\ufe00👩\u200d\ufe01👧":             "👨\u200d👩\u200d👧",
 		"👨\u200d\ufe00\u200d\ufe01👩":              "👨👩", // the joiners, left in a run, go too
@@ -185,7 +192,7 @@ func TestCleaningDropsOtherInvisibleCharacters(t *testing.T) {
 	}
 
 	// A key split by one of them is whole once cleaned, so scrub, which reads the cleaned text, sees it.
-	for _, r := range []rune{0x034F, 0xFE0F, 0xE0100, 0x3164} {
+	for _, r := range []rune{0x034F, 0xFE0F, 0xE0100, 0x3164, 0x180B, 0x17B4, 0xFFF0, 0xE01F0} {
 		in := "AKIAIOSF" + string(r) + "ODNN7EXAMPLE"
 		if got := bus.Text(in, bus.MaxBody); got != "AKIAIOSFODNN7EXAMPLE" {
 			t.Errorf("a key split by U+%04X came through as %+q", r, got)
