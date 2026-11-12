@@ -1767,12 +1767,16 @@ A body past the limit is cut, as in `inbox`.
   What the old session had unread goes to the new one, which now has the way in, in the order the
   messages arrived, behind any that was already on its way in; it leaves behind what the new
   session sent itself and what came while it was running and was for it too, as it had its own copy
-  of those, which it may have read. Not covered: a message for everyone that comes in the second or
-  so between a new session registering and finding its thread goes to the old session's thread
-  while that has the route, and to the new one when it has it, so the thread may see it twice.
-  Nor is a new session that registers before the daemon has seen the old one's connection close:
-  the old one, still running then, keeps the route through its grace, and the thread may see a
-  message for everyone twice (#99). Handing the thread over when the drop is seen was tried
+  of those, which it may have read. A message for everyone that comes in the second or so between
+  a new session registering and finding its thread is handed to the thread by the old session,
+  which still has the route, and the new session's copy is not handed over again when the route
+  moves to it (#70, 2026-11-11): the daemon remembers, by event ID, what it handed to each thread
+  for the last 30 minutes (up to 200 messages a thread, in memory only), and takes another copy of
+  one out of the inbox of any session of that thread, as the thread has it. A message for the new
+  session alone is another event, and goes in. Not covered: a new session that registers before the
+  daemon has seen the old one's connection close. The old one, still running then, keeps the route
+  through its grace, both copies can be on their way in at once, and the thread may see a message
+  for everyone twice (#99). Handing the thread over when the drop is seen was tried
   (2026-10-30) and dropped: in three review rounds each version could strand a message to the old
   session's name, where a repeat is all that happens now.
   A session that found its thread keeps its name under the Claude session ID too, so the ID does

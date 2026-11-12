@@ -98,6 +98,43 @@ func TestMessageForEveryoneReachesAThreadOnce(t *testing.T) {
 	})
 }
 
+// A message for everyone that comes after a thread's new session registered, and before it found its
+// thread, is handed to the thread once (#70): the old session, in its grace, still has the thread
+// and hands its copy over at once, and the new one's copy is not handed over again when the route
+// moves to it. A message for the new session alone is another event, and still goes in.
+func TestMessageForEveryoneBeforeTheThreadIsFoundReachesItOnce(t *testing.T) {
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	b := newTimedDevice(t, remote, 20*time.Second, time.Hour)
+	route := proto.Route{T3CLI: exe, T3Thread: "thread-bob"}
+	_, conn := b.sessionRoute("bbbbbb", "claude-1", route)
+	conn.Close()
+	time.Sleep(500 * time.Millisecond) // the daemon has seen it go; its grace is long
+	// In T3, its thread not found yet.
+	bob, _ := b.sessionRoute("cccccc", "claude-2", proto.Route{T3CLI: exe})
+	b.session("dddddd", "")
+
+	b.send("dddddd", "*", "to everyone", "hello")
+	// Handed over, not only on its way: one still on its way when the route moves is taken over
+	// as it is (see takeInboxLocked), which is another case.
+	eventually(t, "the old session's copy to be handed over", func() bool { return logHas(b, `handed "to everyone"`) })
+	b.send("dddddd", bob, "to the new one", "hi")
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "cccccc", Route: &route}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+
+	eventually(t, "the new session's own message to be handed over", func() bool { return len(calls()) >= 2 })
+	holds(t, "two handoffs", 1500*time.Millisecond, func() bool { return len(calls()) == 2 })
+	for i, want := range []string{"to everyone", "to the new one"} {
+		if got := calls()[i].Stdin; !strings.Contains(got, want) {
+			t.Errorf("call %d carried %q, want the message %q", i, got, want)
+		}
+	}
+	if inbox, notices := b.unread("cccccc", "claude-2"); len(inbox) != 0 || len(notices) != 0 {
+		t.Errorf("left unread: inbox %q, notices %q", inbox, notices)
+	}
+}
+
 // A session that found its T3 thread keeps its name under the thread, and the Claude Code session
 // ID it had before no longer brings that name to a second process of the same client session: a
 // name is an address, and two live sessions can't share one.
