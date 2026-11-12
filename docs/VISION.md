@@ -1178,8 +1178,9 @@ agents that mattered.
 
 ### Session tags
 
-#198, first part built 2026-11-08: tags set by hand, the model, and search by tags. Groups, rules in
-a tag file, subscriptions and the lifecycle state come later, in the issue's order. The first
+#198, first part built 2026-11-08: tags set by hand, the model, and search by tags. Groups followed
+(#184, 2026-11-11; see Groups, below). Rules in a tag file and subscriptions are put off, perhaps for
+good (#441), and the lifecycle state was dropped (#185). The first
 version also had an availability state (#186): `unavailable` made `send` refuse a session and
 broadcasts skip it. Tyler had it taken out before merging (2026-11-08), so no tag carries behaviour:
 `unavailable` is a label like any other. Tyler then asked for `do-not-disturb` (2026-11-08), the one
@@ -1233,6 +1234,58 @@ tag with behaviour, below.
   daemon drops it from anything else's tags in presence or in `state.json`. A person's presence
   still carries it, for daemons from before it, which show presence's tags as they are. `who human`
   lists the people and `who -human` the agents.
+
+### Groups
+
+#184, built 2026-11-11. #198 first had a "group" type that a repo declared in a tag file; with tags
+free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a group.
+
+- **A group is a tag**, such as `group:ui`, with no slash in it. Its members are the sessions that
+  have the tag, and it exists while it has members. Nothing declares it.
+- **The tag is the address.** `send` to `group:ui` reaches every member but the sender. No session
+  name, device ID or `*` has a colon, so a group shadows none of them. Only `group:` tags are
+  addresses: a chat has members who know they are in it, which `reviewing` or `model:opus-5.5`
+  doesn't promise (Tyler, 2026-11-11). `send` takes one tag, not `who`'s filter, because a filter
+  has no name to answer to.
+- **A session joins by setting the tag and leaves by removing it**, as with any tag, and can be in
+  several groups. So a group can stand for a topic: sessions that want to hear of changes to `main`
+  join `group:main-changes`, and whoever lands one sends to it (Tyler, 2026-11-11). That is #178's
+  ping done by hand.
+- **An agent can add other sessions to a group**, with `tags` and their names in `for`. It is the
+  only tag one agent can give another: without that limit any agent could put `do-not-disturb` on
+  another, or change its `model:`. It can't take a session out. The add goes to each session's
+  device as a `group.add` event on the adder's log, and that device makes the tag the session's
+  own, so the session can remove it and a human's mark stands over it. It is a type of its own
+  because every daemon applies a `tags` event as a human's choice, which the session can't undo.
+  An add more than an hour old when it is read isn't applied, nor one from history a daemon passes
+  over unless it was sent since the session started: an add carries no order against the session's
+  own changes, so an old one read late (its log waited for a team key, or a daemon restarted) could
+  put back a member who has left. An add that would take a session past its 12 tags is refused to
+  the adder, since the groups become the session's own tags.
+- **Each receiving device decides who is in.** A message to a group goes on the bus addressed to
+  the tag, and each daemon gives it to those of its sessions that have the tag when it reads the
+  message. A device is the only authority on its sessions' tags, so no sender's view of the members
+  can be out of date, and an add followed at once by a message, both on the adder's log, reaches
+  the session added. The sender is told who it reaches as far as presence shows.
+- **How a member learns it is in a group.** #184 first asked for a notice from Murmur when a
+  session is added. Murmur has no notice of its own to give, only messages, so the group's message
+  says it: its first line is "Message sent in group:ui from quiet-otter" (Tyler's wording,
+  2026-11-12), and its last says the session is in the group, offers the
+  group or the sender to answer and says that removing the tag leaves. That long line comes once: a
+  session's later messages from the same group end "Reply with Murmur's `send` to group:ui or
+  quiet-otter, if a reply is needed" (Tyler, 2026-11-12), kept as a person's explanation is (#345).
+  A session added to a group nobody writes to sees it only in its own tags.
+- **No loop guard**, as for any message (Tyler, 2026-10-29), though an answer to a group gives
+  every member a turn. The instructions ask agents to answer the group only with what the others
+  need. If groups prove noisy, the next step is a group message that never extends a running turn.
+- **Older daemons.** Presence says whether a device's daemon knows groups (`groups`, inside the
+  box). One that doesn't takes a message addressed to a group as not valid and passes over it, and
+  passes over `group.add`. Its sessions can still carry a `group:` tag, set by themselves or by a
+  human, so a sender is told which members won't get the message, and an add to such a device is
+  refused.
+- **On the page** a group is a conversation, as a device's and everyone's are, with the sessions
+  that have the tag as its members, and a person can write to it.
+- **Left open.** Whether a mute (#27) covers what a muted session sends through a group.
 
 ### When a session stays the same session
 

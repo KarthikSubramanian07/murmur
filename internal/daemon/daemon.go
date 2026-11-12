@@ -704,6 +704,7 @@ type state struct {
 	// Explained is, for each of this device's sessions, by its name as Tags is, the people whose
 	// first message to it said in full that they see only what the session sends (#345); their
 	// later messages end with the line an agent's do (see explained.go).
+	// So are the groups whose messages have told it, in full, that it is in them (#184).
 	Explained map[string][]string `json:"explained,omitempty"`
 }
 

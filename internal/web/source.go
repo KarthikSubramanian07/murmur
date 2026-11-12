@@ -147,8 +147,8 @@ type Session struct {
 type Message struct {
 	ID      string    `json:"id"`
 	From    string    `json:"from"`   // the sender's name
-	To      string    `json:"to"`     // a name, a device ID, or "*"
-	ToKind  string    `json:"toKind"` // ToSession, ToDevice or ToAll
+	To      string    `json:"to"`     // a name, a device ID, a group's tag, or "*"
+	ToKind  string    `json:"toKind"` // ToSession, ToDevice, ToGroup or ToAll
 	Subject string    `json:"subject"`
 	Body    string    `json:"body,omitempty"`
 	At      time.Time `json:"at"` // the sender's clock
@@ -167,6 +167,7 @@ const (
 	ToSession = "session"
 	ToDevice  = "device"
 	ToAll     = "all"
+	ToGroup   = "group" // a group's tag (#184): every session that has it
 )
 
 // Mute is one session's mute of another: the muted session's messages never reach it.
