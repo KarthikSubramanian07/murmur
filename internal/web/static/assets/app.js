@@ -4334,6 +4334,7 @@ let timer;
 let inflight = false;
 let polled = false;
 let loaded = false; // the messages have been fetched once, so what comes after is new
+let loadedAt = 0; // when that first fetch came
 let heldIds = null; // see poll
 let scrolledAt = 0;
 let stateAskedAt = 0; // when the state in hand was asked for
@@ -4355,6 +4356,7 @@ async function poll() {
     const [state] = await Promise.all([api("/api/state"), fetchMessages(), fetchActivity()]);
     const arrived = loaded ? ui.messages.filter((m) => !heldIds.has(m.id)) : []; // the first fetch brings the history
     heldIds = null;
+    if (!loaded) loadedAt = Date.now();
     loaded = true;
     // Another daemon is serving: it restarted onto an update, or a reinstall of the same version,
     // and serves this page at the same address and token. Its page may differ too, so load that.
@@ -4421,11 +4423,14 @@ async function poll() {
 
 // New messages are read out, politely: those to the person, and those in the conversation open in
 // front of them. Agents talking among themselves anywhere else would be a flood, so they aren't.
+// Nor is one in the open conversation that was sent before the page loaded: the daemon read it back
+// from the bus late (#138), and it is history, not news. A minute is allowed for a sender's clock.
 function announceArrivals(list) {
   if (document.hidden) return;
   const unread = new Set(ui.state?.account?.unread || []);
   const open = ui.view === "messages" && ui.conversation;
-  const say = list.filter((m) => fromName(m) !== myName() && (unread.has(m.id) || (open && conversationOf(m).key === ui.conversation)));
+  const old = (m) => (when(m.at) || Infinity) < loadedAt - 60000;
+  const say = list.filter((m) => fromName(m) !== myName() && (unread.has(m.id) || (open && conversationOf(m).key === ui.conversation && !old(m))));
   if (!say.length) return;
   const m = say[say.length - 1];
   announce(say.length === 1 ? "New message from " + fromName(m) + ": " + m.subject : say.length + " new messages, the newest from " + fromName(m) + ": " + m.subject);

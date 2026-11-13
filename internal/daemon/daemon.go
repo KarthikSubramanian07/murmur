@@ -378,10 +378,15 @@ type Daemon struct {
 	// count (see keepMessageLocked).
 	ownMsgs int
 	// historyKick wakes historyLoop, which reads the page's earlier messages back from the logs
-	// (history.go). historyRead is closed once it has read them for the first time, done or not;
-	// nil for a daemon Run didn't start.
-	historyKick chan struct{}
-	historyRead chan struct{}
+	// (history.go). historyWant is closed, by historyAsked, when a page or a lookup first asks for
+	// them, and historyRead once they have been read for the first time, done or not; both are nil
+	// for a daemon Run didn't start. historyOwed is the logs whose backlog was given up on before
+	// it was fetched, which are read back once it is; under mu.
+	historyKick  chan struct{}
+	historyWant  chan struct{}
+	historyRead  chan struct{}
+	historyAsked sync.Once
+	historyOwed  map[string]bool
 	// acts is what sessions did other than send messages, for the page (activity.go), oldest
 	// first; actSeq the number of the newest, actIDs the IDs in acts, and actSeen what each
 	// session's presence last said of it, by address.
@@ -828,6 +833,8 @@ func Run(ctx context.Context, opt Options) error {
 	defer cancel()
 	d.bgCtx = ctx
 	d.firstSync = make(chan struct{})
+	// Before the page is served: its calls read these (awaitHistory).
+	d.historyRead, d.historyWant = make(chan struct{}), make(chan struct{})
 	if pageLn != nil {
 		d.servePage(ctx, pageLn) // first, so a page key asked for at once finds the page
 	}
@@ -847,10 +854,9 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.Consent != nil {
 		go d.consentLoop(ctx)
 	}
-	// The page's earlier messages are read back from the logs already here (history.go), before the
-	// first sync and apart from it: a page opened on a daemon that has just started, or has no
-	// network, has them, and no session waits for them.
-	d.historyRead = make(chan struct{})
+	// The page's earlier messages are read back from the logs already here (history.go), apart
+	// from the first sync: a page opened on a daemon that has just started, or has no network, has
+	// them, and no session waits for them. The read begins when a page or a lookup first asks.
 	d.bg.Add(1)
 	go func() {
 		defer d.bg.Done()

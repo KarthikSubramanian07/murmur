@@ -132,6 +132,9 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 	if req.Op == proto.OpWho || req.Op == proto.OpSend || req.Op == proto.OpLookup {
 		d.awaitFirstSync(ctx)
 	}
+	if req.Op == proto.OpLookup {
+		d.awaitHistory(ctx) // its messages are the page's, earlier ones included
+	}
 	resp := d.handle(ctx, req)
 	resp.ClaudeSession = d.claudeSessionOf(req.Session)
 	writeResp(conn, resp)

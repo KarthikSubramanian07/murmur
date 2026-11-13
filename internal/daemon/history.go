@@ -24,9 +24,10 @@ import (
 // page's messages in a file was the other way, and it would not have filled the hole: what a
 // daemon passes over, it never reads.
 //
-// It is read in the background, so neither the daemon's start nor its first sync waits for it:
-// when the daemon starts, when the first syncs have passed over a backlog, and when this device
-// is given a team key, which opens what it couldn't read before.
+// It is read in the background, so neither the daemon's start nor its first sync waits for it, and
+// not before a page or a lookup asks: then, and after that whenever a sync has passed over a log's
+// backlog, a backlog given up on has been fetched, or this device is given a team key, which opens
+// what it couldn't read before.
 //
 // A session's start and stop are in the same commits, so the Recent view gets those back too. A
 // status, a tag or a commit was never on the bus (activity.go), and is gone with the daemon.
@@ -43,8 +44,15 @@ func (d *Daemon) kickHistory() {
 	}
 }
 
-// historyLoop reads the logs back for the page each time it is asked to.
+// historyLoop reads the logs back for the page each time it is asked to, from when a page or a
+// lookup first wants them: most daemons are started by a session and never show the page, and
+// those run no git for it.
 func (d *Daemon) historyLoop(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-d.historyWant:
+	}
 	first := d.historyRead
 	for {
 		select {
@@ -62,18 +70,18 @@ func (d *Daemon) historyLoop(ctx context.Context) {
 	}
 }
 
-// historyWait is how long the page's first calls wait for the logs to be read back.
+// historyWait is how long the page's first calls, and a lookup, wait for the logs to be read back.
 const historyWait = 3 * time.Second
 
-// awaitHistory waits for the first read of the logs, done or not, so that a page opened as its
-// daemon starts gets its earlier messages with its first call. Those that come later the page
-// takes for new ones, and reads the ones in the open conversation out. The read is of what is on
-// this disk, and usually takes well under a second; a page isn't kept waiting past historyWait for
-// one that takes longer, and gets the messages at its next call.
+// awaitHistory has the logs read back, if they haven't been, and waits for that first read, done
+// or not: the page's first call, or a lookup, then has the earlier messages. The read is of what
+// is on this disk, and takes about a second; nothing is kept waiting past historyWait for one that
+// takes longer, and the page gets the messages at its next call.
 func (d *Daemon) awaitHistory(ctx context.Context) {
 	if d.historyRead == nil {
 		return // a daemon Run didn't start
 	}
+	d.historyAsked.Do(func() { close(d.historyWant) })
 	select {
 	case <-d.historyRead:
 		return

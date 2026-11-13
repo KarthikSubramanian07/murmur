@@ -340,8 +340,9 @@ func (d *Daemon) cursorSeq(cursor string) (uint64, error) {
 }
 
 // Messages returns the messages after cursor, oldest first as this daemon read them, which is not
-// by the senders' clocks. Those read back from the logs (history.go) are put among them by the
-// senders' clocks, having no order of arrival; the page sorts what it shows.
+// by the senders' clocks. Once earlier ones are read back from the logs (history.go), all the page
+// has are in the order of their senders' clocks, as what is read back has no order of arrival; the
+// page sorts what it shows.
 func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message, string, error) {
 	d := s.d
 	after, err := d.cursorSeq(cursor)

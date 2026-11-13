@@ -195,6 +195,10 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 				delete(d.st.Junked, ref) // otherwise readGivenUpTags still goes by it
 			}
 			delete(d.backlog, ref)
+			if d.historyOwed == nil {
+				d.historyOwed = map[string]bool{}
+			}
+			d.historyOwed[ref] = true // the page still shows them, once they are here (advanceMesh)
 		}
 	}
 	for ref, sha := range remote {
@@ -623,14 +627,26 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha, listed string) {
 		mode = d.mode
 	}
 	hidden, junked := d.st.Junked[ref]
+	// A backlog given up on before it could be fetched is here once the cursor, which went on to
+	// the tip the remote had, is what was fetched or comes before it: the page gets its messages.
+	owed := d.historyOwed[ref]
 	d.mu.Unlock()
 	settled := func() {
 		d.mu.Lock()
 		delete(d.backlog, ref)
 		d.mu.Unlock()
 	}
+	arrived := func() {
+		if owed {
+			d.mu.Lock()
+			delete(d.historyOwed, ref)
+			d.mu.Unlock()
+			d.kickHistory()
+		}
+	}
 	if prev == sha {
 		settled()
+		arrived()
 		return
 	}
 	if ok, err := d.repo.IsCommit(ctx, sha); err != nil {
@@ -695,8 +711,10 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha, listed string) {
 			}
 			d.log.Printf("%s was rewritten; skipping its history rather than replaying it", ref)
 			skipTo()
+			d.kickHistory() // what it holds now is passed over for the sessions, and still shown on the page
 			return
 		}
+		arrived()
 	}
 	// A page at a time, with mu let go between pages, so a long log (a device back after days away)
 	// doesn't hold up the sessions, the hook and the page while it is read. Each page moves the cursor

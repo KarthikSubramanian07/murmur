@@ -67,6 +67,28 @@ func TestPageKeepsAConversationAcrossARestart(t *testing.T) {
 	eventually(t, "all three after another restart", pageHas(b.page(), "first", "second", "third"))
 }
 
+// A device that joins later is granted the team's keys, and its page then shows the conversation
+// from before it joined, which every device may read. Its sessions are given none of it.
+func TestPageOfADeviceThatJoinsLaterShowsEarlierConversations(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+	a.send("aaaaaa", bob, "before c joined", "")
+	eventually(t, "the first message on b's page", pageHas(b.page(), "before c joined"))
+	b.send("bbbbbb", alice, "an answer, before c joined", "")
+	eventually(t, "the answer on a's page", pageHas(a.page(), "before c joined", "an answer, before c joined"))
+
+	c := newDevice(t, remote)
+	c.session("cccccc", "")
+	eventually(t, "the earlier conversation on c's page", pageHas(c.page(), "before c joined", "an answer, before c joined"))
+	if got := c.do(proto.Request{Op: proto.OpInbox, Session: "cccccc"}).Messages; len(got) != 0 {
+		t.Errorf("a session on the device that joined was given %+v", got)
+	}
+}
+
 // A daemon away for longer than it catches up on passes over what was sent meanwhile: nobody is
 // given it. The page shows it all the same, after what the daemon had read before it went.
 func TestPageShowsWhatWasSentWhileItsDaemonWasAway(t *testing.T) {
