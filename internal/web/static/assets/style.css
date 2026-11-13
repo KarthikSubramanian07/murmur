@@ -38,6 +38,7 @@
   --emerald-500: oklch(69.6% 0.17 162.48);
   --blue-400: oklch(70.7% 0.165 254.624);
   --blue-500: oklch(62.3% 0.214 259.815);
+  --purple-400: oklch(71.4% 0.203 305.504);
 }
 
 /*
@@ -98,6 +99,7 @@
   --warning-foreground: var(--amber-400);
   --pr-open: color-mix(in oklab, var(--emerald-300) 90%, transparent);
   --pr-draft: color-mix(in oklab, var(--zinc-400) 80%, transparent);
+  --pr-merged: var(--purple-400);
   --row-hover: rgb(255 255 255 / 5%);
   --row-selected: rgb(255 255 255 / 8%);
   --composer: color-mix(in srgb, var(--neutral-950) 97%, var(--white));
@@ -193,6 +195,7 @@
   --warning-foreground: oklch(47% 0.163 48.998);
   --pr-open: oklch(50.8% 0.118 165.612);
   --pr-draft: var(--muted-foreground);
+  --pr-merged: oklch(50% 0.22 304);
   --row-hover: rgb(0 0 0 / 4%);
   --row-selected: rgb(0 0 0 / 6%);
   --composer: var(--white);
@@ -258,6 +261,7 @@
   --warning-foreground: oklch(45% 0.163 48.998);
   --pr-open: oklch(47% 0.118 165.612);
   --pr-draft: var(--muted-foreground);
+  --pr-merged: oklch(47% 0.22 304);
   --row-hover: rgb(14 27 69 / 5%);
   --row-selected: rgb(34 91 255 / 11%);
   --composer: #fffef7;
@@ -307,6 +311,7 @@
   --warning-foreground: var(--amber-400);
   --pr-open: color-mix(in oklab, var(--emerald-300) 90%, transparent);
   --pr-draft: #a9b6e6;
+  --pr-merged: var(--purple-400);
   --edge: color-mix(in oklab, var(--foreground) 42%, transparent);
   --dot-off: color-mix(in oklab, #a9b6e6 80%, transparent);
   --scrollbar-thumb: rgb(255 251 234 / 14%);
@@ -2008,11 +2013,29 @@ a.g-pr:hover {
   line-height: 1.45;
   color: var(--muted-foreground);
 }
+/* The icon's color says what happened, as GitHub's and Linear's do: green opened, purple merged or
+ * done, red closed unmerged, blue a commit, amber what a session is doing now. Joining, leaving and
+ * tags stay grey. The icon's shape and the words say it too, so it never rests on color (WCAG 1.4.1). */
 .g-act-ico {
   display: inline-flex;
   justify-content: center;
   align-self: center;
-  color: var(--muted-foreground);
+  color: var(--act, var(--muted-foreground));
+}
+.g-act-open {
+  --act: var(--pr-open);
+}
+.g-act-done {
+  --act: var(--pr-merged);
+}
+.g-act-closed {
+  --act: var(--destructive-foreground);
+}
+.g-act-commit {
+  --act: var(--info-foreground);
+}
+.g-act-status {
+  --act: var(--warning);
 }
 .g-act-ico .icon {
   width: 1rem;
