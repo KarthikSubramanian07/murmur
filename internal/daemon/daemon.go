@@ -102,7 +102,8 @@ type Options struct {
 	// PageOpen is how recently a page someone can see must have called its API to count as open,
 	// which keeps the daemon running like a session does: 2 min. A hidden tab's calls don't count.
 	PageOpen time.Duration
-	// PageMessages is how many messages the page can look back on: 500.
+	// PageMessages is how many messages the page can look back on: 500. A daemon that starts reads
+	// that many back from the logs it has (history.go).
 	PageMessages int
 	// SnapshotTimeout bounds the git a snapshot of a tool call's worktree runs (#21): 4 s. Tests on a
 	// loaded machine raise it.
@@ -376,6 +377,11 @@ type Daemon struct {
 	// ownMsgs is how many of msgs are to or from this device's person, which PageMessages doesn't
 	// count (see keepMessageLocked).
 	ownMsgs int
+	// historyKick wakes historyLoop, which reads the page's earlier messages back from the logs
+	// (history.go). historyRead is closed once it has read them for the first time, done or not;
+	// nil for a daemon Run didn't start.
+	historyKick chan struct{}
+	historyRead chan struct{}
 	// acts is what sessions did other than send messages, for the page (activity.go), oldest
 	// first; actSeq the number of the newest, actIDs the IDs in acts, and actSeen what each
 	// session's presence last said of it, by address.
@@ -841,6 +847,16 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.Consent != nil {
 		go d.consentLoop(ctx)
 	}
+	// The page's earlier messages are read back from the logs already here (history.go), before the
+	// first sync and apart from it: a page opened on a daemon that has just started, or has no
+	// network, has them, and no session waits for them.
+	d.historyRead = make(chan struct{})
+	d.bg.Add(1)
+	go func() {
+		defer d.bg.Done()
+		d.historyLoop(ctx)
+	}()
+	d.kickHistory()
 
 	if d.opt.Clones != "" {
 		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName}); err != nil {
@@ -1006,7 +1022,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
 		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
-		actIDs: map[string]bool{}, actSeen: map[string]sessSeen{},
+		actIDs: map[string]bool{}, actSeen: map[string]sessSeen{}, historyKick: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
 		handedTo: map[threadKey][]handed{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},

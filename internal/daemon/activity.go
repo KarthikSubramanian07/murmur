@@ -21,7 +21,8 @@ import (
 // session committed to, so a branch new to that list is shown without a count.
 //
 // All of it is kept in memory, the newest maxActs, and is gone with the daemon: it is a feed of
-// what happened lately, and the bus and git hold what must last.
+// what happened lately, and the bus and git hold what must last. The starts and stops are on the
+// bus, so a daemon reads those back when it starts (history.go); the rest it can't.
 
 // maxActs is how many the daemon keeps.
 const maxActs = 600
@@ -65,18 +66,26 @@ func (d *Daemon) recordActLocked(a web.Activity) {
 	d.actIDs[a.ID] = true
 }
 
-// recordSessionEventLocked keeps a session's start or stop, as the bus carried it. A person's
-// account has neither. Caller holds mu.
+// recordSessionEventLocked keeps a session's start or stop, as the bus carried it. Caller holds mu.
 func (d *Daemon) recordSessionEventLocked(e bus.Event) {
+	if a, ok := sessionAct(e); ok {
+		d.recordActLocked(a)
+	}
+}
+
+// sessionAct is a session's start or stop as the Recent view shows it. A person's account has
+// neither.
+func sessionAct(e bus.Event) (web.Activity, bool) {
 	if bus.IsPerson(e.From) {
-		return
+		return web.Activity{}, false
 	}
 	switch e.Type {
 	case bus.SessionStarted:
-		d.recordActLocked(web.Activity{ID: e.ID, Kind: web.ActStarted, At: e.At, Addr: e.From, Agent: e.Agent, Branch: e.Branch})
+		return web.Activity{ID: e.ID, Kind: web.ActStarted, At: e.At, Addr: e.From, Agent: e.Agent, Branch: e.Branch}, true
 	case bus.SessionStopped:
-		d.recordActLocked(web.Activity{ID: e.ID, Kind: web.ActStopped, At: e.At, Addr: e.From})
+		return web.Activity{ID: e.ID, Kind: web.ActStopped, At: e.At, Addr: e.From}, true
 	}
+	return web.Activity{}, false
 }
 
 // noteSessionsLocked compares the sessions device dev's presence lists with what its presence
@@ -188,6 +197,7 @@ func (s pageSource) Activity(ctx context.Context, cursor string) ([]web.Activity
 	if err != nil {
 		return nil, "", err
 	}
+	d.awaitHistory(ctx)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.pageSeenLocked(ctx, time.Now())

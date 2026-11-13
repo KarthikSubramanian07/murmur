@@ -179,3 +179,121 @@ func TestLogResumedPastAMergeRepeatsNothing(t *testing.T) {
 		}
 	}
 }
+
+// datedChain is chain with each commit written a minute after the one before, the first at start
+// minutes, so that a test knows the order git hands two logs over in.
+func datedChain(t *testing.T, r *bus.Repo, start int, msgs ...string) []string {
+	t.Helper()
+	var shas []string
+	parent := ""
+	for i, m := range msgs {
+		at := &bus.Repo{Name: r.Name, Email: r.Email, Git: gitx.Git{Dir: r.Git.Dir,
+			Env: []string{fmt.Sprintf("GIT_COMMITTER_DATE=%d +0000", 1_700_000_000+60*(start+i))}}}
+		sha, err := at.NewCommit(context.Background(), parent, m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shas, parent = append(shas, sha), sha
+	}
+	return shas
+}
+
+// Recent reads back across logs, newest first by when each commit was written, says which log each
+// is in, and stops at its limit or when its caller has enough.
+func TestRecentReadsAcrossLogsNewestFirst(t *testing.T) {
+	r := logRepo(t)
+	r.Page = 2
+	a := datedChain(t, r, 0, "a0\n\n{}\n", "a1\n\n{}\n", "a2\n\n{}\n") // minutes 0, 1, 2
+	b := datedChain(t, r, 1, "b0\n\n{}\n", "b1\n\n{}\n", "b2\n\n{}\n") // minutes 1, 2, 3
+	tipA, tipB := a[2], b[2]
+
+	recent := func(limit int, enough int, tips ...string) (got []string, pages int) {
+		t.Helper()
+		err := r.Recent(context.Background(), tips, limit, bus.MaxRecord, func(p []bus.Commit) bool {
+			pages++
+			for _, c := range p {
+				subject, _, _ := strings.Cut(c.Message, "\n")
+				switch c.Tip {
+				case tipA:
+					subject += "@a"
+				case tipB:
+					subject += "@b"
+				default:
+					subject += "@" + c.Tip
+				}
+				got = append(got, subject)
+			}
+			return len(got) < enough
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got, pages
+	}
+
+	// Every commit, each in its own log. The two written in one minute come in either order.
+	got, _ := recent(100, 100, tipA, tipB)
+	if len(got) != 6 || got[0] != "b2@b" || got[5] != "a0@a" {
+		t.Fatalf("both logs whole: %v", got)
+	}
+	for _, log := range []string{"a", "b"} {
+		var own []string
+		for _, s := range got {
+			if strings.HasSuffix(s, "@"+log) {
+				own = append(own, s)
+			}
+		}
+		if want := fmt.Sprintf("%[1]s2@%[1]s %[1]s1@%[1]s %[1]s0@%[1]s", log); strings.Join(own, " ") != want {
+			t.Errorf("log %s came as %v, want %s", log, own, want)
+		}
+	}
+
+	// The limit counts commits across the logs, not for each.
+	if got, _ := recent(3, 100, tipA, tipB); len(got) != 3 || got[0] != "b2@b" || strings.HasPrefix(got[2], "a0") || strings.HasPrefix(got[2], "b0") {
+		t.Errorf("the newest three: %v", got)
+	}
+	// A caller with enough is given no more pages.
+	if got, pages := recent(100, 1, tipA, tipB); pages != 1 || len(got) != 2 {
+		t.Errorf("stopped after the first page: %d pages, %v", pages, got)
+	}
+	// One log's tip, twice, is one log.
+	if got, _ := recent(100, 100, tipA, tipA); strings.Join(got, " ") != "a2@a a1@a a0@a" {
+		t.Errorf("one log named twice: %v", got)
+	}
+	// What isn't a commit here is passed over, and so is what git would read as an option.
+	blob, err := r.Git.Run(context.Background(), "junk", "hash-object", "-w", "--stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	junk := []string{strings.TrimSpace(blob), strings.Repeat("0", 40), strings.Repeat("ab", 20), "--all", "refs/heads/main", ""}
+	if got, _ := recent(100, 100, append(junk, tipA)...); strings.Join(got, " ") != "a2@a a1@a a0@a" {
+		t.Errorf("with junk among the tips: %v", got)
+	}
+	if got, pages := recent(100, 100, junk...); len(got) != 0 || pages != 0 {
+		t.Errorf("junk alone: %v in %d pages", got, pages)
+	}
+}
+
+// Recent marks a commit over the limit and leaves it unread, as Log does.
+func TestRecentPassesOverACommitOverTheLimit(t *testing.T) {
+	r := logRepo(t)
+	const max = 4 << 10
+	huge := "huge\n\n{\"body\":\"" + strings.Repeat("x", 4*max) + "\"}\n"
+	shas := chain(t, r, "", "before\n\n{}\n", huge, "after\n\n{}\n")
+	var got []bus.Commit
+	err := r.Recent(context.Background(), []string{shas[2]}, 100, max, func(p []bus.Commit) bool {
+		got = append(got, p...)
+		return true
+	})
+	if err != nil || len(got) != 3 {
+		t.Fatalf("read %d commits, %v; want 3", len(got), err)
+	}
+	for _, c := range got {
+		if c.Tip != shas[2] {
+			t.Errorf("commit %s is in the log of %q", c.SHA, c.Tip)
+		}
+		if large := c.SHA == shas[1]; c.Oversize != large || (c.Message == "") != large {
+			t.Errorf("commit %s: oversize %v, message of %d bytes", c.SHA, c.Oversize, len(c.Message))
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,6 +34,8 @@ type Commit struct {
 	// Oversize is a commit over the limit it was read with: it was left unread, so it has no Time
 	// or Message.
 	Oversize bool
+	// Tip is, for a commit Recent read, the tip of the log it is in.
+	Tip string
 }
 
 // PushMode chooses how a push may move the remote ref.
@@ -374,7 +377,12 @@ func (r *Repo) Log(ctx context.Context, from, to string, max int64, page func([]
 	if err != nil {
 		return err
 	}
-	shas := strings.Fields(out)
+	return r.readPaged(ctx, strings.Fields(out), max, page)
+}
+
+// readPaged reads the commits named, in order, and calls page with them a page at a time, as Log
+// says.
+func (r *Repo) readPaged(ctx context.Context, shas []string, max int64, page func([]Commit) error) error {
 	n := r.Page
 	if n <= 0 {
 		n = LogPage
@@ -406,6 +414,106 @@ func (r *Repo) Log(ctx context.Context, from, to string, max int64, page func([]
 		}
 	}
 	return nil
+}
+
+// errEnough ends Recent's read when its caller has what it wanted.
+var errEnough = errors.New("enough")
+
+// Recent reads the newest commits of the logs that end at tips, newest first by when each was
+// written, whichever log it is in, and calls page with them a page at a time: until page returns
+// false, limit commits have been read, or the logs run out. Each commit says which log it is in
+// (Commit.Tip). It is for looking back over what the logs hold, and Log is for reading them on: the
+// order across logs goes by their writers' clocks, so a device whose clock runs ahead comes first.
+// A tip that isn't a commit here is passed over, an oversize commit comes marked, and only first
+// parents are followed, as in Log.
+func (r *Repo) Recent(ctx context.Context, tips []string, limit int, max int64, page func([]Commit) bool) error {
+	tips, err := r.commitsAmong(ctx, tips)
+	if err != nil || len(tips) == 0 || limit <= 0 {
+		return err
+	}
+	// One walk over every log: git hands the commits over newest first, each log's from its tip
+	// back, and with each its first parent, which says whose log it is in.
+	out, err := r.Git.Run(ctx, strings.Join(tips, "\n")+"\n", "rev-list", "--first-parent", "--parents",
+		"-n", strconv.Itoa(limit), "--stdin")
+	if err != nil {
+		return err
+	}
+	var shas []string
+	parent := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		shas = append(shas, f[0])
+		parent[f[0]] = ""
+		if len(f) > 1 {
+			parent[f[0]] = f[1]
+		}
+	}
+	tipOf := make(map[string]string, len(shas))
+	for _, tip := range tips {
+		for c := tip; ; c = parent[c] {
+			if _, listed := parent[c]; !listed || tipOf[c] != "" {
+				break // past what was listed, or into a log that another tip's shares
+			}
+			tipOf[c] = tip
+		}
+	}
+	err = r.readPaged(ctx, shas, max, func(commits []Commit) error {
+		for i := range commits {
+			commits[i].Tip = tipOf[commits[i].SHA]
+		}
+		if !page(commits) {
+			return errEnough
+		}
+		return nil
+	})
+	if errors.Is(err, errEnough) {
+		return nil
+	}
+	return err
+}
+
+// commitsAmong is the object names in shas that are commits here, each once, in the order given.
+// Anything that isn't a whole object name is left out: these go to git on its standard input, where
+// a line could otherwise be read as an option.
+func (r *Repo) commitsAmong(ctx context.Context, shas []string) ([]string, error) {
+	var names []string
+	seen := map[string]bool{}
+	for _, sha := range shas {
+		if !seen[sha] && isObjectName(sha) {
+			seen[sha] = true
+			names = append(names, sha)
+		}
+	}
+	if len(names) == 0 {
+		return nil, nil
+	}
+	out, err := r.Git.Run(ctx, strings.Join(names, "\n")+"\n", "cat-file", "--batch-check=%(objectname) %(objecttype)")
+	if err != nil {
+		return nil, err
+	}
+	commit := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) == 2 && f[1] == "commit" {
+			commit[f[0]] = true
+		}
+	}
+	return slices.DeleteFunc(names, func(sha string) bool { return !commit[sha] }), nil
+}
+
+// isObjectName says s is a full object name as git prints one: 40 hex digits, or 64 with SHA-256.
+func isObjectName(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // sizes asks git how large each commit is, without reading it.

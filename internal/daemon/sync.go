@@ -302,6 +302,9 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	d.kickTeam() // a device to grant the team keys to, or a team ref still empty
 	switched := false
 	if d.mode != modeNormal && len(d.backlog) == 0 {
+		if d.mode == modeSkip {
+			d.kickHistory() // the page still shows what was passed over as history
+		}
 		d.mode = modeNormal
 		d.st.Initialized = true
 		switched = true
@@ -933,6 +936,7 @@ func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha, listed string) b
 	delete(d.st.TagsFrom, ref)
 	delete(d.st.Junked, ref)
 	d.saveLocked()
+	d.kickHistory() // the messages given up on are here now, and the page still shows them
 	return true
 }
 
