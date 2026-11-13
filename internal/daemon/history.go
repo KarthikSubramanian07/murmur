@@ -77,6 +77,7 @@ func (d *Daemon) historyLoop(ctx context.Context) {
 		rctx, cancel := context.WithTimeout(ctx, historyLimit)
 		err := d.readHistory(rctx)
 		cancel()
+		retry.Stop() // this read stands in for a retry still due
 		if first != nil {
 			close(first) // done or not: nothing waits on a read that failed
 			first = nil
