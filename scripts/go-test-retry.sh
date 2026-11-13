@@ -6,8 +6,12 @@
 # it passes then. What was retried is printed, annotated on the run and written to its summary, so a
 # test that needs the retry often is seen.
 #
-# Only a test that failed by name is retried. A build that fails, a test binary that hangs or
-# panics, and more than MAX_RETRIED failures at once are real, and fail the job as they did before.
+# Only a test that failed by name is retried, and only when its binary ran to its end. A build that
+# fails, a data race, a test binary that hangs, panics or exits early, a failed example or fuzz
+# target, and more than MAX_RETRIED failures at once are real, and fail the job as they did before.
+#
+# A test that passes alone on the retry may still have failed because of another test running
+# beside it. The retry hides that too; the names it prints are the only trace.
 set -uo pipefail
 
 MAX_RETRIED=5
@@ -17,6 +21,17 @@ trap 'rm -f "$out"' EXIT
 go test "$@" 2>&1 | tee "$out"
 status=${PIPESTATUS[0]}
 if [ "$status" = 0 ]; then exit 0; fi
+
+# The race detector fails the test it fires in by name, and a race rarely fires twice running.
+if grep -q '^WARNING: DATA RACE' "$out"; then
+  echo "go-test-retry: the race detector found a data race; not retrying"
+  exit "$status"
+fi
+# An example or a fuzz target that failed is not run by the retry, which names tests.
+if grep -E '^--- FAIL: ' "$out" | grep -qvE '^--- FAIL: Test'; then
+  echo "go-test-retry: something other than a test failed; not retrying"
+  exit "$status"
+fi
 
 # A top-level test's line starts the line; a subtest's is indented, and its parent fails with it.
 failed=$(grep -E '^--- FAIL: Test' "$out" | awk '{print $3}' | sort -u)
@@ -29,10 +44,16 @@ if [ "$count" -gt "$MAX_RETRIED" ]; then
   echo "go-test-retry: $count tests failed, more than $MAX_RETRIED; not retrying"
   exit "$status"
 fi
-# A package that failed without naming a test (it didn't build, or its binary exited) would pass a
-# retry that runs only the named tests. Each package's lines come together, its verdict last.
-if ! awk '/^--- FAIL: Test/ { n++ } /^(FAIL|ok)[ 	]+[^ 	]+/ { if ($1 == "FAIL" && n == 0) bad = 1; n = 0 } END { exit bad }' "$out"; then
-  echo "go-test-retry: a package failed with no failed test named; not retrying"
+# A package that failed without naming a test (it didn't build), or whose binary stopped before
+# its end (os.Exit, a crash, a kill), would pass a retry that runs only the tests named so far. Each
+# package's lines come together, its verdict last; a binary that ran every test prints a bare FAIL,
+# and then go prints "exit status 1" and the verdict.
+if ! awk '
+  /^--- FAIL: Test/ { n++ }
+  /^(FAIL|ok)[ \t]+[^ \t]+/ { if ($1 == "FAIL" && (n == 0 || last != "FAIL")) bad = 1; n = 0 }
+  !/^exit status [0-9]+$/ { last = $0 }
+  END { exit bad }' "$out"; then
+  echo "go-test-retry: a package failed without naming a test, or its test binary stopped early; not retrying"
   exit "$status"
 fi
 # A panic or the -timeout kills the binary mid-run: the tests named before it are not all of it.

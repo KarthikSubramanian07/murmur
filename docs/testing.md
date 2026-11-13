@@ -51,29 +51,32 @@ the names of the files changed to `scripts/ci-level.sh`, which answers with one 
 
 | Level | The change touches only | What runs |
 |---|---|---|
-| `none` | Markdown outside `internal/` and `docs/agents/` other than `README.md`, `.github/ISSUE_TEMPLATE`, images | nothing |
+| `none` | Markdown and images at the top of the repo, in `docs/` and in `.github/`, other than `README.md` and `docs/agents/` | nothing |
 | `site` | `site/`, and the above | `test-linux`, the site's tests alone |
 | `page` | `internal/web/static`, and the above | `test-linux`, whole |
 | `full` | anything else | every job |
 
 The page's files are built into the binary, so they need the Go tests, but CSS and JS don't behave
 differently per OS. A file no rule names is `full`, and so is a list of files GitHub couldn't give,
-so a mistake runs too much. `scripts/ci-level-test.sh` checks the rules, and `test-linux` runs it.
-A push to `main` and a run by hand are always `full`.
+so a mistake runs too much. `scripts/ci-level-test.sh` checks the rules, and `changes` runs it
+before it uses their answer. A push to `main` and a run by hand are always `full`. On a pull
+request that isn't `full`, the daemon shards show as one skipped check with its name unfilled
+(`test-${{ matrix.os }}-daemon ...`): GitHub doesn't expand a matrix it skips.
 
 **A test that fails is run once more** (`scripts/go-test-retry.sh`). Daemon tests give up a wait on
 a slow runner, a different one each run: three of the four full runs after #504 lost a Windows
 shard that way (#513), each a rerun by hand. The job passes if the retry does, and says what it
 retried in an annotation and in the run's summary, which is where a test that needs the retry often
-shows. A build failure, a test binary that panics or reaches `-timeout`, a package that fails
-without naming a test, and more than five failures at once are not retried.
+shows. A build failure, a data race, a test binary that panics, exits early or reaches `-timeout`,
+a failed example, and more than five failures at once are not retried. What the retry does hide is
+a test that fails only beside another: alone, it passes.
 
 `internal/daemon` is most of the Windows time: on 2026-11-12 it took 2,975 s of a 50-minute budget
 (the rest of the suite together about 8 minutes), and runs from #489, #500 and #501 died at the
 `-timeout 50m` with no test hung (#496). So `test-windows` runs every other package, and
-`test-windows-daemon` runs the daemon's tests on four runners at once, each taking the tests whose
+the `test-daemon` job, whose checks are named `test-windows-daemon (N)`, runs the daemon's tests on four runners at once, each taking the tests whose
 position in the sorted `go test -list` output is its shard number modulo 4. A test added later falls
-into some shard by itself. macOS does the same on two runners, `test-macos-daemon`, since
+into some shard by itself. macOS does the same on two runners, `test-macos-daemon (N)`, since
 2026-11-12: the package was 1,154 s of `test-macos`'s 20 minutes, which made it the longest job.
 Linux runs the package whole, in about 6 minutes.
 

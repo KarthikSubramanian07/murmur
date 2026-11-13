@@ -31,6 +31,12 @@ want full go.mod
 want full install.sh
 want full scripts/ci-level.sh
 want full LICENSE
+want full cmd/mur/testdata/page.md
+want full scripts/notes.md
+want full docs/agents/pictures/turn.png
+want full docs/build.sh
+want full .github/dependabot.yml
+want none .github/ISSUE_TEMPLATE/bug.md docs/assets/brand/mark.svg
 want full site/src/worker.js cmd/mur/main.go
 want full ""
 
