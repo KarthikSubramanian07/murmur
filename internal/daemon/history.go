@@ -36,6 +36,15 @@ import (
 // holds starts, stops and tags events between its messages.
 const historyDepth = 8
 
+// A read of the logs is given historyLimit, so a git that hangs holds nothing up for good. One
+// that fails is tried again after historyRetry, historyTries times in a row at most: what failed
+// it may pass, and a clone whose git can't be run shouldn't have it run every minute for nothing.
+const (
+	historyLimit = 30 * time.Second
+	historyRetry = time.Minute
+	historyTries = 3
+)
+
 // kickHistory has the logs read back for the page, soon.
 func (d *Daemon) kickHistory() {
 	select {
@@ -54,18 +63,34 @@ func (d *Daemon) historyLoop(ctx context.Context) {
 	case <-d.historyWant:
 	}
 	first := d.historyRead
+	retry := time.NewTimer(historyRetry)
+	retry.Stop()
+	defer retry.Stop()
+	failed := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-d.historyKick:
+		case <-retry.C:
 		}
-		if err := d.readHistory(ctx); err != nil && ctx.Err() == nil {
-			d.log.Printf("reading the page's earlier messages back from the bus: %v", err)
-		}
+		rctx, cancel := context.WithTimeout(ctx, historyLimit)
+		err := d.readHistory(rctx)
+		cancel()
 		if first != nil {
-			close(first)
+			close(first) // done or not: nothing waits on a read that failed
 			first = nil
+		}
+		switch {
+		case ctx.Err() != nil:
+			return
+		case err == nil:
+			failed = 0
+		default:
+			d.log.Printf("reading the page's earlier messages back from the bus: %v", err)
+			if failed++; failed < historyTries {
+				retry.Reset(historyRetry)
+			}
 		}
 	}
 }
@@ -73,15 +98,26 @@ func (d *Daemon) historyLoop(ctx context.Context) {
 // historyWait is how long the page's first calls, and a lookup, wait for the logs to be read back.
 const historyWait = 3 * time.Second
 
+// wantHistory has the logs read back, if nothing has asked yet.
+func (d *Daemon) wantHistory() {
+	if d.historyWant != nil {
+		d.historyAsked.Do(func() { close(d.historyWant) })
+	}
+}
+
 // awaitHistory has the logs read back, if they haven't been, and waits for that first read, done
 // or not: the page's first call, or a lookup, then has the earlier messages. The read is of what
-// is on this disk, and takes about a second; nothing is kept waiting past historyWait for one that
-// takes longer, and the page gets the messages at its next call.
+// is on this disk, and takes about a second. Nothing is kept waiting past historyWait for one that
+// takes longer, and once one call has waited that long no other waits at all: the page gets the
+// messages at the call after the read is done.
 func (d *Daemon) awaitHistory(ctx context.Context) {
 	if d.historyRead == nil {
 		return // a daemon Run didn't start
 	}
-	d.historyAsked.Do(func() { close(d.historyWant) })
+	d.wantHistory()
+	if d.historyLate.Load() {
+		return
+	}
 	select {
 	case <-d.historyRead:
 		return
@@ -92,7 +128,9 @@ func (d *Daemon) awaitHistory(ctx context.Context) {
 	select {
 	case <-d.historyRead:
 	case <-ctx.Done():
+	case <-d.bgCtx.Done(): // the daemon is stopping
 	case <-t.C:
+		d.historyLate.Store(true)
 	}
 }
 
@@ -102,14 +140,14 @@ func (d *Daemon) awaitHistory(ctx context.Context) {
 // queues it and keeps a person's own.
 func (d *Daemon) readHistory(ctx context.Context) error {
 	d.mu.Lock()
-	devOf := map[string]string{} // a log's tip → its device
+	devOf, refOf := map[string]string{}, map[string]string{} // a log's tip → its device, and its ref
 	var tips []string
 	for ref, sha := range d.st.Processed {
 		dev, ok := meshDevice(ref)
 		if !ok || !strings.HasPrefix(ref, brand.MeshPrefix) || sha == "" || devOf[sha] != "" {
 			continue
 		}
-		devOf[sha] = dev
+		devOf[sha], refOf[sha] = dev, ref
 		tips = append(tips, sha)
 	}
 	keys := d.keyringLocked()
@@ -121,8 +159,11 @@ func (d *Daemon) readHistory(ctx context.Context) error {
 	var msgs []bus.Event
 	var acts []web.Activity
 	others := 0 // a person's own messages are counted apart, as keepMessageLocked does
-	err := d.repo.Recent(ctx, tips, historyDepth*want, d.maxRecord, func(commits []bus.Commit) bool {
+	missing, err := d.repo.Recent(ctx, tips, historyDepth*want, d.maxRecord, func(commits []bus.Commit) bool {
 		for _, c := range commits {
+			if others >= want {
+				break // newest first: the rest are older than the page keeps
+			}
 			e, ok := historyEvent(c, devOf[c.Tip], keys)
 			if !ok {
 				continue
@@ -149,6 +190,17 @@ func (d *Daemon) readHistory(ctx context.Context) error {
 	slices.Reverse(acts)
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	// A cursor at a commit that isn't here is a backlog given up on before it was fetched, by this
+	// daemon or the one before it. Its log was passed over whole just now, and is read back once
+	// the fetch lands (advanceMesh), unless the cursor has moved since, which a sync does by reading.
+	for _, sha := range missing {
+		if ref := refOf[sha]; d.st.Processed[ref] == sha {
+			if d.historyOwed == nil {
+				d.historyOwed = map[string]bool{}
+			}
+			d.historyOwed[ref] = true
+		}
+	}
 	d.mergeMessagesLocked(msgs)
 	d.mergeActsLocked(acts)
 	return nil

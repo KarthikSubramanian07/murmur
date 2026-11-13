@@ -154,7 +154,8 @@ func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
 	go func() {
 		defer d.bg.Done()
 		<-ctx.Done()
-		// Let a request in flight finish: none waits on anything slow.
+		// Let a request in flight finish. The slowest is a first call for messages, which waits
+		// historyWait at most for the logs to be read back, and awaitHistory lets go of it now.
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if srv.Shutdown(sctx) != nil {

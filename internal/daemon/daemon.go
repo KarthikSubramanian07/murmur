@@ -387,6 +387,9 @@ type Daemon struct {
 	historyRead  chan struct{}
 	historyAsked sync.Once
 	historyOwed  map[string]bool
+	// historyLate says a call waited historyWait for the first read and it hadn't come, so no
+	// other call waits for it (awaitHistory).
+	historyLate atomic.Bool
 	// acts is what sessions did other than send messages, for the page (activity.go), oldest
 	// first; actSeq the number of the newest, actIDs the IDs in acts, and actSeen what each
 	// session's presence last said of it, by address.

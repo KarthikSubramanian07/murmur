@@ -940,23 +940,27 @@ call.
     over, so the hole would have stayed. It would also be a second copy of every message, in the
     clear, to keep in step with the bus. A person's own messages stay in their file (see "A person
     on the page"), which goes back further than the page's 500.
-  - *What it costs.* Four git commands for the newest 500 commits and two for each 500 more, up to
-    4,000 commits, each command about 0.2 s on the Windows laptop (2026-11-12), and no request to
-    the remote. It runs in the background, and not before a page or a `lookup` asks: most daemons
-    are started by a session and never show the page. After that it runs again once the first syncs
-    have passed over a backlog, when a backlog given up on is fetched, and when the device is given
-    a team key, which opens what it couldn't read. The page's first calls, and a `lookup`, wait for
-    the first read, 3 s at most, so the page opens with its conversations in it.
+  - *What it costs.* Four git commands, however many commits are read, up to 4,000: the sizes of
+    all of them are asked at once, and they are read in one go while they fit in 8 MB. Each command
+    took about 0.2 s on the Windows laptop (2026-11-12). No request goes to the remote. It runs in
+    the background, and not before a page or a `lookup` asks: most daemons are started by a session
+    and never show the page. After that it runs again once the first syncs have passed over a
+    backlog, when a backlog given up on is fetched, and when the device is given a team key, which
+    opens what it couldn't read. The page's first calls, and a `lookup`, wait for the first read,
+    3 s at most, so the page opens with its conversations in it. One call waits that long, at most:
+    if the read hasn't come by then, later calls don't wait. A read is given 30 s, and one that
+    fails is tried again a minute later, three times in a row at most.
   - *What changes with it.* The page shows messages from before this device joined, which every
     device may read (The bus is encrypted). No session is given them: a sync still passes over
     history. Once anything is read back, all the page's messages are in the order of their
     senders' clocks, and which commits are the newest goes by their writers' clocks, so a device
-    whose clock runs ahead takes more of the 500. `lookup` shows the same messages. What arrives
-    after the page has loaded but was sent before it isn't read out as new.
+    whose clock runs ahead takes more of the 500. `lookup` shows the same messages. A message
+    that reaches the open conversation after the page has loaded, but was sent before it, isn't
+    read out as new; an unread one to the person still is.
   - *What it doesn't do.* The page can't reach past the newest 500; reading further back when the
-    page asks isn't built. A record this device can't open is left out until a key opens it. A
-    backlog given up on, whose daemon restarts before its fetch lands, stays off the page until the
-    start after that, unless tags were being read from it.
+    page asks isn't built. A record this device can't open is left out until a key opens it. While
+    a backlog given up on hasn't been fetched, the whole log of its device is off the page, since
+    the cursor is at a commit that isn't here; it comes back when the fetch lands.
 - **How it's laid out** (#179, 2026-11-08; drawn as a sibling of T3 Code 2026-11-09, so a person who
   works in T3 Code reads it without learning a second app): sessions down the left under their
   devices, as T3 Code's threads under their projects, then a column of conversations (direct

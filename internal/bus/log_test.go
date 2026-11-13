@@ -207,9 +207,11 @@ func TestRecentReadsAcrossLogsNewestFirst(t *testing.T) {
 	b := datedChain(t, r, 1, "b0\n\n{}\n", "b1\n\n{}\n", "b2\n\n{}\n") // minutes 1, 2, 3
 	tipA, tipB := a[2], b[2]
 
+	var missing []string // the tips the last read found nothing for
 	recent := func(limit int, enough int, tips ...string) (got []string, pages int) {
 		t.Helper()
-		err := r.Recent(context.Background(), tips, limit, bus.MaxRecord, func(p []bus.Commit) bool {
+		var err error
+		missing, err = r.Recent(context.Background(), tips, limit, bus.MaxRecord, func(p []bus.Commit) bool {
 			pages++
 			for _, c := range p {
 				subject, _, _ := strings.Cut(c.Message, "\n")
@@ -260,17 +262,68 @@ func TestRecentReadsAcrossLogsNewestFirst(t *testing.T) {
 	if got, _ := recent(100, 100, tipA, tipA); strings.Join(got, " ") != "a2@a a1@a a0@a" {
 		t.Errorf("one log named twice: %v", got)
 	}
-	// What isn't a commit here is passed over, and so is what git would read as an option.
+	if len(missing) != 0 {
+		t.Errorf("tips that are here came back as missing: %v", missing)
+	}
+	// What isn't a commit here is passed over, and so is what git would read as an option. Only an
+	// object that isn't here at all is missing: a fetch may bring it, and nothing will make a blob
+	// a commit.
 	blob, err := r.Git.Run(context.Background(), "junk", "hash-object", "-w", "--stdin")
 	if err != nil {
 		t.Fatal(err)
 	}
-	junk := []string{strings.TrimSpace(blob), strings.Repeat("0", 40), strings.Repeat("ab", 20), "--all", "refs/heads/main", ""}
+	gone := []string{strings.Repeat("0", 40), strings.Repeat("ab", 20)}
+	junk := append([]string{strings.TrimSpace(blob), "--all", "refs/heads/main", ""}, gone...)
 	if got, _ := recent(100, 100, append(junk, tipA)...); strings.Join(got, " ") != "a2@a a1@a a0@a" {
 		t.Errorf("with junk among the tips: %v", got)
 	}
-	if got, pages := recent(100, 100, junk...); len(got) != 0 || pages != 0 {
-		t.Errorf("junk alone: %v in %d pages", got, pages)
+	if strings.Join(missing, " ") != strings.Join(gone, " ") {
+		t.Errorf("missing %v, want the two objects that aren't here, %v", missing, gone)
+	}
+	if got, pages := recent(100, 100, junk...); len(got) != 0 || pages != 0 || len(missing) != 2 {
+		t.Errorf("junk alone: %v in %d pages, %d missing", got, pages, len(missing))
+	}
+}
+
+// Recent hands over everything in one page, however many commits, where Log pages by LogPage: its
+// caller waits on no cursor, and each page costs git commands.
+func TestRecentReadsALongHistoryInOnePage(t *testing.T) {
+	r := logRepo(t)
+	ctx := context.Background()
+	// Written by one git, as a commit at a time would take a minute: every commit on the branch
+	// has the one before as its parent, and no files.
+	const n = 2*bus.LogPage + 10
+	var in strings.Builder
+	for i := range n {
+		msg := fmt.Sprintf("event %d\n\n{}\n", i)
+		fmt.Fprintf(&in, "commit refs/heads/long\ncommitter test <test@example.invalid> %d +0000\ndata %d\n%s\n", 1_700_000_000+i, len(msg), msg)
+	}
+	if _, err := r.Git.Run(ctx, in.String(), "fast-import", "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := r.Git.Run(ctx, "", "rev-parse", "refs/heads/long")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tip := strings.TrimSpace(out)
+
+	var sizes []int
+	newest := ""
+	if _, err := r.Recent(ctx, []string{tip}, n-5, bus.MaxRecord, func(p []bus.Commit) bool {
+		sizes = append(sizes, len(p))
+		if newest == "" && len(p) > 0 {
+			newest = p[0].Message
+		}
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sizes) != 1 || sizes[0] != n-5 || !strings.HasPrefix(newest, fmt.Sprintf("event %d\n", n-1)) {
+		t.Errorf("pages of %v commits starting at %q, want one page of %d from the newest", sizes, newest, n-5)
+	}
+	// Log, over the same history, pages it.
+	if pages := readLog(t, r, "", tip, bus.MaxRecord); len(pages) != 3 {
+		t.Errorf("Log read it in %d pages, want 3", len(pages))
 	}
 }
 
@@ -281,7 +334,7 @@ func TestRecentPassesOverACommitOverTheLimit(t *testing.T) {
 	huge := "huge\n\n{\"body\":\"" + strings.Repeat("x", 4*max) + "\"}\n"
 	shas := chain(t, r, "", "before\n\n{}\n", huge, "after\n\n{}\n")
 	var got []bus.Commit
-	err := r.Recent(context.Background(), []string{shas[2]}, 100, max, func(p []bus.Commit) bool {
+	_, err := r.Recent(context.Background(), []string{shas[2]}, 100, max, func(p []bus.Commit) bool {
 		got = append(got, p...)
 		return true
 	})

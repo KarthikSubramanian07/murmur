@@ -129,6 +129,9 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
+	if req.Op == proto.OpLookup {
+		d.wantHistory() // read back while the first sync runs, not after it
+	}
 	if req.Op == proto.OpWho || req.Op == proto.OpSend || req.Op == proto.OpLookup {
 		d.awaitFirstSync(ctx)
 	}

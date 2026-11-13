@@ -81,9 +81,26 @@ func TestPageOfADeviceThatJoinsLaterShowsEarlierConversations(t *testing.T) {
 	b.send("bbbbbb", alice, "an answer, before c joined", "")
 	eventually(t, "the answer on a's page", pageHas(a.page(), "before c joined", "an answer, before c joined"))
 
-	c := newDevice(t, remote)
+	// Not waiting for its key: the page is open, and has asked, before the grant comes, where that
+	// is how the timing falls. Nothing holds the grant back until then.
+	c := newDeviceWith(t, remote, func(d *device) { d.noKey = true })
 	c.session("cccccc", "")
-	eventually(t, "the earlier conversation on c's page", pageHas(c.page(), "before c joined", "an answer, before c joined"))
+	// As the page asks: each call carries the cursor the one before gave, and a message it has is
+	// known by its ID. What is read back after its first call must still reach it.
+	pc := c.page()
+	cursor, got := "", map[string]string{}
+	eventually(t, "the earlier conversation to reach a page that holds a cursor", func() bool {
+		msgs, next := pc.messages(cursor)
+		cursor = next
+		for _, m := range msgs {
+			got[m.ID] = m.Subject
+		}
+		return len(got) >= 2
+	})
+	if len(got) != 2 {
+		t.Errorf("the page was given %v", got)
+	}
+	eventually(t, "the earlier conversation on c's page, in order", pageHas(pc, "before c joined", "an answer, before c joined"))
 	if got := c.do(proto.Request{Op: proto.OpInbox, Session: "cccccc"}).Messages; len(got) != 0 {
 		t.Errorf("a session on the device that joined was given %+v", got)
 	}

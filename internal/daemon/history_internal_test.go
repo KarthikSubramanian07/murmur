@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"io"
 	"log"
 	"slices"
@@ -82,6 +83,80 @@ func TestHistoryWithNothingToAddChangesNothing(t *testing.T) {
 		if len(d.msgIDs) != 3 || d.msgIDs["m1"] {
 			t.Fatalf("the IDs known are %v", d.msgIDs)
 		}
+	}
+}
+
+// A page that holds a cursor when earlier messages are read back is given every message again, in
+// order, the ones it has among them: it passes over those by their IDs. Its next call brings
+// nothing more. A read that adds nothing leaves the cursor it holds good.
+func TestHistoryIsGivenToAPageThatHoldsACursor(t *testing.T) {
+	d := historyDaemon(4)
+	src := pageSource{d}
+	ctx := context.Background()
+	call := func(cursor string) ([]string, string) {
+		t.Helper()
+		msgs, next, err := src.Messages(ctx, cursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, m := range msgs {
+			got = append(got, m.Subject)
+		}
+		return got, next
+	}
+	merge := func(events ...bus.Event) {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		d.mergeMessagesLocked(events)
+	}
+
+	d.mu.Lock()
+	d.keepMessageLocked(sentAt("m3", 3))
+	d.keepMessageLocked(sentAt("m5", 5))
+	d.mu.Unlock()
+	got, held := call("")
+	if !slices.Equal(got, []string{"m3", "m5"}) {
+		t.Fatalf("the page's first call: %q", got)
+	}
+
+	merge(sentAt("m3", 3), sentAt("m5", 5))
+	if got, next := call(held); len(got) != 0 || next != held {
+		t.Fatalf("after a read that added nothing, the cursor brought %q and became %q, from %q", got, next, held)
+	}
+
+	merge(sentAt("m1", 1), sentAt("m4", 4))
+	got, next := call(held)
+	if !slices.Equal(got, []string{"m1", "m3", "m4", "m5"}) {
+		t.Fatalf("after earlier messages were read back, the cursor the page held brought %q, want all four in order", got)
+	}
+	if got, again := call(next); len(got) != 0 || again != next {
+		t.Errorf("the call after that brought %q", got)
+	}
+	if got, _ := call(""); !slices.Equal(got, []string{"m1", "m3", "m4", "m5"}) {
+		t.Errorf("a page that starts now is given %q", got)
+	}
+}
+
+// A read of the logs that doesn't come, as with a git that hangs, costs the page one wait: the call
+// that waited it out says so, and no call after it waits.
+func TestAReadThatDoesNotComeIsWaitedForOnce(t *testing.T) {
+	d := historyDaemon(4)
+	d.historyRead, d.historyWant, d.bgCtx = make(chan struct{}), make(chan struct{}), context.Background()
+	began := time.Now()
+	d.awaitHistory(context.Background())
+	if took := time.Since(began); took < historyWait {
+		t.Errorf("the first call waited %s, want the whole %s", took, historyWait)
+	}
+	select {
+	case <-d.historyWant:
+	default:
+		t.Error("the call didn't ask for the logs to be read back")
+	}
+	began = time.Now()
+	d.awaitHistory(context.Background())
+	if took := time.Since(began); took > historyWait/2 {
+		t.Errorf("a second call waited %s for a read the first had waited out", took)
 	}
 }
 
