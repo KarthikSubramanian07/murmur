@@ -34,8 +34,8 @@ color is a change of `fill`, not a new drawing.
 - README: the banner at the top, the icon at the foot.
 - Tab icons: the site's and the `mur ui` page's. `mur ui` also shows the icon in its sidebar and
   on its sign-in gate.
-- Home page: the lockup behind the hero's reeded glass, the mark in the hero's top left corner on
-  screens 1000px and wider, the mark before "Murmur daemon" in the How it works diagram, and the
+- Home page: the lockup behind the hero's reeded glass (on a phone, the wordmark there and the
+  mark at the hero's foot), the mark in the hero's top left corner on screens 1000px and wider, the mark before "Murmur daemon" in the How it works diagram, and the
   lockup at the start of the footer.
 - About, Privacy, Contact and Other ways to use Murmur: the mark in the back pill, the lockup in
   the footer.
@@ -51,6 +51,12 @@ by the glass, at under half the strength the Inter word had (11 against 24), whi
 mark's eyes survive. The eyes of that mark, and of the one in the corner, follow the pointer by a few
 units; they stay holes cut from the designer's shapes, and nothing moves on a touch screen or with
 reduced motion.
+
+On a phone (600px and narrower, #498) the hero is cleaner: the wordmark alone in butter where the
+lockup is, the mark in cream at the hero's foot with its lower third below the edge, and only the
+headline and the button over the glass; the sentence that explains Murmur opens How it works
+instead. The wordmark is behind the gentlest glass (scale 4), as Tyler asked on 2026-11-12 for less
+bend in it than #498's draft had.
 
 ## Color
 
