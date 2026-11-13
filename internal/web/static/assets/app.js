@@ -29,7 +29,29 @@ try {
 } catch {}
 document.documentElement.dataset.theme = theme;
 
+// An easter egg (#499), after the old Discord joke about light mode: going from a dark theme to
+// Light flashes the screen white. It happens the first time in this browser and one time in twenty
+// after that, so it stays a surprise. Someone who asked for reduced motion never gets it.
+const FLASH_KEY = NAME + ":flashbanged";
+const FLASH_ODDS = 0.05;
+function flashbang() {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  let seen = false;
+  try {
+    seen = localStorage.getItem(FLASH_KEY) !== null;
+    localStorage.setItem(FLASH_KEY, "1");
+  } catch {
+    seen = true; // nowhere to remember the first time, so every time takes its chances
+  }
+  if (seen && Math.random() >= FLASH_ODDS) return;
+  document.querySelector(".flashbang")?.remove();
+  const flash = h("div", { class: "flashbang", "aria-hidden": "true" });
+  flash.addEventListener("animationend", () => flash.remove());
+  document.body.append(flash);
+}
+
 function setTheme(t) {
+  if (t === "light" && (theme === "dark" || theme === "dim")) flashbang();
   theme = t;
   document.documentElement.dataset.theme = t;
   try {
@@ -1690,11 +1712,12 @@ function recentPage() {
   );
 }
 
-// One line of activity: an icon where a message has its sender's face, who, what, and when.
-function activityLine(iconName, t, key, ...what) {
+// One line of activity: an icon where a message has its sender's face, who, what, and when. tone
+// colors the icon by what happened (style.css's .g-act-*), and "" leaves it grey.
+function activityLine(iconName, tone, t, key, ...what) {
   return h(
     "div",
-    { class: "g-act", "data-id": key },
+    { class: tone ? "g-act g-act-" + tone : "g-act", "data-id": key },
     h("span", { class: "g-act-ico" }, icon(iconName)),
     h("p", { class: "g-act-text" }, what),
     h("time", { class: "chat-msg-time", title: t ? new Date(t).toLocaleString() : "" }, clockTime(t)),
@@ -1714,18 +1737,19 @@ function activityItem(e) {
   const who = actWho(e.who[0]);
   switch (a.kind) {
     case "started":
-      return activityLine("logIn", e.t, a.id, who, " joined", a.agent && [" as ", a.agent], a.branch && [" on ", actBranch(a.branch)]);
+      return activityLine("logIn", "", e.t, a.id, who, " joined", a.agent && [" as ", a.agent], a.branch && [" on ", actBranch(a.branch)]);
     case "stopped":
-      return activityLine("logOut", e.t, a.id, who, " left");
+      return activityLine("logOut", "", e.t, a.id, who, " left");
     case "status":
-      return activityLine("activity", e.t, a.id, who, " is now ", h("span", { class: "g-act-quote" }, a.doing), e.n > 1 && h("span", { class: "g-act-more" }, " after " + plural(e.n - 1, "earlier update")));
+      return activityLine("activity", "status", e.t, a.id, who, " is now ", h("span", { class: "g-act-quote" }, a.doing), e.n > 1 && h("span", { class: "g-act-more" }, " after " + plural(e.n - 1, "earlier update")));
     case "tags": {
       const added = (a.added || []).map((t) => h("span", { class: "g-act-tag" }, t));
       const removed = (a.removed || []).map((t) => h("span", { class: "g-act-tag g-act-tag-off" }, t));
-      return activityLine("tag", e.t, a.id, who, added.length ? [" is tagged ", added] : null, removed.length ? [added.length ? " and no longer " : " is no longer tagged ", removed] : null);
+      return activityLine("tag", "", e.t, a.id, who, added.length ? [" is tagged ", added] : null, removed.length ? [added.length ? " and no longer " : " is no longer tagged ", removed] : null);
     }
     case "commits":
       return activityLine(
+        "commit",
         "commit",
         e.t,
         a.id,
@@ -1735,7 +1759,7 @@ function activityItem(e) {
         a.subject && h("span", { class: "g-act-more" }, e.commits > 1 ? ", the last: " : ": ", a.subject),
       );
   }
-  return activityLine("activity", e.t, a.id, who, " ", a.kind);
+  return activityLine("activity", "", e.t, a.id, who, " ", a.kind);
 }
 
 function githubItem(e) {
@@ -1745,10 +1769,12 @@ function githubItem(e) {
   const num = g.url ? h("a", { href: g.url, target: "_blank", rel: "noopener noreferrer" }, "#" + g.number) : "#" + g.number;
   const who = e.who[0] ? actWho(e.who[0]) : g.author ? h("span", { class: "g-act-login" }, g.author) : "Someone";
   const title = h("span", { class: "g-act-more" }, ": ", g.title);
-  if (g.what === "opened") return activityLine(pr ? "pr" : "issue", e.t, g.id, who, pr ? " opened pull request " : " filed issue ", num, title);
+  if (g.what === "opened") return activityLine(pr ? "pr" : "issue", "open", e.t, g.id, who, pr ? " opened pull request " : " filed issue ", num, title);
   // GitHub's list says who opened it, not who merged or closed it.
-  const verb = g.what === "merged" ? " was merged" : " was closed";
-  return activityLine(g.what === "merged" ? "merge" : pr ? "pr" : "issue", e.t, g.id, e.who[0] ? [who, "'s " + what + " "] : what[0].toUpperCase() + what.slice(1) + " ", num, verb, title);
+  // GitHub's colors: a merged pull request and a closed issue are done, a closed pull request is not.
+  const merged = g.what === "merged";
+  const verb = merged ? " was merged" : " was closed";
+  return activityLine(merged ? "merge" : pr ? "prClosed" : "issueClosed", merged || !pr ? "done" : "closed", e.t, g.id, e.who[0] ? [who, "'s " + what + " "] : what[0].toUpperCase() + what.slice(1) + " ", num, verb, title);
 }
 
 function recentItem(m, at) {

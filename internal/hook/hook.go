@@ -15,6 +15,10 @@
 // the same moments, with a payload of Claude Code's shape whose session_id is the Pi session's
 // file, and reads its answer as Claude Code would (internal/join/pi.go, #205).
 //
+// OpenCode 2 has none either, and Murmur's plugin there does the same (`mur hook --agent opencode`),
+// with OpenCode's session ID, and says which sessions another session started
+// (internal/join/opencodeplugin.go, #431, #455).
+//
 // It never blocks or fails the agent: any problem, including no daemon running, means it
 // prints nothing and exits 0. Before a tool call it never prints anything at all, and the time it
 // can hold the call up is bounded by BracketTimeout.
@@ -64,6 +68,10 @@ type input struct {
 	// to go on (Escape, an error), so the hook tells the daemon the turn ended and keeps nothing
 	// going. Claude Code fires no Stop then.
 	Interrupted bool `json:"interrupted"`
+	// Child and ParentNative are Murmur's own, from its OpenCode plugin: another session started
+	// this one, whose OpenCode session ID ParentNative is (#455).
+	Child        bool   `json:"child"`
+	ParentNative string `json:"parent_native"`
 }
 
 type output struct {
@@ -165,10 +173,10 @@ func findClone(ctx context.Context, cwd string) (string, error) {
 //
 // Where no record is surely the session's, the working directory answers, as it did before #422:
 // no directory for records, a server from before they were written or one that isn't running, or
-// a process whose sessions can't be told apart. Pi's extension runs the hook only in a clone its
-// user joined, by its working directory.
+// a process whose sessions can't be told apart. Pi's extension and OpenCode's plugin run the hook
+// only in a clone their user joined, by its working directory.
 func sessionClone(ctx context.Context, agent string, in input, who proto.Request) (gitDir string, placed bool) {
-	if agent != Pi {
+	if !byExtension(agent) {
 		if dir, err := here.DefaultDir(); err == nil {
 			pids := who.Ancestors
 			if agent == "" {
@@ -228,17 +236,23 @@ func Run(stdin io.Reader, stdout io.Writer) { RunFor("", stdin, stdout) }
 // Agents other than Claude Code that join installs the hook in, by the name their hook's command
 // line gives (`mur hook codex`). Their hooks take Claude Code's payload and answers, Grok's with
 // some fields of its own (#225). Pi's is run by Murmur's own extension, which gives the session's
-// file for its ID (#205).
+// file for its ID (#205), and OpenCode's by Murmur's plugin, with OpenCode's session ID (#431).
 const (
-	Codex = "codex"
-	Grok  = "grok"
-	Pi    = "pi"
+	Codex    = "codex"
+	Grok     = "grok"
+	Pi       = "pi"
+	OpenCode = "opencode"
 )
 
-// KnownAgent says RunFor knows the agent named: "" (Claude Code), codex, grok or pi.
+// KnownAgent says RunFor knows the agent named: "" (Claude Code), codex, grok, pi or opencode.
 func KnownAgent(agent string) bool {
-	return agent == "" || agent == Codex || agent == Grok || agent == Pi
+	return agent == "" || agent == Codex || agent == Grok || agent == Pi || agent == OpenCode
 }
+
+// byExtension says agent's hook is run by code of Murmur's inside the agent, not by the agent's
+// own hooks: Pi's extension and OpenCode's plugin. Their payload names the session by the ID its
+// MCP server registered with, and may say the work was interrupted.
+func byExtension(agent string) bool { return agent == Pi || agent == OpenCode }
 
 // RunFor is Run for agent, "" for Claude Code. It does nothing for an agent it doesn't know, rather
 // than take another agent's hook for Claude Code's. Another agent's hook brackets no tool call, as
@@ -258,8 +272,11 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 	if in.SessionID == "" || !events[in.Event] {
 		return
 	}
-	if agent != Pi {
-		in.Interrupted = false // Pi's extension's own field: Claude Code fires no Stop then
+	if !byExtension(agent) {
+		in.Interrupted = false // the extensions' own field: Claude Code fires no Stop then
+	}
+	if agent != OpenCode {
+		in.Child, in.ParentNative = false, ""
 	}
 	who := identify(agent, in)
 	if in.Event == stop {
@@ -349,8 +366,8 @@ func turnEnd(agent string, in input, who proto.Request, stdout io.Writer) {
 	if err != nil {
 		return
 	}
-	// Grok's Stop at the session's close can't keep anything going, nor can Pi's after Escape or an
-	// error: the messages are left to be handed over as a turn, as after a turn the user interrupted.
+	// Grok's Stop at the session's close can't keep anything going, nor can Pi's or OpenCode's after
+	// Escape or an error: the messages are left to be handed over as a turn, as after a turn the user interrupted.
 	who.Op, who.Continues = proto.OpTurnEnd, (in.Reason == "" || in.Reason == "end_turn") && !in.Interrupted
 	resp, err := c.Do(ctx, who)
 	if err != nil || len(resp.Read) == 0 || !who.Continues {
@@ -363,12 +380,12 @@ func turnEnd(agent string, in input, who proto.Request, stdout io.Writer) {
 // for Claude Code, its process (CLAUDE_PID); for another agent, the agent's name and the hook's
 // ancestors, among which is the agent's process (proc.Ancestors).
 func identify(agent string, in input) proto.Request {
-	if agent == Pi {
-		// The session is named by its file, which its MCP server registered with too, never by a
-		// Claude Code ID or process: a Pi started from a Claude Code session's shell inherits that
-		// session's CLAUDE_PID. Nothing of Pi's is a transcript of Claude Code's form, and no call is
-		// bracketed, so Pi's commits aren't credited to it.
-		return proto.Request{Native: in.SessionID}
+	if byExtension(agent) {
+		// The session is named by its file (Pi) or its session ID (OpenCode), which its MCP server
+		// registered with too, never by a Claude Code ID or process: a Pi started from a Claude Code
+		// session's shell inherits that session's CLAUDE_PID. Nothing of theirs is a transcript of
+		// Claude Code's form, and no call is bracketed, so their commits aren't credited to them.
+		return proto.Request{Native: in.SessionID, Child: in.Child, ParentNative: in.ParentNative}
 	}
 	r := proto.Request{ClaudeSession: in.SessionID, Subagent: in.AgentID != "" || in.SubagentType != ""}
 	if agent == "" {

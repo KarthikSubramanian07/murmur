@@ -697,10 +697,38 @@ since it wasn't installed). The details, and where each came from, are in the co
   a Muse thread each took a message as a turn and answered it with `send`, nobody typing
   (2026-11-01). Outside T3, Muse and Grok have no way in that Murmur uses yet (Muse's session
   messaging isn't on Windows, and no way to start a turn in Grok was found), so a message waits in
-  the inbox. OpenCode and Muse have no hook of Murmur's, so no notice either; Grok has one (below). Pi
+  the inbox. OpenCode 1 and Muse have no hook of Murmur's, so no notice either; Grok has one (below). Pi
   has both since 2026-11-09 (#205), and OpenCode 2 takes a turn through its server since
   2026-11-11 (#135): see "Pi's extension" and "The client's command line" under "Delivering a
   message as a turn".
+- **OpenCode 2's plugin (2026-11-12, #431, #455).** OpenCode 2 has no hooks of Claude Code's kind,
+  so join writes `plugins/murmur.js` into its config directory, which OpenCode loads with no entry
+  in `opencode.json`. The plugin runs `mur hook --agent opencode` after each tool call, when a turn
+  starts and when it ends, with OpenCode's session ID, so an OpenCode 2 session is told of a
+  message while it works and handed what is unread at its turn's end, as Claude Code is.
+  - *How the words go in.* `ctx.session.synthetic` with `delivery: "steer"` puts the notice after
+    the tool's result and before the next model request, as a message of its own. Appended to the
+    tool's result instead, a model took it for text planted in the file it had read and refused it.
+    At a turn's end the session is idle, and the same call starts another turn. What it costs:
+    OpenCode's terminal UI shows the answer to a synthetic message and not the message.
+  - *Order.* Each hook is a process, so the plugin runs one session's hooks one after another. A
+    turn's start that reached the daemon after its end would leave an idle session looking busy.
+  - *Children.* A session the `subagent` tool started carries `parentID`. The plugin says so on
+    every hook request of that session (`child`, `parentNative`, #473), and once as the session is
+    made, before its first call to one of Murmur's tools registers it; the daemon marks a session
+    named so as it registers. So an OpenCode child is never listed, and its `send` is refused with
+    its parent's name. The gap #487 describes for Codex is left only where the daemon didn't hear
+    the plugin: a child made while no daemon ran, or before a daemon restart, is on the mesh from
+    its first call to one of Murmur's tools until its next tool call ends.
+  - *Tried* on OpenCode 2.2.0 against a private `opencode serve` in a joined scratch clone
+    (2026-11-12): a message sent mid-turn came as a notice after the next tool call; at the turn's
+    end the session was handed it whole, read a file and answered with `send`, nobody typing; a
+    subagent that called `who` and `send` never showed in another session's `who`, and its `send`
+    was refused. Not tried: a thread T3 started, the terminal UI on the shared background server,
+    and whether T3's sidebar shows a child session as a thread of its own (Tyler's rule, #452,
+    keeps such a one on the mesh; the plugin would take it off).
+  - *Not covered.* `opencode run` exits when its turn ends, so what the hook hands over there is
+    marked read and never acted on. OpenCode 1 loads plugins of another shape and gets none.
 - **Titles.** Inside T3 the thread's title is read as for any thread. Outside T3 none is read for
   these agents: their IDs aren't Codex threads.
 - **Tool approval.** OpenCode and Grok have a rule for it, which join writes; Muse and Pi have none.
@@ -1101,7 +1129,7 @@ which session made a commit, so the daemon watches tool calls for them.
   matcher `*` on the three tool events, and run again adds what an older join lacks. A repo set up by an `init` from before #55 had the hook
   in its committed `.claude/settings.json`; `mur init` removes it there, and the user's `mur join`
   installs it in Claude Code's own settings (#422). On `PreToolUse` the daemon snapshots the worktree
-  of the hook's working directory (`attrib.Head`: HEAD, branch and every ref tip). On the call's end it
+  of the hook's working directory (`attrib.Head`: HEAD, branch, every ref tip and every worktree's detached HEAD). On the call's end it
   snapshots again and credits `attrib.NewCommits` between the two to the sessions the hook speaks
   for, the ones its notices go to. A commit made in that worktree during the call by a human or
   another session is credited too: git can't say who made it, and this was accepted. Package
@@ -1113,8 +1141,8 @@ which session made a commit, so the daemon watches tool calls for them.
   dropped after an hour, and the oldest goes once 128 are held, so a call whose end never comes (it
   was cancelled, the hook crashed) can't pile them up. A call with no snapshot credits nothing.
 - **Which worktree.** The one the call started in, and the one it ended in if that is another
-  worktree of the clone: the start's ref tips are the whole clone's, so they keep either
-  worktree's history out, all but a detached HEAD's in the other (#60). A `cd` inside a Bash call leaves the hook's working directory where it
+  worktree of the clone: the start's tips are the whole clone's, every worktree's detached HEAD
+  among them, so they keep either worktree's history out (#60). A `cd` inside a Bash call leaves the hook's working directory where it
   was (seen on 2.1.312, 2026-10-29), so a call ends elsewhere only when Claude Code itself has
   moved, and what `cd ../other && git commit`, or `git -C ../other commit`, makes in another
   worktree isn't credited. The hook finds the clone from its working directory, and a call in
@@ -1123,8 +1151,8 @@ which session made a commit, so the daemon watches tool calls for them.
 - **What it costs.** A call that cannot run a command (`Read`, `Glob`, `Grep`, `Edit`, `Write`
   and the like, named in `internal/hook`) isn't bracketed. Any other tool is, MCP tools and
   subagents included. The start is one `git` process: the hook finds the clone from its files, and
-  `attrib.Head` reads HEAD from the worktree's git directory and asks git only for the refs (a
-  reftable repository, or one git might find differently, takes three). It can't be made to run
+  `attrib.Head` reads HEAD from the worktree's git directory and the other worktrees' HEAD files, and asks git only for the refs (a
+  reftable repository, or one git might find differently, takes four). It can't be made to run
   without the call waiting: a commit made before the snapshot would count as old history. The end
   is answered at once, and the daemon finds the commits after, with two more; a `lookup` waits for
   that, and so does the next call's start for the end's snapshot, as that call could otherwise
@@ -1279,6 +1307,8 @@ then on: not a message to it, to its device, or to everyone.
   as tags are, so they outlast a resume or a restart) and doesn't queue a message from a muted
   session for the one that muted it. Other sessions on the device still get a broadcast. Because
   the receiver drops it, a mute holds whatever the sender's daemon knows, its version included.
+  It holds as well for what arrived while the daemon was down, which a session is given when it
+  reconnects (#482).
 - **Mutes are on the bus, in presence.** Each session's presence lists the names it has muted, at
   most 50, inside the box. Presence is the device's current state, so a mute needs no event to
   replay, and a device back after a week shows its mutes as they are. Anyone on the team sees who
@@ -1298,7 +1328,23 @@ then on: not a message to it, to its device, or to everyone.
   have muted it (Tyler, 2026-11-11), as far as its daemon knows then.
 - **A mute names a session by its name**, which the registry never gives out twice, so it can't
   land on another session, and it follows the conversation across session IDs. It lasts until it
-  is undone. A person can't be muted, nor a session that has no name yet.
+  is undone. A person can't be muted, nor a session that has no name yet. Mutes a session makes
+  before its own name lands are added to the name's when it does (#483), where its tags give way
+  to the name's: a mute dropped lets through what the session asked not to get.
+- **A sender that has left presence is known by every name its address has held** (#483,
+  2026-11-12). An address has two or more after its client started a new conversation in the same
+  session (Claude Code's `/clear`). A message carries no name, and the registry keeps no order, so
+  which name the address had when it sent can't be known, and a mute of any of them holds. Before,
+  one was picked at random for each message. The cost: a conversation nobody muted, at an address
+  whose earlier conversation was, has what it sends dropped if it has left presence when the
+  muting device reads it, and its sender isn't told. A sender still in presence goes by the name
+  it has now, so a mute still depends on when the message is read. Remembering the last name each
+  address showed in presence would narrow both; it isn't built.
+- **A muted session can't add the session that muted it to a group** (#483, 2026-11-12). The
+  messages it sent there were dropped already, but each add used one of the muting session's 12
+  tags. Its `tags` call is refused once its daemon has read of the mute, as its `send` is, and
+  the muting session's device applies no add from it, from the first moment: nobody is told an
+  add arrived, so there is no grace to keep true.
 - **A human can undo one, on the page of the muting session's device.** An agent can't silence a
   teammate's agent without its human able to see it and undo it. The page of another device lists
   the mute and can't undo it: that would take an event to the muting device, as a human's tags on
@@ -1618,7 +1664,7 @@ hook has the session at work (see "A session at work", below):
 | T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if it is busy, interrupting nothing. A busy session the hook runs in (Claude Code, Codex, Grok, and Pi through its extension) is not handed the message: the hook tells it | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
 | Claude Code outside T3 | the session's messaging socket | Unverified: a message Murmur's code wrote to a session's socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle one has not been tried |
 | Pi outside T3 | the socket Murmur's extension opens in the session | Yes (2026-11-09, Pi 1.5.0 in RPC mode with a stand-in model: an idle session took a message as a turn, nobody typing) |
-| Codex, OpenCode, Muse or Grok outside T3, or any handoff that fails | the hook's notice where the hook runs (Claude Code, Codex, Grok, Pi), and `inbox` | No |
+| Codex, OpenCode, Muse or Grok outside T3, or any handoff that fails | the hook's notice where the hook runs (Claude Code, Codex, Grok, Pi, OpenCode 2), and `inbox` | No |
 
 What the agent reads:
 
@@ -1723,9 +1769,10 @@ A body past the limit is cut, as in `inbox`.
     older, it stays a notice, as it would have without the turn.
   - *Why not hand it to T3 as well*: T3 can't take back a queued message, so the agent could read
     it with `inbox` mid-turn and then get it again as a turn.
-  - *Where the hook doesn't run* (OpenCode and Muse in T3, as of 2026-11-09, and OpenCode 2
-    outside it), nothing tells the daemon the session is at work, and a message goes to T3, or to
-    OpenCode's server, as before: without the handoff the session would hear nothing at all. Codex and Grok have the hook since #225, and Pi since #205.
+  - *Where the hook doesn't run* (OpenCode 1 and Muse in T3, as of 2026-11-12), nothing tells the
+    daemon the session is at work, and a message goes to T3 as before: without the handoff the
+    session would hear nothing at all. Codex and Grok have the hook since #225, Pi since #205, and
+    OpenCode 2 since #431.
   - *Subagents.* A subagent's tool call carries the parent's `session_id`, with `agent_id` set
     (Claude Code 2.1.312, 2026-10-29). The hook tells it nothing, as its notice would land in the
     subagent's context, not the session's (inferred, not seen; #188), and it doesn't mark the
@@ -1767,12 +1814,16 @@ A body past the limit is cut, as in `inbox`.
   What the old session had unread goes to the new one, which now has the way in, in the order the
   messages arrived, behind any that was already on its way in; it leaves behind what the new
   session sent itself and what came while it was running and was for it too, as it had its own copy
-  of those, which it may have read. Not covered: a message for everyone that comes in the second or
-  so between a new session registering and finding its thread goes to the old session's thread
-  while that has the route, and to the new one when it has it, so the thread may see it twice.
-  Nor is a new session that registers before the daemon has seen the old one's connection close:
-  the old one, still running then, keeps the route through its grace, and the thread may see a
-  message for everyone twice (#99). Handing the thread over when the drop is seen was tried
+  of those, which it may have read. A message for everyone that comes in the second or so between
+  a new session registering and finding its thread is handed to the thread by the old session,
+  which still has the route, and the new session's copy is not handed over again when the route
+  moves to it (#70, 2026-11-11): the daemon remembers, by event ID, what it handed to each thread
+  for the last 30 minutes (up to 200 messages a thread, in memory only), and takes another copy of
+  one out of the inbox of any session of that thread, as the thread has it. A message for the new
+  session alone is another event, and goes in. Not covered: a new session that registers before the
+  daemon has seen the old one's connection close. The old one, still running then, keeps the route
+  through its grace, both copies can be on their way in at once, and the thread may see a message
+  for everyone twice (#99). Handing the thread over when the drop is seen was tried
   (2026-10-30) and dropped: in three review rounds each version could strand a message to the old
   session's name, where a repeat is all that happens now.
   A session that found its thread keeps its name under the Claude session ID too, so the ID does
@@ -1855,8 +1906,9 @@ A body past the limit is cut, as in `inbox`.
   - *OpenCode 2:* `opencode api session.prompt --param sessionID=<session>` with the body
     `{"text": ..., "delivery": "queue"}`, which asks the background server that every OpenCode 2
     client on the machine shares. `"queue"` waits behind a running turn (the default, `"steer"`,
-    goes into it): OpenCode has no hook of Murmur's, so the daemon can't tell a busy session, and
-    it is handed the message either way, as an OpenCode thread in T3 is. Seen on OpenCode 2.2.0
+    goes into it). When this was built OpenCode had no hook of Murmur's, so the daemon couldn't
+    tell a busy session and handed it the message either way; since 2026-11-12 its plugin runs the
+    hook (#431), and a busy session gets the notice and its turn's end, as Codex does. Seen on OpenCode 2.2.0
     the same day: the turn ran, and the terminal UI open on the session showed the message and the
     answer. `session.synthetic` starts a turn too, and the terminal UI then shows the answer and
     not what was asked, so it isn't used.

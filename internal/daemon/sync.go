@@ -1099,14 +1099,15 @@ func (d *Daemon) addInboxLocked(id string, e bus.Event) {
 }
 
 // catchUpLocked gives a session that reconnects after a restart what arrived for it while the
-// daemon was down. Caller holds mu.
+// daemon was down, less what a session it has muted sent, as queueLocked leaves that out (#482).
+// Caller holds mu.
 func (d *Daemon) catchUpLocked(id string) {
 	if time.Since(d.started) > catchUpWindow || d.caughtUp[id] {
 		return
 	}
 	d.caughtUp[id] = true
 	for _, e := range d.pending {
-		if d.addressedLocked(e, id) && !d.offMeshLocked(id) {
+		if d.addressedLocked(e, id) && !d.offMeshLocked(id) && !d.mutedHereLocked(id, e) {
 			d.addInboxLocked(id, e)
 		}
 	}

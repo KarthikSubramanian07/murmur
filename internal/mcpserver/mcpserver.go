@@ -60,6 +60,14 @@ type Options struct {
 
 // Run serves MCP on stdin and stdout until the client disconnects.
 func Run(ctx context.Context, opt Options) error {
+	if opt.Agent == "opencode" {
+		// As Pi's extension below: per user, and older after an update (#431).
+		if did, err := join.RefreshOpenCode(); err != nil {
+			fmt.Fprintf(os.Stderr, brand.Command+" mcp: couldn't update its OpenCode plugin: %v\n", err)
+		} else if did {
+			fmt.Fprintf(os.Stderr, brand.Command+" mcp: updated its OpenCode plugin, which OpenCode loads again\n")
+		}
+	}
 	if opt.Agent == "pi" {
 		// Pi's extension is per user, like this server, and older after an update (#205).
 		if did, err := join.RefreshPi(); err != nil {

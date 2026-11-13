@@ -670,6 +670,9 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		return
 	}
 	d.outOfInboxLocked(j.id, j.msg, "handed", "as a turn, through "+j.via)
+	if j.via == viaT3 {
+		d.noteHandedLocked(j.route, j.msg.Event.ID)
+	}
 	d.introduceLocked(j.key, j.msg.Event.From)
 	d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), j.msg.Event.From)
 	d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), j.msg.Event.To)
@@ -814,6 +817,7 @@ func (d *Daemon) rememberRouteLocked(s *session) {
 	}
 	want := t3Route{CLI: r.T3CLI, Home: r.T3Home, Thread: r.T3Thread}
 	d.retireRoutesLocked(s, want)
+	d.dropHandedLocked(s.id)
 	if d.st.T3Routes[s.id] != want {
 		d.st.T3Routes[s.id] = want
 		d.saveLocked()
@@ -896,6 +900,105 @@ func (d *Daemon) hadCopyLocked(s *session, m *inMsg) bool {
 		return true
 	}
 	return !m.Arrived.Before(s.started) && d.addressedLocked(m.Event, s.id)
+}
+
+// A thread is one recipient of a message, whichever session's copy reaches it (#70). A thread's new
+// session registers before it has found its thread (#56), and a message for everyone that comes in
+// that second is in both sessions' inboxes: the old session, in its grace, still has the thread and
+// hands its copy over at once, and the new one's copy waits until the thread is found and the route
+// moves to it. takeInboxLocked can't tell that copy from a message the thread never had, as the old
+// copy has left the inbox by then. So the daemon remembers, by event ID, what it handed to each
+// thread, and takes another copy out of the inbox of any session of that thread: the thread has the
+// message, and the session is its thread. Left in, the copy would be handed over as a second turn,
+// or told again by the hook. Taking it out is what a handoff does with the copy it hands over, so
+// nothing tries it again or shows it unread. A message only the new session was sent is another
+// event, and goes in, and so does each of two messages that are both for the thread.
+//
+// What is remembered is in memory only, as introduced is: a daemon that restarts forgets it, and a
+// repeat in that window is what there was before.
+
+// handed is a message handed to a thread as a turn: its event ID, and when.
+type handed struct {
+	id string
+	at time.Time
+}
+
+const (
+	// handedFor is how long a message handed to a thread is remembered. The copy that matters waits
+	// only until its session finds its thread: a second or so for Claude Code in T3, the first tool
+	// call for Codex. A copy older than pushMaxAge is no longer handed over as a turn, unless it was
+	// held for the end of one; twice that is past the window, and bounds what is kept in time.
+	handedFor = 2 * pushMaxAge
+	// maxHanded is how many are remembered for one thread, the most one inbox holds, so a thread
+	// handed a burst of messages keeps the newest.
+	maxHanded = maxInbox
+)
+
+// noteHandedLocked records that the message with event ID id was handed to the thread of route r,
+// forgets what is older than handedFor, and takes any other copy of the message out of the inbox of
+// each session of that thread. Caller holds mu.
+func (d *Daemon) noteHandedLocked(r proto.Route, id string) {
+	if r.T3Thread == "" {
+		return
+	}
+	now := time.Now()
+	for k, list := range d.handedTo {
+		for len(list) > 0 && now.Sub(list[0].at) > handedFor {
+			list = list[1:]
+		}
+		if len(list) == 0 {
+			delete(d.handedTo, k)
+		} else {
+			d.handedTo[k] = list
+		}
+	}
+	k := threadKey{r.T3Home, r.T3Thread}
+	list := append(d.handedTo[k], handed{id: id, at: now})
+	if len(list) > maxHanded {
+		list = list[len(list)-maxHanded:]
+	}
+	d.handedTo[k] = list
+	for _, sid := range sortedKeys(d.st.Inbox) {
+		d.dropHandedLocked(sid)
+	}
+}
+
+// dropHandedLocked takes out of session id's inbox each message its T3 thread was already handed,
+// through another session's copy. A copy on its way in stays: usually it is the one being handed
+// over (see takeInboxLocked), and leaves the inbox when it has been. It can also be a second session
+// of the thread handing over its own copy at the same moment, when both already hold the thread's
+// route; that repeat is #99's, which this doesn't cover. Caller holds mu.
+func (d *Daemon) dropHandedLocked(id string) {
+	r := d.routeOfLocked(id)
+	list := d.handedTo[threadKey{r.T3Home, r.T3Thread}]
+	if r.T3Thread == "" || len(list) == 0 {
+		return
+	}
+	got := map[string]bool{}
+	for _, h := range list {
+		if time.Since(h.at) <= handedFor {
+			got[h.id] = true
+		}
+	}
+	box := d.st.Inbox[id]
+	var keep []*inMsg
+	for _, m := range box {
+		if m.Pushing || !got[m.Event.ID] {
+			keep = append(keep, m)
+			continue
+		}
+		d.log.Printf("session %s: message %s is in its T3 thread already, handed over as another session's copy; not handing it over again",
+			bus.Addr(d.device, id), m.Event.ID)
+	}
+	if len(keep) == len(box) {
+		return
+	}
+	if len(keep) == 0 {
+		delete(d.st.Inbox, id)
+	} else {
+		d.st.Inbox[id] = keep
+	}
+	d.saveLocked()
 }
 
 // setRouteLocked takes what a session's MCP server has learned about reaching its client since it

@@ -177,6 +177,7 @@ func TestFirstStartStillSkipsAllHistory(t *testing.T) {
 // A message kept through a long outage for a stopped session of T3 reaches its thread as a turn,
 // as one received live does, though the session has not come back and its MCP server is gone.
 func TestKeptMessageWakesAStoppedT3Thread(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)

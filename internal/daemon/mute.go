@@ -32,7 +32,10 @@ func (d *Daemon) mutesOfLocked(id string) []string {
 }
 
 // adoptMutesLocked moves the mutes a session made while its name was pending to the name, once
-// it lands, as adoptTagsLocked does its tags. Caller holds mu.
+// it lands. Where the name has mutes already, from before a resume, they are added to those:
+// tags kept by the ID give way to the name's (adoptTagsLocked), but a mute dropped lets through
+// what the session asked not to get (#483). The name's own stay as they are, and no more are
+// added than a session may have. Caller holds mu.
 func (d *Daemon) adoptMutesLocked(s *session) {
 	pending := tagKeyOf("", s.id)
 	m := d.st.Mutes[pending]
@@ -40,14 +43,29 @@ func (d *Daemon) adoptMutesLocked(s *session) {
 		return
 	}
 	delete(d.st.Mutes, pending)
-	if d.st.Mutes[s.name] == nil {
+	have := d.st.Mutes[s.name]
+	if have == nil {
 		d.st.Mutes[s.name] = m
+	} else {
+		for _, name := range sortedKeys(m) {
+			if _, ok := have[name]; ok {
+				continue
+			}
+			if len(have) >= bus.MaxMuted {
+				d.log.Printf("session %s muted %s before its name %s landed, and the name has %d mutes already; not kept",
+					bus.Addr(d.device, s.id), name, s.name, len(have))
+				continue
+			}
+			have[name] = m[name]
+		}
 	}
 	d.saveLocked()
 }
 
-// nameOfLocked is the name of the session at addr: the one it has now, else the one the registry
-// gave that address. "" for an address with none, as the CLI's or a person's. Caller holds mu.
+// nameOfLocked is the name of the session at addr: the one it has now, else one the registry gave
+// that address. Where it gave several, that is the first by spelling, which is the same every
+// time and says nothing of which is the latest: the registry keeps no order. "" for an address
+// with none, as the CLI's or a person's. Caller holds mu.
 func (d *Daemon) nameOfLocked(addr string) string {
 	if bus.IsPerson(addr) {
 		return ""
@@ -55,12 +73,48 @@ func (d *Daemon) nameOfLocked(addr string) string {
 	if name, _, _ := d.sessionInfoLocked(addr); name != "" {
 		return name
 	}
-	for name, a := range d.st.Used {
-		if a == addr {
-			return name
-		}
+	if names := d.usedNamesLocked(addr); len(names) > 0 {
+		return names[0]
 	}
 	return ""
+}
+
+// usedNamesLocked is every name the registry has given the session at addr, sorted by spelling.
+// An address holds more than one when its client started a new conversation in the same session
+// (Claude Code's /clear). Caller holds mu.
+func (d *Daemon) usedNamesLocked(addr string) []string {
+	var names []string
+	for name, a := range d.st.Used {
+		if a == addr {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// mutedAtLocked says session id of this device has muted whoever is at addr, and when. A sender
+// in presence goes by the name it has now. One that isn't goes by every name its address has
+// held: which of them it had when it sent can't be known, and a map's order must not decide
+// (#483), so a mute of any of them holds. The cost is a conversation nobody muted, at an address
+// whose earlier conversation was: what it sends is dropped if it has left presence by the time
+// this device reads it, and its sender isn't told (docs/VISION.md, "Mutes"). Caller holds mu.
+func (d *Daemon) mutedAtLocked(id, addr string) (at time.Time, muted bool) {
+	m := d.st.Mutes[d.tagKeyLocked(id)]
+	if len(m) == 0 || bus.IsPerson(addr) {
+		return at, false
+	}
+	if name, _, _ := d.sessionInfoLocked(addr); name != "" {
+		at, muted = m[name]
+		return at, muted
+	}
+	for _, name := range d.usedNamesLocked(addr) {
+		// The latest mute of them, so the grace is that one's.
+		if t, ok := m[name]; ok && (!muted || t.After(at)) {
+			at, muted = t, true
+		}
+	}
+	return at, muted
 }
 
 // mutedHereLocked says session id of this device has muted whoever sent e, so e isn't queued for
@@ -75,11 +129,7 @@ func (d *Daemon) nameOfLocked(addr string) string {
 // to the device is dropped from the first moment: its sender is never refused, so there is
 // nothing for a grace to keep true. Caller holds mu.
 func (d *Daemon) mutedHereLocked(id string, e bus.Event) bool {
-	m := d.st.Mutes[d.tagKeyLocked(id)]
-	if len(m) == 0 {
-		return false
-	}
-	at, muted := m[d.nameOfLocked(e.From)]
+	at, muted := d.mutedAtLocked(id, e.From)
 	if !muted {
 		return false
 	}
