@@ -43,16 +43,39 @@ set.
 ## On every pull request
 
 `.github/workflows/test.yml` runs those checks on every pull request, on a push to `main`, and by
-hand. Three jobs run them at once, `test-macos`, `test-windows` and `test-linux`, all on GitHub's
-own runners, which are free for a public repo and start fresh for every job. A pull request from a
-fork runs on them the same way.
+hand. Its jobs run at once, on GitHub's own runners, which are free for a public repo and start
+fresh for every job. A pull request from a fork runs on them the same way.
+
+**A pull request runs only the jobs its files need** (2026-11-12, #512). The `changes` job gives
+the names of the files changed to `scripts/ci-level.sh`, which answers with one word:
+
+| Level | The change touches only | What runs |
+|---|---|---|
+| `none` | Markdown outside `internal/` and `docs/agents/` other than `README.md`, `.github/ISSUE_TEMPLATE`, images | nothing |
+| `site` | `site/`, and the above | `test-linux`, the site's tests alone |
+| `page` | `internal/web/static`, and the above | `test-linux`, whole |
+| `full` | anything else | every job |
+
+The page's files are built into the binary, so they need the Go tests, but CSS and JS don't behave
+differently per OS. A file no rule names is `full`, and so is a list of files GitHub couldn't give,
+so a mistake runs too much. `scripts/ci-level-test.sh` checks the rules, and `test-linux` runs it.
+A push to `main` and a run by hand are always `full`.
+
+**A test that fails is run once more** (`scripts/go-test-retry.sh`). Daemon tests give up a wait on
+a slow runner, a different one each run: three of the four full runs after #504 lost a Windows
+shard that way (#513), each a rerun by hand. The job passes if the retry does, and says what it
+retried in an annotation and in the run's summary, which is where a test that needs the retry often
+shows. A build failure, a test binary that panics or reaches `-timeout`, a package that fails
+without naming a test, and more than five failures at once are not retried.
 
 `internal/daemon` is most of the Windows time: on 2026-11-12 it took 2,975 s of a 50-minute budget
 (the rest of the suite together about 8 minutes), and runs from #489, #500 and #501 died at the
 `-timeout 50m` with no test hung (#496). So `test-windows` runs every other package, and
 `test-windows-daemon` runs the daemon's tests on four runners at once, each taking the tests whose
 position in the sorted `go test -list` output is its shard number modulo 4. A test added later falls
-into some shard by itself. Linux and macOS finish in 15 to 30 minutes and run the package whole.
+into some shard by itself. macOS does the same on two runners, `test-macos-daemon`, since
+2026-11-12: the package was 1,154 s of `test-macos`'s 20 minutes, which made it the longest job.
+Linux runs the package whole, in about 6 minutes.
 
 Until 2026-11-01 some jobs ran on self-hosted machines, because GitHub's runners didn't start on
 this account while the repo was private: the macOS job on a machine of Tyler's that also did other
@@ -66,7 +89,9 @@ were deleted then (#113) and are in git history.
   Then `gh run watch` follows it, and `gh run view --log-failed` shows what failed.
 - **gofmt doesn't run on Windows.** A Windows checkout turns line endings into CRLF, which gofmt
   reports as unformatted; the other two jobs check it.
-- **A newer push to the same pull request** cancels the run in progress.
+- **A newer push to the same pull request** cancels the run in progress. A push to `main` never
+  cancels another's: until 2026-11-12 it did, which left merges made close together with no
+  finished run, and the nightly takes the newest commit whose run passed.
 - **A daemon test that gives up waiting** prints every goroutine's stack, as the daemons run in the
   test's process; `MURMUR_TEST_LOG=1` prints their logs too. That is how a `git` whose start never
   came back on a macOS runner was found (#217).

@@ -1,9 +1,10 @@
 # Every pull request runs the checks each change must pass, so a change's verification doesn't wait
 # on a laptop shared with other agents' test runs, or die when that laptop sleeps (#48).
 #
-# Three jobs run in parallel, on GitHub's own runners, which are free for a public repo and start
-# fresh for every job. Until 2026-11-01 `test-linux` ran on a self-hosted VM; docs/testing.md says
-# why it went.
+# The jobs run in parallel on GitHub's own runners, which are free for a public repo and start fresh
+# for every job. `changes` picks which of them a pull request needs from the files it touches
+# (scripts/ci-level.sh); a push to `main` and a run by hand run them all. docs/testing.md has the
+# reasons and the times.
 name: test
 
 on:
@@ -15,12 +16,82 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request cancels its run in progress. A push to `main` is its own group, so
+# each one's run finishes: the nightly takes the newest commit whose run passed.
 concurrency:
-  group: test-${{ github.ref }}
+  group: test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      level: ${{ steps.level.outputs.level }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - id: level
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          CHANGED: ${{ github.event.pull_request.changed_files }}
+        run: |
+          level=full
+          if [ "$EVENT" = pull_request ]; then
+            # A renamed file counts under both names. A list GitHub cut short, or couldn't give,
+            # leaves `full`.
+            if files=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate --jq '.[] | .filename'); then
+              if [ "$(printf '%s\n' "$files" | grep -c .)" = "$CHANGED" ]; then
+                # LICENSE is a name no rule knows, so a failure here is `full` too.
+                old=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate --jq '.[] | .previous_filename // empty') || old=LICENSE
+                level=$(printf '%s\n%s\n' "$files" "$old" | sh scripts/ci-level.sh)
+              fi
+            fi
+          fi
+          echo "level=$level" >> "$GITHUB_OUTPUT"
+          echo "Jobs for this run: \`$level\` (scripts/ci-level.sh)" >> "$GITHUB_STEP_SUMMARY"
+          echo "level: $level"
+
+  test-linux:
+    needs: changes
+    if: needs.changes.outputs.level != 'none'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GO: ${{ needs.changes.outputs.level != 'site' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        if: env.GO == 'true'
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        if: env.GO == 'true'
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "$out"; exit 1; fi
+      - if: env.GO == 'true'
+        run: go vet ./...
+      - run: sh scripts/ci-level-test.sh
+      # The site's Worker and the files machines read on it (site/test), with the runner's own node,
+      # before the Go tests, which take most of the job. A change to site/ alone stops here.
+      - run: node --test --import ./site/test/register.mjs site/test/*.test.mjs
+      - if: env.GO == 'true'
+        run: bash scripts/go-test-retry.sh -race -count=1 -timeout 50m ./...
+
+  # macOS and Windows run `internal/daemon` apart from the other packages, in shards (below): alone
+  # it took 1,154 s of this job's 20 minutes on 2026-11-12, and the others together about 4.
   test-macos:
+    needs: changes
+    if: needs.changes.outputs.level == 'full'
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -35,12 +106,14 @@ jobs:
           out=$(gofmt -l .)
           if [ -n "$out" ]; then echo "$out"; exit 1; fi
       - run: go vet ./...
-      - run: go test -race -count=1 -timeout 50m ./...
+      - run: go list ./... | grep -v '/internal/daemon$' | xargs bash scripts/go-test-retry.sh -race -count=1 -timeout 50m
 
   # gofmt runs on the other two: a Windows checkout turns line endings into CRLF, which gofmt reports.
   # `internal/daemon` alone ran past the 50-minute limit on 2026-11-12 (#496) while the other
-  # packages together took about 8 minutes, so it has its own jobs below.
+  # packages together took about 8 minutes.
   test-windows:
+    needs: changes
+    if: needs.changes.outputs.level == 'full'
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
@@ -54,17 +127,27 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
-      - run: go list ./... | grep -v '/internal/daemon$' | xargs go test -race -count=1 -timeout 50m
+      - run: go list ./... | grep -v '/internal/daemon$' | xargs bash scripts/go-test-retry.sh -race -count=1 -timeout 50m
 
-  # The daemon package's tests, dealt out by position in their sorted list to one runner each. A test
-  # added later lands in some shard on its own, so none goes unrun.
-  test-windows-daemon:
-    runs-on: windows-latest
+  # The daemon package's tests, dealt out by position in their sorted list to one runner each: four
+  # on Windows, where they are slowest, and two on macOS. A test added later lands in some shard on
+  # its own, so none goes unrun.
+  test-daemon:
+    needs: changes
+    if: needs.changes.outputs.level == 'full'
+    name: test-${{ matrix.os }}-daemon (${{ matrix.shard }})
+    runs-on: ${{ matrix.os }}-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        include:
+          - { os: windows, shard: 0, of: 4 }
+          - { os: windows, shard: 1, of: 4 }
+          - { os: windows, shard: 2, of: 4 }
+          - { os: windows, shard: 3, of: 4 }
+          - { os: macos, shard: 0, of: 2 }
+          - { os: macos, shard: 1, of: 2 }
     defaults:
       run:
         shell: bash
@@ -75,29 +158,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - name: go test -race (shard ${{ matrix.shard }} of 4)
+      - name: go test -race (shard ${{ matrix.shard }} of ${{ matrix.of }})
         run: |
-          names=$(go test -list '^Test' ./internal/daemon | grep '^Test' | sort | awk -v k=${{ matrix.shard }} 'NR % 4 == k')
+          names=$(go test -list '^Test' ./internal/daemon | grep '^Test' | sort | awk -v k=${{ matrix.shard }} -v n=${{ matrix.of }} 'NR % n == k')
           test -n "$names"
           echo "$names" | wc -l
-          go test -race -count=1 -timeout 50m -run "^($(echo "$names" | paste -sd'|' -))\$" ./internal/daemon
-
-  test-linux:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - name: gofmt
-        run: |
-          out=$(gofmt -l .)
-          if [ -n "$out" ]; then echo "$out"; exit 1; fi
-      - run: go vet ./...
-      # The site's Worker and the files machines read on it (site/test), with the runner's own node,
-      # before the Go tests, which take most of the job.
-      - run: node --test --import ./site/test/register.mjs site/test/*.test.mjs
-      - run: go test -race -count=1 -timeout 50m ./...
+          bash scripts/go-test-retry.sh -race -count=1 -timeout 50m -run "^($(echo "$names" | paste -sd'|' -))\$" ./internal/daemon
