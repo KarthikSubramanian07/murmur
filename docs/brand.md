@@ -34,8 +34,8 @@ color is a change of `fill`, not a new drawing.
 - README: the banner at the top, the icon at the foot.
 - Tab icons: the site's and the `mur ui` page's. `mur ui` also shows the icon in its sidebar and
   on its sign-in gate.
-- Home page: the wordmark behind the hero's reeded glass and the mark at the hero's foot, the mark
-  in the hero's top left corner on screens 1000px and wider, the mark before "Murmur daemon" in the How it works diagram, and the
+- Home page: the lockup behind the hero's reeded glass (on a phone, the wordmark there and the
+  mark at the hero's foot), the mark in the hero's top left corner on screens 1000px and wider, the mark before "Murmur daemon" in the How it works diagram, and the
   lockup at the start of the footer.
 - About, Privacy, Contact and Other ways to use Murmur: the mark in the back pill, the lockup in
   the footer.
@@ -43,13 +43,20 @@ color is a change of `fill`, not a new drawing.
 - The stats pages: the mark on the header's blue tile.
 - `site/og.jpg`, the card a shared link shows: the home page's hero.
 
-The hero (2026-11-12, #488) has the wordmark in butter where the word "murmur" in Inter was, blurred
-and bent by the glass at the same strength, and the mark in cream at its foot, with its lower third
-below the hero's edge. Tyler chose both from drafts, and asked for the mark to be large. The mark
-sits behind glass at under half that strength (11 against 24), which is the most its eyes survive.
-The hero holds only the headline and the button; the sentence that explains Murmur opens How it
-works. The eyes of that mark, and of the one in the corner, follow the pointer by a few units; they stay holes cut from the designer's shapes, and nothing moves on a touch screen or with
+The hero's lockup (2026-11-12, #488) is the one place the logo is changed, and Tyler chose each
+change from drafts. It took the place of the word "murmur" in Inter. The mark is drawn at 85% of its
+size in `lockup-on-blue.svg` and the letters at 145%, on the same base line: at the file's
+proportions the letters were small enough that the glass broke them apart. Both are blurred and bent
+by the glass, at under half the strength the Inter word had (11 against 24), which is the most the
+mark's eyes survive. The eyes of that mark, and of the one in the corner, follow the pointer by a few
+units; they stay holes cut from the designer's shapes, and nothing moves on a touch screen or with
 reduced motion.
+
+On a phone (600px and narrower, #498) the hero is cleaner: the wordmark alone in butter where the
+lockup is, the mark in cream at the hero's foot with its lower third below the edge, and only the
+headline and the button over the glass; the sentence that explains Murmur opens How it works
+instead. The wordmark is behind the gentlest glass (scale 4), as Tyler asked on 2026-11-12 for less
+bend in it than #498's draft had.
 
 ## Color
 
