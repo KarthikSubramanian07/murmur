@@ -160,6 +160,7 @@ func TestASessionCantTakeAPersonsAddress(t *testing.T) {
 // The whole of it, nobody typing but the person: their message goes into an agent's T3 thread as a
 // turn saying how to answer, and the agent's `send` to their name reaches their page as unread.
 func TestAPersonsMessageBecomesATurnAndTheAnswerReachesThePage(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -246,6 +247,7 @@ func TestAPersonsMessageBecomesATurnAndTheAnswerReachesThePage(t *testing.T) {
 // is left waiting. A broadcast from the page doesn't, or it would wake every thread in the repo.
 // Do not disturb and Never are a human's choices too, and hold.
 func TestAPersonWakesALongIdleThreadWhereAnAgentWouldnt(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	threads := &fakeThreads{st: map[string]t3db.State{"thread-bob": {LastRun: time.Now().Add(-time.Hour)}}}
@@ -684,6 +686,7 @@ func TestAnUpgradedDaemonReadsClaimsItPassedOver(t *testing.T) {
 // says the name, a turn from its owner says which device it came from. Only a presence's first
 // person counts, and a message's name holds nothing, so neither keeps a name from being chosen.
 func TestAnotherDeviceCantSpeakAsAPerson(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote, time.Minute) // the forged presence stays live
@@ -819,6 +822,7 @@ func TestAnotherDeviceCantSpeakAsAPerson(t *testing.T) {
 // one listing, and a turn is built once, when its message is read: so a sync reads the registry and
 // presences before the logs (#304), and the message's name is known to be theirs by then.
 func TestAPersonsFirstMessageNamesThem(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a := newDevice(t, remote)

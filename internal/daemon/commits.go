@@ -232,8 +232,8 @@ func (d *Daemon) settleEnds() {
 // judgeEnd snapshots the worktree a call started in, calls snapped, and credits the sessions with
 // the commits made since its start, as of when the call ended. A call that ended with the hook in another worktree of the
 // clone, moved, is judged there too, against the same start: the start's tips are the whole
-// clone's, so they keep that worktree's history out as well as this one's, but for what only a
-// detached HEAD there holds (#60).
+// clone's, every worktree's detached HEAD among them, so they keep that worktree's history out as
+// well as this one's (#60).
 func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, moved string, ended time.Time, sessions []*session, snapped func()) {
 	ctx, cancel := context.WithTimeout(ctx, d.snapshotLimit())
 	defer cancel()
@@ -316,8 +316,10 @@ func (d *Daemon) creditLocked(sessions []*session, commits []attrib.Commit, at t
 	for _, id := range d.creditedLocked(sessions) {
 		before := d.committedLocked(id)
 		recs := d.st.Commits[id]
+		var fresh []attrib.Commit // those not credited to it before, which the page's Recent view shows
 		for _, c := range commits {
 			if !slices.ContainsFunc(recs, func(r commitRec) bool { return r.SHA == c.SHA }) {
+				fresh = append(fresh, c)
 				i := len(recs)
 				for i > 0 && recs[i-1].At.After(at) {
 					i--
@@ -329,6 +331,7 @@ func (d *Daemon) creditLocked(sessions []*session, commits []attrib.Commit, at t
 			recs = slices.Clone(recs[len(recs)-maxCommits:])
 		}
 		d.st.Commits[id] = recs
+		d.recordCommitsLocked(id, fresh, at)
 		if !slices.Equal(before, d.committedLocked(id)) {
 			branchesChanged = true
 		}

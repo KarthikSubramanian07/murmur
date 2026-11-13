@@ -28,6 +28,9 @@ const (
 	OpLookup  = "lookup"
 	// OpTags adds and removes the calling session's own tags (#198).
 	OpTags = "tags"
+	// OpMute mutes the session called Name for the calling session, or with Unmute undoes that
+	// (#27). With no Name it only lists whom the caller has muted.
+	OpMute = "mute"
 	// OpToolStart and OpToolEnd bracket one tool call, for the hook: the daemon snapshots the
 	// worktree at the start and credits the commits that appeared by the end (#21).
 	OpToolStart = "toolstart"
@@ -79,7 +82,14 @@ const (
 //	    clear, so an upgraded mur replaces it where it may.
 //	15: OpNick, a device's nickname (#190): a daemon of 14 or less answers `mur nickname` with
 //	    "unknown op", so the command replaces it where it may.
-const Protocol = 15
+//	16: the route's CodexCLI and OpenCodeCLI: a Codex or OpenCode session outside T3 is handed a
+//	    message as a turn by its client's own command line (#135)
+//	17: groups (#184): OpSend to a group's tag, and OpTags's For. A daemon of 16 or less refuses
+//	    the first and, not knowing For, would put the tags meant for others on the caller.
+//	18: OpMute (#27): a session's MCP server from this version on asks it of the daemon.
+//	19: a hook's Child and ParentNative: the session is one another session started, and goes
+//	    through it (#452)
+const Protocol = 19
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
@@ -189,16 +199,29 @@ type Request struct {
 	// the hook is the parent of its MCP server too.
 	Agent     string `json:"agent,omitempty"`
 	Ancestors []int  `json:"ancestors,omitempty"`
+	// Child says, on a hook's request that names its session by Native, that another session
+	// started this one (an OpenCode child session, #455): it is off the mesh from then on, as a T3
+	// delegate is (#188), and nothing puts it back. ParentNative is the client's own ID of the
+	// session that started it, "" if the hook doesn't know; messages for the child are refused
+	// with that session's name, and the child's commits are credited to it.
+	Child        bool   `json:"child,omitempty"`
+	ParentNative string `json:"parentNative,omitempty"`
 
 	// Add and Remove are the tags OpTags adds to the caller and takes from it. Tags is what OpWho
 	// searches by: a session is listed when it has every tag named, and none named after a dash
 	// (see tags.ParseFilter).
+	//
+	// For is the sessions OpTags adds to groups in place of the caller (#184), by name or address:
+	// Add then holds group tags only, and nothing is removed.
 	Add    []string `json:"add,omitempty"`
 	Remove []string `json:"remove,omitempty"`
 	Tags   []string `json:"tags,omitempty"`
+	For    []string `json:"for,omitempty"`
 
 	// Name is the session OpLookup describes: a name, or device/session. Limit caps the messages.
-	Name string `json:"name,omitempty"`
+	// For OpMute it is the name of the session to mute, or with Unmute to unmute.
+	Name   string `json:"name,omitempty"`
+	Unmute bool   `json:"unmute,omitempty"`
 
 	// For OpToolStart and OpToolEnd, which carry ClaudeSession and ClientPID too. ToolUseID pairs
 	// the two ends of one call; Claude Code gives both the same one, and calls run in parallel.
@@ -238,6 +261,13 @@ type Route struct {
 	// Codex home. A server names one, ~/.codex where it has no CODEX_HOME; only a server from before
 	// #88 leaves it empty, and the daemon then takes its own CODEX_HOME, else ~/.codex.
 	CodexHome string `json:"codexHome,omitempty"`
+	// CodexCLI and OpenCodeCLI are the client's own program, where its command line can put a
+	// message in the session as a turn outside T3 (package clientcli): the Codex that runs the
+	// thread Native names, or the OpenCode whose background server has the session Native names.
+	// The session's MCP server names the program that started it, and only one it takes for that
+	// client. At most one of the two is set.
+	CodexCLI    string `json:"codexCli,omitempty"`
+	OpenCodeCLI string `json:"openCodeCli,omitempty"`
 }
 
 // Hello registers a session.
@@ -296,6 +326,8 @@ type Response struct {
 	// caller's tags after an OpTags.
 	Filter string     `json:"filter,omitempty"`
 	Tags   []tags.Tag `json:"tags,omitempty"`
+	// Muted is, after an OpMute, the names of the sessions the caller has muted.
+	Muted []string `json:"muted,omitempty"`
 
 	// PageKey is OpPageKey's key: the page trades it once, within a minute, for its token.
 	PageKey string `json:"pageKey,omitempty"`
@@ -356,7 +388,8 @@ type SessionDetail struct {
 	Committed []string   `json:"committed,omitempty"` // branches it has committed to, most recent first
 	Doing     string     `json:"doing,omitempty"`
 	Started   time.Time  `json:"started,omitzero"`
-	Tags      []tags.Tag `json:"tags,omitempty"` // in order of name (#198)
+	Tags      []tags.Tag `json:"tags,omitempty"`  // in order of name (#198)
+	Muted     []string   `json:"muted,omitempty"` // the sessions it has muted, by name (#27)
 
 	// Running says the session is in a device's presence (or registered here), or in its grace.
 	// Reachable says a message sent now will be queued in the session's inbox: it is connected, and its device's
@@ -418,6 +451,10 @@ type MessageView struct {
 	// person, before, which said in full that the person sees only what the session sends: this one
 	// ends with an agent's line (#345). Always false for an agent's message.
 	Explained bool `json:"explained,omitempty"`
+	// GroupKnown says the session this goes to has been given a message sent to the same group
+	// before, which said in full that it is in the group, how to answer and how to leave: this one
+	// ends with a short line (#184). Always false for a message that wasn't sent to a group.
+	GroupKnown bool `json:"groupKnown,omitempty"`
 	// Told is when the hook's notice told the session of this message, for one given whole after:
 	// its turn says so (#355). Zero for a message no notice told of.
 	Told time.Time `json:"told,omitzero"`

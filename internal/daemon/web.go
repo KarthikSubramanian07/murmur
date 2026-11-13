@@ -154,7 +154,8 @@ func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
 	go func() {
 		defer d.bg.Done()
 		<-ctx.Done()
-		// Let a request in flight finish: none waits on anything slow.
+		// Let a request in flight finish. The slowest is a first call for messages, which waits
+		// historyWait at most for the logs to be read back, and awaitHistory lets go of it now.
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if srv.Shutdown(sctx) != nil {
@@ -243,6 +244,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 		}
 		st.Devices = append(st.Devices, dv)
 	}
+	st.Mutes = d.muteViewsLocked()
 	return st, nil
 }
 
@@ -317,7 +319,9 @@ func (d *Daemon) keepMessageLocked(e bus.Event) {
 
 // A cursor is this run of the daemon and the number of the last message returned. Numbers only go
 // up, so a cursor still means "after this one" when the messages before it have been dropped. A
-// cursor from another run, which a page could hold across a restart, has seen nothing.
+// cursor from another run, which a page could hold across a restart, has seen nothing. Nor has one
+// from before earlier messages were read back from the logs, which numbers them all again
+// (mergeMessagesLocked).
 func (d *Daemon) cursor(seq uint64) string {
 	return strconv.FormatInt(d.started.UnixNano(), 36) + "-" + strconv.FormatUint(seq, 10)
 }
@@ -338,32 +342,23 @@ func (d *Daemon) cursorSeq(cursor string) (uint64, error) {
 }
 
 // Messages returns the messages after cursor, oldest first as this daemon read them, which is not
-// by the senders' clocks.
+// by the senders' clocks. Once earlier ones are read back from the logs (history.go), all the page
+// has are in the order of their senders' clocks, as what is read back has no order of arrival; the
+// page sorts what it shows.
 func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message, string, error) {
 	d := s.d
 	after, err := d.cursorSeq(cursor)
 	if err != nil {
 		return nil, "", err
 	}
+	d.awaitHistory(ctx)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.pageSeenLocked(ctx, time.Now())
 
 	after = min(after, d.msgSeq)
 	first := sort.Search(len(d.msgs), func(i int) bool { return d.msgs[i].seq > after })
-	var byAddr map[string]string // the registry's names, for a session no longer in presence
-	label := func(addr string) string {
-		if name, _, _ := d.sessionInfoLocked(addr); name != "" {
-			return name
-		}
-		if name := d.personNameOfLocked(addr); name != "" {
-			return name
-		}
-		if byAddr == nil {
-			byAddr = d.namesByAddrLocked()
-		}
-		return nameOr(byAddr[addr], addr)
-	}
+	label := d.labelerLocked()
 	out := make([]web.Message, 0, len(d.msgs)-first)
 	for _, m := range d.msgs[first:] {
 		msg := web.Message{ID: m.e.ID, From: label(m.e.From), Subject: m.e.Subject, Body: m.e.Body, At: m.e.At,
@@ -376,6 +371,8 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 		switch {
 		case m.e.To == "*":
 			msg.To, msg.ToKind = "*", web.ToAll
+		case bus.IsGroup(m.e.To):
+			msg.To, msg.ToKind = m.e.To, web.ToGroup
 		case !strings.Contains(m.e.To, "/"):
 			msg.To, msg.ToKind = m.e.To, web.ToDevice
 		default:
@@ -466,12 +463,6 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	d.settings = next
 	d.kickPush() // a session that was set to never may be woken now, for what it has waiting
 	return next.view(), nil
-}
-
-// Unmute is for mutes (#27), which don't exist yet.
-func (s pageSource) Unmute(ctx context.Context, by, muted string) error {
-	s.d.pageCalled(ctx)
-	return errors.New("mutes aren't built yet (#27), so there is nothing to unmute")
 }
 
 func (d *Daemon) pageCalled(ctx context.Context) {

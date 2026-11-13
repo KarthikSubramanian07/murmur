@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strings"
 	"time"
 
@@ -128,8 +129,14 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
+	if req.Op == proto.OpLookup {
+		d.wantHistory() // read back while the first sync runs, not after it
+	}
 	if req.Op == proto.OpWho || req.Op == proto.OpSend || req.Op == proto.OpLookup {
 		d.awaitFirstSync(ctx)
+	}
+	if req.Op == proto.OpLookup {
+		d.awaitHistory(ctx) // its messages are the page's, earlier ones included
 	}
 	resp := d.handle(ctx, req)
 	resp.ClaudeSession = d.claudeSessionOf(req.Session)
@@ -262,10 +269,21 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		s.route = route
 		d.rememberRouteLocked(s)
 	}
+	if parent, named := d.kidNative[route.Native]; named && route.Native != "" && claude == "" {
+		// A hook named this session a child before its server registered (an OpenCode child's
+		// plugin does as the session is made, #455): it is one from here, not from the next
+		// refresh, so it is never listed (#487).
+		if d.markKidLocked(s.id, parent) && taken {
+			d.kickPresence() // one back from its grace, named while it was away, was listed
+		}
+	}
 	d.lastActive = time.Now()
 	d.kickPoll() // a session is live: look at the remote at once, and at the faster rate
 	if h.Reconnect {
 		d.catchUpLocked(h.ID)
+		// A catch-up can put back a copy another session of the thread has already handed over
+		// (#70), so the thread's handed messages are taken out again after it.
+		d.dropHandedLocked(h.ID)
 	}
 	name, live := s.name, s.claudeSession
 	d.mu.Unlock()
@@ -370,7 +388,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		return fail("this session isn't registered with the daemon (it may have just restarted); try again in a few seconds")
 	}
 	from := bus.Addr(d.device, sess)
-	if req.Op == proto.OpStatus || req.Op == proto.OpSend || req.Op == proto.OpTags {
+	if req.Op == proto.OpStatus || req.Op == proto.OpSend || req.Op == proto.OpTags || req.Op == proto.OpMute {
 		if why := d.childRefusal(sess); why != "" {
 			return fail(why)
 		}
@@ -414,7 +432,14 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		return d.send(ctx, from, req)
 
 	case proto.OpTags:
+		if len(req.For) > 0 {
+			return d.addToGroups(ctx, sess, req)
+		}
 		return d.setOwnTags(sess, req)
+
+	case proto.OpMute:
+		req.Name = strings.TrimSpace(req.Name)
+		return d.mute(sess, req)
 
 	case proto.OpInbox:
 		d.mu.Lock()
@@ -719,9 +744,15 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 
 func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto.Response {
 	to := strings.TrimSpace(req.To)
+	if g := tags.Normalize(to); bus.IsGroup(g) {
+		to = g
+	}
 	subject := bus.OneLine(req.Subject, 120)
 	if !bus.ValidTo(to) || subject == "" {
-		return fail("a message needs a recipient (a session's name, device/session, a device, or * for everyone; see who) and a subject")
+		if strings.HasPrefix(tags.Normalize(to), tags.GroupPrefix) {
+			return fail(fmt.Sprintf("not sent: %q isn't a group. A group's tag is %s and a name of lowercase letters, digits and . _ : -, such as %sui", to, tags.GroupPrefix, tags.GroupPrefix))
+		}
+		return fail("a message needs a recipient (a session's name, device/session, a device, a group such as group:ui, or * for everyone; see who) and a subject")
 	}
 	if len(req.Body) > maxBody {
 		return fail(fmt.Sprintf("not sent: the body is over %d KB, and the bus keeps everything forever", maxBody>>10))
@@ -775,7 +806,11 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		}
 	}
 	var note string
-	if to != "*" {
+	if bus.IsGroup(to) {
+		d.mu.Lock()
+		note = d.groupNoteLocked(to, from)
+		d.mu.Unlock()
+	} else if to != "*" {
 		d.mu.Lock()
 		at := d.queuedAtLocked(to)
 		dev, sess := bus.SplitAddr(at)
@@ -788,8 +823,14 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		if offline {
 			why = d.offlineWhyLocked(dev, sess, nameOr(toName, at))
 		}
+		// The recipient has muted the sender (#27): its device would drop the message, so it isn't
+		// sent, and this is where the sender learns of the mute.
+		muted := d.hasMutedLocked(dev, sess, d.nameOfLocked(from))
 		d.mu.Unlock()
 		switch {
+		case muted:
+			// The words are Tyler's (2026-11-11).
+			return fail(fmt.Sprintf("your message to %[1]s was not delivered. %[1]s has muted you. Nothing you send can reach them until they unmute you.", nameOr(toName, at)))
 		case offline:
 			return fail("not sent: " + why)
 		case known && dnd:
@@ -822,6 +863,22 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		return fail("not sent: " + err.Error())
 	}
 	note = strings.TrimSpace(renamed + " " + note)
+	// To everyone, to a device or to a group: it went out, and the sender is told which of the
+	// sessions it was for won't get it, as they have muted it (#27).
+	if dev, sess := bus.SplitAddr(to); to == "*" || sess == "" {
+		group := bus.IsGroup(to)
+		if to == "*" || group {
+			dev = ""
+		}
+		d.mu.Lock()
+		muters := d.mutersLocked(d.nameOfLocked(from), dev)
+		if group {
+			members, _ := d.groupMembersLocked(to, from)
+			muters = slices.DeleteFunc(muters, func(m string) bool { return !slices.Contains(members, m) })
+		}
+		d.mu.Unlock()
+		note = strings.TrimSpace(note + " " + mutersNote(muters))
+	}
 	return proto.Response{OK: true, Self: from, Note: note,
 		Messages: []proto.MessageView{{ID: e.ID, From: from, To: to, ToName: toName, Subject: subject, At: e.At}}}
 }

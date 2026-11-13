@@ -670,13 +670,13 @@ func TestPageSettingsPersist(t *testing.T) {
 	}
 }
 
-// There are no mutes yet, and unmuting says so.
-func TestPageUnmuteIsNotBuilt(t *testing.T) {
+// Unmuting a mute that isn't there is refused, and says so (#27). mute_test.go has the rest.
+func TestPageUnmuteOfNoMuteIsRefused(t *testing.T) {
 	t.Parallel()
 	d := newDevice(t, newRemote(t))
 	pg := d.page()
 	code, body := pg.call("POST", "/api/unmute", pg.token, `{"by":"quiet-otter","muted":"brave-heron"}`)
-	if code == http.StatusOK || code == http.StatusNoContent || !strings.Contains(body, "aren't built yet") {
+	if code == http.StatusOK || code == http.StatusNoContent || !strings.Contains(body, "hasn't muted brave-heron") {
 		t.Errorf("unmute: %d %s", code, body)
 	}
 }
@@ -750,7 +750,7 @@ func TestSessionKeepsDaemonUpWithPage(t *testing.T) {
 
 // A daemon whose first sync failed reads the logs it then finds as history, skipping what was sent
 // before it started, but queues what was sent since for the sessions registered meanwhile. The
-// page shows those messages too, and not the history.
+// page shows those messages, and the history after them, read back (#138).
 func TestPageMessagesAfterAFailedFirstSync(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
@@ -779,11 +779,19 @@ func TestPageMessagesAfterAFailedFirstSync(t *testing.T) {
 		return n >= 2
 	})
 	pg := b.page()
-	msgs, _ := pg.messages("")
-	got := subjects(msgs)
+	var got []string
+	eventually(t, "the backlog on b's page, read back", func() bool {
+		msgs, _ := pg.messages("")
+		got = subjects(msgs)
+		return len(got) >= 3
+	})
 	sort.Strings(got)
-	if !reflect.DeepEqual(got, []string{"broadcast", "direct"}) {
-		t.Errorf("b's page shows %q, want the broadcast and the direct message and not the backlog", got)
+	if !reflect.DeepEqual(got, []string{"backlog", "broadcast", "direct"}) {
+		t.Errorf("b's page shows %q, want the broadcast, the direct message and the backlog", got)
+	}
+	// The backlog is on the page only: bob was given the two sent since he started, and no more.
+	if more := b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages; n != 2 || len(more) != 0 {
+		t.Errorf("bob was given %d messages and then %+v, want the two sent since he started", n, more)
 	}
 }
 

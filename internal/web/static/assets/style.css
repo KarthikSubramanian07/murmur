@@ -38,6 +38,7 @@
   --emerald-500: oklch(69.6% 0.17 162.48);
   --blue-400: oklch(70.7% 0.165 254.624);
   --blue-500: oklch(62.3% 0.214 259.815);
+  --purple-400: oklch(71.4% 0.203 305.504);
 }
 
 /*
@@ -98,6 +99,7 @@
   --warning-foreground: var(--amber-400);
   --pr-open: color-mix(in oklab, var(--emerald-300) 90%, transparent);
   --pr-draft: color-mix(in oklab, var(--zinc-400) 80%, transparent);
+  --pr-merged: var(--purple-400);
   --row-hover: rgb(255 255 255 / 5%);
   --row-selected: rgb(255 255 255 / 8%);
   --composer: color-mix(in srgb, var(--neutral-950) 97%, var(--white));
@@ -193,6 +195,7 @@
   --warning-foreground: oklch(47% 0.163 48.998);
   --pr-open: oklch(50.8% 0.118 165.612);
   --pr-draft: var(--muted-foreground);
+  --pr-merged: oklch(50% 0.22 304);
   --row-hover: rgb(0 0 0 / 4%);
   --row-selected: rgb(0 0 0 / 6%);
   --composer: var(--white);
@@ -258,6 +261,7 @@
   --warning-foreground: oklch(45% 0.163 48.998);
   --pr-open: oklch(47% 0.118 165.612);
   --pr-draft: var(--muted-foreground);
+  --pr-merged: oklch(47% 0.22 304);
   --row-hover: rgb(14 27 69 / 5%);
   --row-selected: rgb(34 91 255 / 11%);
   --composer: #fffef7;
@@ -307,6 +311,7 @@
   --warning-foreground: var(--amber-400);
   --pr-open: color-mix(in oklab, var(--emerald-300) 90%, transparent);
   --pr-draft: #a9b6e6;
+  --pr-merged: var(--purple-400);
   --edge: color-mix(in oklab, var(--foreground) 42%, transparent);
   --dot-off: color-mix(in oklab, #a9b6e6 80%, transparent);
   --scrollbar-thumb: rgb(255 251 234 / 14%);
@@ -1985,6 +1990,102 @@ a.g-pr:hover {
   flex-direction: column;
   gap: 0.125rem;
 }
+/* What to show: all of it, messages or activity, and whose. */
+.g-recent-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-bottom: -0.5rem;
+}
+.g-recent-who .select {
+  max-width: 14rem;
+}
+/* One thing a session did: a line, with an icon in the column where a message has its face. */
+.g-act {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 0.75rem;
+  padding: 0.3125rem 0;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+/* The icon's color says what happened, as GitHub's and Linear's do: green opened, purple merged or
+ * done, red closed unmerged, blue a commit, amber what a session is doing now. Joining, leaving and
+ * tags stay grey. The icon's shape and the words say it too, so it never rests on color (WCAG 1.4.1). */
+.g-act-ico {
+  display: inline-flex;
+  justify-content: center;
+  align-self: center;
+  color: var(--act, var(--muted-foreground));
+}
+.g-act-open {
+  --act: var(--pr-open);
+}
+.g-act-done {
+  --act: var(--pr-merged);
+}
+.g-act-closed {
+  --act: var(--destructive-foreground);
+}
+.g-act-commit {
+  --act: var(--info-foreground);
+}
+.g-act-status {
+  --act: var(--warning);
+}
+.g-act-ico .icon {
+  width: 1rem;
+  height: 1rem;
+}
+.g-act-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.g-act-who,
+.g-act-login {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.g-act-quote {
+  color: var(--foreground);
+}
+.g-act-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1875rem;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--foreground);
+  vertical-align: baseline;
+}
+.g-act-branch .icon {
+  width: 0.75rem;
+  height: 0.75rem;
+  align-self: center;
+}
+.g-act-tag {
+  display: inline-block;
+  margin: 0 0.125rem;
+  padding: 0 0.375rem;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--edge);
+  font-size: 0.75rem;
+  color: var(--foreground);
+}
+.g-act-tag-off {
+  text-decoration: line-through;
+  color: var(--muted-foreground);
+}
+.g-act a {
+  color: var(--foreground);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .chat-msg.g-item {
   position: relative;
   margin: 0 -0.75rem;
@@ -1998,6 +2099,32 @@ a.g-pr:hover {
 }
 .chat-msg.g-item:hover {
   background: var(--row-hover);
+}
+/* Where the feed turns from messages to activity or back, a hairline in the day line's color, as
+ * Discord rules off a group of messages. It sits the same distance from the text on either side. */
+.g-act {
+  position: relative;
+}
+.g-item + .g-act {
+  margin-top: 0.5rem;
+}
+.g-act + .chat-msg.g-item {
+  margin-top: 0.625rem;
+}
+.g-item + .g-act::before,
+.g-act + .g-item::before {
+  content: "";
+  position: absolute;
+  top: -0.34375rem;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: color-mix(in oklab, var(--border) 70%, transparent);
+}
+.g-act + .g-item::before {
+  top: -0.46875rem;
+  right: 0.75rem;
+  left: 0.75rem;
 }
 .g-to {
   display: inline-flex;
@@ -3851,6 +3978,26 @@ a.g-pr:hover {
   }
 }
 
+/* The flash of going from a dark theme to Light (app.js flashbang): the whole page white for a
+ * moment, then the page fading back in. Clicks pass through it. */
+.flashbang {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: #fff;
+  pointer-events: none;
+  animation: flashbang 1.8s ease-out forwards;
+}
+@keyframes flashbang {
+  0%,
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 /* Motion only for those who want it. */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -3864,4 +4011,25 @@ a.g-pr:hover {
   .dots i {
     animation: none;
   }
+}
+
+/* A choice from a list (Recent's "whose"), drawn as a field is. */
+.select {
+  height: 1.875rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--input) 32%, transparent);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.875rem;
+}
+.select:focus-visible {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 3px color-mix(in oklab, var(--ring) 24%, transparent);
+}
+.select option {
+  background: var(--background);
+  color: var(--foreground);
 }

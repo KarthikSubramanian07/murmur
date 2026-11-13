@@ -20,17 +20,18 @@ import (
 const testToken = "s3cret-token"
 
 type fakeSource struct {
-	mu       sync.Mutex
-	state    State
-	settings Settings
-	sets     int
-	cursor   string
-	unmuted  [][2]string
-	tagged   []string // each SetTags: addr +added -removed
-	watched  []bool   // what Watched said of each State call
-	restarts int
-	sends    []string // each Send: to: text
-	read     []string // the IDs given to MarkRead
+	mu        sync.Mutex
+	state     State
+	settings  Settings
+	sets      int
+	cursor    string
+	actCursor string
+	unmuted   [][2]string
+	tagged    []string // each SetTags: addr +added -removed
+	watched   []bool   // what Watched said of each State call
+	restarts  int
+	sends     []string // each Send: to: text
+	read      []string // the IDs given to MarkRead
 }
 
 func (f *fakeSource) State(ctx context.Context) (State, error) {
@@ -45,6 +46,13 @@ func (f *fakeSource) Messages(ctx context.Context, cursor string) ([]Message, st
 	defer f.mu.Unlock()
 	f.cursor = cursor
 	return []Message{{ID: "m1", From: "quiet-otter", To: "*", ToKind: ToAll, Subject: "hi"}}, "c1", nil
+}
+
+func (f *fakeSource) Activity(ctx context.Context, cursor string) ([]Activity, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.actCursor = cursor
+	return []Activity{{ID: "a1", Kind: ActStatus, Who: "quiet-otter", Doing: "reading"}}, "a-c1", nil
 }
 
 func (f *fakeSource) Settings(ctx context.Context) (Settings, error) {
