@@ -928,9 +928,39 @@ call.
   device's sessions only: presence doesn't carry it, and a path from another machine would mean
   nothing here. Messages are every one this daemon reads, whoever it is for (every record is
   encrypted for the whole team; see The bus is encrypted), oldest first as this daemon read them, which is not by the
-  senders' clocks. The daemon keeps the last 500 in memory, so they don't outlast a restart, and
-  it never read what was sent while it was away for more than 10 minutes, except what is kept for a
-  stopped session's inbox (above).
+  senders' clocks, until earlier ones are read back (next). The daemon keeps the last 500 in memory.
+- **Messages from before the daemon started are read back from the bus** (#138, 2026-11-12). The
+  daemon exits when idle, and the next one had read nothing, so the page opened on conversations
+  with their beginnings gone. A daemon away for more than 10 minutes also passes over what was sent
+  meanwhile, which left a hole in the middle of one. The issue left two ways open: keep the page's
+  messages in a file beside `state.json`, or read them back. They are read back, from the logs this
+  clone has already fetched: the newest commits across every device's log, up to where the daemon
+  has read each, opened with the keys it holds (`internal/daemon/history.go`, `bus.Repo.Recent`).
+  - *Why not a file.* A file holds what a daemon read, and a daemon never reads what it passes
+    over, so the hole would have stayed. It would also be a second copy of every message, in the
+    clear, to keep in step with the bus. A person's own messages stay in their file (see "A person
+    on the page"), which goes back further than the page's 500.
+  - *What it costs.* Four git commands, however many commits are read, up to 4,000: the sizes of
+    all of them are asked at once, and they are read in one go while they fit in 8 MB. Each command
+    took about 0.2 s on the Windows laptop (2026-11-12). No request goes to the remote. It runs in
+    the background, and not before a page or a `lookup` asks: most daemons are started by a session
+    and never show the page. After that it runs again once the first syncs have passed over a
+    backlog, when a backlog given up on is fetched, and when the device is given a team key, which
+    opens what it couldn't read. The page's first calls, and a `lookup`, wait for the first read,
+    3 s at most, so the page opens with its conversations in it. One call waits that long, at most:
+    if the read hasn't come by then, later calls don't wait. A read is given 30 s, and one that
+    fails is tried again a minute later, three times in a row at most.
+  - *What changes with it.* The page shows messages from before this device joined, which every
+    device may read (The bus is encrypted). No session is given them: a sync still passes over
+    history. Once anything is read back, all the page's messages are in the order of their
+    senders' clocks, and which commits are the newest goes by their writers' clocks, so a device
+    whose clock runs ahead takes more of the 500. `lookup` shows the same messages. A message
+    that reaches the open conversation after the page has loaded, but was sent before it, isn't
+    read out as new; an unread one to the person still is.
+  - *What it doesn't do.* The page can't reach past the newest 500; reading further back when the
+    page asks isn't built. A record this device can't open is left out until a key opens it. While
+    a backlog given up on hasn't been fetched, the whole log of its device is off the page, since
+    the cursor is at a commit that isn't here; it comes back when the fetch lands.
 - **How it's laid out** (#179, 2026-11-08; drawn as a sibling of T3 Code 2026-11-09, so a person who
   works in T3 Code reads it without learning a second app): sessions down the left under their
   devices, as T3 Code's threads under their projects, then a column of conversations (direct
@@ -987,9 +1017,11 @@ call.
     named for the session on its branch (or that committed to it), and for the login only when
     no session is. GitHub's list says who opened one, not who merged or closed it, so those
     lines name nobody but the session whose branch it was. An issue is the login's.
-  - *What it doesn't have.* The daemon keeps the newest 600 in memory, so a daemon that has just
-    started knows of nothing before it, as with messages (Open questions), except pull requests
-    and issues, which GitHub remembers. A change seen only as a difference between presences is
+  - *What it doesn't have.* The daemon keeps the newest 600 in memory. A daemon that has just
+    started reads the sessions' starts and stops back from the bus with the messages (#138), and
+    GitHub remembers pull requests and issues. A status, a tag or a commit from before it started
+    is gone: those were never on the bus, and only a file on this device could keep them, which
+    isn't built. A change seen only as a difference between presences is
     one per presence write: two status lines set within a write show as one. A repository with
     no `gh`, or one that isn't logged in, shows no pull requests or issues, and says nothing.
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
@@ -1179,8 +1211,8 @@ which session made a commit, so the daemon watches tool calls for them.
   matter. An agent without the hook moves it by MCP calls only. Only Claude Code has commits
   credited: the others' hooks bracket no tool call. An older daemon reads the new presence and ignores both fields; the sessions of a
   daemon that doesn't write them have no last-active time, and the page leaves it blank.
-- **Messages in `lookup`** are those this daemon has read, the same as the page keeps: the last
-  500, none from before it started.
+- **Messages in `lookup`** are those the page keeps: the last 500, with the ones from before the
+  daemon started read back from the bus (#138).
 
 ### Who is on, and what they are doing
 
@@ -2372,9 +2404,6 @@ a git library, so it gets each user's credential helpers, SSH config and URL rew
 ## Open questions
 
 - The name.
-- Should the page's messages outlast a daemon restart? `mur ui` often starts a fresh daemon, which
-  has read nothing yet, and the page opens empty. Recent bus commits could be read at start; no code
-  does that yet.
 - A worktree made after joining has the tools (the consent is per clone) but no hook, until
   `mur join` runs there again. Nothing prompts that, since the agent in it already has the tools.
   Should the server or the daemon install the hook there?

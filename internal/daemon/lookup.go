@@ -15,7 +15,8 @@ import (
 
 // lookup (#21) gathers what the daemon knows about one session: what presence shows of anyone's,
 // and, for a session on this device, what never leaves it. The messages are the ones this daemon
-// has read, which is what the page keeps too: the last PageMessages, none from before it started.
+// has read, which is what the page keeps too: the last PageMessages, those from before it started
+// read back from the logs (history.go).
 
 const (
 	defaultLookupMessages = 10
