@@ -2100,6 +2100,32 @@ a.g-pr:hover {
 .chat-msg.g-item:hover {
   background: var(--row-hover);
 }
+/* Where the feed turns from messages to activity or back, a hairline in the day line's color, as
+ * Discord rules off a group of messages. It sits the same distance from the text on either side. */
+.g-act {
+  position: relative;
+}
+.g-item + .g-act {
+  margin-top: 0.5rem;
+}
+.g-act + .chat-msg.g-item {
+  margin-top: 0.625rem;
+}
+.g-item + .g-act::before,
+.g-act + .g-item::before {
+  content: "";
+  position: absolute;
+  top: -0.34375rem;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: color-mix(in oklab, var(--border) 70%, transparent);
+}
+.g-act + .g-item::before {
+  top: -0.46875rem;
+  right: 0.75rem;
+  left: 0.75rem;
+}
 .g-to {
   display: inline-flex;
   align-items: center;
