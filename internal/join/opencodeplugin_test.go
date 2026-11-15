@@ -9,47 +9,90 @@ import (
 	"testing"
 )
 
-// OpenCode 2 gets Murmur's plugin beside its server (#431); OpenCode 1, whose plugins have another
-// shape, gets none. A plugin there that join didn't write is the user's, and stays.
-func TestRegisterOpenCodeWritesThePluginForVersion2Only(t *testing.T) {
-	for version, want := range map[string]bool{"opencode v2.2.0": true, "1.19.5": false} {
+// openCodePluginFor is the plugin join writes for an OpenCode whose --version prints version, for
+// the mur at exe: "" where it writes none.
+func openCodePluginFor(t *testing.T, version, exe string) string {
+	t.Helper()
+	sb := newSandbox(t, false)
+	withAgents(sb)
+	withOpenCode(t, sb, version)
+	sb.Exe = exe
+	if _, _, err := sb.registerOpenCodeAt(context.Background(), openCodeHome(sb)); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(openCodePluginPath(sb.OpenCodeDir))
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// Each OpenCode gets Murmur's plugin in its own version's shape beside its server: OpenCode 2's
+// (#431), and OpenCode 1's (#446), which replaces one join wrote for an OpenCode 2 that was here
+// before. Where the version can't be learned, a plugin join wrote stays as it is, and none is
+// added. A plugin there that join didn't write is the user's, and stays.
+func TestRegisterOpenCodeWritesThePluginForItsVersion(t *testing.T) {
+	for _, version := range []string{"opencode v2.2.0", "1.19.5"} {
 		sb := newSandbox(t, false)
 		withAgents(sb)
 		withOpenCode(t, sb, version)
 		h := openCodeHome(sb)
 		path := openCodePluginPath(sb.OpenCodeDir)
-		if !want {
+		v1 := version == "1.19.5"
+		if v1 {
 			write(t, path, openCodePlugin(sb.Exe)) // left by an OpenCode 2 that was here before
 		}
 		did, fresh, err := sb.registerOpenCodeAt(context.Background(), h)
 		if err != nil || !fresh {
 			t.Fatalf("%s: did=%q fresh=%v err=%v", version, did, fresh, err)
 		}
-		if exists(path) != want {
-			t.Fatalf("%s: plugin written = %v, want %v", version, exists(path), want)
-		}
-		if !want {
-			continue
+		if !exists(path) {
+			t.Fatalf("%s: no plugin written", version)
 		}
 		got := read(t, path)
-		if got != openCodePlugin(sb.Exe) || !strings.HasPrefix(got, openCodeMarker) || !strings.Contains(strings.Join(did, "\n"), path) {
-			t.Errorf("the plugin, or the report of it: %q\n%s", did, got)
+		if !strings.HasPrefix(got, openCodeMarker) || !strings.Contains(strings.Join(did, "\n"), path) {
+			t.Errorf("%s: the plugin, or the report of it: %q\n%s", version, did, got)
+		}
+		if v1 {
+			// OpenCode 1's shape: a default export with server(), and no setup(), which 1.19.5 would
+			// run as well.
+			if got == openCodePlugin(sb.Exe) || !strings.Contains(got, "async server(input)") || strings.Contains(got, "setup(") ||
+				!strings.Contains(got, "MURMUR_OPENCODE_SESSION") || !strings.Contains(got, `const mur = "`) {
+				t.Errorf("%s: not OpenCode 1's plugin:\n%s", version, got)
+			}
+		} else if got != openCodePlugin(sb.Exe) {
+			t.Errorf("%s: not OpenCode 2's plugin:\n%s", version, got)
 		}
 		if strings.Contains(got, "{{") {
-			t.Errorf("a name was left unfilled:\n%s", got)
+			t.Errorf("%s: a name was left unfilled:\n%s", version, got)
 		}
 		if _, fresh, err := sb.registerOpenCodeAt(context.Background(), h); err != nil || fresh {
-			t.Errorf("a second join: fresh=%v err=%v", fresh, err)
+			t.Errorf("%s: a second join: fresh=%v err=%v", version, fresh, err)
 		}
 		if !strings.Contains(openCodeRemoval(sb.Env, h), path) {
-			t.Errorf("the removal doesn't name the plugin: %s", openCodeRemoval(sb.Env, h))
+			t.Errorf("%s: the removal doesn't name the plugin: %s", version, openCodeRemoval(sb.Env, h))
 		}
 
 		mine := "export default { id: \"mine\", setup() {} };\n"
 		write(t, path, mine)
 		if _, _, err := sb.registerOpenCodeAt(context.Background(), h); err == nil || read(t, path) != mine {
-			t.Errorf("a plugin of the user's own: err=%v\n%s", err, read(t, path))
+			t.Errorf("%s: a plugin of the user's own: err=%v\n%s", version, err, read(t, path))
 		}
+	}
+
+	// A version join can't learn: each version's plugin is an error to the other.
+	sb := newSandbox(t, false)
+	withAgents(sb)
+	withOpenCode(t, sb, "")
+	h := openCodeHome(sb)
+	path := openCodePluginPath(sb.OpenCodeDir)
+	if _, _, err := sb.registerOpenCodeAt(context.Background(), h); err != nil || exists(path) {
+		t.Fatalf("unknown version: err=%v, plugin written=%v", err, exists(path))
+	}
+	write(t, path, openCodePlugin(sb.Exe))
+	if did, _, err := sb.registerOpenCodeAt(context.Background(), h); err != nil || read(t, path) != openCodePlugin(sb.Exe) ||
+		strings.Contains(strings.Join(did, "\n"), path) {
+		t.Errorf("unknown version, with a plugin there: did=%q err=%v", did, err)
 	}
 }
 
@@ -76,7 +119,7 @@ func TestUninstallOpenCodeRemovesThePlugin(t *testing.T) {
 }
 
 // A plugin from an older mur is rewritten as its MCP server starts, if join wrote it and it runs
-// this binary.
+// this binary, with the plugin for the same version of OpenCode.
 func TestRefreshOpenCode(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "opencode")
 	exe := filepath.Join(t.TempDir(), exeName("mur"))
@@ -99,6 +142,20 @@ func TestRefreshOpenCode(t *testing.T) {
 	if did, _ := refreshOpenCodeAt(dir, exe); did {
 		t.Error("rewrote its own")
 	}
+
+	// OpenCode 1's is rewritten with OpenCode 1's.
+	v1 := openCodePluginFor(t, "1.19.5", exe)
+	if v1 == "" {
+		t.Fatal("join wrote no plugin for OpenCode 1")
+	}
+	write(t, path, strings.Replace(v1, `"busy"`, `"retry"`, 1))
+	if did, err := refreshOpenCodeAt(dir, exe); !did || err != nil || read(t, path) != v1 {
+		t.Fatalf("an old OpenCode 1 one: did=%v err=%v\n%s", did, err, read(t, path))
+	}
+	if did, _ := refreshOpenCodeAt(dir, exe); did {
+		t.Error("rewrote OpenCode 1's own")
+	}
+
 	for name, text := range map[string]string{
 		"another mur's":     strings.Replace(openCodePlugin(other), `"steer"`, `"queue"`, 1),
 		"someone else's":    "export default { id: \"x\", setup() {} };\n",
