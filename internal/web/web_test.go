@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -168,7 +170,7 @@ type harness struct {
 	port string
 }
 
-func start(t *testing.T, src Source, lookup LookupPR) *harness {
+func start(t *testing.T, src Source, lookup LookupPRs) *harness {
 	t.Helper()
 	srv := httptest.NewServer(NewWithPRs(src, testToken, lookup))
 	t.Cleanup(srv.Close)
@@ -220,7 +222,7 @@ func decode[T any](t *testing.T, resp *http.Response) T {
 	return v
 }
 
-func noPRs(context.Context, string) (*PR, error) { return nil, nil }
+func noPRs(context.Context) (map[string]PR, error) { return nil, nil }
 
 func noCORS(t *testing.T, resp *http.Response) {
 	t.Helper()
@@ -460,36 +462,58 @@ func pollPRs(t *testing.T, h *harness, cond func(map[string]PR) bool) map[string
 	}
 }
 
+// One listing answers for every branch, however many sessions there are, and later polls are
+// answered from it: the page costs GitHub the same whatever the bus says (#43).
 func TestPRLookup(t *testing.T) {
-	var mu sync.Mutex
-	var asked []string
-	lookup := func(ctx context.Context, branch string) (*PR, error) {
-		mu.Lock()
-		asked = append(asked, branch)
-		mu.Unlock()
-		return &PR{Number: 36, Draft: true, URL: "https://github.com/a-Fig/murmur/pull/36"}, nil
+	var asked atomic.Int32
+	lookup := func(ctx context.Context) (map[string]PR, error) {
+		asked.Add(1)
+		return map[string]PR{
+			"web-page":  {Number: 36, Draft: true, URL: "https://github.com/a-Fig/murmur/pull/36"},
+			"elsewhere": {Number: 37, URL: "https://github.com/a-Fig/murmur/pull/37"}, // no session is on it
+		}, nil
 	}
-	h := start(t, newFake(), lookup)
+	src := newFake()
+	for i := range 500 {
+		src.state.Devices[0].Sessions = append(src.state.Devices[0].Sessions, Session{Name: fmt.Sprint("s", i), Branch: fmt.Sprint("branch-", i)})
+	}
+	h := start(t, src, lookup)
 	prs := pollPRs(t, h, func(p map[string]PR) bool { return len(p) > 0 })
 	if want := (PR{Number: 36, Draft: true, URL: "https://github.com/a-Fig/murmur/pull/36"}); prs["web-page"] != want || len(prs) != 1 {
 		t.Errorf("prs = %+v", prs)
 	}
-	// The cached answer serves later polls without asking again, and a branch that could pass
-	// for a flag is never asked about.
 	for range 5 {
 		h.ok("GET", "/api/state", "")
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	if !reflect.DeepEqual(asked, []string{"web-page"}) {
-		t.Errorf("looked up %v, want [web-page] once", asked)
+	if n := asked.Load(); n != 1 {
+		t.Errorf("GitHub was asked %d times for 502 sessions over several polls, want once", n)
+	}
+}
+
+// With no session on a branch there is no PR to show, and GitHub is asked nothing.
+func TestPRLookupNoBranches(t *testing.T) {
+	var asked atomic.Int32
+	src := newFake()
+	for i := range src.state.Devices[0].Sessions {
+		src.state.Devices[0].Sessions[i].Branch = ""
+	}
+	h := start(t, src, func(ctx context.Context) (map[string]PR, error) {
+		asked.Add(1)
+		return nil, nil
+	})
+	for range 3 {
+		h.ok("GET", "/api/state", "")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := asked.Load(); n != 0 {
+		t.Errorf("GitHub was asked %d times with no branch to show", n)
 	}
 }
 
 func TestPRLookupFailureTolerated(t *testing.T) {
 	var mu sync.Mutex
 	calls := 0
-	failing := func(ctx context.Context, branch string) (*PR, error) {
+	failing := func(ctx context.Context) (map[string]PR, error) {
 		mu.Lock()
 		calls++
 		mu.Unlock()
@@ -523,9 +547,9 @@ func TestPRLookupFailureTolerated(t *testing.T) {
 // With no gh on PATH, the real lookup fails, and the page still gets its state.
 func TestGHMissing(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	pr, err := GH(t.TempDir())(context.Background(), "web-page")
-	if err == nil || pr != nil {
-		t.Fatalf("GH with no gh on PATH = %v, %v; want an error", pr, err)
+	prs, err := GH(t.TempDir())(context.Background())
+	if err == nil || prs != nil {
+		t.Fatalf("GH with no gh on PATH = %v, %v; want an error", prs, err)
 	}
 	h := start(t, newFake(), GH(t.TempDir()))
 	st := decode[stateResponse](t, h.ok("GET", "/api/state", ""))
@@ -539,8 +563,8 @@ func TestGHMissing(t *testing.T) {
 }
 
 func TestPRURLMustBeHTTPS(t *testing.T) {
-	lookup := func(ctx context.Context, branch string) (*PR, error) {
-		return &PR{Number: 1, URL: "javascript:alert(1)"}, nil
+	lookup := func(ctx context.Context) (map[string]PR, error) {
+		return map[string]PR{"web-page": {Number: 1, URL: "javascript:alert(1)"}}, nil
 	}
 	h := start(t, newFake(), lookup)
 	prs := pollPRs(t, h, func(p map[string]PR) bool { return len(p) > 0 })

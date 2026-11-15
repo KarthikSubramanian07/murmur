@@ -162,25 +162,18 @@ func randomHex(n int) string {
 }
 
 // fixturePRs answers as gh would for the fixture branches, a little slowly.
-func fixturePRs(ctx context.Context, branch string) (*web.PR, error) {
+func fixturePRs(ctx context.Context) (map[string]web.PR, error) {
 	select {
 	case <-time.After(400 * time.Millisecond):
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	prs := map[string]web.PR{
+	return map[string]web.PR{
 		"auth-flow":      {Number: 12, URL: "https://github.com/example/huddle/pull/12"},
 		"landing-page":   {Number: 14, Draft: true, URL: "https://github.com/example/huddle/pull/14"},
 		"api-rate-limit": {Number: 17, URL: "https://github.com/example/huddle/pull/17"},
 		"demo-polish":    {Number: 19, Draft: true, URL: "https://github.com/example/huddle/pull/19"},
-	}
-	if branch == "seed-data" {
-		return nil, errors.New("gh: simulated failure") // shown as no PR state
-	}
-	if pr, ok := prs[branch]; ok {
-		return &pr, nil
-	}
-	return nil, nil
+	}, nil
 }
 
 type fixtures struct {

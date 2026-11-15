@@ -67,13 +67,13 @@ func New(src Source, token, repoDir string) *Server {
 
 // NewWithPRs is New with another way to look up pull requests, such as a test's, and no listing
 // of GitHub's events.
-func NewWithPRs(src Source, token string, prs LookupPR) *Server {
+func NewWithPRs(src Source, token string, prs LookupPRs) *Server {
 	return NewWithGitHub(src, token, prs, nil)
 }
 
 // NewWithGitHub is New with other ways to ask GitHub, such as the dev server's fixtures. A nil
 // events lists none.
-func NewWithGitHub(src Source, token string, prs LookupPR, events LookupGitHub) *Server {
+func NewWithGitHub(src Source, token string, prs LookupPRs, events LookupGitHub) *Server {
 	s := &Server{src: src, token: token, prs: newPRCache(prs), gh: newGHCache(events), mux: http.NewServeMux()}
 	var page bytes.Buffer
 	if err := index.Execute(&page, struct{ Name, Command string }{brand.Product, brand.Command}); err != nil {

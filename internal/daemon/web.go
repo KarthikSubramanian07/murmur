@@ -125,9 +125,14 @@ func (d *Daemon) keepable(ln net.Listener) (net.Listener, *os.File) {
 	return ln, nil
 }
 
+// newPage makes the page's server, which asks GitHub about pull requests and issues by running gh
+// in the clone. This package's tests put one that asks nothing in its place (#43): a test's
+// daemon would run the real gh, as whoever runs the tests, in a clone with no GitHub remote.
+var newPage = web.New
+
 // servePage serves the page on ln until ctx is done.
 func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
-	page := web.New(pageSource{d}, d.pageTok, repoDir(d.opt.GitDir))
+	page := newPage(pageSource{d}, d.pageTok, repoDir(d.opt.GitDir))
 	if d.opt.Repos != nil {
 		page.WithRepos(d.opt.Repos)
 	}
