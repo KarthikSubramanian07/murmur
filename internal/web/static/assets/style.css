@@ -125,7 +125,10 @@
   --sidebar-row-active: color-mix(in srgb, #f1f3f7 11%, transparent);
   --sidebar-row-selected: color-mix(in srgb, #f1f3f7 7%, transparent);
   --sidebar-row-ring: transparent;
+  /* Lines inside the sidebar: chips, the collapsed sidebar's separators. --sidebar-edge is only its
+   * outer edge, which a theme drops when the sidebar's own color sets it apart. */
   --sidebar-border: rgb(255 255 255 / 8%);
+  --sidebar-edge: var(--sidebar-border);
   --sidebar-icon: color-mix(in srgb, var(--sidebar-muted-foreground) 85%, var(--sidebar));
   --secondary-label: #8f8f8f;
 }
@@ -168,7 +171,8 @@
   --sidebar-row-hover: rgb(255 255 255 / 5%);
   --sidebar-row-active: rgb(255 255 255 / 9%);
   --sidebar-row-selected: rgb(255 255 255 / 9%);
-  --sidebar-border: transparent;
+  --sidebar-border: rgb(255 255 255 / 8%);
+  --sidebar-edge: transparent;
   --secondary-label: #a3a6b0;
 }
 
@@ -290,13 +294,18 @@
   --sidebar-row-hover: rgb(255 251 234 / 7%);
   --sidebar-row-active: rgb(34 91 255 / 55%);
   --sidebar-row-selected: rgb(34 91 255 / 45%);
-  --sidebar-border: transparent;
+  --sidebar-border: rgb(255 251 234 / 12%);
+  --sidebar-edge: transparent;
   --secondary-label: #a9b6e6;
   --background: var(--m-ink);
   --foreground: var(--m-cream);
   --card: #16265c;
   --popover: #16265c;
   --muted-foreground: #a9b6e6;
+  --placeholder: #a9b6e6;
+  --secondary: rgb(255 251 234 / 4%);
+  --secondary-foreground: var(--m-cream);
+  --muted: rgb(255 251 234 / 4%);
   --accent: rgb(255 251 234 / 8%);
   --accent-foreground: var(--m-cream);
   --border: rgb(255 251 234 / 12%);
@@ -942,7 +951,7 @@ a.g-pr:hover {
   background-color: var(--sidebar);
   background-image: var(--surface-grain);
   background-size: 256px 256px;
-  border-right: 1px solid var(--sidebar-border);
+  border-right: 1px solid var(--sidebar-edge);
   color: var(--sidebar-foreground);
   --dot-ring: var(--sidebar);
 }
