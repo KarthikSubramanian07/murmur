@@ -90,7 +90,8 @@ tool calls for them.
 
 ## Device nicknames
 
-A device's ID (`tyler-laptop-3f2a`) says which machine, not whose. Since 2026-11-11 (#190) a device
+A device's ID (`device-3f2a9c1e`; `tyler-laptop-3f2a` for a clone made before #330) says nothing
+of whose it is. Since 2026-11-11 (#190) a device
 can be called something else, such as its owner's name.
 
 - **A label, not a new ID, and not an address.** The ID names the device's refs and is in every

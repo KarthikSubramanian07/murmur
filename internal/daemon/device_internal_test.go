@@ -16,8 +16,8 @@ func TestADeviceIDSaysNothingOfTheMachine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !regexp.MustCompile(`^device-[0-9a-f]{6}$`).MatchString(id) {
-		t.Errorf("a new device's ID is %q, want device- and six hex digits", id)
+	if !regexp.MustCompile(`^device-[0-9a-f]{8}$`).MatchString(id) {
+		t.Errorf("a new device's ID is %q, want device- and eight hex digits", id)
 	}
 	if host, _ := os.Hostname(); host != "" && strings.Contains(id, strings.ToLower(strings.Split(host, ".")[0])) {
 		t.Errorf("the ID %q carries the hostname %q", id, host)

@@ -64,11 +64,12 @@ address once ([counting use](counting.md)).
   after days away doesn't stall its sessions while it catches up, and along first parents, so a
   merge someone wrote by hand can't have its messages delivered twice.
 - **A device is one clone's daemon.** Worktrees of a clone share its `.git`, so they share its
-  daemon; a second clone on the same machine is a second device. The device ID is `device-` and six
-  random hex digits (`device-3f2a9c`), kept in `.git/murmur/`, which no commit or checkout touches.
-  Anyone who can read the repo sees it, so it says nothing of the machine (#330, 2026-11-15); a
-  clone made before keeps its ID, which began with its hostname. Teammates tell devices apart by the
-  owner and host the encrypted presence carries, and by nickname. What people call a device is under [device nicknames](presence.md#device-nicknames).
+  daemon; a second clone on the same machine is a second device. The device ID is `device-` and
+  eight random hex digits (`device-3f2a9c1e`), kept in `.git/murmur/`, which no commit or checkout
+  touches. Anyone who can read the repo sees it, so it says nothing of the machine (#330,
+  2026-11-15); a clone made before keeps its ID, which began with its hostname. Teammates tell
+  devices apart by the owner and host the encrypted presence carries, and by nickname. What people
+  call a device is under [device nicknames](presence.md#device-nicknames).
 
 ## Pushes
 

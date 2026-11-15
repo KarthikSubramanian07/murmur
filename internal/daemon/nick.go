@@ -15,8 +15,8 @@ import (
 	"github.com/a-Fig/murmur/internal/web"
 )
 
-// A device's nickname (#190). A device's ID is its hostname and four hex digits, which says which
-// machine and not whose. Its user can give it a nickname, such as their own name; presence carries
+// A device's nickname (#190). A device's ID says nothing of whose it is: since #330 it is device-
+// and eight hex digits, and before that it began with the machine's hostname. Its user can give it a nickname, such as their own name; presence carries
 // it, so every teammate sees the same one. A device with none is called by its person's name, if
 // someone chose one on the page, so most devices never need one set. It is a label and nothing
 // more: who, lookup and the page show it beside the ID, and no address takes it, so whatever a

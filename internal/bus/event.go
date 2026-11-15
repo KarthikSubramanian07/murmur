@@ -329,7 +329,8 @@ func ValidName(s string) bool {
 
 // ValidDevice accepts device IDs: valid names that every filesystem can hold as a ref (none of
 // Windows' reserved device names), other than Murmur's own, under which a message would pass for
-// the tool's own words. IDs Murmur makes always pass: a hostname slug and 4 hex digits.
+// the tool's own words. IDs Murmur makes always pass: device- and 8 hex digits, or, for a clone
+// made before #330, a hostname slug and 4.
 func ValidDevice(s string) bool {
 	if !ValidName(s) || s == brand.Name {
 		return false

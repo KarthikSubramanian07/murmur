@@ -1290,7 +1290,7 @@ func (d *Daemon) holdsRouteLocked(wake pageSettings) bool {
 	return false
 }
 
-// loadDevice reads this clone's device ID, creating it on first run: "device-" and six random hex
+// loadDevice reads this clone's device ID, creating it on first run: "device-" and eight random hex
 // digits, so two clones on one machine are two devices. The ID names the device's ref and authors
 // its commits, so anyone who can read the repo sees it, and on a public repo a hostname in it would
 // often show its owner's full name (#330). Teammates tell devices apart by what the encrypted
@@ -1303,7 +1303,7 @@ func loadDevice(dir string) (string, error) {
 			return id, nil
 		}
 	}
-	id := "device-" + bus.RandHex(6)
+	id := "device-" + bus.RandHex(8)
 	return id, os.WriteFile(path, []byte(id+"\n"), 0o600)
 }
 
