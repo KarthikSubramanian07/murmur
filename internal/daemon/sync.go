@@ -1279,32 +1279,53 @@ func (d *Daemon) sawPresence(dev, sha string, tried bool) {
 // appendEvent adds an event to this device's log on the remote. It returns once the push has
 // landed, so a sender knows whether its message went out.
 func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
+	_, err := d.writeEvent(ctx, e, "")
+	return err
+}
+
+// writeEvent is appendEvent for an event that may be on the log already: tried, if set, is the
+// commit an earlier write of it pushed and was told failed, which may have landed all the same
+// (bus.Push looks, but can't always tell). If the remote's log holds it, the event isn't written
+// again. On a failure, pushed is the commit that may have landed, for the next try to look for.
+func (d *Daemon) writeEvent(ctx context.Context, e bus.Event, tried string) (pushed string, err error) {
 	if err := d.awaitEpoch(ctx); err != nil {
-		return err
+		return tried, err
 	}
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	ref := d.meshRef()
+	if tried != "" {
+		landed, err := d.logHolds(ctx, ref, tried)
+		if err != nil {
+			return tried, err
+		}
+		if landed {
+			return "", nil
+		}
+	}
 	d.mu.Lock()
 	boxed, err := d.encryptEventLocked(e)
 	d.mu.Unlock()
 	if err != nil {
-		return err
+		return "", err
 	}
 	msg, err := bus.Encode(boxed, bus.EventSubject)
 	if err != nil {
-		return err
+		return "", err
 	}
 	lease := ""
 	for attempt := 0; ; attempt++ {
 		sha, err := d.repo.NewCommit(ctx, d.ownTip, msg)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if lease == "" {
 			err = d.push(ctx, sha, ref, bus.FastForward, "")
 		} else {
 			err = d.push(ctx, sha, ref, bus.Lease, lease)
+		}
+		if err != nil && !errors.Is(err, bus.ErrRejected) && !errors.Is(err, bus.ErrRefused) {
+			return sha, err // network, auth, a deadline: the push may have landed
 		}
 		if err == nil {
 			d.ownTip = sha
@@ -1320,21 +1341,21 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 			d.mu.Unlock()
 			d.advanceMesh(ctx, ref, sha, sha) // queues for sessions on this device
 			d.advMu.Unlock()
-			return nil
+			return "", nil
 		}
 		if !errors.Is(err, bus.ErrRejected) || attempt > 0 {
-			return err
+			return "", err
 		}
 		tip, err := d.repo.RemoteRef(ctx, ref)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if err := d.repo.Fetch(ctx, []string{ref}); err != nil {
-			return err
+			return "", err
 		}
 		over, err := d.overOwnLog(ctx, tip)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if over {
 			// Junk pushed over this log, or an older copy of it: replace it with the next event
@@ -1413,6 +1434,23 @@ func (d *Daemon) clearOwnJunk(listed map[string]string) {
 			}
 		}
 	}()
+}
+
+// logHolds says whether the remote's copy of this device's log, ref, holds commit sha. Caller
+// holds writeMu.
+func (d *Daemon) logHolds(ctx context.Context, ref, sha string) (bool, error) {
+	tip, err := d.repo.RemoteRef(ctx, ref)
+	switch {
+	case err != nil:
+		return false, err
+	case tip == "" || tip == sha:
+		return tip == sha, nil
+	}
+	if err := d.repo.Fetch(ctx, []string{ref}); err != nil {
+		return false, err
+	}
+	// Junk at the tip, or a commit gone from here (never pushed, so never kept), is false.
+	return d.repo.IsAncestor(ctx, sha, tip)
 }
 
 // awaitPresence waits, if a session has started since the last presence was made, until a presence

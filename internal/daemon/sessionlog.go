@@ -22,9 +22,13 @@ import (
 // news, which the page's Recent view is least likely to still show.
 const maxOwed = 100
 
-// owedEvent is a start or stop not yet known to be on the log.
+// owedEvent is a start or stop not yet known to be on the log. Tried is the commit a write of it
+// last pushed and was told failed: a push can land and still report a failure (bus.Push looks,
+// but can't always tell), so the next write checks whether the log holds it before writing it
+// again.
 type owedEvent struct {
 	Event bus.Event `json:"event"`
+	Tried string    `json:"tried,omitempty"`
 }
 
 // owe keeps e, a session's start or stop, to be written to this device's log by owedLoop.
@@ -92,14 +96,20 @@ func (d *Daemon) writeOwed(ctx context.Context) error {
 		d.mu.Unlock()
 		wctx, cancel := context.WithTimeout(ctx, time.Minute)
 		err := d.awaitPresence(wctx)
+		pushed := ""
 		if err == nil {
-			err = d.appendEvent(wctx, o.Event)
+			pushed, err = d.writeEvent(wctx, o.Event, o.Tried)
 		}
 		cancel()
 		d.mu.Lock()
-		if err == nil && len(d.st.Owed) > 0 && d.st.Owed[0].Event.ID == o.Event.ID { // not dropped meanwhile
-			d.st.Owed = d.st.Owed[1:]
-			d.saveLocked()
+		if len(d.st.Owed) > 0 && d.st.Owed[0].Event.ID == o.Event.ID { // not dropped meanwhile
+			if err == nil {
+				d.st.Owed = d.st.Owed[1:]
+				d.saveLocked()
+			} else if pushed != "" {
+				d.st.Owed[0].Tried = pushed
+				d.saveLocked()
+			}
 		}
 		d.mu.Unlock()
 		if err != nil {
