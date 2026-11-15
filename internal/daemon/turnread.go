@@ -79,16 +79,14 @@ func (d *Daemon) forgetAwaitingLocked(id, msg string) {
 	}
 }
 
-// readOnPromptLocked marks read the message handed to session id as a turn that prompt is, and
-// forgets it. A prompt is one turn, so it marks one message at most: the oldest it matches, as the
-// client takes turns in the order they were handed over. It says whether it marked one; the caller
-// saves the state then. Caller holds mu.
+// readOnPromptLocked marks read the message handed to session id as a turn that prompt is (whichTurn),
+// and forgets it. It says whether it marked one; the caller saves the state then. Caller holds mu.
 func (d *Daemon) readOnPromptLocked(id, prompt string) bool {
 	list := d.st.AwaitingRead[id]
 	if prompt == "" || len(list) == 0 {
 		return false
 	}
-	i := slices.IndexFunc(list, func(a awaitingRead) bool { return isTurn(prompt, a.Turn) })
+	i := whichTurn(prompt, list)
 	if i < 0 {
 		return false
 	}
@@ -96,6 +94,29 @@ func (d *Daemon) readOnPromptLocked(id, prompt string) bool {
 	d.markLocked(id, bus.Event{Type: bus.Message, ID: a.ID, From: a.From, Receipts: true}, bus.MarkRead)
 	d.forgetAwaitingLocked(id, a.ID)
 	return true
+}
+
+// whichTurn is where in list the turn that prompt is stands, or -1. A prompt is one turn, so it is
+// one entry at most: the oldest it holds whole, as the client takes turns in the order they were
+// handed over. The hook cuts a prompt at proto.MaxPrompt bytes, and a client may put lines before
+// the turn, so a cut prompt can hold only a turn's start; that counts too, but only where no other
+// entry starts the same way. Two turns that start alike ("Deploy", "Deploy now"), cut before they
+// part, can't be told apart, and marking the oldest could mark the wrong one (#651).
+func whichTurn(prompt string, list []awaitingRead) int {
+	cut := len(prompt) > proto.MaxPrompt-utf8.UTFMax
+	started := -1
+	for i, a := range list {
+		whole, start := isTurn(prompt, a.Turn, cut)
+		switch {
+		case whole:
+			return i
+		case start && started == -1:
+			started = i
+		case start:
+			started = -2
+		}
+	}
+	return max(started, -1)
 }
 
 // turnStart is as much of a turn's text as a prompt can show of it: the hook sends a prompt's first
@@ -113,27 +134,27 @@ func turnStart(turn string) string {
 	return turn[:cut]
 }
 
-// isTurn says prompt is the turn whose text, as turnStart kept it, is turn: from where the turn's
-// header line ("Message from quiet-otter via Murmur:") starts, the prompt and the turn agree for as
-// far as both go, and that is past the header. The header may come after other lines, should a
-// client put anything before the turn, and either may be the shorter: the hook cuts the prompt at
-// proto.MaxPrompt bytes, and a client may trim the end. A prompt the user typed while the client
-// held Murmur's turn in its queue doesn't hold the header, so it isn't the turn.
-func isTurn(prompt, turn string) bool {
+// isTurn says prompt holds the turn whose text, as turnStart kept it, is turn: whole, from where
+// the turn's header line ("Message from quiet-otter via Murmur:") starts; or, for a prompt the hook
+// cut, only its start, past the header. The header may come after other lines, should a client put
+// anything before the turn. A prompt the user typed while the client held Murmur's turn in its
+// queue doesn't hold the header, so it isn't the turn.
+func isTurn(prompt, turn string, cut bool) (whole, start bool) {
 	header, _, _ := strings.Cut(turn, "\n")
 	if header == "" || len(header) == len(turn) {
-		return false
+		return false, false
 	}
 	prompt = strings.ReplaceAll(prompt, "\r\n", "\n")
 	for from := 0; ; {
 		i := strings.Index(prompt[from:], header)
 		if i < 0 {
-			return false
+			return false, start
 		}
 		rest := strings.TrimSpace(prompt[from+i:])
-		if len(rest) > len(header) && (strings.HasPrefix(turn, rest) || strings.HasPrefix(rest, turn)) {
-			return true
+		if strings.HasPrefix(rest, turn) {
+			return true, false
 		}
+		start = start || cut && len(rest) > len(header) && strings.HasPrefix(turn, rest)
 		from += i + len(header)
 	}
 }

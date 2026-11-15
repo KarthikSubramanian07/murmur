@@ -7,8 +7,15 @@ func SetMaxWholeReply(n int) func() {
 	return func() { maxWholeReply = was }
 }
 
-// IsTurn says prompt is the turn whose text is turn, as the daemon matches them (#611, #651).
-func IsTurn(prompt, turn string) bool { return isTurn(prompt, turnStart(turn)) }
+// WhichTurn is which of turns, the texts of turns handed to one session in order, prompt is, or -1,
+// as the daemon matches them (#611, #651).
+func WhichTurn(prompt string, turns ...string) int {
+	list := make([]awaitingRead, len(turns))
+	for i, t := range turns {
+		list[i] = awaitingRead{Turn: turnStart(t)}
+	}
+	return whichTurn(prompt, list)
+}
 
 // CatchUpWindow is catchUpWindow, how long after the start what is read for a reconnecting session
 // is held for it.

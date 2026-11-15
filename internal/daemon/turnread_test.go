@@ -3,6 +3,7 @@ package daemon_test
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/daemon"
@@ -73,37 +74,53 @@ func TestATurnMarksOnlyItsOwnMessage(t *testing.T) {
 
 // A prompt is matched to the turn view.Turn rendered, as the daemon handed it over: after a line a
 // client put before it, cut at the hook's 4 KB, or with its line ends changed. A prompt the user
-// typed, or another message's turn, isn't it.
+// typed, or another message's turn, isn't it, nor is a cut prompt that two turns could be.
 func TestAPromptIsMatchedToItsTurn(t *testing.T) {
-	msg := func(subject, body string) proto.MessageView {
-		return proto.MessageView{From: "d/aaaaaa", FromName: "quiet-otter", To: "d/bbbbbb", Subject: subject, Body: body}
+	msg := func(subject, body string) string {
+		return view.Turn(proto.MessageView{From: "d/aaaaaa", FromName: "quiet-otter", To: "d/bbbbbb", Subject: subject, Body: body})
 	}
-	rerun := view.Turn(msg("Rerun CI?", "It flaked."))
-	cut := view.Turn(msg("A long first line that the page cut…", "A long first line that the page cut short, and went on."))
-	long := view.Turn(msg("Logs", strings.Repeat("é line of the log\n", 400)))
-	for _, c := range []struct{ name, prompt, turn string }{
-		{"the turn itself", rerun, rerun},
-		{"a subject that starts the body", cut, cut},
-		{"after a line a client put first", "[from T3]\n" + rerun, rerun},
-		{"with Windows line ends, trimmed", strings.TrimSpace(strings.ReplaceAll(rerun, "\n", "\r\n")), rerun},
-		{"cut at the hook's 4 KB", long[:proto.MaxPrompt-1], long},
-	} {
-		if !daemon.IsTurn(c.prompt, c.turn) {
-			t.Errorf("%s: the prompt isn't taken for its turn:\n%s", c.name, c.prompt)
+	// hook cuts a prompt as the hook does: at proto.MaxPrompt bytes, where a character starts.
+	hook := func(p string) string {
+		if len(p) <= proto.MaxPrompt {
+			return p
 		}
+		n := proto.MaxPrompt
+		for !utf8.RuneStart(p[n]) {
+			n--
+		}
+		return p[:n]
 	}
-
-	deploy := view.Turn(msg("Deploy", ""))
-	for _, c := range []struct{ name, prompt, turn string }{
-		{"a longer subject that starts the same", view.Turn(msg("Deploy now", "")), deploy},
-		{"a shorter one", deploy, view.Turn(msg("Deploy now", ""))},
-		{"the same subject, another body", view.Turn(msg("Rerun CI?", "It flaked again.")), rerun},
-		{"the user's own words", "run the tests", view.Turn(msg("test", ""))},
-		{"the user's words under a line like a header", "Message me later\ntest", view.Turn(msg("test", ""))},
-		{"the header alone", strings.SplitN(rerun, "\n", 2)[0], rerun},
+	rerun := msg("Rerun CI?", "It flaked.")
+	cut := msg("A long first line that the page cut…", "A long first line that the page cut short, and went on.")
+	long := msg("Logs", strings.Repeat("é line of the log\n", 400))
+	deploy, deployNow := msg("Deploy", ""), msg("Deploy now", "")
+	// A line a client put first leaves room in the hook's 4 KB for the turn's header and "Deploy".
+	before := strings.Repeat("a", proto.MaxPrompt-len("Message from quiet-otter via Murmur:\n\nDeploy")-1) + "\n"
+	for _, c := range []struct {
+		name   string
+		prompt string
+		turns  []string
+		want   int
+	}{
+		{"the turn itself", rerun, []string{rerun}, 0},
+		{"a subject that starts the body", cut, []string{cut}, 0},
+		{"after a line a client put first", "[from T3]\n" + rerun, []string{rerun}, 0},
+		{"with Windows line ends, trimmed", strings.TrimSpace(strings.ReplaceAll(rerun, "\n", "\r\n")), []string{rerun}, 0},
+		{"cut at the hook's 4 KB", hook(long), []string{long}, 0},
+		{"cut, after lines a client put first", hook("[from T3]\n" + long), []string{rerun, long}, 1},
+		{"the later of two whose subjects start the same", deployNow, []string{deploy, deployNow}, 1},
+		{"the earlier of them", deploy, []string{deploy, deployNow}, 0},
+		{"the oldest of two alike", rerun, []string{rerun, rerun}, 0},
+		{"the same subject, another body", msg("Rerun CI?", "It flaked again."), []string{rerun}, -1},
+		{"the user's own words", "run the tests", []string{msg("test", "")}, -1},
+		{"the user's words under a line like a header", "Message me later\ntest", []string{msg("test", "")}, -1},
+		{"the header alone", strings.SplitN(rerun, "\n", 2)[0], []string{rerun}, -1},
+		{"a turn's start, not cut", strings.SplitN(deployNow, "\n\n", 3)[0] + "\n\nDeploy", []string{deploy, deployNow}, -1},
+		{"cut where two turns still agree", hook(before + deployNow), []string{deploy, deployNow}, -1},
+		{"cut, where only one turn starts so", hook(before + deployNow), []string{rerun, deployNow}, 1},
 	} {
-		if daemon.IsTurn(c.prompt, c.turn) {
-			t.Errorf("%s: the prompt is taken for another turn:\n%s", c.name, c.prompt)
+		if got := daemon.WhichTurn(c.prompt, c.turns...); got != c.want {
+			t.Errorf("%s: the prompt is taken for turn %d, want %d:\n%s", c.name, got, c.want, c.prompt)
 		}
 	}
 }
