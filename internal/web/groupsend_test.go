@@ -66,7 +66,7 @@ async function run(name, sessions, failing, then) {
     },
   };
   vm.createContext(ctx);
-  vm.runInContext(src + "\nthis.tagSessions = tagSessions; this.deliver = deliver; this.groupJoins = groupJoins;", ctx);
+  vm.runInContext(src + "\nthis.tagSessions = tagSessions; this.deliver = deliver; this.groupJoins = groupJoins; this.forgetJoins = forgetJoins;", ctx);
   const newItem = (text) => ({ cid: text, key: "group:x", to: "group:x", text, status: "sending" });
   const show = (label, item) => {
     const note = ctx.ui.notes.get("group:x");
@@ -81,6 +81,19 @@ async function run(name, sessions, failing, then) {
     await settled();
     failing.clear();
     await ctx.tagSessions([sessions[0]], "group:x", true);
+  }
+  if (then === "added and taken out by hand") {
+    await settled();
+    failing.clear();
+    await ctx.tagSessions([sessions[0]], "group:x", true);
+    await ctx.tagSessions([sessions[0]], "group:x", false);
+  }
+  if (then === "joins and leaves itself") {
+    // The member takes the tag itself, a poll brings that, and then it removes it.
+    await settled();
+    sessions[0].tags = [{ name: "group:x" }];
+    ctx.forgetJoins(); // as poll does with each state
+    sessions[0].tags = [];
   }
   if (then === "started again") {
     // Both adds fail with nothing sent; tags are freed, and the group is started again.
@@ -107,6 +120,13 @@ async function run(name, sessions, failing, then) {
     await ctx.deliver(item);
     show(name + ", tried again", item);
   }
+  if (then === "ends") {
+    // The member whose add failed stops running.
+    ctx.ui.state.devices[0].sessions = sessions.slice(1);
+    const again = newItem("hello2");
+    await ctx.deliver(again);
+    show(name + ", its session ended", again);
+  }
   if (then === "added by hand") {
     failing.clear();
     await ctx.tagSessions([sessions[0]], "group:x", true); // as the tag menu does
@@ -120,6 +140,9 @@ async function run(name, sessions, failing, then) {
   await run("all join", [s("a"), s("b")], new Set(), "two at once");
   await run("one fails", [s("a"), s("b")], new Set(["laptop/a"]), "added by hand");
   await run("one fails, added by hand first", [s("a"), s("b")], new Set(["laptop/a"]), "added by hand first");
+  await run("one fails, added and taken out by hand", [s("a"), s("b")], new Set(["laptop/a"]), "added and taken out by hand");
+  await run("one fails, joins and leaves itself", [s("a"), s("b")], new Set(["laptop/a"]), "joins and leaves itself");
+  await run("one fails", [s("a"), s("b")], new Set(["laptop/a"]), "ends");
   await run("all fail", [s("a"), s("b")], new Set(["laptop/a", "laptop/b"]), "edit and send");
   await run("all fail", [s("a"), s("b")], new Set(["laptop/a", "laptop/b"]), "try again");
   await run("one fails, two at once", [s("a"), s("b")], new Set(["laptop/a"]), "two at once");
@@ -130,7 +153,9 @@ async function run(name, sessions, failing, then) {
 // Starting a group from the page and sending at once (#535): a member whose add fails isn't in the
 // group, so the page says it didn't get the message, until it is added; with nobody in the group
 // the page sends nothing and says so, for a message written anew too; Try again tries the adds
-// again; and two messages sent at once still go in the order they were written.
+// again; and two messages sent at once still go in the order they were written. A failed add is
+// forgotten once the member is in the group, by anyone's hand, or stops running: out of the group
+// later, it is out for another reason, and the page doesn't give the old one (#538).
 func TestGroupSendSaysWhoWasntAdded(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -144,7 +169,8 @@ func TestGroupSendSaysWhoWasntAdded(t *testing.T) {
 		}
 	}
 	write(src, pageFunctions(t, "AuthError", "api", "HIDDEN", "OWN_MEANING", "sortsBy", "tagWanted", "TAG_WAIT_MS", "tagsOf",
-		"hasTag", "inGroup", "isGroupTag", "sessionByAddr", "tagQueues", "groupJoins", "queueTagChange", "tagSessions", "deliver", "namesOf"))
+		"hasTag", "inGroup", "isGroupTag", "sessionByAddr", "tagQueues", "groupJoins", "groupMisses", "queueTagChange", "tagSessions", "forgetJoins",
+		"deliver", "namesOf"))
 	harness := filepath.Join(dir, "harness.js")
 	write(harness, groupSendHarness)
 	b, err := exec.Command(node, harness, src).CombinedOutput()
@@ -157,6 +183,10 @@ func TestGroupSendSaysWhoWasntAdded(t *testing.T) {
 		"one fails: sent |  | warn Couldn't add a to group:x, so they didn't get this: a session has at most 12 tags | /api/tags laptop/a, /api/tags laptop/b, /api/send group:x, announce Sent, but not to a.",
 		"one fails, added by hand: sent |  | group:x has 1 other member(s) right now. | /api/tags laptop/a, /api/send group:x hello2, announce Sent.",
 		"one fails, added by hand first: sent |  | group:x has 1 other member(s) right now. | /api/tags laptop/a, /api/tags laptop/b, /api/tags laptop/a, /api/send group:x, announce Sent.",
+		"one fails, added and taken out by hand: sent |  | group:x has 1 other member(s) right now. | /api/tags laptop/a, /api/tags laptop/b, /api/tags laptop/a, /api/tags laptop/a, /api/send group:x, announce Sent.",
+		"one fails, joins and leaves itself: sent |  | group:x has 1 other member(s) right now. | /api/tags laptop/a, /api/tags laptop/b, /api/send group:x, announce Sent.",
+		"one fails: sent |  | warn Couldn't add a to group:x, so they didn't get this: a session has at most 12 tags | /api/tags laptop/a, /api/tags laptop/b, /api/send group:x, announce Sent, but not to a.",
+		"one fails, its session ended: sent |  | group:x has 1 other member(s) right now. | /api/send group:x hello2, announce Sent.",
 		"all fail: failed | Not sent: couldn't add a, b to group:x: a session has at most 12 tags |  | /api/tags laptop/a, /api/tags laptop/b",
 		"all fail, sent anew: failed | Not sent: couldn't add a, b to group:x: a session has at most 12 tags |  | ",
 		"all fail: failed | Not sent: couldn't add a, b to group:x: a session has at most 12 tags |  | /api/tags laptop/a, /api/tags laptop/b",

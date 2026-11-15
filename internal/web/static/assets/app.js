@@ -2586,10 +2586,13 @@ function repoMenu() {
 // A session's changes go one after another, in the order they were clicked: the daemon times a
 // change when it gets it, so two in flight at once could land the other way round.
 const tagQueues = new Map();
-// The adds this page made to each group, which a message sent to it waits for: each resolves to the
-// sessions whose add failed, with why. A tag change that fails resolves its place in tagQueues all
-// the same. They are kept, and a session counts as missed only while it is still out of the group.
-const groupJoins = new Map(); // a group's tag → [Promise<[{ s, msg }]>]
+// The adds this page made to each group still on their way, which a message sent to it waits for.
+// A tag change that fails resolves its place in tagQueues all the same, so groupMisses keeps each
+// session whose add to a group failed, with why, while that is the latest word on it: until the
+// session is in the group, by anyone's hand, the page changes its tag there again, or it isn't
+// running. One out of the group after that is out for a reason the page doesn't know (#538).
+const groupJoins = new Map(); // a group's tag → [Promise]
+const groupMisses = new Map(); // a group's tag → Map<addr, { s, msg }>
 
 function queueTagChange(addr, fn) {
   const run = (tagQueues.get(addr) || Promise.resolve()).then(fn);
@@ -2621,16 +2624,30 @@ async function tagSessions(targets, name, on) {
           api("/api/tags", { method: "POST", body: JSON.stringify({ addr: s.addr, add: on ? [name] : [], remove: on ? [] : [name] }) }),
         );
         wishes.get(s.addr).done = Date.now();
+        groupMisses.get(name)?.delete(s.addr);
       } catch (e) {
         // A later click on the same tag has its own wish; only this one's is dropped.
         const w = tagWanted.get(s.addr);
         if (w?.get(name) === wishes.get(s.addr)) w.delete(name);
-        if (e instanceof AuthError) denied = e;
-        else failed.push({ s, msg: e.message });
+        if (e instanceof AuthError) {
+          denied = e;
+        } else {
+          failed.push({ s, msg: e.message });
+          if (on && isGroupTag(name)) {
+            if (!groupMisses.has(name)) groupMisses.set(name, new Map());
+            groupMisses.get(name).set(s.addr, { s, msg: e.message });
+          }
+        }
       }
     }),
   );
-  if (on && isGroupTag(name) && todo.length) groupJoins.set(name, [...(groupJoins.get(name) || []), all.then(() => failed)]);
+  if (on && isGroupTag(name) && todo.length) {
+    groupJoins.set(name, [...(groupJoins.get(name) || []), all]);
+    all.then(() => {
+      const left = (groupJoins.get(name) || []).filter((p) => p !== all);
+      left.length ? groupJoins.set(name, left) : groupJoins.delete(name);
+    });
+  }
   await all;
   if (denied) return deny(denied.token);
   if (failed.length) {
@@ -2640,6 +2657,17 @@ async function tagSessions(targets, name, on) {
   }
   render();
   poll();
+}
+
+// Drops each failed add to a group whose session is in it now or no longer running.
+function forgetJoins() {
+  for (const [group, misses] of groupMisses) {
+    for (const addr of [...misses.keys()]) {
+      const s = sessionByAddr(addr);
+      if (!s || inGroup(s, group)) misses.delete(addr);
+    }
+    if (!misses.size) groupMisses.delete(group);
+  }
 }
 
 // Messages.
@@ -4110,12 +4138,9 @@ async function deliver(item) {
       if (item.missed?.length) tagSessions(item.missed.map((f) => f.s), item.to, true); // Try again tries them again
       const joins = [...(groupJoins.get(item.to) || [])];
       await Promise.all([...tagQueues.values()]);
-      const seen = new Set();
-      for (const f of (await Promise.all(joins)).flat()) {
-        const s = sessionByAddr(f.s.addr) || f.s;
-        if (!seen.has(s.addr) && !inGroup(s, item.to)) missed.push({ s, msg: f.msg });
-        seen.add(s.addr);
-      }
+      await Promise.all(joins);
+      forgetJoins();
+      missed = [...(groupMisses.get(item.to)?.values() || [])].map((f) => ({ s: sessionByAddr(f.s.addr), msg: f.msg }));
       item.missed = missed;
       if (missed.length && !devices().some((d) => d.sessions.some((s) => inGroup(s, item.to)))) {
         throw new Error("not sent: couldn't add " + namesOf(missed) + " to " + item.to + ": " + missed[0].msg);
@@ -4936,6 +4961,7 @@ async function poll() {
     }
     ui.state = state;
     stateAskedAt = asked;
+    forgetJoins();
     // Someone else claimed this name first (#268): ask for another, once per page, unless something
     // is already being asked.
     if (state.account?.taken && !ui.takenAsked && !ui.setup && !ui.picker && !ui.tagMenu) {
