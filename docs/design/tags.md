@@ -37,18 +37,19 @@ no tag carries behavior but `do-not-disturb`, which he asked for the same day.
 - **A session with no name yet** keeps its tags and mutes by its ID. One that stops before its name
   lands still has them while its inbox is kept, and they go with the inbox (#503). One whose daemon
   stopped with it is never recorded as stopped, so they go as its inbox does, if it isn't back two
-  minutes after the restart. After a restart, a person's change to the tags of a session the daemon
-  knows nothing of, or an agent's add of it to a group, read in the first 30 s, waits in memory for
-  a session of that ID to reconnect in that time, as a message does (#524): one whose name was
-  pending and that kept nothing here would otherwise lose it. It is applied before the messages
-  that waited, so the group's message read with an add reaches the session, and a held add is
-  checked again as one read in a catch-up. A daemon back after more than 10 minutes refuses such an
-  add when it reads it, as it does any add from history it passes over that it can't show was sent
-  since the session started; a person's change still waits, unless the daemon has nothing the log
-  could be for (no session, kept inbox, name or tags) and passes it over unread. Nothing is written
-  to disk for it, as the daemon can't tell the ID from a made-up one. The cost: what waited is lost
-  by a session that reconnects after the 30 s, as the messages are, and by one whose daemon
-  restarts again within them.
+  minutes after the restart. The cost: one resumed later than that has lost its mutes too, so the
+  sessions it muted reach it again. After a restart, a person's change to the tags of a session the
+  daemon knows nothing of, or an agent's add of it to a group, read in the first 30 s, waits in
+  memory for a session of that ID to reconnect in that time, as a message does (#524): one whose
+  name was pending and that kept nothing here would otherwise lose it. It is applied before the
+  messages that waited, so the group's message read with an add reaches the session, and a held add
+  is checked again as one read in a catch-up. A daemon back after more than 10 minutes refuses such
+  an add when it reads it, as it does any add from history it passes over that it can't show was
+  sent since the session started; a person's change still waits, unless the daemon has nothing the
+  log could be for (no session, kept inbox, person's account, name or tags) and passes it over
+  unread. Nothing is written to disk for it, as the daemon can't tell the ID from a made-up one. The
+  cost: what waited is lost by a session that reconnects after the 30 s, as the messages are, and by
+  one whose daemon restarts again within them.
 - **Search.** `who` takes tags and lists only the sessions with all of them; `-tag` leaves out those
   with it, and a `*` at the end matches any tag that starts so (`model:opus*`).
 - **`human`** marks a person's account (#267, Tyler, 2026-11-09), so an agent reading `who`,
