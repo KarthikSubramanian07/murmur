@@ -1012,7 +1012,7 @@ func (d *Daemon) ownerOfLocked(addr string) string {
 
 func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.MessageView {
 	views := make([]proto.MessageView, 0, len(msgs))
-	var byAddr map[string]string // the registry's names, for a sender no longer in presence
+	var byAddr map[string]string // the names of senders no longer in presence (lastNameLocked)
 	for _, m := range msgs {
 		e := m.Event
 		name, agent, branch := d.sessionInfoLocked(e.From)

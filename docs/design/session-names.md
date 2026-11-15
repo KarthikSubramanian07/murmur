@@ -70,6 +70,15 @@ names routes by it all the same.
   send to the old name reaches the session, and says it is called something else now. An error
   saying the conversation ended would drop messages to a session that is alive and could read them
   (2026-10-29).
+- **A session that has left presence is shown by one name** (#502, 2026-11-15), the same in the
+  inbox, activity, `lookup` and the mute checks, so the name an agent replies to or mutes is the one
+  it was shown. Before, an address that had held several names was shown by whichever a map gave
+  last, which could change from one call to the next. One of this device's goes by the name it took
+  last, which the device records. Another device's goes by the first by spelling of the names the
+  registry gave its address: the registry keeps no order of them, and a record's time is its
+  writer's clock. That can be an older name; a send to it reaches the same session, as above.
+  Remembering the last name each address showed in presence would show the latest; it needs new
+  saved state and isn't built.
 - **A name held by another session** (#37, #46). A `/resume` back to an earlier conversation can put
   its name on a session whose Murmur ID isn't the one the registry has. A daemon records in its
   state file the last session to hold each name and the last name each of its sessions held. A
