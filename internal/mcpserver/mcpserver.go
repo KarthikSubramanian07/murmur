@@ -273,8 +273,80 @@ func helloFor(agent, cwd string) proto.Hello {
 			h.ID, h.Native = nativeID(native), native
 		}
 	}
+	if thread := os.Getenv(threadEnv); thread != "" && h.T3CLI != "" && isClaude(agent) && !agentAbove() {
+		h.ID, h.T3Thread, h.ByThread = threadID(thread), thread, true
+	}
 	return h
 }
+
+// threadEnv is where T3 puts the thread's ID for the Claude Code process it runs, and so for its MCP
+// servers (read in T3 0.1.x's server, 2026-11-15). Only Claude Code's servers take it: Codex's start
+// with a bare environment, Muse passes on only what join lists, and Pi and Grok weren't tried.
+const threadEnv = "T3CODE_THREAD_ID"
+
+// agentAbove says whether an agent's program runs above the client that started this server. Every
+// process under a T3 thread inherits threadEnv, so a claude run from the thread's shell, perhaps in
+// another clone, has the thread's variable without being the thread: its own client has an agent
+// above it (the thread's), through shells and the like, where T3 runs the thread's client itself.
+// The walk stops at any other program, or one it can't read: past T3 is the desktop's process,
+// whose parent may have exited and its PID gone to anything since. A variable, for tests: their
+// own process runs under whatever agent started them. An agent run through a program the walk
+// stops at isn't seen; on one daemon the thread's address being in use catches it.
+var agentAbove = func() bool {
+	pids := proc.Ancestors(os.Getppid(), 10)
+	for _, pid := range pids[min(1, len(pids)):] {
+		exe, err := proc.Exe(pid)
+		if err != nil {
+			return false
+		}
+		name := programName(exe)
+		if agentPrograms[name] || agentPrograms[commOf(pid)] {
+			return true
+		}
+		if !passThrough[name] {
+			return false
+		}
+	}
+	return false
+}
+
+// agentPrograms are the agents' programs agentAbove looks for, by name.
+var agentPrograms = map[string]bool{"claude": true, "codex": true, "grok": true, "muse": true,
+	"opencode": true, "pi": true, "gemini": true}
+
+// passThrough are the programs between an agent and a claude it runs that agentAbove looks past:
+// shells, and what runs a command for one.
+var passThrough = map[string]bool{"bash": true, "sh": true, "dash": true, "zsh": true, "fish": true,
+	"ksh": true, "pwsh": true, "powershell": true, "cmd": true, "env": true, "sudo": true,
+	"timeout": true, "nohup": true, "script": true, "node": true, "npx": true, "npm": true,
+	"python": true, "python3": true, "uv": true, "go": true, "make": true}
+
+// commOf is the name Linux keeps for process pid as it was started (/proc/<pid>/comm), "" elsewhere.
+// Its program's path resolves links, and Claude Code's native install runs as a link named claude
+// to a file named by its version.
+func commOf(pid int) string {
+	if runtime.GOOS != "linux" {
+		return ""
+	}
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// programName is exe's file name, lower case, without .exe or Linux's " (deleted)".
+func programName(exe string) string {
+	return strings.TrimSuffix(strings.ToLower(filepath.Base(strings.TrimSuffix(exe, " (deleted)"))), ".exe")
+}
+
+// threadID is the session's Murmur ID inside T3, made from its thread (#642). A thread keeps its ID
+// for good, while the client's session under it changes when T3 moves the thread to another
+// provider instance (another Claude account or config home): each instance has a session of its
+// own for the thread. So a server that registers by the thread is the thread's session again after
+// a move, at the same address, and other devices never see an address they can't name. Hashed, as
+// nativeID is, and kept apart from it.
+func threadID(thread string) string { return nativeID("t3:" + thread) }
 
 // isClaude says whether the server runs for Claude Code: `mcp` with no agent, as join registers it
 // there, or with claude-code.
@@ -301,8 +373,9 @@ func nativeID(native string) string {
 // command line; in Claude Code, the messaging socket and the token for it; in Pi, the socket
 // Murmur's extension opens in the session, which takes the same lines (internal/join/pi.go); for
 // Codex and OpenCode outside T3, the client's own program, whose command line takes a message
-// (#135, package clientcli). T3's thread isn't in the environment: link.seek finds it. The daemon
-// keeps all of this to itself (see proto.Route).
+// (#135, package clientcli). T3's thread is in the environment of most agents T3 runs (threadEnv),
+// and helloFor takes it; where it isn't, link.seek finds it. The daemon keeps all of this to itself
+// (see proto.Route).
 func routeFromEnv(agent string) proto.Route {
 	r := proto.Route{T3CLI: os.Getenv("T3CODE_CLI_PATH"), T3Home: os.Getenv("T3CODE_HOME")}
 	switch {
@@ -313,7 +386,7 @@ func routeFromEnv(agent string) proto.Route {
 	case agent == "codex" && r.T3CLI == "":
 		r.CodexCLI = clientProgram("codex")
 	case agent == "opencode" && r.T3CLI == "":
-		r.OpenCodeCLI = openCodeService()
+		r.OpenCodeCLI, r.OpenCodeState = openCodeService()
 	}
 	return r
 }
@@ -342,44 +415,48 @@ func clientProgram(name string) string {
 // say; the path without it is the program that replaced it.
 func programNamed(exe, name string) string {
 	exe = strings.TrimSuffix(exe, " (deleted)")
-	base := strings.TrimSuffix(strings.ToLower(filepath.Base(exe)), ".exe")
-	if exe == "" || !filepath.IsAbs(exe) || base != name {
+	if exe == "" || !filepath.IsAbs(exe) || programName(exe) != name {
 		return ""
 	}
 	return exe
 }
 
 // openCodeService is the OpenCode that started this server, if it is the background server every
-// OpenCode 2 client shares, which is the one `opencode api` asks. OpenCode 2 registers that
-// server's process in service.json in its state directory ($XDG_STATE_HOME/opencode, else
-// ~/.local/state/opencode, on Windows too; {"pid": ...}, seen on 2.2.0, 2026-11-11). A session of
-// any other server gets "": one started with --standalone or --server, where `opencode api` would
-// start the shared server only to be told it has no such session, and OpenCode 1, which has no
-// `api` command. If a later OpenCode keeps the file elsewhere, its sessions are back to the inbox.
-func openCodeService() string {
+// OpenCode 2 client shares, which is the one `opencode api` asks, and the state directory that
+// server is registered in. OpenCode 2 registers that server's process in service.json in its state
+// directory ($XDG_STATE_HOME/opencode, else ~/.local/state/opencode, on Windows too; {"pid": ...},
+// seen on 2.2.0, 2026-11-11), and `opencode api` looks for it there, in the XDG_STATE_HOME it is
+// run with (read in 2.3.0's source, 2026-11-15). The server keeps the state directory it started
+// with, and this process has its environment, so the directory is the one to run the command
+// with: the daemon's may be another session's (#486). It is named in full where XDG_STATE_HOME is
+// unset, for the same reason. A session of any other server gets "": one started with
+// --standalone or --server, where `opencode api` would start the shared server only to be told it
+// has no such session, and OpenCode 1, which has no `api` command. If a later OpenCode keeps the
+// file elsewhere, its sessions are back to the inbox.
+func openCodeService() (exe, state string) {
 	pid, exe := parentProgram()
 	if exe = programNamed(exe, "opencode"); exe == "" {
-		return ""
+		return "", ""
 	}
-	dir := os.Getenv("XDG_STATE_HOME")
-	if dir == "" || !filepath.IsAbs(dir) {
+	state = os.Getenv("XDG_STATE_HOME")
+	if state == "" || !filepath.IsAbs(state) {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return ""
+			return "", ""
 		}
-		dir = filepath.Join(home, ".local", "state")
+		state = filepath.Join(home, ".local", "state")
 	}
-	b, err := os.ReadFile(filepath.Join(dir, "opencode", "service.json"))
+	b, err := os.ReadFile(filepath.Join(state, "opencode", "service.json"))
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	var reg struct {
 		PID int `json:"pid"`
 	}
 	if json.Unmarshal(b, &reg) != nil || reg.PID == 0 || reg.PID != pid {
-		return ""
+		return "", ""
 	}
-	return exe
+	return exe, state
 }
 
 // sessionID derives the session's ID from Claude Code's, when there is one, so the ID stays
@@ -700,7 +777,7 @@ func recipients(to string) []string {
 // this session (no subject, a key in the body, not registered, no daemon) and would be the same for
 // the rest, so the rest aren't tried: a session waiting to register would otherwise wait once per
 // recipient.
-func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []string, subject, body string, files []string) (*mcp.CallToolResult, any, error) {
+func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []string, subject, body, tell string, files []string) (*mcp.CallToolResult, any, error) {
 	if len(to) > maxRecipients {
 		r := text(fmt.Sprintf("Not sent: a send can name at most %d recipients, and this one names %d.", maxRecipients, len(to)))
 		r.IsError = true
@@ -733,7 +810,8 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 			rs[i].Same = first
 			continue
 		}
-		resp, err := s.callFrom(ctx, mreq, proto.Request{Op: proto.OpSend, To: r, Subject: subject, Body: body, Files: files})
+		resp, err := s.callFrom(ctx, mreq, proto.Request{Op: proto.OpSend, To: r, Subject: subject, Body: body, TellMe: tell, Files: files})
+		resp = untold(resp, err, tell)
 		if err != nil {
 			rs[i].Err = err.Error()
 			if !refusedRecipient(resp, rs[i].Err, r, subject) {
@@ -749,6 +827,16 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 	res := text(view.SentEach(rs))
 	res.IsError = !sent
 	return res, nil, nil
+}
+
+// untold adds to a sent message's note that its sender won't be told how far it got, though it
+// asked (#276): the daemon is older than tell_me, and passed over it.
+func untold(resp proto.Response, err error, tell string) proto.Response {
+	if err == nil && tell != "" && !resp.TellKnown && resp.Error == "" {
+		resp.Note = strings.TrimSpace(resp.Note + " You won't be told how far it gets: this device's " + brand.Product +
+			" is too old for tell_me, and updates itself within the hour.")
+	}
+	return resp
 }
 
 // refusedRecipient says whether the refusal why, of the send of subject to r, is r's alone, so
@@ -840,9 +928,10 @@ type (
 		Messages int    `json:"messages,omitempty" jsonschema:"how many of its latest messages to show, 10 if not given"`
 	}
 	sendIn struct {
-		To      string   `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"`
+		To      string   `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device's ID for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"`
 		Subject string   `json:"subject" jsonschema:"one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"`
 		Body    string   `json:"body,omitempty" jsonschema:"the rest of the message"`
+		TellMe  string   `json:"tell_me,omitempty" jsonschema:"read or delivered, to be told once, in your inbox, when every recipient has read the message (or been told of it), or after 30 minutes with where it is; not for a message to everyone. Leave it out unless you need to know, as when handing off work"`
 		Files   []string `json:"files,omitempty" jsonschema:"paths of files to send with it, such as a screenshot or a log: at most 8, 10 MB each, 20 MB together"`
 	}
 )
@@ -887,7 +976,7 @@ func (s *server) tools(srv *mcp.Server) {
 			return result(view.Tags, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "send", Description: "Send a message to another agent by its name (quiet-otter, from who), to a group (group:ui: " +
-		"every session with that tag), to all sessions on a device, or to everyone. It usually reaches the recipient as a turn of its own, headed \"Message from <your name> (...) via " + brand.Product + "\", " +
+		"every session with that tag), to all sessions on a device by its ID, or to everyone. It usually reaches the recipient as a turn of its own, headed \"Message from <your name> (...) via " + brand.Product + "\", " +
 		"with your subject and then your body. A recipient that is at work, or that " + brand.Product + " can't start a turn in, gets a one-line notice with " +
 		"your subject after its next tool call and reads the body with inbox; what it hasn't read when it finishes is usually given to it then, and its turn goes on. " +
 		"To send the same message to several sessions, name them all, separated by commas: each gets an ordinary message from you, " +
@@ -896,14 +985,15 @@ func (s *server) tools(srv *mcp.Server) {
 		func(ctx context.Context, req *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, any, error) {
 			to := recipients(in.To)
 			files := fullPaths(in.Files)
+			tell := strings.TrimSpace(in.TellMe)
 			if len(to) > 1 {
-				return s.sendEach(ctx, req, to, oneLine(in.Subject), in.Body, files)
+				return s.sendEach(ctx, req, to, oneLine(in.Subject), in.Body, tell, files)
 			}
 			if len(to) == 1 {
 				in.To = to[0]
 			}
-			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpSend, To: in.To, Subject: oneLine(in.Subject), Body: in.Body, Files: files})
-			return result(view.Sent, resp, err)
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpSend, To: in.To, Subject: oneLine(in.Subject), Body: in.Body, TellMe: tell, Files: files})
+			return result(view.Sent, untold(resp, err, tell), err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "inbox", Description: "Read your unread messages from other agents, with the name of who sent them. " +
 		"A message that arrived as a turn is already read and isn't here; this is for the ones that came as a notice. " +
@@ -1293,9 +1383,23 @@ func (l *link) run(ctx context.Context) {
 			if strings.Contains(err.Error(), "in use") {
 				if inUse++; inUse >= 3 {
 					l.mu.Lock()
-					l.hello.ID = bus.RandHex(6)
+					byThread := l.hello.ByThread
+					if byThread {
+						// The thread's session is live and stays so: this process isn't the
+						// thread's own (a claude run from the thread's shell inherits
+						// T3CODE_THREAD_ID), or the thread's last provider session hasn't let
+						// go. It is a session of its own, whose thread T3's database may name,
+						// as before #642.
+						l.hello.ByThread, l.hello.T3Thread = false, ""
+						l.hello.ID = sessionID(l.hello.ClaudeSession)
+					} else {
+						l.hello.ID = bus.RandHex(6)
+					}
 					l.mu.Unlock()
 					inUse = 0
+					if byThread {
+						l.startSeek(ctx)
+					}
 				}
 			}
 			select {
@@ -1309,16 +1413,21 @@ func (l *link) run(ctx context.Context) {
 		backoff, inUse = time.Second, 0
 		l.mu.Lock()
 		l.hello.Reconnect = true // any later hello is a reconnection
+		if _, id := bus.SplitAddr(resp.Self); h.ByThread && id != "" {
+			// The daemon may give the thread the address its name has had since before #642
+			// (see Hello.ByThread).
+			l.hello.ID = id
+		}
 		// The thread may have been found after this hello was made, when tellRoute had no session
 		// to tell: the daemon hasn't got it.
-		stale, route := l.hello.Route != h.Route, l.hello.Route
+		stale, route, id := l.hello.Route != h.Route, l.hello.Route, l.hello.ID
 		l.mu.Unlock()
 		l.learn(resp.ClaudeSession)
 		told := h.Route
 		if stale && route.Child {
 			// A subagent's call came while the hello was on its way: the daemon hears that the
 			// session is a child before the call, which waits for this registration, goes on.
-			l.sendRoute(ctx, h.ID, route)
+			l.sendRoute(ctx, id, route)
 			told = route
 		}
 		l.set(true, nil)

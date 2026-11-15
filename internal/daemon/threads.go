@@ -52,8 +52,9 @@ func (d *Daemon) threadLoop(ctx context.Context) {
 }
 
 // refreshThreads reads the state of every thread a session here is in, or a stopped session whose
-// inbox is kept was in. A change to whether a thread is settled is published, and any change lets
-// the handoffs look again.
+// inbox is kept was in. A change to whether a thread is settled is published, as is one to whether
+// a message would wake a session (see wakeChangedLocked), and any change lets the handoffs look
+// again.
 func (d *Daemon) refreshThreads(ctx context.Context) {
 	kids := d.refreshKids(ctx) // before the inboxes and commits of delegates are seen to, below
 	d.mu.Lock()
@@ -98,8 +99,14 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	changed, settled := false, false
+	prev := make(map[threadKey]time.Time, len(read))
 	for k, st := range read {
-		d.threadRead[k] = readAt[k]
+		// A read just before a handoff (t3RunGoing) that began later stands. Only one that began
+		// strictly later: Windows' clock can give two reads in a row the same time.
+		if readAt[k].Before(d.threadRead[k]) {
+			continue
+		}
+		prev[k], d.threadRead[k] = d.threadRead[k], readAt[k]
 		if !st.Busy {
 			// A session the hook has at work may have finished its turn without the Stop hook.
 			changed = true
@@ -139,6 +146,16 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 			}
 		}
 	}
+	d.noteUnseenLocked()
+	// The first read that began after a handoff ends the hold it put on the session (runUnseen): the
+	// next message may go, though nothing else the read found changed.
+	for _, s := range d.sessions {
+		k := threadKey{s.route.T3Home, s.route.T3Thread}
+		p, ok := prev[k]
+		if ok && s.handedAt.After(s.endedAt) && !p.After(s.handedAt) && readAt[k].After(s.handedAt) {
+			changed = true
+		}
+	}
 	// A delegate's inbox stays empty however a message got in, and its commits go to its parent,
 	// those made before its thread was read included.
 	for _, id := range sortedKeys(d.st.Inbox) {
@@ -163,6 +180,7 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 			settled = settled || off
 		}
 	}
+	settled = settled || d.wakeChangedLocked(wake)
 	d.mu.Unlock()
 	if settled || kids {
 		d.kickPresence()

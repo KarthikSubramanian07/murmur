@@ -333,7 +333,8 @@ func ValidName(s string) bool {
 
 // ValidDevice accepts device IDs: valid names that every filesystem can hold as a ref (none of
 // Windows' reserved device names), other than Murmur's own, under which a message would pass for
-// the tool's own words. IDs Murmur makes always pass: a hostname slug and 4 hex digits.
+// the tool's own words. IDs Murmur makes always pass: device- and 8 hex digits, or, for a clone
+// made before #330, a hostname slug and 4.
 func ValidDevice(s string) bool {
 	if !ValidName(s) || s == brand.Name {
 		return false
@@ -466,7 +467,20 @@ type SessionInfo struct {
 	// nothing they send. A daemon from before mutes ignores it, and still delivers to this
 	// session's device, which is the one that drops the message.
 	Muted []string `json:"muted,omitempty"`
+	// NoWake says a message from another agent wouldn't go into the session as a turn now, by its
+	// device's wake setting (#545): NoWakeOff or NoWakeIdle, "" if it would. The message waits for
+	// the session's next turn or its inbox, and the sender is told. A daemon from before it ignores
+	// it, and its own sessions' say nothing.
+	NoWake string `json:"noWake,omitempty"`
 }
+
+// SessionInfo.NoWake values.
+const (
+	// NoWakeOff: the page's wake setting for the session is never.
+	NoWakeOff = "off"
+	// NoWakeIdle: the session has been idle longer than its wake setting's minutes.
+	NoWakeIdle = "idle"
+)
 
 // MaxMuted caps SessionInfo.Muted.
 const MaxMuted = 50

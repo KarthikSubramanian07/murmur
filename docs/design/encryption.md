@@ -104,13 +104,11 @@ key replaced it.
   random session IDs, and a device must read it before it can name a session, which may be before it
   holds the team key. For the same reason an encrypted presence carries its sessions' names and IDs
   beside the box, which exposes nothing the registry doesn't.
-- **What anyone who can read a public repo still sees:** device IDs, which begin with a slug of the
-  hostname; when each device writes, how many records and how large; the team key IDs each record is
-  encrypted for; which devices each team key was granted to, and when; each device's public keys;
-  the name registry; `refs/murmur/reported`; and for a message with [files](files.md), which device
-  sent it, when, how many files and about how large. Not messages, subjects, who sent what to whom,
+- **What anyone who can read a public repo still sees:** device IDs (since #330 a new one says
+  nothing of the machine, but one made before begins with a slug of its hostname); when each device
+  writes, how many records and how large; the team key IDs each record is encrypted for; which
+  devices each team key was granted to, and when; each device's public keys; the name registry; and `refs/murmur/reported`. Not messages, subjects, who sent what to whom,
   statuses, branches, tags, hosts, owners, agents, or rosters.
 - **Open, for Tyler** (#156): whether the census (#199) should keep anything readable, such as
   `owner` or an event's kind (since #550 it estimates messages and sessions instead; [counting
-  use](counting.md)); whether new clones should get a device ID without the hostname (#330); and
-  when a rotation should happen without anyone running `mur rotate`.
+  use](counting.md)); and when a rotation should happen without anyone running `mur rotate`.

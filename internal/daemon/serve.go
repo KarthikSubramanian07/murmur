@@ -219,6 +219,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		return
 	}
 	d.mu.Lock()
+	h.ID = d.threadIDLocked(h)
 	s := d.sessions[h.ID]
 	if s != nil && s.dropped.IsZero() {
 		d.mu.Unlock()
@@ -615,6 +616,9 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		if req.Subagent {
 			continue // the notice would go to the subagent (#188)
 		}
+		if d.readOnPromptLocked(id, req.Prompt) {
+			d.saveLocked() // a turn handed over has started (#611)
+		}
 		if d.dndLocked(id) {
 			// Do not disturb (#198): its messages stay queued in its inbox, with no notice, no
 			// whole message and no hold for the turn's end, and don't count as unread for the hook.
@@ -801,6 +805,17 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	if len(req.Body) > maxBody {
 		return refuse(proto.RefusedSend, fmt.Sprintf("not sent: the body is over %d KB, and the bus keeps everything forever", maxBody>>10))
 	}
+	// A sender may ask to be told how far its message got (#276), but not of one to everyone: a
+	// receipt from every session on the mesh is what this is kept off by default to avoid.
+	tellMe := strings.TrimSpace(req.TellMe)
+	switch {
+	case tellMe == "" || bus.IsPerson(from):
+		tellMe = "" // a person's message asks for receipts anyway, and the page shows them
+	case !ValidTell(tellMe):
+		return fail(fmt.Sprintf("not sent: tell_me is %q or %q, not %q", bus.MarkDelivered, bus.MarkRead, tellMe))
+	case to == "*":
+		return fail("not sent: tell_me can't be asked of a message to everyone. Send it without tell_me, or to a group or to sessions by name")
+	}
 	// The body goes on the bus as readers will show it, so what the sender sent is what everyone
 	// reads, and it is cleaned before scrub looks: a key with a zero-width space in it is still a
 	// key once a reader drops the space. What was sent is checked too: dropping a format character
@@ -839,14 +854,24 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		}
 	} else if bus.ValidPerson(to) {
 		// A person's name is an address too. A device with that ID stands first: it was there before
-		// the name, which takes no device's ID when it is chosen.
+		// the name, which takes no device's ID when it is chosen. A device's nickname has the same
+		// form and is no address: the message would go to a device with that ID, which there isn't,
+		// so it is refused, naming the device's ID (#542).
 		d.mu.Lock()
 		addr, ok := d.resolvePersonLocked(to)
 		_, isDevice := d.peers[to]
 		isDevice = isDevice || to == d.device
+		called := d.calledLocked(to)
 		d.mu.Unlock()
-		if ok && !isDevice {
+		switch {
+		case ok && !isDevice:
 			to, toName = addr, to
+		case len(called) > 0:
+			dev := "a device's ID"
+			if len(called) == 1 {
+				dev = called[0]
+			}
+			return fail(fmt.Sprintf("not sent: %s Send to a session's name from who, or to %s for every session on the device.", nickNoAddress(to, called), dev))
 		}
 	}
 	var note string
@@ -855,6 +880,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		note = d.groupNoteLocked(to, from)
 		d.mu.Unlock()
 	} else if to != "*" {
+		wake := d.wakeSnapshot() // setMu is taken alone, before mu
 		d.mu.Lock()
 		at := d.queuedAtLocked(to)
 		dev, sess := bus.SplitAddr(at)
@@ -863,6 +889,10 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		offline := d.offlineLocked(dev, sess)
 		dnd := d.peerDNDLocked(dev, sess)
 		hookOff, agent := d.peerHookOffLocked(dev, sess)
+		noWake := d.peerNoWakeLocked(dev, sess, wake)
+		if noWake == bus.NoWakeIdle && bus.IsPerson(from) {
+			noWake = "" // a person's message wakes a session however long it has been idle (#242)
+		}
 		why := ""
 		if offline {
 			why = d.offlineWhyLocked(dev, sess, nameOr(toName, at))
@@ -879,6 +909,8 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 			return refuse(proto.RefusedRecipient, "not sent: "+why)
 		case known && dnd:
 			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox until it reads its inbox or turns do not disturb off, with no notice or turn."
+		case known && noWake != "":
+			note = noWakeNote(nameOr(toName, at), noWake, hookOff)
 		case known && hookOff:
 			// Without the hook the daemon hands the message over as a turn where it can (in T3, or
 			// Claude Code's socket), at once, which T3 queues if the session is busy.
@@ -918,6 +950,26 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		d.recordSentLocked(e)
 		d.mu.Unlock()
 	}
+	var tellNote string
+	if tellMe != "" {
+		// Kept like a person's, with whom it is for, and told once it gets that far (tell.go). If
+		// none of them writes marks there is nothing to wait for, and the sender is told so now.
+		d.mu.Lock()
+		e.Receipts = true
+		d.recordSentLocked(e)
+		rec := d.st.Sent[e.ID]
+		rec.Tell, rec.Asker, rec.Subject = tellMe, from, subject
+		// The sender's own reading of a message to itself tells it nothing, and the notice would go
+		// in the inbox that reading is emptying.
+		rec.To = slices.DeleteFunc(rec.To, func(a string) bool { return a == from })
+		if len(waitedFor(rec)) == 0 {
+			delete(d.st.Sent, e.ID)
+			e.Receipts, tellMe = false, ""
+			tellNote = "You won't be told how far it gets: it reached no session whose " + brand.Product + " sends receipts."
+		}
+		d.saveLocked()
+		d.mu.Unlock()
+	}
 	if err := d.appendEvent(ctx, e); err != nil {
 		if len(e.Files) > 0 {
 			d.dropFileRef(e.ID, true) // nothing names them: off the remote at the next prune
@@ -938,22 +990,31 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	}
 	note = strings.TrimSpace(renamed + " " + note)
 	// To everyone, to a device or to a group: it went out, and the sender is told which of the
-	// sessions it was for won't get it, as they have muted it (#27).
+	// sessions it was for won't get it, as they have muted it (#27), and which won't be woken by it
+	// (#545).
 	if dev, sess := bus.SplitAddr(to); to == "*" || sess == "" {
 		group := bus.IsGroup(to)
 		if to == "*" || group {
 			dev = ""
 		}
+		wake := d.wakeSnapshot() // setMu is taken alone, before mu
 		d.mu.Lock()
 		muters := d.mutersLocked(d.nameOfLocked(from), dev)
+		var members []string
 		if group {
-			members, _ := d.groupMembersLocked(to, from)
+			members, _ = d.groupMembersLocked(to, from)
 			muters = slices.DeleteFunc(muters, func(m string) bool { return !slices.Contains(members, m) })
 		}
+		unwoken := d.unwokenLocked(from, dev, group, members, wake)
+		unwoken = slices.DeleteFunc(unwoken, func(m string) bool { return slices.Contains(muters, m) })
 		d.mu.Unlock()
-		note = strings.TrimSpace(note + " " + mutersNote(muters))
+		note = sentences(note, mutersNote(muters), unwokenNote(unwoken))
 	}
-	return proto.Response{OK: true, Self: from, Note: note,
+	if tellMe != "" {
+		tellNote = fmt.Sprintf("You'll be told, in your inbox, once it is %s, or in %s with where it is then.", tellMe, minutes(d.opt.TellWait))
+	}
+	note = strings.TrimSpace(note + " " + tellNote)
+	return proto.Response{OK: true, Self: from, Note: note, Telling: tellMe != "", TellKnown: req.TellMe != "",
 		Messages: []proto.MessageView{{ID: e.ID, From: from, To: to, ToName: toName, Subject: subject, At: e.At}}}
 }
 
@@ -1017,7 +1078,7 @@ func (d *Daemon) ownerOfLocked(addr string) string {
 
 func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.MessageView {
 	views := make([]proto.MessageView, 0, len(msgs))
-	var byAddr map[string]string // the registry's names, for a sender no longer in presence
+	var byAddr map[string]string // the names of senders no longer in presence (lastNameLocked)
 	for _, m := range msgs {
 		e := m.Event
 		name, agent, branch := d.sessionInfoLocked(e.From)
@@ -1040,6 +1101,9 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 		v := proto.MessageView{ID: e.ID, From: e.From, FromName: name, FromAgent: agent, FromBranch: branch,
 			FromOwner: d.ownerOfLocked(e.From), FromDevice: device, To: e.To, Subject: e.Subject, At: e.At}
 		v.Files = d.fileViewsLocked(e)
+		if d.isTellNotice(e) {
+			v.FromName, v.FromOwner, v.Receipt = brand.Product, "", true // from Murmur itself (#276)
+		}
 		if withBody {
 			v.Body = e.Body
 			v.Told = m.NoticedAt
@@ -1112,12 +1176,10 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession, branch: branch,
 		started: now, lastActive: now, reconnect: h.Reconnect, key: key, clientPID: h.ClientPID}
 	if at, ok := d.st.Stopped[h.ID]; ok {
-		delete(d.st.Stopped, h.ID)
 		if time.Since(at) > d.opt.StoppedInbox {
-			delete(d.st.Inbox, h.ID)
-			delete(d.st.Commits, h.ID)
-			delete(d.st.T3Routes, h.ID)
+			d.dropStoppedLocked(h.ID)
 		} else {
+			delete(d.st.Stopped, h.ID)
 			s.since = at
 		}
 		d.saveLocked()

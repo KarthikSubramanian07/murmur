@@ -5,9 +5,11 @@ over.
 
 ## T3 Code
 
-- **Finding the thread** (#56). T3 gives an MCP server or a hook no thread ID, so the MCP server
-  looks the provider's own session up in T3's database: `statev2.sqlite` in T3's data directory
-  (`T3CODE_HOME`, the directory the CLI's `bin` is in, or `~/.t3`), table
+- **Finding the thread** (#56). Claude Code's MCP server takes the thread from `T3CODE_THREAD_ID`
+  ([session names](session-names.md#one-address-per-t3-thread)). Every other server, and a Claude
+  Code one that can't use it, looks the provider's own session up in T3's database:
+  `statev2.sqlite` in T3's data directory (`T3CODE_HOME`, the directory the CLI's `bin` is in, or
+  `~/.t3`), table
   `orchestration_v2_projection_provider_threads`, where `payload_json.nativeThreadRef.nativeId` is
   the Claude Code session ID or the Codex thread ID, beside `thread_id` (seen on T3 0.1.x,
   2026-10-29). The ID comes from the hook or `CLAUDE_CODE_SESSION_ID` for Claude Code, and from a
@@ -116,11 +118,13 @@ hook runs). Each has a command that does what `t3 thread send` does, so the daem
   a busy session, which gets the notice and its turn's end instead.
 - *OpenCode 2:* `opencode api session.prompt --param sessionID=<session>` with `{"text": ...,
   "delivery": "queue"}`, which asks the background server every OpenCode 2 client on the machine
-  shares. `"queue"` waits behind a running turn, where the default, `"steer"`, goes into it. Seen on
-  OpenCode 2.2.0 the same day, with the terminal UI showing the message and the answer.
-  `session.synthetic` starts a turn too, but the terminal UI then shows the answer and not what was
-  asked, so it isn't used. Since 2026-11-12 OpenCode's plugin runs the hook (#431), so a busy
-  session gets the notice, as Codex does.
+  shares, with the `XDG_STATE_HOME` the session's server found it registered under (#486): the
+  command looks for the server there, and the daemon's own may be another session's. `"queue"`
+  waits behind a running turn, where the default, `"steer"`, goes into it. Seen on OpenCode 2.2.0
+  the same day, with the terminal UI showing the message and the answer. `session.synthetic`
+  starts a turn too, but the terminal UI then shows the answer and not what was asked, so it isn't
+  used. Since 2026-11-12 OpenCode's plugin runs the hook (#431), so a busy session gets the notice,
+  as Codex does.
 - *Which program.* The one that started the session's MCP server, if that is a `codex` or an
   `opencode`. Neither command takes the text on standard input, so it goes on the command line, and
   the name on `PATH` won't do: on Windows it is npm's `.cmd` shim, which can't carry a newline. On

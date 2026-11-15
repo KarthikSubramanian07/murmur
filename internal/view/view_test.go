@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // Turn is all the receiving agent reads: who it is from, the sender's words as written, and how to
@@ -200,6 +202,35 @@ func TestWhoCollapsesAStaleDeviceToOneLine(t *testing.T) {
 	}
 }
 
+// A device's nickname comes after its ID, which is its address, and never where a session's name
+// goes: an agent took it for one and sent to it (#542).
+func TestADevicesNicknameComesAfterItsID(t *testing.T) {
+	r := proto.Response{Self: "me-0001/aaaaaa", Devices: []proto.Device{
+		{ID: "me-0001", Host: "laptop", Nick: "tyler", Self: true},
+		{ID: "live-0002", Host: "desktop", Owner: "Sam", Nick: "sam", LastSeen: time.Now(), Sessions: []proto.SessionView{sess("live-one", time.Minute, "")}},
+		{ID: "gone-0003", Host: "old", Nick: "ada", Stale: true, LastSeen: time.Now().Add(-4 * time.Hour), Sessions: []proto.SessionView{sess("ghost", 4*time.Hour, "")}},
+	}}
+	out := Who(r)
+	for _, want := range []string{
+		"\nme-0001, called tyler (laptop, this device)\n",
+		"\nlive-0002, called sam (Sam on desktop, seen ",
+		"\ngone-0003, called ada (old) STALE: ",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("who has no %q:\n%s", want, out)
+		}
+	}
+	for _, nick := range []string{"tyler", "sam", "ada"} {
+		if strings.Contains(out, "\n"+nick+" ") {
+			t.Errorf("who starts a line with the nickname %s:\n%s", nick, out)
+		}
+	}
+	l := Lookup(proto.Response{Lookup: &proto.SessionDetail{Addr: "live-0002/bbbbbb", Name: "live-one", Device: "live-0002", Nick: "sam", Host: "desktop"}})
+	if !strings.Contains(l, "\n  device live-0002, called sam (desktop)\n") {
+		t.Errorf("lookup:\n%s", l)
+	}
+}
+
 // Sessions of a stale device don't use up the limit: it counts those who lists.
 func TestWhoCountsOnlySessionsItCouldList(t *testing.T) {
 	var stale []proto.SessionView
@@ -334,5 +365,27 @@ func TestAPersonInAGroup(t *testing.T) {
 		if !strings.Contains(got, "\nTo: group:ui\nSubject: ") { // being in it is a given (Tyler, 2026-11-13)
 			t.Errorf("%s: inbox's To line: %q", tc.what, got)
 		}
+	}
+}
+
+// lookup says a session won't be woken, and why (#545); do not disturb says more, and stands alone.
+func TestLookupSaysASessionWontBeWoken(t *testing.T) {
+	t.Parallel()
+	det := proto.SessionDetail{Name: "quiet-otter", Addr: "dev-0001/aaaaaa", Device: "dev-0001", Running: true, Reachable: true}
+	if got := Lookup(proto.Response{Lookup: &det}); strings.Contains(got, "won't be woken") {
+		t.Errorf("a session that may be woken:\n%s", got)
+	}
+	det.NoWake = bus.NoWakeOff
+	if got := Lookup(proto.Response{Lookup: &det}); !strings.Contains(got,
+		"  won't be woken: waking is off for it on "+brand.Command+" ui, so a message waits for its next turn or its inbox\n") {
+		t.Errorf("waking off:\n%s", got)
+	}
+	det.NoWake = bus.NoWakeIdle
+	if got := Lookup(proto.Response{Lookup: &det}); !strings.Contains(got, "  won't be woken: it has been idle longer than its wake setting allows,") {
+		t.Errorf("idle:\n%s", got)
+	}
+	det.Tags = []tags.Tag{{Name: tags.DoNotDisturb}}
+	if got := Lookup(proto.Response{Lookup: &det}); strings.Contains(got, "won't be woken") || !strings.Contains(got, "do not disturb") {
+		t.Errorf("on do not disturb:\n%s", got)
 	}
 }

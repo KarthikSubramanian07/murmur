@@ -19,6 +19,14 @@ import (
 type fakeThreads struct {
 	mu sync.Mutex
 	st map[string]t3db.State
+	n  int // reads so far
+}
+
+// reads is how many reads have been made so far.
+func (f *fakeThreads) reads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.n
 }
 
 func (f *fakeThreads) set(thread string, st t3db.State) {
@@ -30,6 +38,7 @@ func (f *fakeThreads) set(thread string, st t3db.State) {
 func (f *fakeThreads) read(_ context.Context, _, _, thread string) (t3db.State, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.n++
 	st, ok := f.st[thread]
 	if !ok {
 		return t3db.State{}, t3db.ErrNotFound

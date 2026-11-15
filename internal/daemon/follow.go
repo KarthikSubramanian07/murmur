@@ -34,6 +34,30 @@ func (d *Daemon) uniqueKeyLocked(key, id string) string {
 	return key
 }
 
+// threadIDLocked is the session ID for a hello: h.ID, unless the server made it from its T3 thread
+// (h.ByThread, #642) and the thread already has a name, which the registry has at a session of this
+// device. That session's ID is the thread's then. A thread named before servers took their ID from
+// it has its name at the address of the session that first had it, a Claude-derived one, and every
+// device names that address and no other: another would show as a bare address on other devices
+// once it stopped. The server takes the ID the reply's Self names. Caller holds mu.
+func (d *Daemon) threadIDLocked(h *proto.Hello) string {
+	if !h.ByThread || h.T3Thread == "" {
+		return h.ID
+	}
+	name := d.st.NameKeys[nameKey(h.T3Thread, "", "", "")]
+	if name == "" {
+		return h.ID
+	}
+	dev, id := bus.SplitAddr(d.st.Used[name])
+	if dev != d.device || !validName(id) || id == proto.CLISession || id == bus.PersonSession {
+		return h.ID
+	}
+	if last, ok := d.st.SessionNames[id]; ok && last != name {
+		return h.ID // that session went on to another conversation, whose inbox it may hold
+	}
+	return id
+}
+
 // setNameLocked gives s its name, "" if it has none yet. A name that lands is also recorded as
 // held by s, the last to take it, and as s's own last: that is how a message for the session the
 // registry has the name down for finds s (see forwardLocked). s also takes what was kept for the
