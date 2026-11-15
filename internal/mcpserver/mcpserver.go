@@ -821,7 +821,7 @@ type (
 		Messages int    `json:"messages,omitempty" jsonschema:"how many of its latest messages to show, 10 if not given"`
 	}
 	sendIn struct {
-		To      string `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"`
+		To      string `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device's ID for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"`
 		Subject string `json:"subject" jsonschema:"one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"`
 		Body    string `json:"body,omitempty" jsonschema:"the rest of the message"`
 	}
@@ -867,7 +867,7 @@ func (s *server) tools(srv *mcp.Server) {
 			return result(view.Tags, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "send", Description: "Send a message to another agent by its name (quiet-otter, from who), to a group (group:ui: " +
-		"every session with that tag), to all sessions on a device, or to everyone. It usually reaches the recipient as a turn of its own, headed \"Message from <your name> (...) via " + brand.Product + "\", " +
+		"every session with that tag), to all sessions on a device by its ID, or to everyone. It usually reaches the recipient as a turn of its own, headed \"Message from <your name> (...) via " + brand.Product + "\", " +
 		"with your subject and then your body. A recipient that is at work, or that " + brand.Product + " can't start a turn in, gets a one-line notice with " +
 		"your subject after its next tool call and reads the body with inbox; what it hasn't read when it finishes is usually given to it then, and its turn goes on. " +
 		"To send the same message to several sessions, name them all, separated by commas: each gets an ordinary message from you, " +

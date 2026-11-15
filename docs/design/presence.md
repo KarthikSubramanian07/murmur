@@ -111,6 +111,11 @@ can be called something else, such as its owner's name.
   read as someone else. Any device can still say any nickname in its presence, so a nickname is no
   proof of whose a device is.
 - **Its form is a person's name's** (`bus.ValidNick`), so it never reads as a session's name.
+- **Shown after the ID, in words**: `who` and `lookup` print `tyler-laptop-3f2a, called tyler`.
+  Until 2026-11-15 (#542) the nickname came first, where a session's name goes, and an agent read
+  it as an address and sent to it. A send or a lookup to a name that is only a nickname is refused
+  with the device's ID. A person's name stays the person's address, and a device's ID stands before
+  any nickname, also the ID of a device whose presence has gone but whose log is on the bus.
 - Not built: the nickname in a message's header, which names its session and "on <owner>'s machine"
   the first time.
 

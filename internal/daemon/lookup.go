@@ -68,6 +68,9 @@ func (d *Daemon) lookupAddrLocked(target string) (string, error) {
 		if addr, ok := d.resolvePersonLocked(target); ok {
 			return addr, nil
 		}
+		if devs := d.calledLocked(target); len(devs) > 0 {
+			return "", fmt.Errorf("%s lookup takes a session's name from who, or its device/session address.", nickNoAddress(target, devs))
+		}
 		return "", fmt.Errorf("nobody is named %q. who shows the names in use.", target)
 	}
 	return "", fmt.Errorf("%q isn't a session's name or address; lookup takes a name like quiet-otter, or device/session", target)
