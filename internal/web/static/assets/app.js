@@ -101,6 +101,7 @@ const ui = {
   outbox: [], // what the person sent that isn't among the messages yet, or that failed
   notes: new Map(), // a conversation's key → what the daemon said of the last message sent in it
   readLocal: new Set(), // messages marked read that the state doesn't know of yet
+  readHeld: false, // a mark that failed is waiting a poll's time before it is asked for again (#652)
   reading: null, // the conversation someone was last seen looking at, null if nobody is looking
   newMark: null, // the open conversation's first unread message: { key, id }
   armed: null, // the group chat whose next send goes: its key
@@ -3550,7 +3551,7 @@ function markOpenRead() {
   const looking = ui.view === "messages" && !!ui.conversation && !document.hidden && document.hasFocus();
   const arriving = looking && ui.reading !== ui.conversation;
   ui.reading = looking ? ui.conversation : null;
-  if (!looking) return;
+  if (!looking || ui.readHeld) return;
   const unread = new Set(unreadIds());
   if (!unread.size) return;
   const ids = ui.messages
@@ -3563,7 +3564,15 @@ function markOpenRead() {
   api("/api/read", { method: "POST", body: JSON.stringify({ ids }) }).catch((e) => {
     if (e instanceof AuthError) return deny(e.token);
     for (const id of ids) ui.readLocal.delete(id);
-    render(); // unread again, and no poll shows it: a state that hasn't changed rebuilds nothing
+    // Unread again, and no poll shows it: a state that hasn't changed rebuilds nothing. The render
+    // asks for it at once, so it is held a poll's time first: a daemon that is down or failing
+    // would otherwise be asked, and the page redrawn, without pause (#652).
+    ui.readHeld = true;
+    setTimeout(() => {
+      ui.readHeld = false;
+      markOpenRead();
+    }, POLL_MS);
+    render();
   });
   render();
 }
