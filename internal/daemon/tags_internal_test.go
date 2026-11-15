@@ -322,3 +322,38 @@ func TestAChangeForAStoppedSessionWhoseNameNeverLandedIsKept(t *testing.T) {
 		t.Errorf("back, it has %q", got)
 	}
 }
+
+// After a restart, a session whose name is pending and that kept nothing here hasn't registered
+// again yet when the daemon reads a person's change to its tags, an agent's add of it to a group,
+// and a message to that group (#524). They wait for it, as the message does, and it has all three
+// once it is back.
+func TestAChangeForASessionNotBackAfterARestartWaitsForIt(t *testing.T) {
+	t.Parallel()
+	d := tagsDaemon(t)
+	d.started = time.Now() // just restarted: within the catch-up window
+	d.caughtUp = map[string]bool{}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.sessions, "aaaaaa")
+	for _, id := range []string{"aaaaaa", "cccccc"} { // cccccc never comes back
+		d.applyTagsEventLocked(bus.Event{V: bus.Version, ID: "abcdef1" + id[:1], Type: bus.Tags, From: "far/cli",
+			To: "dev/" + id, At: time.Now(), Add: []string{"release"}})
+		d.applyGroupAddLocked(bus.Event{V: bus.Version, ID: "abcdef2" + id[:1], Type: bus.GroupAdd, From: "far/xxxxxx",
+			To: "dev/" + id, At: time.Now(), Add: []string{"group:ui"}}, modeCatchUp)
+	}
+	d.queueLocked(bus.Event{V: bus.Version, ID: "m1", Type: bus.Message, From: "far/xxxxxx", To: "group:ui", At: time.Now()}, modeCatchUp)
+
+	inT3(d, "aaaaaa", 0)
+	s := d.sessions["aaaaaa"]
+	s.name, s.reconnect = "", true
+	d.catchUpLocked("aaaaaa")
+	if got := tagNames(d.tagsOfLocked(s)); got != "group:ui release" {
+		t.Errorf("back, it has %q; want the person's change and the add", got)
+	}
+	if box := d.st.Inbox["aaaaaa"]; len(box) != 1 || box[0].Event.ID != "m1" {
+		t.Errorf("back, its inbox holds %d message(s); want the group's", len(box))
+	}
+	if d.st.Tags[tagKeyOf("", "cccccc")] != nil {
+		t.Errorf("a session that isn't back was given tags: %+v", d.st.Tags[tagKeyOf("", "cccccc")])
+	}
+}
