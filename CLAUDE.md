@@ -62,8 +62,9 @@ Tyler's rules:
   issue covers gets one filed first.
 - PR bodies follow `.github/pull_request_template.md`. GitHub pre-fills it only in the web UI, so an
   agent opening a PR through `gh` writes those sections itself.
-- Every PR gets an Opus or Sol review before it is handed over, and merges with every CI check
-  that ran green, except as the next rule says. The PR body says which commits the review covered.
+- Every PR gets an Opus, Fable or Sol review before it is handed over, and merges with every CI
+  check that ran green, except as the next rule says. The PR body says which commits the review
+  covered.
 - **PRs can skip CI and code review in these situations:**
   - **Docs, templates and images only** (Markdown outside `internal/` and `docs/agents/` other
     than `README.md`, `.github/` templates, images): skip both. No check reads these files.
