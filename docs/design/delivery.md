@@ -108,6 +108,19 @@ the turn took, so nothing waits for good.
   last call was dropped in review (Sol, 2026-11-08): a hook from a tool call the interrupt cut short
   would have left the session busy for good. Outside T3 nothing ends an interrupted turn until the
   next prompt and its `Stop`, so a message waits for the user to come back.
+- **A turn in T3 starts before the hook sees it** (#607). T3 marks a run queued or running when it
+  takes a prompt, and Claude Code fires `UserPromptSubmit` only when it starts the turn. Until
+  2026-11-15 the session looked idle in between, and a message was handed to T3, which queued it
+  behind the run as a turn of its own: what Tyler saw. T3's database on his laptop showed about 20
+  such handoffs from 2026-11-11 to 11-15, all to Claude threads. In all but two the run had been
+  going 2 s to 14 min and Claude's turn started 1 s to 3 min after the handoff; four of the runs
+  were a message the daemon had just handed over itself. So a session whose hook has no turn going
+  is at work when a read of T3's database that began after its turn ended finds a run going, and,
+  until a read that began after it, when the daemon has just handed a message to its thread (at
+  most a minute, so a read that keeps failing doesn't hold its messages for good). A read from
+  before the turn's end doesn't count, as it may have seen the run that `Stop` ended. The same read
+  catches a turn a user's own `Stop` hook kept going after Murmur's saw `Stop`, up to 5 s late. The
+  cost is up to 5 s after a turn ends, when a read catches T3 before it has closed the run.
 - **Subject or whole message** (#204), the page's busy setting, per device or session (Tyler,
   2026-11-08). "Subject", the default, leaves the agent's focus to the agent, at the cost that it
   may pass over a line it needed; "Whole message" puts each message in front of it mid-task at full

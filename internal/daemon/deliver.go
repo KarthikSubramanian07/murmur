@@ -12,6 +12,7 @@ import (
 	"github.com/a-Fig/murmur/internal/msgsock"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3"
+	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/view"
 )
 
@@ -82,8 +83,8 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 	// them once, before waiting for anything.
 	d.kickPush()
 	for {
-		// A continuation that lapses (see continueTurnLocked) is woken for too: nothing else may
-		// come to end its turn.
+		// A continuation that lapses (see continueTurnLocked), or a handoff's hold (handedHold), is
+		// woken for too: nothing else may come to end it.
 		var lapse <-chan time.Time
 		d.mu.Lock()
 		if at := d.nextLapseLocked(); !at.IsZero() {
@@ -327,8 +328,9 @@ func (d *Daemon) queuedForPushLocked(id string, m *inMsg, wake pageSettings) boo
 // connection dropped keeps its state through its grace, and one that reconnected after this
 // daemon restarted, before its hook has run here, is at work while T3 shows its thread's run going.
 // Outside T3 nothing but Stop ends a turn. Claude Code fires none when interrupted, so its session
-// waits for its next prompt and the Stop after it; Pi's extension sends an interrupted Stop. Caller
-// holds mu.
+// waits for its next prompt and the Stop after it; Pi's extension sends an interrupted Stop.
+//
+// In T3 a turn can also start before the hook sees it (runUnseenLocked). Caller holds mu.
 func (d *Daemon) hookBusyLocked(id string) bool {
 	s := d.sessions[id]
 	if s == nil {
@@ -343,15 +345,42 @@ func (d *Daemon) hookBusyLocked(id string) bool {
 		}
 		return st.Busy || !inT3 && time.Since(s.started) < reconnectHold
 	}
+	r := d.routeOfLocked(id)
+	read := d.threadRead[threadKey{r.T3Home, r.T3Thread}]
 	switch {
 	case s.busyAt.IsZero():
-		return false
+		return r.T3Thread != "" && runUnseen(s, st, inT3, read)
 	case !inT3:
 		return s.stopSeen && !d.continuationLapsedLocked(s)
 	}
-	r := d.routeOfLocked(id)
-	return st.Busy || !d.threadRead[threadKey{r.T3Home, r.T3Thread}].After(s.busyAt)
+	return st.Busy || !read.After(s.busyAt)
 }
+
+// runUnseen says T3 has a run of session s's thread going that the hook hasn't seen start, where
+// the hook has no turn of s's going: st is what T3's database last said, inT3 that it has said
+// anything, and read when that read began (#607).
+//
+// T3 marks a run queued or running when it takes the prompt, and Claude Code fires
+// UserPromptSubmit only when it starts the turn, which can be minutes later. Between the two the
+// session looked idle, and a message was handed to T3, which queued it behind the run as a turn
+// of its own (docs/design/delivery.md has what T3's database showed).
+//
+// So a read that began after the turn last ended and finds a run going is a turn. A read from
+// before the end may have seen the run Stop ended, and doesn't count. That also covers a turn a
+// Stop hook of the user's own kept going after Murmur's saw Stop, once the next read comes. A
+// message just handed to the thread is a turn too, until a read that began after it says (T3 has
+// made the run by the time `t3 thread send` returns), or handedHold passes with no read.
+func runUnseen(s *session, st t3db.State, inT3 bool, read time.Time) bool {
+	if s.handedAt.After(s.endedAt) && !read.After(s.handedAt) && time.Since(s.handedAt) < handedHold {
+		return true
+	}
+	return inT3 && st.Busy && read.After(s.endedAt)
+}
+
+// handedHold is how long a message handed to a session's T3 thread keeps the session at work
+// before T3's database has been read: a read that keeps failing mustn't hold its messages for
+// good.
+const handedHold = time.Minute
 
 // turnStartLocked is when the hook first saw session id's current turn, zero if it isn't at work
 // as far as the hook knows. Caller holds mu.
@@ -378,7 +407,7 @@ func (d *Daemon) endTurnLocked(s *session, wake pageSettings) {
 			m.Held, held = true, true
 		}
 	}
-	s.busyAt, s.turnStart = time.Time{}, time.Time{}
+	s.busyAt, s.turnStart, s.endedAt = time.Time{}, time.Time{}, time.Now()
 	if held {
 		d.saveLocked()
 	}
@@ -448,13 +477,22 @@ func (d *Daemon) continuationLapsedLocked(s *session) bool {
 	return !s.continuedAt.IsZero() && time.Since(s.continuedAt) >= d.opt.ContinueHold
 }
 
-// nextLapseLocked is when the first continuation now pending lapses, zero if none is. Caller holds
-// mu.
+// nextLapseLocked is when the first hold now pending lapses, zero if none is: a continuation's, or
+// a handoff's to a T3 thread whose database hasn't been read since (handedHold), after which the
+// session's messages may go. Caller holds mu.
 func (d *Daemon) nextLapseLocked() time.Time {
 	var next time.Time
-	for _, s := range d.sessions {
-		if at := s.continuedAt.Add(d.opt.ContinueHold); !s.continuedAt.IsZero() && (next.IsZero() || at.Before(next)) {
+	soonest := func(at time.Time) {
+		if next.IsZero() || at.Before(next) {
 			next = at
+		}
+	}
+	for _, s := range d.sessions {
+		if !s.continuedAt.IsZero() {
+			soonest(s.continuedAt.Add(d.opt.ContinueHold))
+		}
+		if at := s.handedAt.Add(handedHold); !s.handedAt.IsZero() && time.Now().Before(at) {
+			soonest(at)
 		}
 	}
 	return next
@@ -673,6 +711,9 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.outOfInboxLocked(j.id, j.msg, "handed", "as a turn, through "+j.via)
 	if j.via == viaT3 {
 		d.noteHandedLocked(j.route, j.msg.Event.ID)
+		if s := d.sessions[j.id]; s != nil {
+			s.handedAt = time.Now() // a turn the hook hasn't seen start (runUnseen)
+		}
 	}
 	d.introduceLocked(j.key, j.msg.Event.From)
 	if !bus.IsGroup(j.msg.Event.To) { // a group's line stands in for a person's (#484), so they are still to be explained
