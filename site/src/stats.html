@@ -166,6 +166,7 @@
   .tip .row span { color: var(--text-secondary); }
   /* Progress over time: one big chart, a measure and a way of counting it picked above it. */
   .progress .controls { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+  .progress .seg { flex-wrap: wrap; }
   .progress .figure { display: flex; align-items: baseline; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
   .progress .figure .big { font-size: 32px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; }
   .progress .figure .change { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
@@ -879,14 +880,24 @@ function ratioChart(box, legendBox, series) {
 function cumulativeChart(box, legendBox, days, byRepo, repoList, value, what, colors, show) {
   box.replaceChildren();
   const n = days.length, H = 300, idx = new Map(days.map((d, i) => [d, i]));
+  // byRepo holds only listed repos (progress() filters it), so every row has a slot.
   const daily = new Map(colors.slots.map(s => [s.key, days.map(() => 0)]));
-  for (const r of byRepo) if (idx.has(r.day)) daily.get(colors.slotOf(r.name))[idx.get(r.day)] += value(r);
+  const inRange = new Map();
+  for (const r of byRepo) {
+    if (!idx.has(r.day)) continue;
+    daily.get(colors.slotOf(r.name))[idx.get(r.day)] += value(r);
+    inRange.set(r.name, (inRange.get(r.name) || 0) + value(r));
+  }
+  // Where each repo's count stood before the range: its total less what the range added. A count
+  // is only raised, so that can't be below 0; if it seems to be, the census is mid-run, and that
+  // repo starts at 0. Clamped per repo, so one repo can't lower the others in its slot.
   const base = new Map(colors.slots.map(s => [s.key, 0]));
-  for (const r of repoList) { const k = colors.slotOf(r.name); base.set(k, base.get(k) + value(r)); }
+  for (const r of repoList) {
+    const k = colors.slotOf(r.name);
+    base.set(k, base.get(k) + Math.max(0, value(r) - (inRange.get(r.name) || 0)));
+  }
   const bands = colors.slots.map(s => {
-    // A count is only raised, so the range can't hold more than the total; if it seems to, the
-    // census is mid-run, and the band starts at 0.
-    let run = Math.max(0, base.get(s.key) - sum(daily.get(s.key)));
+    let run = base.get(s.key);
     return { ...s, cum: daily.get(s.key).map(v => (run += v)) };
   }).filter(b => b.cum[n - 1] > 0);
   const tops = days.map((_, i) => sum(bands, b => b.cum[i]));
@@ -896,7 +907,7 @@ function cumulativeChart(box, legendBox, days, byRepo, repoList, value, what, co
   let lower = days.map(() => 0);
   for (const b of bands) {
     const upper = lower.map((v, i) => v + b.cum[i]);
-    const xs = days.map((_, i) => (i === 0 ? f.m.l : i === n - 1 ? f.W - f.m.r : f.x(i)).toFixed(1));
+    const xs = days.map((_, i) => f.x(i).toFixed(1));
     const top = upper.map((v, i) => `${i ? 'L' : 'M'}${xs[i]},${f.y(v).toFixed(1)}`).join('');
     const bottom = lower.map((v, i) => `L${xs[i]},${f.y(v).toFixed(1)}`).reverse().join('');
     g.append(el('path', { d: `${top}${bottom}Z`, fill: b.color, opacity: 0.88 }));
@@ -916,7 +927,7 @@ function cumulativeChart(box, legendBox, days, byRepo, repoList, value, what, co
   box.append(f.svg);
   crosshair(box, f, n, css('--text-primary'), i => ({
     y: f.y(tops[i]), when: `${long(days[i])} · ${show(tops[i])} in all`,
-    rows: [...bands].reverse().map(b => [b.color, show(b.cum[i]), b.label]),
+    rows: [...bands].reverse().filter(b => b.cum[i] > 0).map(b => [b.color, show(b.cum[i]), b.label]),
   }));
   legendBox.replaceChildren();
   for (const b of bands) {
@@ -953,11 +964,14 @@ function progress(d, colors) {
   const box = $('c-prog'), legend = $('l-prog');
   const tail = m.note ? `; ${m.note}` : '';
   if (m.total) {
-    // New on a day is the change in the running total; the range's first day has nothing before it.
-    const news = S.map((s, i) => (i ? Math.max(0, s[m.total] - S[i - 1][m.total]) : 0));
-    const added = S[n - 1][m.total] - S[0][m.total];
+    // New on a day is the change in the running total. The range's first day has no day before it
+    // in the data, except for repos, whose start days are all there; for users and contributors
+    // that day is left blank, and the change is counted from the end of it.
+    const first = progKey === 'repos' ? d.repoList.filter(r => r.start === days[0]).length : null;
+    const news = S.map((s, i) => (i ? Math.max(0, s[m.total] - S[i - 1][m.total]) : first));
+    const added = S[n - 1][m.total] - S[0][m.total] + (first || 0);
     $('prog-big').textContent = fmt(S[n - 1][m.total]);
-    $('prog-change').textContent = `+${fmt(added)} since ${date(days[0])}`;
+    $('prog-change').textContent = `+${fmt(added)} ${first === null ? 'after' : 'since'} ${date(days[0])}`;
     if (mode === 'cumulative') {
       $('prog-sub').textContent = `${m.what.toLowerCase()}, in all, each day${tail}`;
       totalChart(box, S, m.total, m.what.toLowerCase(), 300);
@@ -969,19 +983,25 @@ function progress(d, colors) {
     }
     return;
   }
-  const inRange = sum(d.byRepo, m.value);
+  // Only listed repos: a day's row for a repo no longer listed (one deleted by hand) has no total
+  // to start from, so counting it would make the range add more than the whole.
+  const listed = new Set(d.repoList.map(r => r.name));
+  const byRepo = d.byRepo.filter(r => listed.has(r.name));
+  const inRange = sum(byRepo, m.value);
   if (mode === 'cumulative') {
     const all = sum(d.repoList, m.value);
     $('prog-big').textContent = show(all);
     $('prog-change').textContent = `+${show(inRange)} since ${date(days[0])}`;
     $('prog-sub').textContent = `${m.what.toLowerCase()}, in all, each day, by repo${tail}`;
-    cumulativeChart(box, legend, days, d.byRepo, d.repoList, m.value, m.what, colors, show);
+    cumulativeChart(box, legend, days, byRepo, d.repoList, m.value, m.what, colors, show);
   } else {
-    const per = days.map(day => sum(d.byRepo.filter(r => r.day === day), m.value));
-    $('prog-big').textContent = m.dailyOnly ? ratioFmt(sum(per) / n) : show(inRange);
-    $('prog-change').textContent = m.dailyOnly ? `a day on average since ${date(days[0])}` : `since ${date(days[0])}, ${show(Math.round(inRange / n))} a day`;
-    $('prog-sub').textContent = `${m.what.toLowerCase()} each day, by repo${tail}`;
-    stackChart(box, legend, days, d.byRepo.map(r => ({ ...r, v: m.value(r) })), 'v', m.what, colors, { bytes: m.show === size, height: 300 });
+    // The average a day is over full days, to yesterday (FULL): today is only partly counted.
+    const per = days.map(day => sum(byRepo.filter(r => r.day === day), m.value));
+    const fullDays = Math.max(1, n - FULL), avg = sum(per.slice(0, fullDays)) / fullDays;
+    $('prog-big').textContent = m.dailyOnly ? ratioFmt(avg) : show(inRange);
+    $('prog-change').textContent = m.dailyOnly ? `a day on average, ${date(days[0])} to yesterday` : `since ${date(days[0])}; ${show(Math.round(avg))} a day to yesterday`;
+    $('prog-sub').textContent = `${m.what.toLowerCase()} each day, by repo${tail}${m.dailyOnly ? '; per day only, since the data doesn’t say when each device first ran Murmur' : ''}`;
+    stackChart(box, legend, days, byRepo.map(r => ({ ...r, v: m.value(r) })), 'v', m.what, colors, { bytes: m.show === size, height: 300 });
   }
 }
 
@@ -1203,6 +1223,8 @@ for (const b of document.querySelectorAll('.ranges button')) {
     load();
   });
 }
+for (const b of document.querySelectorAll('#prog-metric button')) b.setAttribute('aria-pressed', String(b.dataset.k === progKey));
+for (const b of document.querySelectorAll('#prog-mode button')) b.setAttribute('aria-pressed', String(b.dataset.m === progMode));
 for (const b of document.querySelectorAll('#prog-metric button, #prog-mode button')) {
   b.addEventListener('click', () => {
     if (b.dataset.k) progKey = b.dataset.k; else progMode = b.dataset.m;
