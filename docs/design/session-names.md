@@ -65,13 +65,14 @@ names routes by it all the same.
   of its last holder (below), then in other devices' presence, then in the registry, so a message to
   a session that has stopped is kept for it like any other. A device ID shaped like a name is read
   as a device if no session has that name.
-- **A name in a presence counts only on its own device** (#604, 2026-11-15). A presence is whatever
-  its device wrote. When a daemon reads one, it takes a session's name off it if the registry, or an
-  earlier sighting, has that name on another device, or another device has set it aside; the session
-  is listed and reached by its address, as one whose name hasn't landed is. Before, a send looked
-  through the presences, in the order of their device IDs, ahead of the registry, so a device that
-  listed someone else's name could be sent their messages, and `who` showed the name twice. The
-  device is what is compared, since a name moves between sessions only on its own device.
+  - *When more than one presence shows the name* (#604, 2026-11-15). A presence is whatever its
+    device wrote, so two can. A device still writing its presence goes before a stale one, and of
+    those the device the registry has the name on goes before any other; it was the first by
+    device ID, so a device that listed someone's name was sent their messages when its ID sorted
+    first. Live goes before the registry because a clone that loses its keys file comes back under
+    a new device ID with its names ([encryption](encryption.md)), while the registry still has them
+    on the old one. `who` and the page still show the name on each device that claims it: taking a
+    name off a presence the registry disagrees with would hide that clone's names for good.
 - **A name a session has left.** A session that followed Claude Code to another conversation (#9)
   isn't called its old name any more, but the registry still has that name down for its Murmur ID. A
   send to the old name reaches the session, and says it is called something else now. An error

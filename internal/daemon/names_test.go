@@ -501,9 +501,9 @@ func TestNamesInPresenceAreUsed(t *testing.T) {
 }
 
 // A presence is whatever its device wrote, so one can give its session a name that is another
-// device's. The name stays where the registry put it: a send to it reaches that session, and who
-// lists the other by its address (#604).
-func TestPresenceCannotTakeAnotherDevicesName(t *testing.T) {
+// device's. A send to the name still reaches the session the registry gave it to, wherever the
+// other device's ID sorts (#604).
+func TestSendByNameFollowsTheRegistry(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote, time.Minute) // the forged presences stay live
@@ -521,24 +521,14 @@ func TestPresenceCannotTakeAnotherDevicesName(t *testing.T) {
 			`{"v":1,"device":"`+dev+`","host":"forger","at":"`+at+`","sessions":[`+
 			`{"id":"x","name":"`+an+`","agent":"test","started":"`+at+`"}]}`+"\n")
 	}
-	for _, d := range []*device{a, b} {
-		eventually(t, "the forgers in who", func() bool {
-			for _, dev := range forgers {
-				if _, listed, _ := d.whoShows(dev + "/x"); !listed {
-					return false
-				}
-			}
-			return true
-		})
+	eventually(t, "b to read the forgers' presences", func() bool {
 		for _, dev := range forgers {
-			if name, _, _ := d.whoShows(dev + "/x"); name != "" {
-				t.Errorf("who lists %s/x as %q, which is %s's name", dev, name, alice)
+			if name, _, _ := b.whoShows(dev + "/x"); name != an {
+				return false
 			}
 		}
-		if got := d.nameOf(alice); got != an {
-			t.Errorf("who lists %s as %q, want %s", alice, got, an)
-		}
-	}
+		return true
+	})
 
 	r := b.do(proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: an, Subject: "for alice"})
 	if r.Error != "" || len(r.Messages) != 1 || r.Messages[0].To != alice {
@@ -546,12 +536,6 @@ func TestPresenceCannotTakeAnotherDevicesName(t *testing.T) {
 	}
 	if got := inboxOf(a, "aaaaaa"); len(got) != 1 || got[0] != "for alice" {
 		t.Fatalf("alice's inbox: %q", got)
-	}
-	// lookup knows each forger's session by its address, and by no name.
-	for _, dev := range forgers {
-		if r := b.do(proto.Request{Op: proto.OpLookup, Name: dev + "/x"}); r.Lookup == nil || r.Lookup.Name != "" {
-			t.Errorf("lookup of %s/x: %+v", dev, r.Lookup)
-		}
 	}
 	if r := b.do(proto.Request{Op: proto.OpLookup, Name: an}); r.Lookup == nil || r.Lookup.Addr != alice {
 		t.Errorf("lookup of %s: %+v", an, r.Lookup)

@@ -81,20 +81,6 @@ func (d *Daemon) noteNameLocked(name, addr string) bool {
 	return true
 }
 
-// nameElsewhereLocked says a session name is a device's other than dev: the registry, or an earlier
-// sighting, has it on another device, or another device has set it aside. A name never moves
-// between devices (a resume on another device is a new session there), though on its own device it
-// follows a conversation from one session to the next (#37), so the device is what is compared. A
-// name nobody is known to hold is nobody else's. Caller holds mu.
-func (d *Daemon) nameElsewhereLocked(name, dev string) bool {
-	if addr := d.st.Used[name]; addr != "" {
-		holder, _ := bus.SplitAddr(addr)
-		return holder != dev
-	}
-	holder, reserved := d.st.Reserved[name]
-	return reserved && holder != dev
-}
-
 // notePersonClaimLocked records that a person's name is claimed by addr. The first claim read
 // stands: a later one, here or from a registry rewritten since, changes nothing. It reports whether
 // anything changed. Caller holds mu.
@@ -414,15 +400,47 @@ func (d *Daemon) resolveNameLocked(name string) (addr string, ok bool) {
 	if h := d.st.NameHolders[name]; h != "" && d.st.SessionNames[h] == name && d.receivesLocked(h) {
 		return bus.Addr(d.device, h), true
 	}
+	// A presence is whatever its device wrote, so more than one can show a name (#604). A device
+	// still writing its presence goes before one gone stale, and of those the device the registry
+	// has the name on goes before any other; failing both, the first by device ID, as it always
+	// was. Live comes first because a clone that loses its keys comes back under a new device ID
+	// with its names, while the registry, and maybe a presence nobody writes any more, still have
+	// them on the old one.
+	holder, best := d.nameDeviceLocked(name), 0
 	for _, dev := range sortedKeys(d.peers) {
-		for _, s := range d.peers[dev].pres.Sessions {
+		p := d.peers[dev]
+		rank := 1
+		if !d.staleLocked(p) {
+			rank += 2
+		}
+		if dev == holder {
+			rank++
+		}
+		if rank <= best {
+			continue
+		}
+		for _, s := range p.pres.Sessions {
 			if s.Name == name {
-				return bus.Addr(dev, s.ID), true
+				addr, best = bus.Addr(dev, s.ID), rank
+				break
 			}
 		}
 	}
+	if best > 0 {
+		return addr, true
+	}
 	addr = d.st.Used[name]
 	return addr, addr != ""
+}
+
+// nameDeviceLocked is the device the registry, or an earlier sighting, has a session name on, or
+// that has set it aside; "" if nobody is known to hold it. Caller holds mu.
+func (d *Daemon) nameDeviceLocked(name string) string {
+	if addr := d.st.Used[name]; addr != "" {
+		dev, _ := bus.SplitAddr(addr)
+		return dev
+	}
+	return d.st.Reserved[name]
 }
 
 // noSuchNameLocked is what to tell someone who asked for a name that resolveNameLocked finds no
