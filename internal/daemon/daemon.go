@@ -694,7 +694,11 @@ type state struct {
 	// name still reaches them.
 	Person string `json:"person,omitempty"`
 	// Nick is the nickname this device's user gave it (#190), "" if none.
-	Nick        string            `json:"nick,omitempty"`
+	Nick string `json:"nick,omitempty"`
+	// Color is the colour this device's user picked for its faces on the page (#573), 1 to
+	// bus.Colors, 0 if none; ColorAt is when they picked it.
+	Color       int               `json:"color,omitempty"`
+	ColorAt     time.Time         `json:"colorAt,omitzero"`
 	PersonSince time.Time         `json:"personSince,omitzero"`
 	People      map[string]string `json:"people,omitempty"`
 	// PersonClaims is every person's name in the names registry, to the address that claimed it

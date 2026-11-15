@@ -198,6 +198,8 @@ type fixtures struct {
 	// receipts is how far each of the person's messages got (#26). sam-thinkpad stands for a device
 	// on an older Murmur, which sends none.
 	receipts map[string][]web.Receipt
+	// picks is the colour each device's person picked (#573), by device; the rest are chosen.
+	picks map[string]bus.ColorPick
 }
 
 func newFixtures(now time.Time) *fixtures {
@@ -214,6 +216,11 @@ func newFixtures(now time.Time) *fixtures {
 		},
 	}
 	f.activity = fixtureActivity(now)
+	// Maya and Jordan picked colours, so Settings shows two as taken.
+	f.picks = map[string]bus.ColorPick{
+		"maya-mbp-91c0":   {Device: "maya-mbp-91c0", Color: 9, At: ago(26 * time.Hour)},
+		"jordan-xps-2b90": {Device: "jordan-xps-2b90", Color: 2, At: ago(3 * time.Hour)},
+	}
 	// A hackathon team on its second afternoon, racing to a 5 pm demo of Huddle, an app that writes
 	// meeting notes: four people, five machines, agents from three clients.
 	f.devices = []web.Device{
@@ -427,11 +434,39 @@ func (f *fixtures) State(ctx context.Context) (web.State, error) {
 			st.Receipts[id] = append([]web.Receipt(nil), rs...)
 		}
 	}
+	colors := f.colorsLocked()
 	for _, d := range f.devices {
 		d.Sessions = append([]web.Session(nil), d.Sessions...)
+		d.Color, d.Picked = colors[d.ID].Color, colors[d.ID].Picked
 		st.Devices = append(st.Devices, d)
 	}
 	return st, nil
+}
+
+// colorsLocked settles every device's colour as the daemon does. Caller holds mu.
+func (f *fixtures) colorsLocked() map[string]bus.DeviceColor {
+	var picks []bus.ColorPick
+	for _, d := range f.devices {
+		picks = append(picks, cmp.Or(f.picks[d.ID], bus.ColorPick{Device: d.ID}))
+	}
+	return bus.DeviceColors(picks)
+}
+
+// SetColor picks this device's colour as the daemon does, refusing one another device has.
+func (f *fixtures) SetColor(ctx context.Context, color int) (web.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if color < 0 || color > bus.Colors {
+		return web.Account{}, fmt.Errorf("there is no colour %d", color)
+	}
+	for id, c := range f.colorsLocked() {
+		if id != f.self && c.Picked && c.Color == color-1 {
+			return web.Account{}, fmt.Errorf("%s has that colour", id)
+		}
+	}
+	f.account.Color = color
+	f.picks[f.self] = bus.ColorPick{Device: f.self, Color: color, At: time.Now()}
+	return f.account, nil
 }
 
 // Messages uses the count of messages seen as its cursor.

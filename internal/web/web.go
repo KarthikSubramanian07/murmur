@@ -105,6 +105,7 @@ func NewWithGitHub(src Source, token string, prs LookupPR, events LookupGitHub) 
 	s.mux.HandleFunc("POST /api/restart", s.postRestart)
 	s.mux.HandleFunc("PUT /api/account", s.putAccount)
 	s.mux.HandleFunc("PUT /api/nick", s.putNick)
+	s.mux.HandleFunc("PUT /api/color", s.putColor)
 	s.mux.HandleFunc("POST /api/send", s.postSend)
 	s.mux.HandleFunc("POST /api/read", s.postRead)
 	s.mux.HandleFunc("GET /api/repos", s.getRepos)
@@ -419,6 +420,27 @@ func (s *Server) putNick(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), sendTimeout) // it waits for the first sync, as a name's claim does
 	defer cancel()
 	account, err := s.src.SetNick(ctx, strings.TrimSpace(n.Nick))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, account)
+}
+
+type colorRequest struct {
+	Color int `json:"color"`
+}
+
+// putColor picks this device's colour, or with 0 lets it be chosen (#573).
+func (s *Server) putColor(w http.ResponseWriter, r *http.Request) {
+	var c colorRequest
+	if err := readJSON(w, r, &c); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), sendTimeout) // it waits for the first sync, as a nickname does
+	defer cancel()
+	account, err := s.src.SetColor(ctx, c.Color)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

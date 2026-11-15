@@ -2779,13 +2779,12 @@ function ghostFace(name, cls) {
   );
 }
 
-// A device's color, fixed by its ID: one of twelve hues, the same on its faces and by its name in the
-// sidebar. Offline, or not in presence, it is grey.
+// A device's color: one of twelve hues, the same on its faces and by its name in the sidebar. Its
+// person may pick it (#573); the daemon settles who has which, so every page shows the same. Offline,
+// or not in presence, it is grey.
 function deviceColor(d) {
   if (!d || !d.reachable) return "dev-off";
-  let n = 0;
-  for (const ch of d.id) n = (n * 31 + ch.codePointAt(0)) % 9973;
-  return "dev-c" + (n % 12);
+  return "dev-c" + (d.color || 0);
 }
 
 // The device a session or a person is on, by name, or null if none in presence has it. Built once
@@ -4375,8 +4374,79 @@ function accountSection() {
         h("button", { class: "btn btn-outline btn-xs", "data-key": "account-save", onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) }, a ? "Save" : "Choose"),
       ]),
       nickRow(),
+      colorRow(),
     ),
   );
+}
+
+// The palette's names, in the order of the dev-c classes in style.css.
+const COLORS = ["Rose", "Clay", "Ochre", "Olive", "Sage", "Sea green", "Teal", "Steel blue", "Violet", "Plum", "Berry", "Cocoa"];
+
+// This device's color (#573): Auto, or one of the palette's that no other device has picked. A pick
+// another device made first is shown as theirs, and this device is Auto until they let it go.
+function colorRow() {
+  const pick = ui.state?.account?.color || 0;
+  const devices = ui.state?.devices || [];
+  const self = devices.find((d) => d.self);
+  const taken = new Map(); // a place in the palette, to who picked it
+  for (const d of devices) if (!d.self && d.picked) taken.set(d.color, d.nick || d.owner || d.id);
+  const lost = pick && !self?.picked ? taken.get(pick - 1) : null;
+  const shown = lost ? 0 : pick; // what is checked: 0 is Auto
+  const choices = [0, ...COLORS.map((_, i) => i + 1)].filter((c) => c === shown || !taken.has(c - 1));
+  const move = (e, c) => {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    const next = choices[(choices.indexOf(c) + step + choices.length) % choices.length];
+    saveColor(next);
+    root.querySelector(`[data-key="color-${next}"]`)?.focus();
+  };
+  const radio = (c, props, ...kids) => {
+    const who = c ? taken.get(c - 1) : null;
+    return h(
+      "button",
+      {
+        ...props,
+        role: "radio",
+        "aria-checked": c === shown ? "true" : "false",
+        "aria-disabled": who ? "true" : null,
+        tabindex: c === shown ? 0 : -1,
+        "data-key": "color-" + c,
+        onclick: () => !who && saveColor(c),
+        onkeydown: (e) => move(e, c),
+      },
+      ...kids,
+    );
+  };
+  return settingsRow(
+    "color",
+    "Colour",
+    lost ? lost + " picked yours first, so you're on Auto." : "Your agents' faces.",
+    h(
+      "div",
+      { class: "swatches", role: "radiogroup", "aria-label": "Colour" },
+      radio(0, { class: "swatch-auto" }, "Auto"),
+      COLORS.map((name, i) => {
+        const who = taken.get(i);
+        return radio(i + 1, { class: "swatch dev-c" + i, "aria-label": who ? name + ", " + who + "'s" : name, title: who ? who + "'s" : name });
+      }),
+    ),
+    "row-stack",
+  );
+}
+
+async function saveColor(color) {
+  delete ui.rowErrors.color;
+  if (color === (ui.state?.account?.color || 0)) return render();
+  try {
+    const account = await api("/api/color", { method: "PUT", body: JSON.stringify({ color }) });
+    if (ui.state) ui.state.account = { ...ui.state.account, ...account, color: account.color || 0 };
+    poll();
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    ui.rowErrors.color = e.message;
+  }
+  render();
 }
 
 // This device's nickname (#533), as `mur nickname` sets it: a label teammates see beside the

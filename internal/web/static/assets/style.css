@@ -3737,6 +3737,55 @@ a.g-pr:hover {
   background: var(--dev);
 }
 
+/* Settings' colour row (#573): Auto, then the palette. The checked one has a ring; one another device
+ * picked is struck through. */
+.row-stack {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.625rem;
+}
+.row-stack .row-control {
+  justify-content: flex-start;
+}
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.swatch,
+.swatch-auto {
+  height: 1.5rem;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.swatch {
+  width: 1.5rem;
+  background: var(--dev);
+}
+.swatch-auto {
+  padding: 0 0.625rem;
+  font-size: 0.75rem;
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--input) 60%, transparent);
+}
+.swatch[aria-checked="true"],
+.swatch-auto[aria-checked="true"] {
+  box-shadow:
+    0 0 0 2px var(--background),
+    0 0 0 3.5px var(--foreground);
+}
+.swatch[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.45;
+  background: linear-gradient(to top right, transparent calc(50% - 1px), var(--background) calc(50% - 1px), var(--background) calc(50% + 1px), transparent calc(50% + 1px)), var(--dev);
+}
+.swatch:focus-visible,
+.swatch-auto:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+
 /* A person's face (#579): a ghost, and maybe an accessory, over its device's color. The ghost alone
  * marks a person. Nothing clips it: a hat or a speech bubble may reach past the round tile. */
 .avatar.avatar-ghost > img {

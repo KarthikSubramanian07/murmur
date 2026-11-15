@@ -259,6 +259,9 @@ func (p *Presence) Clean() {
 	if !ValidNick(p.Nick) || p.Nick == p.Device {
 		p.Nick = ""
 	}
+	if p.Color < 1 || p.Color > Colors || p.ColorAt.IsZero() {
+		p.Color, p.ColorAt = 0, time.Time{}
+	}
 	var keep []SessionInfo
 	person := false
 	for _, s := range p.Sessions {
@@ -395,7 +398,13 @@ type Presence struct {
 	Owner  string `json:"owner,omitempty"` // git user.name on that clone
 	// Nick is the nickname the device's user gave it (#190), "" if none. Nothing keeps two devices
 	// from saying the same one: it is a label, and the ID stays the device's address.
-	Nick     string        `json:"nick,omitempty"`
+	Nick string `json:"nick,omitempty"`
+	// Color is the colour the device's user picked for its faces on the page (#573): 1 to
+	// Colors, a place in the page's palette; 0 lets the page choose. ColorAt is when they picked it,
+	// by the writer's clock: of two devices that picked one colour, the one that picked it first
+	// keeps it (DeviceColors).
+	Color    int           `json:"color,omitempty"`
+	ColorAt  time.Time     `json:"colorAt,omitzero"`
 	At       time.Time     `json:"at"` // the writer's clock
 	Sessions []SessionInfo `json:"sessions"`
 	// Offline lists the IDs of the device's sessions whose T3 thread is settled (#189). They are
@@ -416,7 +425,7 @@ type Presence struct {
 	// BoxKey is the device's public box key, which its teammates encrypt to (#156). A presence
 	// that carries one is sealed, which makes the key the device's.
 	BoxKey string `json:"boxKey,omitempty"`
-	// Box holds Host, Owner, Nick, Sessions, Offline, Groups and Receipts, encrypted for the team's devices; those fields
+	// Box holds Host, Owner, Nick, Color, Sessions, Offline, Groups and Receipts, encrypted for the team's devices; those fields
 	// are then empty. Opened, it is nil.
 	Box *Box `json:"box,omitempty"`
 	// Names is, beside a Box, each session's name with the session's ID, readable: a device that
