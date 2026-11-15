@@ -1290,8 +1290,12 @@ func (d *Daemon) holdsRouteLocked(wake pageSettings) bool {
 	return false
 }
 
-// loadDevice reads this clone's device ID, creating it on first run: the hostname plus four
-// random hex digits, so two clones on one machine are two devices.
+// loadDevice reads this clone's device ID, creating it on first run: "device-" and six random hex
+// digits, so two clones on one machine are two devices. The ID names the device's ref and authors
+// its commits, so anyone who can read the repo sees it, and on a public repo a hostname in it would
+// often show its owner's full name (#330). Teammates tell devices apart by what the encrypted
+// presence says (owner, host, nickname), not by the ID. A clone made before keeps its ID, which
+// began with its hostname.
 func loadDevice(dir string) (string, error) {
 	path := filepath.Join(dir, "device")
 	if b, err := os.ReadFile(path); err == nil {
@@ -1299,30 +1303,8 @@ func loadDevice(dir string) (string, error) {
 			return id, nil
 		}
 	}
-	host, _ := os.Hostname()
-	id := slug(host) + "-" + bus.RandHex(4)
+	id := "device-" + bus.RandHex(6)
 	return id, os.WriteFile(path, []byte(id+"\n"), 0o600)
-}
-
-// slug makes a hostname safe as a ref component and short enough to read.
-func slug(host string) string {
-	host, _, _ = strings.Cut(strings.ToLower(host), ".")
-	var b strings.Builder
-	for _, r := range host {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		} else if b.Len() > 0 && !strings.HasSuffix(b.String(), "-") {
-			b.WriteByte('-')
-		}
-	}
-	s := strings.Trim(b.String(), "-")
-	if len(s) > 24 {
-		s = strings.Trim(s[:24], "-")
-	}
-	if s == "" {
-		s = "device"
-	}
-	return s
 }
 
 func validName(s string) bool { return bus.ValidName(s) }
