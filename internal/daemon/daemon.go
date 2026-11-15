@@ -95,6 +95,9 @@ type Options struct {
 	ReceiptGather time.Duration
 	// ReceiptGap is the least time between two receipts from this device: 15 s.
 	ReceiptGap time.Duration
+	// TellWait is how long a sender that asked to be told how far its message got (#276) waits
+	// before it is told that not every recipient has got that far: 30 min.
+	TellWait time.Duration
 	// ContinueHold is how long a Stop's continuation of a turn counts as at work outside T3 before
 	// another hook of the session shows the turn went on: 2 min (see continueTurnLocked).
 	ContinueHold time.Duration
@@ -184,6 +187,9 @@ func (o *Options) defaults() {
 	}
 	if o.ReceiptGap == 0 {
 		o.ReceiptGap = 15 * time.Second
+	}
+	if o.TellWait == 0 {
+		o.TellWait = 30 * time.Minute
 	}
 	if o.StaleAfter == 0 {
 		o.StaleAfter = 6 * time.Minute
@@ -802,8 +808,9 @@ type state struct {
 	Explained map[string][]string `json:"explained,omitempty"`
 
 	// Marks is what this device's sessions have done with messages from other devices that asked
-	// for receipts, not yet on the bus (#26, receipts.go). Sent is this device's person's messages
-	// that asked for them, by ID, with how far each got with each recipient.
+	// for receipts, not yet on the bus (#26, receipts.go). Sent is this device's messages that asked
+	// for them, by ID, with how far each got with each recipient: its person's, and those whose
+	// sender asked to be told (#276).
 	Marks []bus.Mark             `json:"marks,omitempty"`
 	Sent  map[string]*sentRecord `json:"sent,omitempty"`
 	// AwaitingRead is, by session ID, the messages handed to it as a turn that asked for receipts,
@@ -992,6 +999,11 @@ func Run(ctx context.Context, opt Options) error {
 		go func() {
 			defer d.bg.Done()
 			d.receiptLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
+			d.tellLoop(ctx)
 		}()
 		d.bg.Add(1)
 		go func() {

@@ -255,6 +255,12 @@ func pushable(m *inMsg) bool {
 	if m.Pushing || m.PushFailed || m.Attempted {
 		return false
 	}
+	if _, sess := bus.SplitAddr(m.Event.From); sess == bus.ReceiptFrom && !m.Held {
+		// Murmur's notice of how far a message got (#276): the sender asked to be told, not woken.
+		// Only that comes from a receipts address to an inbox. One the hook told of while the
+		// session worked goes in at the turn's end, as any message does.
+		return false
+	}
 	return m.Held || !m.Noticed && time.Since(waitedSince(m)) <= pushMaxAge
 }
 

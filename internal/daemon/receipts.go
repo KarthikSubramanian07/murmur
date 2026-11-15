@@ -19,6 +19,10 @@ import (
 // ReceiptGather and writes them as one encrypted receipt on its own log; the sender's daemon reads
 // them like any event and keeps the furthest state per recipient. A mark for a message sent from
 // this device never goes on the bus: it is applied here.
+//
+// An agent's message asks for receipts only when its sender asks to be told how far it got (#276,
+// send's tell_me). The sender is told once, by a notice from Murmur in its inbox: when every
+// recipient has got that far, or when TellWait has passed and some haven't.
 
 // maxSent is how many of the person's messages keep their recipients and marks (Sent), the newest.
 const maxSent = 200
@@ -34,8 +38,8 @@ const (
 	markRetryMax = 5 * time.Minute
 )
 
-// sentRecord is one of this device's person's messages that asked for receipts: whom it was for when
-// it was sent, and how far it got with each.
+// sentRecord is one of this device's messages that asked for receipts: whom it was for when it was
+// sent, and how far it got with each.
 type sentRecord struct {
 	At time.Time `json:"at"`
 	// To is the sessions it was for, by address, as this device knew them when it was sent: the one
@@ -55,6 +59,14 @@ type sentRecord struct {
 	// would otherwise list itself as a reader. A session that joined a group after the message was
 	// sent is dropped with it.
 	Marks map[string]markRecord `json:"marks,omitempty"`
+	// Tell is, for an agent's message whose sender asked to be told how far it got (#276), the
+	// state it asked about: delivered or read. Asker is the sender's address, Subject the message's,
+	// and Told says the sender has been told, which happens once. The page shows no ticks for such
+	// a message: the page's ticks are for its person's messages.
+	Tell    string `json:"tell,omitempty"`
+	Asker   string `json:"asker,omitempty"`
+	Subject string `json:"subject,omitempty"`
+	Told    bool   `json:"told,omitempty"`
 }
 
 type markRecord struct {
@@ -211,6 +223,7 @@ func (d *Daemon) applyMarkLocked(msg, addr, state string, at time.Time) {
 		rec.Marks = map[string]markRecord{}
 	}
 	rec.Marks[addr] = markRecord{State: state, At: at}
+	d.tellLocked(msg, rec, false)
 }
 
 // recordSentLocked keeps message e, which this device's person is sending with receipts asked for,
@@ -291,6 +304,9 @@ func (d *Daemon) receiptsLocked() map[string][]web.Receipt {
 	label := d.labelerLocked()
 	out := make(map[string][]web.Receipt, len(d.st.Sent))
 	for id, rec := range d.st.Sent {
+		if rec.Tell != "" {
+			continue // an agent's message (#276)
+		}
 		rs := make([]web.Receipt, 0, len(rec.To))
 		for _, addr := range rec.To { // only whom it was sent to (see sentRecord.Marks)
 			r := web.Receipt{Addr: addr, Name: label(addr), Person: bus.IsPerson(addr)}

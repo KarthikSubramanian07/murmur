@@ -804,6 +804,17 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	if len(req.Body) > maxBody {
 		return refuse(proto.RefusedSend, fmt.Sprintf("not sent: the body is over %d KB, and the bus keeps everything forever", maxBody>>10))
 	}
+	// A sender may ask to be told how far its message got (#276), but not of one to everyone: a
+	// receipt from every session on the mesh is what this is kept off by default to avoid.
+	tellMe := strings.TrimSpace(req.TellMe)
+	switch {
+	case tellMe == "" || bus.IsPerson(from):
+		tellMe = "" // a person's message asks for receipts anyway, and the page shows them
+	case !ValidTell(tellMe):
+		return fail(fmt.Sprintf("not sent: tell_me is %q or %q, not %q", bus.MarkDelivered, bus.MarkRead, tellMe))
+	case to == "*":
+		return fail("not sent: tell_me can't be asked of a message to everyone. Send it without tell_me, or to a group or to sessions by name")
+	}
 	// The body goes on the bus as readers will show it, so what the sender sent is what everyone
 	// reads, and it is cleaned before scrub looks: a key with a zero-width space in it is still a
 	// key once a reader drops the space. What was sent is checked too: dropping a format character
@@ -926,6 +937,26 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		d.recordSentLocked(e)
 		d.mu.Unlock()
 	}
+	var tellNote string
+	if tellMe != "" {
+		// Kept like a person's, with whom it is for, and told once it gets that far (tell.go). If
+		// none of them writes marks there is nothing to wait for, and the sender is told so now.
+		d.mu.Lock()
+		e.Receipts = true
+		d.recordSentLocked(e)
+		rec := d.st.Sent[e.ID]
+		rec.Tell, rec.Asker, rec.Subject = tellMe, from, subject
+		// The sender's own reading of a message to itself tells it nothing, and the notice would go
+		// in the inbox that reading is emptying.
+		rec.To = slices.DeleteFunc(rec.To, func(a string) bool { return a == from })
+		if len(waitedFor(rec)) == 0 {
+			delete(d.st.Sent, e.ID)
+			e.Receipts, tellMe = false, ""
+			tellNote = "You won't be told how far it gets: it reached no session whose " + brand.Product + " sends receipts."
+		}
+		d.saveLocked()
+		d.mu.Unlock()
+	}
 	if err := d.appendEvent(ctx, e); err != nil {
 		if e.Receipts {
 			d.mu.Lock()
@@ -963,7 +994,11 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		d.mu.Unlock()
 		note = sentences(note, mutersNote(muters), unwokenNote(unwoken))
 	}
-	return proto.Response{OK: true, Self: from, Note: note,
+	if tellMe != "" {
+		tellNote = fmt.Sprintf("You'll be told, in your inbox, once it is %s, or in %s with where it is then.", tellMe, minutes(d.opt.TellWait))
+	}
+	note = strings.TrimSpace(note + " " + tellNote)
+	return proto.Response{OK: true, Self: from, Note: note, Telling: tellMe != "", TellKnown: req.TellMe != "",
 		Messages: []proto.MessageView{{ID: e.ID, From: from, To: to, ToName: toName, Subject: subject, At: e.At}}}
 }
 
@@ -1049,6 +1084,9 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 		}
 		v := proto.MessageView{ID: e.ID, From: e.From, FromName: name, FromAgent: agent, FromBranch: branch,
 			FromOwner: d.ownerOfLocked(e.From), FromDevice: device, To: e.To, Subject: e.Subject, At: e.At}
+		if d.isTellNotice(e) {
+			v.FromName, v.FromOwner, v.Receipt = brand.Product, "", true // from Murmur itself (#276)
+		}
 		if withBody {
 			v.Body = e.Body
 			v.Told = m.NoticedAt

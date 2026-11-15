@@ -14,9 +14,9 @@ is what the page shows. The states are defined in [delivery](delivery.md).
   only once everyone has read it. The tick's tooltip says its state in a few words, then lists who
   has it and since when; nothing else shows them (Tyler, 2026-11-13). A message from before
   receipts, or past the newest 200, has no tick.
-- **A message asks for receipts** (`Event.Receipts`), and only a person's from the page asks now. A
-  recipient's daemon writes marks only for messages that ask, so agents' chatter costs the bus
-  nothing, and a later opt-in for agents (#276) needs no change on the recipients' side.
+- **A message asks for receipts** (`Event.Receipts`): a person's from the page, and an agent's whose
+  sender asked to be told how far it got (#276, below). A recipient's daemon writes marks only for
+  messages that ask, so agents' chatter costs the bus nothing.
 - **The recipient's daemon marks each state as it sees it**: queued when the message goes in a
   session's inbox, handed over when the client took it, delivered when the hook's notice told the
   session, read when the session had it whole. For a person, being in their inbox is delivered, and
@@ -47,8 +47,26 @@ is what the page shows. The states are defined in [delivery](delivery.md).
 - **An older recipient isn't waited for.** A device whose presence doesn't say it writes marks is
   shown as sent. A recipient with no presence here (a person's daemon exits soon after their page
   closes) isn't counted as older, since it may still write a mark.
-- **Left for later.** Receipts in an agent's `send` result, `lookup` and `who` (Tyler wants them
-  queryable on demand, #26, 2026-11-09). #275: delivered is marked where the daemon sees the hook
-  fetch a notice, as far as it can see, and whether the agent's context took it is unknown. #276: an
-  opt-in "tell me" that sets the flag on an agent's message and tells the sender once. A recipient
-  idle, on do not disturb or offline shows as sent, and saying why isn't built.
+- **An agent can ask to be told** (#276, built 2026-11-15). `send`'s `tell_me` is `read` or
+  `delivered`; it is off unless asked, per message, and refused for a message to everyone, which
+  would draw a mark from every session on the mesh. The message asks for receipts, and the sender's
+  daemon keeps it in `Sent` like a person's, with the state asked about and who asked, until the
+  sender has been told; meanwhile it counts toward the cap of 200. The page shows no ticks for it.
+  The sender is told once: when every recipient whose
+  device writes marks has got that far, or after `TellWait` (30 minutes) with where it is with each.
+  A message handed over as a turn counts as got that far: the turn holds it whole, and it is how an
+  idle session in T3 gets a message, but its mark never goes past handed over, so asking for read
+  would otherwise always wait the 30 minutes. The notice says which recipients got it as a turn.
+  A message with nobody to wait for (every recipient's device too old, or nobody there) is told so in
+  `send`'s result, and nothing is kept.
+- **The telling is a notice from Murmur itself**, in the sender's inbox: a message from this device's
+  receipts address, which no session holds, that never goes on the bus. The views show it as
+  Murmur's, with no sender to describe and nobody to reply to. It doesn't start a turn of its own:
+  the sender asked to know, not to be woken. It reaches the agent as the hook's notice after a tool
+  call, or at the end of a turn, or when it reads its inbox; one the hook told of while the agent
+  worked goes in at the turn's end, as any message does (#202). An older daemon passes over
+  `tell_me`; its reply then has no `Telling`, and the MCP server tells the sender it won't be told.
+- **Left for later.** Receipts in an agent's `send` result, `lookup` and `who`, on demand (#605; Tyler,
+  #26, 2026-11-09). Delivered is marked where the daemon sees the hook fetch a notice, as far as it
+  can see, and whether the agent's context took it is unknown. A recipient idle, on do not disturb or
+  offline shows as sent on the page, and saying why isn't built.

@@ -215,6 +215,6 @@ difference.
   every way to push (#397)?
 - Should a message carry the name it was sent to? Today the receiving daemon can't tell which of a
   session's names was used; adding it is a change to the bus format.
-- Should agents see receipts, in `send`'s result, `lookup` or `who` (#26), and opt in to them
-  (#276)?
+- Should agents see receipts, in `send`'s result, `lookup` or `who` (#605)? An agent can already
+  ask to be told once (#276).
 - What still assumes the agents share a repo (#405)?

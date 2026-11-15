@@ -46,7 +46,8 @@ later.
 
 When someone is waiting on your work, send one message once it is pushed: what is done, the branch
 or commit, and anything they must know before building on it. This is the one "done" message worth
-sending.
+sending. If you go on only once they have it, add `tell_me: "read"`: Murmur tells you once, in
+your inbox, when it is read, or after 30 minutes with where it is.
 
 ## Quiet sessions
 
