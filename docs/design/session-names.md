@@ -70,7 +70,7 @@ names routes by it all the same.
     on any push, and Codex found both races in it.
   - *Trust.* This lets a presence cause a rewrite of the registry, but gives no one more than push
     access already does. Whatever a presence names is used for good on every daemon that reads it,
-    and went into any snapshot written already; a seal shows a presence is its device's, not that
+    and goes into any snapshot written since; a seal shows a presence is its device's, not that
     the device is real, as anyone who can push can seal one for a new device
     ([encryption](encryption.md)). Nor need the presence be fresh: a stale one's names were in use
     all the same. The cost, a new root that every daemon reads from its start, is one push access can

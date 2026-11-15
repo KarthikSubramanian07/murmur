@@ -489,8 +489,18 @@ func TestNameOnlyInPresenceIsWrittenBack(t *testing.T) {
 			git(t, work, "push", "-q", "--force", remote, before+":refs/murmur/names")
 		},
 	}
-	for i, kind := range []string{"deleted", "rewound"} {
-		t.Run(kind, func(t *testing.T) {
+	cases := []struct {
+		name, damage string
+		pool         int // a's; 0 is none
+	}{
+		{"deleted", "deleted", 0},
+		{"rewound", "rewound", 0},
+		// As in production, where a joiner sets names aside at once. Its first push of them is a
+		// plain commit on the rewound tip, which doesn't bring the name back by itself.
+		{"rewound, with a pool", "rewound", 10},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			seed := uint64(71 + 2*i)
 			remote := newRemote(t)
@@ -516,10 +526,10 @@ func TestNameOnlyInPresenceIsWrittenBack(t *testing.T) {
 				return strings.Contains(openedPresence(t, remote, b), pick.name)
 			})
 			b.pushOffline(remote, true)
-			damage[kind](t, remote, before[0])
+			damage[tc.damage](t, remote, before[0])
 
 			// No session, so no name of its own to take: the presence is all a has to go by.
-			a := newDeviceWith(t, remote, func(d *device) { d.stale, d.noKey = time.Minute, true })
+			a := newDeviceWith(t, remote, func(d *device) { d.stale, d.noKey, d.pool = time.Minute, true, tc.pool })
 			eventually(t, "the registry to hold b's name again", func() bool {
 				return readRegistry(t, remote).holdsNames(pick.name)
 			})

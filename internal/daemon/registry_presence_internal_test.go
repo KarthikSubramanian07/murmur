@@ -139,3 +139,22 @@ func TestRepairFoundWhileAPushIsOutIsStillMade(t *testing.T) {
 		t.Fatalf("the registry lost %s: %v", lost, claims)
 	}
 }
+
+// A sync reads the registry before any presence, so a name a presence shows for the first time is
+// checked by the next sync, against a listing made after the presence was read. Read the other way,
+// the same sync would check it against the registry it listed before fetching the presence, which
+// can be older than the name (TestPresenceNewerThanTheRegistryReadIsNoLoss).
+func TestASyncReadsTheRegistryBeforeAnyPresence(t *testing.T) {
+	t.Parallel()
+	remote := map[string]string{
+		brand.MeshPrefix + "aaaa-0001":     "1",
+		brand.PresencePrefix + "aaaa-0001": "2",
+		brand.PresencePrefix + "0000-0001": "3",
+		brand.TeamRef:                      "4",
+		brand.NamesRef:                     "5",
+	}
+	order := readOrder(remote)
+	if len(order) == 0 || order[0] != brand.NamesRef {
+		t.Fatalf("a sync reads %v; the registry should come first", order)
+	}
+}
