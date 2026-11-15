@@ -675,7 +675,7 @@ func (f *fixtures) SetSettings(ctx context.Context, s web.Settings) (web.Setting
 	for _, d := range f.devices {
 		if d.Self {
 			for _, ss := range d.Sessions {
-				local[ss.Name] = true
+				local[ss.Name], local[ss.Addr] = true, true // by its address while it has no name, and after (#43)
 			}
 		}
 	}

@@ -102,6 +102,36 @@ func TestWithinTakesTheSessionsOwnSetting(t *testing.T) {
 	}
 }
 
+// The page sets a session's own setting by its address while it has no name, as it shows the
+// session by its address then. That setting holds before the name lands and after, until one is set
+// by the name, which goes first (#43). The same holds for what a busy session is given.
+func TestASettingMadeBeforeTheNameLandedHoldsAfterIt(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	inT3(d, "aaaaaa", 0)
+	d.sessions["aaaaaa"].name = "" // pending
+	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{LastRun: time.Now().Add(-20 * time.Minute)}
+	wake := wakeWithin(0)
+	wake.SessionWake = map[string]web.Wake{"dev/aaaaaa": {When: web.WakeAlways}}
+	wake.SessionBusy = map[string]string{"dev/aaaaaa": web.BusyWhole}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.wakesLocked("aaaaaa", wake) {
+		t.Errorf("no name yet, set to always by its address, idle 20 minutes: not woken")
+	}
+	d.sessions["aaaaaa"].name = "quiet-otter" // the name lands
+	if !d.wakesLocked("aaaaaa", wake) {
+		t.Errorf("named now, set to always by its address before: not woken")
+	}
+	if got := wake.busyChoice(d.settingKeysLocked("aaaaaa")); got != web.BusyWhole {
+		t.Errorf("named now, set to whole by its address before: given %q while busy", got)
+	}
+	wake.SessionWake["quiet-otter"] = web.Wake{When: web.WakeNever}
+	if d.wakesLocked("aaaaaa", wake) {
+		t.Errorf("set to never by its name, and always by its address: woken")
+	}
+}
+
 // A message just handed over as a turn counts as work: a second one right behind it goes in too,
 // before T3's database shows the run the first one started.
 func TestATurnHandedOverCountsAsWork(t *testing.T) {

@@ -166,7 +166,7 @@ func personAsks(m *inMsg) bool {
 // idle. Do not disturb and a wake setting of Never are a human's choices too, and hold. Caller holds
 // mu.
 func (d *Daemon) personWakesLocked(id string, wake pageSettings) bool {
-	return !d.dndLocked(id) && !d.offMeshLocked(id) && wake.choice(d.sessionNameLocked(id)).When != web.WakeNever
+	return !d.dndLocked(id) && !d.offMeshLocked(id) && wake.choice(d.settingKeysLocked(id)).When != web.WakeNever
 }
 
 func (d *Daemon) personLogPath() string { return filepath.Join(d.dir, "person-messages.jsonl") }

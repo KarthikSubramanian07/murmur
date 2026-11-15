@@ -995,8 +995,24 @@ function onDnd(s) {
 // This device's settings say which of its sessions have wake-ups switched off.
 function wakeNever(d, s) {
   if (!d.self || !ui.settings) return false;
-  const own = ui.settings.sessionWake?.[s.name];
+  const own = ownSetting(ui.settings.sessionWake, s);
   return (own ? own.when : ui.settings.wake?.when) === "never";
+}
+
+// A session's own setting is kept by its name. One made while it had no name, when the page knew it
+// by its address, is kept by the address, and the daemon goes by that one too once the name lands,
+// until the setting is saved again, which moves it to the name (#43).
+function ownSetting(set, s) {
+  return set?.[s.name] || set?.[s.addr] || null;
+}
+
+// withOwn is set with s's own setting changed to v, or taken away if v is null, by its name.
+function withOwn(set, s, v) {
+  const next = { ...(set || {}) };
+  delete next[s.addr];
+  if (v) next[s.name] = v;
+  else delete next[s.name];
+  return next;
 }
 
 // Quiet: running, but idle for a day, or hidden by a person with the hidden tag (#211). Agents
@@ -4615,8 +4631,7 @@ function settingsPage() {
   if (ui.settings) {
     const set = ui.settings;
     const local = (ui.state?.devices || []).find((d) => d.self)?.sessions || [];
-    const overrides = set.sessionWake || {};
-    const wakeOwn = local.filter((s) => overrides[s.name]).length;
+    const wakeOwn = local.filter((s) => ownSetting(set.sessionWake, s)).length;
     const rows = [
       settingsRow(
         "wake",
@@ -4633,22 +4648,18 @@ function settingsPage() {
             null,
             wakeControl(
               "wake-" + s.name,
-              overrides[s.name] || null,
+              ownSetting(set.sessionWake, s),
               (w) => {
                 // From the settings as they are now: a pause in typing minutes can end after
                 // another choice was made.
-                const next = { ...(ui.settings.sessionWake || {}) };
-                if (w) next[s.name] = w;
-                else delete next[s.name];
-                saveSettings({ ...ui.settings, sessionWake: next });
+                saveSettings({ ...ui.settings, sessionWake: withOwn(ui.settings.sessionWake, s, w) });
               },
               true,
             ),
           ),
         ), wakeOwn),
     ];
-    const busyOverrides = set.sessionBusy || {};
-    const busyOwn = local.filter((s) => busyOverrides[s.name]).length;
+    const busyOwn = local.filter((s) => ownSetting(set.sessionBusy, s)).length;
     const busyRows = [
       settingsRow(
         "busy",
@@ -4665,13 +4676,8 @@ function settingsPage() {
             null,
             busyControl(
               "busy-" + s.name,
-              busyOverrides[s.name] || null,
-              (b) => {
-                const next = { ...(ui.settings.sessionBusy || {}) };
-                if (b) next[s.name] = b;
-                else delete next[s.name];
-                saveSettings({ ...ui.settings, sessionBusy: next });
-              },
+              ownSetting(set.sessionBusy, s),
+              (b) => saveSettings({ ...ui.settings, sessionBusy: withOwn(ui.settings.sessionBusy, s, b) }),
               true,
             ),
           ),

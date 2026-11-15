@@ -406,22 +406,39 @@ func later(ts ...time.Time) time.Time {
 	return out
 }
 
-// choice is the page's wake setting for the session called name: its own, if it has one, else the
-// device's.
-func (p pageSettings) choice(name string) web.Wake {
-	if o, ok := p.SessionWake[name]; ok && name != "" {
+// choice is the page's wake setting for the session called name, at addr: its own, if it has one,
+// else the device's. The page sets a session's own by its name, or by its address while it has no
+// name yet, and that one holds once the name lands, until the page sets one by the name (#43).
+func (p pageSettings) choice(name, addr string) web.Wake {
+	if o, ok := ownSetting(p.SessionWake, name, addr); ok {
 		return o
 	}
 	return p.Wake
 }
 
-// busyChoice is the page's setting for what session name is given by the hook while it is busy
-// (#204): its own, if it has one, else the device's, else the subject only.
-func (p pageSettings) busyChoice(name string) string {
-	if o, ok := p.SessionBusy[name]; ok && name != "" {
+// busyChoice is the page's setting for what the session called name, at addr, is given by the hook
+// while it is busy (#204): its own, if it has one, as for choice, else the device's, else the
+// subject only.
+func (p pageSettings) busyChoice(name, addr string) string {
+	if o, ok := ownSetting(p.SessionBusy, name, addr); ok {
 		return o
 	}
 	return cmp.Or(p.Busy, web.BusySubject)
+}
+
+// ownSetting is a session's own setting in set: by its name, else by its address.
+func ownSetting[V any](set map[string]V, name, addr string) (V, bool) {
+	if o, ok := set[name]; ok && name != "" {
+		return o, true
+	}
+	o, ok := set[addr]
+	return o, ok
+}
+
+// settingKeysLocked are the name and the address the page's settings know session id of this
+// device by. Caller holds mu.
+func (d *Daemon) settingKeysLocked(id string) (name, addr string) {
+	return d.sessionNameLocked(id), bus.Addr(d.device, id)
 }
 
 // wakesLocked says whether a message may go into session id as a turn now. Not if it is off the
@@ -442,7 +459,7 @@ func (d *Daemon) mayWakeLocked(id string, wake pageSettings) bool {
 	if d.offMeshLocked(id) {
 		return false
 	}
-	w := wake.choice(d.sessionNameLocked(id))
+	w := wake.choice(d.settingKeysLocked(id))
 	switch w.When {
 	case web.WakeNever:
 		return false

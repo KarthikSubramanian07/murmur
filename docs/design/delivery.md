@@ -162,6 +162,11 @@ the turn took, so nothing waits for good.
   work" comes from T3's database (`orchestration_v2_projection_runs`, read every 5 s); for any
   other, from its start, its last request or tool call, a turn just handed over and, stopped, when
   it stopped. A daemon that starts hands over what its inboxes kept that is still young enough.
+  - *A session's own setting* is kept by its name. The page shows a session whose name is pending by
+    its address, so one set then is kept by the address, and holds before the name lands and after,
+    until it is saved again, which moves it to the name; one by the name goes first (#43,
+    2026-11-15). Before, it was looked up by the name only, so it never applied. What a busy
+    session is given is kept the same way.
 - **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
   decision, 2026-10-29). A message to a busy session never steers its running turn: it is queued as
   the next turn, or announced and given at the turn's end. The AGENTS.md wording asks for
