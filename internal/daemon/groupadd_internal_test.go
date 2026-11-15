@@ -2,13 +2,17 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/tags"
 )
@@ -37,23 +41,71 @@ func TestAnAddLeavesOutAGroupAPersonTookTheSessionOutOf(t *testing.T) {
 
 // An add for a session on a device whose clock runs an hour or more ahead of this one's is refused
 // to the adder: that device would take the add, dated by this clock, as too old to apply (#543). A
-// clock a little ahead doesn't matter.
+// clock a little ahead doesn't matter, and nor does a presence time pinned ahead by a clock that went
+// back (nextPresenceAtLocked): its commit, which git dates by the clock now, shows the clock is right.
 func TestAnAddForADeviceWhoseClockRunsAnHourAheadIsRefused(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		ahead   time.Duration
-		refused bool
-	}{{2 * time.Hour, true}, {20 * time.Minute, false}} {
+		signed, written time.Duration // ahead of this clock: the presence's own time, its commit's
+		refused         bool
+	}{{2 * time.Hour, 2 * time.Hour, true}, {20 * time.Minute, 20 * time.Minute, false}, {2 * time.Hour, 0, false}} {
 		d := tagsDaemon(t)
-		d.peers["far"] = &peer{lastChange: time.Now(), pres: bus.Presence{V: bus.Version, Device: "far", At: time.Now().Add(tc.ahead),
-			Groups: true, Sessions: []bus.SessionInfo{{ID: "ffffff", Agent: "claude"}}}}
-		// No team key here, so an add that passes the checks fails to go out, at once.
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		r := d.addToGroups(ctx, "aaaaaa", proto.Request{Add: []string{"group:ui"}, For: []string{"far/ffffff"}})
-		cancel()
-		t.Logf("%s ahead: %s", tc.ahead, r.Error)
-		if got := strings.Contains(r.Error, "clock runs at least"); got != tc.refused {
-			t.Errorf("a clock %s ahead: told %q; want it refused for the clock %v", tc.ahead, r.Error, tc.refused)
+		now := time.Now()
+		d.peers["far"] = &peer{lastChange: now, written: now.Add(tc.written), pres: bus.Presence{V: bus.Version, Device: "far",
+			At: now.Add(tc.signed), Groups: true, Sessions: []bus.SessionInfo{{ID: "ffffff", Agent: "claude"}}}}
+		if got := addRefusedForClock(t, d, "far/ffffff"); got != tc.refused {
+			t.Errorf("a presence signed %s and written %s ahead: refused for the clock %v; want %v", tc.signed, tc.written, got, tc.refused)
 		}
 	}
+}
+
+// The same, through the reading of a presence from git: a first read times it by its commit
+// (firstSight), and a device whose clock runs ahead dates its commit ahead too.
+func TestAPresenceReadFromGitShowsAClockAhead(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		signed, written time.Duration
+		refused         bool
+	}{{2 * time.Hour, 2 * time.Hour, true}, {2 * time.Hour, 0, false}} {
+		d := tagsDaemon(t)
+		d.maxRecord = bus.MaxRecord
+		dir := t.TempDir()
+		runGit(t, dir, "init", "-q", dir)
+		now := time.Now()
+		d.repo = &bus.Repo{Git: gitx.Git{Dir: filepath.Join(dir, ".git"),
+			Env: []string{fmt.Sprintf("GIT_COMMITTER_DATE=@%d +0000", now.Add(tc.written).Unix())}},
+			Name: "farclock", Email: "farclock@murmur.invalid"}
+		pres := bus.Presence{V: bus.Version, Device: "farclock", Host: "far", At: now.Add(tc.signed).UTC(), Groups: true,
+			Sessions: []bus.SessionInfo{{ID: "ffffff", Agent: "claude", Started: now.UTC()}}}
+		msg, err := bus.Encode(pres, "farclock: 1 sessions")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := context.Background()
+		sha, err := d.repo.NewCommit(ctx, "", msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.updatePeer(ctx, brand.PresencePrefix+"farclock", sha)
+		d.mu.Lock()
+		p := d.peers["farclock"]
+		d.mu.Unlock()
+		if p == nil || p.sha != sha {
+			t.Fatalf("the presence wasn't read: %+v", p)
+		}
+		if got := addRefusedForClock(t, d, "farclock/ffffff"); got != tc.refused {
+			t.Errorf("a presence signed %s and written %s ahead: refused for the clock %v; want %v", tc.signed, tc.written, got, tc.refused)
+		}
+	}
+}
+
+// addRefusedForClock adds addr to group:ui and says whether the add was refused for its device's
+// clock. No team key here, so an add that passes the checks fails to go out, at once.
+func addRefusedForClock(t *testing.T, d *Daemon, addr string) bool {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	r := d.addToGroups(ctx, "aaaaaa", proto.Request{Add: []string{"group:ui"}, For: []string{addr}})
+	t.Logf("%s: %s", addr, r.Error)
+	return strings.Contains(r.Error, "clock runs at least")
 }

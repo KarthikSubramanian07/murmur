@@ -249,11 +249,13 @@ func (d *Daemon) applyGroupAddLocked(e bus.Event, mode syncMode) {
 
 // groupAddWhyLocked is why the session at dev/sess, shown as who, can't be added to groups, as far
 // as this device can tell, or "" if it can't tell. The session's own device decides, by
-// applyGroupAddLocked. For a session here that is the same rule on the same state, so the answer is
-// exact. For one on another device it is that device's presence, which shows the tags the session
-// set itself but not those a person turned off, nor a person's choice that it be out of a group:
-// what the add is sure to fail on is refused, and the reply says the rest may be (#524, #543).
-// Caller holds mu.
+// applyGroupAddLocked. For a session here that is the same rule on the same state, so it refuses
+// every add its device would refuse or leave a group out of. An add of several groups is refused
+// whole when one would be left out, though the device would give the rest: an add is all or
+// nothing, and the reply names the group, so the adder can add the rest again. For one on another
+// device it is that device's presence, which shows the tags the session set itself but not those a
+// person turned off, nor a person's choice that it be out of a group: what the add is sure to fail
+// on is refused, and the reply says the rest may be (#524, #543). Caller holds mu.
 func (d *Daemon) groupAddWhyLocked(dev, sess, who string, groups []string) string {
 	full := func(own, off int) string {
 		has := fmt.Sprintf("%s has %d tags of its own", who, own)
@@ -286,9 +288,20 @@ func (d *Daemon) groupAddWhyLocked(dev, sess, who string, groups []string) strin
 	}
 	p := d.peers[dev]
 	// The add's time is by this device's clock, and its device drops one more than groupAddMaxAge
-	// old by its own. pres.At is that device's clock when it wrote its presence, and lastChange this
-	// one's when it read it, later, so the gap is at most how far that clock runs ahead of this one.
-	if ahead := p.pres.At.Sub(p.lastChange); ahead > groupAddMaxAge-time.Minute {
+	// old by its own. lastChange is this clock when the presence was read, after it was written. The
+	// writer's clock then is the earlier of two times: pres.At can be pinned ahead of it, as a device
+	// whose clock went back signs just after its last (nextPresenceAtLocked), and the commit's time,
+	// which git stamps from the clock as it writes, can't be. So the gap is at most how far that
+	// clock runs ahead of this one, and over groupAddMaxAge the add is sure to be dropped. Anyone who
+	// can push could wrap the presence in a commit dated otherwise, but pres.At is in the seal, so
+	// that can only make the gap smaller, and miss a refusal rather than make one. The commit's time
+	// is pinned only by a GIT_COMMITTER_DATE in the daemon's environment, and is then a false
+	// refusal only with pres.At pinned ahead too.
+	at := p.pres.At
+	if p.written.Before(at) {
+		at = p.written
+	}
+	if ahead := at.Sub(p.lastChange); ahead > groupAddMaxAge {
 		return fmt.Sprintf("%s's device's clock runs at least %d minutes ahead of this one's, so it would take the add as over an hour old and drop it: one of the two clocks is wrong",
 			who, int(ahead/time.Minute))
 	}

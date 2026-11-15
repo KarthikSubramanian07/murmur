@@ -615,6 +615,9 @@ type peer struct {
 	// machines' clocks.
 	listed     string
 	lastChange time.Time
+	// written is the committer time of the presence read: the writer's clock when git wrote it
+	// (groupAddWhyLocked).
+	written time.Time
 	// sealed says the presence read was sealed: only such a one earns a grant of the team keys
 	// (grantsDueLocked). locked says it was encrypted for a team key this device doesn't hold yet, to
 	// read again once it does.

@@ -1225,7 +1225,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	if sealed {
 		d.newPresenceLocked(dev, pres.At) // the high-water mark of its presence times
 	}
-	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, sealed: sealed, locked: locked}
+	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, sealed: sealed, locked: locked}
 	if !locked {
 		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
 	}
