@@ -65,7 +65,7 @@ func TestWithinGoesByT3sRunsWhereKnown(t *testing.T) {
 		{"not read yet, and the session long idle", nil, time.Hour, wakeWithin(0), false},
 		{"always, idle an hour", &t3db.State{LastRun: ago(time.Hour)}, 0, pageSettings{Wake: web.Wake{When: web.WakeAlways}}, true},
 		{"never, idle a minute", &t3db.State{LastRun: ago(time.Minute)}, 0, pageSettings{Wake: web.Wake{When: web.WakeNever}}, false},
-		{"an unset choice is within", &t3db.State{LastRun: ago(5 * time.Minute)}, 0, pageSettings{}, false},
+		{"an unset choice is within", &t3db.State{LastRun: ago(6 * time.Minute)}, 0, pageSettings{}, false},
 		{"settled, under always", &t3db.State{Settled: true, LastRun: ago(time.Second)}, 0, pageSettings{Wake: web.Wake{When: web.WakeAlways}}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
