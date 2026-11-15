@@ -460,7 +460,20 @@ type SessionInfo struct {
 	// nothing they send. A daemon from before mutes ignores it, and still delivers to this
 	// session's device, which is the one that drops the message.
 	Muted []string `json:"muted,omitempty"`
+	// NoWake says a message from another agent wouldn't go into the session as a turn now, by its
+	// device's wake setting (#545): NoWakeOff or NoWakeIdle, "" if it would. The message waits for
+	// the session's next turn or its inbox, and the sender is told. A daemon from before it ignores
+	// it, and its own sessions' say nothing.
+	NoWake string `json:"noWake,omitempty"`
 }
+
+// SessionInfo.NoWake values.
+const (
+	// NoWakeOff: the page's wake setting for the session is never.
+	NoWakeOff = "off"
+	// NoWakeIdle: the session has been idle longer than its wake setting's minutes.
+	NoWakeIdle = "idle"
+)
 
 // MaxMuted caps SessionInfo.Muted.
 const MaxMuted = 50

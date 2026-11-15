@@ -33,13 +33,18 @@ func (d *Daemon) lookup(you string, req proto.Request) proto.Response {
 	}
 	limit = min(limit, maxLookupMessages)
 	d.settleEnds()
+	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	addr, err := d.lookupAddrLocked(strings.TrimSpace(req.Name))
 	if err != nil {
 		return fail(err.Error())
 	}
-	return proto.Response{OK: true, Self: bus.Addr(d.device, you), Lookup: d.detailLocked(addr, you, limit)}
+	det := d.detailLocked(addr, you, limit)
+	if dev, sess := bus.SplitAddr(addr); det.Running && det.Reachable {
+		det.NoWake = d.peerNoWakeLocked(dev, sess, wake)
+	}
+	return proto.Response{OK: true, Self: bus.Addr(d.device, you), Lookup: det}
 }
 
 // lookupAddrLocked turns what the caller named into the address of a session this daemon knows:

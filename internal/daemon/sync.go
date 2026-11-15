@@ -1417,23 +1417,84 @@ func (d *Daemon) clearOwnJunk(listed map[string]string) {
 	}()
 }
 
-// appendSoon appends an event in the background, for events nobody waits on. It goes after the
-// presence of a session just started (see awaitPresence).
+// maxUnwritten bounds st.Unwritten: past it the oldest is let go, and logged.
+const maxUnwritten = 100
+
+// appendSoon appends a session's start or stop to this device's log in the background: nobody
+// waits on it. It goes after the presence of a session just started (see awaitPresence). It is
+// kept in the state file until it lands, and a write that fails, offline or as the daemon stops,
+// is tried again after the next presence that is pushed, in this run or the next (#434). Nothing
+// else would put it on the bus: later events build on the log's last tip that landed. Every
+// device's Recent view shows it, and its notes the line. A write reported as failed may have
+// landed all the same (see Repo.Push), so a start or stop can be on the log twice: the Recent view
+// keeps one by its ID (recordActLocked), and the notes show the line twice.
 func (d *Daemon) appendSoon(e bus.Event) {
-	if d.bgCtx.Err() != nil {
+	d.mu.Lock()
+	d.st.Unwritten = append(d.st.Unwritten, e)
+	if n := len(d.st.Unwritten) - maxUnwritten; n > 0 {
+		for _, old := range d.st.Unwritten[:n] {
+			d.log.Printf("letting %s go: more than %d starts and stops are waiting to be written", logged(old), maxUnwritten)
+		}
+		d.st.Unwritten = slices.Delete(d.st.Unwritten, 0, n)
+	}
+	d.saveLocked()
+	d.mu.Unlock()
+	d.writeUnwritten()
+}
+
+// writeUnwritten writes st.Unwritten to this device's log in the background, oldest first, one
+// writer at a time. It stops at the first write that fails, for the next presence pushed to start
+// it again (presenceLoop). Each is taken out once it has landed.
+func (d *Daemon) writeUnwritten() {
+	d.mu.Lock()
+	if d.unwriting || len(d.st.Unwritten) == 0 || d.bgCtx == nil || d.bgCtx.Err() != nil {
+		d.mu.Unlock()
 		return
 	}
+	d.unwriting = true
 	d.bg.Add(1)
+	d.mu.Unlock()
 	go func() {
 		defer d.bg.Done()
-		ctx, cancel := context.WithTimeout(d.bgCtx, time.Minute)
-		defer cancel()
-		err := d.awaitPresence(ctx)
-		if err == nil {
-			err = d.appendEvent(ctx, e)
-		}
-		if err != nil {
-			d.log.Printf("writing %s: %v", logged(e), err)
+		for {
+			d.mu.Lock()
+			if len(d.st.Unwritten) == 0 {
+				d.unwriting = false
+				d.mu.Unlock()
+				return
+			}
+			e := d.st.Unwritten[0]
+			d.mu.Unlock()
+			// Readers take only their own version (Event.Valid), and one held from a run before an
+			// update may carry the old one.
+			e.V = bus.Version
+			ctx, cancel := context.WithTimeout(d.bgCtx, time.Minute)
+			err := d.awaitPresence(ctx)
+			if err == nil {
+				err = d.appendEvent(ctx, e)
+			}
+			cancel()
+			d.mu.Lock()
+			if err != nil {
+				d.unwriting = false
+				warned := d.unwrittenWarned
+				d.unwrittenWarned = true
+				d.mu.Unlock()
+				if !warned {
+					d.log.Printf("writing %s: %v; it is tried again after the next presence pushed", logged(e), err)
+				}
+				return
+			}
+			// Let go as maxUnwritten ran over, it isn't at the head any more.
+			if len(d.st.Unwritten) > 0 && d.st.Unwritten[0].ID == e.ID {
+				d.st.Unwritten = slices.Delete(d.st.Unwritten, 0, 1)
+			}
+			if d.unwrittenWarned {
+				d.unwrittenWarned = false
+				d.log.Printf("wrote %s, which had failed", logged(e))
+			}
+			d.saveLocked()
+			d.mu.Unlock()
 		}
 	}()
 }
@@ -1538,6 +1599,9 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 			d.log.Printf("presence pushed again")
 		}
 		failing = err != nil
+		if err == nil {
+			d.writeUnwritten() // what failed to be written may go now (#434)
+		}
 		d.pruneInboxes()
 	}
 }
@@ -1564,6 +1628,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		branches[id] = branchOf(ctx, cwd)
 	}
 
+	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	for id, b := range branches {
 		if s := d.sessions[id]; s != nil && b != "" {
@@ -1581,7 +1646,8 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	pres.Offline = d.offlineIDsLocked()
 	for _, s := range d.sortedSessionsLocked() {
 		if d.offMeshLocked(s.id) {
-			continue // offline: listed in Offline instead
+			s.noWake = "" // as noWakeLocked says of it
+			continue      // offline: listed in Offline instead
 		}
 		name := s.name
 		if !s.dropped.IsZero() && live[name] {
@@ -1589,7 +1655,8 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 		info := bus.SessionInfo{ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(),
 			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s), HookOff: d.hookOffLocked(s),
-			Muted: d.mutesOfLocked(s.id)}
+			Muted: d.mutesOfLocked(s.id), NoWake: d.noWakeLocked(s.id, wake)}
+		s.noWake = info.NoWake
 		if !s.lastActive.IsZero() {
 			info.LastActive = s.lastActive.UTC()
 		}

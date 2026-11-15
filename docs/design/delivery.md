@@ -163,6 +163,26 @@ the turn took, so nothing waits for good.
   work" comes from T3's database (`orchestration_v2_projection_runs`, read every 5 s); for any
   other, from its start, its last request or tool call, a turn just handed over and, stopped, when
   it stopped. A daemon that starts hands over what its inboxes kept that is still young enough.
+- **The sender is told** (#545, 2026-11-15). On 2026-11-13 three messages to a T3 session idle for
+  13 minutes started no turn, as its device's wake setting said, while `send` said "Sent" and
+  `lookup` "reachable", so the sender took them for read. Each session's presence now carries
+  what its device would do with an agent's message now (`noWake`: `off` for never, `idle` for idle
+  past the setting's minutes), and `send` and `lookup` say "won't be woken", and why, on every
+  device. A message to a group, a device or everyone names the sessions it won't wake, three at
+  most and the rest counted. A person sending to one session is told only of `off`, as their
+  message wakes it however long it has been idle; their message to many doesn't (`personAsks`), so
+  there they are told of `idle` too.
+  - `idle` changes with time, so the daemon looks every 5 s (`TitleEvery`, with the threads) and
+    writes presence when a session's answer changes, rather than leaving it to the 2-minute
+    heartbeat: about two pushes more each time a session stays idle past its limit, one as it
+    crosses it and one as it gets to work again.
+  - A session with no way in at all (Muse or Grok outside T3, OpenCode 1 in a terminal) is
+    judged as any other: under the default nothing is said for its first 3 idle minutes, and
+    `idle` after, with that reason, though it would not be woken at any time. `who`'s agent column shows it. Not counted:
+    do not disturb, which says so itself, and a session of this device that has stopped, which
+    `send` already calls stopped.
+  - No protocol bump. An older daemon ignores the field and writes none, so a sender is told
+    nothing of its sessions, as before.
 - **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
   decision, 2026-10-29). A message to a busy session never steers its running turn: it is queued as
   the next turn, or announced and given at the turn's end. The AGENTS.md wording asks for

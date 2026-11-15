@@ -512,6 +512,9 @@ type Daemon struct {
 	// have; bgCtx is cancelled when the daemon starts shutting down.
 	bg    sync.WaitGroup
 	bgCtx context.Context
+	// unwriting says writeUnwritten is writing st.Unwritten; unwrittenWarned that a write of it
+	// has failed since the last that landed, and was logged.
+	unwriting, unwrittenWarned bool
 
 	// firstSync is closed once Run's first sync is over, done or not (see awaitFirstSync). Nil for
 	// a daemon Run didn't start, which has no first sync to wait for.
@@ -578,6 +581,9 @@ type session struct {
 	// unlogged says the session was a child when it registered, so neither its start nor its stop
 	// goes on the bus (#487).
 	unlogged bool
+	// noWake is what the last presence written said of whether a message would wake the session
+	// (bus.SessionInfo.NoWake), so that a change is published (see wakeChangedLocked).
+	noWake string
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its
@@ -696,6 +702,9 @@ type state struct {
 	Stopped map[string]time.Time `json:"stopped,omitempty"`
 	// LastSync tells the next daemon how long this one was down.
 	LastSync time.Time `json:"lastSync"`
+	// Unwritten holds this device's sessions' starts and stops not yet on its log, oldest first
+	// (appendSoon, #434).
+	Unwritten []bus.Event `json:"unwritten,omitempty"`
 
 	// Person is the name this device's human chose on the page, "" until they do, and PersonSince
 	// is when (#242). People is the address of every person's name this daemon has seen in a presence
