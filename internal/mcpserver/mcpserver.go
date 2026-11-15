@@ -723,7 +723,8 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 			rs[i].Err = "not tried, as " + stopped
 			continue
 		}
-		if r == "*" || bus.IsGroup(tags.Normalize(r)) {
+		// A device's group (tags.DevicePrefix) can pass the length bus.IsGroup allows.
+		if r == "*" || bus.IsGroup(tags.Normalize(r)) || strings.HasPrefix(tags.Normalize(r), tags.DevicePrefix) {
 			rs[i].Err = "a list is for sessions and people, each of whom gets a message of their own; send to " + r + " on its own"
 			continue
 		}

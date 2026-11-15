@@ -483,3 +483,26 @@ func TestADevicesGroupIsGivenOnlyByWhereTheSessionRuns(t *testing.T) {
 		t.Errorf("DeviceGroup(device-3f2a9c1e) = %q", g)
 	}
 }
+
+// A device ID can be 40 long, so its group's tag can pass MaxLen, and who still searches by it
+// (Sol's review of #628).
+func TestALongDevicesGroupIsSearchable(t *testing.T) {
+	long := DeviceGroup("abcdefghijklmnopqrstuvwx-1234")
+	if len(long) <= MaxLen {
+		t.Fatalf("%s is no longer than %d", long, MaxLen)
+	}
+	ts := WithDevice([]Tag{{Name: "reviewing"}}, "abcdefghijklmnopqrstuvwx-1234")
+	for _, terms := range [][]string{{long}, {long[:len(long)-2] + "*"}, {"group:device-*"}} {
+		f, err := ParseFilter(terms)
+		if err != nil {
+			t.Fatalf("%q: %v", terms, err)
+		}
+		if !f.Match(ts) {
+			t.Errorf("%q doesn't match %v", terms, Names(ts))
+		}
+	}
+	f, err := ParseFilter([]string{"-" + long})
+	if err != nil || f.Match(ts) {
+		t.Errorf("-%s: %v, matches %v", long, err, f.Match(ts))
+	}
+}

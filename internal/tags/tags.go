@@ -588,7 +588,8 @@ func ParseFilter(in []string) (Filter, error) {
 			if rest, ok := strings.CutSuffix(t, "*"); ok {
 				tm.prefix, t = true, rest
 			}
-			if t == "" || len(t) > MaxLen || !shape.MatchString(t) {
+			// A device's group can pass MaxLen, as a device ID can be 40 long (DevicePrefix).
+			if t == "" || len(t) > MaxLen && !strings.HasPrefix(t, DevicePrefix) || !shape.MatchString(t) {
 				return Filter{}, fmt.Errorf("%q isn't a tag to search by: use a tag, -tag for sessions without it, or end it in * for tags that start so", strings.TrimSpace(part))
 			}
 			tm.name = t
