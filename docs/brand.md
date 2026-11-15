@@ -3,6 +3,15 @@
 The brand dates from 2026-11-10. Its source is Tyler's Figma file, "murmur"; the files here were
 cut from that file's SVG export, so the shapes are the designer's and nothing was redrawn.
 
+## Taglines
+
+Kept for later use; not on the site yet (2026-11-14).
+
+- **Your team's agents, moving as one.** Tyler's pick. A murmuration is a flock of starlings moving as one with no leader, which is what Murmur does for a team's agents: they steer each other, and no single agent orchestrates.
+- **Murmur: agent swarms for teams.** The plainer sibling, for positioning Murmur as the practical way for a team to run an agent swarm.
+
+Evidence to pair with them: at the AIE x MLH hackathon at Code Summit (2026-11-13), 4 people ran 21 Claude Code sessions on 4 laptops for about 4 hours on github.com/a-Fig/cue, with 44 merged PRs and 225 agent messages, and the result held together.
+
 ## The mark
 
 Two agents side by side that read as an M: two agents in one repo, talking. The left one has round
