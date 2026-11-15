@@ -698,7 +698,7 @@ func recipients(to string) []string {
 // sessions. A refusal that doesn't name the recipient is about the message or this session (no
 // subject, a key in the body, not registered, no daemon) and would be the same for the rest, so the
 // rest aren't tried: a session waiting to register would otherwise wait once per recipient.
-func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []string, subject, body string) (*mcp.CallToolResult, any, error) {
+func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []string, subject, body, tell string) (*mcp.CallToolResult, any, error) {
 	if len(to) > maxRecipients {
 		r := text(fmt.Sprintf("Not sent: a send can name at most %d recipients, and this one names %d.", maxRecipients, len(to)))
 		r.IsError = true
@@ -731,7 +731,8 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 			rs[i].Same = first
 			continue
 		}
-		resp, err := s.callFrom(ctx, mreq, proto.Request{Op: proto.OpSend, To: r, Subject: subject, Body: body})
+		resp, err := s.callFrom(ctx, mreq, proto.Request{Op: proto.OpSend, To: r, Subject: subject, Body: body, TellMe: tell})
+		resp = untold(resp, err, tell)
 		if err != nil {
 			rs[i].Err = err.Error()
 			if !strings.Contains(rs[i].Err, r) {
@@ -747,6 +748,16 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 	res := text(view.SentEach(rs))
 	res.IsError = !sent
 	return res, nil, nil
+}
+
+// untold adds to a sent message's note that its sender won't be told how far it got, though it
+// asked (#276): the daemon is older than tell_me, and passed over it.
+func untold(resp proto.Response, err error, tell string) proto.Response {
+	if err == nil && tell != "" && !resp.Telling && resp.Error == "" {
+		resp.Note = strings.TrimSpace(resp.Note + " You won't be told how far it gets: this device's " + brand.Product +
+			" is too old for tell_me, and updates itself within the hour.")
+	}
+	return resp
 }
 
 func text(s string) *mcp.CallToolResult {
@@ -792,6 +803,7 @@ type (
 		To      string `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"`
 		Subject string `json:"subject" jsonschema:"one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"`
 		Body    string `json:"body,omitempty" jsonschema:"the rest of the message"`
+		TellMe  string `json:"tell_me,omitempty" jsonschema:"read or delivered, to be told once, in your inbox, when every recipient has read the message (or been told of it), or after 30 minutes with where it is; not for a message to everyone. Leave it out unless you need to know, as when handing off work"`
 	}
 )
 
@@ -842,14 +854,15 @@ func (s *server) tools(srv *mcp.Server) {
 		"not told who else got it, and the result says what became of each. Message to coordinate, not to chat."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, any, error) {
 			to := recipients(in.To)
+			tell := strings.TrimSpace(in.TellMe)
 			if len(to) > 1 {
-				return s.sendEach(ctx, req, to, oneLine(in.Subject), in.Body)
+				return s.sendEach(ctx, req, to, oneLine(in.Subject), in.Body, tell)
 			}
 			if len(to) == 1 {
 				in.To = to[0]
 			}
-			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpSend, To: in.To, Subject: oneLine(in.Subject), Body: in.Body})
-			return result(view.Sent, resp, err)
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpSend, To: in.To, Subject: oneLine(in.Subject), Body: in.Body, TellMe: tell})
+			return result(view.Sent, untold(resp, err, tell), err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "inbox", Description: "Read your unread messages from other agents, with the name of who sent them. " +
 		"A message that arrived as a turn is already read and isn't here; this is for the ones that came as a notice. " +

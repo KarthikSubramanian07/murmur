@@ -157,8 +157,12 @@ type Request struct {
 	To      string `json:"to,omitempty"`
 	Subject string `json:"subject,omitempty"`
 	Body    string `json:"body,omitempty"`
-	Doing   string `json:"doing,omitempty"`
-	Limit   int    `json:"limit,omitempty"`
+	// TellMe is, on OpSend, the state the sender asks to be told its message reached: "delivered"
+	// or "read" (#276), or "" for nothing. A daemon from before it ignores it, and its reply has no
+	// Telling, which is how the sender learns it won't be told.
+	TellMe string `json:"tellMe,omitempty"`
+	Doing  string `json:"doing,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
 
 	// Collaborators is, for OpRotate, the repo's collaborators as the CLI listed them, or nil if it
 	// couldn't; Force rotates whatever the list says.
@@ -310,6 +314,9 @@ type Response struct {
 	Name        string `json:"name,omitempty"`
 	NamePending bool   `json:"namePending,omitempty"`
 	Note        string `json:"note,omitempty"`
+	// Telling says, in a reply to OpSend with TellMe, that the sender will be told how far the
+	// message got (#276).
+	Telling bool `json:"telling,omitempty"`
 	// ClaudeSession is the Claude Code session ID the daemon holds for the calling session, which
 	// a hook may have corrected since the MCP server started. The server sends it in any later
 	// hello, in place of its environment's.
@@ -469,6 +476,9 @@ type MessageView struct {
 	// Told is when the hook's notice told the session of this message, for one given whole after:
 	// its turn says so (#355). Zero for a message no notice told of.
 	Told time.Time `json:"told,omitzero"`
+	// Receipt says this is a notice from Murmur itself, not a message from anyone: how far one of
+	// the session's messages got, which it asked to be told (#276). Nobody can be answered.
+	Receipt bool `json:"receipt,omitempty"`
 }
 
 // EventView is one line of `log`.

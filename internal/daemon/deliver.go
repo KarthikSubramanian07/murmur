@@ -272,6 +272,9 @@ func waitedSince(m *inMsg) time.Time {
 // at work now: it is pushable, the page's wake setting lets it through, and there is a way in.
 // Caller holds mu.
 func (d *Daemon) turnableLocked(id string, m *inMsg, wake pageSettings) bool {
+	if d.isTellNotice(m.Event) && !m.Held {
+		return false // the sender asked to be told, not woken (#276); one told of while at work goes in at the turn's end
+	}
 	return pushable(m) && d.wayInLocked(id, wake)
 }
 

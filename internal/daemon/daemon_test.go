@@ -126,6 +126,9 @@ type device struct {
 	threadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
 	// codexLineage, if set, stands in for Codex's state (the daemon's CodexLineage).
 	codexLineage func(ctx context.Context, dir, thread string) (title.Lineage, error)
+	// tellWait is TellWait, how long a sender that asked to be told waits (#276); zero takes the
+	// daemon's default.
+	tellWait time.Duration
 	// noKey starts the device without waiting for it to hold the team key (awaitTeamKey), for a test
 	// about a device that doesn't, or can't, hold it.
 	noKey bool
@@ -233,7 +236,7 @@ func (d *device) start() {
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
 			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll, FetchLimit: d.fetchLimit, FirstSyncLimit: d.firstSync,
 			SessionGrace: d.grace, StoppedInbox: d.keep, MuteGrace: muteGrace, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
-			ReceiptGather: 200 * time.Millisecond, ReceiptGap: 200 * time.Millisecond,
+			ReceiptGather: 200 * time.Millisecond, ReceiptGap: 200 * time.Millisecond, TellWait: d.tellWait,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState,
 			CodexLineage: d.codexLineage, Log: logger})
