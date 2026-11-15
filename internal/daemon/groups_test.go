@@ -8,6 +8,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/tags"
+	"github.com/a-Fig/murmur/internal/view"
 )
 
 // Group chats (#184): a group is a group: tag, the tag is its address, a session joins by setting
@@ -290,4 +291,51 @@ func TestASessionLeavesAGroupAPersonStarted(t *testing.T) {
 		t.Fatalf("adding bob again: %d %s", code, body)
 	}
 	eventually(t, "bob back in the group", func() bool { return a.inGroup("aaaaaa", bob, "group:a-b") })
+}
+
+// lookup lists a session's group messages, the ones it got as well as the ones it sent (#445), on
+// its own device and on another, and not for a session outside the group.
+func TestLookupListsTheGroupMessagesASessionGot(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	carol, _ := b.session("cccccc", "")
+	nameA, nameB, nameC := b.named(alice), a.named(bob), a.named(carol)
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && a.seesSession(carol) && b.seesSession(alice) })
+	if r := a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"group:ui"}, For: []string{alice, bob}}); r.Error != "" {
+		t.Fatalf("starting the group: %s", r.Error)
+	}
+	eventually(t, "bob in the group, as both devices see it", func() bool {
+		return a.inGroup("aaaaaa", bob, "group:ui") && b.inGroup("bbbbbb", bob, "group:ui")
+	})
+	a.send("aaaaaa", "group:ui", "alice to the group", "")
+	b.send("bbbbbb", "group:ui", "bob to the group", "")
+
+	subjects := func(d *device, as, who string) []string {
+		var out []string
+		for _, m := range d.look(as, who).Messages {
+			out = append(out, m.Subject)
+		}
+		return out
+	}
+	both := []string{"alice to the group", "bob to the group"}
+	for _, c := range []struct {
+		d       *device
+		as, who string
+	}{{a, "aaaaaa", nameB}, {b, "bbbbbb", nameB}, {b, "cccccc", nameA}, {a, "aaaaaa", nameA}} {
+		var got []string
+		eventually(t, "both group messages in the lookup of "+c.who, func() bool {
+			got = subjects(c.d, c.as, c.who)
+			return slices.Equal(got, both)
+		})
+	}
+	if got := subjects(a, "aaaaaa", nameC); len(got) != 0 {
+		t.Errorf("carol, who isn't in the group, has %q in lookup", got)
+	}
+	out := view.Lookup(proto.Response{Lookup: a.look("aaaaaa", nameB)})
+	if !strings.Contains(out, nameA+" -> group:ui  \"alice to the group\"") {
+		t.Errorf("lookup's text doesn't show alice's message to the group:\n%s", out)
+	}
+	t.Logf("lookup of bob, from alice's device:\n%s", out)
 }
