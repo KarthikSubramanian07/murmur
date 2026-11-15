@@ -269,8 +269,11 @@ func Inbox(r proto.Response) string {
 			// Being in it is a given (Tyler, 2026-11-13); the line after the subject says how to leave.
 			fmt.Fprintf(&b, "To: %s\n", m.To)
 		}
-		fmt.Fprintf(&b, "Subject: %s\n", m.Subject)
-		if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
+		body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody))
+		if !repeatsSubject(m.Subject, body) {
+			fmt.Fprintf(&b, "Subject: %s\n", m.Subject)
+		}
+		if body != "" {
 			// Quoted line by line, so no line of it can pass for one of these headers.
 			for _, line := range strings.Split(body, "\n") {
 				b.WriteString("> " + line + "\n")
@@ -296,6 +299,24 @@ func Inbox(r proto.Response) string {
 	return b.String()
 }
 
+// repeatsSubject says a subject is only the start of the body, cut short and ended with "…" or
+// "...". That is what web.SplitText makes of a message a person writes on the page with no subject
+// and a first line too long for one; printing both would give the agent that line twice (#552), so
+// Turn and Inbox print the body alone, whoever sent it: an agent's cut subject repeats its body
+// just the same. The page hides a person's such subject by the same rule (personText in
+// internal/web/static/assets/app.js). body is the body as the view prints it, trimmed.
+func repeatsSubject(subject, body string) bool {
+	if body == "" {
+		return false
+	}
+	for _, end := range []string{"…", "..."} {
+		if stem, ok := strings.CutSuffix(subject, end); ok {
+			return strings.HasPrefix(body, stem)
+		}
+	}
+	return false
+}
+
 // isPerson says a person sent m from Murmur's page (#242), not an agent.
 func isPerson(m proto.MessageView) bool { return bus.IsPerson(m.From) }
 
@@ -310,7 +331,7 @@ func senders(msgs []proto.MessageView) string {
 }
 
 // Turn renders a message as the turn it becomes in the session it is for, when Murmur hands it
-// over at once (docs/VISION.md, "Delivering a message as a turn"): who it is from, as Murmur knows them,
+// over at once (docs/design/delivery.md, "Handing over"): who it is from, as Murmur knows them,
 // then the message as its sender wrote it, then how to answer. What the agent reads here is all it
 // has, so the first line says it is a teammate's agent and not the user, and the last says how to
 // reply and that doing so is optional. The sender's text is not wrapped or quoted: teammates'
@@ -371,8 +392,12 @@ func Turn(m proto.MessageView) string {
 	if !m.Told.IsZero() {
 		fmt.Fprintf(&b, ", which a notice told you of %s", Ago(m.Told))
 	}
-	fmt.Fprintf(&b, ":\n\n%s\n", m.Subject)
-	if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
+	b.WriteString(":\n")
+	body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody))
+	if !repeatsSubject(m.Subject, body) {
+		fmt.Fprintf(&b, "\n%s\n", m.Subject)
+	}
+	if body != "" {
 		fmt.Fprintf(&b, "\n%s\n", body)
 	}
 	if bus.IsGroup(m.To) && m.GroupKnown {

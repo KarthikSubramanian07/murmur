@@ -16,7 +16,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
-// Which commits are a session's, and when it was last active (#21). docs/VISION.md has the
+// Which commits are a session's, and when it was last active (#21). docs/design/presence.md has the
 // reasons.
 //
 // Git doesn't record which session made a commit, so the daemon watches for them: the Claude Code

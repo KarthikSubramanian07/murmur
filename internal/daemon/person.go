@@ -21,8 +21,8 @@ import (
 
 // A person's account (#242). A human chooses a name on the page, and from then on is a participant:
 // their address is device/human, presence lists them, agents find them in who and send to their
-// name, and the messages to and from them are kept on this device past a restart. docs/VISION.md
-// ("A person on the page") has the reasons.
+// name, and the messages to and from them are kept on this device past a restart.
+// docs/design/people.md has the reasons.
 //
 // The account is one per clone, like the CLI's mailbox it sits beside. It is unlike it in three ways:
 // it has a name, what is sent to it reaches the page and only the page, and it gets what was sent
@@ -329,9 +329,9 @@ func (d *Daemon) suggestedNameLocked() string {
 // accountLocked is this device's person as the page sees them. Caller holds mu.
 func (d *Daemon) accountLocked() web.Account {
 	if d.st.Person == "" {
-		return web.Account{Suggested: d.suggestedNameLocked(), Nick: d.st.Nick}
+		return web.Account{Suggested: d.suggestedNameLocked(), Nick: d.st.Nick, Color: d.st.Color, ColorLost: d.st.ColorLostTo}
 	}
-	a := web.Account{Name: d.st.Person, Addr: d.personAddr(), Taken: d.nameTakenByLocked(), Nick: d.st.Nick}
+	a := web.Account{Name: d.st.Person, Addr: d.personAddr(), Taken: d.nameTakenByLocked(), Nick: d.st.Nick, Color: d.st.Color, ColorLost: d.st.ColorLostTo}
 	for _, m := range d.st.Inbox[bus.PersonSession] {
 		a.Unread = append(a.Unread, m.Event.ID)
 	}
@@ -457,6 +457,11 @@ func (s pageSource) MarkRead(ctx context.Context, ids []string) error {
 	kept := slices.DeleteFunc(slices.Clone(box), func(m *inMsg) bool { return slices.Contains(ids, m.Event.ID) })
 	if len(kept) == len(box) {
 		return nil
+	}
+	for _, m := range box {
+		if slices.Contains(ids, m.Event.ID) {
+			d.markLocked(bus.PersonSession, m.Event, bus.MarkRead)
+		}
 	}
 	if len(kept) == 0 {
 		delete(d.st.Inbox, bus.PersonSession)

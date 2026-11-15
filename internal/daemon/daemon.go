@@ -34,7 +34,7 @@ import (
 	"github.com/a-Fig/murmur/internal/web"
 )
 
-// Options configure a daemon. Zero values take the defaults in docs/VISION.md.
+// Options configure a daemon. Zero values take the defaults in docs/design/.
 type Options struct {
 	GitDir string        // the clone's git common dir, absolute
 	Poll   time.Duration // how often to check the remote; 3 s
@@ -89,6 +89,12 @@ type Options struct {
 	// handed the message over, so it is not repeated, and a second failure of this kind too leaves
 	// the message to the hook's notice.
 	PushRetry time.Duration
+	// ReceiptGather is how long the marks this device's sessions make on messages that asked for
+	// receipts gather before they go on the bus as one receipt (#26): 3 s. A message queued and handed
+	// over within it costs one mark, not two.
+	ReceiptGather time.Duration
+	// ReceiptGap is the least time between two receipts from this device: 15 s.
+	ReceiptGap time.Duration
 	// ContinueHold is how long a Stop's continuation of a turn counts as at work outside T3 before
 	// another hook of the session shows the turn went on: 2 min (see continueTurnLocked).
 	ContinueHold time.Duration
@@ -172,6 +178,12 @@ func (o *Options) defaults() {
 	}
 	if o.Heartbeat == 0 {
 		o.Heartbeat = 2 * time.Minute
+	}
+	if o.ReceiptGather == 0 {
+		o.ReceiptGather = 3 * time.Second
+	}
+	if o.ReceiptGap == 0 {
+		o.ReceiptGap = 15 * time.Second
 	}
 	if o.StaleAfter == 0 {
 		o.StaleAfter = 6 * time.Minute
@@ -257,7 +269,7 @@ var ErrNoConsent = errors.New("this clone hasn't joined " + brand.Product)
 // A device pushes one ref at a time. Its presence, its log and the names registry used to be pushed
 // each from its own goroutine, and a session starting or stopping set off two or three pushes in
 // the same second; GitHub then refused one of them now and then with "[remote rejected] (failed)",
-// which is not a lease refusal and cost a retry (see "Git is the transport" in docs/VISION.md).
+// which is not a lease refusal and cost a retry (see "Pushes" in docs/design/transport.md).
 // Pushes from other devices still meet this device's on GitHub; bus.Push sends a push refused that
 // way again, within this device's turn.
 func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, expect string) error {
@@ -484,6 +496,7 @@ type Daemon struct {
 	kick     chan struct{}
 	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
 	pushKick chan struct{} // wakes pushLoop, which hands messages over to sessions as turns
+	markKick chan struct{} // wakes receiptLoop, which writes this device's marks (receipts.go)
 	pushSem  chan struct{} // bounds the handoffs running at once
 	nameKick chan struct{} // wakes nameLoop, the only user of nameSrc
 	nameSrc  io.Reader
@@ -499,6 +512,9 @@ type Daemon struct {
 	// firstSync is closed once Run's first sync is over, done or not (see awaitFirstSync). Nil for
 	// a daemon Run didn't start, which has no first sync to wait for.
 	firstSync chan struct{}
+	// colorSettled says a full sync has checked this device's picked colour against its peers',
+	// so its presence may carry it (color.go).
+	colorSettled bool
 }
 
 type session struct {
@@ -681,7 +697,14 @@ type state struct {
 	// name still reaches them.
 	Person string `json:"person,omitempty"`
 	// Nick is the nickname this device's user gave it (#190), "" if none.
-	Nick        string            `json:"nick,omitempty"`
+	Nick string `json:"nick,omitempty"`
+	// Color is the colour this device's user picked for its faces on the page (#573), 1 to
+	// bus.Colors, 0 if none; ColorAt is when they picked it.
+	Color   int       `json:"color,omitempty"`
+	ColorAt time.Time `json:"colorAt,omitzero"`
+	// ColorLostTo is what the device that took this one's picked colour is called, "" if none
+	// did since its person last picked.
+	ColorLostTo string            `json:"colorLostTo,omitempty"`
 	PersonSince time.Time         `json:"personSince,omitzero"`
 	People      map[string]string `json:"people,omitempty"`
 	// PersonClaims is every person's name in the names registry, to the address that claimed it
@@ -761,6 +784,12 @@ type state struct {
 	// later messages end with the line an agent's do (see explained.go).
 	// So are the groups whose messages have told it, in full, that it is in them (#184).
 	Explained map[string][]string `json:"explained,omitempty"`
+
+	// Marks is what this device's sessions have done with messages from other devices that asked
+	// for receipts, not yet on the bus (#26, receipts.go). Sent is this device's person's messages
+	// that asked for them, by ID, with how far each got with each recipient.
+	Marks []bus.Mark             `json:"marks,omitempty"`
+	Sent  map[string]*sentRecord `json:"sent,omitempty"`
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if
@@ -941,6 +970,11 @@ func Run(ctx context.Context, opt Options) error {
 		d.bg.Add(1)
 		go func() {
 			defer d.bg.Done()
+			d.receiptLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
 			d.titleLoop(ctx)
 		}()
 		d.bg.Add(1)
@@ -1037,7 +1071,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
-		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
+		pushKick: make(chan struct{}, 1), markKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
 		actIDs: map[string]bool{}, actSeen: map[string]sessSeen{}, historyKick: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},

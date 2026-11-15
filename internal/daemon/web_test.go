@@ -766,7 +766,7 @@ func TestPageMessagesAfterAFailedFirstSync(t *testing.T) {
 	b.start()
 	bob, _ := b.session("bbbbbb", "")
 	// a sees b's device, not bob: b, never having read the team ref, encrypts its presence for
-	// itself alone (docs/VISION.md, "The bus is encrypted").
+	// itself alone (docs/design/encryption.md).
 	eventually(t, "a sees b", func() bool { return a.seesDevices(2) })
 
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast"})

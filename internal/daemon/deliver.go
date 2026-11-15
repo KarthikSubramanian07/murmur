@@ -39,9 +39,10 @@ import (
 // Stop can't keep it going (Pi's after Escape or an error).
 //
 // Handing a message over is not the agent having it: it is read (it arrives whole, so it skips
-// delivered) when the turn carrying it starts, which the daemon doesn't see (docs/VISION.md,
-// `What "delivered" and "read" mean`, #325). A message handed over is removed from the inbox, as the
-// client holds it now: neither the hook nor `inbox` shows it again. docs/VISION.md ("Delivering a message as a turn") has the reasons.
+// delivered) when the turn carrying it starts, which the daemon doesn't see
+// (docs/design/delivery.md, "Delivered and read", #325). A message handed over is removed from the
+// inbox, as the client holds it now: neither the hook nor `inbox` shows it again.
+// docs/design/delivery.md has the reasons.
 
 const (
 	// maxPushes is how many handoffs run at once. Each `t3 thread send` starts a process, and a
@@ -118,7 +119,7 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 
 // pusher hands session id's messages over until it has none left to hand over.
 //
-// Nothing is handed over for a user who has left (docs/VISION.md, "Joining a repo"): the daemon exits
+// Nothing is handed over for a user who has left (docs/design/joining.md): the daemon exits
 // within ConsentPoll of the consent going, and until then a message that comes in by sync waits in
 // the inbox instead of being put into a thread or a socket. The handoff is the one thing the daemon does
 // to the user's other programs, so it asks here, before taking a message, and again in sendTurn,
@@ -801,6 +802,12 @@ func (d *Daemon) outOfInboxLocked(id string, m *inMsg, verb, how string) {
 	}
 	d.pushedAt[id] = time.Now()
 	d.health.outOfInbox(verb)
+	switch verb {
+	case "handed":
+		d.markLocked(id, m.Event, bus.MarkHanded) // Murmur can't see the turn start (#325)
+	case "gave":
+		d.markLocked(id, m.Event, bus.MarkRead)
+	}
 	d.noteConversationLocked() // the client has the message for the agent; its answer may soon follow
 	e, addr := m.Event, bus.Addr(d.device, id)
 	d.noteLocked(time.Now(), fmt.Sprintf("%s %q from %s to %s %s", verb, e.Subject, e.From, addr, how))

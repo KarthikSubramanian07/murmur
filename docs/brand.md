@@ -3,6 +3,15 @@
 The brand dates from 2026-11-10. Its source is Tyler's Figma file, "murmur"; the files here were
 cut from that file's SVG export, so the shapes are the designer's and nothing was redrawn.
 
+## Taglines
+
+Kept for later use; not on the site yet (2026-11-14).
+
+- **Your team's agents, moving as one.** Tyler's pick. A murmuration is a flock of starlings moving as one with no leader, which is what Murmur does for a team's agents: they steer each other, and no single agent orchestrates.
+- **Murmur: agent swarms for teams.** The plainer sibling, for positioning Murmur as the practical way for a team to run an agent swarm.
+
+Evidence to pair with them: at the AIE x MLH hackathon at Code Summit (2026-11-13), 4 people ran 21 Claude Code sessions on 4 laptops for about 4 hours on github.com/a-Fig/cue, with 44 merged PRs and 225 agent messages, and the result held together.
+
 ## The mark
 
 Two agents side by side that read as an M: two agents in one repo, talking. The left one has round
@@ -117,6 +126,19 @@ pressed, and butter for a person's own messages. The sidebar is ink, not blue. C
 5.1:1, which leaves no room for quieter text, and the sidebar is mostly quieter text; on ink the
 quiet step (`#A9B6E6`) is still 8:1. The greens, ambers and reds of session states stay Light's,
 a step darker for cream. Dark stays the default.
+
+A session's face is a ghost (#579) and a person's is their initial, both on their device's colour;
+a person has no ring (Tyler, 2026-11-15; the first version had it the other way round). A ghost is
+drawn in three layers: a round tile in its device's colour, one of 16 ghosts (`ghost-*.svg` in
+`internal/web/static/assets/ghosts/`) and one of 15 accessories (`acc-*.svg`) or none, so 256 faces
+in all. The ghosts are named for ways of talking quietly (murmur, hush, whisper, psst); the murmur
+ghost has the mark's quotation-mark eyes and mumble its leaning ovals, and the bubble accessory is a
+butter speech bubble with someone typing. The ghosts carry no tile of their own; their bodies are the
+brand's light tints, which read on all twelve device hues. A session's name picks its ghost and
+accessory (`ghostOf` in `app.js`), so it wears the same one everywhere. Every body shares one head
+and eye line, so each accessory fits every ghost; some, like the bubble, reach past the tile's edge,
+and the page doesn't clip them. `scripts/ghosts.py` writes them and `docs/ghosts.html`, a sheet of
+every combination; a change to the set means running it again.
 
 ## Renders
 

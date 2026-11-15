@@ -4,9 +4,10 @@ Murmur lets coding agents on different teammates' machines, in the same repo, di
 message each other, with git refs on GitHub as the transport. V1 exists (2026-10-26): one Go
 binary, `cmd/mur`, with its packages in `internal/`; `go test ./...` runs it all, and every pull
 request runs it on macOS, Windows and Linux in CI (`docs/testing.md`).
-`docs/VISION.md` is the design and its reasons; read it before proposing architecture, and change
-it when a decision changes. The name lives in `internal/brand`, so a rename is that file plus the
-module path.
+`docs/VISION.md` is the direction and its reasons; read it before proposing architecture. How each
+part works is in `docs/design/`, one file per topic. Tyler's rule (2026-11-14, #578): a PR adds to
+VISION only when it changes a direction; how a feature works goes in its design file or in code
+comments. The name lives in `internal/brand`, so a rename is that file plus the module path.
 The logo files, palette and type, and the renders a palette change means redoing, are in
 `docs/brand.md`.
 

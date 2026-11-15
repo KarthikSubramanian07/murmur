@@ -94,7 +94,7 @@ func TestEncryptedEventHidesEverything(t *testing.T) {
 func TestEncryptedPresence(t *testing.T) {
 	k, sk := NewBoxKey(), NewSignKey()
 	p := Presence{V: Version, Device: "dev-0001", Host: "secret-host", Owner: "Secret Owner", Nick: "secretnick", At: time.Now().UTC(),
-		BoxKey: BoxPublic(k), Offline: []string{"cccccc"},
+		Color: 4, ColorAt: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC), BoxKey: BoxPublic(k), Offline: []string{"cccccc"},
 		Sessions: []SessionInfo{{ID: "aaaaaa", Name: "quiet-otter", Agent: "claude", Branch: "secret-branch", Doing: "secret status"},
 			{ID: PersonSession, Name: "secretperson", Agent: AgentPerson}}}
 	enc, err := EncryptPresence(p, map[string]string{"dev-0001": BoxPublic(k)})
@@ -106,7 +106,7 @@ func TestEncryptedPresence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range []string{"secret", "Secret", "cccccc", "claude"} {
+	for _, s := range []string{"secret", "Secret", "cccccc", "claude", "color", "2026-11-14"} {
 		if strings.Contains(msg, s) {
 			t.Fatalf("%q is readable in %s", s, msg)
 		}
@@ -128,6 +128,7 @@ func TestEncryptedPresence(t *testing.T) {
 	}
 	open, err := DecryptPresence(read, Keyring{"dev-0001": k})
 	if err != nil || open.Host != p.Host || open.Owner != p.Owner || open.Nick != p.Nick || len(open.Sessions) != 2 ||
+		open.Color != 4 || !open.ColorAt.Equal(p.ColorAt) ||
 		open.Sessions[0].Doing != "secret status" || len(open.Offline) != 1 || open.Box != nil {
 		t.Fatalf("opened %+v, %v", open, err)
 	}

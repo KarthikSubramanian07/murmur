@@ -23,8 +23,8 @@ import (
 // (team.go), with nothing for anyone to run, approve or copy. Each device makes its own keys at
 // start, publishes the public halves in its sealed presence, and pins its teammates' keys the first
 // time it reads them. Push access is the key directory: only collaborators can write refs/murmur/*,
-// so only they can publish a key, and only they are granted the team key. docs/VISION.md, "The bus
-// is encrypted", has the reasons and what it costs.
+// so only they can publish a key, and only they are granted the team key. docs/design/encryption.md
+// has the reasons and what it costs.
 
 // keyPin is what this device knows of a device's keys: the signing key it pinned on first sight,
 // the box key that device's latest sealed presence carried, the latest time a sealed presence of it

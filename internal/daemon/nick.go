@@ -20,8 +20,8 @@ import (
 // it, so every teammate sees the same one. A device with none is called by its person's name, if
 // someone chose one on the page, so most devices never need one set. It is a label and nothing
 // more: who, lookup and the page show it beside the ID, and no address takes it, so whatever a
-// device calls itself, no message goes anywhere else for it. docs/VISION.md ("Device nicknames")
-// has the reasons.
+// device calls itself, no message goes anywhere else for it. docs/design/presence.md ("Device
+// nicknames") has the reasons.
 
 // nickOfLocked is what device dev is called: the nickname its user gave it, else its person's
 // name. "" if it has neither. Another device's person's name counts only if it reaches them

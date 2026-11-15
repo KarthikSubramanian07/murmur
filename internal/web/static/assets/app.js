@@ -504,6 +504,7 @@ function render() {
   placeLive();
   announceShown();
   document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME;
+  refreshTip();
   queueMicrotask(markOpenRead);
 }
 
@@ -545,6 +546,21 @@ function setMini(v) {
   mini = v;
   try {
     localStorage.setItem(MINI_KEY, v ? "1" : "0");
+  } catch {}
+  render();
+}
+
+// Whether the conversation list shows only the conversations you are in, remembered like the
+// sidebar.
+const ONLY_MINE_KEY = NAME + ":only-mine";
+let onlyMine = false;
+try {
+  onlyMine = localStorage.getItem(ONLY_MINE_KEY) === "1";
+} catch {}
+function setOnlyMine(v) {
+  onlyMine = v;
+  try {
+    localStorage.setItem(ONLY_MINE_KEY, v ? "1" : "0");
   } catch {}
   render();
 }
@@ -705,7 +721,13 @@ function deviceGroup(d) {
         },
       },
       icon("chevronRight", "dev-chev"),
-      h("span", { class: "label" }, h("span", { class: "dev-name truncate" }, deviceLabel(d)), h("span", { class: "dev-host truncate" }, host(d.id))),
+      h(
+        "span",
+        { class: "label" },
+        h("span", { class: "dev-swatch " + deviceColor(d), "aria-hidden": "true" }),
+        h("span", { class: "dev-name truncate" }, deviceLabel(d)),
+        h("span", { class: "dev-host truncate" }, host(d.id)),
+      ),
       d.self ? h("span", { class: "dev-you" }, "you") : !d.reachable && h("span", { class: "dev-you" }, "offline"),
       h("span", { class: "menu-count" }, live.length),
     ),
@@ -1553,6 +1575,10 @@ function sessionCard(d, s) {
           { class: "s-line name-line" },
           h("span", { class: "s-name truncate" }, s.name),
           h("span", { class: "s-agent truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · ")),
+          // The hook never reported after a tool call, so the session isn't told of messages while it
+          // works (#225). It sits in the name line: the meta columns are a fixed grid, and an extra
+          // cell there shifted chats, state and Message one column over (#546).
+          s.hookOff && h("span", { class: "badge badge-warning", title: "Isn't told of messages while it works" }, "hook not running"),
           tagChips(s, 3, true),
         ),
         h("span", { class: "s-doing truncate" + (s.doing ? "" : " none") }, s.doing || "No status set"),
@@ -1563,8 +1589,6 @@ function sessionCard(d, s) {
       { class: "s-meta" },
       h("span", { class: "s-col-branch" }, s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch))),
       h("span", { class: "s-col-pr" }, pr && prBadge(pr, true, "pr-row-" + s.name)),
-      // The hook never reported after a tool call, so the session isn't told of messages while it works (#225).
-      s.hookOff && h("span", { class: "badge badge-warning", title: "Isn't told of messages while it works" }, "hook not running"),
       h("span", { class: "s-chats" }, plural(convs, "chat")),
       h("span", { class: "s-col-state" }, h("span", { class: "g-state g-state-" + sessionState(d, s) }, stateWord(d, s))),
       h(
@@ -2189,39 +2213,66 @@ function tagChips(s, max = Infinity, line = false) {
   );
 }
 
-// The sidebar's Tags: one chip per tag in use, which filters the lists to it.
+// Whether the sidebar's Tags are folded (#569), remembered like the sidebar.
+const TAGS_FOLDED_KEY = NAME + ":tags-folded";
+let tagsFolded = false;
+try {
+  tagsFolded = localStorage.getItem(TAGS_FOLDED_KEY) === "1";
+} catch {}
+function setTagsFolded(v) {
+  tagsFolded = v;
+  try {
+    localStorage.setItem(TAGS_FOLDED_KEY, v ? "1" : "0");
+  } catch {}
+  render();
+}
+
+// The sidebar's Tags: one chip per tag in use, which filters the lists to it. Folded, it keeps only
+// the chip of the filter that is on, so that filter can still be seen and turned off.
 function tagsGroup() {
   const counts = tagCounts();
   if (ui.tagFilter && !counts.has(ui.tagFilter)) ui.tagFilter = null;
   if (!counts.size) return null;
+  const chips = [...counts].filter(([n]) => !tagsFolded || n === ui.tagFilter);
   return h(
     "div",
     { class: "sidebar-group dev-group" },
-    h("div", { class: "group-label" }, h("span", { class: "label" }, "Tags"), h("span", { class: "menu-count" }, counts.size)),
     h(
-      "div",
-      { class: "tag-filter" },
-      [...counts]
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([n, c]) => {
-          const on = ui.tagFilter === n;
-          return h(
-            "button",
-            {
-              class: "tf" + (on ? " on" : ""),
-              "aria-pressed": on ? "true" : "false",
-              title: on ? "Show every session" : "Show only sessions tagged " + n,
-              "data-key": "tf-" + n,
-              onclick: () => {
-                ui.tagFilter = on ? null : n;
-                render();
-              },
-            },
-            h("span", { class: "tf-name" }, n),
-            h("span", { class: "tf-n" }, c),
-          );
-        }),
+      "button",
+      {
+        class: "group-label group-fold",
+        "aria-expanded": tagsFolded ? "false" : "true",
+        "data-key": "tags-fold",
+        onclick: () => setTagsFolded(!tagsFolded),
+      },
+      h("span", { class: "label" }, "Tags", icon("chevronRight", "dev-chev")),
+      h("span", { class: "menu-count" }, counts.size),
     ),
+    chips.length > 0 &&
+      h(
+        "div",
+        { class: "tag-filter" },
+        chips
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([n, c]) => {
+            const on = ui.tagFilter === n;
+            return h(
+              "button",
+              {
+                class: "tf" + (on ? " on" : ""),
+                "aria-pressed": on ? "true" : "false",
+                title: on ? n + ": show every session" : "Show only sessions tagged " + n,
+                "data-key": "tf-" + n,
+                onclick: () => {
+                  ui.tagFilter = on ? null : n;
+                  render();
+                },
+              },
+              h("span", { class: "tf-name" }, n),
+              h("span", { class: "tf-n" }, c),
+            );
+          }),
+      ),
   );
 }
 
@@ -2696,12 +2747,62 @@ function draftConversation() {
   return ui.conversation === key ? { key, kind: "dm", title: pair.join(" & "), pair, messages: [] } : null;
 }
 
-// The same name always gets the same color. The classes are in style.css: the page's content
-// policy doesn't allow an inline style.
+// A face is filled with the color of the device it is on (#560), so a stack of faces says whose
+// machines they are. A session's shows a ghost; a person's, their initial (#579, Tyler). The
+// classes are in style.css: the page's content policy doesn't allow an inline style.
 function avatar(name) {
-  let n = 0;
-  for (const ch of name) n = (n * 31 + ch.codePointAt(0)) % 997;
-  return h("span", { class: isPerson(name) ? "avatar avatar-person" : "avatar avatar-" + (n % 5), "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
+  const color = "avatar dev-fill " + deviceColor(deviceOfName(name));
+  return isPerson(name) ? personFace(name, color) : ghostFace(name, color);
+}
+
+function personFace(name, cls) {
+  return h("span", { class: cls + " avatar-person", "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
+}
+
+// A session's ghost (#579): its name picks one of 16 ghosts and one of 15 accessories or none, so
+// it wears the same one everywhere. The files are drawn by scripts/ghosts.py, which these lists
+// follow; a ghost has no tile of its own, so it sits on its device's color.
+const GHOSTS = ["murmur", "hush", "whisper", "mumble", "chatter", "babble", "rumor", "echo", "chirp", "coo", "hum", "psst", "sigh", "jabber", "natter", "buzz"];
+const GHOST_ACCESSORIES = ["", "bow", "glasses", "specs", "shades", "bubble", "headset", "beanie", "party", "crown", "halo", "flower", "sprout", "tophat", "cat", "propeller"];
+
+function ghostOf(name) {
+  let n = 2166136261; // FNV-1a
+  for (const ch of name) n = Math.imul(n ^ ch.codePointAt(0), 16777619) >>> 0;
+  return { ghost: GHOSTS[n % 16], accessory: GHOST_ACCESSORIES[(n >>> 4) % 16] };
+}
+
+function ghostFace(name, cls) {
+  const { ghost, accessory } = ghostOf(name);
+  return h(
+    "span",
+    { class: cls + " avatar-ghost", "aria-hidden": "true" },
+    h("img", { src: "/assets/ghosts/ghost-" + ghost + ".svg", alt: "", draggable: "false" }),
+    accessory && h("img", { src: "/assets/ghosts/acc-" + accessory + ".svg", alt: "", draggable: "false" }),
+  );
+}
+
+// A device's color: one of twelve hues, the same on its faces and by its name in the sidebar. Its
+// person may pick it (#573); the daemon settles who has which, so every page shows the same. Offline,
+// or not in presence, it is grey.
+function deviceColor(d) {
+  if (!d || !d.reachable) return "dev-off";
+  return "dev-c" + (d.color || 0);
+}
+
+// The device a session or a person is on, by name, or null if none in presence has it. Built once
+// per state, since every face asks.
+let devOfNames = null;
+let devOfState = null;
+function deviceOfName(name) {
+  if (devOfState !== ui.state) {
+    devOfState = ui.state;
+    devOfNames = new Map();
+    for (const d of ui.state?.devices || []) {
+      for (const s of d.sessions || []) devOfNames.set(s.name, d);
+      if (d.person) devOfNames.set(d.person.name, d);
+    }
+  }
+  return devOfNames?.get(name) || null;
 }
 
 // A group chat is named for whose it is, and its face is its members'.
@@ -2795,8 +2896,16 @@ function conversationList(list) {
   const hit = (c) => !q || (otherIn(c) || c.title).toLowerCase().includes(q) || c.messages.some((m) => (m.subject + " " + (m.body || "")).toLowerCase().includes(q));
   // One list, newest first, so a busy group chat is never below every quiet DM. The switch
   // narrows it to direct messages or group chats.
+  // The toggle under it leaves only the conversations you are in: your DMs, the group chats you
+  // have written in, and one you have just begun. It needs an account, and Your messages is that
+  // list already, so it isn't there.
   const kind = ui.convKind || "all";
   const wanted = (c) => kind === "all" || (kind === "dm") === (c.kind === "dm");
+  const canMine = !!me() && !isMyFilter();
+  if (canMine && onlyMine) {
+    const keys = new Set(myMessages().map((m) => conversationOf(m).key));
+    list = list.filter((c) => keys.has(c.key) || (!c.messages.length && !c.quiet));
+  }
   const old = (c) => c.kind === "dm" && c.pair.some((n) => isSettled(n));
   const rows = list.filter((c) => wanted(c) && hit(c) && (q || name || !old(c)));
   const older = q || name || kind === "group" ? [] : list.filter((c) => old(c));
@@ -2882,6 +2991,19 @@ function conversationList(list) {
         ),
       ),
     ),
+    canMine &&
+      h(
+        "button",
+        {
+          class: "g-mine-toggle",
+          role: "switch",
+          "aria-checked": onlyMine ? "true" : "false",
+          "data-key": "only-mine",
+          onclick: () => setOnlyMine(!onlyMine),
+        },
+        h("span", { class: "tm-box" + (onlyMine ? " on" : "") }, onlyMine && icon("check")),
+        h("span", { class: "truncate" }, "Only conversations you're in"),
+      ),
     rows.map(conversationRow),
     older.length > 0 &&
       h(
@@ -3052,11 +3174,14 @@ function chatMessages(c) {
   return out;
 }
 
-// What a person wrote, whole, from the subject and body the bus carries it as (web.SplitText).
+// What a person wrote, whole, from the subject and body the bus carries it as (web.SplitText). A
+// subject that is only the body's start, cut short, is left out, as repeatsSubject in
+// internal/view/view.go leaves it out of the agent's turn and inbox.
 function personText(m) {
   const subject = m.subject || "";
   const body = m.body || "";
-  if (subject.endsWith("…") && body.startsWith(subject.slice(0, -1))) return body;
+  const end = ["…", "..."].find((e) => subject.endsWith(e));
+  if (end && body && body.startsWith(subject.slice(0, -end.length))) return body;
   return body ? subject + "\n" + body : subject;
 }
 
@@ -3135,7 +3260,7 @@ function chatMessage(m, from, at, head) {
       "article",
       { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : ""), "data-id": m.id },
       h("div", { class: "chat-bubble rich" }, rich(personText(m))),
-      h("div", { class: "chat-msg-meta" }, time, copyButton(copy)),
+      h("div", { class: "chat-msg-meta" }, time, copyButton(copy), receiptMark(m)),
     );
   }
   // Everyone else's message has its sender's face beside it, and a run of messages from one sender
@@ -3152,6 +3277,76 @@ function chatMessage(m, from, at, head) {
       messageText(m),
     ),
     h("div", { class: "msg-tools" }, copyButton(copy)),
+  );
+}
+
+// How far one of the person's messages got (#26), as a chat app shows it: one tick for sent, two
+// for delivered, and two in the accent colour for read (docs/design/receipts.md). The states in
+// between, queued and handed over, read as sent, and so does a recipient whose Murmur sends no
+// receipts. A message to several shows the lowest of them, so it reads as read only once everyone
+// has read it. The tick's tooltip says what its state means, then who has it and since when, and
+// nothing else shows them (Tyler, 2026-11-13): on hover, on keyboard focus, and on touch, where
+// nothing hovers, on a tap. A message from before receipts, or past the newest 200, shows no mark
+// rather than a guess.
+const RECEIPT_RANK = { sent: 0, delivered: 1, read: 2 };
+
+function receiptFold(state) {
+  return state === "read" || state === "delivered" ? state : "sent";
+}
+
+function receiptLabel(state) {
+  return state === "read" ? "Read" : state === "delivered" ? "Delivered" : "Sent";
+}
+
+// The tooltip's first line: the state, and in a few words what it leaves out, for one recipient or
+// for several (Tyler, 2026-11-13: a few words, no sentences). Delivered is knowing a message waits,
+// read is having it (#325); sent covers every step before.
+const RECEIPT_MEANS = {
+  sent: ["Sent", "Sent"],
+  delivered: ["Delivered: not read yet", "Delivered: not all read yet"],
+  read: ["Read", "Read"],
+};
+
+function receiptMeaning(state, several) {
+  return RECEIPT_MEANS[state][several ? 1 : 0];
+}
+
+// One recipient as the tooltip lists them: their name, and for several their own state, with the
+// time they got there if they got past sent.
+function receiptEntry(r) {
+  const state = receiptFold(r.state);
+  const at = state !== "sent" && when(r.at);
+  const today = at && new Date(at).toDateString() === new Date().toDateString();
+  return { name: r.name, state, time: !at ? "" : today ? clockTime(at) : new Date(at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) };
+}
+
+function receiptLine(e, several) {
+  return [e.name, several ? receiptLabel(e.state) : "", e.time].filter(Boolean).join(" · ");
+}
+
+function receiptMark(m) {
+  const rs = ui.state?.receipts?.[m.id];
+  if (!rs) return null;
+  const entries = rs.map(receiptEntry).sort((a, b) => RECEIPT_RANK[b.state] - RECEIPT_RANK[a.state] || a.name.localeCompare(b.name));
+  const state = entries.reduce((low, e) => (RECEIPT_RANK[e.state] < RECEIPT_RANK[low] ? e.state : low), "read");
+  const several = entries.length > 1;
+  // A message that found nobody in presence to count (a group with no member online) is sent.
+  const lines = entries.length ? [receiptMeaning(state, several), ...entries.map((e) => receiptLine(e, several))] : ["Sent: nobody online"];
+  // A button, so the keyboard reaches it and focus shows its tooltip. A tap shows it too: the page's
+  // tips follow the mouse, and a touch has none. A tap elsewhere hides it, as any tip is. Its label is
+  // the tip's text, so the tip doesn't describe it again (data-tip-labelled).
+  return h(
+    "button",
+    {
+      class: "receipt-mark",
+      "data-state": entries.length ? state : "sent",
+      "data-key": "receipt-" + m.id,
+      "data-tip": lines.join("\n"),
+      "data-tip-labelled": "1",
+      "aria-label": lines.join(". "),
+      onclick: (e) => showTipNow(e.currentTarget, e.pointerType === "mouse" ? "hover" : "tap"),
+    },
+    icon(entries.length && state !== "sent" ? "checks" : "check"),
   );
 }
 
@@ -3510,9 +3705,9 @@ function setupDialog() {
   );
 }
 
-// The face a name would have: a person's, whatever is typed so far.
+// The face a name would have: a person's on this device, whatever is typed so far.
 function faceOf(name) {
-  return h("span", { class: "avatar avatar-person", "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
+  return personFace(name, "avatar dev-fill " + deviceColor((ui.state?.devices || []).find((d) => d.self)));
 }
 
 // Everyone a person can start a conversation with: people, then sessions, those at work first.
@@ -4181,8 +4376,66 @@ function accountSection() {
         h("button", { class: "btn btn-outline btn-xs", "data-key": "account-save", onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) }, a ? "Save" : "Choose"),
       ]),
       nickRow(),
+      colorRow(),
     ),
   );
+}
+
+// The palette's names, in the order of the dev-c classes in style.css.
+const COLORS = ["Rose", "Clay", "Ochre", "Olive", "Sage", "Sea green", "Teal", "Steel blue", "Violet", "Plum", "Berry", "Cocoa"];
+
+// This device's color (#573): Auto, or one of the palette's that no other device has picked. A pick
+// that lost to another device's is given up, and the row says whose it is now until Auto is pressed
+// or another color picked. Buttons, not radios: each press is written to the remote, so the arrow
+// keys mustn't pick.
+function colorRow() {
+  const acct = ui.state?.account;
+  const pick = acct?.color || 0;
+  const taken = new Map(); // a place in the palette, to who picked it
+  for (const d of ui.state?.devices || []) if (!d.self && d.picked) taken.set(d.color, d.nick || d.owner || d.id);
+  const swatch = (c, props, ...kids) => {
+    const who = c ? taken.get(c - 1) : null;
+    return h(
+      "button",
+      {
+        ...props,
+        "aria-pressed": c === pick ? "true" : "false",
+        "aria-disabled": who ? "true" : null,
+        "data-key": "color-" + c,
+        onclick: () => !who && saveColor(c),
+      },
+      ...kids,
+    );
+  };
+  return settingsRow(
+    "color",
+    "Colour",
+    acct?.colorLost && !pick ? acct.colorLost + " has yours now, so you're on Auto." : "Your agents' faces.",
+    h(
+      "div",
+      { class: "swatches" },
+      swatch(0, { class: "swatch-auto" }, "Auto"),
+      COLORS.map((name, i) => {
+        const who = taken.get(i);
+        return swatch(i + 1, { class: "swatch dev-c" + i, "aria-label": who ? name + ", " + who + "'s" : name, title: who ? who + "'s" : name });
+      }),
+    ),
+    "row-stack",
+  );
+}
+
+async function saveColor(color) {
+  delete ui.rowErrors.color;
+  if (color === (ui.state?.account?.color || 0) && !ui.state?.account?.colorLost) return render();
+  try {
+    const account = await api("/api/color", { method: "PUT", body: JSON.stringify({ color }) });
+    if (ui.state) ui.state.account = { ...ui.state.account, ...account, color: account.color || 0, colorLost: account.colorLost || "" };
+    poll();
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    ui.rowErrors.color = e.message;
+  }
+  render();
 }
 
 // This device's nickname (#533), as `mur nickname` sets it: a label teammates see beside the
@@ -4821,7 +5074,9 @@ let tipFor = null; // the element whose tip shows, or is about to
 let tipTimer = 0;
 let tipHiddenAt = 0;
 let tipShown = false;
+let tipBy = ""; // what opened the tip: "hover", "focus" or "tap"
 let pointerX = 0;
+let pointerY = 0;
 
 function tipText(el) {
   return el.dataset.tip || el.dataset.tipTitle || el.getAttribute("title") || "";
@@ -4835,7 +5090,7 @@ function borrowTitle(el) {
     el.removeAttribute("title");
   }
   tip.textContent = tipText(el);
-  if (!el.hasAttribute("aria-describedby")) {
+  if (!el.hasAttribute("aria-describedby") && !el.dataset.tipLabelled) {
     el.setAttribute("aria-describedby", tip.id);
     el.dataset.tipDescribed = "1";
   }
@@ -4876,14 +5131,70 @@ function hideTip() {
   tipShown = false;
   returnTitle(tipFor);
   tipFor = null;
+  tipBy = "";
   tip.classList.remove("on");
   tip.removeAttribute("role");
 }
 
-function queueTip(el, atPointer) {
+// refreshTip runs after each render. A tip that shows was for an element the render may have
+// replaced, and whose text may have changed (a tick that moved on to read): it moves to the element
+// with the same data-key and reads its text again, or goes if there is none. A hover tip is for what
+// is under the mouse now, which a render may have scrolled something else under.
+let renderedAt = 0;
+function refreshTip() {
+  renderedAt = Date.now();
+  if (!tipShown || !tipFor) return;
+  const key = tipFor.dataset.key;
+  if (tipBy === "hover") {
+    const el = tipTarget(document.elementFromPoint(pointerX, pointerY));
+    if (!el) return hideTip();
+    if (el !== tipFor && !(key && el.dataset.key === key)) return queueTip(el, true, "hover");
+    tipFor = el;
+    borrowTitle(el);
+    return showTip(el, true);
+  }
+  const el = tipFor.isConnected ? tipFor : key ? root.querySelector(`[data-key="${CSS.escape(key)}"]`) : null;
+  if (!el) return hideTip();
+  tipFor = el;
+  borrowTitle(el); // a render takes off what borrowing put on an element it kept
+  placeTip();
+}
+
+// placeTip shows the tip again where its element is now, or hides it if that has scrolled out of view.
+function placeTip() {
+  if (!tipShown || !tipFor) return;
+  if (!inView(tipFor)) return hideTip();
+  showTip(tipFor, false);
+}
+
+// inView says el is on screen: in the window, and in each scrolling element it sits in.
+function inView(el) {
+  if (!el.isConnected) return false;
+  const r = el.getBoundingClientRect();
+  if (r.bottom <= 0 || r.top >= window.innerHeight) return false;
+  for (let a = el.parentElement; a; a = a.parentElement) {
+    if (!/auto|scroll/.test(getComputedStyle(a).overflowY)) continue;
+    const box = a.getBoundingClientRect();
+    if (r.bottom <= box.top || r.top >= box.bottom) return false;
+  }
+  return true;
+}
+
+// showTipNow shows el's tip at once, for a click, which hides the tip hover brought. A mouse's click
+// then keeps it as a hover tip, for what is under the mouse; a tap or a key keeps it until the next.
+function showTipNow(el, by) {
+  hideTip();
+  tipFor = el;
+  tipBy = by;
+  borrowTitle(el);
+  showTip(el, false);
+}
+
+function queueTip(el, atPointer, by) {
   if (el === tipFor) return;
   hideTip();
   tipFor = el;
+  tipBy = by;
   borrowTitle(el);
   if (Date.now() - tipHiddenAt < 400 || tipShown) return showTip(el, atPointer);
   tipTimer = setTimeout(() => showTip(el, atPointer), 150);
@@ -4908,21 +5219,28 @@ function tipTarget(node) {
 
 document.addEventListener("pointerover", (e) => {
   if (e.pointerType === "touch") return;
+  // A render that changes what is under a still mouse brings a pointerover the mouse didn't make. It
+  // mustn't hide a tip that focus or a tap opened; refreshTip has already moved that one.
+  const still = e.clientX === pointerX && e.clientY === pointerY;
+  if (still && tipShown && tipBy !== "hover" && Date.now() - renderedAt < 250) return;
   pointerX = e.clientX;
+  pointerY = e.clientY;
   const el = tipTarget(e.target);
-  el ? queueTip(el, true) : hideTip();
+  el ? queueTip(el, true, "hover") : hideTip();
 });
-document.addEventListener("pointermove", (e) => (pointerX = e.clientX), { passive: true });
+document.addEventListener("pointermove", (e) => ((pointerX = e.clientX), (pointerY = e.clientY)), { passive: true });
 document.documentElement.addEventListener("pointerleave", hideTip);
 document.addEventListener("focusin", (e) => {
   const el = tipTarget(e.target);
-  if (el && e.target.matches(":focus-visible")) queueTip(el, false);
+  if (el && e.target.matches(":focus-visible")) queueTip(el, false, "focus");
 });
 document.addEventListener("focusout", hideTip);
 document.addEventListener("pointerdown", hideTip, true);
 // Escape also cancels a tip that is still waiting to show.
 document.addEventListener("keydown", (e) => e.key === "Escape" && tipFor && hideTip());
-document.addEventListener("scroll", hideTip, { capture: true, passive: true });
+// A render puts the thread's scroll back, which fires a scroll; a tip outlives that unless its element
+// went out of view. Any other scroll hides it.
+document.addEventListener("scroll", () => (Date.now() - renderedAt > 250 ? hideTip() : placeTip()), { capture: true, passive: true });
 
 setInterval(tick, 10000);
 start();
