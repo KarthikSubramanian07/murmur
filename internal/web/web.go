@@ -150,6 +150,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(hiddenHeader) != "" {
 			r = r.WithContext(context.WithValue(r.Context(), hiddenKey{}, true))
 		}
+		if r.Header.Get(appHeader) != "" {
+			r = r.WithContext(context.WithValue(r.Context(), appKey{}, true))
+		}
 	}
 	s.mux.ServeHTTP(w, r)
 }
@@ -163,6 +166,19 @@ const keyPath = "/api/key"
 const hiddenHeader = "X-Page-Hidden"
 
 type hiddenKey struct{}
+
+// appHeader marks a call from the page in the desktop app's window (`mur app`, #23), seen or not.
+// Someone who keeps the app open is waiting for messages, as someone who closes a tab isn't.
+const appHeader = "X-Page-App"
+
+type appKey struct{}
+
+// InApp says whether the call ctx belongs to came from the desktop app's page. A daemon lets it
+// keep it running, though not count as someone watching: a minimized app is no one looking.
+func InApp(ctx context.Context) bool {
+	in, _ := ctx.Value(appKey{}).(bool)
+	return in
+}
 
 // Watched says whether the call ctx belongs to came from a page someone can see. The Source's
 // methods get that ctx, so a daemon can let only a watched page keep it running.

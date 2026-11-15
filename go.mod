@@ -1,11 +1,13 @@
 module github.com/a-Fig/murmur
 
-go 1.26.0
+go 1.27.1
 
-toolchain go1.26.11
+toolchain go1.27.3
 
 require (
 	github.com/Microsoft/go-winio v0.6.4
+	github.com/crgimenes/glaze v0.0.83
+	github.com/ebitengine/purego v0.11.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.61.0
