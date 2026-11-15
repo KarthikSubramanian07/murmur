@@ -695,9 +695,10 @@ func recipients(to string) []string {
 // Names go first, and addresses after, so that an address of a session already sent to by its name
 // is known for one and skipped: the daemon says which address a name reached. Two names for the
 // same session (one it had before a move, #36) would each send, as would a device and one of its
-// sessions. A refusal that doesn't name the recipient is about the message or this session (no
-// subject, a key in the body, not registered, no daemon) and would be the same for the rest, so the
-// rest aren't tried: a session waiting to register would otherwise wait once per recipient.
+// sessions. A refusal that isn't the recipient's alone (refusedRecipient) is about the message or
+// this session (no subject, a key in the body, not registered, no daemon) and would be the same for
+// the rest, so the rest aren't tried: a session waiting to register would otherwise wait once per
+// recipient.
 func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []string, subject, body string) (*mcp.CallToolResult, any, error) {
 	if len(to) > maxRecipients {
 		r := text(fmt.Sprintf("Not sent: a send can name at most %d recipients, and this one names %d.", maxRecipients, len(to)))
@@ -734,7 +735,7 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 		resp, err := s.callFrom(ctx, mreq, proto.Request{Op: proto.OpSend, To: r, Subject: subject, Body: body})
 		if err != nil {
 			rs[i].Err = err.Error()
-			if !strings.Contains(rs[i].Err, r) {
+			if !refusedRecipient(resp, rs[i].Err, r, subject) {
 				stopped = "the send to " + r + " failed for a reason that isn't about " + r
 			}
 			continue
@@ -747,6 +748,37 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 	res := text(view.SentEach(rs))
 	res.IsError = !sent
 	return res, nil, nil
+}
+
+// refusedRecipient says whether the refusal why, of the send of subject to r, is r's alone, so
+// that the rest of a list can still be sent to. The daemon says so (resp.Refused, #541); one from
+// before that is judged by its words. Its refusals for a recipient name it as it was given, but
+// for a recipient that isn't a name or an address at all (its "a message needs a recipient ...
+// and a subject", which with a subject given is about the recipient), a mute or an offline
+// session at an address whose messages go on to another (forwardLocked), which it names by that
+// one, and a recipient whose device has no key to encrypt to, which it names by its device. A call
+// no daemon answered (no daemon, or a session not yet registered) is about the sender, and its
+// words, which may hold a short recipient by chance, aren't looked at.
+func refusedRecipient(resp proto.Response, why, r, subject string) bool {
+	switch resp.Refused {
+	case proto.RefusedRecipient:
+		return true
+	case proto.RefusedSend:
+		return false
+	}
+	if resp.Error == "" {
+		return false
+	}
+	if strings.Contains(why, r) || subject != "" && strings.HasPrefix(why, "a message needs a recipient (") {
+		return true
+	}
+	for _, words := range []string{" has muted you.", " is offline and takes no messages", " is a T3 thread that is settled",
+		" is a delegate that another thread started", " from before the bus was encrypted", " so there is no key to encrypt to"} {
+		if strings.Contains(why, words) {
+			return true
+		}
+	}
+	return false
 }
 
 func text(s string) *mcp.CallToolResult {
