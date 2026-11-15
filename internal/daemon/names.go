@@ -729,6 +729,7 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 			parent = "" // junk is never something to build on
 		}
 	}
+	held := map[string]string{} // every name a new root holds; none if the chain isn't one
 	if parent == "" || repair {
 		// A new root. The names set aside go in it as reservations again, first, so a daemon that
 		// joins later still knows whose they are; the rest of the used names go in the snapshot.
@@ -745,6 +746,12 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 			used[name] = addr // a person's claim survives a repair, as a session's name does
 		}
 		parent, recs[0].Used = "", used
+		for name, addr := range used {
+			held[name] = addr
+		}
+		for _, r := range recs {
+			held[r.Name] = ""
+		}
 	}
 	if len(recs) == 0 {
 		return nil // nothing to record: a repair that a sync has meanwhile found unneeded
@@ -775,7 +782,13 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		// Nothing newer was read meanwhile; this chain, on a tip that was read in full, is read. A
 		// tip not yet read by a daemon that keeps people's claims isn't (see NamesPeople), unless
 		// this chain is a new root, which holds every name itself.
-		d.st.NamesTip, d.st.NamesRepair = sha, false
+		d.st.NamesTip = sha
+		// The repair is made only if every name in use now is in the root. One can be learned while
+		// the push is out, and a sync can then find the registry it read lacking it, with no newer
+		// tip to show for that: clearing the flag would lose the name.
+		if parent == "" && !d.lacksNamesLocked(held) {
+			d.st.NamesRepair = false
+		}
 		if d.st.NamesPeople || parent == "" {
 			d.st.NamesGood, d.st.NamesPeople = sha, true
 		}

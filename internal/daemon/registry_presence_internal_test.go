@@ -10,8 +10,9 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 )
 
-// A race that sank the first fix for #40 (Codex's review, 2026-10-29), as a test: a presence newer
-// than the registry it was read with must not have a healthy registry rewritten.
+// The two races that sank the first fix for #40 (Codex's review, 2026-10-29), as tests: a presence
+// newer than the registry it was read with must not have a healthy registry rewritten, and a
+// repair found while a push is out must not be cleared when that push lands without the name.
 
 // seePresence has d read a presence of dev's, from a daemon before encryption, that shows one
 // session, id, called name. Caller holds advMu, as a sync does.
@@ -79,5 +80,62 @@ func TestPresenceNewerThanTheRegistryReadIsNoLoss(t *testing.T) {
 	}
 	if got, err := d.repo.RemoteRef(ctx, brand.NamesRef); err != nil || got != tip {
 		t.Errorf("the registry on the remote is %.7s (%v); it should still be %.7s", got, err, tip)
+	}
+}
+
+// A sync lists the registry, and before it reads it this daemon's own push lands on the tip
+// listed, with what it set aside. Meanwhile a presence showed a name the registry doesn't hold, and
+// the sync, reading the tip it listed, finds that name lost. The push that lands must not clear the
+// repair: it was built before the name was known, and nothing newer was read to show that it is
+// still missing. Otherwise no one writes the name back.
+func TestRepairFoundWhileAPushIsOutIsStillMade(t *testing.T) {
+	t.Parallel()
+	d, _ := namedDaemon(t)
+	ctx := context.Background()
+	listed := d.st.NamesTip
+	lost := freshNames(t, 82, 1)[0]
+
+	d.advMu.Lock() // the sync, which has listed the registry at listed
+	pushed := make(chan error, 1)
+	go func() { pushed <- d.pushNames(ctx, nameWork{reserve: 1}) }()
+	deadline := time.Now().Add(time.Minute)
+	for {
+		// Landed on the remote: the push is waiting for advMu to record it.
+		if got, err := d.repo.RemoteRef(ctx, brand.NamesRef); err != nil {
+			t.Fatal(err)
+		} else if got != listed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the push didn't land")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	seePresence(t, d, "far-0001", "ffffff", lost)
+	d.processNames(ctx, listed)
+	d.advMu.Unlock()
+	if err := <-pushed; err != nil {
+		t.Fatal(err)
+	}
+
+	d.mu.Lock()
+	repair := d.st.NamesRepair
+	d.mu.Unlock()
+	if !repair {
+		t.Fatalf("after the push landed there is no repair to make, though the registry lacks %s", lost)
+	}
+	w := d.nextNames()
+	if !w.repair {
+		t.Fatalf("the assigner has %+v; want a repair", w)
+	}
+	if err := d.pushNames(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	tip, err := d.repo.RemoteRef(ctx, brand.NamesRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims, _ := claimsAt(t, d, tip); claims[lost] == "" {
+		t.Fatalf("the registry lost %s: %v", lost, claims)
 	}
 }

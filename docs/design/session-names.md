@@ -64,8 +64,10 @@ names routes by it all the same.
     device's presence; nothing in the history it reads looks damaged. So a presence showing a name
     the daemon has never seen has the next sync read the registry from its start, and write the
     snapshot if the name isn't there. Not at once: a sync's fetch brings a presence as it is then,
-    which can be newer than the registry it listed, and the next sync lists after it. An attempt on
-    2026-10-29 decided at once, and Codex found that race in it.
+    which can be newer than the registry it listed, and the next sync lists after it. A push clears
+    a repair only if it is a new root holding every name in use when it lands, since a sync can find
+    a name lost while the push is out. An attempt on 2026-10-29 decided at once and cleared the flag
+    on any push, and Codex found both races in it.
   - *Trust.* This lets a presence cause a rewrite of the registry, but gives no one more than push
     access already does. Whatever a presence names is used for good on every daemon that reads it,
     and went into any snapshot written already; a seal shows a presence is its device's, not that
