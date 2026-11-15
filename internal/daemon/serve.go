@@ -890,6 +890,12 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		dnd := d.peerDNDLocked(dev, sess)
 		hookOff, agent := d.peerHookOffLocked(dev, sess)
 		noWake := d.peerNoWakeLocked(dev, sess, wake)
+		// A T3 thread T3 stopped while it was idle has no session, but its route is kept and a message
+		// wakes it as one does an idle session, if the wake setting lets it (#669).
+		sleeping := false
+		if r, ok := d.st.T3Routes[sess]; ok && r.Thread != "" && dev == d.device && stopped {
+			sleeping, noWake = true, d.noWakeLocked(sess, wake)
+		}
 		if noWake == bus.NoWakeIdle && bus.IsPerson(from) {
 			noWake = "" // a person's message wakes a session however long it has been idle (#242)
 		}
@@ -920,6 +926,10 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 				note = nameOr(toName, at) + "'s hook isn't running, so it sees this when it next reads its inbox."
 			}
 		case known:
+		case sleeping && noWake != "":
+			note = noWakeNote(nameOr(toName, at), noWake, false)
+		case sleeping:
+			note = nameOr(toName, at) + " is idle in T3, which stopped its process: the message wakes it."
 		case dev == d.device && stopped:
 			note = at + " has stopped. The message waits for it, in case it comes back."
 		case bus.IsPerson(at):
