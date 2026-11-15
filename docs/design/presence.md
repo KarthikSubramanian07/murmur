@@ -113,3 +113,24 @@ can be called something else, such as its owner's name.
 - **Its form is a person's name's** (`bus.ValidNick`), so it never reads as a session's name.
 - Not built: the nickname in a message's header, which names its session and "on <owner>'s machine"
   the first time.
+
+## Device colours
+
+The page fills a device's faces with its colour (#560), one of 12. Since 2026-11-14 (#573) its
+person can pick one on Settings.
+
+- **Shared and settled the same everywhere.** The pick and when it was made (`Color`, `ColorAt`)
+  travel in presence, inside the box. Every daemon decides who has which colour by one rule,
+  `bus.DeviceColors`, and the page shows what its daemon decided.
+- **One device per picked colour.** A colour another device holds is refused. In a race, the
+  earlier pick by its own clock wins, and a tie goes to the lower ID. The loser goes back to Auto,
+  and its Settings says who has it.
+- **Coming back.** An idle daemon takes its presence off the remote, so its colour looks free.
+  A returning daemon leaves its pick out of presence until it has synced with every live presence
+  open, then gives the pick up if a peer took it. Keeping a lost pick to reclaim later made two
+  devices swap colours each time one went idle (found in review, #577).
+- **Stale devices keep their colours**, since staleness is each reader's own clock: a dead device
+  holds its colour until its presence goes (#581).
+- **Auto** is the colour the ID hashes to, or the next one nobody picked.
+- **No protocol bump.** An older device ignores the fields and shows in its automatic colour, and
+  the pick is a page call to the page's own daemon.

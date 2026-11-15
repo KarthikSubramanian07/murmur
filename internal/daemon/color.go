@@ -15,6 +15,7 @@ import (
 // no other device holds it; presence carries the pick, inside the box, and every daemon settles
 // who holds what by one rule (bus.DeviceColors), so every teammate's page shows the same colours.
 // A device on a Murmur from before this sends no pick, and its colour is chosen for it.
+// docs/design/presence.md ("Device colours") has the reasons.
 //
 // A pick that loses is given up, not kept: the device goes back to Auto, and its person is told
 // who has the colour (st.ColorLostTo). It loses a race by the rule, and it loses on coming back
