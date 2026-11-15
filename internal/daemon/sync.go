@@ -1686,8 +1686,8 @@ func (d *Daemon) liveNamesLocked() map[string]bool {
 	return live
 }
 
-// pruneInboxes drops the inboxes of sessions stopped longer than StoppedInbox, and those left by
-// sessions that didn't come back after a restart.
+// pruneInboxes drops the inboxes of sessions stopped longer than StoppedInbox, with what is kept
+// for them, and those left by sessions that didn't come back after a restart.
 func (d *Daemon) pruneInboxes() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1701,6 +1701,13 @@ func (d *Daemon) pruneInboxes() {
 			delete(d.st.Inbox, id)
 			delete(d.st.Commits, id)
 			delete(d.st.T3Routes, id)
+			// One whose name never landed kept its tags and mutes by its ID while it could come
+			// back to its inbox (tagKeyLocked). They go with the inbox, as nothing else would
+			// ever drop them; a name's are kept for good.
+			if d.sessions[id] == nil {
+				delete(d.st.Tags, tagKeyOf("", id))
+				delete(d.st.Mutes, tagKeyOf("", id))
+			}
 			d.saveLocked()
 		}
 	}

@@ -357,3 +357,36 @@ func TestAChangeForASessionNotBackAfterARestartWaitsForIt(t *testing.T) {
 		t.Errorf("a session that isn't back was given tags: %+v", d.st.Tags[tagKeyOf("", "cccccc")])
 	}
 }
+
+// What a session whose name never landed kept by its ID goes when its inbox does, as nothing else
+// would ever drop it; one stopped more lately keeps its own.
+func TestWhatAStoppedSessionKeptByItsIDGoesWithItsInbox(t *testing.T) {
+	t.Parallel()
+	d := tagsDaemon(t)
+	d.opt.StoppedInbox = time.Hour
+	d.mu.Lock()
+	d.st.Mutes = map[string]map[string]time.Time{}
+	for _, id := range []string{"aaaaaa", "bbbbbb"} {
+		delete(d.sessions, id)
+		d.st.Stopped[id] = time.Now()
+		st := &tags.State{}
+		if err := st.SetSelf([]string{"release"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		d.st.Tags[tagKeyOf("", id)] = st
+		d.st.Mutes[tagKeyOf("", id)] = map[string]time.Time{"brave-heron": time.Now()}
+	}
+	d.st.Stopped["aaaaaa"] = time.Now().Add(-2 * time.Hour)
+	d.mu.Unlock()
+	d.pruneInboxes()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.st.Tags[tagKeyOf("", "aaaaaa")] != nil || d.st.Mutes[tagKeyOf("", "aaaaaa")] != nil {
+		t.Errorf("kept for a session stopped past StoppedInbox: tags %+v, mutes %v",
+			d.st.Tags[tagKeyOf("", "aaaaaa")], d.st.Mutes[tagKeyOf("", "aaaaaa")])
+	}
+	if d.st.Tags[tagKeyOf("", "bbbbbb")] == nil || d.st.Mutes[tagKeyOf("", "bbbbbb")] == nil {
+		t.Errorf("a session stopped within StoppedInbox lost what it kept: tags %+v, mutes %v",
+			d.st.Tags[tagKeyOf("", "bbbbbb")], d.st.Mutes[tagKeyOf("", "bbbbbb")])
+	}
+}
