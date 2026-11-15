@@ -451,3 +451,23 @@ func TestASessionLeavesAGroupAHumanPutItIn(t *testing.T) {
 		t.Error("a human's add after the session left didn't put it back")
 	}
 }
+
+// Off is what an agent adding the session to a group needs of a human's marks (#524, #543): the
+// session's own tags a human hid, then the groups a human took it out of. A tag a human turned on,
+// and one turned off that is neither its own nor a group, aren't in it.
+func TestOffIsTheSessionsHiddenTagsThenTheGroupsItWasTakenOutOf(t *testing.T) {
+	at := time.Now()
+	st := &State{Self: []string{"reviewing", "group:ui", "t1"}, Human: map[string]Mark{
+		"t1":        {On: false, At: at},
+		"group:ui":  {On: false, At: at},
+		"group:api": {On: false, At: at}, // left since a human took it out
+		"model:x":   {On: false, At: at}, // derived, not its own
+		"release":   {On: true, At: at},
+	}}
+	if got := st.Off(); !slices.Equal(got, []string{"group:ui", "t1", "group:api"}) {
+		t.Errorf("Off is %q", got)
+	}
+	if got := (*State)(nil).Off(); got != nil {
+		t.Errorf("a nil State has %q off", got)
+	}
+}

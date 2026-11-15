@@ -165,27 +165,80 @@ func TestOnlyAGroupCanBeGivenAndNoneTakenAway(t *testing.T) {
 	}
 }
 
+// A person on the page took the session out of the group, and an agent's add can't put it back
+// (#543). The adder is told so, by the session's presence or, for a session on its own device, by
+// what that device keeps, instead of "Added" for an add its device would not apply.
 func TestAHumansChoiceStandsOverAnAgentsAdd(t *testing.T) {
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.session("bbbbbb", "")
+	dave, _ := a.session("dddddd", "") // on alice's own device
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	// The person on bob's device takes him out of the group for good.
+	// The people on bob's device and on dave's take them out of the group for good.
 	b.tagSelf("bbbbbb", []string{"group:ui"}, nil)
-	pg := b.page()
-	if code, body := pg.call("POST", "/api/tags", pg.token, `{"addr":"`+bob+`","remove":["group:ui"]}`); code != 200 && code != 204 {
-		t.Fatalf("removing the tag on the page: %d %s", code, body)
+	a.tagSelf("dddddd", []string{"group:ui"}, nil)
+	for _, m := range []struct {
+		d    *device
+		addr string
+	}{{b, bob}, {a, dave}} {
+		pg := m.d.page()
+		if code, body := pg.call("POST", "/api/tags", pg.token, `{"addr":"`+m.addr+`","remove":["group:ui"]}`); code != 200 && code != 204 {
+			t.Fatalf("removing the tag on the page: %d %s", code, body)
+		}
 	}
-	if r := a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"group:ui"}, For: []string{bob}}); r.Error != "" {
-		t.Fatalf("adding bob: %s", r.Error)
+	add := func(who string) proto.Response {
+		return a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"group:ui"}, For: []string{who}})
 	}
+	if r := add(dave); !strings.Contains(r.Error, "a person took "+dave+" out of group:ui") {
+		t.Errorf("adding dave, on alice's own device: %+v; want it refused for the person's choice", r)
+	}
+	eventually(t, "alice's add of bob to be refused for the person's choice", func() bool {
+		return strings.Contains(add(bob).Error, "a person took "+bob+" out of group:ui")
+	})
 	a.send("aaaaaa", "group:ui", "for the group", "")
 	a.send("aaaaaa", bob, "for bob", "")
 	if got := inboxOf(b, "bbbbbb"); !slices.Equal(got, []string{"for bob"}) {
 		t.Errorf("bob's inbox is %q; want only what was sent to him, as a human took him out of the group", got)
 	}
+}
+
+// A tag a person hid on the page is still one of the session's own, and takes one of its 12
+// places (#524). The adder counts it, by the session's presence, and is refused as the session's
+// device would refuse the add, instead of being told "Added".
+func TestAnAddPastTagsAPersonHidIsRefusedToTheAdder(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	dave, _ := a.session("dddddd", "") // on alice's own device
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+
+	full := []string{"t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11", "t12"}
+	b.tagSelf("bbbbbb", full, nil)
+	a.tagSelf("dddddd", full, nil)
+	for _, m := range []struct {
+		d    *device
+		addr string
+	}{{b, bob}, {a, dave}} {
+		pg := m.d.page()
+		if code, body := pg.call("POST", "/api/tags", pg.token, `{"addr":"`+m.addr+`","remove":["t1"]}`); code != 200 && code != 204 {
+			t.Fatalf("hiding t1 on the page: %d %s", code, body)
+		}
+	}
+	eventually(t, "bob's tags, t1 hidden, as alice's device sees them", func() bool {
+		return a.inGroup("aaaaaa", bob, "t12") && !a.inGroup("aaaaaa", bob, "t1")
+	})
+	for _, who := range []string{bob, dave} {
+		r := a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"group:bus"}, For: []string{who}})
+		if !strings.Contains(r.Error, "1 of them hidden by a person on the page") {
+			t.Errorf("adding %s past the tags a person hid: %+v; want it refused, saying why", who, r)
+		}
+	}
+	holds(t, "bob and dave out of the group", time.Second, func() bool {
+		return !b.inGroup("bbbbbb", bob, "group:bus") && !a.inGroup("aaaaaa", dave, "group:bus")
+	})
 }
 
 // The first message a session is given from a group says in full that it is in the group, how to

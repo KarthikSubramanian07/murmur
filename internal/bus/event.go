@@ -281,6 +281,7 @@ func (p *Presence) Clean() {
 			s.Committed = cleanBranches(s.Committed)
 			s.Tags = tags.CleanRead(s.Tags)
 			s.Muted = cleanMuted(s.Muted)
+			s.Off = cleanOff(s.Off)
 			if s.ID == PersonSession {
 				s.Tags = tags.Person() // by the address, whatever the presence says (#267)
 			}
@@ -288,6 +289,18 @@ func (p *Presence) Clean() {
 		}
 	}
 	p.Sessions = keep
+}
+
+// cleanOff holds the tags a person turned off for a session to what Murmur writes: tags, none
+// repeated, at most MaxOff.
+func cleanOff(in []string) []string {
+	var out []string
+	for _, t := range in {
+		if tags.Valid(t) && t != tags.Human && !slices.Contains(out, t) && len(out) < MaxOff {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // cleanMuted holds a session's mutes to what Murmur writes: sessions' names, none repeated, at
@@ -459,10 +472,19 @@ type SessionInfo struct {
 	// nothing they send. A daemon from before mutes ignores it, and still delivers to this
 	// session's device, which is the one that drops the message.
 	Muted []string `json:"muted,omitempty"`
+	// Off is the tags a person turned off for this session on the page that bear on an agent's add
+	// of it to a group (#524, #543): its own that they hid, each still one of its
+	// tags.MaxPerSession, then the groups they took it out of, which no agent's add puts it back in.
+	// At most MaxOff. A daemon from before it ignores it, and tells an adder "Added" for an add the
+	// session's device won't apply.
+	Off []string `json:"off,omitempty"`
 }
 
 // MaxMuted caps SessionInfo.Muted.
 const MaxMuted = 50
+
+// MaxOff caps SessionInfo.Off: a session's own tags, and as many groups again.
+const MaxOff = 2 * tags.MaxPerSession
 
 // MaxCommitted caps SessionInfo.Committed.
 const MaxCommitted = 5

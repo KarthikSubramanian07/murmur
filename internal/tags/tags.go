@@ -267,6 +267,29 @@ func (st *State) pick(f, t string, at time.Time) {
 	st.Picked[f] = at
 }
 
+// Off is the tags a human turned off that bear on another agent's add of the session to groups
+// (see Given), as presence publishes them: its own, which a human's mark hides but which still take
+// a place under MaxPerSession, then every group a human took it out of, which an add doesn't put it
+// back in. Each part is in order of name. A nil st has none.
+func (st *State) Off() []string {
+	if st == nil {
+		return nil
+	}
+	var own, out []string
+	for t, m := range st.Human {
+		switch {
+		case m.On:
+		case slices.Contains(st.Self, t):
+			own = append(own, t)
+		case IsGroup(t):
+			out = append(out, t)
+		}
+	}
+	slices.Sort(own)
+	slices.Sort(out)
+	return append(own, out...)
+}
+
 // Person is the tags of a person's account: human, worked out from the address.
 func Person() []Tag { return []Tag{{Name: Human, Src: SrcDerived}} }
 

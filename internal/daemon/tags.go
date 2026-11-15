@@ -132,9 +132,21 @@ func (d *Daemon) tagsOfLocked(s *session) []tags.Tag {
 
 // peerTagsLocked is the tags of session sess in device p's presence, nil if it isn't there.
 func peerTagsLocked(p *peer, sess string) []tags.Tag {
-	for _, s := range p.pres.Sessions {
-		if s.ID == sess {
-			return s.Tags
+	if s := peerSessionLocked(p, sess); s != nil {
+		return s.Tags
+	}
+	return nil
+}
+
+// peerSessionLocked is session sess as device p's presence shows it, nil if it isn't there or p is
+// nil.
+func peerSessionLocked(p *peer, sess string) *bus.SessionInfo {
+	if p == nil {
+		return nil
+	}
+	for i := range p.pres.Sessions {
+		if p.pres.Sessions[i].ID == sess {
+			return &p.pres.Sessions[i]
 		}
 	}
 	return nil

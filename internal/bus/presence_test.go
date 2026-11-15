@@ -3,6 +3,8 @@ package bus_test
 import (
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -113,5 +115,25 @@ func TestPresenceCleanHoldsMutedToNames(t *testing.T) {
 	}
 	if n := len(p.Sessions[1].Muted); n > bus.MaxMuted {
 		t.Errorf("kept %d mutes, want at most %d", n, bus.MaxMuted)
+	}
+}
+
+// The tags a person turned off for a session (#524, #543) are tags: none that isn't one, never
+// human, none repeated, at most bus.MaxOff, in the order written.
+func TestPresenceCleanHoldsOffToTags(t *testing.T) {
+	var many []string
+	for i := 0; i < bus.MaxOff+5; i++ {
+		many = append(many, fmt.Sprintf("group:g%d", i))
+	}
+	p := bus.Presence{Sessions: []bus.SessionInfo{
+		{ID: "s1", Off: []string{"reviewing", "Not A Tag", "human", "reviewing", "group:ui"}},
+		{ID: "s2", Off: many},
+	}}
+	p.Clean()
+	if got := p.Sessions[0].Off; !slices.Equal(got, []string{"reviewing", "group:ui"}) {
+		t.Errorf("kept %q, want reviewing and group:ui once each", got)
+	}
+	if n := len(p.Sessions[1].Off); n != bus.MaxOff {
+		t.Errorf("kept %d, want %d", n, bus.MaxOff)
 	}
 }

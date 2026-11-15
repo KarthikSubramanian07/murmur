@@ -145,26 +145,18 @@ func (d *Daemon) addToGroups(ctx context.Context, id string, req proto.Request) 
 			// here, as a send to it does.
 			why = who + " has muted you, so you can't add it to a group"
 		default:
-			// A session's tags are capped, and the groups would be its own: past the cap its device
-			// refuses the add, or what others see of it loses another tag. Refused here, the adder
-			// is told, which that device can't do.
+			// What its device would refuse (applyGroupAddLocked), by the same tags and marks it
+			// publishes in presence. Refused here, the adder is told, which that device can't do.
 			var has []tags.Tag
+			var off []string
 			if dev == d.device {
 				if t := d.sessions[sess]; t != nil {
-					has = d.tagsOfLocked(t)
+					has, off = d.tagsOfLocked(t), d.offLocked(t)
 				}
-			} else {
-				has = peerTagsLocked(d.peers[dev], sess)
+			} else if info := peerSessionLocked(d.peers[dev], sess); info != nil {
+				has, off = info.Tags, info.Off
 			}
-			n := len(has)
-			for _, grp := range groups {
-				if !tags.Has(has, grp) {
-					n++
-				}
-			}
-			if n > tags.MaxPerSession {
-				why = fmt.Sprintf("%s has %d tags, and a session has at most %d, so it has no room for more: it can drop one, or join the group itself", who, len(has), tags.MaxPerSession)
-			}
+			why = groupAddWhy(who, has, off, groups)
 		}
 		if why != "" {
 			d.mu.Unlock()
@@ -215,11 +207,50 @@ func (d *Daemon) addToGroups(ctx context.Context, id string, req proto.Request) 
 	return proto.Response{OK: true, Self: from, Note: strings.TrimSuffix(strings.Join(notes, " "), "."), Tags: mine}
 }
 
+// groupAddWhy is why the session called who can't be added to groups, "" if it can: has is its
+// tags, and off those a person turned off for it (see tags.State.Off), as its presence shows them.
+func groupAddWhy(who string, has []tags.Tag, off, groups []string) string {
+	for _, g := range groups {
+		if slices.Contains(off, g) {
+			// The add would be the session's own tag, which a human's mark stands over (#543).
+			return fmt.Sprintf("a person took %s out of %s on the page, and only a person can put it back, there", who, g)
+		}
+	}
+	// A session's tags are capped, and the groups would be its own: past the cap its device refuses
+	// the add, or what others see of it loses another tag. One of its own that a person hid is still
+	// one of them (#524).
+	n := len(has) + len(off)
+	for _, g := range groups {
+		if !tags.Has(has, g) {
+			n++
+		}
+	}
+	if n <= tags.MaxPerSession {
+		return ""
+	}
+	hidden := ""
+	if len(off) > 0 {
+		hidden = fmt.Sprintf(", %d of them hidden by a person on the page,", len(off))
+	}
+	return fmt.Sprintf("%s has %d tags%s and a session has at most %d, so it has no room for more: it can drop one, or join the group itself",
+		who, len(has)+len(off), hidden, tags.MaxPerSession)
+}
+
+// offLocked is the tags a person turned off for session s that bear on an add of it to a group,
+// as its presence publishes them (bus.SessionInfo.Off). Caller holds mu.
+func (d *Daemon) offLocked(s *session) []string {
+	off := d.tagStateLocked(s).Off()
+	if len(off) > bus.MaxOff {
+		off = off[:bus.MaxOff]
+	}
+	return off
+}
+
 // applyGroupAddLocked applies an agent's add of a session here to groups, read in a sync of this
-// mode: the tags become the session's own, so it can take them off again, and a human's mark still
-// stands over them. An add older than groupAddMaxAge isn't applied, and from history a skip passes
-// over, only one sent since the session started, as a message from there would be queued for it.
-// Caller holds mu.
+// mode: the tags become the session's own, so it can take them off again. A group a person took
+// the session out of on the page isn't added: a human's mark would stand over the tag. An add older
+// than groupAddMaxAge isn't applied, and from history a skip passes over, only one sent since the
+// session started, as a message from there would be queued for it. Caller holds mu.
 func (d *Daemon) applyGroupAddLocked(e bus.Event, mode syncMode) {
 	dev, sess := bus.SplitAddr(e.To)
 	if dev != d.device {
@@ -245,11 +276,26 @@ func (d *Daemon) applyGroupAddLocked(e bus.Event, mode syncMode) {
 		return
 	}
 	next := d.st.Tags[key].Clone()
-	if err := next.Given(e.Add); err != nil {
+	var out []string
+	add := slices.DeleteFunc(slices.Clone(e.Add), func(g string) bool {
+		if m, marked := next.Human[g]; marked && !m.On {
+			out = append(out, g)
+			return true
+		}
+		return false
+	})
+	if len(out) > 0 {
+		d.log.Printf("%s added %s to %s, but a person took it out of that on the page; not applied",
+			e.From, e.To, strings.Join(out, ", "))
+		if len(add) == 0 {
+			return
+		}
+	}
+	if err := next.Given(add); err != nil {
 		d.log.Printf("%s added %s to %s; not applied: %v", e.From, e.To, strings.Join(e.Add, ", "), err)
 		return
 	}
 	d.putTagStateLocked(key, next)
 	d.kickPresence()
-	d.log.Printf("%s gave session %s the tags %s", e.From, e.To, strings.Join(e.Add, ", "))
+	d.log.Printf("%s gave session %s the tags %s", e.From, e.To, strings.Join(add, ", "))
 }
