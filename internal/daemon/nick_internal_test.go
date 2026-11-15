@@ -14,6 +14,7 @@ import (
 // address: not a person's name, and not the ID of a device, whether its presence is here or only
 // its log.
 func TestANicknameIsNamedOnlyWhenItIsNoAddress(t *testing.T) {
+	t.Parallel()
 	d := &Daemon{device: "here-0001", log: log.New(io.Discard, "", 0), peers: map[string]*peer{}}
 	d.st.Nick = "tyler"
 	d.peers["laptop-0002"] = &peer{pres: bus.Presence{Nick: "tyler"}}

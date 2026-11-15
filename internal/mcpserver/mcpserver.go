@@ -789,7 +789,7 @@ type (
 		Messages int    `json:"messages,omitempty" jsonschema:"how many of its latest messages to show, 10 if not given"`
 	}
 	sendIn struct {
-		To      string `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"`
+		To      string `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device's ID for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"`
 		Subject string `json:"subject" jsonschema:"one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"`
 		Body    string `json:"body,omitempty" jsonschema:"the rest of the message"`
 	}
