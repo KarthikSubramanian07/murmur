@@ -207,8 +207,7 @@ func addTips(ref *Ref, shas []string) {
 	slices.Sort(shas)
 	for _, sha := range slices.Compact(shas) {
 		// git before 2.44 writes the all-zero ID into a new worktree's HEAD for a moment during
-		// `git worktree add`. It names no commit, and as a tip it would make NewCommits's git log
-		// fail with "bad object", so the call would be credited nothing.
+		// `git worktree add`. It names no commit.
 		if strings.Trim(sha, "0") == "" {
 			continue
 		}
@@ -338,8 +337,15 @@ func NewCommits(ctx context.Context, worktree string, before, after Ref) ([]Comm
 	for _, tip := range before.tips {
 		exclude.WriteString("^" + tip + "\n")
 	}
+	// --ignore-missing has git skip a revision that isn't an object in the clone, instead of
+	// failing the whole call with "bad object"; a tree or blob it passes over anyway. A tip can be
+	// one: a worktree's HEAD file naming a commit the clone lacks, from a corrupt or hand-copied
+	// entry, would otherwise stop every call in every worktree of the clone being credited (#540).
+	// A commit the clone lacks keeps nothing out anyway, since git can't read its parents. An
+	// after.SHA the clone lacks is skipped too, leaving no commits. git reads stdin's revisions where
+	// --stdin stands among the arguments, so the flag comes before it.
 	repo := gitx.Git{Dir: strings.TrimSpace(gitDir)}
-	out, err := repo.Run(ctx, exclude.String(), "log", "--stdin", "--reverse", "--topo-order", "--no-show-signature", "--encoding=UTF-8", "--format=%H%x00%ct%x00%s", "-z", "--end-of-options", after.SHA, "--")
+	out, err := repo.Run(ctx, exclude.String(), "log", "--ignore-missing", "--stdin", "--reverse", "--topo-order", "--no-show-signature", "--encoding=UTF-8", "--format=%H%x00%ct%x00%s", "-z", "--end-of-options", after.SHA, "--")
 	if err != nil {
 		return nil, err
 	}
