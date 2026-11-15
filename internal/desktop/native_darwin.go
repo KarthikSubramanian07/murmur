@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"log"
+	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -16,12 +17,16 @@ import (
 // asks once whether Script Editor may show them. An app bundle would make them Murmur's.
 
 // AppKit works only on the process's first thread. Go starts the main goroutine there, and this
-// keeps it there for whatever command runs, before anything can move it.
-func init() { runtime.LockOSThread() }
+// keeps it there before anything can move it, for `mur app` alone: no other command needs it.
+func init() {
+	if appCommand(os.Args[1:]) {
+		runtime.LockOSThread()
+	}
+}
 
 type macNative struct{}
 
-func beforeWindow() {}
+func beforeWindow() (after func()) { return func() {} }
 
 func newNative(glaze.WebView) native {
 	if err := glaze.SetAppIcon(dockPNG); err != nil {

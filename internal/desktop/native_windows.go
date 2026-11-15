@@ -113,12 +113,15 @@ type winNative struct {
 // beforeWindow runs WebView2's GPU work in its browser process rather than a process of its own:
 // about 120 MB less private memory at idle (measured 2026-11-15, docs/design/desktop.md), and a page
 // of text and a few images needs no isolated GPU. Someone who sets the variable themselves is left
-// to it.
-func beforeWindow() {
+// to it. The runtime reads it as the web view is made; what it returns puts it back, so the
+// daemons and browsers the app starts don't inherit it.
+func beforeWindow() (after func()) {
 	const env = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
-	if os.Getenv(env) == "" {
-		os.Setenv(env, "--in-process-gpu")
+	if _, set := os.LookupEnv(env); set {
+		return func() {}
 	}
+	os.Setenv(env, "--in-process-gpu")
+	return func() { os.Unsetenv(env) }
 }
 
 // The window procedure is installed once per process, and its callback can't be freed.
@@ -196,21 +199,25 @@ func (n *winNative) data() notifyIconData {
 	return d
 }
 
+// addTray puts the icon in the notification area. No lock is held across a shell call: Explorer
+// may send the window a message meanwhile, which runs wndProc on this thread.
 func (n *winNative) addTray() {
 	d := n.data()
 	d.uFlags = nifMessage | nifIcon | nifTip | nifShowTip
 	d.uCallbackMessage = trayMsg
 	d.hIcon = n.small
 	n.mu.Lock()
-	defer n.mu.Unlock()
 	copyUTF16(d.szTip[:], tip(n.unread))
+	n.mu.Unlock()
 	if r, _, _ := procShellNotifyIconW.Call(nimAdd, uintptr(unsafe.Pointer(&d))); r == 0 {
 		log.Print("the notification area refused the icon")
 		return
 	}
 	d.uVersion = notifyIconV
 	procShellNotifyIconW.Call(nimSetVersion, uintptr(unsafe.Pointer(&d)))
+	n.mu.Lock()
 	n.tray = true
+	n.mu.Unlock()
 }
 
 func tip(unread int) string {
@@ -223,13 +230,14 @@ func tip(unread int) string {
 func (n *winNative) badge(unread int) {
 	n.mu.Lock()
 	n.unread = unread
-	if n.tray {
+	tray := n.tray
+	n.mu.Unlock()
+	if tray {
 		d := n.data()
 		d.uFlags = nifTip | nifShowTip
 		copyUTF16(d.szTip[:], tip(unread))
 		procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&d)))
 	}
-	n.mu.Unlock()
 	n.overlay()
 }
 
@@ -253,8 +261,9 @@ func (n *winNative) overlay() {
 
 func (n *winNative) notify(title, body string) error {
 	n.mu.Lock()
-	defer n.mu.Unlock()
-	if !n.tray {
+	tray := n.tray
+	n.mu.Unlock()
+	if !tray {
 		return fmt.Errorf("no icon in the notification area to show it from")
 	}
 	d := n.data()
@@ -271,11 +280,17 @@ func (n *winNative) notify(title, body string) error {
 
 func (n *winNative) close() {
 	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.tray {
+	tray := n.tray
+	n.tray = false
+	n.mu.Unlock()
+	if tray {
 		d := n.data()
 		procShellNotifyIconW.Call(nimDelete, uintptr(unsafe.Pointer(&d)))
-		n.tray = false
+	}
+	if n.taskbar != nil {
+		vtbl := *(**[3]uintptr)(n.taskbar)
+		syscall.SyscallN(vtbl[2], uintptr(n.taskbar)) // Release
+		n.taskbar = nil
 	}
 }
 

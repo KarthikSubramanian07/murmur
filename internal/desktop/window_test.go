@@ -1,4 +1,4 @@
-//go:build !linux || desktop
+//go:build windows || darwin || (linux && desktop)
 
 package desktop
 

@@ -12,6 +12,7 @@ package desktop
 import (
 	"context"
 	"net/url"
+	"os/exec"
 	"strings"
 )
 
@@ -44,6 +45,30 @@ func clip(s string, n int) string {
 		return string(r[:n-1]) + "…"
 	}
 	return s
+}
+
+// waited is the end of cmd's process, once it comes.
+func waited(cmd *exec.Cmd) <-chan error {
+	c := make(chan error, 1)
+	go func() { c <- cmd.Wait() }()
+	return c
+}
+
+// appCommand says whether the arguments after the program's name run `mur app`, after any -C DIR
+// that comes before the command (cmd/mur's leadingDirs).
+func appCommand(args []string) bool {
+	for len(args) > 0 {
+		name, _, hasValue := strings.Cut(args[0], "=")
+		if name != "-C" && name != "--C" {
+			break
+		}
+		if hasValue {
+			args = args[1:]
+		} else {
+			args = args[min(2, len(args)):]
+		}
+	}
+	return len(args) > 0 && args[0] == "app"
 }
 
 // native is what each platform adds to the window.

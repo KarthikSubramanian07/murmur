@@ -10,13 +10,16 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/desktop"
 	"github.com/a-Fig/murmur/internal/join"
+	"github.com/a-Fig/murmur/internal/logfile"
 )
 
 // runApp opens the page in a window of its own (#23; docs/design/desktop.md). It starts the window
@@ -48,17 +51,30 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		logf, err := os.OpenFile(filepath.Join(cfg, "app.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		logPath := filepath.Join(cfg, "app.log")
+		if fi, err := os.Stat(logPath); err == nil && fi.Size() > logfile.Max {
+			os.Rename(logPath, logPath+".old")
+		}
+		logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			return err
 		}
 		defer logf.Close()
+		start, _ := logf.Seek(0, io.SeekEnd)
 		args := []string{"app", "--wait", "-C", top(gitDir)}
 		if *devtools {
 			args = append(args, "--devtools")
 		}
-		if err := desktop.Detach(exe, args, logf); err != nil {
+		exited, err := desktop.Detach(exe, args, logf)
+		if err != nil {
 			return err
+		}
+		// A window that can't be made (no web view, no screen) fails within a second or two, and
+		// says why in the log: that is worth saying here, where someone is looking.
+		select {
+		case <-exited:
+			return fmt.Errorf("the window closed as it opened: %s", lastLine(logPath, start))
+		case <-time.After(appStartWait):
 		}
 		fmt.Fprintln(out, "Opened.")
 		return nil
@@ -76,6 +92,19 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 		Open:   browse,
 		Debug:  *devtools,
 	})
+}
+
+// appStartWait is how long `mur app` watches the window's process before saying it opened.
+const appStartWait = 2 * time.Second
+
+// lastLine is the last line written to the log at path after offset from, without mur's prefix.
+func lastLine(path string, from int64) string {
+	b, err := os.ReadFile(path)
+	if err != nil || int64(len(b)) <= from {
+		return "see " + path
+	}
+	lines := strings.Split(strings.TrimSpace(string(b[from:])), "\n")
+	return strings.TrimPrefix(strings.TrimSpace(lines[len(lines)-1]), brand.Command+": ")
 }
 
 // appDir is the app's directory in the user's config directory, beside the clones' record: its
@@ -148,6 +177,7 @@ type follower struct {
 
 	mu     sync.Mutex
 	gitDir string
+	failed string // the last failure logged, so a daemon that keeps failing fills no log
 }
 
 func (f *follower) remember() {
@@ -181,9 +211,13 @@ func (f *follower) follow(ctx context.Context, host string) string {
 	}
 	page, err := f.page(ctx, gitDir)
 	if err != nil {
-		log.Printf("the page of %s: %v", gitDir, err)
+		if msg := fmt.Sprintf("the page of %s: %v", gitDir, err); msg != f.failed {
+			log.Print(msg)
+			f.failed = msg
+		}
 		return ""
 	}
+	f.failed = ""
 	if u, err := url.Parse(page); err != nil || u.Host == host {
 		return ""
 	}

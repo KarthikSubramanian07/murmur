@@ -1,4 +1,4 @@
-//go:build desktop && !windows && !darwin
+//go:build linux && desktop
 
 package desktop
 
@@ -16,7 +16,7 @@ import (
 
 type linuxNative struct{}
 
-func beforeWindow() {}
+func beforeWindow() (after func()) { return func() {} }
 
 func newNative(glaze.WebView) native { return linuxNative{} }
 

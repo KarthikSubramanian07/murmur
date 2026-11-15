@@ -123,3 +123,19 @@ func TestFollow(t *testing.T) {
 		t.Fatalf("after leaving: %q, asked %v", got, asked)
 	}
 }
+
+// What `mur app` says when the window's process ends as it starts is the last line it logged.
+func TestLastLine(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "app.log")
+	os.WriteFile(p, []byte("an older run\nmur: old\n"), 0o600)
+	from := int64(len("an older run\nmur: old\n"))
+	f, _ := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o600)
+	f.WriteString("2026/11/15 10:00:00 starting\nmur: webview2: runtime not found\n")
+	f.Close()
+	if got := lastLine(p, from); got != "webview2: runtime not found" {
+		t.Fatalf("got %q", got)
+	}
+	if got := lastLine(p, from+1000); got != "see "+p {
+		t.Fatalf("with nothing new: %q", got)
+	}
+}

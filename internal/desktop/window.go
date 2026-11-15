@@ -1,4 +1,4 @@
-//go:build !linux || desktop
+//go:build windows || darwin || (linux && desktop)
 
 package desktop
 
@@ -33,7 +33,7 @@ const Supported = true
 // Run shows the window and returns when it is closed. It must be called from the main goroutine:
 // every platform's UI belongs to the thread that made it.
 func Run(ctx context.Context, opts Options) error {
-	beforeWindow()
+	after := beforeWindow()
 	var a *app
 	w, err := glaze.NewWithOptions(glaze.Options{
 		Debug:             opts.Debug,
@@ -42,6 +42,7 @@ func Run(ctx context.Context, opts Options) error {
 		AcceptsFirstMouse: true,
 		OnClose:           func() { a.w.Terminate() },
 	})
+	after()
 	if err != nil {
 		return err
 	}
@@ -56,6 +57,9 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	if err := w.Bind("murmurOpen", a.openOutside); err != nil {
+		return err
+	}
+	if err := w.Bind("murmurHere", a.here); err != nil {
 		return err
 	}
 	w.Init(initScript)
@@ -151,6 +155,15 @@ func (a *app) fromPage(n pageNote) {
 	})
 }
 
+// here takes the host of each document the window loads, whatever page it is: follow then sends a
+// window that ended up on another page (a file dropped on it, a link opened in place) back to the
+// clone's page. A page's own host can't take the window anywhere but a joined clone's page.
+func (a *app) here(host string) {
+	a.mu.Lock()
+	a.host = host
+	a.mu.Unlock()
+}
+
 // openOutside opens a link the page would have opened in a new tab, in the person's browser.
 func (a *app) openOutside(link string) {
 	u, err := url.Parse(link)
@@ -206,6 +219,7 @@ const initScript = `(() => {
     e.preventDefault();
     window.murmurOpen(href);
   };
+  addEventListener("DOMContentLoaded", () => window.murmurHere(location.host));
   addEventListener("click", click, true);
   addEventListener("auxclick", click, true);
   const open = window.open;
