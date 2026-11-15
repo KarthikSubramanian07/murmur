@@ -877,6 +877,14 @@ func Run(ctx context.Context, opt Options) error {
 	d.firstSync = make(chan struct{})
 	// Before the page is served: its calls read these (awaitHistory).
 	d.historyRead, d.historyWant = make(chan struct{}), make(chan struct{})
+	// On the record of this machine's clones before the daemon answers, not after: whoever finds it
+	// answering, `mur join` that started it or another clone's page, then finds the record as this
+	// daemon leaves it, and not the join's version being replaced (#479).
+	if d.opt.Clones != "" {
+		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName}); err != nil {
+			d.log.Printf("this clone isn't on the record of this machine's clones, so other clones' pages can't switch to it: %v", err)
+		}
+	}
 	if pageLn != nil {
 		d.servePage(ctx, pageLn) // first, so a page key asked for at once finds the page
 	}
@@ -905,12 +913,6 @@ func Run(ctx context.Context, opt Options) error {
 		d.historyLoop(ctx)
 	}()
 	d.kickHistory()
-
-	if d.opt.Clones != "" {
-		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName}); err != nil {
-			d.log.Printf("this clone isn't on the record of this machine's clones, so other clones' pages can't switch to it: %v", err)
-		}
-	}
 
 	// Sync once before sessions register (they wait for it), so whatever this sync finds was sent
 	// before any of them registered: it is the backlog, and nothing a new session should get. A stop
