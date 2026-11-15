@@ -94,8 +94,8 @@ func DeviceGroup(device string) string {
 
 // DevicesOfGroup is the devices whose group's tag name could be, if it is a device's group: an ID
 // that starts with device- (group:device-3f2a9c1e is device-3f2a9c1e's), and one without it (an
-// older ID made from a host name, such as device-1a2b's when the host had none). At most one of
-// them is a device anyone knows.
+// older ID made from a host name, such as device-1a2b's when the host had none). Both can be
+// devices someone knows, as laptop-1a2b and device-laptop-1a2b would be; send then refuses the tag.
 func DevicesOfGroup(name string) []string {
 	rest, ok := strings.CutPrefix(Normalize(name), DevicePrefix)
 	if !ok || rest == "" {

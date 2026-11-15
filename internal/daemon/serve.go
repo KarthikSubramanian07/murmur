@@ -775,16 +775,23 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	// sessions. It isn't read as a name after, as a device ID can be shaped like one.
 	toDevice := false
 	if devs := tags.DevicesOfGroup(to); devs != nil {
+		// Two devices can share a group's tag, device-x and x; the message is then sent to neither,
+		// rather than to whichever comes first, and the sender is told to use the device's ID.
+		var found []string
 		d.mu.Lock()
 		for _, dev := range devs {
 			if _, known := d.peers[dev]; known || dev == d.device {
-				to, toDevice = dev, true
-				break
+				found = append(found, dev)
 			}
 		}
 		d.mu.Unlock()
-		if !toDevice {
+		switch len(found) {
+		case 0:
 			return fail(fmt.Sprintf("not sent: no device in presence has the group %s. who lists each device's group", tags.Normalize(to)))
+		case 1:
+			to, toDevice = found[0], true
+		default:
+			return fail(fmt.Sprintf("not sent: devices %s and %s both have the group %s. Send to the one you mean by its ID", found[0], found[1], tags.Normalize(to)))
 		}
 	} else if g := tags.Normalize(to); bus.IsGroup(g) {
 		to = g
