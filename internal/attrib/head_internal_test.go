@@ -88,11 +88,13 @@ func TestHeadReadsTheSameAsGit(t *testing.T) {
 	hgit(t, dir, "symbolic-ref", "HEAD", "refs/heads/feature/with/slashes")
 	hgit(t, dir, "symbolic-ref", "--delete", "refs/heads/alias")
 
-	// A tree tag and a ref at a tree are no tips.
+	// A ref at a tree is a tip either way, which git log passes over.
 	hgit(t, dir, "update-ref", "refs/custom/tree", hgit(t, dir, "rev-parse", "HEAD^{tree}"))
 	sameHead(t, "with a ref at a tree", dir)
 
-	// HEAD at a branch that points at a tree: git is asked, and refuses, as before.
+	// HEAD at a branch that points at a tree. Reading HEAD itself, Head takes the branch's object
+	// as a commit unchecked, as it does a detached HEAD file's, and NewCommits finds nothing in it;
+	// git, asked, refuses.
 	odd := t.TempDir()
 	hgit(t, odd, "init", "-q", "-b", "main")
 	hgit(t, odd, "commit", "-q", "--allow-empty", "-m", "root")
@@ -102,8 +104,13 @@ func TestHeadReadsTheSameAsGit(t *testing.T) {
 		t.Fatal(err)
 	}
 	hgit(t, odd, "symbolic-ref", "HEAD", "refs/heads/treeish")
-	if _, err := Head(context.Background(), odd); err == nil {
-		t.Error("HEAD at a tree read as a commit")
+	if r, err := Head(context.Background(), odd); err != nil || r.SHA != tree {
+		t.Errorf("Head at a branch at a tree = %+v, %v; want the tree's ID", r, err)
+	} else if commits, err := NewCommits(context.Background(), odd, r, r); err != nil || len(commits) != 0 {
+		t.Errorf("NewCommits at a branch at a tree = %v, %v; want none", commits, err)
+	}
+	if _, err := headByGit(context.Background(), odd, Ref{Time: time.Now()}); err == nil {
+		t.Error("git read HEAD at a tree as a commit")
 	}
 
 	// A reftable repository's HEAD file is a placeholder: git reads it.
@@ -290,6 +297,95 @@ func TestTipsThatAreNoCommitsHereStillCredit(t *testing.T) {
 					t.Fatalf("NewCommits = %+v, want only %s", commits, sha)
 				}
 			})
+		}
+	}
+}
+
+// A ref can name an object the clone lacks: a branch whose commit was lost, or an annotated tag
+// whose tag object was. Head's for-each-ref read each ref's object type, and died on such a ref with
+// "missing object", so Head failed in every worktree of the clone and no call was credited (#540).
+// Each case must leave a commit made on another branch credited, in files and reftable
+// repositories, with the refs loose and packed, whether Head reads HEAD itself or asks git. An
+// annotated tag whose commit is lost already passed, and is here to keep it so.
+func TestRefsAtObjectsTheCloneLacksStillCredit(t *testing.T) {
+	for _, format := range []string{"files", "reftable"} {
+		for _, lost := range []string{"a branch's commit", "a tag object", "a tag's commit"} {
+			for _, packed := range []bool{false, true} {
+				name := format + ", " + lost + ", loose"
+				if packed {
+					name = format + ", " + lost + ", packed"
+				}
+				t.Run(name, func(t *testing.T) {
+					dir := t.TempDir()
+					// --ref-format came in git 2.45, so the files cases leave it out and still run
+					// on the older gits mur supports.
+					args := []string{"init", "-q", "-b", "main"}
+					if format == "reftable" {
+						args = append(args, "--ref-format=reftable")
+					}
+					if exec.Command("git", append(args, dir)...).Run() != nil {
+						t.Skip("this git has no reftable ref format")
+					}
+					hgit(t, dir, "commit", "-q", "--allow-empty", "-m", "root")
+					var gone, tip string
+					switch lost {
+					case "a branch's commit":
+						hgit(t, dir, "switch", "-q", "-c", "side")
+						hgit(t, dir, "commit", "-q", "--allow-empty", "-m", "lost")
+						gone = hgit(t, dir, "rev-parse", "HEAD")
+						tip = gone
+					case "a tag object":
+						hgit(t, dir, "tag", "-a", "-m", "lost", "v1")
+						gone = hgit(t, dir, "rev-parse", "v1")
+						tip = gone
+					case "a tag's commit":
+						hgit(t, dir, "switch", "-q", "--detach")
+						hgit(t, dir, "commit", "-q", "--allow-empty", "-m", "lost")
+						gone = hgit(t, dir, "rev-parse", "HEAD")
+						hgit(t, dir, "tag", "-a", "-m", "kept", "v1")
+						tip = hgit(t, dir, "rev-parse", "v1")
+					}
+					hgit(t, dir, "switch", "-q", "main")
+					if packed {
+						hgit(t, dir, "pack-refs", "--all")
+					}
+					loose := filepath.Join(dir, ".git", "objects", gone[:2], gone[2:])
+					os.Chmod(loose, 0o644) // git writes objects read-only, which Windows won't delete
+					if err := os.Remove(loose); err != nil {
+						t.Fatal(err)
+					}
+					for _, p := range []struct {
+						name string
+						head func(string) (Ref, error)
+					}{
+						{"read from the files", func(wt string) (Ref, error) { return Head(context.Background(), wt) }},
+						{"read by git", func(wt string) (Ref, error) {
+							return headByGit(context.Background(), wt, Ref{Time: time.Now()})
+						}},
+					} {
+						before, err := p.head(dir)
+						if err != nil {
+							t.Fatalf("%s: Head: %v", p.name, err)
+						}
+						if !slices.Contains(before.tips, tip) {
+							t.Fatalf("%s: %s is not among the tips %v, so this tests nothing", p.name, tip, before.tips)
+						}
+						hgit(t, dir, "commit", "-q", "--allow-empty", "-m", "during, "+p.name)
+						sha := hgit(t, dir, "rev-parse", "HEAD")
+						after, err := p.head(dir)
+						if err != nil {
+							t.Fatalf("%s: Head after: %v", p.name, err)
+						}
+						commits, err := NewCommits(context.Background(), dir, before, after)
+						if err != nil {
+							t.Fatalf("%s: NewCommits: %v", p.name, err)
+						}
+						if len(commits) != 1 || commits[0].SHA != sha {
+							t.Fatalf("%s: NewCommits = %+v, want only %s", p.name, commits, sha)
+						}
+					}
+				})
+			}
 		}
 	}
 }
