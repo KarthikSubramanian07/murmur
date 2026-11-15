@@ -126,6 +126,8 @@ type device struct {
 	threadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
 	// codexLineage, if set, stands in for Codex's state (the daemon's CodexLineage).
 	codexLineage func(ctx context.Context, dir, thread string) (title.Lineage, error)
+	// clones is the daemon's Clones, the record of this machine's clones; "" leaves it unset.
+	clones string
 	// noKey starts the device without waiting for it to hold the team key (awaitTeamKey), for a test
 	// about a device that doesn't, or can't, hold it.
 	noKey bool
@@ -236,7 +238,7 @@ func (d *device) start() {
 			ReceiptGather: 200 * time.Millisecond, ReceiptGap: 200 * time.Millisecond,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState,
-			CodexLineage: d.codexLineage, Log: logger})
+			CodexLineage: d.codexLineage, Clones: d.clones, Log: logger})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)
 		}

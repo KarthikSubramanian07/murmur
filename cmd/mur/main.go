@@ -59,6 +59,9 @@ For humans:
   mur ui [--no-open]            open the page in a browser, to see sessions and messages and to message
                                 agents; --no-open only prints its address (starts the clone's daemon
                                 if it isn't running)
+  mur app                       open the page in a window of its own, with a count of what's unread and
+                                notifications of messages to you; in a repo that joined, that repo's page,
+                                else the one it last showed
   mur nickname [NAME|--clear]   call this clone's device NAME, such as your own name: teammates see it
                                 beside the device's ID; --clear takes it off; alone, says what the
                                 device is called
@@ -123,6 +126,8 @@ func main() {
 		err = runUninstall(ctx, args, os.Stdout)
 	case "ui":
 		err = runUI(ctx, args, os.Stdout, browse)
+	case "app":
+		err = runApp(ctx, args, os.Stdout)
 	case "version", "--version":
 		fmt.Println(brand.Command, version)
 		noteNewer(ctx, os.Stderr)
