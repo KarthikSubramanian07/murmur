@@ -128,7 +128,7 @@ func TestRefreshOpenCode(t *testing.T) {
 		write(t, f, "binary")
 	}
 	path := openCodePluginPath(dir)
-	if did, err := refreshOpenCodeAt(dir, exe); did || err != nil {
+	if did, err := refreshOpenCodeAt(dir, exe, 0); did || err != nil {
 		t.Fatalf("with no plugin: did=%v err=%v", did, err)
 	}
 	old := strings.Replace(openCodePlugin(exe), `"steer"`, `"queue"`, 1)
@@ -136,10 +136,10 @@ func TestRefreshOpenCode(t *testing.T) {
 		t.Fatal("the stand-in for an older plugin is the plugin")
 	}
 	write(t, path, old)
-	if did, err := refreshOpenCodeAt(dir, exe); !did || err != nil || read(t, path) != openCodePlugin(exe) {
+	if did, err := refreshOpenCodeAt(dir, exe, 0); !did || err != nil || read(t, path) != openCodePlugin(exe) {
 		t.Fatalf("an old one: did=%v err=%v", did, err)
 	}
-	if did, _ := refreshOpenCodeAt(dir, exe); did {
+	if did, _ := refreshOpenCodeAt(dir, exe, 0); did {
 		t.Error("rewrote its own")
 	}
 
@@ -149,11 +149,32 @@ func TestRefreshOpenCode(t *testing.T) {
 		t.Fatal("join wrote no plugin for OpenCode 1")
 	}
 	write(t, path, strings.Replace(v1, `"busy"`, `"retry"`, 1))
-	if did, err := refreshOpenCodeAt(dir, exe); !did || err != nil || read(t, path) != v1 {
+	if did, err := refreshOpenCodeAt(dir, exe, 0); !did || err != nil || read(t, path) != v1 {
 		t.Fatalf("an old OpenCode 1 one: did=%v err=%v\n%s", did, err, read(t, path))
 	}
-	if did, _ := refreshOpenCodeAt(dir, exe); did {
+	if did, _ := refreshOpenCodeAt(dir, exe, 0); did {
 		t.Error("rewrote OpenCode 1's own")
+	}
+	// A line of its own says which it is, whatever the words around it, and that line never changes:
+	// files written by older binaries carry it.
+	const line = "\n// For OpenCode 1.\n"
+	head, rest, ok := strings.Cut(v1, line)
+	_, body, ok2 := strings.Cut(rest, "\nimport ")
+	if !ok || !ok2 {
+		t.Fatalf("OpenCode 1's plugin has no line %q before its imports", line)
+	}
+	write(t, path, head+line+"// An older plugin's words.\nimport "+body)
+	if did, err := refreshOpenCodeAt(dir, exe, 0); !did || err != nil || read(t, path) != v1 {
+		t.Fatalf("a reworded OpenCode 1 one: did=%v err=%v\n%s", did, err, read(t, path))
+	}
+
+	// The OpenCode that started the server says which it loads: an upgrade from 1 to 2 moves the
+	// file to 2's, and back.
+	if did, err := refreshOpenCodeAt(dir, exe, 2); !did || err != nil || read(t, path) != openCodePlugin(exe) {
+		t.Fatalf("OpenCode 1's under OpenCode 2: did=%v err=%v\n%s", did, err, read(t, path))
+	}
+	if did, err := refreshOpenCodeAt(dir, exe, 1); !did || err != nil || read(t, path) != v1 {
+		t.Fatalf("OpenCode 2's under OpenCode 1: did=%v err=%v\n%s", did, err, read(t, path))
 	}
 
 	for name, text := range map[string]string{
@@ -162,9 +183,46 @@ func TestRefreshOpenCode(t *testing.T) {
 		"with no mur in it": openCodeMarker + " (Murmur).\nexport default {};\n",
 	} {
 		write(t, path, text)
-		if did, err := refreshOpenCodeAt(dir, exe); did || err != nil || read(t, path) != text {
+		if did, err := refreshOpenCodeAt(dir, exe, 0); did || err != nil || read(t, path) != text {
 			t.Errorf("%s: did=%v err=%v", name, did, err)
 		}
+	}
+}
+
+// TestRefreshOpenCodeAsksItsClient: the refresh as the MCP server starts asks the OpenCode that
+// started it for its version, so OpenCode 1's plugin left from before an upgrade becomes OpenCode
+// 2's, and one whose client isn't known keeps its own.
+func TestRefreshOpenCodeAsksItsClient(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", config)
+	dir := filepath.Join(config, "opencode")
+	path := openCodePluginPath(dir)
+	client := filepath.Join(t.TempDir(), exeName("opencode"))
+	var asked []string
+	e := Env{Run: func(_ context.Context, name string, args ...string) (string, error) {
+		asked = append(asked, name+" "+strings.Join(args, " "))
+		return "opencode v2.3.0\n", nil
+	}}
+	old := strings.Replace(openCode1Plugin(exe), `"busy"`, `"retry"`, 1)
+
+	write(t, path, old)
+	if did, err := e.refreshOpenCode(context.Background(), ""); !did || err != nil || read(t, path) != openCode1Plugin(exe) {
+		t.Fatalf("with no client: did=%v err=%v\n%s", did, err, read(t, path))
+	}
+	if len(asked) != 0 {
+		t.Errorf("with no client, ran %q", asked)
+	}
+
+	write(t, path, old)
+	if did, err := e.refreshOpenCode(context.Background(), client); !did || err != nil || read(t, path) != openCodePlugin(exe) {
+		t.Fatalf("under OpenCode 2.3.0: did=%v err=%v\n%s", did, err, read(t, path))
+	}
+	if want := client + " --version"; len(asked) != 1 || asked[0] != want {
+		t.Errorf("ran %q, want %q", asked, want)
 	}
 }
 

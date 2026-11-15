@@ -2,6 +2,7 @@ package join
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -55,8 +56,11 @@ import (
 // other: 1.19.5 calls a default export's server(input), and also runs the setup of a file that has
 // both, and 2.3.0 refuses a file without setup or effect (packages/opencode/src/plugin/shared.ts
 // at v1.19.5, packages/core/src/plugin/module.ts at v2.3.0). Join writes the one `opencode
-// --version` names (opencode.go), at the same path. Read in 1.19.5's source and seen with it,
-// 2026-11-15, against a scratch config (the PR that added this says what was run):
+// --version` names (opencode.go), at the same path, and the refresh as Murmur's server starts
+// rewrites it for the OpenCode that started the server, so an upgrade from 1 to 2 (or both
+// installed, sharing one config) moves the file to the version that loads it. Read in 1.19.5's
+// source and seen with it, 2026-11-15, against a scratch config (the PR that added this says what
+// was run):
 //
 //   - OpenCode 1 names no session in a call to an MCP server (_meta has only a progress token), so
 //     the one server process in a directory is one session to Murmur, as it was before the plugin.
@@ -251,17 +255,24 @@ export default {
 };
 `
 
-// openCode1Line is in OpenCode 1's plugin and not in OpenCode 2's: a refresh keeps each to its own.
-const openCode1Line = "// This one is for OpenCode 1."
+// openCode1Line is a line of OpenCode 1's plugin and not of OpenCode 2's. Where the refresh can't
+// learn the version of the OpenCode that started the server, it keeps a file with this line as
+// OpenCode 1's. Never reword it: an older file would then be refreshed with OpenCode 2's plugin,
+// which OpenCode 1 refuses.
+const openCode1Line = "// For OpenCode 1."
+
+// openCode1Re finds openCode1Line as a line of its own.
+var openCode1Re = regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(openCode1Line) + `\r?$`)
 
 // openCode1Template is OpenCode 1's plugin, with its names left for package brand to fill in. Its
 // default export is {id, server}, server(input) giving OpenCode 1's hooks; input.client is
 // OpenCode's own SDK client for this server.
 const openCode1Template = `// Written by ` + "`{{command}} join`" + ` ({{product}}, https://github.com/a-Fig/murmur). ` + "`{{command}} join`" + ` writes it again when {{command}} moves,
 // and {{command}} when it is updated, so edits here are lost; take this first line out to keep yours.
-// This one is for OpenCode 1. It brings an OpenCode session its {{product}} messages: a notice after
-// a tool call while it works, what it hasn't read when its turn ends, and a turn when it is idle,
-// through a socket it opens. Delete this file to take it out of OpenCode.
+` + openCode1Line + `
+// It brings an OpenCode session its {{product}} messages: a notice after a tool call while it works,
+// what it hasn't read when its turn ends, and a turn when it is idle, through a socket it opens.
+// Delete this file to take it out of OpenCode.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -562,9 +573,16 @@ func writeOpenCodePlugin(dir, want string) (wrote bool, err error) {
 // starts: an update replaces the binary and doesn't run join again, so a plugin from an older one
 // would stay as it was (as RefreshPi does for Pi's extension, #205). It rewrites only a plugin
 // join wrote, that runs this very binary, and whose text is another's, with this binary's plugin
-// for the same version of OpenCode. OpenCode loads plugins again when the folder changes. It says
-// whether it rewrote it.
-func RefreshOpenCode() (bool, error) {
+// for the version of client, the OpenCode program that started the server. That moves the file
+// after an upgrade from OpenCode 1 to 2, or for one of both installed with one config folder,
+// where join asked the other. Where client is "" or its version can't be learned, the file keeps
+// its own version. OpenCode 2 loads plugins again when the folder changes, OpenCode 1 at its next
+// start. It says whether it rewrote it.
+func RefreshOpenCode(ctx context.Context, client string) (bool, error) {
+	return Env{Run: runProgram}.refreshOpenCode(ctx, client)
+}
+
+func (e Env) refreshOpenCode(ctx context.Context, client string) (bool, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return false, err
@@ -577,10 +595,16 @@ func RefreshOpenCode() (bool, error) {
 	if config == "" {
 		config = filepath.Join(home, ".config")
 	}
-	return refreshOpenCodeAt(filepath.Join(config, "opencode"), exe)
+	major := 0
+	if client != "" {
+		major = e.openCodeMajorFor(ctx, agentHome{Bin: client})
+	}
+	return refreshOpenCodeAt(filepath.Join(config, "opencode"), exe, major)
 }
 
-func refreshOpenCodeAt(dir, exe string) (bool, error) {
+// refreshOpenCodeAt is RefreshOpenCode for OpenCode's config directory dir, the mur at exe, and
+// OpenCode's major version, 0 where it isn't known.
+func refreshOpenCodeAt(dir, exe string, major int) (bool, error) {
 	path := openCodePluginPath(dir)
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -596,7 +620,7 @@ func refreshOpenCodeAt(dir, exe string) (bool, error) {
 		return false, nil
 	}
 	want := openCodePlugin(named)
-	if strings.Contains(text, openCode1Line) {
+	if major == 1 || (major == 0 && openCode1Re.MatchString(text)) {
 		want = openCode1Plugin(named)
 	}
 	if text == want {

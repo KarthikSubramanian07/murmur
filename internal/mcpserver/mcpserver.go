@@ -64,12 +64,15 @@ type Options struct {
 // Run serves MCP on stdin and stdout until the client disconnects.
 func Run(ctx context.Context, opt Options) error {
 	if opt.Agent == "opencode" {
-		// As Pi's extension below: per user, and older after an update (#431).
-		if did, err := join.RefreshOpenCode(); err != nil {
-			fmt.Fprintf(os.Stderr, brand.Command+" mcp: couldn't update its OpenCode plugin: %v\n", err)
-		} else if did {
-			fmt.Fprintf(os.Stderr, brand.Command+" mcp: updated its OpenCode plugin, which OpenCode loads again\n")
-		}
+		// As Pi's extension below: per user, and older after an update (#431). In the background:
+		// asking OpenCode its version takes a second or more, and the server answers meanwhile.
+		go func() {
+			if did, err := join.RefreshOpenCode(ctx, openCodeClient()); err != nil {
+				fmt.Fprintf(os.Stderr, brand.Command+" mcp: couldn't update its OpenCode plugin: %v\n", err)
+			} else if did {
+				fmt.Fprintf(os.Stderr, brand.Command+" mcp: updated its OpenCode plugin, which OpenCode loads again (OpenCode 1 at its next start)\n")
+			}
+		}()
 	}
 	if opt.Agent == "pi" {
 		// Pi's extension is per user, like this server, and older after an update (#205).
@@ -426,6 +429,17 @@ func programNamed(exe, name string) string {
 		return ""
 	}
 	return exe
+}
+
+// openCodeClient is the OpenCode program that started this server, whose version says which of
+// Murmur's plugins it loads: OpenCode 2's npm package installs it as opencode2 too. "" for a
+// server started by anything else.
+func openCodeClient() string {
+	_, exe := parentProgram()
+	if c := programNamed(exe, "opencode"); c != "" {
+		return c
+	}
+	return programNamed(exe, "opencode2")
 }
 
 // openCodeService is the OpenCode that started this server, if it is the background server every
