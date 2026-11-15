@@ -851,7 +851,8 @@ func (d *Daemon) logEventWaitLocked(c bus.Commit, dev, ref string) (bus.Event, b
 
 // tagsKnownLocked says whether this device has a name or tags for any session: a tags event applies
 // only to a session it has (see tagKeyLocked), so with neither, as on a new clone, nothing in a
-// log's history is for it. Caller holds mu.
+// log's history is for it but a change for a session still reconnecting (holdForLocked), which a
+// skip with nothing else to read the log for lets go. Caller holds mu.
 func (d *Daemon) tagsKnownLocked() bool {
 	return len(d.st.SessionNames) > 0 || len(d.st.Tags) > 0
 }
@@ -1129,13 +1130,14 @@ func (d *Daemon) addInboxLocked(id string, e bus.Event) {
 }
 
 // catchUpLocked gives a session that reconnects after a restart what arrived for it while the
-// daemon was down, less what a session it has muted sent, as queueLocked leaves that out (#482).
-// Caller holds mu.
+// daemon was down, less what a session it has muted sent, as queueLocked leaves that out (#482),
+// and the changes to its tags that waited for it (holdForLocked). Caller holds mu.
 func (d *Daemon) catchUpLocked(id string) {
 	if time.Since(d.started) > catchUpWindow || d.caughtUp[id] {
 		return
 	}
 	d.caughtUp[id] = true
+	d.applyHeldLocked(id) // first: a group's message waiting for it goes by the tags they give it
 	for _, e := range d.pending {
 		if d.addressedLocked(e, id) && !d.offMeshLocked(id) && !d.mutedHereLocked(id, e) {
 			d.addInboxLocked(id, e)
@@ -1685,20 +1687,18 @@ func (d *Daemon) liveNamesLocked() map[string]bool {
 	return live
 }
 
-// pruneInboxes drops the inboxes of sessions stopped longer than StoppedInbox, and those left by
-// sessions that didn't come back after a restart.
+// pruneInboxes drops the inboxes of sessions stopped longer than StoppedInbox, with what is kept
+// for them, and those left by sessions that didn't come back after a restart.
 func (d *Daemon) pruneInboxes() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if time.Since(d.started) > catchUpWindow {
 		d.pending = nil
+		d.dropHeldLocked()
 	}
 	for id, at := range d.st.Stopped {
 		if time.Since(at) > d.opt.StoppedInbox {
-			delete(d.st.Stopped, id)
-			delete(d.st.Inbox, id)
-			delete(d.st.Commits, id)
-			delete(d.st.T3Routes, id)
+			d.dropStoppedLocked(id)
 			d.saveLocked()
 		}
 	}
@@ -1731,6 +1731,43 @@ func (d *Daemon) pruneInboxes() {
 			d.saveLocked()
 		}
 	}
+	// The tags and mutes it kept by its ID, if its name never landed, go with its inbox as well.
+	gone := func(key string) {
+		id, pending := strings.CutPrefix(key, tagKeyOf("", ""))
+		if _, stopped := d.st.Stopped[id]; pending && d.sessions[id] == nil && !stopped {
+			d.dropPendingKeyLocked(id)
+			d.saveLocked()
+		}
+	}
+	for key := range d.st.Tags {
+		gone(key)
+	}
+	for key := range d.st.Mutes {
+		gone(key)
+	}
+}
+
+// dropStoppedLocked lets go of what is kept for session id, stopped past StoppedInbox: its inbox,
+// the commits credited to it and its thread, and the tags and mutes it kept by its ID if its name
+// never landed. The stop runs out in pruneInboxes, or in newSessionLocked if the session comes back
+// first; both come here, so what it gets back doesn't depend on which ran first. Caller holds mu.
+func (d *Daemon) dropStoppedLocked(id string) {
+	delete(d.st.Stopped, id)
+	delete(d.st.Inbox, id)
+	delete(d.st.Commits, id)
+	delete(d.st.T3Routes, id)
+	d.dropPendingKeyLocked(id)
+}
+
+// dropPendingKeyLocked drops the tags and mutes session id kept by its ID while its name was
+// pending (tagKeyLocked), once it has no inbox to come back to: nothing else would ever drop them.
+// A name's are kept for good. Caller holds mu.
+func (d *Daemon) dropPendingKeyLocked(id string) {
+	if d.sessions[id] != nil {
+		return
+	}
+	delete(d.st.Tags, tagKeyOf("", id))
+	delete(d.st.Mutes, tagKeyOf("", id))
 }
 
 func (d *Daemon) sortedSessionsLocked() []*session {

@@ -349,6 +349,7 @@ type Daemon struct {
 	lastActive time.Time
 	mode       syncMode
 	pending    []bus.Event     // what arrived while down, for sessions that reconnect
+	heldTags   []bus.Event     // changes to tags read then for sessions not known yet (holdForLocked)
 	caughtUp   map[string]bool // sessions already given pending
 	// backlog lists the mesh refs the first listing showed that haven't been read yet: they are
 	// read under the mode the daemon started in, and the mode turns normal once all have been.
