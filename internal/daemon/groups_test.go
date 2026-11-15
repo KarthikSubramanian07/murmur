@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/tags"
 	"github.com/a-Fig/murmur/internal/view"
@@ -338,4 +339,65 @@ func TestLookupListsTheGroupMessagesASessionGot(t *testing.T) {
 		t.Errorf("lookup's text doesn't show alice's message to the group:\n%s", out)
 	}
 	t.Logf("lookup of bob, from alice's device:\n%s", out)
+}
+
+// A member on a device whose Murmur is from before groups (#445): its presence, encrypted as every
+// presence has been since the bus was, says nothing of groups, and its daemon passes over what is
+// sent to one. The sender of a group message is told that member won't get it, and an add of a
+// session there is refused, both by the presence alone.
+func TestAMemberOnADeviceFromBeforeGroups(t *testing.T) {
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	a.session("aaaaaa", "")
+	a.tagSelf("aaaaaa", []string{"group:ui"}, nil)
+	eventually(t, "a's presence on the remote", func() bool {
+		return gitOK(remote, "rev-parse", "--verify", "-q", "refs/murmur/presence/"+a.self()) != "" &&
+			presenceOn(t, remote, a.self()).BoxKey != ""
+	})
+	toA := map[string]string{a.self(): presenceOn(t, remote, a.self()).BoxKey}
+
+	const old = "oldhost-0002"
+	member, other := old+"/oooooo", old+"/pppppp"
+	sign, box := bus.NewSignKey(), bus.NewBoxKey()
+	pushOld := func() {
+		t.Helper()
+		now := time.Now().UTC()
+		pres := bus.Presence{V: bus.Version, Device: old, Host: "oldhost", At: now, BoxKey: bus.BoxPublic(box),
+			Sessions: []bus.SessionInfo{
+				{ID: "oooooo", Agent: "claude", Started: now, Tags: []tags.Tag{{Name: "group:ui", Src: tags.SrcSession}}},
+				{ID: "pppppp", Agent: "claude", Started: now},
+			}} // and no Groups, as that daemon writes it
+		enc, err := bus.EncryptPresence(pres, toA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ref := "refs/murmur/presence/" + old
+		msg, err := bus.EncodeSealed(enc, bus.PresenceSubject, sign, old, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pushMessage(t, remote, ref, msg)
+	}
+	// Pushed again before each check: one presence is fresh for three seconds here, and the older
+	// device's sessions count only while it is.
+	eventually(t, "a sees the older device's sessions", func() bool { pushOld(); return a.seesSession(member) && a.seesSession(other) })
+
+	var note string
+	eventually(t, "the sender told the older device's member won't get it", func() bool {
+		pushOld()
+		note = a.send("aaaaaa", "group:ui", "to the group", "").Note
+		return strings.Contains(note, member+" won't get it") && strings.Contains(note, "from before groups")
+	})
+	t.Logf("the sender's note: %s", note)
+
+	var r proto.Response
+	eventually(t, "an add of the older device's session refused for being from before groups", func() bool {
+		pushOld()
+		r = a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"group:ui"}, For: []string{other}})
+		return strings.Contains(r.Error, "from before groups")
+	})
+	if r.OK || !strings.HasPrefix(r.Error, "nobody added: "+other) {
+		t.Errorf("the add of %s gave %+v; want it refused, naming the session", other, r)
+	}
+	t.Logf("the refused add: %s", r.Error)
 }
