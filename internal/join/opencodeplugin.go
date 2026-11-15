@@ -355,12 +355,21 @@ export default {
       } catch {}
     };
 
+    // gone takes the socket's file away, also as the process exits without disposing of its plugins.
+    // One killed by a signal (opencode serve on SIGTERM) leaves the file, which no other run's
+    // random name takes.
+    const gone = () => {
+      try {
+        if (!windows) rmSync(sock, { force: true });
+      } catch {}
+    };
     const close = () => {
       try {
         if (server) server.close();
         for (const c of conns) c.destroy();
-        if (server && !windows) rmSync(sock, { force: true });
+        if (server) gone();
       } catch {}
+      process.off("exit", gone);
       conns = new Set();
       server = null;
     };
@@ -401,8 +410,13 @@ export default {
             if (!windows) chmodSync(sock, 0o600);
           } catch {}
           srv.unref();
-          if (stopped) srv.close();
-          else server = srv;
+          if (stopped) {
+            srv.close();
+            gone();
+          } else {
+            server = srv;
+            process.once("exit", gone);
+          }
           done();
         });
       });

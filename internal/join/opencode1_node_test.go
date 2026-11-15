@@ -86,6 +86,12 @@ await h.dispose();
 await after("ses_a");
 console.log("calls after dispose:", calls().length);
 console.log("socket after dispose:", await send(env.MURMUR_OPENCODE_MESSAGING_TOKEN, "too late"), JSON.stringify(prompts));
+// A server stopped by a signal exits without disposing of its plugins.
+const h2 = await p.server({ client, directory: repo, worktree: repo, project: {}, serverUrl: new URL("http://localhost:4096") });
+const cfg2 = { mcp: { murmur: { type: "local", command: ["mur"] } } };
+await h2.config(cfg2);
+await h2["tool.execute.after"]({ tool: "read", sessionID: "ses_z", callID: "c", args: {} }, { title: "", output: "x", metadata: {} });
+console.log("second socket:", cfg2.mcp.murmur.environment.MURMUR_OPENCODE_MESSAGING_SOCKET);
 process.exit(0);
 `
 
@@ -113,7 +119,8 @@ process.stdin.on("end", () => {
 // in the same way, and one that came after an error is told as interrupted and says nothing; a
 // session another session started, seen made or asked about, runs no hook; a turn on the socket
 // goes to the session last at work, shown, and one with a wrong token goes nowhere; and once
-// OpenCode disposes of it, nothing more runs and the socket is gone.
+// OpenCode disposes of it, nothing more runs and the socket is gone, as it is when the process
+// exits without disposing of it.
 func TestOpenCode1PluginRunsTheHook(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -164,5 +171,12 @@ func TestOpenCode1PluginRunsTheHook(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("the harness didn't say %q:\n%s", want, got)
 		}
+	}
+	_, second, ok := strings.Cut(got, "second socket: ")
+	if second = strings.TrimSpace(strings.SplitN(second, "\n", 2)[0]); !ok || second == "" {
+		t.Fatalf("no second socket:\n%s", got)
+	}
+	if _, err := os.Stat(second); runtime.GOOS != "windows" && !os.IsNotExist(err) {
+		t.Errorf("the socket's file outlived its process: %s (%v)", second, err)
 	}
 }
