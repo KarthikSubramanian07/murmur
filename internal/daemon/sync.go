@@ -1424,8 +1424,8 @@ const maxUnwritten = 100
 // is tried again after the next presence that is pushed, in this run or the next (#434). Nothing
 // else would put it on the bus: later events build on the log's last tip that landed. Every
 // device's Recent view shows it, and its notes the line. A write reported as failed may have
-// landed all the same (see Repo.Push), so a start can be on the log twice; readers keep one by
-// its ID (recordActLocked).
+// landed all the same (see Repo.Push), so a start or stop can be on the log twice: the Recent view
+// keeps one by its ID (recordActLocked), and the notes show the line twice.
 func (d *Daemon) appendSoon(e bus.Event) {
 	d.mu.Lock()
 	d.st.Unwritten = append(d.st.Unwritten, e)
@@ -1463,6 +1463,9 @@ func (d *Daemon) writeUnwritten() {
 			}
 			e := d.st.Unwritten[0]
 			d.mu.Unlock()
+			// Readers take only their own version (Event.Valid), and one held from a run before an
+			// update may carry the old one.
+			e.V = bus.Version
 			ctx, cancel := context.WithTimeout(d.bgCtx, time.Minute)
 			err := d.awaitPresence(ctx)
 			if err == nil {

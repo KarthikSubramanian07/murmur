@@ -31,8 +31,9 @@ daemon is started through WMI so it outlives that session (2026-10-29).
   its log notes do, though, and later events build on the log's last tip that landed, so nothing
   else would carry a lost one. They wait in the state file (`unwritten`, at most 100) and are written
   again, in order, after the next presence that is pushed, in this run or the next. A write that
-  failed may have landed all the same, so a start can be on the log twice; readers keep one by its
-  ID.
+  failed may have landed all the same, so a start or stop can be on the log twice: the Recent view
+  keeps one by its ID, and the log notes show the line twice. One written late shows at its own
+  time, older than what came meanwhile.
 - **A stopped session's inbox is kept 24 hours**, across daemon restarts, and given back if the
   session returns. Before 2026-10-30 (#30) a laptop shut overnight lost every message sent to its
   stopped sessions. A daemon back after more than 10 minutes skips what it missed, except for

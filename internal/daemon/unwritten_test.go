@@ -16,21 +16,22 @@ import (
 // run or the next: the Recent view on another device shows it, and nothing else would put it on
 // the bus.
 
-// unwritten is what d's state file holds back to be written to its log.
-func (d *device) unwritten() []bus.Event {
+// unwritten is what d's state file holds back to be written to its log. ok is false while the file
+// is being replaced, when it can't be read.
+func (d *device) unwritten() (held []bus.Event, ok bool) {
 	d.t.Helper()
 	var st struct {
 		Unwritten []bus.Event `json:"unwritten"`
 	}
 	b, err := os.ReadFile(filepath.Join(d.gitDir, brand.StateDir, "state.json"))
 	if err != nil || json.Unmarshal(b, &st) != nil {
-		return nil // being replaced: asked again
+		return nil, false
 	}
-	return st.Unwritten
+	return st.Unwritten, true
 }
 
 // startFailed starts session id on d while d can't push, and waits until its start has failed to
-// be written.
+// be written and is held back in the state file.
 func startFailed(t *testing.T, d *device, remote, id string) string {
 	t.Helper()
 	d.cantPush(remote, true)
@@ -38,9 +39,10 @@ func startFailed(t *testing.T, d *device, remote, id string) string {
 	eventually(t, "the start's write to fail", func() bool {
 		return strings.Contains(d.tail.String(), "writing "+bus.SessionStarted)
 	})
-	if got := d.unwritten(); len(got) != 1 || got[0].Type != bus.SessionStarted || got[0].From != addr {
-		t.Fatalf("held back to be written: %+v, want the start of %s", got, addr)
-	}
+	eventually(t, "the start held back in the state file", func() bool {
+		held, ok := d.unwritten()
+		return ok && len(held) == 1 && held[0].Type == bus.SessionStarted && held[0].From == addr
+	})
 	return addr
 }
 
@@ -53,7 +55,10 @@ func startShown(t *testing.T, d, on *device, addr string) {
 		acts, _ := pg.activity("")
 		return hasAct(acts, web.ActStarted, addr, nil)
 	})
-	eventually(t, "nothing left to write", func() bool { return len(on.unwritten()) == 0 })
+	eventually(t, "nothing left to write", func() bool {
+		held, ok := on.unwritten()
+		return ok && len(held) == 0
+	})
 }
 
 func TestAStartThatFailedToPushIsWrittenOnceItCanBe(t *testing.T) {
