@@ -574,8 +574,12 @@ type session struct {
 	// the unread count the hook last showed it. continuedAt is when a Stop last kept its turn going,
 	// zero once another hook of the session showed the turn went on (see continueTurnLocked), and
 	// continuations how many times in a row it did, which Claude Code caps (stopBlockCap).
+	// endedAt is when its turn last ended (Stop, or T3's database), handedAt when a message last
+	// went to its T3 thread as a turn, and unseenAt when a read after endedAt first found a run of
+	// the thread going: a turn the hook hasn't seen start yet (see runUnseen, #607).
 	hooked, stopSeen, stopContinues bool
 	busyAt, turnStart, continuedAt  time.Time
+	endedAt, handedAt, unseenAt     time.Time
 	toldUnread, continuations       int
 	// hookSeen says a hook of the session has reported, a subagent's included; toolCalled is when
 	// the session first called one of Murmur's tools (see hookOffLocked, #225). hookNative is the

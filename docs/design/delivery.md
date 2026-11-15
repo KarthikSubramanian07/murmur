@@ -109,6 +109,32 @@ the turn took, so nothing waits for good.
   last call was dropped in review (Sol, 2026-11-08): a hook from a tool call the interrupt cut short
   would have left the session busy for good. Outside T3 nothing ends an interrupted turn until the
   next prompt and its `Stop`, so a message waits for the user to come back.
+- **A turn in T3 starts before the hook sees it** (#607). T3 marks a run queued or running when it
+  takes a prompt, and Claude Code fires `UserPromptSubmit` only when it starts the turn. Until
+  2026-11-15 the session looked idle in between, and a message was handed to T3, which queued it
+  behind the run as a turn of its own: what Tyler saw. T3's database on his laptop showed about 20
+  such handoffs from 2026-11-11 to 11-15, all to Claude threads. In all but two the run had been
+  going 2 s to 14 min and Claude's turn started 1 s to 3 min after the handoff; four of the runs
+  were a message the daemon had just handed over itself. So a session whose hook has no turn going
+  is at work when a read of T3's database that began after its turn ended finds a run going, and,
+  until a read that began after it, when the daemon has just handed a message to its thread (at
+  most a minute, so a read that keeps failing doesn't hold its messages for good). The daemon reads
+  the thread again just before each handoff, as the reads every 5 s would let a prompt T3 took
+  since the last one through. The same read catches a turn a user's own `Stop` hook kept going
+  after Murmur's saw `Stop`, up to 5 s late.
+  - A read from before the turn's end, or less than a second after it, doesn't count: it may have
+    seen the run `Stop` ended, which T3 closed within 0.4 s of the turn's end in 99% of 1,212
+    Claude runs (2026-11-11 to 11-15).
+  - The run is dated from when T3 took the prompt, as its database says. What came after counts as
+    come during the turn, and is held for its end however long it waited: Claude's turn once began
+    27 minutes after T3 took the prompt (2026-11-13).
+  - A read that finds no run, after the run was seen or a message handed over, ends it as `Stop`
+    would: the run was cancelled, failed, or was the one `Stop` ended.
+  - A run no hook has shown going for 15 minutes no longer counts, and messages go to T3 as before:
+    T3 can leave a run queued for good (one from 2026-11-03 was still queued on 11-15), and no hook
+    would ever tell the session of them.
+  - A run counts only while the thread's newest run is queued or running. One T3 left queued
+    behind later runs would otherwise start the 15 minutes again at every turn's end.
 - **Subject or whole message** (#204), the page's busy setting, per device or session (Tyler,
   2026-11-08). "Subject", the default, leaves the agent's focus to the agent, at the cost that it
   may pass over a line it needed; "Whole message" puts each message in front of it mid-task at full
