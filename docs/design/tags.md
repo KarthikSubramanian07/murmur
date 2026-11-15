@@ -84,12 +84,12 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   case: a session a person took out of a group, which then dropped that tag itself, keeps the
   person's mark but no longer holds the tag, so an add of that group with others counts it, where
   the device would leave it out and might have room for the rest. It also refuses an add to a
-  device whose clock runs over an hour ahead, as that device would take the add as too old. It
-  measures the earlier of the presence's own time and its commit's (git's, from the writer's clock
-  as it wrote) against when the presence was read here: the presence time alone can be pinned ahead
-  after a clock went back, and the gap can only understate the difference. Publishing a person's
-  marks in presence would let the adder see more, but it would put the names of tags a person
-  removed back on the bus, and change its format.
+  device whose clock it can tell runs over an hour ahead, as that device would take the add as too
+  old. It measures the earlier of the presence's own time and its commit's (git's, from the
+  writer's clock as it wrote) against when the presence was read here: the presence time alone can
+  be pinned ahead after a clock went back, and the gap can only understate the difference.
+  Publishing a person's marks in presence would let the adder see more, but it would put the names
+  of tags a person removed back on the bus, and change its format.
 - **Each receiving device decides who is in.** A group message goes on the bus addressed to the tag,
   and each daemon gives it to those of its sessions that have the tag when it reads it. A device is
   the only authority on its sessions' tags, so no sender's view of the members can be out of date,
