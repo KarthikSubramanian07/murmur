@@ -2,10 +2,12 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -111,5 +113,47 @@ func TestCloseEndsLookups(t *testing.T) {
 	case b := <-started:
 		t.Errorf("a lookup for %s started after Close", b)
 	default:
+	}
+}
+
+// Branches come from the bus, and each lookup spends the viewer's GitHub quota (#43). A presence
+// listing a thousand has only the first maxPRBranches looked up, and a thousand more, as from
+// branches that change on every poll, start no more lookups until prTTL has passed.
+func TestPRLookupsAreCapped(t *testing.T) {
+	var mu sync.Mutex
+	asked := map[string]int{}
+	s := NewWithPRs(newFake(), testToken, func(ctx context.Context, branch string) (*PR, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		asked[branch]++
+		return &PR{Number: 7, URL: "https://github.com/o/r/pull/7"}, nil
+	})
+	defer s.Close()
+	branches := func(prefix string) []string {
+		var out []string
+		for i := range 1000 {
+			out = append(out, fmt.Sprintf("%s-%d", prefix, i))
+		}
+		return out
+	}
+	first := branches("feat")
+	s.prs.get(first)
+	s.prs.wg.Wait() // no get runs meanwhile, so nothing is added to it while it waits
+	if len(asked) != maxPRBranches {
+		t.Errorf("%d branches were looked up, want %d", len(asked), maxPRBranches)
+	}
+	for _, b := range first[:maxPRBranches] {
+		if asked[b] != 1 {
+			t.Errorf("%s, among the first %d, was looked up %d times, want 1", b, maxPRBranches, asked[b])
+		}
+	}
+	if got := s.prs.get(first); len(got) != maxPRBranches {
+		t.Errorf("%d branches show a PR, want the %d looked up", len(got), maxPRBranches)
+	}
+
+	s.prs.get(branches("other"))
+	s.prs.wg.Wait()
+	if len(asked) != maxPRBranches {
+		t.Errorf("new branches within prTTL started %d more lookups, want none", len(asked)-maxPRBranches)
 	}
 }

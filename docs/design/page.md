@@ -59,6 +59,11 @@ from it is in [a person on the page](people.md).
   green when active in the last five minutes, yellow idle, red do not disturb (the tag, or wake-ups
   set to Never), and grey when its device is unreachable. The only other colors are the accent and a
   pull request's state.
+  - *Pull requests* are looked up by branch with `gh`, in the background, each answer kept a minute
+    (`internal/web/pr.go`). Branches come from the bus and every lookup spends the viewer's GitHub
+    quota, so since 2026-11-15 (#43) only the first 30 branches are looked up, this device's
+    first, and at most 30 lookups start in a minute however often the branches change: about a
+    third of the 5,000 an hour GitHub gives a user, at worst. A branch past the 30 shows no PR.
 - **Quiet sessions fold** under their device. A settled T3 thread (#189) is out of presence but
   still in the messages. Sessions in Claude Code, Codex, Pi or OpenCode never settle, and one left
   open in a forgotten terminal stays in presence for good, so a session idle for a day, or one a

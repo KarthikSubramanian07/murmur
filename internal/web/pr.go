@@ -56,6 +56,10 @@ const (
 	prTimeout  = 15 * time.Second // one lookup, however slow GitHub is
 	prParallel = 4                // lookups at once, so ten new branches don't start ten gh's
 	maxBranch  = 255              // longer than git allows; such a branch isn't looked up
+	// maxPRBranches is how many branches are looked up, this device's first, and how many lookups
+	// start in each prTTL. Branches come from the bus, and each lookup spends the viewer's GitHub
+	// quota, so a presence listing thousands, or new ones on every write, can't spend it all (#43).
+	maxPRBranches = 30
 )
 
 // prCache answers PR state from memory and refreshes it in the background, so a page poll never
@@ -73,6 +77,8 @@ type prCache struct {
 	mu      sync.Mutex
 	entries map[string]*prEntry
 	closed  bool
+	window  time.Time // when the current prTTL of lookups began
+	started int       // lookups started in it
 }
 
 type prEntry struct {
@@ -97,16 +103,22 @@ func (c *prCache) close() {
 }
 
 // get returns what is known of each branch's PR, leaving out branches with none or not yet
-// looked up, and starts a lookup for each branch whose answer is missing or old.
+// looked up, and starts a lookup for each branch whose answer is missing or old. Only the first
+// maxPRBranches branches are looked up, in the order given; the rest show none.
 func (c *prCache) get(branches []string) map[string]PR {
 	now := time.Now()
 	out := map[string]PR{}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	taken := map[string]bool{}
 	for _, b := range branches {
-		if !lookupable(b) {
+		if !lookupable(b) || taken[b] {
 			continue
 		}
+		if len(taken) == maxPRBranches {
+			break
+		}
+		taken[b] = true
 		e := c.entries[b]
 		if e == nil {
 			e = &prEntry{}
@@ -116,7 +128,7 @@ func (c *prCache) get(branches []string) map[string]PR {
 		if e.pr != nil {
 			out[b] = *e.pr
 		}
-		if !c.closed && !e.inflight && now.Sub(e.fetched) >= prTTL {
+		if !c.closed && !e.inflight && now.Sub(e.fetched) >= prTTL && c.mayStartLocked(now) {
 			e.inflight = true
 			c.wg.Add(1) // under mu, which close takes before it waits, so never after the wait began
 			go c.refresh(b)
@@ -128,6 +140,20 @@ func (c *prCache) get(branches []string) map[string]PR {
 		}
 	}
 	return out
+}
+
+// mayStartLocked says whether another lookup may start now, and counts it if it may: at most
+// maxPRBranches in each prTTL, so branches that change on every poll run no more lookups than a
+// steady set would. One that may not is tried again at the next get. Caller holds mu.
+func (c *prCache) mayStartLocked(now time.Time) bool {
+	if now.Sub(c.window) >= prTTL {
+		c.window, c.started = now, 0
+	}
+	if c.started >= maxPRBranches {
+		return false
+	}
+	c.started++
+	return true
 }
 
 func (c *prCache) refresh(branch string) {
