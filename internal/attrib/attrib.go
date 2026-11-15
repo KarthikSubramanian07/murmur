@@ -94,10 +94,16 @@ func readHEADFile(path string) (symref, sha string, ok bool) {
 		}
 		return target, "", true
 	}
-	if (len(text) == 40 || len(text) == 64) && strings.Trim(text, "0123456789abcdef") == "" {
+	if objectID(text) {
 		return "", text, true
 	}
 	return "", "", false
+}
+
+// objectID says whether s is spelled as git writes a full object ID: 40 lowercase hex digits for
+// SHA-1, 64 for SHA-256. It says nothing of whether the object is in the clone.
+func objectID(s string) bool {
+	return (len(s) == 40 || len(s) == 64) && strings.Trim(s, "0123456789abcdef") == ""
 }
 
 // headFromFile completes a Ref from what the HEAD file said, with one for-each-ref: the tips, and
@@ -185,7 +191,7 @@ func detachedHeadsByGit(ctx context.Context, worktree string) ([]string, error) 
 	// Each worktree is a block of lines ended by a blank one; a detached one has a "detached" line
 	// after its "HEAD <sha>". -z would keep a path with a newline in it from reading as lines of
 	// its own, but needs git 2.36, and mur supports 2.31; such a path could at most add a tip,
-	// which only keeps more out.
+	// which only keeps more out, and addTips drops one that isn't an object ID.
 	var shas []string
 	var sha string
 	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
@@ -203,12 +209,16 @@ func detachedHeadsByGit(ctx context.Context, worktree string) ([]string, error) 
 
 // addTips adds detached HEADs to ref's tips, sorted, so both ways of finding them record the same
 // list, and leaving out any already there.
+//
+// It keeps only full object IDs, since each tip goes to NewCommits's git log as a revision, where
+// anything else would be read as an expression or refused. And it leaves out the all-zero ID, which
+// git before 2.44 writes into a new worktree's HEAD for a moment during `git worktree add`: it names
+// no commit. A tip can still name an object this clone lacks, which only git can tell; NewCommits
+// skips it there rather than spend a process per Head checking (#540).
 func addTips(ref *Ref, shas []string) {
 	slices.Sort(shas)
 	for _, sha := range slices.Compact(shas) {
-		// git before 2.44 writes the all-zero ID into a new worktree's HEAD for a moment during
-		// `git worktree add`. It names no commit.
-		if strings.Trim(sha, "0") == "" {
+		if !objectID(sha) || strings.Trim(sha, "0") == "" {
 			continue
 		}
 		if !slices.Contains(ref.tips, sha) {
