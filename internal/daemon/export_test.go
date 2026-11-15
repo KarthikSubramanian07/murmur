@@ -7,8 +7,8 @@ func SetMaxWholeReply(n int) func() {
 	return func() { maxWholeReply = was }
 }
 
-// Holds is holds, for a test of how a prompt is matched to a turn (#611).
-func Holds(prompt, subject string) bool { return holds(prompt, subject) }
+// IsTurn says prompt is the turn whose text is turn, as the daemon matches them (#611, #651).
+func IsTurn(prompt, turn string) bool { return isTurn(prompt, turnStart(turn)) }
 
 // CatchUpWindow is catchUpWindow, how long after the start what is read for a reconnecting session
 // is held for it.

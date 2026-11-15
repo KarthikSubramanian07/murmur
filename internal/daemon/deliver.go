@@ -631,9 +631,6 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 		return nil
 	}
 	m.Pushing = true
-	// Remembered before the handoff, not after: the turn can start, and its prompt reach the
-	// daemon, while the client's command is still returning (#611). A handoff that fails forgets it.
-	d.awaitReadLocked(id, m.Event)
 	views := d.messageViewsLocked([]*inMsg{m}, true)
 	key := d.keyOfLocked(id)
 	views[0].Introduced = key != "" && d.introduced[key][m.Event.From]
@@ -641,8 +638,12 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 		views[0].Explained = d.explainedLocked(id, m.Event.From) // recorded once it is handed over
 	}
 	views[0].GroupKnown = bus.IsGroup(m.Event.To) && d.explainedLocked(id, m.Event.To) // likewise
+	text := view.Turn(views[0])
+	// Remembered before the handoff, not after: the turn can start, and its prompt reach the
+	// daemon, while the client's command is still returning (#611). A handoff that fails forgets it.
+	d.awaitReadLocked(id, m.Event, text)
 	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, conv: d.conversationLocked(id), explainKey: d.explainKeyLocked(id), msg: m, via: via,
-		route: route, text: view.Turn(views[0])}
+		route: route, text: text}
 }
 
 // handOver passes the message to the session's client, once. It is tried a second time, after PushRetry, only
