@@ -50,14 +50,14 @@ func TestADevicesNicknameIsSeenBesideItsID(t *testing.T) {
 		t.Errorf("its own who calls it %q", got)
 	}
 	eventually(t, "a to see b's nickname", func() bool { return a.nickOf(b.self()) == "tyler" })
-	if got := view.Who(a.do(proto.Request{Op: proto.OpWho})); !strings.Contains(got, "\ntyler  "+b.self()+" (") {
+	if got := view.Who(a.do(proto.Request{Op: proto.OpWho})); !strings.Contains(got, "\n"+b.self()+", called tyler (") {
 		t.Errorf("who doesn't show the nickname beside the ID:\n%s", got)
 	}
 	l := a.do(proto.Request{Op: proto.OpLookup, Name: bob})
 	if l.Error != "" || l.Lookup.Nick != "tyler" {
 		t.Fatalf("lookup: %+v", l)
 	}
-	if got := view.Lookup(l); !strings.Contains(got, "  device tyler  "+b.self()+" (") {
+	if got := view.Lookup(l); !strings.Contains(got, "  device "+b.self()+", called tyler (") {
 		t.Errorf("lookup doesn't show the nickname:\n%s", got)
 	}
 

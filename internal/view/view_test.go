@@ -200,6 +200,35 @@ func TestWhoCollapsesAStaleDeviceToOneLine(t *testing.T) {
 	}
 }
 
+// A device's nickname comes after its ID, which is its address, and never where a session's name
+// goes: an agent took it for one and sent to it (#542).
+func TestADevicesNicknameComesAfterItsID(t *testing.T) {
+	r := proto.Response{Self: "me-0001/aaaaaa", Devices: []proto.Device{
+		{ID: "me-0001", Host: "laptop", Nick: "tyler", Self: true},
+		{ID: "live-0002", Host: "desktop", Owner: "Sam", Nick: "sam", LastSeen: time.Now(), Sessions: []proto.SessionView{sess("live-one", time.Minute, "")}},
+		{ID: "gone-0003", Host: "old", Nick: "ada", Stale: true, LastSeen: time.Now().Add(-4 * time.Hour), Sessions: []proto.SessionView{sess("ghost", 4*time.Hour, "")}},
+	}}
+	out := Who(r)
+	for _, want := range []string{
+		"\nme-0001, called tyler (laptop, this device)\n",
+		"\nlive-0002, called sam (Sam on desktop, seen ",
+		"\ngone-0003, called ada (old) STALE: ",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("who has no %q:\n%s", want, out)
+		}
+	}
+	for _, nick := range []string{"tyler", "sam", "ada"} {
+		if strings.Contains(out, "\n"+nick+" ") {
+			t.Errorf("who starts a line with the nickname %s:\n%s", nick, out)
+		}
+	}
+	l := Lookup(proto.Response{Lookup: &proto.SessionDetail{Addr: "live-0002/bbbbbb", Name: "live-one", Device: "live-0002", Nick: "sam", Host: "desktop"}})
+	if !strings.Contains(l, "\n  device live-0002, called sam (desktop)\n") {
+		t.Errorf("lookup:\n%s", l)
+	}
+}
+
 // Sessions of a stale device don't use up the limit: it counts those who lists.
 func TestWhoCountsOnlySessionsItCouldList(t *testing.T) {
 	var stale []proto.SessionView
