@@ -284,6 +284,12 @@ type Route struct {
 	// client. At most one of the two is set.
 	CodexCLI    string `json:"codexCli,omitempty"`
 	OpenCodeCLI string `json:"openCodeCli,omitempty"`
+	// OpenCodeState is where OpenCodeCLI's command looks for the shared server (XDG_STATE_HOME):
+	// the state directory the session's server found that server registered in, ~/.local/state
+	// where it has no XDG_STATE_HOME. As with CodexHome, one daemon serves every client, and its own
+	// XDG_STATE_HOME is that of whichever session started it (#486). Only a server from before #486
+	// leaves it empty, and the command then has the daemon's.
+	OpenCodeState string `json:"openCodeState,omitempty"`
 	// Child says the client started the conversation Native names for another of its own: Codex
 	// marks a tool call of a thread it spawned as a subagent's (thread_source "subagent" in
 	// x-codex-turn-metadata), and ParentNative is the thread that spawned it, as the call names
@@ -435,6 +441,9 @@ type SessionDetail struct {
 	// or says that thread isn't on the mesh here.
 	Offline    bool   `json:"offline,omitempty"`
 	DelegateOf string `json:"delegateOf,omitempty"`
+	// NoWake says a message from an agent wouldn't go into the session as a turn now, by its
+	// device's wake setting (#545): bus.NoWakeOff or bus.NoWakeIdle, "" if it would or isn't known.
+	NoWake string `json:"noWake,omitempty"`
 
 	// Local says the session is on the daemon's own device, which is what gives it the rest.
 	Local         bool         `json:"local,omitempty"`

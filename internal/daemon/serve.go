@@ -865,6 +865,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		note = d.groupNoteLocked(to, from)
 		d.mu.Unlock()
 	} else if to != "*" {
+		wake := d.wakeSnapshot() // setMu is taken alone, before mu
 		d.mu.Lock()
 		at := d.queuedAtLocked(to)
 		dev, sess := bus.SplitAddr(at)
@@ -873,6 +874,10 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		offline := d.offlineLocked(dev, sess)
 		dnd := d.peerDNDLocked(dev, sess)
 		hookOff, agent := d.peerHookOffLocked(dev, sess)
+		noWake := d.peerNoWakeLocked(dev, sess, wake)
+		if noWake == bus.NoWakeIdle && bus.IsPerson(from) {
+			noWake = "" // a person's message wakes a session however long it has been idle (#242)
+		}
 		why := ""
 		if offline {
 			why = d.offlineWhyLocked(dev, sess, nameOr(toName, at))
@@ -889,6 +894,8 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 			return refuse(proto.RefusedRecipient, "not sent: "+why)
 		case known && dnd:
 			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox until it reads its inbox or turns do not disturb off, with no notice or turn."
+		case known && noWake != "":
+			note = noWakeNote(nameOr(toName, at), noWake, hookOff)
 		case known && hookOff:
 			// Without the hook the daemon hands the message over as a turn where it can (in T3, or
 			// Claude Code's socket), at once, which T3 queues if the session is busy.
@@ -933,20 +940,25 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	}
 	note = strings.TrimSpace(renamed + " " + note)
 	// To everyone, to a device or to a group: it went out, and the sender is told which of the
-	// sessions it was for won't get it, as they have muted it (#27).
+	// sessions it was for won't get it, as they have muted it (#27), and which won't be woken by it
+	// (#545).
 	if dev, sess := bus.SplitAddr(to); to == "*" || sess == "" {
 		group := bus.IsGroup(to)
 		if to == "*" || group {
 			dev = ""
 		}
+		wake := d.wakeSnapshot() // setMu is taken alone, before mu
 		d.mu.Lock()
 		muters := d.mutersLocked(d.nameOfLocked(from), dev)
+		var members []string
 		if group {
-			members, _ := d.groupMembersLocked(to, from)
+			members, _ = d.groupMembersLocked(to, from)
 			muters = slices.DeleteFunc(muters, func(m string) bool { return !slices.Contains(members, m) })
 		}
+		unwoken := d.unwokenLocked(from, dev, group, members, wake)
+		unwoken = slices.DeleteFunc(unwoken, func(m string) bool { return slices.Contains(muters, m) })
 		d.mu.Unlock()
-		note = strings.TrimSpace(note + " " + mutersNote(muters))
+		note = sentences(note, mutersNote(muters), unwokenNote(unwoken))
 	}
 	return proto.Response{OK: true, Self: from, Note: note,
 		Messages: []proto.MessageView{{ID: e.ID, From: from, To: to, ToName: toName, Subject: subject, At: e.At}}}
@@ -1106,12 +1118,10 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession, branch: branch,
 		started: now, lastActive: now, reconnect: h.Reconnect, key: key, clientPID: h.ClientPID}
 	if at, ok := d.st.Stopped[h.ID]; ok {
-		delete(d.st.Stopped, h.ID)
 		if time.Since(at) > d.opt.StoppedInbox {
-			delete(d.st.Inbox, h.ID)
-			delete(d.st.Commits, h.ID)
-			delete(d.st.T3Routes, h.ID)
+			d.dropStoppedLocked(h.ID)
 		} else {
+			delete(d.st.Stopped, h.ID)
 			s.since = at
 		}
 		d.saveLocked()

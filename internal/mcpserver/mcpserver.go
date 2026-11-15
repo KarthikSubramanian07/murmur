@@ -312,7 +312,7 @@ func routeFromEnv(agent string) proto.Route {
 	case agent == "codex" && r.T3CLI == "":
 		r.CodexCLI = clientProgram("codex")
 	case agent == "opencode" && r.T3CLI == "":
-		r.OpenCodeCLI = openCodeService()
+		r.OpenCodeCLI, r.OpenCodeState = openCodeService()
 	}
 	return r
 }
@@ -349,36 +349,41 @@ func programNamed(exe, name string) string {
 }
 
 // openCodeService is the OpenCode that started this server, if it is the background server every
-// OpenCode 2 client shares, which is the one `opencode api` asks. OpenCode 2 registers that
-// server's process in service.json in its state directory ($XDG_STATE_HOME/opencode, else
-// ~/.local/state/opencode, on Windows too; {"pid": ...}, seen on 2.2.0, 2026-11-11). A session of
-// any other server gets "": one started with --standalone or --server, where `opencode api` would
-// start the shared server only to be told it has no such session, and OpenCode 1, which has no
-// `api` command. If a later OpenCode keeps the file elsewhere, its sessions are back to the inbox.
-func openCodeService() string {
+// OpenCode 2 client shares, which is the one `opencode api` asks, and the state directory that
+// server is registered in. OpenCode 2 registers that server's process in service.json in its state
+// directory ($XDG_STATE_HOME/opencode, else ~/.local/state/opencode, on Windows too; {"pid": ...},
+// seen on 2.2.0, 2026-11-11), and `opencode api` looks for it there, in the XDG_STATE_HOME it is
+// run with (read in 2.3.0's source, 2026-11-15). The server keeps the state directory it started
+// with, and this process has its environment, so the directory is the one to run the command
+// with: the daemon's may be another session's (#486). It is named in full where XDG_STATE_HOME is
+// unset, for the same reason. A session of any other server gets "": one started with
+// --standalone or --server, where `opencode api` would start the shared server only to be told it
+// has no such session, and OpenCode 1, which has no `api` command. If a later OpenCode keeps the
+// file elsewhere, its sessions are back to the inbox.
+func openCodeService() (exe, state string) {
 	pid, exe := parentProgram()
 	if exe = programNamed(exe, "opencode"); exe == "" {
-		return ""
+		return "", ""
 	}
-	dir := os.Getenv("XDG_STATE_HOME")
-	if dir == "" || !filepath.IsAbs(dir) {
+	state = os.Getenv("XDG_STATE_HOME")
+	if state == "" || !filepath.IsAbs(state) {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return ""
+			return "", ""
 		}
-		dir = filepath.Join(home, ".local", "state")
+		state = filepath.Join(home, ".local", "state")
 	}
-	b, err := os.ReadFile(filepath.Join(dir, "opencode", "service.json"))
+	b, err := os.ReadFile(filepath.Join(state, "opencode", "service.json"))
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	var reg struct {
 		PID int `json:"pid"`
 	}
 	if json.Unmarshal(b, &reg) != nil || reg.PID == 0 || reg.PID != pid {
-		return ""
+		return "", ""
 	}
-	return exe
+	return exe, state
 }
 
 // sessionID derives the session's ID from Claude Code's, when there is one, so the ID stays

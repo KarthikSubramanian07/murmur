@@ -33,13 +33,18 @@ func (d *Daemon) lookup(you string, req proto.Request) proto.Response {
 	}
 	limit = min(limit, maxLookupMessages)
 	d.settleEnds()
+	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	addr, err := d.lookupAddrLocked(strings.TrimSpace(req.Name))
 	if err != nil {
 		return fail(err.Error())
 	}
-	return proto.Response{OK: true, Self: bus.Addr(d.device, you), Lookup: d.detailLocked(addr, you, limit)}
+	det := d.detailLocked(addr, you, limit)
+	if dev, sess := bus.SplitAddr(addr); det.Running && det.Reachable {
+		det.NoWake = d.peerNoWakeLocked(dev, sess, wake)
+	}
+	return proto.Response{OK: true, Self: bus.Addr(d.device, you), Lookup: det}
 }
 
 // lookupAddrLocked turns what the caller named into the address of a session this daemon knows:
@@ -162,14 +167,23 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 		// From the address, so a person whose daemon has gone, known only by name, has it too.
 		det.Agent, det.Tags = cmp.Or(det.Agent, bus.AgentPerson), tags.Person()
 	}
-	det.Messages = d.messagesOfLocked(addr, det.Name, byAddr, limit)
+	// A group the session is in now is its conversation too, as on the page's filter (#485, #445):
+	// here by the tags delivery goes by (addressedLocked), elsewhere by its device's presence. A
+	// stopped session here keeps its tags for its name, so it counts where the page counts none.
+	inGroup := func(group string) bool { return tags.Has(det.Tags, group) }
+	if dev == d.device {
+		inGroup = func(group string) bool { return sess != bus.PersonSession && d.hasTagLocked(sess, group) }
+	}
+	det.Messages = d.messagesOfLocked(addr, det.Name, byAddr, inGroup, limit)
 	return det
 }
 
 // messagesOfLocked lists the last limit messages to or from the session at addr, oldest first. A
 // conversation that came back under a new session ID keeps its name, so the other addresses with
-// that name count as the same session, as the page's filter does. Caller holds mu.
-func (d *Daemon) messagesOfLocked(addr, name string, byAddr map[string]string, limit int) []proto.MessageView {
+// that name count as the same session, as the page's filter does. A message to a group counts if
+// inGroup says the session is in it: by its tags now, so one it got before it left is passed over,
+// as the page does. Caller holds mu.
+func (d *Daemon) messagesOfLocked(addr, name string, byAddr map[string]string, inGroup func(string) bool, limit int) []proto.MessageView {
 	label := func(a string) string {
 		if n, _, _ := d.sessionInfoLocked(a); n != "" {
 			return n
@@ -181,7 +195,7 @@ func (d *Daemon) messagesOfLocked(addr, name string, byAddr map[string]string, l
 	for i := len(d.msgs) - 1; i >= 0 && len(out) < limit; i-- {
 		e := d.msgs[i].e
 		toSession := strings.Contains(e.To, "/")
-		if !is(e.From) && !(toSession && is(e.To)) {
+		if !is(e.From) && !(toSession && is(e.To)) && !(bus.IsGroup(e.To) && inGroup(e.To)) {
 			continue
 		}
 		v := proto.MessageView{ID: e.ID, From: e.From, FromName: label(e.From), To: e.To, Subject: e.Subject, At: e.At}

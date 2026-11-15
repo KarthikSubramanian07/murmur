@@ -150,6 +150,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(hiddenHeader) != "" {
 			r = r.WithContext(context.WithValue(r.Context(), hiddenKey{}, true))
 		}
+		if r.Header.Get(appHeader) != "" {
+			r = r.WithContext(context.WithValue(r.Context(), appKey{}, true))
+		}
 	}
 	s.mux.ServeHTTP(w, r)
 }
@@ -163,6 +166,19 @@ const keyPath = "/api/key"
 const hiddenHeader = "X-Page-Hidden"
 
 type hiddenKey struct{}
+
+// appHeader marks a call from the page in the desktop app's window (`mur app`, #23), seen or not.
+// Someone who keeps the app open is waiting for messages, as someone who closes a tab isn't.
+const appHeader = "X-Page-App"
+
+type appKey struct{}
+
+// InApp says whether the call ctx belongs to came from the desktop app's page. A daemon lets it
+// keep it running, though not count as someone watching: a minimized app is no one looking.
+func InApp(ctx context.Context) bool {
+	in, _ := ctx.Value(appKey{}).(bool)
+	return in
+}
 
 // Watched says whether the call ctx belongs to came from a page someone can see. The Source's
 // methods get that ctx, so a daemon can let only a watched page keep it running.
@@ -463,7 +479,10 @@ func (s *Server) postSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a message needs a recipient and some text")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), sendTimeout)
+	// Not cut short by the page going: a person who closes or reloads it while the push is on its
+	// way has sent the message, and the page told them so (#613). Cut short, git's push was killed
+	// and the message was lost without a word.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), sendTimeout)
 	defer cancel()
 	sent, err := s.src.Send(ctx, m.To, m.Text)
 	if err != nil {
