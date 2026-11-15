@@ -21,13 +21,12 @@ const src = fs.readFileSync(process.argv[2], "utf8");
   let reads = 0, renders = 0, failing = true;
   const timers = [];
   const ctx = {
-    POLL_MS: 3000,
     ui: { token: "t", view: "messages", conversation: "c", reading: null, newMark: null,
-      state: { account: { unread: ["m1"] } }, ids: new Set(["m1"]), readLocal: new Set(), readHeld: false,
-      messages: [{ id: "m1", sortAt: 1 }] },
+      state: { account: { unread: ["m1", "m2"] } }, ids: new Set(["m1", "m2"]), readLocal: new Set(), readHeld: false,
+      messages: [{ id: "m1", sortAt: 1, conv: "c" }, { id: "m2", sortAt: 2, conv: "d" }] },
     document: { hidden: false, hasFocus: () => true },
     inApp: () => false,
-    conversationOf: () => ({ key: "c" }),
+    conversationOf: (m) => ({ key: m.conv }),
     deny: () => {},
     setTimeout: (f, ms) => timers.push({ f, ms }),
     queueMicrotask,
@@ -43,7 +42,9 @@ const src = fs.readFileSync(process.argv[2], "utf8");
   vm.runInContext(src + "\nthis.markOpenRead = markOpenRead;", ctx);
   const settle = async () => { for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r)); };
   const show = (label) => {
-    console.log(label + ": " + reads + " read, " + renders + " render, timers " + timers.map((t) => t.ms).join(" ") + ", unread " + (ctx.ui.readLocal.has("m1") ? "no" : "yes"));
+    const unread = ["m1", "m2"].filter((id) => !ctx.ui.readLocal.has(id)).join(" ");
+    const mark = ctx.ui.newMark ? ctx.ui.newMark.key + "/" + ctx.ui.newMark.id : "none";
+    console.log(label + ": " + reads + " read, " + renders + " render, timers " + timers.map((t) => t.ms).join(" ") + ", unread " + unread + ", new " + mark);
     reads = 0; renders = 0;
   };
   ctx.markOpenRead();
@@ -52,6 +53,10 @@ const src = fs.readFileSync(process.argv[2], "utf8");
   timers.shift().f(); // the wait is over, and the daemon still fails
   await settle();
   show("fails again");
+  ctx.ui.conversation = "d"; // opened while the mark is held: it shows as new, and waits its turn
+  ctx.markOpenRead();
+  await settle();
+  show("another opened");
   failing = false;
   timers.shift().f();
   await settle();
@@ -61,7 +66,8 @@ const src = fs.readFileSync(process.argv[2], "utf8");
 
 // A conversation open while /api/read fails (#652): the page marks it unread again, and asks once
 // more only after a poll's wait, not at once from the render that shows it unread, which would ask
-// and redraw again without pause.
+// and redraw again without pause. A conversation opened during the wait still marks where its
+// unread messages start ("New"), and is read once the wait is over.
 func TestAFailedReadWaitsBeforeAskingAgain(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -74,7 +80,7 @@ func TestAFailedReadWaitsBeforeAskingAgain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(src, pageFunctions(t, "AuthError", "api", "unreadIds", "markOpenRead"))
+	write(src, pageFunctions(t, "POLL_MS", "AuthError", "api", "unreadIds", "markOpenRead"))
 	harness := filepath.Join(dir, "harness.js")
 	write(harness, markReadHarness)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -85,9 +91,10 @@ func TestAFailedReadWaitsBeforeAskingAgain(t *testing.T) {
 	}
 	got := strings.TrimSpace(strings.ReplaceAll(string(b), "\r\n", "\n"))
 	want := strings.Join([]string{
-		"fails: 1 read, 2 render, timers 3000, unread yes",
-		"fails again: 1 read, 2 render, timers 3000, unread yes",
-		"then works: 1 read, 1 render, timers , unread no",
+		"fails: 1 read, 2 render, timers 3000, unread m1 m2, new c/m1",
+		"fails again: 1 read, 2 render, timers 3000, unread m1 m2, new c/m1",
+		"another opened: 0 read, 1 render, timers 3000, unread m1 m2, new d/m2",
+		"then works: 1 read, 1 render, timers , unread m1, new d/m2",
 	}, "\n")
 	if got != want {
 		t.Errorf("the harness printed\n%s\nwant\n%s", got, want)
