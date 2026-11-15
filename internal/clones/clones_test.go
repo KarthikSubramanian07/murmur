@@ -83,11 +83,12 @@ func TestAnEmptyOrStrangeRecord(t *testing.T) {
 }
 
 // A write or read of the record that fails is tried again for a moment, as on Windows it fails while
-// another process reads or replaces the file (#479); a file that isn't there isn't waited for.
+// another process reads or replaces the file (#479); a file that isn't there is waited for only where
+// it is known to be there.
 func TestAgainRetriesForAMoment(t *testing.T) {
 	busy := errors.New("in use")
 	calls := 0
-	if err := again(func() error {
+	if err := again(false, func() error {
 		if calls++; calls < 3 {
 			return busy
 		}
@@ -96,12 +97,25 @@ func TestAgainRetriesForAMoment(t *testing.T) {
 		t.Errorf("failing twice, then not: %v after %d calls; want nil after 3", err, calls)
 	}
 	calls = 0
-	if err := again(func() error { calls++; return busy }); err != busy || calls != 20 {
+	if err := again(false, func() error { calls++; return busy }); err != busy || calls != 20 {
 		t.Errorf("failing always: %v after %d calls; want its error after 20", err, calls)
 	}
 	calls = 0
-	if err := again(func() error { calls++; return fs.ErrNotExist }); !errors.Is(err, fs.ErrNotExist) || calls != 1 {
+	if err := again(false, func() error { calls++; return fs.ErrNotExist }); !errors.Is(err, fs.ErrNotExist) || calls != 1 {
 		t.Errorf("no file: %v after %d calls; want it at once", err, calls)
+	}
+	calls = 0
+	if err := again(true, func() error {
+		if calls++; calls < 3 {
+			return fs.ErrNotExist
+		}
+		return nil
+	}); err != nil || calls != 3 {
+		t.Errorf("no file, twice, where one is known to be there: %v after %d calls; want nil after 3", err, calls)
+	}
+	calls = 0
+	if err := again(true, func() error { calls++; return fs.ErrNotExist }); !errors.Is(err, fs.ErrNotExist) || calls != 20 {
+		t.Errorf("no file ever, where one was: %v after %d calls; want its error after 20", err, calls)
 	}
 }
 
