@@ -3786,8 +3786,8 @@ a.g-pr:hover {
   outline-offset: 3px;
 }
 
-/* A person's face (#579): a ghost, and maybe an accessory, over its device's color. The ghost alone
- * marks a person. Nothing clips it: a hat or a speech bubble may reach past the round tile. */
+/* A session's face (#579): a ghost, and maybe an accessory, over its device's color. Nothing clips
+ * it: a hat or a speech bubble may reach past the round tile. */
 .avatar.avatar-ghost > img {
   position: absolute;
   inset: 0;
@@ -3795,6 +3795,12 @@ a.g-pr:hover {
   height: 100%;
   pointer-events: none;
   user-select: none;
+}
+/* A person's face (#579, Tyler): their initial on a plain tile, no device color and no ring, so it
+ * reads apart from the sessions' ghosts. Opaque, so it covers the face under it in a stack. */
+.avatar.avatar-person {
+  background: color-mix(in oklab, var(--foreground) 20%, var(--background));
+  color: var(--foreground);
 }
 /* Where a device header is short of room, its host gives way before its name. */
 .device-link .dev-name {

@@ -8,7 +8,7 @@ import (
 )
 
 // The page names each person's ghost and accessory from two lists in app.js (#579); every name has
-// to have a file that scripts/ghosts.py drew, or a person's face loses a layer.
+// to have a file that scripts/ghosts.py drew, or a session's face loses a layer.
 func TestGhostFilesExist(t *testing.T) {
 	src, err := fs.ReadFile(static, "static/assets/app.js")
 	if err != nil {

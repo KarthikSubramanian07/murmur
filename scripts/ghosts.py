@@ -1,7 +1,7 @@
 """Writes Murmur's ghost avatars (#579): 16 ghosts and 15 accessories, 64x64 SVGs.
 
-A person's avatar is three layers: a round tile the page paints, a ghost, and an accessory
-or none: 16 x 16 = 256 faces. The ghosts carry no tile, so it can take the person's device
+A session's avatar is three layers: a round tile the page paints, a ghost, and an accessory
+or none: 16 x 16 = 256 faces. The ghosts carry no tile, so it can take the session's device
 colour (#571) or any tone, and their bodies are light tints that read on all twelve device
 hues. Every body shares one head and one pair of eye positions, so each accessory fits every
 ghost. The script also writes docs/ghosts.html, a sheet of every combination. The page picks
@@ -297,7 +297,7 @@ p {{ color: var(--quiet); margin: 0 0 20px; max-width: 60ch; }}
 .size .av + .av {{ margin-left: -3px; }}
 </style>
 <h1>Murmur ghosts</h1>
-<p>{len(GHOSTS)} ghosts &times; {len(accs)} accessories, counting none: {len(GHOSTS) * len(accs)} faces. A person's name picks one of each. The tile is the page's to paint; here each row sits on one of the twelve device colours.</p>
+<p>{len(GHOSTS)} ghosts &times; {len(accs)} accessories, counting none: {len(GHOSTS) * len(accs)} faces. A session's name picks one of each. The tile is the page's to paint; here each row sits on one of the twelve device colours.</p>
 <div class="grid"><div class="head"><span></span>{head}</div>
 {rows}</div>
 <h2>A few faces, one per device colour</h2>

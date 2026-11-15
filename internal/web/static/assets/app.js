@@ -2747,18 +2747,20 @@ function draftConversation() {
   return ui.conversation === key ? { key, kind: "dm", title: pair.join(" & "), pair, messages: [] } : null;
 }
 
-// A face is filled with the color of the device it is on (#560), so a stack of faces says whose
-// machines they are. A session's shows its initial; a person's, a ghost. The classes are in
-// style.css: the page's content policy doesn't allow an inline style.
+// A session's face is a ghost on the color of the device it is on (#560), so a stack of faces says
+// whose machines they are. A person's is their initial on a plain tile (#579, Tyler). The classes
+// are in style.css: the page's content policy doesn't allow an inline style.
 function avatar(name) {
-  const d = deviceOfName(name);
-  const color = "avatar dev-fill " + deviceColor(d);
-  if (isPerson(name)) return ghostFace(name, color);
-  return h("span", { class: color, "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
+  if (isPerson(name)) return personFace(name);
+  return ghostFace(name, "avatar dev-fill " + deviceColor(deviceOfName(name)));
 }
 
-// A person's ghost (#579): their name picks one of 16 ghosts and one of 15 accessories or none, so
-// they wear the same one everywhere. The files are drawn by scripts/ghosts.py, which these lists
+function personFace(name) {
+  return h("span", { class: "avatar avatar-person", "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
+}
+
+// A session's ghost (#579): its name picks one of 16 ghosts and one of 15 accessories or none, so
+// it wears the same one everywhere. The files are drawn by scripts/ghosts.py, which these lists
 // follow; a ghost has no tile of its own, so it sits on its device's color.
 const GHOSTS = ["murmur", "hush", "whisper", "mumble", "chatter", "babble", "rumor", "echo", "chirp", "coo", "hum", "psst", "sigh", "jabber", "natter", "buzz"];
 const GHOST_ACCESSORIES = ["", "bow", "glasses", "specs", "shades", "bubble", "headset", "beanie", "party", "crown", "halo", "flower", "sprout", "tophat", "cat", "propeller"];
@@ -2773,7 +2775,7 @@ function ghostFace(name, cls) {
   const { ghost, accessory } = ghostOf(name);
   return h(
     "span",
-    { class: cls + " avatar-person avatar-ghost", "aria-hidden": "true" },
+    { class: cls + " avatar-ghost", "aria-hidden": "true" },
     h("img", { src: "/assets/ghosts/ghost-" + ghost + ".svg", alt: "", draggable: "false" }),
     accessory && h("img", { src: "/assets/ghosts/acc-" + accessory + ".svg", alt: "", draggable: "false" }),
   );
@@ -3703,9 +3705,9 @@ function setupDialog() {
   );
 }
 
-// The face a name would have: a person's on this device, whatever is typed so far.
+// The face a name would have: a person's, whatever is typed so far.
 function faceOf(name) {
-  return ghostFace(name, "avatar dev-fill " + deviceColor((ui.state?.devices || []).find((d) => d.self)));
+  return personFace(name);
 }
 
 // Everyone a person can start a conversation with: people, then sessions, those at work first.
