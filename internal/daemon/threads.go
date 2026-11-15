@@ -98,11 +98,12 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	changed, settled := false, false
+	prev := make(map[threadKey]time.Time, len(read))
 	for k, st := range read {
 		if !readAt[k].After(d.threadRead[k]) {
 			continue // a read just before a handoff (t3RunGoing) began later, and stands
 		}
-		d.threadRead[k] = readAt[k]
+		prev[k], d.threadRead[k] = d.threadRead[k], readAt[k]
 		if !st.Busy {
 			// A session the hook has at work may have finished its turn without the Stop hook.
 			changed = true
@@ -143,6 +144,15 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 		}
 	}
 	d.noteUnseenLocked()
+	// The first read that began after a handoff ends the hold it put on the session (runUnseen): the
+	// next message may go, though nothing else the read found changed.
+	for _, s := range d.sessions {
+		k := threadKey{s.route.T3Home, s.route.T3Thread}
+		p, ok := prev[k]
+		if ok && s.handedAt.After(s.endedAt) && !p.After(s.handedAt) && readAt[k].After(s.handedAt) {
+			changed = true
+		}
+	}
 	// A delegate's inbox stays empty however a message got in, and its commits go to its parent,
 	// those made before its thread was read included.
 	for _, id := range sortedKeys(d.st.Inbox) {

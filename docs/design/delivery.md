@@ -132,6 +132,8 @@ the turn took, so nothing waits for good.
   - A run no hook has shown going for 15 minutes no longer counts, and messages go to T3 as before:
     T3 can leave a run queued for good (one from 2026-11-03 was still queued on 11-15), and no hook
     would ever tell the session of them.
+  - A run counts only while the thread's newest run is queued or running. One T3 left queued
+    behind later runs would otherwise start the 15 minutes again at every turn's end.
 - **Subject or whole message** (#204), the page's busy setting, per device or session (Tyler,
   2026-11-08). "Subject", the default, leaves the agent's focus to the agent, at the cost that it
   may pass over a line it needed; "Whole message" puts each message in front of it mid-task at full

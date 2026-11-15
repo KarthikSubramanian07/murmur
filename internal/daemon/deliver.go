@@ -379,11 +379,16 @@ func runUnseen(s *session, st t3db.State, inT3 bool, read time.Time) bool {
 	if s.handedAt.After(s.endedAt) && !read.After(s.handedAt) && time.Since(s.handedAt) < handedHold {
 		return true
 	}
-	if !inT3 || !st.Busy || !read.After(s.endedAt.Add(closeGrace)) {
+	if !inT3 || !runGoing(st) || !read.After(s.endedAt.Add(closeGrace)) {
 		return false
 	}
 	return !s.unseenAt.After(s.endedAt) || time.Since(s.unseenAt) < unseenHold
 }
+
+// runGoing says st shows a run going that a turn of the thread's session may be: runs T3 left
+// queued behind later ones (Left) aren't, or every turn's end would start a run the hook hasn't
+// seen, holding messages unseenHold each time.
+func runGoing(st t3db.State) bool { return st.Busy && !st.Left }
 
 // closeGrace is how long after a turn's end a read of T3's database may still find the run Stop
 // ended open: T3 closed 99% of 1,212 Claude runs within 0.4 s of the turn's end (2026-11-11 to
@@ -439,9 +444,9 @@ func (d *Daemon) noteUnseenLocked() {
 		}
 		start := s.unseenStart()
 		switch {
-		case !st.Busy && !start.IsZero() && read.After(start) && read.After(s.handedAt):
+		case !runGoing(st) && !start.IsZero() && read.After(start) && read.After(s.handedAt):
 			s.endedAt, s.unseenAt = read, time.Time{}
-		case st.Busy && !s.unseenAt.After(s.endedAt):
+		case runGoing(st) && !s.unseenAt.After(s.endedAt):
 			s.unseenAt = read
 			if st.LastRun.After(s.endedAt) && st.LastRun.Before(read) {
 				s.unseenAt = st.LastRun
@@ -717,14 +722,18 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 func (d *Daemon) t3RunGoing(ctx context.Context, j *pushJob) bool {
 	readAt := time.Now()
 	st, err := d.opt.ThreadState(ctx, j.route.T3CLI, j.route.T3Home, j.route.T3Thread)
-	if err != nil || !st.Busy {
+	if err != nil || !runGoing(st) {
 		return false
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	k := threadKey{j.route.T3Home, j.route.T3Thread}
 	if readAt.After(d.threadRead[k]) {
-		d.threads[k], d.threadRead[k] = st, readAt
+		// Only what says whether a run goes: a change to the rest (settled, model, parent) is left
+		// for refreshThreads to see, as it acts on it.
+		cur := d.threads[k]
+		cur.Busy, cur.Left, cur.LastRun = st.Busy, st.Left, st.LastRun
+		d.threads[k], d.threadRead[k] = cur, readAt
 	}
 	d.noteUnseenLocked()
 	return d.hookBusyLocked(j.id)

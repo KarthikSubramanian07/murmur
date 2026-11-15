@@ -16,6 +16,7 @@ func TestARunTheHookHasntSeenIsAtWork(t *testing.T) {
 	t.Parallel()
 	const ended = 10 * time.Second // ago
 	busy, idle := &t3db.State{Busy: true}, &t3db.State{}
+	left := &t3db.State{Busy: true, Left: true} // only runs T3 left behind later ones
 	for _, tc := range []struct {
 		name   string
 		hookOn bool
@@ -27,6 +28,7 @@ func TestARunTheHookHasntSeenIsAtWork(t *testing.T) {
 		{"a run, read after the turn ended", true, busy, 2 * time.Second, 0, true},
 		{"a run, read before the turn ended", true, busy, 20 * time.Second, 0, false},
 		{"no run, read after the turn ended", true, idle, 2 * time.Second, 0, false},
+		{"only runs left behind, read after the turn ended", true, left, 2 * time.Second, 0, false},
 		{"handed over, not read since", true, idle, 5 * time.Second, 2 * time.Second, true},
 		{"handed over, thread never read", true, nil, 0, 2 * time.Second, true},
 		{"handed over, a read since finds no run", true, idle, time.Second, 2 * time.Second, false},
@@ -179,19 +181,62 @@ func TestAHandoffReadsTheThreadFirst(t *testing.T) {
 	inT3(d, "aaaaaa", time.Hour)
 	s := d.sessions["aaaaaa"]
 	s.hooked, s.stopSeen, s.endedAt = true, true, time.Now().Add(-time.Minute)
+	k := threadKey{"", "thread-aaaaaa"}
+	d.threads[k] = t3db.State{Model: "claude-opus-5-5"}
 	st := t3db.State{}
 	d.opt.ThreadState = func(context.Context, string, string, string) (t3db.State, error) { return st, nil }
 	j := &pushJob{id: "aaaaaa", route: s.route}
 	if d.t3RunGoing(context.Background(), j) {
 		t.Fatal("a run going, by a read that found none")
 	}
-	st = t3db.State{Busy: true}
+	st = t3db.State{Busy: true, Left: true}
+	if d.t3RunGoing(context.Background(), j) {
+		t.Fatal("a run going, by a read that found only runs T3 left behind")
+	}
+	st = t3db.State{Busy: true, Model: "claude-fable-5-2"}
 	if !d.t3RunGoing(context.Background(), j) {
 		t.Fatal("no run going, by a read that found one")
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if k := (threadKey{"", "thread-aaaaaa"}); !d.threads[k].Busy || d.threadRead[k].IsZero() || s.unseenAt.IsZero() {
+	if !d.threads[k].Busy || d.threadRead[k].IsZero() || s.unseenAt.IsZero() {
 		t.Errorf("the read wasn't kept: %+v, read at %v, unseenAt %v", d.threads[k], d.threadRead[k], s.unseenAt)
+	}
+	// The model is refreshThreads' to see change, as it puts the new one in presence.
+	if m := d.threads[k].Model; m != "claude-opus-5-5" {
+		t.Errorf("the read before a handoff set the model to %q", m)
+	}
+}
+
+// The first read that began after a handoff wakes the push loop, though it finds the thread as
+// before: it ends the handoff's hold, and the session's next message may go.
+func TestAReadAfterAHandoffWakesThePushLoop(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	inT3(d, "aaaaaa", time.Hour)
+	s := d.sessions["aaaaaa"]
+	now := time.Now()
+	s.hooked, s.stopSeen, s.endedAt, s.handedAt = true, true, now.Add(-time.Minute), now.Add(-2*time.Second)
+	k := threadKey{"", "thread-aaaaaa"}
+	d.threads[k], d.threadRead[k] = t3db.State{Busy: true}, now.Add(-3*time.Second)
+	d.opt.ThreadState = func(context.Context, string, string, string) (t3db.State, error) {
+		return t3db.State{Busy: true}, nil
+	}
+	kicked := func() bool {
+		select {
+		case <-d.pushKick:
+			return true
+		default:
+			return false
+		}
+	}
+	kicked()
+	d.refreshThreads(context.Background())
+	if !kicked() {
+		t.Error("the read after the handoff didn't wake the push loop")
+	}
+	d.refreshThreads(context.Background())
+	if kicked() {
+		t.Error("a second read, with no handoff since, woke the push loop")
 	}
 }
