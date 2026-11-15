@@ -53,7 +53,7 @@ func (d *Daemon) groupMembersLocked(group, except string) (members, old []string
 			if !tags.Has(s.Tags, group) {
 				continue
 			}
-			who := nameOr(s.Name, bus.Addr(dev, s.ID))
+			who := nameOr(d.listedSessionNameLocked(bus.Addr(dev, s.ID), s.Name), bus.Addr(dev, s.ID))
 			members = append(members, who)
 			if !p.pres.Groups {
 				old = append(old, who)

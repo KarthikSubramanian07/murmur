@@ -373,8 +373,9 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 }
 
 // resolveNameLocked finds the session called name: in this device's sessions, then in its record
-// of who held each name last, then in other devices' presence, and last in the registry, which
-// also knows a session that has since stopped.
+// of who held each name last, then in other devices' presence where the registry doesn't say the
+// name is another device's (listedSessionNameLocked), and last in the registry, which also knows a
+// session that has since stopped.
 //
 // The record is for #37. The registry has the session a name was first given to, which may have
 // moved to another conversation since, and another session here may have taken the name after it.
@@ -402,13 +403,39 @@ func (d *Daemon) resolveNameLocked(name string) (addr string, ok bool) {
 	}
 	for _, dev := range sortedKeys(d.peers) {
 		for _, s := range d.peers[dev].pres.Sessions {
-			if s.Name == name {
+			if s.Name == name && d.listedSessionNameLocked(bus.Addr(dev, s.ID), name) == name {
 				return bus.Addr(dev, s.ID), true
 			}
 		}
 	}
 	addr = d.st.Used[name]
 	return addr, addr != ""
+}
+
+// listedSessionNameLocked is the name a session of another device, at addr, goes by here: the one
+// its presence gives, unless the registry has that name down for another device, when the session
+// is listed, labeled and reached by its address. Any device can put any name in its presence, so
+// one saying quiet-otter while quiet-otter is another device's session would be shown as a second
+// quiet-otter, and a send to the name, which looks in presence before the registry, could reach it
+// (#43; #350 is the same for a person's name). A name stays with its device: another session of
+// the same device can hold it after a resume (#37), but a session on another device never does. A
+// name the registry has set aside counts only from the device it was set aside for. A name the
+// registry doesn't show yet counts, as it may be the session's own with its assignment not read
+// here yet. Caller holds mu.
+func (d *Daemon) listedSessionNameLocked(addr, name string) string {
+	if name == "" {
+		return ""
+	}
+	dev, _ := bus.SplitAddr(addr)
+	if r, ok := d.st.Reserved[name]; ok && r != dev {
+		return ""
+	}
+	if holder := d.st.Used[name]; holder != "" {
+		if hdev, _ := bus.SplitAddr(holder); hdev != dev {
+			return ""
+		}
+	}
+	return name
 }
 
 // noSuchNameLocked is what to tell someone who asked for a name that resolveNameLocked finds no

@@ -1229,7 +1229,17 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	if !locked {
 		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
 	}
-	// A name in another device's presence is in use, whether or not the registry shows it yet.
+	if d.notePresenceNamesLocked(dev, pres) {
+		d.saveLocked()
+	}
+	d.mu.Unlock()
+}
+
+// notePresenceNamesLocked records the names in dev's presence as in use, whether or not the
+// registry shows them yet, and says whether anything changed. A session's name the registry has
+// down for another device is known already, and noting it would give it to dev, as the first
+// address seen for a name stands (#43). Caller holds mu.
+func (d *Daemon) notePresenceNamesLocked(dev string, pres bus.Presence) bool {
 	seen := false
 	for _, s := range pres.Sessions {
 		if s.ID == bus.PersonSession {
@@ -1239,19 +1249,17 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 			}
 			continue
 		}
-		if s.Name != "" && d.noteNameLocked(s.Name, bus.Addr(dev, s.ID)) {
+		addr := bus.Addr(dev, s.ID)
+		if d.listedSessionNameLocked(addr, s.Name) != "" && d.noteNameLocked(s.Name, addr) {
 			seen = true
 		}
 	}
 	for name, id := range pres.Names { // the same, from a presence this device can't open
-		if d.noteNameLocked(name, bus.Addr(dev, id)) {
+		if addr := bus.Addr(dev, id); d.listedSessionNameLocked(addr, name) != "" && d.noteNameLocked(name, addr) {
 			seen = true
 		}
 	}
-	if seen {
-		d.saveLocked()
-	}
-	d.mu.Unlock()
+	return seen
 }
 
 // sawPresence records that a device's presence moved to sha without being read: tried and found

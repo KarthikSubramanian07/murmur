@@ -945,7 +945,7 @@ func (d *Daemon) sessionInfoLocked(addr string) (name, agent, branch string) {
 				return d.listedPersonNameLocked(addr, s.Name), s.Agent, s.Branch // only a name that reaches them (#350)
 			}
 			if s.ID == sess {
-				return s.Name, s.Agent, s.Branch
+				return d.listedSessionNameLocked(addr, s.Name), s.Agent, s.Branch // only a name that is its device's (#43)
 			}
 		}
 	}
@@ -1033,9 +1033,9 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 			if !filter.Match(s.Tags) {
 				continue
 			}
-			name := s.Name
+			name := d.listedSessionNameLocked(bus.Addr(id, s.ID), s.Name)
 			if s.ID == bus.PersonSession {
-				name = d.listedPersonNameLocked(bus.Addr(id, s.ID), name)
+				name = d.listedPersonNameLocked(bus.Addr(id, s.ID), s.Name)
 			}
 			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: bus.Addr(id, s.ID), Name: name,
 				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: peerStarted(p, s), LastActive: peerActive(p, s),

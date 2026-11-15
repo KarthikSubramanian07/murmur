@@ -65,6 +65,16 @@ names routes by it all the same.
   of its last holder (below), then in other devices' presence, then in the registry, so a message to
   a session that has stopped is kept for it like any other. A device ID shaped like a name is read
   as a device if no session has that name.
+- **A name in presence is checked against the registry** (#43, 2026-11-15). Any device can write
+  any presence, so one could say another device's session's name, be listed as a second holder of
+  it, and take sends to it, since presence is looked in before the registry. A presence name now
+  counts only if the registry doesn't have it down for another device, or set aside for one; a
+  session that says such a name is listed, labeled and reached by its address, as a person's is
+  (#350), and the name isn't noted from that presence, which would give it to the device. Another
+  session of the same device may hold a name after a resume, and a name the registry doesn't show
+  yet counts, as its assignment may not have been read here. That leaves a name read in a presence
+  before the registry's record of it, which counts for the first device seen saying it; a sync reads
+  the registry first, and a name is set aside or assigned before its session shows it.
 - **A name a session has left.** A session that followed Claude Code to another conversation (#9)
   isn't called its old name any more, but the registry still has that name down for its Murmur ID. A
   send to the old name reaches the session, and says it is called something else now. An error

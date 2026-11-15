@@ -284,3 +284,49 @@ func TestKnownNameWithNoDeviceGainsItsReservation(t *testing.T) {
 		}
 	}
 }
+
+// A session's name in another device's presence counts unless the registry has it down for a third
+// device, or set aside for one (#43). The same device's other session may hold it, after a resume
+// (#37), and a name the registry doesn't show yet counts. One that doesn't count isn't noted from
+// the presence either: the first address seen for a name stands, so noting it would give the name
+// to the device that only said it, and the set-aside name's own session, once its assignment is
+// read, wouldn't count.
+func TestAPresenceNameCountsOnlyIfTheRegistryDoesntGiveItElsewhere(t *testing.T) {
+	d := &Daemon{device: "here-0001", log: log.New(io.Discard, "", 0), peers: map[string]*peer{},
+		sessions: map[string]*session{}, personClashes: map[string]bool{},
+		st: state{Used: map[string]string{"quiet-otter": "home-0002/aaaaaa", "blank-name": ""},
+			Reserved: map[string]string{"set-aside": "home-0002"}, People: map[string]string{}}}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, tc := range []struct{ addr, name, want string }{
+		{"home-0002/aaaaaa", "quiet-otter", "quiet-otter"},
+		{"home-0002/bbbbbb", "quiet-otter", "quiet-otter"}, // the same device, another session
+		{"evil-0003/eeeeee", "quiet-otter", ""},
+		{"home-0002/cccccc", "set-aside", "set-aside"},
+		{"evil-0003/eeeeee", "set-aside", ""},
+		{"evil-0003/eeeeee", "blank-name", "blank-name"},
+		{"evil-0003/eeeeee", "never-seen", "never-seen"},
+		{"evil-0003/eeeeee", "", ""},
+	} {
+		if got := d.listedSessionNameLocked(tc.addr, tc.name); got != tc.want {
+			t.Errorf("%s saying %q is listed as %q, want %q", tc.addr, tc.name, got, tc.want)
+		}
+	}
+
+	d.notePresenceNamesLocked("evil-0003", bus.Presence{Sessions: []bus.SessionInfo{{ID: "eeeeee", Name: "set-aside"},
+		{ID: "ffffff", Name: "quiet-otter"}, {ID: "gggggg", Name: "fresh-name"}}})
+	if d.st.Used["set-aside"] != "" || d.st.Reserved["set-aside"] != "home-0002" || d.st.Used["quiet-otter"] != "home-0002/aaaaaa" {
+		t.Errorf("after evil-0003's presence, used %v, set aside %v", d.st.Used, d.st.Reserved)
+	}
+	if d.st.Used["fresh-name"] != "evil-0003/gggggg" {
+		t.Errorf("a name nobody had, from evil-0003's presence: used %v", d.st.Used)
+	}
+	d.notePresenceNamesLocked("home-0002", bus.Presence{Sessions: []bus.SessionInfo{{ID: "cccccc", Name: "set-aside"}}})
+	if d.st.Used["set-aside"] != "home-0002/cccccc" {
+		t.Errorf("the set-aside name from its own device's presence: used %v", d.st.Used)
+	}
+	d.peers["evil-0003"] = &peer{pres: bus.Presence{Sessions: []bus.SessionInfo{{ID: "ffffff", Name: "quiet-otter"}}}}
+	if addr, ok := d.resolveNameLocked("quiet-otter"); !ok || addr != "home-0002/aaaaaa" {
+		t.Errorf("quiet-otter resolves to %q, %v; want the registry's home-0002/aaaaaa", addr, ok)
+	}
+}

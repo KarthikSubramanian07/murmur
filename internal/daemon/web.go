@@ -240,7 +240,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 				continue
 			}
 			dv.Sessions = append(dv.Sessions, web.Session{
-				Name: nameOr(ps.Name, addr), Addr: addr, Agent: ps.Agent, Branch: ps.Branch,
+				Name: nameOr(d.listedSessionNameLocked(addr, ps.Name), addr), Addr: addr, Agent: ps.Agent, Branch: ps.Branch,
 				Committed: ps.Committed, Doing: ps.Doing, Started: peerStarted(p, ps), LastActive: peerActive(p, ps),
 				Tags: ps.Tags, HookOff: ps.HookOff})
 		}
