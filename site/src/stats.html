@@ -1,5 +1,6 @@
 <!doctype html>
-<!-- The private stats page (#148, #259): the public repos that use Murmur, and what the census reads
+<!-- The private stats page (#148, #259), laid out for a desktop browser first: Tyler reads it there,
+     and a phone only has to stay readable: the public repos that use Murmur, and what the census reads
      from them. Public repos and users, approximate (#323), lead. Then what is measured exactly,
      encrypted or not: bus records, their bytes, devices and contributors. Then sessions and
      messages, which an encrypted bus hides and the census estimates (#550). Then where the activity
@@ -60,7 +61,7 @@
   }
   a { color: var(--brand); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  main { max-width: 1120px; margin: 0 auto; padding: 32px 24px 64px; }
+  main { max-width: 1440px; margin: 0 auto; padding: 32px 24px 64px; }
   header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
   header .mark { width: 28px; height: 28px; border-radius: 8px; background: #225BFF; display: grid; place-items: center; }
   header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
@@ -89,7 +90,7 @@
   .hero { grid-column: span 6; }
   .hero .top { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
   .hero .label, .tile .label { color: var(--text-secondary); font-weight: 500; }
-  .hero .value { font-size: 64px; font-weight: 600; letter-spacing: -0.035em; line-height: 1; margin-top: 10px; font-variant-numeric: tabular-nums; }
+  .hero .value { font-size: 72px; font-weight: 600; letter-spacing: -0.035em; line-height: 1; margin-top: 10px; font-variant-numeric: tabular-nums; }
   .hero .notes { display: grid; gap: 4px; color: var(--text-secondary); text-align: right; }
   .hero .notes b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
   .up { color: var(--good-text) !important; font-weight: 600; }
@@ -184,11 +185,13 @@
   td.num, th.num { text-align: right; }
   td .key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; }
   td.trend svg { display: block; }
+  /* A long repo name is cut short, with the whole of it on hover, so the table fits a laptop screen. */
+  td.repo { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
   tbody tr:hover td { background: color-mix(in srgb, var(--page) 60%, transparent); }
   tr:last-child td { border-bottom: 0; }
   .empty { color: var(--text-muted); padding: 24px 0 8px; text-align: center; }
   .loading main { opacity: .55; transition: opacity .2s; }
-  footer { color: var(--text-muted); font-size: 12px; margin-top: 20px; max-width: 860px; }
+  footer { color: var(--text-muted); font-size: 12px; margin-top: 20px; max-width: 960px; }
   /* Marks arrive once per load, not on every resize: columns rise from the baseline, lines draw in. */
   .grow { transform-box: fill-box; transform-origin: 50% 100%; animation: grow .55s cubic-bezier(.2,.75,.25,1) both; }
   .growx { transform-origin: 0 50%; animation: growx .7s cubic-bezier(.2,.75,.25,1) both; }
@@ -519,7 +522,7 @@ function crosshair(box, f, n, color, place) {
 // A running total over time, one series, as a step with a fading area under it. With barKey, that
 // day's count of the same thing (repos active that day) stands under it as light columns, on the
 // same axis, since it is the same unit.
-function totalChart(box, series, key, what, H = 220, { barKey, barWhat, legendBox } = {}) {
+function totalChart(box, series, key, what, H = 260, { barKey, barWhat, legendBox } = {}) {
   box.replaceChildren();
   const n = series.length;
   const f = frame(box, n, Math.max(1, ...series.map(d => d[key])), H, what + ' over time');
@@ -566,7 +569,7 @@ const rolling = (xs, w = 7) => xs.map((_, i) => { const from = Math.max(0, i - w
 function stackChart(box, legendBox, days, byRepo, key, what, colors, { estKey, bytes = false } = {}) {
   const value = bytes ? size : fmt;
   box.replaceChildren();
-  const n = days.length, H = 220;
+  const n = days.length, H = 260;
   const cell = new Map(); // day -> Map(slot -> value)
   for (const r of byRepo) {
     const extra = (estKey && r[estKey]) || 0, v = (r[key] || 0) + extra;
@@ -685,7 +688,7 @@ function heatmap(box, legendBox, days, byRepo, colors) {
     rows = [...ranked.slice(0, MAX_ROWS - 1), { name: `${rest.length} other repos`, cells, other: true }];
   }
   const W = box.clientWidth, narrow = W < 560;
-  const labelW = narrow ? 92 : 168, rowH = 20, gap = 2, top = 4, bottom = 24;
+  const labelW = narrow ? 92 : 200, rowH = narrow ? 20 : 26, gap = 2, top = 4, bottom = 24;
   const cw = (W - labelW) / n, H = top + rows.length * rowH + bottom;
   const max = Math.max(1, ...rows.flatMap(r => r.cells.map(c => c.records)));
   const c1 = css('--series-1'), empty = css('--grid');
@@ -786,7 +789,7 @@ function shareChart(box, byRepo, colors, days) {
 // no point. The range's own figure is a dashed reference line.
 function ratioChart(box, legendBox, series) {
   box.replaceChildren();
-  const n = series.length, H = 220;
+  const n = series.length, H = 260;
   const pts = series.map(s => {
     const ses = s.sessions + (s.estSessions || 0), msg = s.messages + (s.estMessages || 0);
     return ses ? msg / ses : null;
@@ -887,7 +890,7 @@ function repoTable(box, list, colors, days, byRepo) {
   const tbody = el('tbody');
   for (const r of rowsOf) {
     const tr = el('tr');
-    const name = el('td'); const key = el('span', { class: 'key' }); key.style.background = colors.colorOf(r.name);
+    const name = el('td', { class: 'repo', title: short(r.name) }); const key = el('span', { class: 'key' }); key.style.background = colors.colorOf(r.name);
     const a = el('a', { href: 'https://' + r.name, rel: 'noopener' }, short(r.name));
     name.append(key, a); tr.append(name);
     const t = el('td', { class: 'trend' });
@@ -985,8 +988,8 @@ function render() {
 
   const colors = repoColors(d.repoList);
   const dayList = S.map(s => s.day);
-  totalChart($('c-repos'), S, 'repos', 'public repos', 200, { barKey: 'activeRepos', barWhat: 'Active that day', legendBox: $('l-repos') });
-  totalChart($('c-users'), S, 'users', 'users', 200);
+  totalChart($('c-repos'), S, 'repos', 'public repos', 240, { barKey: 'activeRepos', barWhat: 'Active that day', legendBox: $('l-repos') });
+  totalChart($('c-users'), S, 'users', 'users', 240);
   totalChart($('c-contributors'), S, 'contributors', 'contributors');
   stackChart($('c-records'), $('l-records'), dayList, d.byRepo, 'records', 'Records', colors);
   stackChart($('c-bytes'), $('l-bytes'), dayList, d.byRepo, 'bytes', 'Data', colors, { bytes: true });
