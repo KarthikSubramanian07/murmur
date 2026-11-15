@@ -913,7 +913,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 			return refuse(proto.RefusedRecipient, fmt.Sprintf("your message to %[1]s was not delivered. %[1]s has muted you. Nothing you send can reach them until they unmute you.", nameOr(toName, at)))
 		case offline:
 			return refuse(proto.RefusedRecipient, "not sent: "+why)
-		case known && dnd:
+		case (known || sleeping) && dnd:
 			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox until it reads its inbox or turns do not disturb off, with no notice or turn."
 		case known && noWake != "":
 			note = noWakeNote(nameOr(toName, at), noWake, hookOff)
