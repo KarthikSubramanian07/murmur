@@ -188,6 +188,71 @@ func TestAHumansChoiceStandsOverAnAgentsAdd(t *testing.T) {
 	}
 }
 
+// An add for a session on the adder's own device goes by what that device keeps of it, which is
+// what the add is applied by: a tag a person turned off on the page still counts toward the 12, and
+// a group a person took the session out of can't be given back by an agent (#524, #543).
+func TestAnAddForASessionHereGoesByWhatItsDeviceKeeps(t *testing.T) {
+	a := newDevice(t, newRemote(t))
+	a.session("aaaaaa", "")
+	dave, _ := a.session("dddddd", "")
+	carol, _ := a.session("cccccc", "")
+	pg := a.page()
+	off := func(addr, tag string) {
+		t.Helper()
+		if code, body := pg.call("POST", "/api/tags", pg.token, `{"addr":"`+addr+`","remove":["`+tag+`"]}`); code != 200 && code != 204 {
+			t.Fatalf("removing %s on the page: %d %s", tag, code, body)
+		}
+		eventually(t, tag+" off", func() bool { return !a.inGroup("aaaaaa", addr, tag) })
+	}
+
+	// Dave set twelve tags, and a person turned one off: he shows eleven, and has no room.
+	a.tagSelf("dddddd", []string{"t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11", "t12"}, nil)
+	off(dave, "t1")
+	r := a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"group:ui"}, For: []string{dave}})
+	t.Logf("adding dave: error %q, note %q", r.Error, r.Note)
+	if !strings.Contains(r.Error, "no room") {
+		t.Errorf("adding dave past a tag a person turned off gave %+v; want it refused, as he has no room", r)
+	}
+
+	// A person took carol out of group:ui.
+	a.tagSelf("cccccc", []string{"group:ui"}, nil)
+	off(carol, "group:ui")
+	r = a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"group:ui"}, For: []string{carol}})
+	t.Logf("adding carol: error %q, note %q", r.Error, r.Note)
+	if !strings.Contains(r.Error, "a person took") {
+		t.Errorf("adding carol to a group a person took her out of gave %+v; want it refused, saying so", r)
+	}
+}
+
+// An add for a session on another device counts the tags its presence shows as the session's own,
+// as its device counts them; a tag a person gave it isn't one (#524). The adder is told that device
+// can still refuse it, for what presence doesn't show.
+func TestAnAddForASessionElsewhereCountsTheTagsItSetItself(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+
+	b.tagSelf("bbbbbb", []string{"t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11"}, nil)
+	pg := b.page()
+	if code, body := pg.call("POST", "/api/tags", pg.token, `{"addr":"`+bob+`","add":["reviewing"]}`); code != 200 && code != 204 {
+		t.Fatalf("adding a tag on the page: %d %s", code, body)
+	}
+	eventually(t, "bob's twelve tags, as alice's device sees them", func() bool {
+		return a.inGroup("aaaaaa", bob, "t11") && a.inGroup("aaaaaa", bob, "reviewing")
+	})
+	r := a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"group:bus"}, For: []string{bob}})
+	t.Logf("adding bob: error %q, note %q", r.Error, r.Note)
+	if r.Error != "" {
+		t.Fatalf("adding bob, who set eleven tags himself: %s", r.Error)
+	}
+	if !strings.Contains(r.Note, "Another device can still refuse the add") {
+		t.Errorf("the adder was told %q; want it told bob's device can still refuse the add", r.Note)
+	}
+	eventually(t, "bob in the group", func() bool { return a.inGroup("aaaaaa", bob, "group:bus") })
+}
+
 // The first message a session is given from a group says in full that it is in the group, how to
 // answer and how to leave; later ones from that group end with one short line (Tyler, 2026-11-12).
 // A second group explains itself afresh, and inbox goes by the same record as a turn.

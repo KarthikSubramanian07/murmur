@@ -110,7 +110,7 @@ func (d *Daemon) addToGroups(ctx context.Context, id string, req proto.Request) 
 		d.mu.Unlock()
 		return fail("the CLI has no tags, and adds nobody to a group")
 	}
-	var self bool
+	var self, far bool
 	var addrs, shown []string
 	for _, raw := range req.For {
 		who := strings.TrimSpace(raw)
@@ -145,25 +145,9 @@ func (d *Daemon) addToGroups(ctx context.Context, id string, req proto.Request) 
 			// here, as a send to it does.
 			why = who + " has muted you, so you can't add it to a group"
 		default:
-			// A session's tags are capped, and the groups would be its own: past the cap its device
-			// refuses the add, or what others see of it loses another tag. Refused here, the adder
-			// is told, which that device can't do.
-			var has []tags.Tag
-			if dev == d.device {
-				if t := d.sessions[sess]; t != nil {
-					has = d.tagsOfLocked(t)
-				}
-			} else {
-				has = peerTagsLocked(d.peers[dev], sess)
-			}
-			n := len(has)
-			for _, grp := range groups {
-				if !tags.Has(has, grp) {
-					n++
-				}
-			}
-			if n > tags.MaxPerSession {
-				why = fmt.Sprintf("%s has %d tags, and a session has at most %d, so it has no room for more: it can drop one, or join the group itself", who, len(has), tags.MaxPerSession)
+			why = d.groupAddWhyLocked(dev, sess, who, groups)
+			if dev != d.device {
+				far = true
 			}
 		}
 		if why != "" {
@@ -200,6 +184,11 @@ func (d *Daemon) addToGroups(ctx context.Context, id string, req proto.Request) 
 	if len(addrs) > 0 {
 		notes = append(notes, fmt.Sprintf("Added %s to %s. Each is in it once its device reads this, usually within seconds, "+
 			"and learns of it from the group's first message: send to %s to reach them all.", strings.Join(shown, ", "), list, groups[0]))
+		if far {
+			// What groupAddWhyLocked can't see from presence (#524, #543).
+			notes = append(notes, fmt.Sprintf("Another device can still refuse the add, for a session a person took out of the group on the page "+
+				"or one with no room for another tag: who with %s shows who is in.", groups[0]))
+		}
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -256,4 +245,64 @@ func (d *Daemon) applyGroupAddLocked(e bus.Event, mode syncMode) {
 	d.putTagStateLocked(key, next)
 	d.kickPresence()
 	d.log.Printf("%s gave session %s the tags %s", e.From, e.To, strings.Join(given, ", "))
+}
+
+// groupAddWhyLocked is why the session at dev/sess, shown as who, can't be added to groups, as far
+// as this device can tell, or "" if it can't tell. The session's own device decides, by
+// applyGroupAddLocked. For a session here that is the same rule on the same state, so the answer is
+// exact. For one on another device it is that device's presence, which shows the tags the session
+// set itself but not those a person turned off, nor a person's choice that it be out of a group:
+// what the add is sure to fail on is refused, and the reply says the rest may be (#524, #543).
+// Caller holds mu.
+func (d *Daemon) groupAddWhyLocked(dev, sess, who string, groups []string) string {
+	full := func(own, off int) string {
+		has := fmt.Sprintf("%s has %d tags of its own", who, own)
+		if off > 0 {
+			has += fmt.Sprintf(", %d of them taken off by a person on the page but still counted", off)
+		}
+		return fmt.Sprintf("%s, and a session has at most %d, so it has no room for more: it can drop one, or join the group itself", has, tags.MaxPerSession)
+	}
+	if dev == d.device {
+		var st *tags.State
+		if t := d.sessions[sess]; t != nil {
+			st = d.tagStateLocked(t)
+		}
+		next := st.Clone()
+		_, out, err := next.Given(groups)
+		switch {
+		case len(out) > 0:
+			return fmt.Sprintf("a person took %s out of %s on the page, and only a person can put it back", who, strings.Join(out, ", "))
+		case err != nil:
+			// Self holds those a person turned off too: they aren't shown, and still count.
+			off := 0
+			for _, t := range next.Self {
+				if m, ok := next.Human[t]; ok && !m.On {
+					off++
+				}
+			}
+			return full(len(next.Self), off)
+		}
+		return ""
+	}
+	p := d.peers[dev]
+	// The tags the session is sure to hold as its own are those presence shows as its own, and the
+	// groups it would gain those it isn't shown in. A tag from a person or the daemon isn't its own,
+	// and doesn't count.
+	has := peerTagsLocked(p, sess)
+	own := 0
+	for _, t := range has {
+		if t.Src == tags.SrcSession {
+			own++
+		}
+	}
+	n := own
+	for _, g := range groups {
+		if !tags.Has(has, g) {
+			n++
+		}
+	}
+	if n > tags.MaxPerSession {
+		return full(own, 0)
+	}
+	return ""
 }
