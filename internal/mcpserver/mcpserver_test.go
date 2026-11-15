@@ -42,7 +42,7 @@ func TestMain(m *testing.M) {
 	}
 	// The tests run in whatever session started them, which may be one in T3 with a messaging socket:
 	// a server that took those from its environment would look its thread up in the real T3 database.
-	for _, k := range []string{"T3CODE_CLI_PATH", "T3CODE_HOME", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN"} {
+	for _, k := range []string{"T3CODE_CLI_PATH", "T3CODE_HOME", "T3CODE_THREAD_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN"} {
 		os.Unsetenv(k)
 	}
 	// Servers publish their records here, not in the real user's config directory.
@@ -69,6 +69,9 @@ type fakeDaemon struct {
 	routeError string
 	// sendReply, if set, is the daemon's answer to a send.
 	sendReply func(proto.Request) proto.Response
+	// helloReply, if set, may answer a hello in the daemon's place: an error to refuse it, or the
+	// session ID the daemon gives it. "", "" answers as the daemon usually does.
+	helloReply func(proto.Hello) (refusal, id string)
 
 	mu       sync.Mutex
 	hellos   []proto.Hello
@@ -157,7 +160,19 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 		if f.helloGate != nil {
 			<-f.helloGate
 		}
-		reply(proto.Response{OK: true, Self: "dev/" + req.Hello.ID, ClaudeSession: live, Protocol: proto.Protocol})
+		id := req.Hello.ID
+		if f.helloReply != nil {
+			refusal, given := f.helloReply(*req.Hello)
+			if refusal != "" {
+				reply(proto.Response{Error: refusal})
+				conn.Close()
+				return
+			}
+			if given != "" {
+				id = given
+			}
+		}
+		reply(proto.Response{OK: true, Self: "dev/" + id, ClaudeSession: live, Protocol: proto.Protocol})
 		return // the connection stays open until the test drops it
 	}
 	defer conn.Close()

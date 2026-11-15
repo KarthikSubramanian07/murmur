@@ -5,7 +5,10 @@ over.
 
 ## T3 Code
 
-- **Finding the thread** (#56). T3 gives an MCP server or a hook no thread ID, so the MCP server
+- **Finding the thread** (#56). T3 puts the thread's ID in `T3CODE_THREAD_ID` for Claude Code and
+  its ACP agents, and their MCP servers take it from there ([session
+  names](session-names.md#one-address-per-t3-thread)). Codex's MCP servers get a bare environment
+  without it, so for them, and for a server whose thread's address is in use, the MCP server
   looks the provider's own session up in T3's database: `statev2.sqlite` in T3's data directory
   (`T3CODE_HOME`, the directory the CLI's `bin` is in, or `~/.t3`), table
   `orchestration_v2_projection_provider_threads`, where `payload_json.nativeThreadRef.nativeId` is

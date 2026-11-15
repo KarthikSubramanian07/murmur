@@ -272,7 +272,33 @@ func helloFor(agent, cwd string) proto.Hello {
 			h.ID, h.Native = nativeID(native), native
 		}
 	}
+	if thread := os.Getenv(threadEnv); thread != "" && h.T3CLI != "" && !sharedAgent(agent) {
+		h.ID, h.T3Thread, h.ByThread = threadID(thread), thread, true
+	}
 	return h
+}
+
+// threadEnv is where T3 puts the thread's ID for the agents it runs, and so for their MCP servers:
+// Claude Code's process, and an ACP agent's (read in T3 0.1.x's server, 2026-11-15). Codex's MCP
+// servers start with a bare environment and don't get it. An OpenCode server serves every session
+// in its directory, so the one thread in its environment isn't theirs: it is left out (sharedAgent).
+const threadEnv = "T3CODE_THREAD_ID"
+
+// threadID is the session's Murmur ID inside T3, made from its thread (#642). A thread keeps its ID
+// for good, while the client's session under it changes when T3 moves the thread to another
+// provider instance (another Claude account or config home): each instance has a session of its
+// own for the thread. So a server that registers by the thread is the thread's session again after
+// a move, at the same address, and other devices never see an address they can't name. Hashed, as
+// nativeID is, and kept apart from it.
+func threadID(thread string) string { return nativeID("t3:" + thread) }
+
+// ownID is the ID the session has when it isn't registered by its thread: made from its client's
+// own ID, as helloFor makes it.
+func ownID(h proto.Hello) string {
+	if h.Native != "" {
+		return nativeID(h.Native)
+	}
+	return sessionID(h.ClaudeSession)
 }
 
 // isClaude says whether the server runs for Claude Code: `mcp` with no agent, as join registers it
@@ -300,8 +326,9 @@ func nativeID(native string) string {
 // command line; in Claude Code, the messaging socket and the token for it; in Pi, the socket
 // Murmur's extension opens in the session, which takes the same lines (internal/join/pi.go); for
 // Codex and OpenCode outside T3, the client's own program, whose command line takes a message
-// (#135, package clientcli). T3's thread isn't in the environment: link.seek finds it. The daemon
-// keeps all of this to itself (see proto.Route).
+// (#135, package clientcli). T3's thread is in the environment of most agents T3 runs (threadEnv),
+// and helloFor takes it; where it isn't, link.seek finds it. The daemon keeps all of this to itself
+// (see proto.Route).
 func routeFromEnv(agent string) proto.Route {
 	r := proto.Route{T3CLI: os.Getenv("T3CODE_CLI_PATH"), T3Home: os.Getenv("T3CODE_HOME")}
 	switch {
@@ -1276,9 +1303,23 @@ func (l *link) run(ctx context.Context) {
 			if strings.Contains(err.Error(), "in use") {
 				if inUse++; inUse >= 3 {
 					l.mu.Lock()
-					l.hello.ID = bus.RandHex(6)
+					byThread := l.hello.ByThread
+					if byThread {
+						// The thread's session is live and stays so: this process isn't the
+						// thread's own (a claude run from the thread's shell inherits
+						// T3CODE_THREAD_ID), or the thread's last provider session hasn't let
+						// go. It is a session of its own, whose thread T3's database may name,
+						// as before #642.
+						l.hello.ByThread, l.hello.T3Thread = false, ""
+						l.hello.ID = ownID(l.hello)
+					} else {
+						l.hello.ID = bus.RandHex(6)
+					}
 					l.mu.Unlock()
 					inUse = 0
+					if byThread {
+						l.startSeek(ctx)
+					}
 				}
 			}
 			select {
@@ -1292,16 +1333,21 @@ func (l *link) run(ctx context.Context) {
 		backoff, inUse = time.Second, 0
 		l.mu.Lock()
 		l.hello.Reconnect = true // any later hello is a reconnection
+		if _, id := bus.SplitAddr(resp.Self); h.ByThread && id != "" {
+			// The daemon may give the thread the address its name has had since before #642
+			// (see Hello.ByThread).
+			l.hello.ID = id
+		}
 		// The thread may have been found after this hello was made, when tellRoute had no session
 		// to tell: the daemon hasn't got it.
-		stale, route := l.hello.Route != h.Route, l.hello.Route
+		stale, route, id := l.hello.Route != h.Route, l.hello.Route, l.hello.ID
 		l.mu.Unlock()
 		l.learn(resp.ClaudeSession)
 		told := h.Route
 		if stale && route.Child {
 			// A subagent's call came while the hello was on its way: the daemon hears that the
 			// session is a child before the call, which waits for this registration, goes on.
-			l.sendRoute(ctx, h.ID, route)
+			l.sendRoute(ctx, id, route)
 			told = route
 		}
 		l.set(true, nil)

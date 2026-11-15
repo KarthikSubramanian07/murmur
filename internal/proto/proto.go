@@ -310,6 +310,11 @@ type Hello struct {
 	// Reconnect says the session was registered with a daemon that went away, so it should get
 	// what that daemon would have queued for it.
 	Reconnect bool `json:"reconnect,omitempty"`
+	// ByThread says ID was made from Route.T3Thread, which T3 gave the server in its environment
+	// (#642), and that the server takes the session ID the reply's Self names: the daemon may
+	// register the thread at the address its name already has. A server from before it, still
+	// running after an update, sends the thread it found too, but keeps its own ID.
+	ByThread bool `json:"byThread,omitempty"`
 	// Route says how to hand a message over to the session as a turn.
 	Route
 }
