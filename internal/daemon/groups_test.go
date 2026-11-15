@@ -295,11 +295,14 @@ func TestASessionLeavesAGroupAPersonStarted(t *testing.T) {
 }
 
 // lookup lists a session's group messages, the ones it got as well as the ones it sent (#445), on
-// its own device and on another, and not for a session outside the group.
+// its own device and on another, and not for a session outside the group. Membership is by the
+// session's tags now: one that left lists only what it said there, and a stopped one still lists
+// the group's messages by the tags kept for its name.
 func TestLookupListsTheGroupMessagesASessionGot(t *testing.T) {
 	remote := newRemote(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
+	a := newDeviceWith(t, remote, func(d *device) { d.grace = 300 * time.Millisecond }) // alice stops at the end
+	b := newDevice(t, remote)
+	alice, aliceConn := a.session("aaaaaa", "")
 	bob, _ := b.session("bbbbbb", "")
 	carol, _ := b.session("cccccc", "")
 	nameA, nameB, nameC := b.named(alice), a.named(bob), a.named(carol)
@@ -311,6 +314,11 @@ func TestLookupListsTheGroupMessagesASessionGot(t *testing.T) {
 		return a.inGroup("aaaaaa", bob, "group:ui") && b.inGroup("bbbbbb", bob, "group:ui")
 	})
 	a.send("aaaaaa", "group:ui", "alice to the group", "")
+	// b lists messages in the order it reads them, so bob sends only once b has read alice's.
+	eventually(t, "bob got alice's message", func() bool {
+		inbox, _ := b.unread("bbbbbb", "")
+		return slices.Contains(inbox, "alice to the group")
+	})
 	b.send("bbbbbb", "group:ui", "bob to the group", "")
 
 	subjects := func(d *device, as, who string) []string {
@@ -339,6 +347,26 @@ func TestLookupListsTheGroupMessagesASessionGot(t *testing.T) {
 		t.Errorf("lookup's text doesn't show alice's message to the group:\n%s", out)
 	}
 	t.Logf("lookup of bob, from alice's device:\n%s", out)
+
+	// Bob leaves: the group's messages are no longer his conversation, on his device or alice's.
+	b.tagSelf("bbbbbb", nil, []string{"group:ui"})
+	for _, c := range []struct {
+		d  *device
+		as string
+	}{{b, "bbbbbb"}, {a, "aaaaaa"}} {
+		var got []string
+		eventually(t, "only bob's own message in his lookup once he left", func() bool {
+			got = subjects(c.d, c.as, nameB)
+			return slices.Equal(got, []string{"bob to the group"})
+		})
+	}
+
+	// Alice stops: her own device still lists the group's messages, by the tags kept for her name.
+	aliceConn.Close()
+	eventually(t, "alice stopped", func() bool { return !a.look("", nameA).Running })
+	if got := subjects(a, "", nameA); !slices.Equal(got, both) {
+		t.Errorf("lookup of alice, stopped, lists %q; want %q", got, both)
+	}
 }
 
 // A member on a device whose Murmur is from before groups (#445): its presence, encrypted as every

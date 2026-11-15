@@ -160,7 +160,8 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 		det.Agent, det.Tags = cmp.Or(det.Agent, bus.AgentPerson), tags.Person()
 	}
 	// A group the session is in now is its conversation too, as on the page's filter (#485, #445):
-	// here by the tags delivery goes by (addressedLocked), elsewhere by its device's presence.
+	// here by the tags delivery goes by (addressedLocked), elsewhere by its device's presence. A
+	// stopped session here keeps its tags for its name, so it counts where the page counts none.
 	inGroup := func(group string) bool { return tags.Has(det.Tags, group) }
 	if dev == d.device {
 		inGroup = func(group string) bool { return sess != bus.PersonSession && d.hasTagLocked(sess, group) }
