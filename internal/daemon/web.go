@@ -222,11 +222,13 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 			Committed: d.committedLocked(ss.id), Doing: ss.shownDoing(), Worktree: ss.worktree, Started: ss.started,
 			LastActive: ss.lastActive, Tags: d.tagsOfLocked(ss), HookOff: d.hookOffLocked(ss)})
 	}
+	colors := d.colorsLocked()
+	self.Color, self.Picked = colors[d.device].Color, colors[d.device].Picked
 	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked()}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), Reachable: !d.staleLocked(p),
-			LastSeen: p.lastChange}
+			LastSeen: p.lastChange, Color: colors[id].Color, Picked: colors[id].Picked}
 		for _, ps := range p.pres.Sessions {
 			if ps.ID == proto.CLISession {
 				continue // V1 daemons list their CLI

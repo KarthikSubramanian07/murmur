@@ -38,6 +38,9 @@ type Source interface {
 	// SetNick gives this device a nickname (#190, #533), as `mur nickname` does, or with "" takes
 	// it off, and returns the account. An error says why the nickname won't do, in words to show.
 	SetNick(ctx context.Context, nick string) (Account, error)
+	// SetColor picks this device's colour (#573), 1 to bus.Colors, or with 0 lets it be chosen, and
+	// returns the account. An error says why the colour won't do: another device has it.
+	SetColor(ctx context.Context, color int) (Account, error)
 	// Send sends text as this device's person to a name, a device/session address, a device or "*".
 	// It returns once the message is on the remote; an error means it wasn't sent, and says why.
 	Send(ctx context.Context, to, text string) (Sent, error)
@@ -113,6 +116,11 @@ type Account struct {
 	// Nick is the nickname this device's person gave it (#190), "" if none: not the name it is
 	// called by without one, which Device.Nick gives.
 	Nick string `json:"nick,omitempty"`
+	// Color is the colour this device's person picked (#573), 1 to bus.Colors, 0 if none.
+	// ColorLost is what the device that took their last pick is called, "" if none did: a pick
+	// that loses a race, or that someone made while this device was away, is given up.
+	Color     int    `json:"color,omitempty"`
+	ColorLost string `json:"colorLost,omitempty"`
 }
 
 // Person is a person on a device.
@@ -144,6 +152,10 @@ type Device struct {
 	Sessions  []Session `json:"sessions"`
 	// Person is the person on this device, nil if they have no account.
 	Person *Person `json:"person,omitempty"`
+	// Color is the colour of the device's faces (#560, #573), a place in the page's palette, 0 to
+	// bus.Colors-1. Picked says its person picked it; otherwise it was chosen for them.
+	Color  int  `json:"color"`
+	Picked bool `json:"picked,omitempty"`
 }
 
 // Session is one agent session.

@@ -512,6 +512,9 @@ type Daemon struct {
 	// firstSync is closed once Run's first sync is over, done or not (see awaitFirstSync). Nil for
 	// a daemon Run didn't start, which has no first sync to wait for.
 	firstSync chan struct{}
+	// colorSettled says a full sync has checked this device's picked colour against its peers',
+	// so its presence may carry it (color.go).
+	colorSettled bool
 }
 
 type session struct {
@@ -694,7 +697,14 @@ type state struct {
 	// name still reaches them.
 	Person string `json:"person,omitempty"`
 	// Nick is the nickname this device's user gave it (#190), "" if none.
-	Nick        string            `json:"nick,omitempty"`
+	Nick string `json:"nick,omitempty"`
+	// Color is the colour this device's user picked for its faces on the page (#573), 1 to
+	// bus.Colors, 0 if none; ColorAt is when they picked it.
+	Color   int       `json:"color,omitempty"`
+	ColorAt time.Time `json:"colorAt,omitzero"`
+	// ColorLostTo is what the device that took this one's picked colour is called, "" if none
+	// did since its person last picked.
+	ColorLostTo string            `json:"colorLostTo,omitempty"`
 	PersonSince time.Time         `json:"personSince,omitzero"`
 	People      map[string]string `json:"people,omitempty"`
 	// PersonClaims is every person's name in the names registry, to the address that claimed it
