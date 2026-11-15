@@ -330,3 +330,50 @@ func TestFirstSyncFailedStillQueues(t *testing.T) {
 		t.Fatalf("bob got %q, want the broadcast and the direct message", got)
 	}
 }
+
+// After a restart, a person's change to the tags of a session whose name was pending and that kept
+// nothing here, an agent's add of it to a group, and the group's message, all read before the
+// session reconnects, reach it once it does (#524): the daemon knew nothing of it when it read them.
+func TestTagsReadBeforeANamelessSessionReconnectsReachIt(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newDevice(t, remote)
+	const far = "refs/murmur/mesh/far-0001"
+	read := func(what string) func() bool {
+		return func() bool {
+			for _, ev := range b.do(proto.Request{Op: proto.OpLog}).Events {
+				if strings.Contains(ev.Line, what) {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	// b has read far-0001's log before it stops, so what is written there meanwhile is news to it.
+	pushEvent(t, remote, far, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "far-0001/xxxxxx",
+		At: time.Now().UTC(), To: "*", Subject: "before"})
+	eventually(t, "b reads far-0001's log", read("before"))
+	b.offline(remote, true) // so bob's name can't land
+	bob, _ := b.session("bbbbbb", "")
+	b.stop()
+
+	now := time.Now().UTC()
+	pushEvent(t, remote, far, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Tags, From: "far-0001/cli",
+		At: now, To: bob, Add: []string{"release"}})
+	pushEvent(t, remote, far, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.GroupAdd, From: "far-0001/xxxxxx",
+		At: now, To: bob, Add: []string{"group:ui"}})
+	pushEvent(t, remote, far, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "far-0001/xxxxxx",
+		At: now, To: "group:ui", Subject: "to the group"})
+	b.offline(remote, false)
+	b.start()
+	eventually(t, "b reads them", read("to the group"))
+
+	b.helloAgain("bbbbbb", true)
+	if !b.inGroup("bbbbbb", bob, "group:ui") || !b.inGroup("bbbbbb", bob, "release") {
+		t.Errorf("back, bob has %v; want release and group:ui", b.do(proto.Request{Op: proto.OpTags, Session: "bbbbbb"}).Tags)
+	}
+	got := b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages
+	if len(got) != 1 || got[0].Subject != "to the group" {
+		t.Errorf("back, bob's inbox: %+v; want the group's message", got)
+	}
+}
