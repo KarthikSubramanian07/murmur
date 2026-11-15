@@ -925,9 +925,10 @@ function cumulativeBands(days, byRepo, repoList, value, colors) {
 // repo by repo, is in the tooltip rather than in the marks, so the shape reads at a glance.
 function progressChart(box, days, values, { mode, show = fmt, what, rowsAt = () => [] }) {
   box.replaceChildren();
-  // Ink, not a series color: the tooltip lists repos in their colors under it, and series-1 is
-  // the oldest repo's.
-  const n = days.length, H = 300, c = css('--text-primary'), soft = `color-mix(in srgb, ${c} 18%, transparent)`;
+  // The page's blue for one series, as on the other totals. The oldest repo has it too, so the
+  // tooltip's keys take the marks' shapes (a line for the average, the columns' tint for the day)
+  // to stay apart from that repo's square.
+  const n = days.length, H = 300, c = css('--series-1'), soft = `color-mix(in srgb, ${c} 28%, transparent)`;
   const f = frame(box, n, Math.max(1, ...values), H, `${what}, ${mode === 'cumulative' ? 'in all' : 'per day'}`, show === size ? sizeTick : fmt);
   const pt = i => [f.x(i), f.y(values[i])];
   let lineAt = i => f.y(values[i]);
