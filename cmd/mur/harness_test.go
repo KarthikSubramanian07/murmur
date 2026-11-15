@@ -110,8 +110,8 @@ func cloneOf(t *testing.T, root string) (remote, clone string) {
 	return remote, clone
 }
 
-// stopDaemon stops the clone's daemon and waits until it has let go of the clone's files: until
-// nothing holds its lock, not until daemon.json has gone. A daemon removes daemon.json as it begins
+// stopDaemon stops the clone's daemon and waits until nothing holds the clone's lock, which the
+// daemon lets go of as it exits, not until daemon.json has gone. A daemon removes daemon.json as it begins
 // to stop and keeps the lock while it drains and says goodbye. One that began to stop by itself, as
 // a clone's does once its user has left, isn't found by `mur stop`, which then doesn't wait; on a
 // slow Windows runner it outlasted the TempDir cleanup's retries (#663).
