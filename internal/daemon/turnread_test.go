@@ -93,6 +93,7 @@ func TestAPromptIsMatchedToItsTurn(t *testing.T) {
 	rerun := msg("Rerun CI?", "It flaked.")
 	cut := msg("A long first line that the page cut…", "A long first line that the page cut short, and went on.")
 	long := msg("Logs", strings.Repeat("é line of the log\n", 400))
+	longAgain := msg("Logs", strings.Repeat("é line of the log\n", 400)+"and one more")
 	deploy, deployNow := msg("Deploy", ""), msg("Deploy now", "")
 	// A line a client put first leaves room in the hook's 4 KB for the turn's header and "Deploy".
 	before := strings.Repeat("a", proto.MaxPrompt-len("Message from quiet-otter via Murmur:\n\nDeploy")-1) + "\n"
@@ -107,6 +108,7 @@ func TestAPromptIsMatchedToItsTurn(t *testing.T) {
 		{"after a line a client put first", "[from T3]\n" + rerun, []string{rerun}, 0},
 		{"with Windows line ends, trimmed", strings.TrimSpace(strings.ReplaceAll(rerun, "\n", "\r\n")), []string{rerun}, 0},
 		{"cut at the hook's 4 KB", hook(long), []string{long}, 0},
+		{"two long turns that share their first 4 KB", hook(longAgain), []string{long, longAgain}, -1},
 		{"cut, after lines a client put first", hook("[from T3]\n" + long), []string{rerun, long}, 1},
 		{"the later of two whose subjects start the same", deployNow, []string{deploy, deployNow}, 1},
 		{"the earlier of them", deploy, []string{deploy, deployNow}, 0},

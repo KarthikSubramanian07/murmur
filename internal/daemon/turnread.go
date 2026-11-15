@@ -29,8 +29,8 @@ const maxAwaiting = 20
 // The text, not the subject: a subject can start another's ("Deploy", "Deploy now") or repeat it,
 // so a cancelled turn's message took the mark of the next turn whose subject began with it (#651).
 // The text holds the sender, the subject and the body, so two messages share it only when nothing
-// tells their turns apart. An entry saved before #651 has no text, matches no prompt, and goes
-// after awaitingFor.
+// tells their turns apart, or, for turns past 4 KB, nothing in their first 4 KB (whichTurn). An
+// entry saved before #651 has no text, matches no prompt, and goes after awaitingFor.
 type awaitingRead struct {
 	ID   string    `json:"id"`
 	From string    `json:"from"`
@@ -136,7 +136,8 @@ func turnStart(turn string) string {
 
 // isTurn says prompt holds the turn whose text, as turnStart kept it, is turn: whole, from where
 // the turn's header line ("Message from quiet-otter via Murmur:") starts; or, for a prompt the hook
-// cut, only its start, past the header. The header may come after other lines, should a client put
+// cut, only its start, past the header. A turn turnStart cut is only ever held as its start, as two
+// long turns can share their first 4 KB. The header may come after other lines, should a client put
 // anything before the turn. A prompt the user typed while the client held Murmur's turn in its
 // queue doesn't hold the header, so it isn't the turn.
 func isTurn(prompt, turn string, cut bool) (whole, start bool) {
@@ -144,6 +145,7 @@ func isTurn(prompt, turn string, cut bool) (whole, start bool) {
 	if header == "" || len(header) == len(turn) {
 		return false, false
 	}
+	long := len(turn) > proto.MaxPrompt-utf8.UTFMax
 	prompt = strings.ReplaceAll(prompt, "\r\n", "\n")
 	for from := 0; ; {
 		i := strings.Index(prompt[from:], header)
@@ -151,10 +153,10 @@ func isTurn(prompt, turn string, cut bool) (whole, start bool) {
 			return false, start
 		}
 		rest := strings.TrimSpace(prompt[from+i:])
-		if strings.HasPrefix(rest, turn) {
+		if strings.HasPrefix(rest, turn) && !long {
 			return true, false
 		}
-		start = start || cut && len(rest) > len(header) && strings.HasPrefix(turn, rest)
+		start = start || len(rest) > len(header) && (strings.HasPrefix(rest, turn) || cut && strings.HasPrefix(turn, rest))
 		from += i + len(header)
 	}
 }
