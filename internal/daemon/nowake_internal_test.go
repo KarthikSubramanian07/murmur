@@ -10,7 +10,7 @@ import (
 // What a sender is told of recipients that won't be woken (#545), piece by piece; nowake_test.go
 // has it end to end.
 
-func TestUnwokenNoteNamesFiveAndCountsTheRest(t *testing.T) {
+func TestUnwokenNoteNamesThreeAndCountsTheRest(t *testing.T) {
 	t.Parallel()
 	if got := unwokenNote(nil); got != "" {
 		t.Errorf("nobody: %q", got)
@@ -22,7 +22,7 @@ func TestUnwokenNoteNamesFiveAndCountsTheRest(t *testing.T) {
 		{[]string{"quiet-otter"}, "quiet-otter won't be woken ("},
 		{[]string{"quiet-otter", "brave-heron"}, "quiet-otter and brave-heron won't be woken ("},
 		{[]string{"a-a", "b-b", "c-c"}, "a-a, b-b and c-c won't be woken ("},
-		{[]string{"a-a", "b-b", "c-c", "d-d", "e-e", "f-f", "g-g"}, "a-a, b-b, c-c, d-d, e-e and 2 more won't be woken ("},
+		{[]string{"a-a", "b-b", "c-c", "d-d", "e-e", "f-f", "g-g"}, "a-a, b-b, c-c and 4 more won't be woken ("},
 	} {
 		if got := unwokenNote(tc.names); !strings.HasPrefix(got, tc.want) || !strings.HasSuffix(got, "when they read their inbox.") {
 			t.Errorf("%q: %q, want it to start %q", tc.names, got, tc.want)

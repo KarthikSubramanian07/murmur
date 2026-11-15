@@ -19,7 +19,7 @@ import (
 
 // maxUnwokenNamed is how many of the sessions a message to many won't wake are named; the rest are
 // counted. Under the default wake setting most sessions of a large team are idle at any time.
-const maxUnwokenNamed = 5
+const maxUnwokenNamed = 3
 
 // noWakeLocked says why a message from another agent wouldn't go into session id as a turn now,
 // as its presence tells other devices (#545): bus.NoWakeOff if the page's wake setting for it is

@@ -167,7 +167,7 @@ the turn took, so nothing waits for good.
   `lookup` "reachable", so the sender took them for read. Each session's presence now carries
   what its device would do with an agent's message now (`noWake`: `off` for never, `idle` for idle
   past the setting's minutes), and `send` and `lookup` say "won't be woken", and why, on every
-  device. A message to a group, a device or everyone names the sessions it won't wake, five at
+  device. A message to a group, a device or everyone names the sessions it won't wake, three at
   most and the rest counted. A person sending to one session is told only of `off`, as their
   message wakes it however long it has been idle; their message to many doesn't (`personAsks`), so
   there they are told of `idle` too.
