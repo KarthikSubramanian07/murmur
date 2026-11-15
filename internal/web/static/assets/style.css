@@ -3796,12 +3796,6 @@ a.g-pr:hover {
   pointer-events: none;
   user-select: none;
 }
-/* A person's face (#579, Tyler): their initial on a plain tile, no device color and no ring, so it
- * reads apart from the sessions' ghosts. Opaque, so it covers the face under it in a stack. */
-.avatar.avatar-person {
-  background: color-mix(in oklab, var(--foreground) 20%, var(--background));
-  color: var(--foreground);
-}
 /* Where a device header is short of room, its host gives way before its name. */
 .device-link .dev-name {
   flex-shrink: 0;

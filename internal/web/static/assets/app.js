@@ -2747,16 +2747,16 @@ function draftConversation() {
   return ui.conversation === key ? { key, kind: "dm", title: pair.join(" & "), pair, messages: [] } : null;
 }
 
-// A session's face is a ghost on the color of the device it is on (#560), so a stack of faces says
-// whose machines they are. A person's is their initial on a plain tile (#579, Tyler). The classes
-// are in style.css: the page's content policy doesn't allow an inline style.
+// A face is filled with the color of the device it is on (#560), so a stack of faces says whose
+// machines they are. A session's shows a ghost; a person's, their initial (#579, Tyler). The
+// classes are in style.css: the page's content policy doesn't allow an inline style.
 function avatar(name) {
-  if (isPerson(name)) return personFace(name);
-  return ghostFace(name, "avatar dev-fill " + deviceColor(deviceOfName(name)));
+  const color = "avatar dev-fill " + deviceColor(deviceOfName(name));
+  return isPerson(name) ? personFace(name, color) : ghostFace(name, color);
 }
 
-function personFace(name) {
-  return h("span", { class: "avatar avatar-person", "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
+function personFace(name, cls) {
+  return h("span", { class: cls + " avatar-person", "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
 }
 
 // A session's ghost (#579): its name picks one of 16 ghosts and one of 15 accessories or none, so
@@ -3705,9 +3705,9 @@ function setupDialog() {
   );
 }
 
-// The face a name would have: a person's, whatever is typed so far.
+// The face a name would have: a person's on this device, whatever is typed so far.
 function faceOf(name) {
-  return personFace(name);
+  return personFace(name, "avatar dev-fill " + deviceColor((ui.state?.devices || []).find((d) => d.self)));
 }
 
 // Everyone a person can start a conversation with: people, then sessions, those at work first.

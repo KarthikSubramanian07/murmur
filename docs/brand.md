@@ -127,8 +127,8 @@ pressed, and butter for a person's own messages. The sidebar is ink, not blue. C
 quiet step (`#A9B6E6`) is still 8:1. The greens, ambers and reds of session states stay Light's,
 a step darker for cream. Dark stays the default.
 
-A session's face is a ghost (#579) and a person's is their initial on a plain tile, with no device
-colour and no ring (Tyler, 2026-11-15; the first version had it the other way round). A ghost is
+A session's face is a ghost (#579) and a person's is their initial, both on their device's colour;
+a person has no ring (Tyler, 2026-11-15; the first version had it the other way round). A ghost is
 drawn in three layers: a round tile in its device's colour, one of 16 ghosts (`ghost-*.svg` in
 `internal/web/static/assets/ghosts/`) and one of 15 accessories (`acc-*.svg`) or none, so 256 faces
 in all. The ghosts are named for ways of talking quietly (murmur, hush, whisper, psst); the murmur
