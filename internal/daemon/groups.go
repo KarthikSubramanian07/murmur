@@ -285,6 +285,13 @@ func (d *Daemon) groupAddWhyLocked(dev, sess, who string, groups []string) strin
 		return ""
 	}
 	p := d.peers[dev]
+	// The add's time is by this device's clock, and its device drops one more than groupAddMaxAge
+	// old by its own. pres.At is that device's clock when it wrote its presence, and lastChange this
+	// one's when it read it, later, so the gap is at most how far that clock runs ahead of this one.
+	if ahead := p.pres.At.Sub(p.lastChange); ahead > groupAddMaxAge-time.Minute {
+		return fmt.Sprintf("%s's device's clock runs at least %d minutes ahead of this one's, so it would take the add as over an hour old and drop it: one of the two clocks is wrong",
+			who, int(ahead/time.Minute))
+	}
 	// The tags the session is sure to hold as its own are those presence shows as its own, and the
 	// groups it would gain those it isn't shown in. A tag from a person or the daemon isn't its own,
 	// and doesn't count.
