@@ -63,6 +63,10 @@ var agents = []agent{
 		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerGrokAt(h) },
 		removal:    grokRemoval,
 		unregister: Env.unregisterGrokAt},
+	{driver: "antigravity", label: "Antigravity",
+		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerAntigravityAt(h) },
+		removal:    antigravityRemoval,
+		unregister: Env.unregisterAntigravityAt},
 }
 
 // defaultHome is an agent's configuration as this process's environment says, "" Dir where the
@@ -82,6 +86,8 @@ func (e Env) defaultHome(a agent) agentHome {
 		h.Dir = e.PiDir
 	case "grok":
 		h.Dir = e.GrokHome
+	case "antigravity":
+		h.Dir = e.GeminiHome
 	}
 	return h
 }
@@ -89,6 +95,11 @@ func (e Env) defaultHome(a agent) agentHome {
 // t3Home is the configuration a T3 instance of agent a runs in.
 func (e Env) t3Home(a agent, in t3Instance) (agentHome, bool) {
 	h := agentHome{Label: a.label + " (" + in.Name + " in T3 Code)", Bin: in.binary()}
+	if a.driver == "antigravity" {
+		// A home of T3's own for each instance, which nothing in its settings moves.
+		h.Dir = antigravityHomeOf(e.T3Settings, in.ID)
+		return h, h.Dir != ""
+	}
 	dir := in.homeOf(a.t3Var, e.Home)
 	switch {
 	case dir != "" && a.sub != "":

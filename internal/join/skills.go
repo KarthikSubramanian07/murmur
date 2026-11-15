@@ -22,6 +22,11 @@ func skillsDir(a agent, h agentHome) string {
 		if h.Dir != "" {
 			return filepath.Join(h.Dir, "skills")
 		}
+	case "antigravity":
+		// T3 links each instance's config/skills to the user's, ~/.gemini/config/skills.
+		if h.Dir != "" {
+			return filepath.Join(h.Dir, "config", "skills")
+		}
 	}
 	return ""
 }
