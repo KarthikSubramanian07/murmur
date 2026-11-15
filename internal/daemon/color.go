@@ -46,7 +46,8 @@ func (d *Daemon) shownColorLocked() (int, time.Time) {
 
 // settleColorLocked gives up this device's pick if a peer holds that colour: one that picked it
 // first, or, at the first full sync, one that picked it while this device was away. Called after
-// each full sync. Caller holds mu.
+// each full sync. The pick stays out of presence while any peer's is locked (no team key for it
+// yet), since it could hide the holder; a lost pick is still given up meanwhile. Caller holds mu.
 func (d *Daemon) settleColorLocked() {
 	if d.st.Color != 0 {
 		for _, id := range sortedKeys(d.peers) {
@@ -60,6 +61,11 @@ func (d *Daemon) settleColorLocked() {
 				d.kickPresence()
 				break
 			}
+		}
+	}
+	for _, p := range d.peers {
+		if p.locked {
+			return // a holder could be hiding in it: settled once every presence can be read
 		}
 	}
 	if !d.colorSettled {
@@ -108,6 +114,9 @@ func (s pageSource) SetColor(ctx context.Context, color int) (web.Account, error
 		}
 		d.saveLocked()
 		d.kickPresence()
+	} else if d.st.ColorLostTo != "" {
+		d.st.ColorLostTo = "" // seen: picking Auto again takes the note away
+		d.saveLocked()
 	}
 	return d.accountLocked(), nil
 }

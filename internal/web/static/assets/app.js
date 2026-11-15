@@ -4383,34 +4383,24 @@ function accountSection() {
 const COLORS = ["Rose", "Clay", "Ochre", "Olive", "Sage", "Sea green", "Teal", "Steel blue", "Violet", "Plum", "Berry", "Cocoa"];
 
 // This device's color (#573): Auto, or one of the palette's that no other device has picked. A pick
-// that lost to another device's is given up, and the row says whose it is now.
+// that lost to another device's is given up, and the row says whose it is now until Auto is pressed
+// or another color picked. Buttons, not radios: each press is written to the remote, so the arrow
+// keys mustn't pick.
 function colorRow() {
   const acct = ui.state?.account;
   const pick = acct?.color || 0;
   const taken = new Map(); // a place in the palette, to who picked it
   for (const d of ui.state?.devices || []) if (!d.self && d.picked) taken.set(d.color, d.nick || d.owner || d.id);
-  const choices = [0, ...COLORS.map((_, i) => i + 1)].filter((c) => c === pick || !taken.has(c - 1));
-  // The arrow keys move the focus, and Enter or Space picks: each pick is written to the remote.
-  const move = (e, c) => {
-    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
-    if (!step) return;
-    e.preventDefault();
-    const next = choices[(choices.indexOf(c) + step + choices.length) % choices.length];
-    root.querySelector(`[data-key="color-${next}"]`)?.focus();
-  };
-  const radio = (c, props, ...kids) => {
+  const swatch = (c, props, ...kids) => {
     const who = c ? taken.get(c - 1) : null;
     return h(
       "button",
       {
         ...props,
-        role: "radio",
-        "aria-checked": c === pick ? "true" : "false",
+        "aria-pressed": c === pick ? "true" : "false",
         "aria-disabled": who ? "true" : null,
-        tabindex: c === pick ? 0 : -1,
         "data-key": "color-" + c,
         onclick: () => !who && saveColor(c),
-        onkeydown: (e) => move(e, c),
       },
       ...kids,
     );
@@ -4421,11 +4411,11 @@ function colorRow() {
     acct?.colorLost && !pick ? acct.colorLost + " has yours now, so you're on Auto." : "Your agents' faces.",
     h(
       "div",
-      { class: "swatches", role: "radiogroup", "aria-label": "Colour" },
-      radio(0, { class: "swatch-auto" }, "Auto"),
+      { class: "swatches" },
+      swatch(0, { class: "swatch-auto" }, "Auto"),
       COLORS.map((name, i) => {
         const who = taken.get(i);
-        return radio(i + 1, { class: "swatch dev-c" + i, "aria-label": who ? name + ", " + who + "'s" : name, title: who ? who + "'s" : name });
+        return swatch(i + 1, { class: "swatch dev-c" + i, "aria-label": who ? name + ", " + who + "'s" : name, title: who ? who + "'s" : name });
       }),
     ),
     "row-stack",
@@ -4434,7 +4424,7 @@ function colorRow() {
 
 async function saveColor(color) {
   delete ui.rowErrors.color;
-  if (color === (ui.state?.account?.color || 0)) return render();
+  if (color === (ui.state?.account?.color || 0) && !ui.state?.account?.colorLost) return render();
   try {
     const account = await api("/api/color", { method: "PUT", body: JSON.stringify({ color }) });
     if (ui.state) ui.state.account = { ...ui.state.account, ...account, color: account.color || 0, colorLost: account.colorLost || "" };

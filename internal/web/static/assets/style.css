@@ -3769,8 +3769,8 @@ a.g-pr:hover {
   color: var(--foreground);
   background: color-mix(in oklab, var(--input) 60%, transparent);
 }
-.swatch[aria-checked="true"],
-.swatch-auto[aria-checked="true"] {
+.swatch[aria-pressed="true"],
+.swatch-auto[aria-pressed="true"] {
   box-shadow:
     0 0 0 2px var(--background),
     0 0 0 3.5px var(--foreground);
