@@ -15,7 +15,7 @@ const vm = require("vm");
 const fs = require("fs");
 const src = fs.readFileSync(process.argv[2], "utf8");
 const ctx = {
-  ui: { state: { account: { name: "ann", addr: "laptop/human" } }, messages: [], conversation: null, restored: null, draftTo: null, draftGroup: null },
+  ui: { state: { account: { name: "ann", addr: "laptop/human" } }, messages: [], conversation: null, restored: null, draftTo: null, draftGroup: null, outbox: [], filter: null },
   named: new Map(),
   onlyMine: false,
   setOnlyMine: (v) => (ctx.onlyMine = v),
@@ -44,6 +44,13 @@ ctx.onlyMine = true;
 console.log("on: " + keys(ctx.onlyYours(list)));
 ctx.ui.conversation = "tag:group:db"; // opened from Recent
 console.log("on, another's open: " + keys(ctx.onlyYours(list)));
+ctx.ui.conversation = null;
+ctx.ui.outbox = [{ key: "tag:group:db", status: "failed" }]; // a send that failed
+console.log("on, one failed: " + keys(ctx.onlyYours(list)));
+ctx.ui.outbox = [];
+ctx.ui.filter = "laptop/otter"; // a picked session's conversations
+console.log("on, a session picked: " + keys(ctx.onlyYours(list)));
+ctx.ui.filter = null;
 ctx.ui.state.account = {};
 console.log("no account: " + keys(ctx.onlyYours(list)));
 ctx.ui.state.account = { name: "ann", addr: "laptop/human" };
@@ -63,7 +70,8 @@ console.log("toggled off: " + ctx.onlyMine + " " + ctx.ui.conversation);
 // The "only yours" toggle took over from the Your messages view (#637): it leaves the person's DMs,
 // the group chats they wrote in, and one they just began, and drops others' and quiet groups. A
 // conversation opened from elsewhere stays while open; turning the toggle on closes one that isn't
-// theirs, so the pane and the list agree. With no account there is nothing to filter by.
+// theirs, so the pane and the list agree. One with a send waiting or failed is theirs too. It
+// narrows all conversations, not a picked session's; with no account there is nothing to filter by.
 func TestOnlyYoursConversations(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -89,6 +97,8 @@ func TestOnlyYoursConversations(t *testing.T) {
 		`off: dm:["ann","otter"] dm:["heron","otter"] tag:group:ui tag:group:db tag:group:quiet dm:["ann","wren"]`,
 		`on: dm:["ann","otter"] tag:group:ui dm:["ann","wren"]`,
 		`on, another's open: dm:["ann","otter"] tag:group:ui tag:group:db dm:["ann","wren"]`,
+		`on, one failed: dm:["ann","otter"] tag:group:ui tag:group:db dm:["ann","wren"]`,
+		`on, a session picked: dm:["ann","otter"] dm:["heron","otter"] tag:group:ui tag:group:db tag:group:quiet dm:["ann","wren"]`,
 		`no account: dm:["ann","otter"] dm:["heron","otter"] tag:group:ui tag:group:db tag:group:quiet dm:["ann","wren"]`,
 		`toggled on over another's: true null`,
 		`toggled on over ann's: true tag:group:ui`,

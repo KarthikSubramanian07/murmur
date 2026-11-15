@@ -2690,7 +2690,7 @@ function visibleMessages() {
   );
 }
 
-// Your messages: direct ones, and the group chats you have posted in, whole, with the one you just
+// The person's messages: direct ones, and the group chats they have posted in, whole, with the one you just
 // opened, so a group that already has a history shows it before you write in it. The conversations
 // they make are the ones the "only yours" toggle leaves.
 function myMessages() {
@@ -2875,15 +2875,16 @@ function conversationIcon(c) {
 let chatMoved = false; // the open conversation has just changed key, and is still the one being read
 
 // The toggle in the list leaves only the conversations you are in: your DMs, the group chats you
-// have written in, and one you have just begun or have a message waiting in. It needs an account.
+// have written in, and one you have just begun or have a message waiting in. It needs an account,
+// and narrows all conversations, not a picked session's, which are about that session.
 // The open conversation stays, as one opened from Recent has to; turning the toggle on closes one
 // that isn't yours (mineToggle), so the pane never shows what the list has left out.
 function yourKeys() {
-  return new Set(myMessages().map((m) => conversationOf(m).key));
+  return new Set([...myMessages().map((m) => conversationOf(m).key), ...ui.outbox.map((item) => item.key)]);
 }
 
 function onlyYours(list) {
-  if (!me() || !onlyMine) return list;
+  if (!me() || !onlyMine || ui.filter) return list;
   const keys = yourKeys();
   return list.filter((c) => keys.has(c.key) || c.key === ui.conversation || (!c.messages.length && !c.quiet));
 }
@@ -2895,14 +2896,16 @@ function mineToggle() {
 
 function conversationsPage() {
   const every = conversations();
-  const list = onlyYours(every);
+  let list = onlyYours(every);
   // On a wide page a conversation is always open, and stays open while others get newer. On a
   // narrow one the list and a conversation take turns, so the list is where it starts.
   // A name landing changes a conversation's key, so one that has gone is looked for by a message
   // it held before settling for the newest.
+  // It is looked for among every conversation, as one left open outside the toggle stays open.
   if (ui.conversation && !list.some((c) => c.key === ui.conversation)) {
-    ui.conversation = list.find((c) => c.messages.some((m) => m.id === ui.conversationAnchor))?.key || null;
+    ui.conversation = every.find((c) => c.messages.some((m) => m.id === ui.conversationAnchor))?.key || null;
     chatMoved = ui.conversation != null;
+    list = onlyYours(every);
   }
   if (!ui.conversation && list.length && !NARROW.matches) ui.conversation = list[0].key;
   const open = list.find((c) => c.key === ui.conversation);
@@ -2911,14 +2914,15 @@ function conversationsPage() {
   return h(
     "div",
     { class: "page chat-page" },
-    // A picked session keeps its header, and so its tags, before it has any messages.
-    every.length === 0 && !ui.filter
+    // A picked session keeps its header, and so its tags, before it has any messages. With an
+    // account, the list stays, with who you could talk to beside it.
+    every.length === 0 && !ui.filter && !me()
       ? emptyState("message", "No conversations yet", "Messages between sessions show here as this daemon reads them.")
       : h(
           "div",
           { class: "chat" + (open ? " chat-open" : "") },
           conversationList(list),
-          // None of yours yet: who you could talk to.
+          // None yet, or none of yours: who you could talk to.
           open ? conversationPane(open) : !ui.filter && !NARROW.matches && startPane(),
         ),
   );
@@ -2942,7 +2946,7 @@ function conversationList(list) {
   // narrows it to direct messages or group chats, and the toggle under it to yours (onlyYours).
   const kind = ui.convKind || "all";
   const wanted = (c) => kind === "all" || (kind === "dm") === (c.kind === "dm");
-  const canMine = !!me();
+  const canMine = !!me() && !ui.filter;
   const old = (c) => c.kind === "dm" && c.pair.some((n) => isSettled(n));
   const rows = list.filter((c) => wanted(c) && hit(c) && (q || name || !old(c)));
   const older = q || name || kind === "group" ? [] : list.filter((c) => old(c));
@@ -3612,6 +3616,8 @@ function startChat(name) {
   // Yourself, from a group's members: there is no chat with yourself, so Conversations.
   if (name === myName()) {
     ui.conversation = null;
+    ui.draftTo = null;
+    ui.draftGroup = null;
     return go("messages");
   }
   ui.draftTo = name;
