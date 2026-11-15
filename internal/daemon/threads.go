@@ -101,8 +101,10 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 	changed, settled := false, false
 	prev := make(map[threadKey]time.Time, len(read))
 	for k, st := range read {
-		if !readAt[k].After(d.threadRead[k]) {
-			continue // a read just before a handoff (t3RunGoing) began later, and stands
+		// A read just before a handoff (t3RunGoing) that began later stands. Only one that began
+		// strictly later: Windows' clock can give two reads in a row the same time.
+		if readAt[k].Before(d.threadRead[k]) {
+			continue
 		}
 		prev[k], d.threadRead[k] = d.threadRead[k], readAt[k]
 		if !st.Busy {
