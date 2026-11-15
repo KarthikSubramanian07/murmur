@@ -99,6 +99,24 @@ func TestMessageForEveryoneReachesAThreadOnce(t *testing.T) {
 		eventually(t, "the handoff", func() bool { return len(calls()) >= 1 })
 		holds(t, "one handoff", 1500*time.Millisecond, func() bool { return len(calls()) == 1 })
 	})
+	t.Run("the new session registered before the old one's drop was seen", func(t *testing.T) {
+		// #99: the new session takes the thread's route while the old one still runs, so the old
+		// one keeps its route, and is in its grace with it once its drop is seen.
+		remote := newRemote(t)
+		exe, calls := useFakeT3(t)
+		a, b := newDevice(t, remote), newTimedDevice(t, remote, 20*time.Second, time.Hour)
+		alice, _ := a.session("aaaaaa", "")
+		old, conn := b.sessionRoute("bbbbbb", "claude-1", route(exe))
+		eventually(t, "presence", func() bool { return a.seesSession(old) && b.seesSession(alice) })
+		bob, _ := b.sessionRoute("cccccc", "claude-2", route(exe))
+		conn.Close() // dropped; its grace runs
+		b.awaitDrop("bbbbbb")
+		eventually(t, "presence", func() bool { return a.seesSession(bob) })
+
+		a.send("aaaaaa", "*", "to everyone", "hello")
+		eventually(t, "the handoff", func() bool { return len(calls()) >= 1 })
+		holds(t, "one handoff", 1500*time.Millisecond, func() bool { return len(calls()) == 1 })
+	})
 }
 
 // awaitDrop waits until the daemon has seen session id's connection close: from then on it refuses

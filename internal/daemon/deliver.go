@@ -205,7 +205,9 @@ func viaOf(r proto.Route, live bool) string {
 // candidateLocked finds the next message to hand over to session id, with how and where, or nil.
 // A message that is being handed over, that the hook has told the session about, whose handoff
 // failed, or that is too old, is passed over, and so is every message of a session that may not be
-// woken now (see wakesLocked). A session with a message and no way in is logged, once. Caller holds mu.
+// woken now (see wakesLocked). The session waits while another session's copy of its next message
+// is on its way into the same T3 thread (see handing). A session with a message and no way in is
+// logged, once. Caller holds mu.
 func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, proto.Route) {
 	var next, person *inMsg
 	for _, m := range d.st.Inbox[id] {
@@ -243,6 +245,9 @@ func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, 
 			d.log.Printf("session %s has no way to take a message as a turn (%s); its messages show as notices through the hook",
 				bus.Addr(d.device, id), noWay(route, s.dropped.IsZero()))
 		}
+		return nil, "", proto.Route{}
+	}
+	if via == viaT3 && d.handing[handing{threadKey{route.T3Home, route.T3Thread}, next.Event.ID}] {
 		return nil, "", proto.Route{}
 	}
 	return next, via, route
@@ -633,6 +638,9 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 		return nil
 	}
 	m.Pushing = true
+	if via == viaT3 {
+		d.handing[handing{threadKey{route.T3Home, route.T3Thread}, m.Event.ID}] = true
+	}
 	views := d.messageViewsLocked([]*inMsg{m}, true)
 	key := d.keyOfLocked(id)
 	views[0].Introduced = key != "" && d.introduced[key][m.Event.From]
@@ -800,6 +808,9 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	j.msg.Pushing = false
+	if j.via == viaT3 {
+		delete(d.handing, handing{threadKey{j.route.T3Home, j.route.T3Thread}, j.msg.Event.ID})
+	}
 	if err != nil {
 		d.forgetAwaitingLocked(j.id, j.msg.Event.ID) // not handed over, so no turn holds it (#611)
 	}
@@ -1083,6 +1094,16 @@ func (d *Daemon) hadCopyLocked(s *session, m *inMsg) bool {
 // nothing tries it again or shows it unread. A message only the new session was sent is another
 // event, and goes in, and so does each of two messages that are both for the thread.
 //
+// Two sessions of a thread can also both hold its route when the copies come (#99): a new session
+// that registers before the daemon has seen the old one's connection close finds the old one still
+// running, so retireRoutesLocked leaves it its route, and it keeps it through its grace. Both copies
+// can then be taken for a handoff at once, before either has been handed over. So the daemon also
+// knows what is on its way into each thread (handing), and a session whose next message is on its
+// way in through another session's copy waits: once that copy has been handed over, its own is
+// taken out as above, and if that handoff failed, its own goes in, as it would have. The route isn't
+// taken from the old session when its drop is seen: tried for #99 (2026-10-30), that could leave a
+// message to the old session's name or address with no way in.
+//
 // What is remembered is in memory only, as introduced is: a daemon that restarts forgets it, and a
 // repeat in that window is what there was before.
 
@@ -1090,6 +1111,12 @@ func (d *Daemon) hadCopyLocked(s *session, m *inMsg) bool {
 type handed struct {
 	id string
 	at time.Time
+}
+
+// handing is a message on its way into a T3 thread as a turn: the thread, and the event ID.
+type handing struct {
+	thread threadKey
+	id     string
 }
 
 const (
@@ -1133,10 +1160,9 @@ func (d *Daemon) noteHandedLocked(r proto.Route, id string) {
 }
 
 // dropHandedLocked takes out of session id's inbox each message its T3 thread was already handed,
-// through another session's copy. A copy on its way in stays: usually it is the one being handed
-// over (see takeInboxLocked), and leaves the inbox when it has been. It can also be a second session
-// of the thread handing over its own copy at the same moment, when both already hold the thread's
-// route; that repeat is #99's, which this doesn't cover. Caller holds mu.
+// through another session's copy. A copy on its way in stays: it is the one being handed over (see
+// takeInboxLocked), and leaves the inbox when it has been; a second copy for the same thread waits
+// for it (see handing). Caller holds mu.
 func (d *Daemon) dropHandedLocked(id string) {
 	r := d.routeOfLocked(id)
 	list := d.handedTo[threadKey{r.T3Home, r.T3Thread}]
