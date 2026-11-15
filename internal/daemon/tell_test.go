@@ -94,7 +94,8 @@ func TestASenderIsToldItsTurnWasReadOnceItStarts(t *testing.T) {
 		t.Fatalf("the send: %+v", r)
 	}
 	eventually(t, "the handoff", func() bool { return len(calls()) > 0 })
-	holds(t, "nothing told while the turn waits", 2*time.Second, func() bool {
+	// Longer than a receipt takes to reach a, so a notice at the handoff would show.
+	holds(t, "nothing told while the turn waits", 6*time.Second, func() bool {
 		return len(a.do(proto.Request{Op: proto.OpInbox, Session: "aaaaaa"}).Messages) == 0
 	})
 

@@ -70,8 +70,9 @@ func (d *Daemon) tellLocked(msg string, rec *sentRecord, late bool) {
 // as delivered: the client has the turn whole, and it is the way an idle session in T3 gets a
 // message. It doesn't count as read: where the hook sends the turn's prompt, the mark moves on to
 // read once the turn starts (turnread.go), and a turn T3 holds in its queue hasn't been read (#654).
-// A recipient whose hook sends no prompt (Pi, OpenCode) stays handed over, so a sender asking for
-// read is told at TellWait, with the message handed over as a turn.
+// A recipient that never sends one stays handed over, so a sender asking it for read is told at
+// TellWait, with the message handed over as a turn: Pi, OpenCode, Grok and Muse, whose hooks send no
+// prompt, a session with no hook, and one on a device whose daemon is older than #611.
 func reached(state, want string) bool {
 	if state == bus.MarkHanded && want == bus.MarkDelivered {
 		return true
@@ -84,7 +85,7 @@ func reached(state, want string) bool {
 func tellText(rec *sentRecord, waited []string, short int, label func(string) string) (subject, body string) {
 	verb := map[string]string{bus.MarkDelivered: "been told of", bus.MarkRead: "read"}[rec.Tell]
 	if short == 0 && slices.ContainsFunc(waited, func(a string) bool { return rec.Marks[a].State == bus.MarkHanded }) {
-		verb = "got" // some as a turn, which the body says (reached)
+		verb = "got" // some as a turn, which the body says; only for delivered (reached)
 	}
 	about := "your message " + strconv.Quote(bus.OneLine(rec.Subject, 60))
 	switch {

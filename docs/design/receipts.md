@@ -58,8 +58,9 @@ is what the page shows. The states are defined in [delivery](delivery.md).
   A message handed over as a turn counts as delivered: the client holds the turn whole, and it is
   how an idle session in T3 gets a message. The notice says which recipients got it as a turn. It
   doesn't count as read, as the turn may still wait in T3's queue: the mark becomes read once the
-  turn's prompt comes (#611), and the sender is told then (#654). A recipient whose hook sends no
-  prompt (Pi, OpenCode) stays handed over, so asking it for read waits the 30 minutes.
+  turn's prompt comes (#611), and the sender is told then (#654). A recipient that sends no prompt
+  stays handed over, so asking it for read waits the 30 minutes: Pi, OpenCode, Grok and Muse, a
+  session with no hook, and a device whose daemon is older than #611.
   A message with nobody to wait for (every recipient's device too old, or nobody there) is told so in
   `send`'s result, and nothing is kept.
 - **The telling is a notice from Murmur itself**, in the sender's inbox: a message from this device's
