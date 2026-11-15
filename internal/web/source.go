@@ -116,9 +116,11 @@ type Account struct {
 	// Nick is the nickname this device's person gave it (#190), "" if none: not the name it is
 	// called by without one, which Device.Nick gives.
 	Nick string `json:"nick,omitempty"`
-	// Color is the colour this device's person picked (#573), 1 to bus.Colors, 0 if none. Whether
-	// the device has it is Device.Picked: another device may have picked it first.
-	Color int `json:"color,omitempty"`
+	// Color is the colour this device's person picked (#573), 1 to bus.Colors, 0 if none.
+	// ColorLost is what the device that took their last pick is called, "" if none did: a pick
+	// that loses a race, or that someone made while this device was away, is given up.
+	Color     int    `json:"color,omitempty"`
+	ColorLost string `json:"colorLost,omitempty"`
 }
 
 // Person is a person on a device.

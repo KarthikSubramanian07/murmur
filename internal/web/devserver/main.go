@@ -459,12 +459,13 @@ func (f *fixtures) SetColor(ctx context.Context, color int) (web.Account, error)
 	if color < 0 || color > bus.Colors {
 		return web.Account{}, fmt.Errorf("there is no colour %d", color)
 	}
-	for id, c := range f.colorsLocked() {
-		if id != f.self && c.Picked && c.Color == color-1 {
-			return web.Account{}, fmt.Errorf("%s has that colour", id)
+	colors := f.colorsLocked()
+	for _, d := range f.devices {
+		if c := colors[d.ID]; !d.Self && c.Picked && c.Color == color-1 {
+			return web.Account{}, fmt.Errorf("%s has that colour", cmp.Or(d.Nick, d.Owner, d.ID))
 		}
 	}
-	f.account.Color = color
+	f.account.Color, f.account.ColorLost = color, ""
 	f.picks[f.self] = bus.ColorPick{Device: f.self, Color: color, At: time.Now()}
 	return f.account, nil
 }

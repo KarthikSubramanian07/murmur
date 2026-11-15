@@ -84,3 +84,52 @@ func TestAPickedColourIsSeenByTeammatesAndCantBeTaken(t *testing.T) {
 		t.Errorf("b taking the colour a let go: %d %s", code, body)
 	}
 }
+
+// A daemon that stops takes its presence off the remote, so its colour looks free. A pick that
+// outlasts a restart is the device's again; one someone else picked meanwhile is given up, not
+// taken back, and its person is told who has it (#573).
+func TestAColourPickedWhileItsDeviceWasAwayStaysPicked(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b, c := newDevice(t, remote), newDevice(t, remote), newDevice(t, remote)
+	pa, pb, pc := a.page(), b.page(), c.page()
+	idA, idB := a.self(), b.self() // a can't be asked while it is stopped
+	if code, _, body := pa.pickColor(3); code != http.StatusOK {
+		t.Fatalf("a picking: %d %s", code, body)
+	}
+	eventually(t, "b to see a's pick", func() bool { d, _ := pb.colorOn(idA); return d.Picked && d.Color == 2 })
+
+	// A restart keeps it.
+	a.restart()
+	pa = a.page()
+	eventually(t, "a's pick back on both pages after a restart", func() bool {
+		ad, _ := pa.colorOn(idA)
+		bd, _ := pb.colorOn(idA)
+		return ad.Picked && ad.Color == 2 && bd.Picked && bd.Color == 2
+	})
+
+	// While a is away, b picks it.
+	a.stop()
+	eventually(t, "b to see a gone", func() bool { _, ok := pb.colorOn(idA); return !ok })
+	if code, _, body := pb.pickColor(3); code != http.StatusOK {
+		t.Fatalf("b picking the colour a left: %d %s", code, body)
+	}
+	// Once it is on the remote: a's coming back before then would be a race, which the first pick wins.
+	eventually(t, "c to see b's pick", func() bool { d, _ := pc.colorOn(idB); return d.Picked && d.Color == 2 })
+	a.start()
+	pa = a.page()
+	eventually(t, "a to give the colour up to b", func() bool {
+		acct := pa.state().Account
+		return acct.Color == 0 && acct.ColorLost != ""
+	})
+	for name, p := range map[string]*page{"a": pa, "b": pb} {
+		eventually(t, name+"'s page to show b with it", func() bool {
+			ad, okA := p.colorOn(idA)
+			bd, _ := p.colorOn(idB)
+			return okA && !ad.Picked && bd.Picked && bd.Color == 2
+		})
+	}
+	if code, _, body := pa.pickColor(3); code != http.StatusBadRequest {
+		t.Errorf("a taking it back: %d %s", code, body)
+	}
+}
