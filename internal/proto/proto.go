@@ -98,6 +98,18 @@ const Protocol = 21
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
 
+// What a send's refusal is about (Response.Refused).
+const (
+	// RefusedRecipient is a refusal for the recipient alone: its name isn't one, nobody has it, it
+	// is offline, it has muted the sender, its device has no key to encrypt to. Another recipient
+	// might be sent the same message.
+	RefusedRecipient = "recipient"
+	// RefusedSend is a refusal of the message or the sender: no subject, a key in the body, a
+	// session that isn't registered or is a delegate, a push that failed. Every recipient would be
+	// refused the same.
+	RefusedSend = "send"
+)
+
 // Proof is what the daemon whose token is token, listening at addr, answers to a ping carrying
 // nonce: an HMAC of the address and the nonce, keyed by the token. Only that daemon and the clients
 // that read its daemon.json have the token, and the client's nonce is fresh, so a reply that carries
@@ -310,6 +322,11 @@ type Response struct {
 	Name        string `json:"name,omitempty"`
 	NamePending bool   `json:"namePending,omitempty"`
 	Note        string `json:"note,omitempty"`
+	// Refused says what a send's refusal is about (#541): RefusedRecipient or RefusedSend. A send
+	// to a list goes on past the first and stops at the second. A daemon from before it says
+	// neither, and an MCP server goes by the refusal's words (refusedRecipient), so it needed no
+	// new Protocol number.
+	Refused string `json:"refused,omitempty"`
 	// ClaudeSession is the Claude Code session ID the daemon holds for the calling session, which
 	// a hook may have corrected since the MCP server started. The server sends it in any later
 	// hello, in place of its environment's.
