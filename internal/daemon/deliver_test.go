@@ -46,8 +46,11 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		exe = os.Args[0]
 	}
-	if strings.TrimSuffix(filepath.Base(exe), filepath.Ext(exe)) == fakeT3Name {
+	switch strings.TrimSuffix(filepath.Base(exe), filepath.Ext(exe)) {
+	case fakeT3Name:
 		os.Exit(fakeT3(filepath.Dir(exe)))
+	case fakeGHName:
+		os.Exit(fakeGH(filepath.Dir(exe)))
 	}
 	// The daemon reads conversation titles from the clients' state under the user's home (#66): in
 	// tests that is an empty directory, so nothing here reads the real ~/.t3, ~/.codex or ~/.claude.
@@ -63,6 +66,9 @@ func TestMain(m *testing.M) {
 	// here, so it finds its clone from its working directory, and never a real session's.
 	os.Setenv(brand.SessionsDirEnv, filepath.Join(home, "sessions"))
 	testgit.Isolate() // HOME keeps out ~/.gitconfig, but not the system's, or a GIT_CONFIG_GLOBAL set already
+	if err := useFakeGH(filepath.Join(home, "bin")); err != nil {
+		panic(err)
+	}
 	started := time.Now()
 	code := m.Run()
 	os.RemoveAll(home)
@@ -160,19 +166,24 @@ func fakeT3Path(t *testing.T) (exe string, calls func() []t3Call) {
 // couldn't be cleaned up.
 func installFakeT3(t *testing.T, exe string) {
 	t.Helper()
+	if err := placeTestBinary(exe); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// placeTestBinary is installFakeT3 for a caller with no test, as TestMain is.
+func placeTestBinary(exe string) error {
 	self, err := os.Executable()
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	tmp := exe + ".tmp"
 	if runtime.GOOS == "windows" || os.Link(self, tmp) != nil {
 		if err := copyFile(self, tmp); err != nil {
-			t.Fatal(err)
+			return err
 		}
 	}
-	if err := os.Rename(tmp, exe); err != nil {
-		t.Fatal(err)
-	}
+	return os.Rename(tmp, exe)
 }
 
 // copyFile copies src to a new file dst that can be run.
