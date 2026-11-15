@@ -139,6 +139,7 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 			}
 		}
 	}
+	d.noteUnseenLocked()
 	// A delegate's inbox stays empty however a message got in, and its commits go to its parent,
 	// those made before its thread was read included.
 	for _, id := range sortedKeys(d.st.Inbox) {

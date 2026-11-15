@@ -103,6 +103,11 @@ func (d *Daemon) touchHookLocked(req proto.Request) []*session {
 		if !req.Subagent {
 			if s.busyAt.IsZero() || d.continuationLapsedLocked(s) {
 				s.turnStart = now
+				// A turn T3 started before the hook saw it began then: what came since came
+				// during it, and is held for its end however long it waited (#607).
+				if at := s.unseenStart(); s.busyAt.IsZero() && !at.IsZero() {
+					s.turnStart = at
+				}
 			}
 			s.hooked, s.busyAt = true, now
 			if req.Op != proto.OpTurnEnd {

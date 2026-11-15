@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
 )
 
@@ -54,5 +55,66 @@ func TestARunTheHookHasntSeenIsAtWork(t *testing.T) {
 				t.Errorf("hookBusyLocked = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// A run no hook has shown going stops counting after unseenHold: T3 can leave one queued for good,
+// and the session would never be told of its messages. Until then, the hook's first call dates the
+// turn from when the run was first seen, so what came since is held for the turn's end however
+// long it waited.
+func TestAnUnseenRunCountsForUnseenHoldAndStartsTheTurn(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	inT3(d, "aaaaaa", time.Hour)
+	s := d.sessions["aaaaaa"]
+	s.claudeSession = "claude-a"
+	now := time.Now()
+	s.hooked, s.stopSeen, s.endedAt = true, true, now.Add(-time.Hour)
+	k := threadKey{"", "thread-aaaaaa"}
+	d.threads[k], d.threadRead[k] = t3db.State{Busy: true}, now.Add(-20*time.Minute)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.noteUnseenLocked()
+	if !s.unseenAt.Equal(d.threadRead[k]) {
+		t.Fatalf("unseenAt = %v, want the read's %v", s.unseenAt, d.threadRead[k])
+	}
+	d.threadRead[k] = now // read again since: the run still goes
+	d.noteUnseenLocked()
+	if !s.unseenAt.Equal(now.Add(-20 * time.Minute)) {
+		t.Errorf("a later read moved unseenAt to %v", s.unseenAt)
+	}
+	if d.hookBusyLocked("aaaaaa") {
+		t.Error("at work by a run no hook has shown going for 20 minutes")
+	}
+
+	s.unseenAt = now.Add(-time.Minute)
+	if !d.hookBusyLocked("aaaaaa") {
+		t.Fatal("not at work by a run first seen a minute ago")
+	}
+	if at := d.nextLapseLocked(); !at.Equal(s.unseenAt.Add(unseenHold)) {
+		t.Errorf("nextLapseLocked = %v, want when the run stops counting, %v", at, s.unseenAt.Add(unseenHold))
+	}
+	d.touchHookLocked(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-a"})
+	if !s.turnStart.Equal(s.unseenAt) {
+		t.Errorf("turnStart = %v, want when the run was first seen, %v", s.turnStart, s.unseenAt)
+	}
+}
+
+// The push loop wakes when a handoff's hold lapses, as nothing else may come to let the session's
+// next message go.
+func TestAHandoffsHoldWakesThePushLoop(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	inT3(d, "aaaaaa", time.Hour)
+	s := d.sessions["aaaaaa"]
+	s.hooked, s.handedAt = true, time.Now().Add(-time.Second)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if at := d.nextLapseLocked(); !at.Equal(s.handedAt.Add(handedHold)) {
+		t.Errorf("nextLapseLocked = %v, want %v", at, s.handedAt.Add(handedHold))
+	}
+	s.handedAt = time.Now().Add(-handedHold - time.Second)
+	if at := d.nextLapseLocked(); !at.IsZero() {
+		t.Errorf("nextLapseLocked = %v after the hold lapsed, want zero", at)
 	}
 }

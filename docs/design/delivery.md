@@ -117,10 +117,19 @@ the turn took, so nothing waits for good.
   were a message the daemon had just handed over itself. So a session whose hook has no turn going
   is at work when a read of T3's database that began after its turn ended finds a run going, and,
   until a read that began after it, when the daemon has just handed a message to its thread (at
-  most a minute, so a read that keeps failing doesn't hold its messages for good). A read from
-  before the turn's end doesn't count, as it may have seen the run that `Stop` ended. The same read
-  catches a turn a user's own `Stop` hook kept going after Murmur's saw `Stop`, up to 5 s late. The
-  cost is up to 5 s after a turn ends, when a read catches T3 before it has closed the run.
+  most a minute, so a read that keeps failing doesn't hold its messages for good). The daemon reads
+  the thread again just before each handoff, as the reads every 5 s would let a prompt T3 took
+  since the last one through. A read from before the turn's end doesn't count, as it may have seen
+  the run that `Stop` ended. The same read catches a turn a user's own `Stop` hook kept going after
+  Murmur's saw `Stop`, up to 5 s late.
+  - What came after the run began counts as come during the turn, and is held for its end however
+    long it waited: Claude's turn once began 27 minutes after T3 took the prompt (2026-11-13).
+  - A run no hook has shown going for 15 minutes no longer counts, and messages go to T3 as before:
+    T3 can leave a run queued for good (one from 2026-11-03 was still queued on 11-15), and no hook
+    would ever tell the session of them.
+  - The cost: a message that comes just after a turn ends waits for the next read if a read caught
+    T3 before it closed the run, which is rare: of 1,212 Claude runs from 2026-11-11 to 11-15, T3
+    closed the run within 0.4 s of the turn's end in 99%.
 - **Subject or whole message** (#204), the page's busy setting, per device or session (Tyler,
   2026-11-08). "Subject", the default, leaves the agent's focus to the agent, at the cost that it
   may pass over a line it needed; "Whole message" puts each message in front of it mid-task at full
