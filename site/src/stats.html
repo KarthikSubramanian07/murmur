@@ -382,6 +382,8 @@ const css = name => getComputedStyle(document.documentElement).getPropertyValue(
 const short = name => name.replace(/^github\.com\//, '');
 const plural = (n, one, many = one + 's') => `${fmt(n)} ${n === 1 ? one : many}`;
 const ratioFmt = v => v == null ? '–' : v >= 10 ? v.toFixed(0) : v.toFixed(1);
+// An axis tick keeps the digits it has: 0.25 stays 0.25.
+const ratioTick = v => String(+v.toFixed(2));
 const sum = (xs, f = x => x) => xs.reduce((s, x) => s + (f(x) || 0), 0);
 // A count with the estimate of what encrypted buses hide added (#550). The asterisk on sessions
 // and on messages says they hold one, and how it is made.
@@ -560,8 +562,11 @@ function totalChart(box, series, key, what, H = 260, { barKey, barWhat, legendBo
   }
 }
 
-// The mean of the last 7 days up to each day, of as many days as there are before the first 7.
-const rolling = (xs, w = 7) => xs.map((_, i) => { const from = Math.max(0, i - w + 1); return sum(xs.slice(from, i + 1)) / (i - from + 1); });
+// The mean of the 7 days up to each day; null until there are 7.
+const rolling = (xs, w = 7) => xs.map((_, i) => i < w - 1 ? null : sum(xs.slice(i - w + 1, i + 1)) / w);
+// The census reads a day's records through the day, so the newest day, today, is only partly
+// counted until tomorrow. Trends (averages, ▲/▼) end at yesterday, or they would dip every day.
+const FULL = 1;
 
 // Columns per day, stacked by repo in the repos' fixed colors, with the 7-day average of the
 // whole as a dashed line over them. With estKey, a column is the exact count and the estimate
@@ -607,7 +612,7 @@ function stackChart(box, legendBox, days, byRepo, key, what, colors, { estKey, b
     const hit = el('rect', { x: f.m.l + f.band * i, y: f.m.t, width: f.band, height: H - f.m.t - f.m.b, fill: 'transparent', tabindex: 0 });
     const show = () => {
       const rows = m ? colors.slots.filter(s => m.has(s.key)).map(s => [s.color, value(m.get(s.key)), s.label]) : [];
-      if (n >= 7) rows.push([css('--text-muted'), value(Math.round(avg[i])), '7-day average']);
+      if (avg[i] != null && i < n - FULL) rows.push([css('--text-muted'), value(Math.round(avg[i])), '7-day average']);
       tip.show(f.x(i), f.y(totals[i]), `${long(d)} · ${value(totals[i])}${bytes ? '' : ' ' + what.toLowerCase()}`, rows);
     };
     hit.addEventListener('pointerenter', show); hit.addEventListener('focus', show);
@@ -615,8 +620,8 @@ function stackChart(box, legendBox, days, byRepo, key, what, colors, { estKey, b
     hits.push(hit);
   });
   const any = totals.some(Boolean);
-  if (any && n >= 7) {
-    const line = avg.map((v, i) => `${i ? 'L' : 'M'}${f.x(i).toFixed(1)},${f.y(v).toFixed(1)}`).join('');
+  if (any && n >= 7 + FULL) {
+    const line = avg.map((v, i) => v == null || i >= n - FULL ? '' : `${avg[i - 1] == null ? 'M' : 'L'}${f.x(i).toFixed(1)},${f.y(v).toFixed(1)}`).join('');
     // A surface halo under the line keeps it readable where it crosses the columns.
     f.svg.append(el('path', { d: line, fill: 'none', stroke: css('--surface-1'), 'stroke-width': 4, 'stroke-linejoin': 'round', opacity: 0.9 }));
     const p = el('path', { d: line, fill: 'none', stroke: css('--text-secondary'), 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-dasharray': '4 3' });
@@ -631,7 +636,7 @@ function stackChart(box, legendBox, days, byRepo, key, what, colors, { estKey, b
     const item = el('span'); const k = el('i'); k.style.background = s.color;
     item.append(k, document.createTextNode(s.label)); legendBox.append(item);
   }
-  if (any && n >= 7) {
+  if (any && n >= 7 + FULL) {
     const item = el('span'); item.append(el('i', { class: 'line' }), document.createTextNode('7-day average')); legendBox.append(item);
   }
   if (!any) box.append(el('div', { class: 'empty' }, `No ${what.toLowerCase()} in these days.`));
@@ -642,25 +647,29 @@ function sparkline(box, values) {
   box.replaceChildren();
   const W = 96, H = 32, n = values.length;
   if (n < 2) return;
-  const max = Math.max(...values, 1), min = Math.min(0, ...values);
+  const real = values.filter(v => v != null);
+  if (!real.length) return;
+  const max = Math.max(...real, 1), min = Math.min(0, ...real);
   const x = i => (i / (n - 1)) * W, y = v => H - 2 - ((v - min) / (max - min || 1)) * (H - 6);
   const c = css('--series-1');
   const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, 'aria-hidden': 'true', preserveAspectRatio: 'none' });
-  const d = values.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
-  svg.append(el('path', { d: `${d}L${W},${H}L0,${H}Z`, fill: fadeFill(svg, c) }));
+  const d = values.map((v, i) => v == null ? '' : `${values[i - 1] == null ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
+  if (!values.includes(null)) svg.append(el('path', { d: `${d}L${W},${H}L0,${H}Z`, fill: fadeFill(svg, c) }));
   svg.append(draw(el('path', { d, fill: 'none', stroke: c, 'stroke-width': 1.75, 'stroke-linejoin': 'round', 'vector-effect': 'non-scaling-stroke' })));
-  svg.append(el('circle', { cx: x(n - 1), cy: y(values[n - 1]), r: 2.75, fill: c, stroke: css('--surface-1'), 'stroke-width': 1.5 }));
+  const end = values.findLastIndex(v => v != null);
+  svg.append(el('circle', { cx: x(end), cy: y(values[end]), r: 2.75, fill: c, stroke: css('--surface-1'), 'stroke-width': 1.5 }));
   box.append(svg);
 }
 
-// "1,234 in the last 7 days · ▲ 12%": the week, and how it compares with the week before.
-function weekNote(id, now, before, show, lead) {
+// "1,234 in the last 7 days · ▲ 12%": the figure, then the 7 full days to yesterday against the
+// 7 before them (FULL). A week from nothing is "new", except for a ratio, where it means nothing.
+function weekNote(id, now, before, show, lead, { ratio = false } = {}) {
   const box = $(id);
-  box.replaceChildren(document.createTextNode(lead ?? `${show(now)} in the last 7 days`));
-  if (!before && !now) return;
+  box.replaceChildren(document.createTextNode(lead));
+  if (!before && (!now || ratio)) return;
   const pct = before ? Math.round((now - before) / before * 100) : null;
   const text = pct === null ? 'new' : `${pct > 0 ? '▲' : pct < 0 ? '▼' : '='} ${Math.abs(pct)}%`;
-  const b = el('b', { class: pct === null || pct > 0 ? 'up' : pct < 0 ? 'down' : '', title: `vs the 7 days before: ${show(before)}` }, text);
+  const b = el('b', { class: pct === null || pct > 0 ? 'up' : pct < 0 ? 'down' : '', title: `The 7 days to yesterday: ${show(now)}; the 7 before: ${show(before)}` }, text);
   box.append(document.createTextNode(' · '), b);
 }
 
@@ -680,12 +689,12 @@ function heatmap(box, legendBox, days, byRepo, colors) {
   const ranked = [...per.entries()].map(([name, cells]) => ({ name, cells, total: sum(cells, c => c.records) }))
     .filter(r => r.total > 0 || r.cells.some(c => c.devices)).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
   if (!ranked.length) { box.append(el('div', { class: 'empty' }, 'No activity in these days.')); legendBox.replaceChildren(); return; }
-  const MAX_ROWS = 10;
-  let rows = ranked;
-  if (ranked.length > MAX_ROWS) {
-    const rest = ranked.slice(MAX_ROWS - 1);
+  // A repo with a color of its own gets a row; the rest share one, as they share Other's color.
+  const rest = ranked.filter(r => colors.slotOf(r.name) === 'other');
+  const rows = ranked.filter(r => colors.slotOf(r.name) !== 'other');
+  if (rest.length) {
     const cells = days.map((_, i) => ({ records: sum(rest, r => r.cells[i].records), sessions: sum(rest, r => r.cells[i].sessions), messages: sum(rest, r => r.cells[i].messages), devices: sum(rest, r => r.cells[i].devices) }));
-    rows = [...ranked.slice(0, MAX_ROWS - 1), { name: `${rest.length} other repos`, cells, other: true }];
+    rows.push({ name: rest.length === 1 ? short(rest[0].name) : `${rest.length} other repos`, cells, other: true });
   }
   const W = box.clientWidth, narrow = W < 560;
   const labelW = narrow ? 92 : 200, rowH = narrow ? 20 : 26, gap = 2, top = 4, bottom = 24;
@@ -771,12 +780,11 @@ function shareChart(box, byRepo, colors, days) {
   const total = sum([...by.values()]);
   if (!total) { box.append(el('div', { class: 'empty' }, 'Nothing in these days.')); return; }
   const items = colors.slots.filter(s => by.get(s.key)).map(s => ({ ...s, v: by.get(s.key) })).sort((a, b) => b.v - a.v);
-  const top = items[0].v;
   items.forEach((s, i) => {
     const row = el('div', { class: 'item' });
     const name = el('div', { class: 'name', title: s.label }); const k = el('i'); k.style.background = s.color; name.append(k, document.createTextNode(s.label));
     const track = el('div', { class: 'track' });
-    const bar = grow(el('div', { class: 'bar' }), i * 60, 'growx'); bar.style.width = `${(s.v / top) * 100}%`; bar.style.background = s.color;
+    const bar = grow(el('div', { class: 'bar' }), i * 60, 'growx'); bar.style.width = `${(s.v / total) * 100}%`; bar.style.background = s.color;
     track.append(bar);
     const pct = s.v / total * 100;
     const num = el('div', { class: 'num' }); num.append(el('b', {}, m.show(s.v)), el('span', {}, `${pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)}%`));
@@ -799,7 +807,7 @@ function ratioChart(box, legendBox, series) {
   if (!vals.length) { box.append(el('div', { class: 'empty' }, 'No sessions in these days.')); return; }
   const ses = sum(series, s => s.sessions + (s.estSessions || 0)), msg = sum(series, s => s.messages + (s.estMessages || 0));
   const overall = msg / ses;
-  const f = frame(box, n, Math.max(1, ...vals), H, 'Messages per session, by day', v => ratioFmt(v), false);
+  const f = frame(box, n, Math.max(1, ...vals), H, 'Messages per session, by day', ratioTick, false);
   const c = css('--series-1');
   // Segments break where a day has no sessions, so a gap reads as a gap.
   let d = '', pen = false;
@@ -811,7 +819,9 @@ function ratioChart(box, legendBox, series) {
   f.svg.append(el('line', { x1: f.m.l, x2: f.W - f.m.r, y1: yo, y2: yo, stroke: css('--text-secondary'), 'stroke-width': 1.5, 'stroke-dasharray': '4 3' }));
   f.svg.append(el('text', { class: 'bar-value', x: f.m.l + 6, y: yo - 6 }, `${ratioFmt(overall)} over the range`));
   f.svg.append(draw(el('path', { d, fill: 'none', stroke: c, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' })));
-  if (n <= 45) pts.forEach((v, i) => { if (v != null) f.svg.append(grow(el('circle', { cx: f.x(i), cy: f.y(v), r: 3, fill: c, stroke: css('--surface-1'), 'stroke-width': 1.5 }), 400 + i * 400 / n, 'fade')); });
+  // Every point gets a dot on a short range; on a long one, only a point with no neighbour, which
+  // a line can't show.
+  pts.forEach((v, i) => { if (v != null && (n <= 45 || (pts[i - 1] == null && pts[i + 1] == null))) f.svg.append(grow(el('circle', { cx: f.x(i), cy: f.y(v), r: 3, fill: c, stroke: css('--surface-1'), 'stroke-width': 1.5 }), 400 + i * 400 / n, 'fade')); });
   dayLabels(f, series.map(s => s.day));
   box.append(f.svg);
   crosshair(box, f, n, c, i => {
@@ -878,9 +888,12 @@ function repoTable(box, list, colors, days, byRepo) {
       const b = el('button', { type: 'button' }, c.t);
       if (sortBy?.col === i) th.setAttribute('aria-sort', sortBy.dir > 0 ? 'ascending' : 'descending');
       b.addEventListener('click', () => {
-        sortBy = sortBy?.col === i ? (sortBy.dir < 0 ? { col: i, dir: 1 } : null) : { col: i, dir: c.num ? -1 : 1 };
+        // Each heading cycles: its natural order (numbers largest first), the reverse, the server's.
+        const first = c.num ? -1 : 1;
+        sortBy = sortBy?.col !== i ? { col: i, dir: first } : sortBy.dir === first ? { col: i, dir: -first } : null;
         animate = false;
         repoTable(box, list, colors, days, byRepo);
+        box.querySelectorAll('th')[i].querySelector('button')?.focus();
       });
       th.append(b);
     }
@@ -943,19 +956,22 @@ function render() {
 
   // The tiles: the total, a sparkline of the range, and the last 7 days against the 7 before.
   const S = d.series, wk = d.week;
-  const last = (k, f = s => s[k]) => sum(S.slice(-wk), f), prev = (k, f = s => s[k]) => sum(S.slice(-2 * wk, -wk), f);
-  const daily = f => S.map(f);
+  // Trends use full days only, ending yesterday (FULL); the notes' own figures are the server's
+  // week, which includes today.
+  const full = S.slice(0, S.length - FULL);
+  const last = (k, f = s => s[k]) => sum(full.slice(-wk), f), prev = (k, f = s => s[k]) => sum(full.slice(-2 * wk, -wk), f);
+  const daily = f => full.map(f);
   const ses = s => s.sessions + (s.estSessions || 0), msg = s => s.messages + (s.estMessages || 0);
   countUp($('t-records'), d.records);
   sparkline($('s-records'), daily(s => s.records));
-  weekNote('t-records-note', d.weekRecords || 0, prev('records'), fmt);
+  weekNote('t-records-note', last('records'), prev('records'), fmt, `${fmt(d.weekRecords || 0)} in the last ${wk} days`);
   $('t-bytes').textContent = size(d.bytes);
   sparkline($('s-bytes'), daily(s => s.bytes));
-  weekNote('t-bytes-note', d.weekBytes || 0, prev('bytes'), size);
+  weekNote('t-bytes-note', last('bytes'), prev('bytes'), size, `${size(d.weekBytes)} in the last ${wk} days`);
   countUp($('t-devices'), d.devices);
   sparkline($('s-devices'), daily(s => s.devices));
   const avgDev = last('devices') / wk, avgDevPrev = prev('devices') / wk;
-  weekNote('t-devices-note', avgDev, avgDevPrev, v => ratioFmt(v), `${ratioFmt(avgDev)} active a day, last 7 days`);
+  weekNote('t-devices-note', avgDev, avgDevPrev, ratioFmt, `${ratioFmt(avgDev)} active a day, the 7 days to yesterday`);
   countUp($('t-contributors'), d.contributors);
   sparkline($('s-contributors'), daily(s => s.contributors));
   $('t-contributors-note').textContent = `${fmt(d.newContributors)} new in the last ${wk} days`;
@@ -963,15 +979,17 @@ function render() {
   // together. Their asterisks say so, how each estimate is made, and how much of the total it is.
   countUp($('t-sessions'), d.sessions + (d.estSessions || 0));
   sparkline($('s-sessions'), daily(ses));
-  weekNote('t-sessions-note', d.weekSessions + (d.weekEstSessions || 0), prev(null, ses), fmt);
+  weekNote('t-sessions-note', last(null, ses), prev(null, ses), fmt, `${withEst(d.weekSessions, d.weekEstSessions)} in the last ${wk} days`);
   countUp($('t-messages'), d.messages + (d.estMessages || 0));
   sparkline($('s-messages'), daily(msg));
-  weekNote('t-messages-note', d.weekMessages + (d.weekEstMessages || 0), prev(null, msg), fmt);
+  weekNote('t-messages-note', last(null, msg), prev(null, msg), fmt, `${withEst(d.weekMessages, d.weekEstMessages)} in the last ${wk} days`);
   const allSes = d.sessions + (d.estSessions || 0), allMsg = d.messages + (d.estMessages || 0);
   $('t-ratio').textContent = allSes ? ratioFmt(allMsg / allSes) : '–';
-  sparkline($('s-ratio'), rolling(daily(s => ses(s) ? msg(s) / ses(s) : 0)));
+  // Messages over sessions across each 7 days, not a mean of daily ratios, so it agrees with the number.
+  const rs = rolling(daily(ses)), rm = rolling(daily(msg));
+  sparkline($('s-ratio'), rs.map((v, i) => v ? rm[i] / v : null));
   const r7 = last(null, ses) ? last(null, msg) / last(null, ses) : 0, rp = prev(null, ses) ? prev(null, msg) / prev(null, ses) : 0;
-  weekNote('t-ratio-note', r7, rp, ratioFmt, `${ratioFmt(r7)} in the last 7 days`);
+  weekNote('t-ratio-note', r7, rp, ratioFmt, `${ratioFmt(r7)} in the 7 days to yesterday`, { ratio: true });
   const why = (id, how, est, all) => {
     const row = el('div', { class: 'how' });
     row.append(el('b', {}, fmt(est || 0)), el('span', {}, `of ${fmt(all)} estimated`));
