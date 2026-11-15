@@ -180,7 +180,7 @@ the turn took, so nothing waits for good.
   isn't sprung on the agent as a turn; it stays a notice. The 15 minutes count from when the daemon
   queues it, so one read after a long outage (#30, 2026-10-30) is young and wakes its thread.
 - **The wake setting** (#22, #25), for the device or for one session, decides the rest. "Never"
-  keeps the notice. "Always" hands over at once. "Within N minutes", the default with N = 3, hands
+  keeps the notice. "Always" hands over at once. "Within N minutes", the default with N = 5, hands
   over only to a session that is busy or was last at work within N minutes; one idle longer gets the
   notice, and the message is handed over after all if the session gets to work again while it is
   young. The reason for the limit: a session idle that briefly still has its prompt cache, and a
