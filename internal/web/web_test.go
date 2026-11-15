@@ -486,7 +486,7 @@ func TestPRLookup(t *testing.T) {
 		h.ok("GET", "/api/state", "")
 	}
 	if n := asked.Load(); n != 1 {
-		t.Errorf("GitHub was asked %d times for 502 sessions and 7 polls, want once", n)
+		t.Errorf("GitHub was asked %d times for 502 sessions over several polls, want once", n)
 	}
 }
 

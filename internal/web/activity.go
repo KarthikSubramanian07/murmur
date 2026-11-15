@@ -80,6 +80,7 @@ const (
 	ghTimeout = 20 * time.Second // one listing: two runs of gh
 	ghLimit   = 30               // pull requests, and issues, asked for: the most recently updated
 	maxTitle  = 200
+	maxBranch = 255 // longer than git allows
 )
 
 // GHEvents lists them with the gh CLI, run in dir, as GH does: the thirty pull requests and the

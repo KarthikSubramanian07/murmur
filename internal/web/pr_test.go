@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -93,5 +94,45 @@ func TestCloseEndsLookups(t *testing.T) {
 	case <-started:
 		t.Error("a listing started after Close")
 	default:
+	}
+}
+
+// A listing that fails leaves the PRs known before. One listing answers for every branch, so
+// counting a failure as no PRs would take every branch's off the page at once.
+func TestFailedListingKeepsWhatWasKnown(t *testing.T) {
+	var fail atomic.Bool
+	c := newPRCache(func(ctx context.Context) (map[string]PR, error) {
+		if fail.Load() {
+			return nil, errors.New("gh: offline")
+		}
+		return map[string]PR{"feat": {Number: 1, URL: "https://github.com/o/r/pull/1"}}, nil
+	})
+	defer c.close()
+	list := func() { // one listing, from its start to its end
+		t.Helper()
+		c.mu.Lock()
+		c.fetched = time.Time{} // as if the last were old
+		c.mu.Unlock()
+		c.get([]string{"feat"})
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+			c.mu.Lock()
+			done := !c.inflight && !c.fetched.IsZero()
+			c.mu.Unlock()
+			if done {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the listing never ended")
+			}
+		}
+	}
+	list()
+	if got := c.get([]string{"feat"}); got["feat"].Number != 1 {
+		t.Fatalf("after a listing: %+v", got)
+	}
+	fail.Store(true)
+	list()
+	if got := c.get([]string{"feat"}); got["feat"].Number != 1 {
+		t.Errorf("after a failed listing: %+v, want what was known", got)
 	}
 }
