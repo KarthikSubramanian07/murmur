@@ -1659,11 +1659,19 @@ function recentEntries() {
     const to = m.toKind === "session" ? [toName(m)] : m.toKind === "group" ? members.get(m.to) || [] : [];
     out.push({ t: m.sortAt, group: "messages", m, who: [fromName(m), ...to] });
   }
+  // An issue a session of this device filed or closed, as its hook saw (#510), names the session on
+  // GitHub's event for it, matched by number; one GitHub hasn't listed (yet) shows on its own.
+  const listed = new Set(ui.github.filter((g) => g.kind === "issue").map((g) => g.what + " " + g.number));
+  const issues = new Map();
   // A session's status changes, and its commits to a branch, that follow each other closely are one entry.
   const runs = new Map();
   const acts = [...ui.acts].sort((a, b) => a.t - b.t);
   for (const a of acts) {
     const who = nameOf(a.addr, a.who);
+    if (a.kind === "issue") {
+      issues.set(a.what + " " + a.issue, who);
+      if (listed.has(a.what + " " + a.issue)) continue;
+    }
     const key = a.kind === "status" ? "status " + who : a.kind === "commits" ? "commits " + who + " " + (a.branch || "") : "";
     const run = key && runs.get(key);
     if (run && a.t - run.t <= RECENT_RUN) {
@@ -1679,7 +1687,16 @@ function recentEntries() {
   }
   for (const g of ui.github) {
     const t = when(g.at);
-    if (t) out.push({ t: Math.min(t, Date.now()), group: "activity", g, who: [sessionOnBranch(g.branch)] });
+    if (!t) continue;
+    const e = { t: Math.min(t, Date.now()), group: "activity", g, who: [sessionOnBranch(g.branch)] };
+    if (g.kind === "issue") {
+      // Who closed it, where a session here did; else who filed it. Both count for the filter.
+      const filer = issues.get("opened " + g.number) || "";
+      const closer = g.what === "closed" ? issues.get("closed " + g.number) || "" : "";
+      e.who = closer ? [closer, filer] : [filer];
+      e.closer = !!closer;
+    }
+    out.push(e);
   }
   return out;
 }
@@ -1812,6 +1829,8 @@ function activityItem(e) {
         a.branch ? [e.commits ? " on " : " to ", actBranch(a.branch)] : null,
         a.subject && h("span", { class: "g-act-more" }, e.commits > 1 ? ", the last: " : ": ", a.subject),
       );
+    case "issue":
+      return a.what === "closed" ? activityLine("issueClosed", "done", e.t, a.id, who, " closed issue #" + a.issue) : activityLine("issue", "open", e.t, a.id, who, " filed issue #" + a.issue);
   }
   return activityLine("activity", "", e.t, a.id, who, " ", a.kind);
 }
@@ -1824,6 +1843,7 @@ function githubItem(e) {
   const who = e.who[0] ? actWho(e.who[0]) : g.author ? h("span", { class: "g-act-login" }, g.author) : "Someone";
   const title = h("span", { class: "g-act-more" }, ": ", g.title);
   if (g.what === "opened") return activityLine(pr ? "pr" : "issue", "open", e.t, g.id, who, pr ? " opened pull request " : " filed issue ", num, title);
+  if (e.closer) return activityLine("issueClosed", "done", e.t, g.id, who, " closed issue ", num, title);
   // GitHub's list says who opened it, not who merged or closed it.
   // GitHub's colors: a merged pull request and a closed issue are done, a closed pull request is not.
   const merged = g.what === "merged";

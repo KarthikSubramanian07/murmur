@@ -89,6 +89,18 @@ from it is in [a person on the page](people.md).
   - *Who did it.* Agents on one machine share their user's GitHub login, so a pull request is named
     for the session on its branch, and for the login only when no session is. GitHub's list says who
     opened one, not who merged or closed it.
+  - *An issue's session* (2026-11-15, #510, Tyler's request). An issue has no branch, so the hook
+    looks at each tool call for one it filed or closed: a shell command running `gh issue create`
+    or `gh issue close`, read from what gh printed, or GitHub's MCP server creating or closing one,
+    read from the address in its result. The daemon keeps the number and which it was, for an issue
+    in its own remote's repository, as the session's activity, and the page names that session on
+    GitHub's event of the same number: `quiet-otter filed issue #37`, `quiet-otter closed issue #37`.
+    One GitHub hasn't listed yet shows on its own. Matching by time and login was set aside as a
+    guess that goes wrong with two sessions at work, and a marker in the issue as something every
+    agent would have to write. What it costs: a hook decodes the call's output only for those
+    calls, and nothing of it but the number leaves the hook. It is known only on the session's own
+    device, like a commit's count, and not for Pi or OpenCode, whose plugins pass the hook no tool
+    output, nor for an issue filed another way (`gh api`, the website); those keep the login.
   - *What it doesn't have.* The newest 600 entries are kept in memory. After a restart, starts and
     stops come back from the bus with the messages and pull requests from GitHub, but a status, tag
     or commit from before is gone: only a file could keep them, which isn't built. Two status
