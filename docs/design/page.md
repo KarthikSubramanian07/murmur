@@ -11,6 +11,10 @@ from it is in [a person on the page](people.md).
   extensions.
 - **Opened by `mur ui`**, which starts the daemon if it isn't running, opens the browser and prints
   the address. The token is in the fragment (`#token=`), which a browser keeps from the server.
+  A daemon that stops and is started again serves the page at a new address with a new token, so
+  an open tab can't follow it; only a restart onto an update hands the address over
+  ([updating](updating.md)). The tab's badge says Disconnected, and after 20 s out of reach, "Run
+  `mur ui` again" (#43, 2026-11-15).
 - **Switching repos** (2026-11-09, #348). The sidebar's header opens this machine's other joined
   clones. Each clone's daemon serves its own page, with its own port and token, and knows no others,
   so a per-user record lists them: `clones` in the user's config directory, one file per clone so

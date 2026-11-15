@@ -64,6 +64,7 @@ const ui = {
   view: "messages",
   token: null,
   conn: "connecting", // connecting, ok, down, denied
+  downSince: 0, // when conn last went down
   state: null,
   messages: [], // oldest first
   ids: new Set(), // msgKey of each
@@ -651,13 +652,26 @@ function miniYou() {
   );
 }
 
-// Whether the page can reach its daemon. Nothing shows while it can.
+// Whether the page can reach its daemon. Nothing shows while it can. A daemon that stopped and was
+// started again serves the page at a new address with a new token, so this tab never reaches it
+// again; only a restart onto an update keeps them (see updateInfo). So once the daemon has been out
+// of reach for a while, the badge says what opens the page again, where the tab can't (#43).
+const DOWN_WAIT_MS = 20000;
+
+function connStuck() {
+  return ui.conn === "down" && !ui.restarting && Date.now() - ui.downSince > DOWN_WAIT_MS;
+}
+
 function connBadge(small) {
   if (ui.conn !== "down" || ui.restarting) return null;
-  const tip = "Can't reach the daemon. The page keeps trying; " + COMMAND + " ui starts it again.";
+  const stuck = connStuck();
+  const text = stuck ? "Run " + COMMAND + " ui again" : "Disconnected";
+  const tip = stuck
+    ? "Can't reach the daemon. Started again, it serves the page at a new address, which " + COMMAND + " ui opens."
+    : "Can't reach the daemon. The page keeps trying.";
   return small
-    ? h("span", { class: "mini-conn", role: "img", title: tip, "aria-label": "Disconnected", "data-announce": tip }, h("span", { class: "dot warn" }))
-    : h("span", { class: "conn-badge", title: tip, "data-announce": tip }, h("span", { class: "dot warn" }), "Disconnected");
+    ? h("span", { class: "mini-conn", role: "img", title: tip, "aria-label": text, "data-announce": text + ". " + tip }, h("span", { class: "dot warn" }))
+    : h("span", { class: "conn-badge", title: tip, "data-announce": text + ". " + tip }, h("span", { class: "dot warn" }), text);
 }
 
 function sidebar() {
@@ -4973,12 +4987,13 @@ async function poll() {
     if (era !== tokenEra) return;
     inflight = false;
     if (e instanceof AuthError) return deny(e.token);
+    if (ui.conn !== "down") ui.downSince = Date.now();
     ui.conn = "down";
   }
   inflight = false;
   // Rebuild only when something changed, and leave alone a minutes field being typed in, text being
   // selected, and a pane being scrolled: a rebuild would drop the selection or stop the scroll.
-  const sig = JSON.stringify([ui.state, ui.cursor, ui.actCursor, ui.github, ui.conn, ui.restarting > 0, restartStuck(), ui.outbox.length, Math.floor(Date.now() / 15000)]);
+  const sig = JSON.stringify([ui.state, ui.cursor, ui.actCursor, ui.github, ui.conn, ui.restarting > 0, restartStuck(), connStuck(), ui.outbox.length, Math.floor(Date.now() / 15000)]);
   // A composer keeps its own element, so what is being typed there survives a rebuild, unless an
   // input method is partway through a character. On a phone it wouldn't: refocusing it isn't a tap,
   // so the keyboard would drop. There the thread catches up when the composer loses focus.
