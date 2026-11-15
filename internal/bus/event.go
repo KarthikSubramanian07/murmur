@@ -50,8 +50,8 @@ const (
 // sessions, and no session's ID is this (session IDs Murmur makes are hex or a client's own).
 const ReceiptFrom = "receipts"
 
-// What a mark says of a message, in the order a message meets them (docs/VISION.md, `What
-// "delivered" and "read" mean`): queued in the recipient's inbox, handed over to its client as a
+// What a mark says of a message, in the order a message meets them (docs/design/delivery.md,
+// "Delivered and read"): queued in the recipient's inbox, handed over to its client as a
 // turn, delivered (it knows the message is waiting), read (it has the message).
 const (
 	MarkQueued    = "queued"

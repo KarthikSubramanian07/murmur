@@ -3260,7 +3260,7 @@ function chatMessage(m, from, at, head) {
 }
 
 // How far one of the person's messages got (#26), as a chat app shows it: one tick for sent, two
-// for delivered, and two in the accent colour for read (docs/VISION.md, "Receipts"). The states in
+// for delivered, and two in the accent colour for read (docs/design/receipts.md). The states in
 // between, queued and handed over, read as sent, and so does a recipient whose Murmur sends no
 // receipts. A message to several shows the lowest of them, so it reads as read only once everyone
 // has read it. The tick's tooltip says what its state means, then who has it and since when, and

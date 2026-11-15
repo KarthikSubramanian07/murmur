@@ -348,8 +348,8 @@ func readFirstContext(ctx context.Context, limit time.Duration) (context.Context
 // presence, then the logs (#71). A message's handoff starts as soon as its log is read, and writes
 // the turn from what this daemon knows of the sender then, so what was fetched with the message
 // about its sender is read first. In the refs' own order, mesh/ before names and presence/, a turn
-// could go out without a name the same sync had brought (docs/VISION.md, "Delivering a message as
-// a turn").
+// could go out without a name the same sync had brought (docs/design/delivery.md, "Who it
+// is from, as the receiver knows it").
 func readOrder(remote map[string]string) []string {
 	rank := func(ref string) int {
 		switch {
@@ -965,14 +965,14 @@ func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha, listed string) b
 }
 
 // queueLocked puts a message in the inbox of each session here it is addressed to. That queues it;
-// it is delivered once the agent is told of it, and read once it has it (docs/VISION.md,
-// `What "delivered" and "read" mean`, #325). A session gets only what arrives while it runs, or, if it stops, within StoppedInbox of that, in case it
-// comes back (see recipientsLocked). What arrived while the daemon was down (modeCatchUp)
-// goes only to sessions that were running before and reconnect, and in modeSkip to nobody, except
-// the sessions whose inbox is kept, for what was sent since they stopped (see inTimeLocked); in
-// both, what was sent after a session here started is for it. Everything
-// is held for catchUpWindow after the daemon starts, for sessions still reconnecting (see
-// catchUpLocked). A message forwarded to the session that holds its recipient's name (see
+// it is delivered once the agent is told of it, and read once it has it (docs/design/delivery.md,
+// "Delivered and read", #325). A session gets only what arrives while it runs, or, if it stops,
+// within StoppedInbox of that, in case it comes back (see recipientsLocked). What arrived while the
+// daemon was down (modeCatchUp) goes only to sessions that were running before and reconnect, and
+// in modeSkip to nobody, except the sessions whose inbox is kept, for what was sent since they
+// stopped (see inTimeLocked); in both, what was sent after a session here started is for it.
+// Everything is held for catchUpWindow after the daemon starts, for sessions still reconnecting
+// (see catchUpLocked). A message forwarded to the session that holds its recipient's name (see
 // forwardLocked) is the holder's if it is new enough for either: a backlog read after the holder
 // started still gives it what the recipient's kept inbox would have caught up on. Caller holds mu.
 func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
@@ -1541,7 +1541,7 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 
 // jittered is d give or take up to a fifth, at random. Each heartbeat waits that long, so devices
 // whose daemons started together drift apart rather than push at the same moment every beat, which
-// GitHub refuses now and then (see "Git is the transport" in docs/VISION.md).
+// GitHub refuses now and then (see "Pushes" in docs/design/transport.md).
 func jittered(d time.Duration) time.Duration {
 	return d - d/5 + rand.N(2*(d/5)+1)
 }

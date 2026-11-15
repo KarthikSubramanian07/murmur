@@ -14,7 +14,7 @@ import (
 	"github.com/a-Fig/murmur/internal/tags"
 )
 
-// Group chats (#184, docs/VISION.md, "Groups"). A group is a tag that starts with group:, its
+// Group chats (#184, docs/design/tags.md, "Groups"). A group is a tag that starts with group:, its
 // members are the sessions that have the tag, and the tag is the group's address. A session joins
 // one by setting the tag, as it sets any tag, and leaves by taking it off. An agent can also add
 // other sessions to a group, which no other tag allows: the add goes to each session's device as a

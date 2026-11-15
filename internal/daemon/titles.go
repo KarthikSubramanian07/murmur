@@ -13,11 +13,11 @@ import (
 	"github.com/a-Fig/murmur/internal/title"
 )
 
-// A conversation's title as the default status line (#66, docs/VISION.md, "Who is on, and what
-// they are doing"). Where an agent has set no status, the session's line in `who` is the title of
-// the conversation it is in, read from the client's own state: T3's database, Codex's name for the
-// thread, Claude Code's transcript. The title goes out in presence as `doing`, as a status does;
-// the format has no field for it, and an older daemon shows it as it shows a status.
+// A conversation's title as the default status line (#66, docs/design/presence.md, "Who is on, and
+// what they are doing"). Where an agent has set no status, the session's line in `who` is the title
+// of the conversation it is in, read from the client's own state: T3's database, Codex's name for
+// the thread, Claude Code's transcript. The title goes out in presence as `doing`, as a status
+// does; the format has no field for it, and an older daemon shows it as it shows a status.
 
 // titleLoop reads the titles every TitleEvery. Each pass reads each session's source once, so no
 // database is read more often than that; a title takes at most that long to show after its source

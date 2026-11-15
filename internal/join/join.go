@@ -411,7 +411,7 @@ func othersAdvice(labels []string) string {
 // agent is running join decides it: the MCP server is registered once, so a session that started
 // after that already runs it (idle, with no tools, until the join), and one that started before
 // has never heard of it. What each kind of session picks up was measured, 2026-10-29
-// (docs/VISION.md, "Reloading MCP servers").
+// (docs/design/joining.md, "Reloading MCP servers").
 func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 	if problems {
 		return []string{"Joining didn't finish: tell your user what is under Problems. Running `" + brand.Command + " join` again retries, and only does what is missing."}
@@ -429,7 +429,8 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 			"within a few seconds. If they haven't after a minute, start a new conversation.")
 	case e.looksLikeCodex() && e.getenv("T3CODE_CLI_PATH") != "":
 		// T3's Codex provider loads the server in a thread created after it was registered, and
-		// never in an older one, which T3 doesn't refresh (docs/VISION.md, "Reloading MCP servers").
+		// never in an older one, which T3 doesn't refresh (docs/design/joining.md, "Reloading MCP
+		// servers").
 		out = append(out, brand.Product+" is on for this repo, but Codex loads MCP servers only in a thread that starts after they were added, so this thread doesn't have the tools: "+
 			"open a new thread in this project to talk to other agents through "+brand.Product+".")
 	case e.looksLikeCodex():
@@ -448,8 +449,8 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 
 // looksLikeCodex reports whether the agent running join is Codex. The variables are the ones Codex
 // is believed to set for the commands it runs; no Codex session's environment has been checked
-// (docs/VISION.md, "Reloading MCP servers"), so this may miss one, and advice then falls back to
-// covering every client.
+// (docs/design/joining.md, "Reloading MCP servers"), so this may miss one, and advice then falls
+// back to covering every client.
 func (e Env) looksLikeCodex() bool {
 	for _, k := range []string{"CODEX_THREAD_ID", "CODEX_SANDBOX", "CODEX_CI"} {
 		if e.getenv(k) != "" {

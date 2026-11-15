@@ -75,8 +75,8 @@ code or IP addresses. To count each device and person once, it keeps a short uns
 of a device's ID, its owner's git user name, and the GitHub account matched to that owner. A private
 repo is never read. https://murmur.afig.dev/privacy/ lists everything the site keeps. Each repo's
 totals show on the count's public run page in GitHub Actions; the rest is seen only by Murmur's
-maintainer and people given a key. The code is `internal/publicrepo`, and `docs/VISION.md` has the
-design.
+maintainer and people given a key. The code is `internal/publicrepo`, and `docs/design/counting.md`
+has the design.
 
 There is no setting to turn it off: the address is already public. Murmur versions before this one
 sent a daily check-in instead; the site stopped storing those on 2026-11-08.
