@@ -283,7 +283,11 @@ func TestTipsThatAreNoCommitsHereStillCredit(t *testing.T) {
 				if c.isTip && !slices.Contains(before.tips, c.id) {
 					t.Fatalf("%s is not among the tips %v, so this tests nothing", c.id, before.tips)
 				}
-				hgit(t, wt, "commit", "-q", "--allow-empty", "-m", "during")
+				// The subtests share one repository, and the main-worktree case commits on other,
+				// still at root, the way the linked case before it committed on main. With the
+				// same message in the same second, git makes the same commit, already on main, so
+				// rule 2 rightly drops it. Each subtest's own message keeps its commit new.
+				hgit(t, wt, "commit", "-q", "--allow-empty", "-m", "during: "+c.name+", "+p.name)
 				sha := hgit(t, wt, "rev-parse", "HEAD")
 				after, err := p.head(wt)
 				if err != nil {
