@@ -219,6 +219,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		return
 	}
 	d.mu.Lock()
+	h.ID = d.threadIDLocked(h)
 	s := d.sessions[h.ID]
 	if s != nil && s.dropped.IsZero() {
 		d.mu.Unlock()

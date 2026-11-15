@@ -159,7 +159,7 @@ func newBox(t *testing.T) *box {
 // machine this is and which agent is running the command.
 func (b *box) env() []string {
 	drop := map[string]bool{"HOME": true, "USERPROFILE": true, "CLAUDE_CONFIG_DIR": true, "CODEX_HOME": true, "PATH": true,
-		"CLAUDECODE": true, "CLAUDE_CODE_SESSION_ID": true, "T3CODE_CLI_PATH": true, "CODEX_THREAD_ID": true,
+		"CLAUDECODE": true, "CLAUDE_CODE_SESSION_ID": true, "T3CODE_CLI_PATH": true, "T3CODE_THREAD_ID": true, "CODEX_THREAD_ID": true,
 		"CODEX_SANDBOX": true, "CODEX_CI": true, "XDG_CONFIG_HOME": true, jointest.LogEnv: true,
 		// Where T3 Code and the other agents keep their settings: join reads and writes those too.
 		"T3CODE_HOME": true, "PI_CODING_AGENT_DIR": true, "GROK_HOME": true,

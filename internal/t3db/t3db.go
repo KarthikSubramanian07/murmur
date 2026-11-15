@@ -1,6 +1,7 @@
 // Package t3db finds the T3 Code thread a coding agent's session belongs to, in T3's own state
-// database. T3 gives the agents it runs no thread ID: an MCP server has T3CODE_CLI_PATH in its
-// environment and nothing else to say which thread it is in. The database does. In
+// database. T3 puts the thread's ID in Claude Code's environment (T3CODE_THREAD_ID, seen in T3
+// 0.1.x on 2026-11-15), and Claude Code's MCP server takes it from there (#642), but a Codex MCP
+// server gets T3CODE_CLI_PATH and nothing else to say which thread it is in. The database does. In
 // orchestration_v2_projection_provider_threads, each thread is tied to the session its provider
 // runs it with, and payload_json.nativeThreadRef.nativeId is that session's own ID: the Claude
 // Code session ID or the Codex thread ID, next to the thread's ID (seen on T3 0.1.x, 2026-10-29).
