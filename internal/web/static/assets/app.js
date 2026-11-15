@@ -158,6 +158,22 @@ async function takeKey() {
   } catch {}
 }
 
+// Whether nobody is looking at the page. A browser says so when its tab is in the background or
+// its window minimized. The desktop app's window under another window stays visible to the page
+// (#638), so the window itself says whether it is in front (appSaysFront), and while it isn't, the
+// page counts as hidden: an app left open behind the editor doesn't keep the person active.
+function pageHidden() {
+  return document.hidden || ui.appFront === false;
+}
+
+// The desktop app's window saying whether it is in front, each time that changes. Back in front, the
+// page polls at once, as a tab shown again does, so the person is active again without a wait.
+function appSaysFront(front) {
+  const back = front && ui.appFront === false;
+  ui.appFront = !!front;
+  if (back && ui.token && ui.conn !== "denied") poll();
+}
+
 async function api(path, init = {}) {
   const token = ui.token;
   const headers = { Authorization: "Bearer " + token };
@@ -165,7 +181,7 @@ async function api(path, init = {}) {
   // A tab nobody can see still polls, but mustn't keep the daemon running for good. The desktop
   // app's window is someone waiting for messages, minimized or not: it keeps the daemon running,
   // though hidden it doesn't count as someone looking.
-  if (document.hidden) headers["X-Page-Hidden"] = "1";
+  if (pageHidden()) headers["X-Page-Hidden"] = "1";
   if (inApp()) headers["X-Page-App"] = "1";
   const res = await fetch(path, { ...init, headers, cache: "no-store" });
   if (res.status === 401) throw new AuthError(token);
@@ -5160,6 +5176,7 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("focus", () => {
   if (ui.token && ui.conn !== "denied") markOpenRead();
 });
+window.murmurFront = appSaysFront; // what the desktop app's window calls
 window.addEventListener("blur", markOpenRead); // nobody is looking now, so what comes next is new
 document.addEventListener("scroll", () => (scrolledAt = Date.now()), { capture: true, passive: true });
 NARROW.addEventListener("change", () => {
