@@ -403,7 +403,7 @@ type Presence struct {
 	// Color is the colour the device's user picked for its faces on the page (#573): 1 to
 	// Colors, a place in the page's palette; 0 lets the page choose. ColorAt is when they picked it,
 	// by the writer's clock: of two devices that picked one colour, the one that picked it first
-	// keeps it (DeviceColors).
+	// keeps it, unless it had gone quiet (DeviceColors).
 	Color    int           `json:"color,omitempty"`
 	ColorAt  time.Time     `json:"colorAt,omitzero"`
 	At       time.Time     `json:"at"` // the writer's clock

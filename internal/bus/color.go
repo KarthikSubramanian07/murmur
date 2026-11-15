@@ -11,11 +11,13 @@ import (
 const Colors = 12
 
 // ColorPick is what a device's presence says of its colour: the one its user picked, 1 to Colors,
-// and when; Color 0 picked none.
+// and when; Color 0 picked none. Seen is when that presence was written, by the device's clock
+// (Presence.At); zero is a device taken to be here.
 type ColorPick struct {
 	Device string
 	Color  int
 	At     time.Time
+	Seen   time.Time
 }
 
 // DeviceColor is the colour a device's faces are shown in: Color is a place in the palette, 0 to
@@ -32,18 +34,31 @@ type DeviceColor struct {
 // none, and keeps its pick, which is its own again when the first lets the colour go. A device
 // with no colour of its own gets the one its ID hashes to, unless someone picked that one, when it
 // gets the next nobody picked; a palette of picked colours leaves it its hash's.
-func DeviceColors(devs []ColorPick) map[string]DeviceColor {
+//
+// A pick made more than stale after the holder's presence was written takes the colour from it
+// (#581): its device had gone quiet, and one that died without a goodbye would hold it for good.
+// The two times are both in presence, so every page that reads the same presence settles it the
+// same, whatever its own clock says.
+func DeviceColors(devs []ColorPick, stale time.Duration) map[string]DeviceColor {
 	byFirst := slices.Clone(devs)
 	slices.SortFunc(byFirst, func(a, b ColorPick) int {
 		return cmp.Or(a.At.Compare(b.At), cmp.Compare(a.Device, b.Device))
 	})
+	holder := make(map[int]ColorPick)
+	for _, p := range byFirst {
+		c := p.Color - 1
+		if c < 0 || c >= Colors {
+			continue
+		}
+		if h, ok := holder[c]; !ok || ColorGoneQuiet(h, p.At, stale) {
+			holder[c] = p
+		}
+	}
 	out := make(map[string]DeviceColor, len(devs))
 	held := make(map[int]bool)
-	for _, p := range byFirst {
-		if c := p.Color - 1; c >= 0 && c < Colors && !held[c] {
-			held[c] = true
-			out[p.Device] = DeviceColor{Color: c, Picked: true}
-		}
+	for c, p := range holder {
+		held[c] = true
+		out[p.Device] = DeviceColor{Color: c, Picked: true}
 	}
 	for _, p := range devs {
 		if _, ok := out[p.Device]; ok {
@@ -59,6 +74,12 @@ func DeviceColors(devs []ColorPick) map[string]DeviceColor {
 		out[p.Device] = DeviceColor{Color: c}
 	}
 	return out
+}
+
+// ColorGoneQuiet says a pick made at "at" takes holder h's colour (DeviceColors): h's presence
+// was written more than stale before it.
+func ColorGoneQuiet(h ColorPick, at time.Time, stale time.Duration) bool {
+	return !h.Seen.IsZero() && at.Sub(h.Seen) > stale
 }
 
 // autoColor is the colour device id hashes to, as the page chose it before colours could be

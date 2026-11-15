@@ -528,6 +528,9 @@ type Daemon struct {
 	// colorSettled says a full sync has checked this device's picked colour against its peers',
 	// so its presence may carry it (color.go).
 	colorSettled bool
+	// presenceOut is when this device's newest presence on the remote was written: the At of the
+	// last one pushed, zero before any is (color.go).
+	presenceOut time.Time
 }
 
 type session struct {

@@ -138,8 +138,21 @@ person can pick one on Settings.
   A returning daemon leaves its pick out of presence until it has synced with every live presence
   open, then gives the pick up if a peer took it. Keeping a lost pick to reclaim later made two
   devices swap colours each time one went idle (found in review, #577).
-- **Stale devices keep their colours**, since staleness is each reader's own clock: a dead device
-  holds its colour until its presence goes (#581).
+- **A quiet device's colour can be taken** (#581, 2026-11-15). A device that died without a
+  goodbye leaves its presence, and its pick, on the remote. Staleness is each reader's own clock,
+  so it doesn't end the pick; instead a pick made more than `StaleAfter` (6 min) after the
+  holder's presence was written (`Presence.At`) takes the colour. Both times are in presence, so
+  every daemon settles it alike, and a live device writes presence every 2 min, so its colour can't
+  be taken this way. The daemon allows the pick only when the holder is also stale by the picking
+  daemon's own clock, since a live device whose clock runs behind writes times that look quiet.
+  The taker keeps the colour when it restarts: coming back, it gives a pick up to a peer that
+  picked it meanwhile, not to the quiet one it took it from.
+- **A quiet device that comes back** gives the colour up. One that restarted does so as "Coming
+  back" says. One that was asleep or offline knows its presence on the remote is older than
+  `StaleAfter` when it next writes one, and settles its pick again the same way. Without that, its
+  next presence would be fresh, its earlier pick would win again, and the colour would go back
+  to it. A device from before #581 that wakes from sleep does take it back, and a daemon from
+  before #581 shows the quiet device with the colour until its presence goes.
 - **Auto** is the colour the ID hashes to, or the next one nobody picked.
 - **No protocol bump.** An older device ignores the fields and shows in its automatic colour, and
   the pick is a page call to the page's own daemon.

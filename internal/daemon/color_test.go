@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/web"
 )
@@ -131,5 +132,71 @@ func TestAColourPickedWhileItsDeviceWasAwayStaysPicked(t *testing.T) {
 	}
 	if code, _, body := pa.pickColor(3); code != http.StatusBadRequest {
 		t.Errorf("a taking it back: %d %s", code, body)
+	}
+}
+
+// A device that died without a goodbye leaves its presence, and its pick, on the remote (#581).
+// Once it is stale, a teammate may pick its colour, and every page gives the colour to the one
+// that picked it. When the device comes back it gives the colour up, as one that restarted after a
+// teammate picked its colour does.
+func TestTheColourOfADeviceThatLeftWithoutAGoodbyeCanBePicked(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	// a's own limit is long: with the tests' short one, a push slower than it on a loaded runner
+	// leaves the pick out of a's next presence (colorAwayLocked), which could be the one kept.
+	a, b, c := newDevice(t, remote, time.Minute), newDevice(t, remote), newDevice(t, remote)
+	pa, pb, pc := a.page(), b.page(), c.page()
+	idA, idB := a.self(), b.self()
+	if code, _, body := pa.pickColor(3); code != http.StatusOK {
+		t.Fatalf("a picking: %d %s", code, body)
+	}
+	var left string // a's presence with its pick, as a daemon killed now would leave it
+	eventually(t, "a's pick on the remote and on b's page", func() bool {
+		d, _ := pb.colorOn(idA)
+		left = presenceTip(t, a, remote)
+		return d.Picked && d.Color == 2
+	})
+	a.stop()
+	eventually(t, "b to see a gone", func() bool { _, ok := pb.colorOn(idA); return !ok })
+	git(t, remote, "update-ref", "refs/murmur/presence/"+idA, left) // the goodbye undone
+	for name, p := range map[string]*page{"b": pb, "c": pc} {
+		eventually(t, name+" to see a stale, with its pick", func() bool {
+			d, ok := p.colorOn(idA)
+			return ok && !d.Reachable && d.Picked && d.Color == 2
+		})
+	}
+
+	// Stale here is not yet stale by the presence's own time, to the second; within moments it is.
+	eventually(t, "b to pick a's colour", func() bool { code, _, _ := pb.pickColor(3); return code == http.StatusOK })
+	for name, p := range map[string]*page{"b": pb, "c": pc} {
+		eventually(t, name+"'s page to give b the colour", func() bool {
+			ad, _ := p.colorOn(idA)
+			bd, _ := p.colorOn(idB)
+			return !ad.Picked && bd.Picked && bd.Color == 2
+		})
+	}
+	if acct := pb.state().Account; acct.Color != 3 || acct.ColorLost != "" {
+		t.Errorf("b's account after taking it: %+v", acct)
+	}
+	if code, _, body := pc.pickColor(3); code != http.StatusBadRequest || !strings.Contains(body, idB+" has that colour") {
+		t.Errorf("c taking b's colour: %d %s", code, body)
+	}
+
+	// a comes back and gives it up.
+	a.start()
+	pa = a.page()
+	eventually(t, "a to give the colour up to b", func() bool {
+		acct := pa.state().Account
+		return acct.Color == 0 && acct.ColorLost != ""
+	})
+	for name, p := range map[string]*page{"a": pa, "b": pb, "c": pc} {
+		eventually(t, name+"'s page to show b with it, a here without it", func() bool {
+			ad, okA := p.colorOn(idA)
+			bd, _ := p.colorOn(idB)
+			return okA && ad.Reachable && !ad.Picked && bd.Picked && bd.Color == 2
+		})
+	}
+	if acct := pb.state().Account; acct.Color != 3 {
+		t.Errorf("b's pick after a came back: %+v", acct)
 	}
 }

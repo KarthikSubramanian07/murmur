@@ -209,10 +209,12 @@ func newFixtures(now time.Time) *fixtures {
 		},
 	}
 	f.activity = fixtureActivity(now)
-	// Maya and Jordan picked colours, so Settings shows two as taken.
+	// Maya and Jordan picked colours, so Settings shows two as taken. Sam's desktop picked one too,
+	// but it is offline, so its colour can be taken (#581).
 	f.picks = map[string]bus.ColorPick{
-		"maya-mbp-91c0":   {Device: "maya-mbp-91c0", Color: 9, At: ago(26 * time.Hour)},
-		"jordan-xps-2b90": {Device: "jordan-xps-2b90", Color: 2, At: ago(3 * time.Hour)},
+		"maya-mbp-91c0":    {Device: "maya-mbp-91c0", Color: 9, At: ago(26 * time.Hour)},
+		"jordan-xps-2b90":  {Device: "jordan-xps-2b90", Color: 2, At: ago(3 * time.Hour)},
+		"sam-desktop-07be": {Device: "sam-desktop-07be", Color: 5, At: ago(30 * time.Hour)},
 	}
 	// A hackathon team on its second afternoon, racing to a 5 pm demo of Huddle, an app that writes
 	// meeting notes: four people, five machines, agents from three clients.
@@ -436,16 +438,25 @@ func (f *fixtures) State(ctx context.Context) (web.State, error) {
 	return st, nil
 }
 
-// colorsLocked settles every device's colour as the daemon does. Caller holds mu.
+// staleAfter is the daemon's: how long a presence goes unchanged before its device is gone.
+const staleAfter = 6 * time.Minute
+
+// colorsLocked settles every device's colour as the daemon does. A reachable device is taken to
+// be here; an unreachable one's presence was written when it was last seen. Caller holds mu.
 func (f *fixtures) colorsLocked() map[string]bus.DeviceColor {
 	var picks []bus.ColorPick
 	for _, d := range f.devices {
-		picks = append(picks, cmp.Or(f.picks[d.ID], bus.ColorPick{Device: d.ID}))
+		p := cmp.Or(f.picks[d.ID], bus.ColorPick{Device: d.ID})
+		if !d.Reachable {
+			p.Seen = d.LastSeen
+		}
+		picks = append(picks, p)
 	}
-	return bus.DeviceColors(picks)
+	return bus.DeviceColors(picks, staleAfter)
 }
 
-// SetColor picks this device's colour as the daemon does, refusing one another device has.
+// SetColor picks this device's colour as the daemon does, refusing one another device has unless
+// that device has gone quiet.
 func (f *fixtures) SetColor(ctx context.Context, color int) (web.Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -453,13 +464,14 @@ func (f *fixtures) SetColor(ctx context.Context, color int) (web.Account, error)
 		return web.Account{}, fmt.Errorf("there is no colour %d", color)
 	}
 	colors := f.colorsLocked()
+	now := time.Now()
 	for _, d := range f.devices {
-		if c := colors[d.ID]; !d.Self && c.Picked && c.Color == color-1 {
+		if c := colors[d.ID]; !d.Self && c.Picked && c.Color == color-1 && (d.Reachable || now.Sub(d.LastSeen) <= staleAfter) {
 			return web.Account{}, fmt.Errorf("%s has that colour", cmp.Or(d.Nick, d.Owner, d.ID))
 		}
 	}
 	f.account.Color, f.account.ColorLost = color, ""
-	f.picks[f.self] = bus.ColorPick{Device: f.self, Color: color, At: time.Now()}
+	f.picks[f.self] = bus.ColorPick{Device: f.self, Color: color, At: now}
 	return f.account, nil
 }
 

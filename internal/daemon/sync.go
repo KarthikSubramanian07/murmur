@@ -1644,7 +1644,9 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick,
 		At:       d.nextPresenceAtLocked(),
 		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true}
+	d.colorAwayLocked(pres.At)
 	pres.Color, pres.ColorAt = d.shownColorLocked()
+	at := pres.At
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must
 	// reach the live one, not the one about to stop.
@@ -1725,6 +1727,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	d.mu.Lock()
 	d.known[ref] = sha
+	d.presenceOut = at
 	d.mu.Unlock()
 	return nil
 }

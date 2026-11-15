@@ -23,17 +23,33 @@ import (
 // the remote, so its colour looked free. Until its first full sync it leaves its pick out of its
 // presence, and then gives it up if a peer has picked it meanwhile. Kept, a lost pick would come
 // back each time the holder's daemon went idle, and two devices would swap colours day by day.
+//
+// A device that died without a goodbye leaves its presence, and its pick, on the remote (#581).
+// Whether it is stale is each reader's own clock, so it doesn't end the pick; a pick made more
+// than StaleAfter after that presence was written takes the colour (bus.DeviceColors), which every
+// daemon settles alike from the two times in presence. A device that comes back from being quiet
+// that long (asleep, or offline) settles its pick again as one that restarted does.
 
 // colorsLocked is every device's colour, this one's included, by the devices in presence. A
-// device whose presence is stale still holds its colour: staleness is each reader's own clock,
-// and the colours must come out the same everywhere. Caller holds mu.
+// device whose presence is stale still holds its colour, until a pick made long enough after its
+// presence takes it. Caller holds mu.
 func (d *Daemon) colorsLocked() map[string]bus.DeviceColor {
 	color, at := d.shownColorLocked() // as the peers see it
-	picks := []bus.ColorPick{{Device: d.device, Color: color, At: at}}
+	return bus.DeviceColors(d.colorPicksLocked(color, at), d.opt.StaleAfter)
+}
+
+// colorPicksLocked is every device's pick, this one's as color and at, each with when its
+// presence on the remote was written. Caller holds mu.
+func (d *Daemon) colorPicksLocked(color int, at time.Time) []bus.ColorPick {
+	picks := []bus.ColorPick{{Device: d.device, Color: color, At: at, Seen: d.presenceOut}}
 	for id, p := range d.peers {
-		picks = append(picks, bus.ColorPick{Device: id, Color: p.pres.Color, At: p.pres.ColorAt})
+		picks = append(picks, peerPick(id, p))
 	}
-	return bus.DeviceColors(picks)
+	return picks
+}
+
+func peerPick(id string, p *peer) bus.ColorPick {
+	return bus.ColorPick{Device: id, Color: p.pres.Color, At: p.pres.ColorAt, Seen: p.pres.At}
 }
 
 // shownColorLocked is the pick this device's presence carries: none until its first full sync
@@ -45,23 +61,17 @@ func (d *Daemon) shownColorLocked() (int, time.Time) {
 	return d.st.Color, d.st.ColorAt
 }
 
-// settleColorLocked gives up this device's pick if a peer holds that colour: one that picked it
-// first, or, at the first full sync, one that picked it while this device was away. Called after
-// each full sync. The pick stays out of presence while any peer's is locked (no team key for it
-// yet), since it could hide the holder; a lost pick is still given up meanwhile. Caller holds mu.
+// settleColorLocked gives up this device's pick if a peer holds that colour: one bus.DeviceColors
+// gives it to, or, at the first full sync, one that picked it while this device was away, not one
+// this device took it from for being quiet. Called after each full sync. The pick stays out of
+// presence while any peer's is locked (no team key for it yet), since it could hide the holder; a
+// lost pick is still given up meanwhile. Caller holds mu.
 func (d *Daemon) settleColorLocked() {
 	if d.st.Color != 0 {
-		for _, id := range sortedKeys(d.peers) {
-			p := d.peers[id].pres
-			if p.Color != d.st.Color {
-				continue
-			}
-			if !d.colorSettled || p.ColorAt.Before(d.st.ColorAt) || p.ColorAt.Equal(d.st.ColorAt) && id < d.device {
-				d.st.Color, d.st.ColorAt, d.st.ColorLostTo = 0, time.Time{}, d.deviceCalledLocked(id)
-				d.saveLocked()
-				d.kickPresence()
-				break
-			}
+		if id := d.colorHolderLocked(); id != "" {
+			d.st.Color, d.st.ColorAt, d.st.ColorLostTo = 0, time.Time{}, d.deviceCalledLocked(id)
+			d.saveLocked()
+			d.kickPresence()
 		}
 	}
 	for _, p := range d.peers {
@@ -80,6 +90,38 @@ func (d *Daemon) settleColorLocked() {
 	}
 }
 
+// colorHolderLocked is the peer that holds this device's picked colour instead of it, "" if none
+// does. Caller holds mu.
+func (d *Daemon) colorHolderLocked() string {
+	mine := d.st.Color - 1
+	if c := bus.DeviceColors(d.colorPicksLocked(d.st.Color, d.st.ColorAt), d.opt.StaleAfter); !c[d.device].Picked {
+		for _, id := range sortedKeys(d.peers) {
+			if c[id].Picked && c[id].Color == mine {
+				return id
+			}
+		}
+	}
+	if !d.colorSettled {
+		for _, id := range sortedKeys(d.peers) {
+			p := d.peers[id]
+			if p.pres.Color == d.st.Color && !bus.ColorGoneQuiet(peerPick(id, p), d.st.ColorAt, d.opt.StaleAfter) {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
+// colorAwayLocked notes that this device's presence on the remote is older than StaleAfter, as it
+// is about to write a new one: its daemon was asleep or couldn't push, and to its peers it had
+// gone quiet, so one of them may have taken its colour. Like a daemon that has just started, it
+// leaves its pick out until the next full sync has settled it. Caller holds mu.
+func (d *Daemon) colorAwayLocked(now time.Time) {
+	if d.colorSettled && !d.presenceOut.IsZero() && now.Sub(d.presenceOut) > d.opt.StaleAfter {
+		d.colorSettled = false
+	}
+}
+
 // deviceCalledLocked is what the page calls device id: its nickname or person's name, else its
 // owner, else its ID. Caller holds mu.
 func (d *Daemon) deviceCalledLocked(id string) string {
@@ -91,8 +133,9 @@ func (d *Daemon) deviceCalledLocked(id string) string {
 }
 
 // SetColor is the page picking this device's colour, 1 to bus.Colors, or with 0 letting it be
-// chosen. A colour another device holds is refused. It waits for the first sync, as a nickname
-// does: before it, this daemon knows no other device's colour.
+// chosen. A colour another device holds is refused, unless that device is stale here and its
+// presence was written more than StaleAfter ago, so the pick takes it everywhere (#581). It waits
+// for the first sync, as a nickname does: before it, this daemon knows no other device's colour.
 func (s pageSource) SetColor(ctx context.Context, color int) (web.Account, error) {
 	d := s.d
 	d.mu.Lock()
@@ -107,14 +150,20 @@ func (s pageSource) SetColor(ctx context.Context, color int) (web.Account, error
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if color != d.st.Color {
+		now := time.Now().UTC()
 		for id, c := range d.colorsLocked() {
-			if id != d.device && c.Picked && c.Color == color-1 {
+			if id == d.device || !c.Picked || c.Color != color-1 {
+				continue
+			}
+			// Both: a presence quiet by its own times can be a live device's whose clock runs
+			// behind, and one stale here can have been written by a clock that runs ahead.
+			if p := d.peers[id]; p == nil || !d.staleLocked(p) || !bus.ColorGoneQuiet(peerPick(id, p), now, d.opt.StaleAfter) {
 				return web.Account{}, fmt.Errorf("%s has that colour", d.deviceCalledLocked(id))
 			}
 		}
 		d.st.Color, d.st.ColorAt, d.st.ColorLostTo = color, time.Time{}, ""
 		if color != 0 {
-			d.st.ColorAt = time.Now().UTC()
+			d.st.ColorAt = now
 		}
 		d.saveLocked()
 		d.kickPresence()
