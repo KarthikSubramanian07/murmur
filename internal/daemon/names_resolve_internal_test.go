@@ -7,8 +7,9 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 )
 
-// When more than one device's presence shows a name, a send to it goes to a device still writing
-// its presence before a stale one, and of those to the device the registry has the name on (#604).
+// While the device the registry has a name on is up, a send to the name goes there, whatever
+// another device's presence shows. With that device gone or stale, it goes to a device still
+// writing its presence before a stale one (#604).
 func TestResolveNameAmongPresences(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
@@ -41,6 +42,10 @@ func TestResolveNameAmongPresences(t *testing.T) {
 			map[string]*peer{"peer-0001": {lastChange: now}, "peer-0002": shows(false)}, "peer-0002/x"},
 		{"the registry's address when no presence shows it", "peer-0009/x", "",
 			map[string]*peer{"peer-0001": {lastChange: now}}, "peer-0009/x"},
+		{"the registry's address when its device is up and the session has stopped", "peer-0002/stopped", "",
+			map[string]*peer{"peer-0001": shows(true), "peer-0002": {lastChange: now}}, "peer-0002/stopped"},
+		{"this device's own stopped session, whatever a presence shows", "here-0001/stopped", "",
+			map[string]*peer{"peer-0001": shows(true)}, "here-0001/stopped"},
 	} {
 		d := &Daemon{device: "here-0001", opt: Options{StaleAfter: 6 * time.Minute}, lastPollOK: now, peers: c.peers,
 			st: state{Used: map[string]string{}, Reserved: map[string]string{}}}
@@ -57,5 +62,17 @@ func TestResolveNameAmongPresences(t *testing.T) {
 		if !ok || got != c.want {
 			t.Errorf("%s: resolved to %q, %v; want %s", c.what, got, ok, c.want)
 		}
+	}
+
+	// A name a live device has set aside and not yet given to a session is nobody's to send to,
+	// though another device's presence shows it.
+	d := &Daemon{device: "here-0001", opt: Options{StaleAfter: 6 * time.Minute}, lastPollOK: now,
+		peers: map[string]*peer{"peer-0001": shows(true), "peer-0002": {lastChange: now}},
+		st:    state{Used: map[string]string{"quiet-otter": ""}, Reserved: map[string]string{"quiet-otter": "peer-0002"}}}
+	d.mu.Lock()
+	got, ok := d.resolveNameLocked("quiet-otter")
+	d.mu.Unlock()
+	if ok {
+		t.Errorf("a name set aside by a live device resolved to %q", got)
 	}
 }

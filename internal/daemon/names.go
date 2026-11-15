@@ -400,14 +400,20 @@ func (d *Daemon) resolveNameLocked(name string) (addr string, ok bool) {
 	if h := d.st.NameHolders[name]; h != "" && d.st.SessionNames[h] == name && d.receivesLocked(h) {
 		return bus.Addr(d.device, h), true
 	}
-	// A presence is whatever its device wrote, so more than one can show a name (#604). A device
-	// still writing its presence goes before one gone stale, and of those the device the registry
-	// has the name on goes before any other; failing both, the first by device ID, as it always
-	// was. Live comes first because a clone that loses its keys comes back under a new device ID
-	// with its names, while the registry, and maybe a presence nobody writes any more, still have
-	// them on the old one.
+	// A presence is whatever its device wrote, so a device can show a name that isn't its own
+	// (#604). While the device the registry has the name on is up, only its presence counts: if no
+	// session there shows the name, the session has stopped, and the registry's address keeps the
+	// message for it. Otherwise, of the presences that show the name, one still being written goes
+	// before a stale one, and the first by device ID stands, as it always did. That is for a clone
+	// that lost its keys (#617): it is back under a new device ID with its names, and the registry
+	// still has them on the old one, which is gone or going stale.
 	holder, best := d.nameDeviceLocked(name), 0
+	hp := d.peers[holder]
+	holderUp := holder != "" && (holder == d.device || hp != nil && !d.staleLocked(hp))
 	for _, dev := range sortedKeys(d.peers) {
+		if holderUp && dev != holder {
+			continue
+		}
 		p := d.peers[dev]
 		rank := 1
 		if !d.staleLocked(p) {
