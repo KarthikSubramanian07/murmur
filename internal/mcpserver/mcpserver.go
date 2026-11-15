@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -286,14 +287,24 @@ const threadEnv = "T3CODE_THREAD_ID"
 // agentAbove says whether an agent's program runs above the client that started this server. Every
 // process under a T3 thread inherits threadEnv, so a claude run from the thread's shell, perhaps in
 // another clone, has the thread's variable without being the thread: its own client has an agent
-// above it (the thread's), where T3 runs the thread's client itself. A variable, for tests: their
-// own process runs under whatever agent started them. An agent run through node, as an npm install
-// is, isn't seen; on one daemon the thread's address being in use catches it.
+// above it (the thread's), through shells and the like, where T3 runs the thread's client itself.
+// The walk stops at any other program, or one it can't read: past T3 is the desktop's process,
+// whose parent may have exited and its PID gone to anything since. A variable, for tests: their
+// own process runs under whatever agent started them. An agent run through a program the walk
+// stops at isn't seen; on one daemon the thread's address being in use catches it.
 var agentAbove = func() bool {
-	pids := proc.Ancestors(os.Getppid(), 8)
+	pids := proc.Ancestors(os.Getppid(), 10)
 	for _, pid := range pids[min(1, len(pids)):] {
-		if exe, err := proc.Exe(pid); err == nil && agentPrograms[programName(exe)] {
+		exe, err := proc.Exe(pid)
+		if err != nil {
+			return false
+		}
+		name := programName(exe)
+		if agentPrograms[name] || agentPrograms[commOf(pid)] {
 			return true
+		}
+		if !passThrough[name] {
+			return false
 		}
 	}
 	return false
@@ -302,6 +313,27 @@ var agentAbove = func() bool {
 // agentPrograms are the agents' programs agentAbove looks for, by name.
 var agentPrograms = map[string]bool{"claude": true, "codex": true, "grok": true, "muse": true,
 	"opencode": true, "pi": true, "gemini": true}
+
+// passThrough are the programs between an agent and a claude it runs that agentAbove looks past:
+// shells, and what runs a command for one.
+var passThrough = map[string]bool{"bash": true, "sh": true, "dash": true, "zsh": true, "fish": true,
+	"ksh": true, "pwsh": true, "powershell": true, "cmd": true, "env": true, "sudo": true,
+	"timeout": true, "nohup": true, "script": true, "node": true, "npx": true, "npm": true,
+	"python": true, "python3": true, "uv": true, "go": true, "make": true}
+
+// commOf is the name Linux keeps for process pid as it was started (/proc/<pid>/comm), "" elsewhere.
+// Its program's path resolves links, and Claude Code's native install runs as a link named claude
+// to a file named by its version.
+func commOf(pid int) string {
+	if runtime.GOOS != "linux" {
+		return ""
+	}
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
 
 // programName is exe's file name, lower case, without .exe or Linux's " (deleted)".
 func programName(exe string) string {

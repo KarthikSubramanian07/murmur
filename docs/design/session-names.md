@@ -160,11 +160,13 @@ knew the rest.
   Codex, whose servers get a bare environment, find their thread as before.
 - **Not the thread's own.** Every process under a thread inherits the variable, so a `claude` run
   from the thread's shell, perhaps in another clone, would pass for the thread. The server ignores
-  the variable when an agent's program (`claude`, `codex` and the like) runs above its client;
-  T3 runs the thread's client itself. An agent run through `node` isn't seen. On the thread's own
-  daemon the hello is refused anyway while the thread's session is live, as any ID in use is, and
-  after three refusals, about 7 s, the server registers as before #642: an ID from its Claude
-  session, its thread looked up in T3's database.
+  the variable when an agent's program (`claude`, `codex` and the like) runs above its client,
+  looking up through shells and the programs that run commands for them (`node`, `python`, `go`);
+  T3 runs the thread's client itself. Not seen: an agent that runs as `node` (an npm install), or
+  a `claude` started through any other program. On the thread's own daemon the hello is refused
+  anyway while the thread's session is live, as any ID in use is, and after three refusals, about
+  7 s, the server registers as before #642: an ID from its Claude session, its thread looked up in
+  T3's database.
 - **Threads named before #642** have their name in the registry at the address of the session that
   first had it, made from a Claude session ID. A hello that says it was made from the thread
   (`ByThread`, protocol 22) is registered at that address when it is this device's and still goes
@@ -178,5 +180,5 @@ knew the rest.
   the same way.
 - **Not covered.** If T3 started the new instance's process before letting the old one go, the new
   server would give up the thread's address after 7 s, for good, and the thread would split as
-  before #642. In the switch seen for #636 the old one had gone about 40 s before. A conversation moved
-  between the Claude Code CLI and T3 still changes its name and address (#643).
+  before #642. In the switch seen for #636 the old one had gone about 40 s before. A conversation
+  moved between the Claude Code CLI and T3 still changes its name and address (#643).
