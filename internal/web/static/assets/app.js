@@ -4613,7 +4613,9 @@ function settingsPage() {
   const sections = [ui.state ? accountSection() : null, themeSection()];
   if (ui.settings) {
     const set = ui.settings;
-    const local = (ui.state?.devices || []).find((d) => d.self)?.sessions || [];
+    // A session is shown by its address until its name lands, and the daemon keeps these settings
+    // by name: one saved under the address would never apply, so the session isn't offered (#43).
+    const local = ((ui.state?.devices || []).find((d) => d.self)?.sessions || []).filter((s) => !s.name.includes("/"));
     const overrides = set.sessionWake || {};
     const wakeOwn = local.filter((s) => overrides[s.name]).length;
     const rows = [
