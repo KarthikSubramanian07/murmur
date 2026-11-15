@@ -3681,7 +3681,7 @@ a.g-pr:hover {
 
 /* A device's color (#560): twelve quiet hues, as saturated as the faces were, the same on every
  * theme so a white initial reads on each. Neighbouring hues alternate in lightness so they stay
- * apart, and those near the state dots' green, amber and red, or the accent ring's blue, are muted
+ * apart, and those near the state dots' green, amber and red or the accent blue are muted
  * well below them. Every face on a device is filled with it, and its sidebar header shows it as a
  * dot by its name; the initial tells that device's sessions apart. A face on a device that is
  * offline or not in presence is grey. */
@@ -3737,25 +3737,15 @@ a.g-pr:hover {
   background: var(--dev);
 }
 
-/* A person's face: a thin ring in the accent color, a small gap from the face. The gap is the
- * surface's color, as the state dot's cutout is. */
-.avatar.avatar-person {
-  box-shadow:
-    0 0 0 1.5px var(--dot-ring, var(--background)),
-    0 0 0 3px var(--primary);
-}
-/* In an overlapping stack the ring takes the place of the stack's cutout, so a face has one outline. */
-.avatar-pair > .avatar.avatar-person,
-.g-pile .avatar.avatar-person {
-  box-shadow:
-    0 0 0 1px var(--dot-ring, var(--background)),
-    0 0 0 2.5px var(--primary);
-}
-/* A group's square of faces has no room outside a face: the ring goes inside it. */
-.g-grid .avatar.avatar-person {
-  box-shadow:
-    inset 0 0 0 1.25px var(--primary),
-    inset 0 0 0 2.5px var(--dot-ring, var(--background));
+/* A person's face (#579): a ghost, and maybe an accessory, over its device's color. The ghost alone
+ * marks a person. Nothing clips it: a hat or a speech bubble may reach past the round tile. */
+.avatar.avatar-ghost > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  user-select: none;
 }
 /* Where a device header is short of room, its host gives way before its name. */
 .device-link .dev-name {

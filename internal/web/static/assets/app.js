@@ -2748,14 +2748,34 @@ function draftConversation() {
 }
 
 // A face is filled with the color of the device it is on (#560), so a stack of faces says whose
-// machines they are; a person's also has a ring. The classes are in style.css: the page's content
-// policy doesn't allow an inline style.
+// machines they are. A session's shows its initial; a person's, a ghost. The classes are in
+// style.css: the page's content policy doesn't allow an inline style.
 function avatar(name) {
   const d = deviceOfName(name);
+  const color = "avatar dev-fill " + deviceColor(d);
+  if (isPerson(name)) return ghostFace(name, color);
+  return h("span", { class: color, "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
+}
+
+// A person's ghost (#579): their name picks one of 16 ghosts and one of 15 accessories or none, so
+// they wear the same one everywhere. The files are drawn by scripts/ghosts.py, which these lists
+// follow; a ghost has no tile of its own, so it sits on its device's color.
+const GHOSTS = ["murmur", "hush", "whisper", "mumble", "chatter", "babble", "rumor", "echo", "chirp", "coo", "hum", "psst", "sigh", "jabber", "natter", "buzz"];
+const GHOST_ACCESSORIES = ["", "bow", "glasses", "specs", "shades", "bubble", "headset", "beanie", "party", "crown", "halo", "flower", "sprout", "tophat", "cat", "propeller"];
+
+function ghostOf(name) {
+  let n = 2166136261; // FNV-1a
+  for (const ch of name) n = Math.imul(n ^ ch.codePointAt(0), 16777619) >>> 0;
+  return { ghost: GHOSTS[n % 16], accessory: GHOST_ACCESSORIES[(n >>> 4) % 16] };
+}
+
+function ghostFace(name, cls) {
+  const { ghost, accessory } = ghostOf(name);
   return h(
     "span",
-    { class: "avatar dev-fill " + deviceColor(d) + (isPerson(name) ? " avatar-person" : ""), "aria-hidden": "true" },
-    (name[0] || "?").toUpperCase(),
+    { class: cls + " avatar-person avatar-ghost", "aria-hidden": "true" },
+    h("img", { src: "/assets/ghosts/ghost-" + ghost + ".svg", alt: "", draggable: "false" }),
+    accessory && h("img", { src: "/assets/ghosts/acc-" + accessory + ".svg", alt: "", draggable: "false" }),
   );
 }
 
@@ -2781,7 +2801,7 @@ function deviceOfName(name) {
       if (d.person) devOfNames.set(d.person.name, d);
     }
   }
-  return devOfNames.get(name) || null;
+  return devOfNames?.get(name) || null;
 }
 
 // A group chat is named for whose it is, and its face is its members'.
@@ -3684,9 +3704,9 @@ function setupDialog() {
   );
 }
 
-// The face a name would have: a person's, whatever is typed so far.
+// The face a name would have: a person's on this device, whatever is typed so far.
 function faceOf(name) {
-  return h("span", { class: "avatar avatar-person", "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
+  return ghostFace(name, "avatar dev-fill " + deviceColor((ui.state?.devices || []).find((d) => d.self)));
 }
 
 // Everyone a person can start a conversation with: people, then sessions, those at work first.
