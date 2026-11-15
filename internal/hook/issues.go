@@ -19,7 +19,8 @@ import (
 //
 // Only calls of a known shape are read: a shell command that runs `gh issue create` or `gh issue
 // close`, and an MCP tool of GitHub's server that creates an issue or closes one. Any other call's
-// output is never looked at, and of these only the issue's repository and number go to the daemon.
+// output is never looked at, and of these only the issue's repository and number, and whether it
+// was closed, go to the daemon.
 
 // shellTools are the agents' names for the tool that runs a command: Claude Code's and Codex's Bash,
 // and Grok's run_terminal_command.
@@ -29,12 +30,15 @@ var shellTools = map[string]bool{"Bash": true, "run_terminal_command": true}
 const maxIssues = 10
 
 var (
-	ghIssueCmd = regexp.MustCompile(`\bgh\s+issue\s+(create|new|close)\b`)
+	// gh issue create (or new) or close where a command starts, in a command whose quoted text is
+	// masked (unquoted): at its start, or after ;, &, |, (, or a newline, past assignments like
+	// GH_REPO=x and words like do, then or env that run what follows.
+	ghIssueCmd = regexp.MustCompile(`(?m)(?:^|[;&|(\n])[ \t]*(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S*|do|then|else|time|command|exec|env|!|\{)[ \t]+)*gh[ \t]+issue[ \t]+(create|new|close)\b`)
 	// What gh prints (cli/cli's pkg/cmd/issue, read 2026-11-15): `create` the new issue's address
 	// on a line of its own, and `close` "✓ Closed issue owner/name#37 (title)", on stderr whether
 	// or not that is a terminal. An issue that was closed already is "! Issue ... is already closed".
 	createdLine = regexp.MustCompile(`(?m)^\s*https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/([0-9]+)\s*$`)
-	closedLine  = regexp.MustCompile(`Closed issue ([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#([0-9]+)\b`)
+	closedLine  = regexp.MustCompile(`(?m)^\s*(?:✓\s*)?Closed issue ([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#([0-9]+) \(`)
 	issueURL    = regexp.MustCompile(`^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/([0-9]+)$`)
 )
 
@@ -49,7 +53,10 @@ func issuesOf(in input) []proto.Issue {
 	return nil
 }
 
-// shellIssues reads what gh printed, for a command that ran it to file or close an issue.
+// shellIssues reads what gh printed, for a command that ran it to file or close an issue. It
+// counts the gh issue commands the command runs, and if the output holds more issues filed or closed
+// than that, something else in the command printed them (a gh issue list, a cat of a log), so it
+// reports none rather than credit the call with an issue it didn't file.
 func shellIssues(input, response json.RawMessage) []proto.Issue {
 	var args struct {
 		Command any `json:"command"` // a string; a list of words where an agent passes argv
@@ -57,59 +64,155 @@ func shellIssues(input, response json.RawMessage) []proto.Issue {
 	if json.Unmarshal(input, &args) != nil {
 		return nil
 	}
-	command := ""
+	creates, closes := 0, 0
 	switch c := args.Command.(type) {
 	case string:
-		command = c
+		creates, closes = ghIssueCalls(c)
 	case []any:
+		var words []string
 		for _, w := range c {
 			if s, ok := w.(string); ok {
-				command += s + " "
+				words = append(words, s)
 			}
 		}
-	}
-	var created, closed bool
-	for _, m := range ghIssueCmd.FindAllStringSubmatch(command, -1) {
-		if m[1] == "close" {
-			closed = true
-		} else {
-			created = true
+		// argv is one command: gh's own words, or a shell's, whose last word is its script.
+		if len(words) >= 3 && words[0] == "gh" && words[1] == "issue" {
+			creates, closes = ghIssueCalls(strings.Join(words[:3], " "))
+		} else if len(words) > 0 {
+			creates, closes = ghIssueCalls(words[len(words)-1])
 		}
 	}
-	if !created && !closed {
+	if creates == 0 && closes == 0 {
 		return nil
 	}
 	var v any
 	if json.Unmarshal(response, &v) != nil {
 		return nil
 	}
-	var out []proto.Issue
-	add := func(m []string, isClosed bool) {
+	var filed, shut []proto.Issue
+	add := func(list *[]proto.Issue, m []string, isClosed bool) {
 		n, err := strconv.Atoi(m[3])
-		if err != nil || n <= 0 || len(out) >= maxIssues {
+		if err != nil || n <= 0 || len(*list) > maxIssues {
 			return
 		}
 		is := proto.Issue{Repo: m[1] + "/" + m[2], Number: n, Closed: isClosed}
-		for _, o := range out {
+		for _, o := range *list {
 			if o == is {
 				return
 			}
 		}
-		out = append(out, is)
+		*list = append(*list, is)
 	}
 	walk(v, func(s string) {
-		if created {
-			for _, m := range createdLine.FindAllStringSubmatch(s, maxIssues) {
-				add(m, false)
+		if creates > 0 {
+			for _, m := range createdLine.FindAllStringSubmatch(s, maxIssues+1) {
+				add(&filed, m, false)
 			}
 		}
-		if closed {
-			for _, m := range closedLine.FindAllStringSubmatch(s, maxIssues) {
-				add(m, true)
+		if closes > 0 {
+			for _, m := range closedLine.FindAllStringSubmatch(s, maxIssues+1) {
+				add(&shut, m, true)
 			}
 		}
 	})
+	if len(filed) > creates || len(shut) > closes {
+		return nil
+	}
+	out := append(filed, shut...)
+	if len(out) > maxIssues {
+		out = out[:maxIssues]
+	}
 	return out
+}
+
+// ghIssueCalls counts the gh issue create (or new) and gh issue close commands a shell command runs,
+// where a command starts and outside quotes, so text that only names one (an echo, a grep pattern, a
+// commit message) doesn't count. It doesn't parse a shell: a loop that runs one close for several
+// issues counts once.
+func ghIssueCalls(command string) (creates, closes int) {
+	for _, m := range ghIssueCmd.FindAllStringSubmatch(unquoted(command), -1) {
+		if m[1] == "close" {
+			closes++
+		} else {
+			creates++
+		}
+	}
+	return creates, closes
+}
+
+// unquoted is command with what is inside quotes, or escaped by a backslash, replaced by '_', except
+// a $( ) or backtick substitution inside double quotes, which runs as a command does. A backtick is
+// written as ( or ), so that what follows one starts a command.
+func unquoted(command string) string {
+	const (
+		plain = iota
+		single
+		double
+		sub  // $( ) or ( ), which ) ends
+		tick // `, which ` ends
+	)
+	stack := []int{plain}
+	var b strings.Builder
+	rs := []rune(command)
+	for i := 0; i < len(rs); i++ {
+		r, mode := rs[i], stack[len(stack)-1]
+		switch mode {
+		case single:
+			if r == '\'' {
+				stack = stack[:len(stack)-1]
+			}
+			b.WriteByte('_')
+			continue
+		case double:
+			switch {
+			case r == '"':
+				stack = stack[:len(stack)-1]
+				b.WriteByte('_')
+			case r == '\\' && i+1 < len(rs):
+				i++
+				b.WriteString("__")
+			case r == '$' && i+1 < len(rs) && rs[i+1] == '(':
+				i++
+				stack = append(stack, sub)
+				b.WriteString("$(")
+			case r == '`':
+				stack = append(stack, tick)
+				b.WriteByte('(')
+			default:
+				b.WriteByte('_')
+			}
+			continue
+		}
+		switch {
+		case r == '\\' && i+1 < len(rs) && rs[i+1] == '\n':
+			i++
+			b.WriteByte(' ') // a line continued
+		case r == '\\' && i+1 < len(rs):
+			i++
+			b.WriteString("__")
+		case r == '\'':
+			stack = append(stack, single)
+			b.WriteByte('_')
+		case r == '"':
+			stack = append(stack, double)
+			b.WriteByte('_')
+		case r == '(':
+			stack = append(stack, sub)
+			b.WriteRune(r)
+		case r == ')' && mode == sub:
+			stack = stack[:len(stack)-1]
+			b.WriteRune(r)
+		case r == '`' && mode == tick:
+			stack = stack[:len(stack)-1]
+			b.WriteByte(')')
+		case r == '`':
+			stack = append(stack, tick)
+			b.WriteByte('(')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // mcpIssues reads the issue a GitHub MCP tool filed or closed, named tool without its server's

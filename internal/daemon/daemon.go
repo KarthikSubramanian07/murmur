@@ -28,7 +28,6 @@ import (
 	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
-	"github.com/a-Fig/murmur/internal/publicrepo"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
 	"github.com/a-Fig/murmur/internal/title"
@@ -333,9 +332,6 @@ type Daemon struct {
 	// repoName is the repository's name from its remote's address, which the page's repo picker
 	// shows.
 	repoName string
-	// repoAddr is its remote's github.com/<owner>/<name>, lowercased, or "" off GitHub: the
-	// repository whose issues a session's hook reports are kept for the page (#510).
-	repoAddr string
 	// page is the page's server, nil until it is made and when the page isn't served. OpPageKey
 	// asks it for a key.
 	page    atomic.Pointer[web.Server]
@@ -1134,8 +1130,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		return nil, err
 	}
 	d.owner = d.repo.Config(ctx, "user.name")
-	remoteURL := d.repo.Config(ctx, "remote."+d.repo.Remote+".url")
-	d.repoName, d.repoAddr = clones.NameOf(remoteURL), publicrepo.Address(remoteURL)
+	d.repoName = clones.NameOf(d.repo.Config(ctx, "remote."+d.repo.Remote+".url"))
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}
