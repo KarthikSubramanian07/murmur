@@ -1225,13 +1225,13 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	if sealed {
 		d.newPresenceLocked(dev, pres.At) // the high-water mark of its presence times
 	}
-	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, sealed: sealed, locked: locked}
-	if !locked {
-		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
-	}
-	// A name in another device's presence is in use, whether or not the registry shows it yet.
+	// A name in another device's presence is in use, whether or not the registry shows it yet. A
+	// name that is another device's is not dev's to show, whatever its presence says (#604): the
+	// session is listed, and reached, by its address, as one whose name hasn't landed is. It is
+	// taken off here, before the presence is kept, so that everything that reads one agrees.
 	seen := false
-	for _, s := range pres.Sessions {
+	var notIts []string
+	for i, s := range pres.Sessions {
 		if s.ID == bus.PersonSession {
 			// A person's name is claimed in the registry under its own key (PersonClaims), not Used.
 			if d.notePersonLocked(s.Name, bus.Addr(dev, s.ID)) {
@@ -1239,14 +1239,31 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 			}
 			continue
 		}
-		if s.Name != "" && d.noteNameLocked(s.Name, bus.Addr(dev, s.ID)) {
+		if s.Name == "" {
+			continue
+		}
+		if d.nameElsewhereLocked(s.Name, dev) {
+			notIts = append(notIts, s.Name)
+			pres.Sessions[i].Name = ""
+		} else if d.noteNameLocked(s.Name, bus.Addr(dev, s.ID)) {
 			seen = true
 		}
 	}
 	for name, id := range pres.Names { // the same, from a presence this device can't open
-		if d.noteNameLocked(name, bus.Addr(dev, id)) {
+		if d.nameElsewhereLocked(name, dev) {
+			notIts = append(notIts, name)
+		} else if d.noteNameLocked(name, bus.Addr(dev, id)) {
 			seen = true
 		}
+	}
+	sort.Strings(notIts)
+	if dropped := strings.Join(notIts, ", "); dropped != "" && (p == nil || p.notIts != dropped) {
+		d.log.Printf("%s: it gives its sessions names that are other devices' (%s); they go by their addresses here", ref, dropped)
+	}
+	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, sealed: sealed, locked: locked,
+		notIts: strings.Join(notIts, ", ")}
+	if !locked {
+		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
 	}
 	if seen {
 		d.saveLocked()

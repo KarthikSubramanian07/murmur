@@ -620,6 +620,9 @@ type peer struct {
 	// read again once it does.
 	sealed bool
 	locked bool
+	// notIts is the names the presence gave its sessions that are other devices', taken off it
+	// (updatePeer), so that a presence written every heartbeat is logged once.
+	notIts string
 }
 
 // fetchFail is a ref whose fetch failed: at which listed SHA, and when. It is fetched again on

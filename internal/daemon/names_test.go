@@ -500,6 +500,64 @@ func TestNamesInPresenceAreUsed(t *testing.T) {
 	eventually(t, "the peer's name in who", func() bool { return a.nameOf("peer-0001/x") == taken })
 }
 
+// A presence is whatever its device wrote, so one can give its session a name that is another
+// device's. The name stays where the registry put it: a send to it reaches that session, and who
+// lists the other by its address (#604).
+func TestPresenceCannotTakeAnotherDevicesName(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote, time.Minute) // the forged presences stay live
+	alice, _ := a.session("aaaaaa", "claude-alice")
+	b.session("bbbbbb", "claude-bob")
+	an := a.named(alice)
+	b.nameIs(alice, an)
+
+	// A name is looked for in the devices' presences in the order of their IDs, so one forger's
+	// sorts before any device's and one after.
+	forgers := []string{"00-forger-0001", "zz-forger-0001"}
+	at := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, dev := range forgers {
+		pushMessage(t, remote, "refs/murmur/presence/"+dev, dev+": 1 sessions\n\n"+
+			`{"v":1,"device":"`+dev+`","host":"forger","at":"`+at+`","sessions":[`+
+			`{"id":"x","name":"`+an+`","agent":"test","started":"`+at+`"}]}`+"\n")
+	}
+	for _, d := range []*device{a, b} {
+		eventually(t, "the forgers in who", func() bool {
+			for _, dev := range forgers {
+				if _, listed, _ := d.whoShows(dev + "/x"); !listed {
+					return false
+				}
+			}
+			return true
+		})
+		for _, dev := range forgers {
+			if name, _, _ := d.whoShows(dev + "/x"); name != "" {
+				t.Errorf("who lists %s/x as %q, which is %s's name", dev, name, alice)
+			}
+		}
+		if got := d.nameOf(alice); got != an {
+			t.Errorf("who lists %s as %q, want %s", alice, got, an)
+		}
+	}
+
+	r := b.do(proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: an, Subject: "for alice"})
+	if r.Error != "" || len(r.Messages) != 1 || r.Messages[0].To != alice {
+		t.Fatalf("a send to %s: %+v", an, r)
+	}
+	if got := inboxOf(a, "aaaaaa"); len(got) != 1 || got[0] != "for alice" {
+		t.Fatalf("alice's inbox: %q", got)
+	}
+	// lookup knows each forger's session by its address, and by no name.
+	for _, dev := range forgers {
+		if r := b.do(proto.Request{Op: proto.OpLookup, Name: dev + "/x"}); r.Lookup == nil || r.Lookup.Name != "" {
+			t.Errorf("lookup of %s/x: %+v", dev, r.Lookup)
+		}
+	}
+	if r := b.do(proto.Request{Op: proto.OpLookup, Name: an}); r.Lookup == nil || r.Lookup.Addr != alice {
+		t.Errorf("lookup of %s: %+v", an, r.Lookup)
+	}
+}
+
 // Without a reachable remote a session works, addressed as device/session, with its name pending;
 // the name is taken in the background when the remote is back.
 func TestNameIsPendingUntilItLands(t *testing.T) {

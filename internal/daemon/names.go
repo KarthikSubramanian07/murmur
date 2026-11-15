@@ -81,6 +81,20 @@ func (d *Daemon) noteNameLocked(name, addr string) bool {
 	return true
 }
 
+// nameElsewhereLocked says a session name is a device's other than dev: the registry, or an earlier
+// sighting, has it on another device, or another device has set it aside. A name never moves
+// between devices (a resume on another device is a new session there), though on its own device it
+// follows a conversation from one session to the next (#37), so the device is what is compared. A
+// name nobody is known to hold is nobody else's. Caller holds mu.
+func (d *Daemon) nameElsewhereLocked(name, dev string) bool {
+	if addr := d.st.Used[name]; addr != "" {
+		holder, _ := bus.SplitAddr(addr)
+		return holder != dev
+	}
+	holder, reserved := d.st.Reserved[name]
+	return reserved && holder != dev
+}
+
 // notePersonClaimLocked records that a person's name is claimed by addr. The first claim read
 // stands: a later one, here or from a registry rewritten since, changes nothing. It reports whether
 // anything changed. Caller holds mu.
