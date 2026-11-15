@@ -478,6 +478,9 @@ func (d *Daemon) pageCalled(ctx context.Context) {
 // see the page: a tab left in the background goes on polling for as long as the browser runs.
 // Caller holds mu.
 func (d *Daemon) pageSeenLocked(ctx context.Context, now time.Time) {
+	if web.InApp(ctx) {
+		d.lastApp = now
+	}
 	if web.Watched(ctx) {
 		if !d.pageOpenLocked(now) {
 			d.kickPoll() // a page opens: its view should not be 30 s behind

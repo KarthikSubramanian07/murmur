@@ -29,6 +29,7 @@ type fakeSource struct {
 	unmuted   [][2]string
 	tagged    []string // each SetTags: addr +added -removed
 	watched   []bool   // what Watched said of each State call
+	inApp     []bool   // what InApp said of each State call
 	restarts  int
 	sends     []string // each Send: to: text
 	read      []string // the IDs given to MarkRead
@@ -38,6 +39,7 @@ func (f *fakeSource) State(ctx context.Context) (State, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.watched = append(f.watched, Watched(ctx))
+	f.inApp = append(f.inApp, InApp(ctx))
 	return f.state, nil
 }
 
@@ -570,6 +572,30 @@ func TestHiddenPageIsNotWatched(t *testing.T) {
 	defer src.mu.Unlock()
 	if !reflect.DeepEqual(src.watched, []bool{true, false}) {
 		t.Errorf("watched = %v, want [true false]: a visible page's call, then a hidden one's", src.watched)
+	}
+}
+
+// The desktop app's page says so, hidden or not, and isn't watched while hidden (#23).
+func TestAppPageSaysSo(t *testing.T) {
+	src := newFake()
+	h := start(t, src, noPRs)
+	for _, hidden := range []bool{false, true} {
+		req, _ := http.NewRequest("GET", h.srv.URL+"/api/state", nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		req.Header.Set("X-Page-App", "1")
+		if hidden {
+			req.Header.Set("X-Page-Hidden", "1")
+		}
+		resp, err := h.srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	src.mu.Lock()
+	defer src.mu.Unlock()
+	if !reflect.DeepEqual(src.inApp, []bool{true, true}) || !reflect.DeepEqual(src.watched, []bool{true, false}) {
+		t.Errorf("inApp = %v, watched = %v; want [true true] and [true false]", src.inApp, src.watched)
 	}
 }
 

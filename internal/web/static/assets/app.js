@@ -163,8 +163,10 @@ async function api(path, init = {}) {
   const headers = { Authorization: "Bearer " + token };
   if (init.body) headers["Content-Type"] = "application/json";
   // A tab nobody can see still polls, but mustn't keep the daemon running for good. The desktop
-  // app's window is someone waiting for messages, minimized or not, so it keeps the daemon up.
-  if (document.hidden && !inApp()) headers["X-Page-Hidden"] = "1";
+  // app's window is someone waiting for messages, minimized or not: it keeps the daemon running,
+  // though hidden it doesn't count as someone looking.
+  if (document.hidden) headers["X-Page-Hidden"] = "1";
+  if (inApp()) headers["X-Page-App"] = "1";
   const res = await fetch(path, { ...init, headers, cache: "no-store" });
   if (res.status === 401) throw new AuthError(token);
   if (!res.ok) {

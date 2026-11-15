@@ -383,9 +383,12 @@ type Daemon struct {
 	// lastPage is when a page someone can see last called its API, zero if none has. msgs is the
 	// page's messages, oldest first, msgSeq the number of the newest and msgIDs the IDs in msgs.
 	lastPage time.Time
-	msgs     []pageMsg
-	msgSeq   uint64
-	msgIDs   map[string]bool
+	// lastApp is when the desktop app's page last called, seen or not: it keeps the daemon from
+	// exiting, and does nothing else lastPage does (docs/design/desktop.md).
+	lastApp time.Time
+	msgs    []pageMsg
+	msgSeq  uint64
+	msgIDs  map[string]bool
 	// ownMsgs is how many of msgs are to or from this device's person, which PageMessages doesn't
 	// count (see keepMessageLocked).
 	ownMsgs int
@@ -1257,8 +1260,10 @@ func (d *Daemon) idleLoop(ctx context.Context) {
 		// An open page keeps the daemon up as a session does: the idle time counts from the last
 		// session going, or from the page no longer counting as open.
 		quiet := d.lastActive
-		if gone := d.lastPage.Add(d.opt.PageOpen); gone.After(quiet) {
-			quiet = gone
+		for _, last := range []time.Time{d.lastPage, d.lastApp} {
+			if gone := last.Add(d.opt.PageOpen); gone.After(quiet) {
+				quiet = gone
+			}
 		}
 		idle := len(d.sessions) == 0 && !d.holdsRouteLocked(wake) && time.Since(quiet) > d.opt.Idle
 		d.mu.Unlock()
