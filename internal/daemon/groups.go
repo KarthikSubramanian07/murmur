@@ -242,11 +242,18 @@ func (d *Daemon) applyGroupAddLocked(e bus.Event, mode syncMode) {
 		return
 	}
 	next := d.st.Tags[key].Clone()
-	if err := next.Given(e.Add); err != nil {
+	given, out, err := next.Given(e.Add)
+	if err != nil {
 		d.log.Printf("%s added %s to %s; not applied: %v", e.From, e.To, strings.Join(e.Add, ", "), err)
+		return
+	}
+	if len(out) > 0 {
+		d.log.Printf("%s added %s to %s, but a person took that session out of it; not applied", e.From, e.To, strings.Join(out, ", "))
+	}
+	if len(given) == 0 {
 		return
 	}
 	d.putTagStateLocked(key, next)
 	d.kickPresence()
-	d.log.Printf("%s gave session %s the tags %s", e.From, e.To, strings.Join(e.Add, ", "))
+	d.log.Printf("%s gave session %s the tags %s", e.From, e.To, strings.Join(given, ", "))
 }
