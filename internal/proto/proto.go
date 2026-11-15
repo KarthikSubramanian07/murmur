@@ -451,6 +451,9 @@ type SessionDetail struct {
 	// or says that thread isn't on the mesh here.
 	Offline    bool   `json:"offline,omitempty"`
 	DelegateOf string `json:"delegateOf,omitempty"`
+	// NoWake says a message from an agent wouldn't go into the session as a turn now, by its
+	// device's wake setting (#545): bus.NoWakeOff or bus.NoWakeIdle, "" if it would or isn't known.
+	NoWake string `json:"noWake,omitempty"`
 
 	// Local says the session is on the daemon's own device, which is what gives it the rest.
 	Local         bool         `json:"local,omitempty"`

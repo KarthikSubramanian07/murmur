@@ -57,9 +57,7 @@ tool calls for them.
   HEAD, branch, every ref tip and every worktree's detached HEAD); at the call's end it snapshots
   again and credits the commits between the two to the sessions the hook speaks for. A commit made
   in that worktree during the call by a person or another session is credited too: git can't say who
-  made it, and this was accepted. A tip that isn't an object in the clone, such as a branch or a
-  worktree HEAD file naming a lost commit, is skipped; until #540 it failed the snapshot or the end's
-  `git log` in every worktree.
+  made it, and this was accepted.
 - **Pairing.** The two ends of a call share a `tool_use_id`, as does a call that fails, which fires
   `PostToolUseFailure` instead (seen on Claude Code 2.1.312, 2026-10-29), so `git commit && git
   push` with a failed push is still credited. A snapshot is dropped after an hour, and the oldest
@@ -95,7 +93,8 @@ tool calls for them.
 
 ## Device nicknames
 
-A device's ID (`tyler-laptop-3f2a`) says which machine, not whose. Since 2026-11-11 (#190) a device
+A device's ID (`device-3f2a9c1e`; `tyler-laptop-3f2a` for a clone made before #330) says nothing
+of whose it is. Since 2026-11-11 (#190) a device
 can be called something else, such as its owner's name.
 
 - **A label, not a new ID, and not an address.** The ID names the device's refs and is in every

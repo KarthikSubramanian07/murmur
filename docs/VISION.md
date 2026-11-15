@@ -210,8 +210,7 @@ difference.
   2026-11-10 a device's `/api/health` classes a refusal for too many requests as `rate-limited`, so
   a team's own devices can show it.
 - When should a rotation of the team key happen without anyone running `mur rotate`? Should the
-  census keep anything readable (#156), and should new clones get a device ID without the hostname
-  (#330)?
+  census keep anything readable (#156)?
 - Should a daemon check who pushed a device's key, through GitHub's activity API, rather than trust
   every way to push (#397)?
 - Should a message carry the name it was sent to? Today the receiving daemon can't tell which of a
