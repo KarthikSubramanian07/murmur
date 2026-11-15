@@ -4268,7 +4268,7 @@ function cancelMinutes(key) {
 }
 
 function wakeControl(key, wake, onChange, withDefault) {
-  const def = ui.settings.defaultMinutes || 3;
+  const def = ui.settings.defaultMinutes || 5;
   const choices = withDefault ? [["default", "Default"], ...WAKE_CHOICES] : WAKE_CHOICES;
   const current = wake ? wake.when : "default";
   const seg = h(

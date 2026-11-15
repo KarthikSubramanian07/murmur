@@ -54,8 +54,8 @@ func TestWithinGoesByT3sRunsWhereKnown(t *testing.T) {
 		wake  pageSettings
 		want  bool
 	}{
-		{"idle a minute, within the default 3", &t3db.State{LastRun: ago(time.Minute)}, 0, wakeWithin(0), true},
-		{"idle 5 minutes, past the default 3", &t3db.State{LastRun: ago(5 * time.Minute)}, 0, wakeWithin(0), false},
+		{"idle 4 minutes, within the default 5", &t3db.State{LastRun: ago(4 * time.Minute)}, 0, wakeWithin(0), true},
+		{"idle 6 minutes, past the default 5", &t3db.State{LastRun: ago(6 * time.Minute)}, 0, wakeWithin(0), false},
 		{"idle 5 minutes, within 10", &t3db.State{LastRun: ago(5 * time.Minute)}, 0, wakeWithin(10), true},
 		{"busy, however long since the last run", &t3db.State{Busy: true, LastRun: ago(time.Hour)}, 0, wakeWithin(0), true},
 		// The session's own times say nothing once T3 has spoken: its MCP server may have started
@@ -98,7 +98,7 @@ func TestWithinTakesTheSessionsOwnSetting(t *testing.T) {
 	}
 	wake.SessionWake = nil
 	if d.wakesLocked("aaaaaa", wake) {
-		t.Errorf("idle 20 minutes, with the device's 3: woken")
+		t.Errorf("idle 20 minutes, with the device's 5: woken")
 	}
 }
 
