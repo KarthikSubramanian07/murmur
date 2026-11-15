@@ -226,11 +226,12 @@ func Who(r proto.Response) string {
 	return b.String()
 }
 
-// device renders a device as a session is rendered: what it is called (#190), if anything, then
-// its ID, which is its address.
+// device renders a device: its ID, which is its address, then what it is called (#190), if
+// anything. The nickname comes second and in words, as no address takes it: first, where a
+// session's name goes, an agent read it as one and sent to it (#542).
 func device(nick, id string) string {
 	if nick != "" {
-		return nick + "  " + id
+		return id + ", called " + nick
 	}
 	return id
 }

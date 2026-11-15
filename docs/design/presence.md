@@ -57,7 +57,9 @@ tool calls for them.
   HEAD, branch, every ref tip and every worktree's detached HEAD); at the call's end it snapshots
   again and credits the commits between the two to the sessions the hook speaks for. A commit made
   in that worktree during the call by a person or another session is credited too: git can't say who
-  made it, and this was accepted.
+  made it, and this was accepted. A tip that isn't an object in the clone, such as a branch or a
+  worktree HEAD file naming a lost commit, is skipped; until #540 it failed the snapshot or the end's
+  `git log` in every worktree.
 - **Pairing.** The two ends of a call share a `tool_use_id`, as does a call that fails, which fires
   `PostToolUseFailure` instead (seen on Claude Code 2.1.312, 2026-10-29), so `git commit && git
   push` with a failed push is still credited. A snapshot is dropped after an hour, and the oldest
@@ -86,7 +88,10 @@ tool calls for them.
   presence was written it was. An agent without the hook moves it by MCP calls only. Only Claude
   Code has commits credited: other agents' hooks bracket no tool call.
 - **Messages in `lookup`** are the page's: the last 500, read back from the bus past a restart
-  (#138).
+  (#138). A group's messages count for the sessions in it now, by their tags (#485, #445), so one a
+  session got before it left the group isn't listed. That is the page's filter for a running
+  session. For a stopped one the page counts none, and lookup on its own device counts them by the
+  tags kept for its name.
 
 ## Device nicknames
 
@@ -111,6 +116,11 @@ can be called something else, such as its owner's name.
   read as someone else. Any device can still say any nickname in its presence, so a nickname is no
   proof of whose a device is.
 - **Its form is a person's name's** (`bus.ValidNick`), so it never reads as a session's name.
+- **Shown after the ID, in words**: `who` and `lookup` print `tyler-laptop-3f2a, called tyler`.
+  Until 2026-11-15 (#542) the nickname came first, where a session's name goes, and an agent read
+  it as an address and sent to it. A send or a lookup to a name that is only a nickname is refused
+  with the device's ID. A person's name stays the person's address, and a device's ID stands before
+  any nickname, also the ID of a device whose presence has gone but whose log is on the bus.
 - Not built: the nickname in a message's header, which names its session and "on <owner>'s machine"
   the first time.
 

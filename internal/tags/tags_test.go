@@ -376,7 +376,7 @@ func TestIsGroup(t *testing.T) {
 
 func TestOnlyGroupsAreGiven(t *testing.T) {
 	st := &State{Self: []string{"reviewing"}}
-	if err := st.Given([]string{"Group:UI", "group:bus"}); err != nil {
+	if _, _, err := st.Given([]string{"Group:UI", "group:bus"}); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"group:bus", "group:ui", "reviewing"}; !slices.Equal(st.Self, want) {
@@ -388,17 +388,25 @@ func TestOnlyGroupsAreGiven(t *testing.T) {
 	}
 	for _, bad := range [][]string{{DoNotDisturb}, {"model:opus-5.5"}, {"group:ui", "reviewing"}, {"group:"}, {Human}} {
 		before := slices.Clone(st.Self)
-		if err := st.Given(bad); err == nil {
+		if _, _, err := st.Given(bad); err == nil {
 			t.Errorf("Given(%q) was allowed", bad)
 		}
 		if !slices.Equal(st.Self, before) {
 			t.Errorf("a refused Given(%q) changed Self to %q", bad, st.Self)
 		}
 	}
-	// A human's mark stands over what another agent gives.
+	// A human's mark stands over what another agent gives: a group a human took the session out
+	// of is left out, and takes no place under MaxPerSession (#543).
 	st = &State{Human: map[string]Mark{"group:ui": {On: false, At: time.Now()}}}
-	if err := st.Given([]string{"group:ui"}); err != nil {
+	given, out, err := st.Given([]string{"group:ui", "group:bus"})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !slices.Equal(given, []string{"group:bus"}) || !slices.Equal(out, []string{"group:ui"}) {
+		t.Errorf("given %q, out %q; want group:bus given and group:ui out", given, out)
+	}
+	if !slices.Equal(st.Self, []string{"group:bus"}) {
+		t.Errorf("Self is %q; want only group:bus, as a human took the session out of group:ui", st.Self)
 	}
 	if got := Effective(st.Self, nil, st.Human); Has(got, "group:ui") {
 		t.Errorf("the session has %v; want group:ui kept off, as a human took it off", got)

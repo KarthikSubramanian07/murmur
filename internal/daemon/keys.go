@@ -243,12 +243,16 @@ func short(sha string) string {
 	return sha
 }
 
+// noKeyError is a message refused because its recipient's device has no key this one can encrypt
+// to. It is about that recipient alone, so a send to a list goes on past it (#541).
+type noKeyError struct{ error }
+
 // errOldDevice says a device can't read what this one writes.
 func errOldDevice(dev string) error {
-	return fmt.Errorf("%s runs a version of Murmur from before the bus was encrypted, so it couldn't read this. "+
+	return noKeyError{fmt.Errorf("%s runs a version of Murmur from before the bus was encrypted, so it couldn't read this. "+
 		"It can once it runs Murmur 0.3 or later. Versions after 0.2.3 check for a newer release on their channel every hour, "+
 		"unless updates are turned off there; 0.2.3 and older don't, so that teammate runs Murmur's installer again "+
-		"(https://murmur.afig.dev)", dev)
+		"(https://murmur.afig.dev)", dev)}
 }
 
 // encryptEventLocked returns e as this device writes it: encrypted for the current team key
@@ -264,7 +268,7 @@ func (d *Daemon) encryptEventLocked(e bus.Event) (bus.Event, error) {
 			if p := d.peers[dev]; p != nil {
 				return bus.Event{}, errOldDevice(dev)
 			}
-			return bus.Event{}, fmt.Errorf("%s isn't a device this one has seen, so there is no key to encrypt to", dev)
+			return bus.Event{}, noKeyError{fmt.Errorf("%s isn't a device this one has seen, so there is no key to encrypt to", dev)}
 		}
 	}
 	if d.epochLocked() == nil {

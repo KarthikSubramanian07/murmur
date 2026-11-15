@@ -424,13 +424,18 @@ func (d *Daemon) noSuchNameLocked(name string) string {
 	return fmt.Sprintf("no session is named %q. who shows the names in use.", name)
 }
 
-// namesByAddrLocked inverts the registry: the name of each session whose address it knows.
-// Caller holds mu.
+// namesByAddrLocked is lastNameLocked for every address at once: the name to show for each session
+// this daemon knows a name of, when it has none in presence. Caller holds mu.
 func (d *Daemon) namesByAddrLocked() map[string]string {
 	byAddr := map[string]string{}
 	for name, addr := range d.st.Used {
-		if addr != "" {
+		if cur := byAddr[addr]; addr != "" && (cur == "" || name < cur) {
 			byAddr[addr] = name
+		}
+	}
+	for id, name := range d.st.SessionNames {
+		if name != "" {
+			byAddr[bus.Addr(d.device, id)] = name
 		}
 	}
 	return byAddr
