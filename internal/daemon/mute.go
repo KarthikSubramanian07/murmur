@@ -62,8 +62,8 @@ func (d *Daemon) adoptMutesLocked(s *session) {
 	d.saveLocked()
 }
 
-// nameOfLocked is the name of the session at addr: the one it has now, else the one shown for it
-// once it has left presence (lastNameLocked). "" for an address with none, as the CLI's or a
+// nameOfLocked is the name of the session at addr: the one it has in presence, else the one shown
+// for it when it has none there (lastNameLocked). "" for an address with none, as the CLI's or a
 // person's. Caller holds mu.
 func (d *Daemon) nameOfLocked(addr string) string {
 	if bus.IsPerson(addr) {
@@ -75,13 +75,15 @@ func (d *Daemon) nameOfLocked(addr string) string {
 	return d.lastNameLocked(addr)
 }
 
-// lastNameLocked is the name a session that has left presence is shown by, the same every time and
-// in every place: the inbox, activity, lookup and the mute checks (#502), so the name an agent
-// replies to or mutes is the one it was shown. One of this device's goes by the name it took last
-// (SessionNames), which this device knows. Another device's goes by the first by spelling of the
-// names the registry gave its address, which says nothing of which is the latest: neither the
-// registry nor presence keeps an order of them. namesByAddrLocked gives the same for every address
-// at once. "" for an address with none. Caller holds mu.
+// lastNameLocked is the name a session is shown by when it has none in presence: it has left, or
+// its new name hasn't landed yet (a follow to a new conversation, as after /clear, leaves it with
+// none until the name is pushed). It is the same every time and in every place: the inbox,
+// activity, lookup and the mute checks (#502), so the name an agent replies to or mutes is the one
+// it was shown. One of this device's goes by the name it took last (SessionNames), which this
+// device knows; for one waiting on a new name, that is its previous one. Another device's goes by
+// the first by spelling of the names the registry gave its address, which says nothing of which is
+// the latest: neither the registry nor presence keeps an order of them. namesByAddrLocked gives
+// the same for every address at once. "" for an address with none. Caller holds mu.
 func (d *Daemon) lastNameLocked(addr string) string {
 	if dev, id := bus.SplitAddr(addr); dev == d.device && d.st.SessionNames[id] != "" {
 		return d.st.SessionNames[id]

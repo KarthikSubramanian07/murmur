@@ -286,17 +286,21 @@ func TestKnownNameWithNoDeviceGainsItsReservation(t *testing.T) {
 	}
 }
 
+// shownName is the name one place shows for a sender.
+type shownName struct{ where, name string }
+
 // shownNames is the name each place shows for the sender of e, a session that isn't in presence:
 // the inbox, activity, lookup's detail and its list of messages, and the name a mute check goes by.
-func shownNames(d *Daemon, e bus.Event) map[string]string {
+// The order is fixed, so a failing test reports the same place every run.
+func shownNames(d *Daemon, e bus.Event) []shownName {
 	d.msgs = []pageMsg{{seq: 1, e: e}}
 	det := d.detailLocked(e.From, "", 10)
-	return map[string]string{
-		"inbox":             d.messageViewsLocked([]*inMsg{{Event: e}}, false)[0].FromName,
-		"activity":          d.labelerLocked()(e.From),
-		"lookup":            det.Name,
-		"lookup's messages": det.Messages[0].FromName,
-		"nameOfLocked":      d.nameOfLocked(e.From),
+	return []shownName{
+		{"inbox", d.messageViewsLocked([]*inMsg{{Event: e}}, false)[0].FromName},
+		{"activity", d.labelerLocked()(e.From)},
+		{"lookup", det.Name},
+		{"lookup's messages", det.Messages[0].FromName},
+		{"nameOfLocked", d.nameOfLocked(e.From)},
 	}
 }
 
@@ -313,9 +317,9 @@ func TestADepartedSenderIsShownByOneNameEverywhere(t *testing.T) {
 	d := &Daemon{device: "here-0001", st: state{Used: used}}
 	e := bus.Event{ID: "m1", From: from, To: "*", Subject: "hi"}
 	for i := 0; i < 50; i++ {
-		for where, got := range shownNames(d, e) {
-			if got != "brave-heron" {
-				t.Fatalf("try %d: %s shows the sender as %q; want brave-heron, the first by spelling, every time", i, where, got)
+		for _, got := range shownNames(d, e) {
+			if got.name != "brave-heron" {
+				t.Fatalf("try %d: %s shows the sender as %q; want brave-heron, the first by spelling, every time", i, got.where, got.name)
 			}
 		}
 	}
@@ -334,9 +338,9 @@ func TestADepartedLocalSessionIsShownByTheNameItTookLast(t *testing.T) {
 		Stopped: map[string]time.Time{"aaaaaa": time.Now()}}}
 	e := bus.Event{ID: "m1", From: from, To: me, Subject: "hi"}
 	for i := 0; i < 50; i++ {
-		for where, got := range shownNames(d, e) {
-			if got != "dusty-crane" {
-				t.Fatalf("try %d: %s shows the sender as %q; want dusty-crane, the name it took last", i, where, got)
+		for _, got := range shownNames(d, e) {
+			if got.name != "dusty-crane" {
+				t.Fatalf("try %d: %s shows the sender as %q; want dusty-crane, the name it took last", i, got.where, got.name)
 			}
 		}
 	}

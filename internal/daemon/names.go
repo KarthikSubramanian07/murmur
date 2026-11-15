@@ -425,7 +425,7 @@ func (d *Daemon) noSuchNameLocked(name string) string {
 }
 
 // namesByAddrLocked is lastNameLocked for every address at once: the name to show for each session
-// this daemon knows a name of, once it has left presence. Caller holds mu.
+// this daemon knows a name of, when it has none in presence. Caller holds mu.
 func (d *Daemon) namesByAddrLocked() map[string]string {
 	byAddr := map[string]string{}
 	for name, addr := range d.st.Used {
