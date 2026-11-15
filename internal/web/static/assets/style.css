@@ -2951,7 +2951,7 @@ a.g-pr:hover {
 .receipt-mark[data-state="read"] {
   color: var(--primary);
 }
-/* A message on its way (#613): a mark, not a button, until it is listed. */
+/* A message on its way (#613): its mark shows a tip, as a receipt's does, and does nothing else. */
 .receipt-mark[data-state="sending"] {
   cursor: default;
 }

@@ -3214,11 +3214,25 @@ function pendingMessage(item, head) {
 }
 
 // The mark under a message on its way: a clock until it is on the remote, then one tick, as
-// receiptMark shows it once the message is listed.
+// receiptMark shows it once the message is listed. Its tip promises the message goes out only
+// once the daemon has it (item.posted): a new group's message waits here first for its members'
+// tags (deliver). A button, as receiptMark's is, so the keyboard and a tap reach the tip.
 function sendingMark(item) {
   const sent = item.status === "sent";
-  const tip = sent ? "Sent" : "Sending: it goes out even if you close this page";
-  return h("span", { class: "receipt-mark", "data-state": sent ? "sent" : "sending", role: "img", "aria-label": tip, "data-tip": tip }, icon(sent ? "check" : "clock"));
+  const tip = sent ? "Sent" : item.posted ? "Sending: it goes out even if you close this page" : "Sending";
+  return h(
+    "button",
+    {
+      class: "receipt-mark",
+      "data-state": sent ? "sent" : "sending",
+      "data-key": "sending-" + item.cid,
+      "data-tip": tip,
+      "data-tip-labelled": "1",
+      "aria-label": tip,
+      onclick: (e) => showTipNow(e.currentTarget, e.pointerType === "mouse" ? "hover" : "tap"),
+    },
+    icon(sent ? "check" : "clock"),
+  );
 }
 
 function dayLabel(t) {
@@ -4111,6 +4125,7 @@ function sendFrom(c, target, el, big) {
 async function deliver(item) {
   item.status = "sending";
   item.error = "";
+  item.posted = false;
   render();
   try {
     // A group just started here reaches its members only once they have its tag: the tag changes
@@ -4133,7 +4148,13 @@ async function deliver(item) {
         throw new Error("not sent: couldn't add " + namesOf(missed) + " to " + item.to + ": " + missed[0].msg);
       }
     }
-    const sent = await api("/api/send", { method: "POST", body: JSON.stringify({ to: item.to, text: item.text }) });
+    // keepalive: a page closed just as it sends still hands the message to the daemon, which then
+    // finishes it whatever the page does (#613). A browser refuses keepalive past 64 KiB in flight,
+    // and a UTF-16 unit is at most 3 bytes of UTF-8.
+    item.posted = true;
+    render();
+    const body = JSON.stringify({ to: item.to, text: item.text });
+    const sent = await api("/api/send", { method: "POST", body, keepalive: body.length * 3 < 60000 });
     item.id = sent.id;
     if (missed.length) ui.notes.set(item.key, { id: sent.id, text: "Couldn't add " + namesOf(missed) + " to " + item.to + ", so they didn't get this: " + missed[0].msg, warn: true });
     else if (sent.note) ui.notes.set(item.key, { id: sent.id, text: sent.note });

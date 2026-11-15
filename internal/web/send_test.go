@@ -20,6 +20,12 @@ type heldSource struct {
 func (f *heldSource) Send(ctx context.Context, to, text string) (Sent, error) {
 	close(f.entered)
 	<-f.release
+	// The server notices the closed connection a moment after the client goes: a context that
+	// ends with the request has ended within the second.
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+	}
 	f.ended <- ctx.Err()
 	return f.fakeSource.Send(ctx, to, text)
 }
@@ -54,8 +60,6 @@ func TestASendOutlivesThePageThatAskedForIt(t *testing.T) {
 	if err := <-done; err == nil {
 		t.Fatal("the request finished though the page went")
 	}
-	// The server notices the closed connection within a moment; give it that before the push ends.
-	time.Sleep(200 * time.Millisecond)
 	close(src.release)
 	if err := <-src.ended; err != nil {
 		t.Errorf("the send's context ended with the page: %v", err)
