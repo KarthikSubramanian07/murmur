@@ -366,11 +366,11 @@ func (d *Daemon) hookBusyLocked(id string) bool {
 // of its own (docs/design/delivery.md has what T3's database showed).
 //
 // So a read that began after the turn last ended and finds a run going is a turn. A read from
-// before the end may have seen the run Stop ended, and doesn't count. That also covers a turn a
-// Stop hook of the user's own kept going after Murmur's saw Stop, once the next read comes. A
-// message just handed to the thread is a turn too, until a read that began after it says (T3 has
-// made the run by the time `t3 thread send` returns), or handedHold passes with no read; sendTurn
-// also reads the thread just before each handoff.
+// before the end, or within closeGrace after it, may have seen the run Stop ended, and doesn't
+// count. That also covers a turn a Stop hook of the user's own kept going after Murmur's saw
+// Stop, once the next read comes. A message just handed to the thread is a turn too, until a read
+// that began after it says (T3 has made the run by the time `t3 thread send` returns), or
+// handedHold passes with no read; sendTurn also reads the thread just before each handoff.
 //
 // A run no hook has shown going for unseenHold no longer counts: T3 can leave a run queued for
 // days (one from 2026-11-03 was still queued on 11-15), and no hook would ever tell the session
@@ -379,11 +379,17 @@ func runUnseen(s *session, st t3db.State, inT3 bool, read time.Time) bool {
 	if s.handedAt.After(s.endedAt) && !read.After(s.handedAt) && time.Since(s.handedAt) < handedHold {
 		return true
 	}
-	if !inT3 || !st.Busy || !read.After(s.endedAt) {
+	if !inT3 || !st.Busy || !read.After(s.endedAt.Add(closeGrace)) {
 		return false
 	}
 	return !s.unseenAt.After(s.endedAt) || time.Since(s.unseenAt) < unseenHold
 }
+
+// closeGrace is how long after a turn's end a read of T3's database may still find the run Stop
+// ended open: T3 closed 99% of 1,212 Claude runs within 0.4 s of the turn's end (2026-11-11 to
+// 11-15). Without it, the handoff that follows Stop, read just before it, would wait for the next
+// read.
+const closeGrace = time.Second
 
 // handedHold is how long a message handed to a session's T3 thread keeps the session at work
 // before T3's database has been read: a read that keeps failing mustn't hold its messages for
@@ -409,17 +415,37 @@ func (s *session) unseenStart() time.Time {
 	return at
 }
 
-// noteUnseenLocked marks, for each session whose hook has no turn going, when a read of its T3
-// thread that began after its turn ended first found a run going (unseenAt). Caller holds mu.
+// noteUnseenLocked keeps, for each session whose hook has no turn going, what the latest read of
+// its T3 thread says of a run the hook hasn't seen start. Caller holds mu.
+//
+// A read that began after the turn ended (and closeGrace) and finds a run going dates the run
+// (unseenAt) if it isn't yet: from when T3 took the prompt, its LastRun while the run goes, else
+// from the read. A message that came after that came during the turn.
+//
+// A read that began after the run was seen or a message handed over, and finds no run, ends it, as
+// Stop would: the run was cancelled, failed, or was the one Stop ended. Otherwise its date would
+// stand until the next Stop, which may be hours on: the cap (unseenHold) would have lapsed for a
+// run that starts then, and the turn would be dated from long before.
 func (d *Daemon) noteUnseenLocked() {
 	for _, s := range d.sessions {
 		r := s.route
-		if !s.hooked || !s.busyAt.IsZero() || r.T3Thread == "" || s.unseenAt.After(s.endedAt) {
+		if !s.hooked || !s.busyAt.IsZero() || r.T3Thread == "" {
 			continue
 		}
 		k := threadKey{r.T3Home, r.T3Thread}
-		if read := d.threadRead[k]; d.threads[k].Busy && read.After(s.endedAt) {
+		read, st := d.threadRead[k], d.threads[k]
+		if !read.After(s.endedAt.Add(closeGrace)) {
+			continue
+		}
+		start := s.unseenStart()
+		switch {
+		case !st.Busy && !start.IsZero() && read.After(start) && read.After(s.handedAt):
+			s.endedAt, s.unseenAt = read, time.Time{}
+		case st.Busy && !s.unseenAt.After(s.endedAt):
 			s.unseenAt = read
+			if st.LastRun.After(s.endedAt) && st.LastRun.Before(read) {
+				s.unseenAt = st.LastRun
+			}
 		}
 	}
 }

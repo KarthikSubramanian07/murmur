@@ -99,6 +99,9 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 	d.mu.Lock()
 	changed, settled := false, false
 	for k, st := range read {
+		if !readAt[k].After(d.threadRead[k]) {
+			continue // a read just before a handoff (t3RunGoing) began later, and stands
+		}
 		d.threadRead[k] = readAt[k]
 		if !st.Busy {
 			// A session the hook has at work may have finished its turn without the Stop hook.

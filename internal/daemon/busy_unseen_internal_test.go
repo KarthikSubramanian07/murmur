@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -116,5 +117,81 @@ func TestAHandoffsHoldWakesThePushLoop(t *testing.T) {
 	s.handedAt = time.Now().Add(-handedHold - time.Second)
 	if at := d.nextLapseLocked(); !at.IsZero() {
 		t.Errorf("nextLapseLocked = %v after the hold lapsed, want zero", at)
+	}
+}
+
+// A read that finds no run ends an unseen run, as Stop would: its date mustn't stand until the next
+// Stop, when it would have lapsed the cap for a run that starts later and dated that turn from
+// hours before. A run is dated from when T3 took its prompt, where the read says.
+func TestAnUnseenRunThatEndsWithoutAHookIsForgotten(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	inT3(d, "aaaaaa", time.Hour)
+	s := d.sessions["aaaaaa"]
+	now := time.Now()
+	s.hooked, s.stopSeen, s.endedAt = true, true, now.Add(-2*time.Hour)
+	s.unseenAt = s.endedAt.Add(200 * time.Millisecond) // a read caught T3 closing the run
+	k := threadKey{"", "thread-aaaaaa"}
+	d.threads[k], d.threadRead[k] = t3db.State{}, now.Add(-time.Hour)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.noteUnseenLocked()
+	if !s.endedAt.Equal(d.threadRead[k]) || !s.unseenAt.IsZero() {
+		t.Fatalf("after a read finds no run: endedAt %v, unseenAt %v; want the read's %v, zero", s.endedAt, s.unseenAt, d.threadRead[k])
+	}
+
+	// Later, a prompt: T3 took it 3 s before the read that finds the run.
+	took := now.Add(-3 * time.Second)
+	d.threads[k], d.threadRead[k] = t3db.State{Busy: true, LastRun: took}, now
+	d.noteUnseenLocked()
+	if !s.unseenAt.Equal(took) {
+		t.Errorf("unseenAt = %v, want when T3 took the prompt, %v", s.unseenAt, took)
+	}
+	if !d.hookBusyLocked("aaaaaa") {
+		t.Error("not at work while the new run goes")
+	}
+}
+
+// A read within closeGrace of the turn's end may find the run Stop ended still open: it says
+// nothing of a new turn.
+func TestARunReadJustAfterStopIsTheOldOne(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	inT3(d, "aaaaaa", time.Hour)
+	s := d.sessions["aaaaaa"]
+	now := time.Now()
+	s.hooked, s.stopSeen, s.endedAt = true, true, now.Add(-500*time.Millisecond)
+	k := threadKey{"", "thread-aaaaaa"}
+	d.threads[k], d.threadRead[k] = t3db.State{Busy: true}, now
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.noteUnseenLocked()
+	if d.hookBusyLocked("aaaaaa") || !s.unseenAt.IsZero() {
+		t.Errorf("busy %v, unseenAt %v, by a read half a second after Stop", d.hookBusyLocked("aaaaaa"), s.unseenAt)
+	}
+}
+
+// Just before a handoff to T3 the thread is read again: a prompt T3 took since the last read keeps
+// the message from being queued behind its run. The read stands for the next.
+func TestAHandoffReadsTheThreadFirst(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	inT3(d, "aaaaaa", time.Hour)
+	s := d.sessions["aaaaaa"]
+	s.hooked, s.stopSeen, s.endedAt = true, true, time.Now().Add(-time.Minute)
+	st := t3db.State{}
+	d.opt.ThreadState = func(context.Context, string, string, string) (t3db.State, error) { return st, nil }
+	j := &pushJob{id: "aaaaaa", route: s.route}
+	if d.t3RunGoing(context.Background(), j) {
+		t.Fatal("a run going, by a read that found none")
+	}
+	st = t3db.State{Busy: true}
+	if !d.t3RunGoing(context.Background(), j) {
+		t.Fatal("no run going, by a read that found one")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if k := (threadKey{"", "thread-aaaaaa"}); !d.threads[k].Busy || d.threadRead[k].IsZero() || s.unseenAt.IsZero() {
+		t.Errorf("the read wasn't kept: %+v, read at %v, unseenAt %v", d.threads[k], d.threadRead[k], s.unseenAt)
 	}
 }

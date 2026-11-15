@@ -211,6 +211,8 @@ func TestARunTheHookHasntSeenStartHoldsTheMessage(t *testing.T) {
 
 	b.finishedATurn("claude-bob")
 	// The user types in the thread: T3 has the run going, and Claude Code hasn't started the turn.
+	// Not at once: a read within a second of Stop may find the run Stop ended still open.
+	time.Sleep(1200 * time.Millisecond)
 	threads.set("thread-bob", t3db.State{Busy: true, LastRun: time.Now()})
 	n := threads.reads()
 	eventually(t, "a read that began after the run started", func() bool { return threads.reads() >= n+2 })

@@ -119,17 +119,19 @@ the turn took, so nothing waits for good.
   until a read that began after it, when the daemon has just handed a message to its thread (at
   most a minute, so a read that keeps failing doesn't hold its messages for good). The daemon reads
   the thread again just before each handoff, as the reads every 5 s would let a prompt T3 took
-  since the last one through. A read from before the turn's end doesn't count, as it may have seen
-  the run that `Stop` ended. The same read catches a turn a user's own `Stop` hook kept going after
-  Murmur's saw `Stop`, up to 5 s late.
-  - What came after the run began counts as come during the turn, and is held for its end however
-    long it waited: Claude's turn once began 27 minutes after T3 took the prompt (2026-11-13).
+  since the last one through. The same read catches a turn a user's own `Stop` hook kept going
+  after Murmur's saw `Stop`, up to 5 s late.
+  - A read from before the turn's end, or less than a second after it, doesn't count: it may have
+    seen the run `Stop` ended, which T3 closed within 0.4 s of the turn's end in 99% of 1,212
+    Claude runs (2026-11-11 to 11-15).
+  - The run is dated from when T3 took the prompt, as its database says. What came after counts as
+    come during the turn, and is held for its end however long it waited: Claude's turn once began
+    27 minutes after T3 took the prompt (2026-11-13).
+  - A read that finds no run, after the run was seen or a message handed over, ends it as `Stop`
+    would: the run was cancelled, failed, or was the one `Stop` ended.
   - A run no hook has shown going for 15 minutes no longer counts, and messages go to T3 as before:
     T3 can leave a run queued for good (one from 2026-11-03 was still queued on 11-15), and no hook
     would ever tell the session of them.
-  - The cost: a message that comes just after a turn ends waits for the next read if a read caught
-    T3 before it closed the run, which is rare: of 1,212 Claude runs from 2026-11-11 to 11-15, T3
-    closed the run within 0.4 s of the turn's end in 99%.
 - **Subject or whole message** (#204), the page's busy setting, per device or session (Tyler,
   2026-11-08). "Subject", the default, leaves the agent's focus to the agent, at the cost that it
   may pass over a line it needed; "Whole message" puts each message in front of it mid-task at full
