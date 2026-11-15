@@ -76,11 +76,11 @@ func TestASenderIsToldOnceItsMessageIsRead(t *testing.T) {
 	}
 }
 
-// A message handed to an idle T3 thread as a turn is never marked read, as Murmur can't see the turn
-// start, so being handed over is enough, and the notice says how it got there. The sender is an
-// idle T3 thread too, and the notice waits in its inbox rather than starting a turn: it asked to be
-// told, not woken.
-func TestASenderIsToldItsMessageWasHandedOverAsATurn(t *testing.T) {
+// A message handed to an idle T3 thread as a turn is read once the turn's prompt comes (#611), so a
+// sender asking for read is told then, not at the handoff, while T3 may still hold the turn in its
+// queue (#654). The sender is an idle T3 thread too, and the notice waits in its inbox rather than
+// starting a turn: it asked to be told, not woken.
+func TestASenderIsToldItsTurnWasReadOnceItStarts(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
@@ -94,17 +94,47 @@ func TestASenderIsToldItsMessageWasHandedOverAsATurn(t *testing.T) {
 		t.Fatalf("the send: %+v", r)
 	}
 	eventually(t, "the handoff", func() bool { return len(calls()) > 0 })
+	holds(t, "nothing told while the turn waits", 2*time.Second, func() bool {
+		return len(a.do(proto.Request{Op: proto.OpInbox, Session: "aaaaaa"}).Messages) == 0
+	})
+
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Whole: true, Prompt: calls()[0].Stdin})
 	told := a.awaitTold("aaaaaa")
-	if want := bobName + ` has been handed your message "Rerun CI?" as a turn`; told.Subject != want {
+	if want := bobName + ` has read your message "Rerun CI?"`; told.Subject != want {
 		t.Errorf("the notice's subject is %q, want %q", told.Subject, want)
 	}
-	if !strings.HasPrefix(told.Body, "- "+bobName+": handed over as a turn") {
+	if !strings.HasPrefix(told.Body, "- "+bobName+": read, ") {
 		t.Errorf("the notice's body is %q", told.Body)
 	}
 	for _, c := range calls() {
 		if slices.Contains(c.Args, "thread-ada") {
 			t.Errorf("the notice was handed to the sender's thread as a turn: %+v", c)
 		}
+	}
+}
+
+// A message handed over as a turn has been delivered: the client holds the turn whole. A sender
+// asking for delivered is told at the handoff, and the notice says how it got there.
+func TestASenderIsToldItsMessageWasHandedOverAsATurn(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	a.session("aaaaaa", "claude-ada")
+	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	bobName := b.named(bob)
+	eventually(t, "a knows bob's name", func() bool { return a.seesSession(bob) && a.nameOf(bob) == bobName })
+
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bobName, Subject: "Rerun CI?", TellMe: bus.MarkDelivered}); !r.Telling {
+		t.Fatalf("the send: %+v", r)
+	}
+	eventually(t, "the handoff", func() bool { return len(calls()) > 0 })
+	told := a.awaitTold("aaaaaa")
+	if want := bobName + ` has been handed your message "Rerun CI?" as a turn`; told.Subject != want {
+		t.Errorf("the notice's subject is %q, want %q", told.Subject, want)
+	}
+	if !strings.HasPrefix(told.Body, "- "+bobName+": handed over as a turn") {
+		t.Errorf("the notice's body is %q", told.Body)
 	}
 }
 
