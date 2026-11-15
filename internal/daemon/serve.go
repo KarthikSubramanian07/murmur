@@ -810,14 +810,24 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		}
 	} else if bus.ValidPerson(to) {
 		// A person's name is an address too. A device with that ID stands first: it was there before
-		// the name, which takes no device's ID when it is chosen.
+		// the name, which takes no device's ID when it is chosen. A device's nickname has the same
+		// form and is no address: the message would go to a device with that ID, which there isn't,
+		// so it is refused, naming the device's ID (#542).
 		d.mu.Lock()
 		addr, ok := d.resolvePersonLocked(to)
 		_, isDevice := d.peers[to]
 		isDevice = isDevice || to == d.device
+		called := d.calledLocked(to)
 		d.mu.Unlock()
-		if ok && !isDevice {
+		switch {
+		case ok && !isDevice:
 			to, toName = addr, to
+		case len(called) > 0:
+			dev := "a device's ID"
+			if len(called) == 1 {
+				dev = called[0]
+			}
+			return fail(fmt.Sprintf("not sent: %s Send to a session's name from who, or to %s for every session on the device.", nickNoAddress(to, called), dev))
 		}
 	}
 	var note string

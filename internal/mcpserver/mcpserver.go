@@ -835,7 +835,7 @@ func (s *server) tools(srv *mcp.Server) {
 			return result(view.Tags, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "send", Description: "Send a message to another agent by its name (quiet-otter, from who), to a group (group:ui: " +
-		"every session with that tag), to all sessions on a device, or to everyone. It usually reaches the recipient as a turn of its own, headed \"Message from <your name> (...) via " + brand.Product + "\", " +
+		"every session with that tag), to all sessions on a device by its ID, or to everyone. It usually reaches the recipient as a turn of its own, headed \"Message from <your name> (...) via " + brand.Product + "\", " +
 		"with your subject and then your body. A recipient that is at work, or that " + brand.Product + " can't start a turn in, gets a one-line notice with " +
 		"your subject after its next tool call and reads the body with inbox; what it hasn't read when it finishes is usually given to it then, and its turn goes on. " +
 		"To send the same message to several sessions, name them all, separated by commas: each gets an ordinary message from you, " +
