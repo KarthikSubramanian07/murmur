@@ -92,7 +92,9 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
 - **On the page** a group is a conversation a person can write to. A mute covers a group (#27;
   [mutes](mutes.md)).
 - **A device is a group** (#463, Tyler, 2026-11-12; built 2026-11-15): every agent's session on a
-  device has `group:device-<its ID>`, so there is one way to name several sessions. `who` lists it
+  device has `group:device-<its ID>`, so there is one way to name several sessions. An ID that
+  starts with `device-` already, as those made since #330 do, gives `group:<its ID>`, which starts
+  the same way. `who` lists it
   and searches by it, `lookup` shows it, and `send` to it is a send to the device. Some choices:
   - *Nobody sets it, or takes it off.* Each reader adds it to a session from the device the session
     runs on, as it shows the session. It is never kept, and never carried in presence: a presence

@@ -762,16 +762,19 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	// A device's group is the device (#463): the message goes on the bus to the device, as one sent
 	// to its ID does, so every daemon delivers it, older ones too, and only to that device's
 	// sessions. It isn't read as a name after, as a device ID can be shaped like one.
-	dev, toDevice := tags.DeviceOfGroup(to)
-	if toDevice {
+	toDevice := false
+	if devs := tags.DevicesOfGroup(to); devs != nil {
 		d.mu.Lock()
-		_, known := d.peers[dev]
-		known = known || dev == d.device
-		d.mu.Unlock()
-		if !known {
-			return fail(fmt.Sprintf("not sent: no device %s is in presence, so %s has nobody in it. who lists each device's group", dev, tags.DeviceGroup(dev)))
+		for _, dev := range devs {
+			if _, known := d.peers[dev]; known || dev == d.device {
+				to, toDevice = dev, true
+				break
+			}
 		}
-		to = dev
+		d.mu.Unlock()
+		if !toDevice {
+			return fail(fmt.Sprintf("not sent: no device in presence has the group %s. who lists each device's group", tags.Normalize(to)))
+		}
 	} else if g := tags.Normalize(to); bus.IsGroup(g) {
 		to = g
 	}

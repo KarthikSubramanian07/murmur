@@ -77,7 +77,7 @@ func TestADeviceIsAGroup(t *testing.T) {
 
 	// A device nobody knows has no group to send to.
 	r = a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: tags.DeviceGroup("nowhere-0000"), Subject: "lost"})
-	if !strings.Contains(r.Error, "no device nowhere-0000") {
+	if !strings.Contains(r.Error, "no device in presence has the group group:device-nowhere-0000") {
 		t.Errorf("sending to an unknown device's group: %q", r.Error)
 	}
 }

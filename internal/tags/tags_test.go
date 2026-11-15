@@ -472,10 +472,14 @@ func TestADevicesGroupIsGivenOnlyByWhereTheSessionRuns(t *testing.T) {
 	if again := WithDevice(got, "laptop-1a2b"); len(again) != 2 {
 		t.Errorf("a second WithDevice gave %+v", again)
 	}
-	if dev, ok := DeviceOfGroup(" Group:Device-Laptop-1A2B "); !ok || dev != "laptop-1a2b" {
-		t.Errorf("DeviceOfGroup: %q, %v", dev, ok)
+	if got := DevicesOfGroup(" Group:Device-Laptop-1A2B "); !slices.Equal(got, []string{"device-laptop-1a2b", "laptop-1a2b"}) {
+		t.Errorf("DevicesOfGroup: %q", got)
 	}
-	if _, ok := DeviceOfGroup("group:ui"); ok {
-		t.Error("group:ui read as a device's group")
+	if got := DevicesOfGroup("group:ui"); got != nil {
+		t.Errorf("group:ui read as a device's group: %q", got)
+	}
+	// An ID made since #330 starts with device- already.
+	if g := DeviceGroup("device-3f2a9c1e"); g != "group:device-3f2a9c1e" || !slices.Contains(DevicesOfGroup(g), "device-3f2a9c1e") {
+		t.Errorf("DeviceGroup(device-3f2a9c1e) = %q", g)
 	}
 }

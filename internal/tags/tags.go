@@ -82,13 +82,26 @@ func IsGroup(name string) bool {
 // MaxLen.
 const DevicePrefix = GroupPrefix + "device-"
 
-// DeviceGroup is the tag of device's group.
-func DeviceGroup(device string) string { return DevicePrefix + device }
+// DeviceGroup is the tag of device's group: group:device-<ID>, or group:<ID> for an ID that starts
+// with device- already, as those made since #330 do (device-3f2a9c1e), so it never reads
+// group:device-device-.
+func DeviceGroup(device string) string {
+	if strings.HasPrefix(device, "device-") {
+		return GroupPrefix + device
+	}
+	return DevicePrefix + device
+}
 
-// DeviceOfGroup is the device whose group's tag name is, if it is one.
-func DeviceOfGroup(name string) (device string, ok bool) {
-	device, ok = strings.CutPrefix(Normalize(name), DevicePrefix)
-	return device, ok && device != ""
+// DevicesOfGroup is the devices whose group's tag name could be, if it is a device's group: an ID
+// that starts with device- (group:device-3f2a9c1e is device-3f2a9c1e's), and one without it (an
+// older ID made from a host name, such as device-1a2b's when the host had none). At most one of
+// them is a device anyone knows.
+func DevicesOfGroup(name string) []string {
+	rest, ok := strings.CutPrefix(Normalize(name), DevicePrefix)
+	if !ok || rest == "" {
+		return nil
+	}
+	return []string{"device-" + rest, rest}
 }
 
 // WithDevice is ts with the tag of device's group added, as a derived tag: what a reader shows of
