@@ -64,8 +64,11 @@ func (d *Daemon) settleColorLocked() {
 		}
 	}
 	for _, p := range d.peers {
-		if p.locked {
-			return // a holder could be hiding in it: settled once every presence can be read
+		// A live holder could be hiding in it: settled once every live presence can be read. A
+		// stale one may never open (written before its device read a team key), and whether to
+		// hold this device's own pick back is this device's call, so its clock may judge.
+		if p.locked && !d.staleLocked(p) {
+			return
 		}
 	}
 	if !d.colorSettled {
