@@ -1241,12 +1241,12 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 			}
 			continue
 		}
-		if s.Name != "" && d.noteNameLocked(s.Name, bus.Addr(dev, s.ID)) {
+		if s.Name != "" && d.notePresenceNameLocked(s.Name, bus.Addr(dev, s.ID)) {
 			seen = true
 		}
 	}
 	for name, id := range pres.Names { // the same, from a presence this device can't open
-		if d.noteNameLocked(name, bus.Addr(dev, id)) {
+		if d.notePresenceNameLocked(name, bus.Addr(dev, id)) {
 			seen = true
 		}
 	}

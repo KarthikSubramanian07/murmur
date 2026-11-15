@@ -59,6 +59,20 @@ names routes by it all the same.
     that brings in another root is damage to repair, and a presence listing more than 200 sessions
     (`bus.MaxSessions`) is unreadable. Push access can still mark names used, more slowly. Once
     1,000 random picks have all been in use, a daemon walks the lists for a free name.
+  - *A name only a presence shows* (#40, 2026-11-15). The registry can lose a name while the device
+    that holds it can't push, and a daemon that never read the name then learns it only from that
+    device's presence; nothing in the history it reads looks damaged. So a presence showing a name
+    the daemon has never seen has the next sync read the registry from its start, and write the
+    snapshot if the name isn't there. Not at once: a sync's fetch brings a presence as it is then,
+    which can be newer than the registry it listed, and the next sync lists after it. An attempt on
+    2026-10-29 decided at once, and Codex found that race in it.
+  - *Trust.* This lets a presence cause a rewrite of the registry, but gives no one more than push
+    access already does. Whatever a presence names is used for good on every daemon that reads it,
+    and went into any snapshot written already; a seal shows a presence is its device's, not that
+    the device is real, as anyone who can push can seal one for a new device
+    ([encryption](encryption.md)). Nor need the presence be fresh: a stale one's names were in use
+    all the same. The cost, a new root that every daemon reads from its start, is one push access can
+    cause as often by damaging the registry itself.
 - **Without the remote**, a session that finds no name set aside works as `device/session`, shown as
   pending, and the daemon keeps trying, at once when the remote is back.
 - **Sending to a name.** A name is looked up in this device's sessions, then in this device's record
