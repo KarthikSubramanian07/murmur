@@ -51,4 +51,14 @@ func TestATurnHoldsItsSubject(t *testing.T) {
 			t.Errorf("the turn for %q isn't matched by its subject:\n%s", m.Subject, view.Turn(m))
 		}
 	}
+	// A prompt the user typed holds a short subject's words without being Murmur's turn.
+	short := proto.MessageView{From: "d/aaaaaa", FromName: "quiet-otter", To: "d/bbbbbb", Subject: "test"}
+	for _, prompt := range []string{"run the tests", "test\nthen push", "Message me later\ntest"} {
+		if daemon.Holds(prompt, short.Subject) {
+			t.Errorf("the user's prompt %q is taken for the turn of %q", prompt, short.Subject)
+		}
+	}
+	if !daemon.Holds("[from T3]\n"+view.Turn(short), short.Subject) {
+		t.Errorf("a turn after a line a client put before it isn't matched")
+	}
 }

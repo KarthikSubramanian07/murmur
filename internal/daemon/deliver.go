@@ -511,6 +511,9 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 		return nil
 	}
 	m.Pushing = true
+	// Remembered before the handoff, not after: the turn can start, and its prompt reach the
+	// daemon, while the client's command is still returning (#611). A handoff that fails forgets it.
+	d.awaitReadLocked(id, m.Event)
 	views := d.messageViewsLocked([]*inMsg{m}, true)
 	key := d.keyOfLocked(id)
 	views[0].Introduced = key != "" && d.introduced[key][m.Event.From]
@@ -646,6 +649,9 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	j.msg.Pushing = false
+	if err != nil {
+		d.forgetAwaitingLocked(j.id, j.msg.Event.ID) // not handed over, so no turn holds it (#611)
+	}
 	if errors.Is(err, ErrNoConsent) || errors.Is(err, errNotNow) {
 		// The user left, or the session may no longer be woken, on its way: it waits in the inbox,
 		// not handed over, and not a failure. Unless the session turned out to be a delegate, whose
@@ -804,8 +810,7 @@ func (d *Daemon) outOfInboxLocked(id string, m *inMsg, verb, how string) {
 	d.health.outOfInbox(verb)
 	switch verb {
 	case "handed":
-		d.markLocked(id, m.Event, bus.MarkHanded) // Murmur can't see the turn start (#325)
-		d.awaitReadLocked(id, m.Event)            // but the hook may, in its prompt (#611)
+		d.markLocked(id, m.Event, bus.MarkHanded) // Murmur can't see the turn start (#325), but the hook may (#611)
 	case "gave":
 		d.markLocked(id, m.Event, bus.MarkRead)
 	}
