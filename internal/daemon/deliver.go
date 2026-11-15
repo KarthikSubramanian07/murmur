@@ -591,7 +591,7 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 		})
 	case viaOpenCode:
 		return d.attempt(j.msg, func() error {
-			return openCodePrompt(ctx, j.route.OpenCodeCLI, j.route.Native, j.text)
+			return openCodePrompt(ctx, j.route.OpenCodeCLI, j.route.OpenCodeState, j.route.Native, j.text)
 		})
 	}
 	return fmt.Errorf("no way to hand a message over by %s", j.via)
