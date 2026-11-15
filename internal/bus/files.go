@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"math/bits"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -141,7 +143,8 @@ func CleanFiles(in []File) []File {
 		}
 		name := FileName(f.Name)
 		for n := 2; seen[strings.ToLower(name)]; n++ {
-			name = strconv.Itoa(n) + "-" + FileName(f.Name)
+			// Through FileName again, which may cut it: a second clean then gives the same name.
+			name = FileName(strconv.Itoa(n) + "-" + FileName(f.Name))
 		}
 		seen[strings.ToLower(name)] = true
 		f.Name = name
@@ -153,14 +156,15 @@ func CleanFiles(in []File) []File {
 // Readable says the file's blob can be opened: cleanFiles left it its size, sum and key.
 func (f File) Readable() bool { return f.Key != "" }
 
-func fileAAD(msgID string, index int) []byte {
-	return []byte("file\x00" + msgID + "\x00" + strconv.Itoa(index))
+func fileAAD(at string, index int) []byte {
+	return []byte("file\x00" + at + "\x00" + strconv.Itoa(index))
 }
 
-// SealFile encrypts a file for the message with that ID, as the index'th of its files, and returns
-// the blob to store and the size, sum and key the event says of it. The blob is bound to the
-// message and the place: moved to another, it doesn't open.
-func SealFile(plain []byte, msgID string, index int) (blob []byte, f File, err error) {
+// SealFile encrypts a file as the index'th on the files ref called at, and returns the blob to
+// store and the size, sum and key the event says of it. The blob is bound to the ref and the
+// place: moved to another, it doesn't open. It is bound to the ref and not to the message, so
+// that several messages can one day share an upload.
+func SealFile(plain []byte, at string, index int) (blob []byte, f File, err error) {
 	key := make([]byte, 32)
 	nonce := make([]byte, 12)
 	if _, err := rand.Read(key); err != nil {
@@ -174,16 +178,16 @@ func SealFile(plain []byte, msgID string, index int) (blob []byte, f File, err e
 		return nil, File{}, err
 	}
 	sum := sha256.Sum256(plain)
-	blob = aead.Seal(nonce, nonce, plain, fileAAD(msgID, index))
+	blob = aead.Seal(nonce, nonce, plain, fileAAD(at, index))
 	return blob, File{Size: int64(len(plain)), Sum: hex.EncodeToString(sum[:]), Key: b64.EncodeToString(key)}, nil
 }
 
 // errBadFile is a file's blob that isn't the file its event describes.
 var errBadFile = errors.New("a file that doesn't open")
 
-// OpenFile decrypts the blob of the index'th file of the message with that ID, and holds it to
-// the size and sum the event gives.
-func OpenFile(blob []byte, f File, msgID string, index int) ([]byte, error) {
+// OpenFile decrypts the blob of the index'th file on the files ref called at, and holds it to the
+// size and sum the event gives.
+func OpenFile(blob []byte, f File, at string, index int) ([]byte, error) {
 	key, err := b64.DecodeString(f.Key)
 	if err != nil || len(key) != 32 || len(blob) < fileOverhead {
 		return nil, errBadFile
@@ -192,7 +196,7 @@ func OpenFile(blob []byte, f File, msgID string, index int) ([]byte, error) {
 	if err != nil {
 		return nil, errBadFile
 	}
-	plain, err := aead.Open(nil, blob[:12], blob[12:], fileAAD(msgID, index))
+	plain, err := aead.Open(nil, blob[:12], blob[12:], fileAAD(at, index))
 	if err != nil {
 		return nil, errBadFile
 	}
@@ -202,6 +206,21 @@ func OpenFile(blob []byte, f File, msgID string, index int) ([]byte, error) {
 		return nil, errBadFile
 	}
 	return plain, nil
+}
+
+// Scratch returns r with dir as the place git writes objects, and the clone's own objects still
+// readable. What a files commit is made of, and what a fetch of one brings, goes there, and the
+// caller deletes dir after: nothing names those objects once the push or the read is done, and in
+// the clone they would stay until a garbage collection that may be months away, up to 23 MB a
+// message. It is r itself if the clone's objects aren't where a git directory keeps them.
+func (r *Repo) Scratch(dir string) *Repo {
+	objects := filepath.Join(r.Git.Dir, "objects")
+	if info, err := os.Stat(objects); err != nil || !info.IsDir() {
+		return r
+	}
+	c := &Repo{Git: r.Git, Remote: r.Remote, Name: r.Name, Email: r.Email, Page: r.Page}
+	c.Git.Env = append(slices.Clone(r.Git.Env), "GIT_OBJECT_DIRECTORY="+dir, "GIT_ALTERNATE_OBJECT_DIRECTORIES="+objects)
+	return c
 }
 
 // minPack is the smallest pack: files under it all look alike.
@@ -278,10 +297,13 @@ func (r *Repo) NewFilesCommit(ctx context.Context, pack []byte) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	// In the environment, which goes before any configuration: a name or a date set there, or as
+	// author.name in the user's config, would otherwise be the commit's.
+	who, mail := brand.Name, "files@"+brand.Name+".invalid"
 	g := r.Git
-	g.Env = append(slices.Clone(g.Env), "GIT_AUTHOR_DATE="+filesDate, "GIT_COMMITTER_DATE="+filesDate)
-	out, err = g.Run(ctx, "files\n", "-c", "user.name="+brand.Name, "-c", "user.email=files@"+brand.Name+".invalid",
-		"commit-tree", "--no-gpg-sign", strings.TrimSpace(out), "-F", "-")
+	g.Env = append(slices.Clone(g.Env), "GIT_AUTHOR_DATE="+filesDate, "GIT_COMMITTER_DATE="+filesDate,
+		"GIT_AUTHOR_NAME="+who, "GIT_COMMITTER_NAME="+who, "GIT_AUTHOR_EMAIL="+mail, "GIT_COMMITTER_EMAIL="+mail)
+	out, err = g.Run(ctx, "files\n", "commit-tree", "--no-gpg-sign", strings.TrimSpace(out), "-F", "-")
 	if err != nil {
 		return "", err
 	}
@@ -319,7 +341,7 @@ func (r *Repo) ReadPack(ctx context.Context, rev string, max int64) ([]byte, err
 }
 
 // FetchFiles fetches the commit a files ref holds on the remote and returns it. Nothing local
-// names it after: the objects are read once and left for git's own housekeeping. ErrNoFile if the
+// names it after, whatever the clone's own refspecs say (--refmap=): the objects are read once. ErrNoFile if the
 // ref isn't on the remote. The fetch asks for the ref by name, as not every server gives an object
 // asked for by its ID; a ref that moves between the listing and the fetch reads as files that
 // aren't there.
@@ -332,7 +354,7 @@ func (r *Repo) FetchFiles(ctx context.Context, ref string) (string, error) {
 		return "", ErrNoFile
 	}
 	_, err = r.Git.Run(ctx, "", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "fetch", "--quiet",
-		"--no-tags", "--no-write-fetch-head", "--no-recurse-submodules",
+		"--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=",
 		"--negotiation-tip="+brand.RefRoot+"*", r.Remote, ref)
 	if err != nil {
 		return "", err

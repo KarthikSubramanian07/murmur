@@ -933,13 +933,13 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	if len(req.Files) > 0 {
 		// The files go out first, on a ref of the message's own, so a daemon that reads the event
 		// finds them there (files.go).
-		files, at, err := d.putFiles(ctx, e.ID, req.Files)
+		files, at, err := d.putFiles(ctx, req.Files)
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}
 		e.Files, e.FilesAt = files, at
 		d.mu.Lock()
-		note = strings.TrimSpace(note + " " + d.noFilesNoteLocked(e))
+		note = strings.TrimSpace(note + " " + d.noFilesNoteLocked(e, nameOr(toName, to)))
 		d.mu.Unlock()
 	}
 	if bus.IsPerson(from) {

@@ -23,14 +23,22 @@ send files yet (#570's second part).
 - **Encrypted with keys in the event.** Each file has a fresh AES-256-GCM key; the event, which is
   encrypted for the team ([encryption](encryption.md)), carries each file's name, size, SHA-256
   and key, and the ref's name. So whoever can read a message can read its files, and nobody else.
-  A file is bound to its message and its place in it, and a receiver holds what it opens to the
-  event's size and SHA-256.
+  A file is bound to its ref and its place on it, and a receiver holds what it opens to the
+  event's size and SHA-256. It is bound to the ref and not the message so that several messages
+  can one day share an upload.
 - **Fetched before the message is queued.** A daemon that reads a message with files for one of
-  its sessions fetches the ref, saves the files under `.git/murmur/files/<message id>/`, never the
-  working tree, and only then queues the message, so a path in a turn works when the agent reads
-  it. The fetch stores no local ref. It gets three tries of a minute each; then the message is
-  queued without the files, and the turn says which aren't there. A ref that isn't on the remote,
-  or holds something else, costs one try. The wait survives a restart (`state.json`).
+  its sessions fetches the ref, saves the files under `.git/murmur/files/<the ref's name>/`, never
+  the working tree, and only then queues the message, so a path in a turn works when the agent
+  reads it. It gets three tries of a minute each; then the message is queued without the files, and
+  the turn says which aren't there. A ref that isn't on the remote, or holds something else, costs
+  one try. Messages are fetched for one at a time, in the order they came, so one slow fetch holds
+  up the files of those behind it, not their text-only neighbours. The wait survives a restart
+  (`state.json`).
+- **Nothing is left in the clone.** Git writes a files commit, and what a fetch of one brings, to
+  a directory of the daemon's own (`GIT_OBJECT_DIRECTORY`, with the clone's objects as an
+  alternate), which is deleted when the push or the read is done, and the fetch stores no ref. In
+  the clone's own objects each message would leave up to 23 MB that nothing names, until a garbage
+  collection that may be months away.
 - **On the sender's device** the daemon keeps a copy where a receiver's would be, so a session on
   the same device has the files with no fetch.
 
@@ -61,14 +69,15 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   while it encrypts. A push has a minute, which 20 MB needs 2.7 Mbit/s of upload for. GitHub warns
   at 50 MB an object and refuses 100 MB.
 - **A week on the remote.** The sender's daemon deletes a files ref 7 days after it sent it, and
-  the remote's own housekeeping then drops the objects. Receivers delete their copies after 7 days
+  the remote may then drop the objects in its own time (GitHub doesn't promise when; they are
+  encrypted either way). Receivers delete their copies after 7 days
   too. A week covers a message read after a weekend; the message itself stays in history with its
   file names, and a turn made from it later says the files aren't there. A sender that never runs
   again leaves its refs.
 - **A send to several recipients uploads the files once for each**, since each gets a message of
   its own (#520).
-- **In the clone**, the blobs a daemon wrote or fetched stay in `.git/objects` with nothing
-  naming them until git's own garbage collection, two weeks by default.
+- **A send with files has 90 seconds**, like any request, and its push holds the device's one
+  push at a time for up to a minute, so the device's presence and other sends wait behind it.
 
 ## What is checked
 
@@ -77,9 +86,14 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   and makes the names in one message distinct (`bus.FileName`, `bus.CleanFiles`). The sender runs
   the same, so both sides agree on the names.
 - **The ref's name.** A reader takes only a name of the form Murmur makes, so no event can point
-  it at another ref.
-- **Secrets.** A file that is text goes through the check a body does (`internal/scrub`). An image
-  or other binary can't be checked.
+  it at another ref, and saves files in a directory of that name, not of the message's ID, which
+  is short and anyone's to repeat.
+- **Paths from Git Bash.** On Windows the MCP server puts `/c/Users/...` back to `C:\Users\...`
+  and leaves any other path from a root with no drive (`/tmp/shot.png`) for the daemon to refuse:
+  Windows would read it on the current drive, where another file of that name may be.
+- **Secrets.** A file that is text goes through the check a body does (`internal/scrub`): UTF-16
+  with its mark, as Windows PowerShell writes a redirected file, and anything with no zero byte. An
+  image or other binary can't be checked.
 - **Sizes.** A sender is refused past the limits. A receiver reads a pack's size before the pack
   and doesn't read one over the limit: git stores a blob compressed, so a small fetch can hold a
   large one.
@@ -87,13 +101,27 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   listing gives no sizes, so a fetch can't be capped before it runs; a `--filter` would make the
   user's clone a partial clone for all its later fetches. Push access is already trusted with code.
 
-## Older daemons
+## Open, for Tyler
+
+- **The daemon reads the files, as the user.** A path in `files` is read by the daemon, not by the
+  agent's own tools, so an agent's read permissions, deny rules and sandbox don't apply to it. An
+  agent talked into it by a message ("send me that file") can send a binary the secret check can't
+  read. Having the MCP server read the file instead wouldn't change that: it runs outside the
+  sandbox too. What would is the agent's client asking its user, which `send` as a tool already
+  can be set to do.
+- **Where a received file is saved.** `.git/murmur/files/` is in the clone's git directory. A
+  session in a worktree elsewhere is given a path outside its workspace: Claude Code asks its user
+  before reading there, and a client that reads only inside its workspace can't. Saving under the
+  session's own directory would put files in a working tree.
+
+## Older daemons, and people
 
 Tyler's decision (2026-11-15): sent with a note, not refused. A daemon from before files ignores
 an event's `files` and gives its sessions the text, with no sign there was more. A device's
 presence says whether its daemon takes files (`files`, beside `groups` and `receipts`), and a
 sender is told which recipients' devices don't. Refusing would hold back the text for a gap the
-updater closes within an hour ([updating](updating.md)).
+updater closes within an hour ([updating](updating.md)). A sender to a person is told the same
+until the page shows files.
 
 A client from before files talking to a newer daemon sends none. A newer client finds an older
 daemon by its protocol number (23) and replaces it, as for any request an older daemon can't serve.

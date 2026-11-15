@@ -7,11 +7,22 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
 )
+
+// utf16File is text as Windows PowerShell writes a redirected file: UTF-16, little end first, after
+// its mark.
+func utf16File(text string) []byte {
+	b := []byte{0xff, 0xfe}
+	for _, u := range utf16.Encode([]rune(text)) {
+		b = append(b, byte(u), byte(u>>8))
+	}
+	return b
+}
 
 // writeFile writes a file a test sends, in a directory of its own, and returns its full path.
 func writeFile(t *testing.T, name string, data []byte) string {
@@ -104,8 +115,8 @@ func TestFilesTravelWithAMessage(t *testing.T) {
 	if tree := git(t, remote, "ls-tree", "--name-only", refs[0]); tree != "0" {
 		t.Errorf("the files commit's tree: %q", tree)
 	}
-	if commit := git(t, remote, "cat-file", "commit", refs[0]); strings.Contains(commit, a.self()) || !strings.Contains(commit, " 946684800 +0000") {
-		t.Errorf("the files commit says who or when:\n%s", commit)
+	if c := git(t, remote, "cat-file", "commit", refs[0]); strings.Contains(c, a.self()) || !strings.Contains(c, " 946684800 +0000") {
+		t.Errorf("the files commit says who or when:\n%s", c)
 	}
 	if size := git(t, remote, "cat-file", "-s", refs[0]+":0"); size != "20480" { // 20009+24 and 28 each is 20089
 		t.Errorf("the pack is %s bytes", size)
@@ -126,8 +137,19 @@ func TestFilesTravelWithAMessage(t *testing.T) {
 	if refs := git(t, work, "for-each-ref", "refs/murmur/files"); refs != "" {
 		t.Errorf("the receiver kept a files ref: %s", refs)
 	}
-	if got, err := os.ReadFile(filepath.Join(a.gitDir, "murmur", "files", id, "notes.txt")); err != nil || !bytes.Equal(got, notes) {
+	at := strings.TrimPrefix(refs[0], "refs/murmur/files/")
+	if got, err := os.ReadFile(filepath.Join(a.gitDir, "murmur", "files", at, "notes.txt")); err != nil || !bytes.Equal(got, notes) {
 		t.Errorf("the sender's copy: %q, %v", got, err)
+	}
+	// Neither clone keeps the files commit: it was made, and fetched, in a directory since deleted.
+	commit := git(t, remote, "rev-parse", refs[0])
+	for who, d := range map[string]*device{"sender": a, "receiver": b} {
+		if gitOK(filepath.Dir(d.gitDir), "cat-file", "-e", commit) != "" || gitOK(filepath.Dir(d.gitDir), "cat-file", "-t", commit) != "" {
+			t.Errorf("the %s's clone holds the files commit", who)
+		}
+		if left, _ := filepath.Glob(filepath.Join(d.gitDir, "murmur", "files-scratch-*")); len(left) > 0 {
+			t.Errorf("the %s left %v", who, left)
+		}
 	}
 }
 
@@ -147,6 +169,19 @@ func TestFilesForASessionOnTheSameDevice(t *testing.T) {
 	}
 	if got, err := os.ReadFile(m.Files[0].Path); err != nil || !bytes.Equal(got, log) {
 		t.Errorf("the file: %q, %v", got, err)
+	}
+}
+
+// A person reads on the page, which doesn't show files yet, so a sender is told they get the text
+// alone, and nothing is held back from their inbox while files are fetched.
+func TestFilesSentToAPerson(t *testing.T) {
+	t.Parallel()
+	a := newDevice(t, newRemote(t))
+	a.session("aaaaaa", "")
+	a.page().choose("ada-lovelace")
+	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "ada-lovelace", Subject: "the chart", Files: []string{writeFile(t, "chart.png", []byte{0x89, 0x00})}})
+	if r.Error != "" || !strings.Contains(r.Note, "ada-lovelace reads this on Murmur's page, which doesn't show files yet") {
+		t.Fatalf("send: %+v", r)
 	}
 }
 
@@ -176,6 +211,8 @@ func TestFilesASendRefuses(t *testing.T) {
 		"files over the limit":      {[]string{half, half, half}, "at most 20 MB together"},
 		"a key in a text file":      {[]string{small, writeFile(t, "env.txt", []byte("AWS=AKIAIOSFODNN7EXAMPLE\n"))}, "env.txt"},
 		"a key in a file named png": {[]string{writeFile(t, "shot.png", []byte("AKIAIOSFODNN7EXAMPLE"))}, "shot.png"},
+		"a key in UTF-16":           {[]string{writeFile(t, "ps.txt", utf16File("key AKIAIOSFODNN7EXAMPLE\r\n"))}, "ps.txt"},
+		"a key after a stray byte":  {[]string{writeFile(t, "latin.txt", []byte("caf\xe9 AKIAIOSFODNN7EXAMPLE\n"))}, "latin.txt"},
 	} {
 		r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "files", Files: c.files})
 		if !strings.Contains(r.Error, "not sent") || !strings.Contains(r.Error, c.why) {
@@ -195,7 +232,7 @@ func TestMessageArrivesWithoutFilesThatCannotBeHad(t *testing.T) {
 	remote := newRemote(t)
 	b := newDevice(t, remote)
 	bob, _ := b.session("bbbbbb", "")
-	_, f, err := bus.SealFile([]byte("what the event describes"), "00000000000000aa", 0)
+	_, f, err := bus.SealFile([]byte("what the event describes"), bus.NewFilesAt(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +263,7 @@ func TestMessageArrivesWithoutFilesThatCannotBeHad(t *testing.T) {
 	if m.Subject != "wrong blob" || len(m.Files) != 1 || m.Files[0].Path != "" {
 		t.Fatalf("message: %+v", m)
 	}
-	if _, err := os.Stat(filepath.Join(b.gitDir, "murmur", "files", "00000000000000bb", "swapped.txt")); err == nil {
+	if _, err := os.Stat(filepath.Join(b.gitDir, "murmur", "files", at, "swapped.txt")); err == nil {
 		t.Error("a blob that isn't the file was saved as it")
 	}
 }
@@ -243,9 +280,9 @@ func TestFilesLeaveTheRemote(t *testing.T) {
 		t.Fatalf("send: %s", r.Error)
 	}
 	listed := func() string { return gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files") }
-	copies := filepath.Join(a.gitDir, "murmur", "files", r.Messages[0].ID)
-	if _, err := os.Stat(copies); err != nil || listed() == "" {
-		t.Fatalf("after the send: the copies %v, the files refs %q", err, listed())
+	copies := filepath.Join(a.gitDir, "murmur", "files", strings.TrimPrefix(listed(), "refs/murmur/files/"))
+	if _, err := os.Stat(filepath.Join(copies, "a.txt")); err != nil || listed() == "" {
+		t.Fatalf("after the send: the copy %v, the files refs %q", err, listed())
 	}
 	// The same device, with a time to keep files that has already passed.
 	a.fileKeep, a.filePrune = time.Millisecond, 300*time.Millisecond

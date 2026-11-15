@@ -879,20 +879,29 @@ func text(s string) *mcp.CallToolResult {
 // longer than it keeps could otherwise make a send of a full body too long to be read at all.
 func oneLine(s string) string { return bus.OneLine(s, 120) }
 
-// fullPaths makes each path a send names a full one, from this server's working directory, which
-// is the agent's: the daemon that reads the files runs somewhere else. On Windows an agent in Git
-// Bash writes C:\Users as /c/Users, which Windows would read as \c\Users on the current drive.
+// fullPath makes a path a send names a full one, from this server's working directory, which is
+// the agent's: the daemon that reads the files runs somewhere else. On Windows an agent in Git Bash
+// writes C:\Users as /c/Users, which is put back. Any other path there that starts at a root with
+// no drive, such as Git Bash's /tmp, is left as it is, and the daemon refuses it as no full path:
+// Windows would read it on the current drive, where another file of that name may be.
+func fullPath(p string, windows bool) string {
+	if windows && len(p) >= 3 && p[0] == '/' && p[2] == '/' &&
+		(p[1] >= 'a' && p[1] <= 'z' || p[1] >= 'A' && p[1] <= 'Z') {
+		p = p[1:2] + ":" + p[2:]
+	} else if windows && (strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) && !strings.HasPrefix(p, `\\`)) {
+		return p
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
+}
+
+// fullPaths is fullPath for each path a send names.
 func fullPaths(paths []string) []string {
 	out := make([]string, 0, len(paths))
 	for _, p := range paths {
-		if runtime.GOOS == "windows" && len(p) >= 3 && p[0] == '/' && p[2] == '/' &&
-			(p[1] >= 'a' && p[1] <= 'z' || p[1] >= 'A' && p[1] <= 'Z') {
-			p = p[1:2] + ":" + p[2:]
-		}
-		if abs, err := filepath.Abs(p); err == nil {
-			p = abs
-		}
-		out = append(out, p)
+		out = append(out, fullPath(p, runtime.GOOS == "windows"))
 	}
 	return out
 }

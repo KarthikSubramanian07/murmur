@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -10,7 +12,7 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
+	"unicode/utf16"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
@@ -29,17 +31,54 @@ const (
 	// message gets before it is queued without them.
 	fileFetchLimit = time.Minute
 	fileTries      = 3
+	// scratchPrefix begins the name of a directory git writes a files commit's objects to, or a
+	// fetch's, inside the daemon's own (bus.Repo.Scratch). Each is deleted when its work is done.
+	scratchPrefix = "files-scratch-"
 )
 
 // fileWait is a message held back from the inboxes of sessions here until its files are fetched.
 type fileWait struct {
 	Event bus.Event `json:"event"`
 	For   []string  `json:"for"` // the sessions it is for
+	// Since is when it began to wait: messages are fetched for in the order they came.
+	Since time.Time `json:"since"`
 }
 
-// filesDir is where the files of the message with that ID are saved: inside the git directory,
-// never the working tree.
-func (d *Daemon) filesDir(msgID string) string { return filepath.Join(d.dir, "files", msgID) }
+// filesDir is where the files on the files ref called at are saved: inside the git directory, never
+// the working tree. It is named by the ref, which is random and which a reader holds to the form
+// Murmur makes, and not by the message's ID, which is short and anyone's to repeat.
+func (d *Daemon) filesDir(at string) string { return filepath.Join(d.dir, "files", at) }
+
+// scratch makes a directory for git to write objects to in place of the clone's, and returns the
+// repo that writes there and what deletes the directory.
+func (d *Daemon) scratch() (*bus.Repo, func(), error) {
+	dir, err := os.MkdirTemp(d.dir, scratchPrefix)
+	if err != nil {
+		return nil, nil, err
+	}
+	return d.repo.Scratch(dir), func() { os.RemoveAll(dir) }, nil
+}
+
+// textOf is a file's bytes as text, if it is text the secret check can read: UTF-16 with its mark,
+// as Windows PowerShell writes a redirected file, or anything with no zero byte in it, with
+// whatever isn't UTF-8 passed over, so one stray byte doesn't hide the rest.
+func textOf(b []byte) (string, bool) {
+	if len(b) >= 2 && len(b)%2 == 0 && (b[0] == 0xff && b[1] == 0xfe || b[0] == 0xfe && b[1] == 0xff) {
+		var order binary.ByteOrder = binary.LittleEndian
+		if b[0] == 0xfe {
+			order = binary.BigEndian
+		}
+		units := make([]uint16, 0, len(b)/2-1)
+		for i := 2; i < len(b); i += 2 {
+			units = append(units, order.Uint16(b[i:]))
+		}
+		return string(utf16.Decode(units)), true
+	}
+	if slices.Contains(b, 0) {
+		return "", false
+	}
+	return strings.ToValidUTF8(string(b), " "), true
+}
 
 // readSendFiles reads the files a send names and holds them to the limits. A text file is checked
 // for secrets as a body is; anything else can't be.
@@ -78,8 +117,8 @@ func readSendFiles(paths []string) ([][]byte, []bus.File, error) {
 		if total += int64(len(b)); total > bus.MaxFilesTotal {
 			return nil, nil, fmt.Errorf("a message's files can come to at most %d MB together", bus.MaxFilesTotal>>20)
 		}
-		if utf8.Valid(b) && !slices.Contains(b, 0) {
-			if err := scrub.Check(string(b)); err != nil {
+		if text, ok := textOf(b); ok {
+			if err := scrub.Check(text); err != nil {
 				return nil, nil, fmt.Errorf("%s: %v", path, err)
 			}
 		}
@@ -89,17 +128,18 @@ func readSendFiles(paths []string) ([][]byte, []bus.File, error) {
 	return data, files, nil
 }
 
-// putFiles encrypts the files a send names and pushes them to a new files ref, for the message
-// with that ID, and returns what the event says of them and the ref's name. It keeps a copy of each
-// where a receiver's would be, so a session on this device, and the page, have them without a fetch.
-func (d *Daemon) putFiles(ctx context.Context, msgID string, paths []string) (files []bus.File, at string, err error) {
+// putFiles encrypts the files a send names and pushes them to a new files ref, and returns what
+// the event says of them and the ref's name. It keeps a copy of each where a receiver's would be,
+// so a session on this device, and the page, have them without a fetch.
+func (d *Daemon) putFiles(ctx context.Context, paths []string) (files []bus.File, at string, err error) {
 	data, files, err := readSendFiles(paths)
 	if err != nil {
 		return nil, "", err
 	}
+	at = bus.NewFilesAt()
 	sealed := make([][]byte, len(data))
 	for i, b := range data {
-		blob, f, err := bus.SealFile(b, msgID, i)
+		blob, f, err := bus.SealFile(b, at, i)
 		if err != nil {
 			return nil, "", err
 		}
@@ -111,22 +151,27 @@ func (d *Daemon) putFiles(ctx context.Context, msgID string, paths []string) (fi
 	if err != nil {
 		return nil, "", err
 	}
-	sha, err := d.repo.NewFilesCommit(ctx, pack)
+	repo, done, err := d.scratch()
 	if err != nil {
 		return nil, "", err
 	}
-	at = bus.NewFilesAt()
+	defer done()
+	sha, err := repo.NewFilesCommit(ctx, pack)
+	if err != nil {
+		return nil, "", err
+	}
 	d.mu.Lock()
 	d.st.FileRefs[at] = time.Now().Round(0)
 	d.saveLocked()
 	d.mu.Unlock()
-	if err := d.push(ctx, sha, bus.FilesRef(at), bus.FastForward, ""); err != nil {
-		d.dropFileRef(at, false)
+	if err := d.pushFrom(ctx, repo, sha, bus.FilesRef(at), bus.FastForward, ""); err != nil {
+		// Left to the next prune to delete: a push can land and still be told it failed.
+		d.dropFileRef(at, true)
 		return nil, "", fmt.Errorf("its files didn't go out: %w", err)
 	}
 	for i, f := range files {
-		if err := d.saveFile(msgID, f.Name, data[i]); err != nil {
-			d.log.Printf("keeping a copy of %s, sent with message %s: %v", f.Name, msgID, err)
+		if err := d.saveFile(at, f.Name, data[i]); err != nil {
+			d.log.Printf("keeping a copy of %s, sent on files ref %s: %v", f.Name, at, err)
 		}
 	}
 	return files, at, nil
@@ -145,10 +190,10 @@ func (d *Daemon) dropFileRef(at string, due bool) {
 	d.saveLocked()
 }
 
-// saveFile writes one file of a message where its sessions are told it is. It is written beside
-// its place and renamed, so a path that exists holds the whole file.
-func (d *Daemon) saveFile(msgID, name string, data []byte) error {
-	dir := d.filesDir(msgID)
+// saveFile writes one file from the files ref called at where sessions are told it is. It is
+// written beside its place and renamed, so a path that exists holds the whole file.
+func (d *Daemon) saveFile(at, name string, data []byte) error {
+	dir := d.filesDir(at)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -169,13 +214,15 @@ func (d *Daemon) saveFile(msgID, name string, data []byte) error {
 	return err
 }
 
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // filesHere says every file of e that can be read is saved here.
 func (d *Daemon) filesHere(e bus.Event) bool {
 	for _, f := range e.Files {
-		if !f.Readable() {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(d.filesDir(e.ID), f.Name)); err != nil {
+		if f.Readable() && (e.FilesAt == "" || !fileExists(filepath.Join(d.filesDir(e.FilesAt), f.Name))) {
 			return false
 		}
 	}
@@ -183,15 +230,16 @@ func (d *Daemon) filesHere(e bus.Event) bool {
 }
 
 // holdForFilesLocked says message e, for session id, waits for its files: they aren't here yet, so
-// the fetch is started and the message is queued when it ends, with or without them. A person's
-// page asks for a file when it shows one, so nothing is held for them. Caller holds mu.
+// the fetch is started and the message is queued when it ends, with or without them. Nothing is
+// held for a person: the page doesn't show files yet, and will ask for one when it shows it.
+// Caller holds mu.
 func (d *Daemon) holdForFilesLocked(id string, e bus.Event) bool {
 	if len(e.Files) == 0 || id == bus.PersonSession || d.filesHere(e) {
 		return false
 	}
 	w := d.st.FilesWait[e.ID]
 	if w == nil {
-		w = &fileWait{Event: e}
+		w = &fileWait{Event: e, Since: time.Now().Round(0)}
 		d.st.FilesWait[e.ID] = w
 	}
 	if !slices.Contains(w.For, id) {
@@ -208,22 +256,36 @@ func (d *Daemon) kickFiles() {
 	}
 }
 
-// fileLoop fetches the files of the messages that wait for them, one message at a time, and
-// deletes what is past FileKeep.
+// nextFileWaitLocked is the message that has waited longest for its files. Caller holds mu.
+func (d *Daemon) nextFileWaitLocked() (bus.Event, bool) {
+	ids := sortedKeys(d.st.FilesWait)
+	if len(ids) == 0 {
+		return bus.Event{}, false
+	}
+	first := slices.MinFunc(ids, func(a, b string) int {
+		return cmp.Or(d.st.FilesWait[a].Since.Compare(d.st.FilesWait[b].Since), cmp.Compare(a, b))
+	})
+	return d.st.FilesWait[first].Event, true
+}
+
+// fileLoop fetches the files of the messages that wait for them, one message at a time in the
+// order they came, and deletes what is past FileKeep. Messages go first: a prune is a push for each
+// ref past its time, and a session shouldn't wait for those.
 func (d *Daemon) fileLoop(ctx context.Context) {
+	// Scratch directories a daemon that was stopped mid-work left.
+	left, _ := filepath.Glob(filepath.Join(d.dir, scratchPrefix+"*"))
+	for _, dir := range left {
+		os.RemoveAll(dir)
+	}
 	prune := time.NewTicker(d.opt.FilePrune)
 	defer prune.Stop()
-	d.pruneFiles(ctx)
+	pruned := false
 	for {
-		for {
+		for ctx.Err() == nil {
 			d.mu.Lock()
-			ids := sortedKeys(d.st.FilesWait)
-			var e bus.Event
-			if len(ids) > 0 {
-				e = d.st.FilesWait[ids[0]].Event
-			}
+			e, ok := d.nextFileWaitLocked()
 			d.mu.Unlock()
-			if len(ids) == 0 || ctx.Err() != nil {
+			if !ok {
 				break
 			}
 			err := d.fetchFiles(ctx, e)
@@ -243,6 +305,11 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 			}
 			d.mu.Unlock()
 		}
+		if !pruned {
+			pruned = true
+			d.pruneFiles(ctx)
+			continue // a message may have come meanwhile
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -255,7 +322,7 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 
 // fetchFiles brings the files of message e from its files ref and saves them. A fetch that fails
 // is tried again, as the network may be why; a ref that isn't there, or holds something else, is
-// not.
+// not. What the fetch brings goes to a scratch directory, not the clone's objects.
 func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
 	if d.filesHere(e) {
 		return nil
@@ -263,12 +330,16 @@ func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
 	if e.FilesAt == "" {
 		return bus.ErrNoFile
 	}
+	repo, done, err := d.scratch()
+	if err != nil {
+		return err
+	}
+	defer done()
 	ref := bus.FilesRef(e.FilesAt)
 	var sha string
-	var err error
 	for try := 1; ; try++ {
 		fctx, cancel := context.WithTimeout(ctx, fileFetchLimit)
-		sha, err = d.repo.FetchFiles(fctx, ref)
+		sha, err = repo.FetchFiles(fctx, ref)
 		cancel()
 		if err == nil || errors.Is(err, bus.ErrNoFile) || try == fileTries || ctx.Err() != nil {
 			break
@@ -282,7 +353,7 @@ func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
 	if err != nil {
 		return err
 	}
-	pack, err := d.repo.ReadPack(ctx, sha, bus.MaxPack)
+	pack, err := repo.ReadPack(ctx, sha, bus.MaxPack)
 	if err != nil {
 		return err
 	}
@@ -294,10 +365,10 @@ func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
 		blob, err := bus.PackedFile(pack, e.Files, i)
 		var plain []byte
 		if err == nil {
-			plain, err = bus.OpenFile(blob, f, e.ID, i)
+			plain, err = bus.OpenFile(blob, f, e.FilesAt, i)
 		}
 		if err == nil {
-			err = d.saveFile(e.ID, f.Name, plain)
+			err = d.saveFile(e.FilesAt, f.Name, plain)
 		}
 		if err != nil {
 			failed = append(failed, fmt.Sprintf("%s: %v", f.Name, err))
@@ -310,14 +381,14 @@ func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
 }
 
 // pruneFiles deletes the copies of files kept longer than FileKeep, and from the remote the files
-// refs of messages this device sent that long ago.
+// refs this device pushed that long ago.
 func (d *Daemon) pruneFiles(ctx context.Context) {
 	root := filepath.Join(d.dir, "files")
 	entries, _ := os.ReadDir(root)
 	for _, entry := range entries {
 		if info, err := entry.Info(); err == nil && time.Since(info.ModTime()) > d.opt.FileKeep {
 			if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
-				d.log.Printf("deleting the files of message %s: %v", entry.Name(), err)
+				d.log.Printf("deleting the files saved from files ref %s: %v", entry.Name(), err)
 			}
 		}
 	}
@@ -345,9 +416,14 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 }
 
 // noFilesNoteLocked tells the sender of message e, which carries files, which of its recipients
-// are on a device whose daemon is from before files: they get the text alone, with no sign that
-// there was more. Caller holds mu.
-func (d *Daemon) noFilesNoteLocked(e bus.Event) string {
+// get the text alone, with no sign that there was more: those on a device whose daemon is from
+// before files, and a person, whose page doesn't show files yet. who is what the sender called a
+// person it sent to. Caller holds mu.
+func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
+	if bus.IsPerson(e.To) {
+		// A person gets only what is sent to them, never a broadcast, so they are the one recipient.
+		return who + " reads this on " + brand.Product + "'s page, which doesn't show files yet: the text alone gets there."
+	}
 	to, _ := d.recipientsOfLocked(e)
 	var old []string
 	for _, addr := range to {
@@ -377,8 +453,8 @@ func (d *Daemon) fileViewsLocked(e bus.Event) []proto.FileView {
 	views := make([]proto.FileView, 0, len(e.Files))
 	for _, f := range e.Files {
 		v := proto.FileView{Name: f.Name, Size: f.Size}
-		if path := filepath.Join(d.filesDir(e.ID), f.Name); f.Readable() {
-			if _, err := os.Stat(path); err == nil {
+		if f.Readable() && e.FilesAt != "" {
+			if path := filepath.Join(d.filesDir(e.FilesAt), f.Name); fileExists(path) {
 				v.Path = path
 			}
 		}

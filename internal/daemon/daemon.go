@@ -290,6 +290,12 @@ var ErrNoConsent = errors.New("this clone hasn't joined " + brand.Product)
 // Pushes from other devices still meet this device's on GitHub; bus.Push sends a push refused that
 // way again, within this device's turn.
 func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, expect string) error {
+	return d.pushFrom(ctx, d.repo, sha, ref, mode, expect)
+}
+
+// pushFrom is push from repo, which is d.repo or a copy of it that keeps its objects elsewhere
+// (bus.Repo.Scratch).
+func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, mode bus.PushMode, expect string) error {
 	if !d.takePush(ctx) {
 		return ctx.Err()
 	}
@@ -300,7 +306,7 @@ func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
-	err := d.repo.Push(ctx, sha, ref, mode, expect)
+	err := repo.Push(ctx, sha, ref, mode, expect)
 	d.health.pushed(ctx, ref, err)
 	return err
 }
