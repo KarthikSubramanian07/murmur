@@ -139,10 +139,11 @@ func (r *Repo) RemoteRef(ctx context.Context, ref string) (string, error) {
 // It offers the server only the bus commits it has (--negotiation-tip), as no commit Murmur writes
 // has a branch's commit in its history. By default git offers every local ref, and for a presence
 // commit, which has no parent, the server is never ready, so the clone lists the user's whole
-// history a batch per request (VISION, "Speed"). The cost: a commit built on a branch and pushed
-// onto a bus ref, junk to Murmur, brings its branch's whole history, since the server isn't told
-// the clone has it; on a large repo #15's slow fetch takes it. A clone with no bus refs yet offers
-// nothing, which git warns of on stderr, where it leads the error of a fetch that fails.
+// history a batch per request (docs/design/transport.md, "A fetch offers only bus commits"). The
+// cost: a commit built on a branch and pushed onto a bus ref, junk to Murmur, brings its branch's
+// whole history, since the server isn't told the clone has it; on a large repo #15's slow fetch
+// takes it. A clone with no bus refs yet offers nothing, which git warns of on stderr, where it
+// leads the error of a fetch that fails.
 func (r *Repo) Fetch(ctx context.Context, refs []string) error {
 	if len(refs) == 0 {
 		return nil
@@ -190,7 +191,7 @@ const pushTries = 3
 // busyReasons are the reasons GitHub gives, now and then, for refusing a push that met another push
 // to the same repository, from the same device or another ("[remote rejected] (failed)"). They say
 // nothing about the push itself, and the same push sent a moment later lands. What was seen, and
-// when, is under "Git is the transport" in docs/VISION.md.
+// when, is under "Pushes" in docs/design/transport.md.
 var busyReasons = map[string]bool{"failed": true, "failure": true, "fatal error in commit_refs": true}
 
 // busyWait is how long Push waits after its try'th try was refused as busy: half a second to a

@@ -12,7 +12,7 @@ import (
 	"github.com/a-Fig/murmur/internal/tags"
 )
 
-// Session tags (#198, docs/VISION.md, "Session tags"). A session's own device decides its tags and
+// Session tags (#198, docs/design/tags.md). A session's own device decides its tags and
 // publishes them in presence: the tags the session set for itself, those the daemon derives (the
 // model, from T3's thread), and a human's marks over both. A human on another device's page sends
 // the change to this device as a tags event on their own log, and this device applies it. No

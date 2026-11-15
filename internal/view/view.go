@@ -331,7 +331,7 @@ func senders(msgs []proto.MessageView) string {
 }
 
 // Turn renders a message as the turn it becomes in the session it is for, when Murmur hands it
-// over at once (docs/VISION.md, "Delivering a message as a turn"): who it is from, as Murmur knows them,
+// over at once (docs/design/delivery.md, "Handing over"): who it is from, as Murmur knows them,
 // then the message as its sender wrote it, then how to answer. What the agent reads here is all it
 // has, so the first line says it is a teammate's agent and not the user, and the last says how to
 // reply and that doing so is optional. The sender's text is not wrapped or quoted: teammates'

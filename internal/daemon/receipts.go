@@ -13,7 +13,7 @@ import (
 	"github.com/a-Fig/murmur/internal/web"
 )
 
-// Receipts (#26, docs/VISION.md, "Receipts"). A message that asks for them (Event.Receipts, which a
+// Receipts (#26, docs/design/receipts.md). A message that asks for them (Event.Receipts, which a
 // person's messages from the page do) gets marks back from each device it reaches: queued, handed
 // over, delivered, read, per recipient session. The recipient's daemon gathers its marks for
 // ReceiptGather and writes them as one encrypted receipt on its own log; the sender's daemon reads

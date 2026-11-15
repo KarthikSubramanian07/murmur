@@ -2,7 +2,7 @@
 // in who, lookup and the page, and can search by. A tag comes from one of three places, highest
 // first: a human on the page, the session itself, or the daemon, which derives a few from facts it
 // already has (the model, where T3 records it). The session's own device decides the tags of its
-// sessions and publishes them in presence; docs/VISION.md, "Session tags", has the reasons.
+// sessions and publishes them in presence; docs/design/tags.md has the reasons.
 //
 // One tag carries behaviour: do-not-disturb, set by the session or a human, keeps the session's
 // messages queued in its inbox. None is handed over as a turn or told by the hook until the

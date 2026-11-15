@@ -131,8 +131,9 @@ const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
 // Estimating what encryption hides (#550)
 //
 // Nothing here is decrypted: the census holds no key. It reads only public repos, as anyone can,
-// and uses two things VISION lists as visible to any reader of one: how large each record is, and
-// the name registry. A size says roughly what kind of event a record is, never what it says.
+// and uses two things docs/design/encryption.md lists as visible to any reader of one: how large
+// each record is, and the name registry. A size says roughly what kind of event a record is, never
+// what it says.
 //
 // Messages, from size. An encrypted event's box holds the event's JSON, encrypted with AES-GCM,
 // which adds 16 bytes (internal/bus/box.go), so the box's length gives the event's length exactly.
@@ -398,8 +399,8 @@ export function apiLookup(owner, name, deadline = Infinity) {
 // within BUDGET. `url`, where it is fetched from, and `lookup` are for the tests.
 //
 // Only the refs count() reads are fetched, and of them only commits: a bus commit's tree is empty
-// (VISION), and a ref elsewhere under refs/murmur/, or a commit made to look like a bus's, could
-// point at gigabytes.
+// (docs/design/transport.md), and a ref elsewhere under refs/murmur/, or a commit made to look like
+// a bus's, could point at gigabytes.
 //
 // The name registry is fetched on its own, because a fetch that names a ref the remote doesn't
 // have fails whole, and a bus from before the registry has none. Without it the repo is counted as

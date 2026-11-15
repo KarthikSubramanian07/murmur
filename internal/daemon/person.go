@@ -21,8 +21,8 @@ import (
 
 // A person's account (#242). A human chooses a name on the page, and from then on is a participant:
 // their address is device/human, presence lists them, agents find them in who and send to their
-// name, and the messages to and from them are kept on this device past a restart. docs/VISION.md
-// ("A person on the page") has the reasons.
+// name, and the messages to and from them are kept on this device past a restart.
+// docs/design/people.md has the reasons.
 //
 // The account is one per clone, like the CLI's mailbox it sits beside. It is unlike it in three ways:
 // it has a name, what is sent to it reaches the page and only the page, and it gets what was sent

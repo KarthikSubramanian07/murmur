@@ -17,7 +17,7 @@ import (
 // MCP server's copy never does, so the daemon learns the live ID from the hook, which always has
 // it, and pairs the hook with its sessions by process: the hook's CLAUDE_PID is the MCP server's
 // parent. A session that follows keeps its Murmur ID and its inbox; its key, and so its name,
-// change. docs/VISION.md ("When a session stays the same session") has the reasons.
+// change. docs/design/session-names.md ("When a session stays the same session") has the reasons.
 
 // uniqueKeyLocked is key, unless another live session has it, or has the name it would bring: two
 // live sessions of one client session (two MCP servers in it) would share a name, and a name is an
@@ -216,8 +216,8 @@ func (d *Daemon) receivesLocked(id string) bool {
 // if that session can receive it and the name is still the last it took. A holder that has moved
 // to another conversation since gets nothing for the name it left (#46): the message stays in the
 // kept inbox, which the next session to take the name takes (see adoptLocked). It goes by the
-// address alone, which is all a message on the bus carries; docs/VISION.md ("A name held by
-// another session") says what that misses. Caller holds mu.
+// address alone, which is all a message on the bus carries; docs/design/session-names.md ("A name
+// held by another session") says what that misses. Caller holds mu.
 func (d *Daemon) forwardLocked(to string) string {
 	dev, id := bus.SplitAddr(to)
 	if dev != d.device || id == "" || d.liveLocked(id) {

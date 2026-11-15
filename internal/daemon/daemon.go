@@ -34,7 +34,7 @@ import (
 	"github.com/a-Fig/murmur/internal/web"
 )
 
-// Options configure a daemon. Zero values take the defaults in docs/VISION.md.
+// Options configure a daemon. Zero values take the defaults in docs/design/.
 type Options struct {
 	GitDir string        // the clone's git common dir, absolute
 	Poll   time.Duration // how often to check the remote; 3 s
@@ -269,7 +269,7 @@ var ErrNoConsent = errors.New("this clone hasn't joined " + brand.Product)
 // A device pushes one ref at a time. Its presence, its log and the names registry used to be pushed
 // each from its own goroutine, and a session starting or stopping set off two or three pushes in
 // the same second; GitHub then refused one of them now and then with "[remote rejected] (failed)",
-// which is not a lease refusal and cost a retry (see "Git is the transport" in docs/VISION.md).
+// which is not a lease refusal and cost a retry (see "Pushes" in docs/design/transport.md).
 // Pushes from other devices still meet this device's on GitHub; bus.Push sends a push refused that
 // way again, within this device's turn.
 func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, expect string) error {

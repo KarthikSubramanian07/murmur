@@ -476,7 +476,8 @@ const openCodeSessionMeta = "ai.opencode/sessionID"
 // sharedIdle is how long a session of a shared server goes without a tool call before its
 // registration is dropped, as a session whose server stopped is: OpenCode never says a session
 // ended, and its server can run for days. A message to the session still reaches its T3 thread,
-// whose route the daemon keeps (docs/VISION.md, "A thread that is idle"). A variable, for tests.
+// whose route the daemon keeps (docs/design/handoff.md, "A thread that is idle"). A variable, for
+// tests.
 var sharedIdle = 30 * time.Minute
 
 // activate lists the tools and registers the session with the daemon, starting it if needed.

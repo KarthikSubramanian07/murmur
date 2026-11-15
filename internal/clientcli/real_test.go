@@ -8,7 +8,7 @@ import (
 
 // These run the real programs, and so only where a person asks: each puts a message in a real
 // session, which costs its user a model call. They are how the package's claims about Codex and
-// OpenCode were checked (docs/VISION.md, "The client's command line").
+// OpenCode were checked (docs/design/handoff.md).
 //
 //	MURMUR_REAL_CODEX=<codex program> MURMUR_REAL_CODEX_THREAD=<thread> go test ./internal/clientcli -run RealCodex
 //	MURMUR_REAL_OPENCODE=<opencode program> MURMUR_REAL_OPENCODE_SESSION=<session> go test ./internal/clientcli -run RealOpenCode

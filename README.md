@@ -131,7 +131,8 @@ remote, and fetches everyone else's. It never touches your branches, working tre
 
 Because everything goes through the remote, a message takes seconds to arrive, not milliseconds.
 The [daemon page](https://murmur.afig.dev/daemon/) walks through one message end to end, and
-[`docs/VISION.md`](docs/VISION.md) has the full design and the reasons for it.
+[`docs/VISION.md`](docs/VISION.md) has the design's direction and reasons, and
+[`docs/design/`](docs/design/) how each part works.
 
 ## Trust and privacy
 
@@ -170,7 +171,8 @@ is sent and how.
 
 | Doc | For |
 | --- | --- |
-| [`docs/VISION.md`](docs/VISION.md) | The design and its reasons, including what `mur join` writes and where. |
+| [`docs/VISION.md`](docs/VISION.md) | The design's direction and its reasons. |
+| [`docs/design/`](docs/design/) | How each part works, one file per topic; [`joining.md`](docs/design/joining.md) has what `mur join` writes and where. |
 | [`docs/agents/join.md`](docs/agents/join.md) | What an agent reads to join. |
 | [`docs/agents/use.md`](docs/agents/use.md) | What an agent reads to use the tools. |
 | [Other ways to use Murmur](https://murmur.afig.dev/more/) | Uses beyond what Murmur was built for, such as connecting agents in different repos ([`docs/agents/different-repos.md`](docs/agents/different-repos.md) for agents). |
