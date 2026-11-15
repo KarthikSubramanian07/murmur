@@ -136,8 +136,9 @@ grok`. Both take Claude Code's payload and answers.
   Codex's hooks are given its input and output as `tool_input` and `tool_response`, a shell command
   as `Bash` in both (codex-rs rust-v0.169.0); Grok's as `toolName` and `toolInput`, its shell as
   `run_terminal_command`, with `tool_response` beside its own `toolResult` (its hooks docs, read
-  2026-11-15). The hook reads them only to find an issue the call filed or closed
-  ([page](page.md)). Murmur's Pi extension and OpenCode plugin pass neither.
+  2026-11-15). Codex's output is the command's own, and it has none for a call still running when
+  it yields. The hook reads them only to find an issue the call filed or closed ([page](page.md)).
+  Murmur's Pi extension and OpenCode plugin pass neither.
 - **Hook not running.** A session of an agent the hook runs in that called a Murmur tool over a
   minute ago, with no hook of it since the daemon started, is marked in `who`, on the page and in
   `send`'s answer, and asked to have its user run `mur join` again. It is judged from the daemon's

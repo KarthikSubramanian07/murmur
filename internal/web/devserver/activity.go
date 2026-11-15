@@ -33,11 +33,11 @@ func fixtureActivity(now time.Time) []web.Activity {
 		{Kind: web.ActStatus, At: ago(24 * time.Minute), Who: "rapid-ibis", Doing: "Load-testing /api/summarize at 50 requests a second"},
 		// Issues sessions' hooks saw them close or file (#510), which GitHub's list gives only a login
 		// for; it hasn't listed #22 yet.
-		{Kind: web.ActIssue, At: ago(17 * time.Minute), Who: "rapid-ibis", Issue: 15, What: web.GHClosed},
+		{Kind: web.ActIssue, At: ago(17 * time.Minute), Who: "rapid-ibis", Repo: "example/huddle", Issue: 15, What: web.GHClosed},
 		{Kind: web.ActCommits, At: ago(12 * time.Minute), Who: "quiet-otter", Branch: "demo-polish", Commits: 3, Subject: "Show a skeleton while meetings load"},
 		{Kind: web.ActStatus, At: ago(6 * time.Minute), Who: "quiet-otter", Doing: "Adding empty states and a loading skeleton to the dashboard"},
-		{Kind: web.ActIssue, At: ago(4 * time.Minute), Who: "quiet-otter", Issue: 21, What: web.GHOpened},
-		{Kind: web.ActIssue, At: ago(1 * time.Minute), Who: "brave-heron", Issue: 22, What: web.GHOpened},
+		{Kind: web.ActIssue, At: ago(4 * time.Minute), Who: "quiet-otter", Repo: "example/huddle", Issue: 21, What: web.GHOpened},
+		{Kind: web.ActIssue, At: ago(1 * time.Minute), Who: "brave-heron", Repo: "example/huddle", Issue: 22, What: web.GHOpened},
 	}
 	for i := range acts {
 		acts[i].ID = "act-" + strconv.Itoa(i+1)

@@ -1633,6 +1633,15 @@ function emptyState(iconName, title, line) {
 // together show the last, and its commits to one branch are counted.
 const RECENT_MAX = 300;
 const RECENT_RUN = 30 * 60 * 1000; // how far apart two of a kind may be and still be one line
+// How long before GitHub's time for an issue's close a session's close of it may be and still be the
+// one GitHub lists: the hook tells of it after gh returns, so later, but clocks differ a little.
+const ISSUE_NEAR = 10 * 60 * 1000;
+
+// ghRepo is the owner/name, lowercased, of a pull request's or an issue's address on GitHub, or "".
+function ghRepo(url) {
+  const m = /^https:\/\/(?:www\.)?github\.com\/([\w.-]+\/[\w.-]+)\/(?:issues|pull)\/\d+(?:[/?#]|$)/i.exec(url || "");
+  return m ? m[1].toLowerCase() : "";
+}
 
 // The session a pull request is from: the one on its branch, or that committed to it.
 function sessionOnBranch(branch) {
@@ -1660,8 +1669,15 @@ function recentEntries() {
     out.push({ t: m.sortAt, group: "messages", m, who: [fromName(m), ...to] });
   }
   // An issue a session of this device filed or closed, as its hook saw (#510), names the session on
-  // GitHub's event for it, matched by number; one GitHub hasn't listed (yet) shows on its own.
-  const listed = new Set(ui.github.filter((g) => g.kind === "issue").map((g) => g.what + " " + g.number));
+  // GitHub's event for it: the same number in the repository of the event's address, which needn't
+  // be the remote's (gh lists a clone's upstream first), and for a close, one about when GitHub's
+  // was, since an issue reopened and closed again was closed last by someone else. One GitHub hasn't
+  // listed (yet) shows on its own, if it is in the repository GitHub's listing is of: one, as one
+  // run of gh lists one, so an event without an address is in it too.
+  const listedRepo = ui.github.map((g) => ghRepo(g.url)).find(Boolean) || "";
+  const repoOf = (g) => ghRepo(g.url) || listedRepo;
+  const listed = new Map();
+  for (const g of ui.github) if (g.kind === "issue" && repoOf(g)) listed.set(repoOf(g) + " " + g.what + " " + g.number, g);
   const issues = new Map();
   // A session's status changes, and its commits to a branch, that follow each other closely are one entry.
   const runs = new Map();
@@ -1669,8 +1685,14 @@ function recentEntries() {
   for (const a of acts) {
     const who = nameOf(a.addr, a.who);
     if (a.kind === "issue") {
-      issues.set(a.what + " " + a.issue, who);
-      if (listed.has(a.what + " " + a.issue)) continue;
+      const repo = (a.repo || "").toLowerCase();
+      const key = repo + " " + a.what + " " + a.issue;
+      const g = listed.get(key);
+      if (g && (a.what !== "closed" || a.t >= when(g.at) - ISSUE_NEAR)) {
+        issues.set(key, who);
+        continue;
+      }
+      if (!repo || repo !== listedRepo) continue;
     }
     const key = a.kind === "status" ? "status " + who : a.kind === "commits" ? "commits " + who + " " + (a.branch || "") : "";
     const run = key && runs.get(key);
@@ -1691,8 +1713,9 @@ function recentEntries() {
     const e = { t: Math.min(t, Date.now()), group: "activity", g, who: [sessionOnBranch(g.branch)] };
     if (g.kind === "issue") {
       // Who closed it, where a session here did; else who filed it. Both count for the filter.
-      const filer = issues.get("opened " + g.number) || "";
-      const closer = g.what === "closed" ? issues.get("closed " + g.number) || "" : "";
+      const repo = repoOf(g);
+      const filer = (repo && issues.get(repo + " opened " + g.number)) || "";
+      const closer = (repo && g.what === "closed" && issues.get(repo + " closed " + g.number)) || "";
       e.who = closer ? [closer, filer] : [filer];
       e.closer = !!closer;
     }
