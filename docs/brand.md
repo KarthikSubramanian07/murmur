@@ -118,6 +118,19 @@ pressed, and butter for a person's own messages. The sidebar is ink, not blue. C
 quiet step (`#A9B6E6`) is still 8:1. The greens, ambers and reds of session states stay Light's,
 a step darker for cream. Dark stays the default.
 
+A person's face is a ghost (#579), and the ghost alone marks a person: there is no ring. It is
+drawn in three layers: a round tile in the person's device colour, one of
+16 ghosts (`ghost-*.svg` in `internal/web/static/assets/ghosts/`) and one of 15 accessories
+(`acc-*.svg`) or none, so 256 faces in all. The ghosts are named for ways of talking quietly
+(murmur, hush, whisper, psst); the murmur ghost has the mark's quotation-mark eyes and mumble its
+leaning ovals, and the bubble accessory is a butter speech bubble with someone typing. The ghosts
+carry no tile of their own; their bodies are the brand's light tints, which read on all twelve
+device hues. A person's name picks their ghost and accessory (`ghostOf` in `app.js`), so they wear
+the same one everywhere. Every body shares one head and eye line, so each
+accessory fits every ghost; some, like the bubble, reach past the tile's edge, and the page
+doesn't clip them. `scripts/ghosts.py` writes them and `docs/ghosts.html`, a sheet of
+every combination; a change to the set means running it again.
+
 ## Renders
 
 `site/how-wide.mp4`, `site/how-tall.mp4` and their posters are rendered from
