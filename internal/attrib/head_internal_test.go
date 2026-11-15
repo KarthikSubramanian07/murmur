@@ -209,6 +209,88 @@ func TestAddTipsSkipsTheZeroID(t *testing.T) {
 	}
 }
 
+// A worktree's HEAD file can name an object the clone lacks, from a corrupt or hand-copied entry,
+// or an ID of the other hash's length. As a tip it made NewCommits's git log fail with "bad object"
+// or "bad revision", so no call in any worktree of the clone was credited (#540). A tree or blob
+// ID git already passed over. Each must leave a commit made in another worktree credited, whether
+// Head reads the HEAD files itself or asks git.
+func TestTipsThatAreNoCommitsHereStillCredit(t *testing.T) {
+	dir := t.TempDir()
+	hgit(t, dir, "init", "-q", "-b", "main")
+	hgit(t, dir, "commit", "-q", "--allow-empty", "-m", "root")
+	other := filepath.Join(t.TempDir(), "other")
+	hgit(t, dir, "worktree", "add", "-q", "-b", "other", other)
+	tree := hgit(t, dir, "rev-parse", "HEAD^{tree}")
+	file := filepath.Join(t.TempDir(), "blob")
+	if err := os.WriteFile(file, []byte("a blob\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	blob := hgit(t, dir, "hash-object", "-w", file)
+	missing := strings.Repeat("1", 40)
+	heads := map[string]string{
+		dir:   filepath.Join(dir, ".git", "HEAD"),
+		other: filepath.Join(dir, ".git", "worktrees", "other", "HEAD"),
+	}
+	cases := []struct {
+		name, id string
+		corrupt  string // the worktree whose HEAD file is overwritten; the commit is made in the other
+		isTip    bool   // whether both ways of reading HEADs record id as a tip
+	}{
+		{"a missing commit in a linked worktree", missing, other, true},
+		{"a missing commit in the main worktree", missing, dir, true},
+		{"an ID of the other hash's length", strings.Repeat("2", 64), other, false},
+		{"a tree", tree, other, true},
+		{"a blob", blob, other, true},
+	}
+	paths := []struct {
+		name string
+		head func(string) (Ref, error)
+	}{
+		{"read from the files", func(wt string) (Ref, error) { return Head(context.Background(), wt) }},
+		{"read by git", func(wt string) (Ref, error) {
+			return headByGit(context.Background(), wt, Ref{Time: time.Now()})
+		}},
+	}
+	for _, c := range cases {
+		for _, p := range paths {
+			t.Run(c.name+", "+p.name, func(t *testing.T) {
+				saved, err := os.ReadFile(heads[c.corrupt])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(heads[c.corrupt], []byte(c.id+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				defer os.WriteFile(heads[c.corrupt], saved, 0o644)
+				wt := dir
+				if c.corrupt == dir {
+					wt = other
+				}
+				before, err := p.head(wt)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if c.isTip && !slices.Contains(before.tips, c.id) {
+					t.Fatalf("%s is not among the tips %v, so this tests nothing", c.id, before.tips)
+				}
+				hgit(t, wt, "commit", "-q", "--allow-empty", "-m", "during")
+				sha := hgit(t, wt, "rev-parse", "HEAD")
+				after, err := p.head(wt)
+				if err != nil {
+					t.Fatal(err)
+				}
+				commits, err := NewCommits(context.Background(), wt, before, after)
+				if err != nil {
+					t.Fatalf("NewCommits: %v", err)
+				}
+				if len(commits) != 1 || commits[0].SHA != sha {
+					t.Fatalf("NewCommits = %+v, want only %s", commits, sha)
+				}
+			})
+		}
+	}
+}
+
 // detachedHeadFiles reads its HEAD files several at a time, so give it more entries than readers,
 // on and off branches, and some it can't read, and check it finds exactly the detached ones.
 func TestDetachedHeadFilesReadsEveryEntry(t *testing.T) {
