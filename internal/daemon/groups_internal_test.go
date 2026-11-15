@@ -28,19 +28,37 @@ func TestAChangeNobodyCameBackForIsLetGo(t *testing.T) {
 }
 
 // An add refused as too old says how old it was by this device's clock, beside its time by its
-// sender's, so a clock far off on either side shows (#543).
+// sender's, so a clock far off on either side shows (#543). One refused in a skip while younger
+// than that says so, rather than "too long ago".
 func TestAnAddTooOldToApplySaysHowOld(t *testing.T) {
 	t.Parallel()
 	d := tagsDaemon(t)
 	var out strings.Builder
 	d.log = log.New(&out, "", 0)
+	add := func(at time.Time, mode syncMode) string {
+		out.Reset()
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		d.applyGroupAddLocked(bus.Event{V: bus.Version, ID: "abcdef12", Type: bus.GroupAdd, From: "far/xxxxxx",
+			To: "dev/aaaaaa", At: at, Add: []string{"group:ui"}}, mode)
+		return out.String()
+	}
 	at := time.Now().Add(-2 * time.Hour)
+	got := add(at, modeNormal)
+	// The age is rounded to the second, so a slow run may log 2h0m1s.
+	for _, want := range []string{"at " + at.Format(time.RFC3339) + " by its clock, 2h0m",
+		" ago by this device's, too long ago to apply"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("logged %q; want it to say %q", got, want)
+		}
+	}
+	// From a sender whose clock runs ahead: sent before the session started, by that clock.
 	d.mu.Lock()
-	d.applyGroupAddLocked(bus.Event{V: bus.Version, ID: "abcdef12", Type: bus.GroupAdd, From: "far/xxxxxx",
-		To: "dev/aaaaaa", At: at, Add: []string{"group:ui"}}, modeNormal)
+	d.sessions["aaaaaa"].started = time.Now().Add(time.Hour)
 	d.mu.Unlock()
-	want := "at " + at.Format(time.RFC3339) + " by its clock, 2h0m0s ago by this device's, too long ago to apply"
-	if !strings.Contains(out.String(), want) {
-		t.Errorf("logged %q; want it to say %q", out.String(), want)
+	got = add(time.Now().Add(20*time.Minute), modeSkip)
+	if want := "read after a long gap and not shown to be sent since the session started; not applied"; !strings.Contains(got, want) ||
+		strings.Contains(got, "too long ago") {
+		t.Errorf("refused in a skip, logged %q; want it to say %q", got, want)
 	}
 }

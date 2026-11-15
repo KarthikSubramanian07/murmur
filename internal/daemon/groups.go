@@ -225,11 +225,17 @@ func (d *Daemon) applyGroupAddLocked(e bus.Event, mode syncMode) {
 	if dev != d.device {
 		return
 	}
-	if ago := time.Since(e.At); ago > groupAddMaxAge || mode == modeSkip && !d.sentSinceLocked(e, sess, mode) {
+	ago := time.Since(e.At)
+	if old := ago > groupAddMaxAge; old || mode == modeSkip && !d.sentSinceLocked(e, sess, mode) {
 		// The add's time is by its sender's clock and the age by this one's, so a clock far off
-		// on either side shows in the line (#543).
-		d.log.Printf("%s added %s to %s at %s by its clock, %s ago by this device's, too long ago to apply",
-			e.From, e.To, strings.Join(e.Add, ", "), e.At.Format(time.RFC3339), ago.Round(time.Second))
+		// on either side shows in the line (#543). One refused in a skip may be younger than
+		// groupAddMaxAge, or ahead of this clock, so the line says which rule refused it.
+		why := "too long ago to apply"
+		if !old {
+			why = "read after a long gap and not shown to be sent since the session started; not applied"
+		}
+		d.log.Printf("%s added %s to %s at %s by its clock, %s ago by this device's, %s",
+			e.From, e.To, strings.Join(e.Add, ", "), e.At.Format(time.RFC3339), ago.Round(time.Second), why)
 		return
 	}
 	key := d.tagKeyLocked(sess)
