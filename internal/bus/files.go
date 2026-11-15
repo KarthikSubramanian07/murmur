@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/bits"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -16,9 +18,9 @@ import (
 )
 
 // File is one file a message carries (#570, docs/design/files.md). The file itself isn't in the
-// event: it is a blob, encrypted with Key, in the commit on the message's files ref (FilesRef),
-// which a device fetches only when the message is for it. The event is encrypted for the team, so
-// whoever can read the message can read its files, and nobody else.
+// event: it is encrypted with Key, in the blob on the message's files ref (Event.FilesAt), which a
+// device fetches only when the message is for it. The event is encrypted for the team, so whoever
+// can read the message can read its files, and nobody else.
 type File struct {
 	Name string `json:"name"`
 	Size int64  `json:"size"` // of the file, not of its blob
@@ -39,9 +41,26 @@ const (
 	fileOverhead = 12 + 16
 )
 
-// FilesRef is the ref that holds the files of the message with that ID, sent from that device: one
-// commit, whose tree names each file's blob by its place in the event's list ("0", "1", ...).
-func FilesRef(device, msgID string) string { return brand.FilesPrefix + device + "/" + msgID }
+// FilesRef is the ref that holds a message's files: one commit, whose tree has one blob, the pack
+// (PackFiles). at is the event's FilesAt, random, so the ref says neither which message it is for
+// nor which device sent it.
+func FilesRef(at string) string { return brand.FilesPrefix + at }
+
+// NewFilesAt makes the name of a message's files ref.
+func NewFilesAt() string { return RandHex(32) }
+
+// validFilesAt says s is a name NewFilesAt makes.
+func validFilesAt(s string) bool {
+	if len(s) != 32 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
 
 // FileName makes of what a sender called a file a name a receiver can save it under, on any
 // system, inside the directory Murmur chose: letters, digits, '.', '_' and '-' only, so never a
@@ -185,23 +204,83 @@ func OpenFile(blob []byte, f File, msgID string, index int) ([]byte, error) {
 	return plain, nil
 }
 
-// NewFilesCommit writes blobs as one commit with no parent, whose tree names each by its place
-// ("0", "1", ...), and returns the commit. Like NewCommit it writes objects and nothing else, with
-// plumbing that never reads the index or the working tree.
-func (r *Repo) NewFilesCommit(ctx context.Context, blobs [][]byte) (string, error) {
-	var tree strings.Builder
-	for i, blob := range blobs {
-		out, err := r.Git.Run(ctx, string(blob), "hash-object", "-t", "blob", "-w", "--stdin")
-		if err != nil {
-			return "", err
-		}
-		fmt.Fprintf(&tree, "100644 blob %s\t%d\n", strings.TrimSpace(out), i)
+// minPack is the smallest pack: files under it all look alike.
+const minPack = 4 << 10
+
+// MaxPack is the largest pack a message within the limits makes: PackFiles adds under an eighth.
+const MaxPack = (MaxFilesTotal + MaxFiles*fileOverhead) / 8 * 9
+
+// packLen is how long a pack holding n bytes is made: n rounded up so that only the first few bits
+// of its length are set (Padmé: at most 12% longer, less as it grows), and no shorter than minPack.
+// A length then says about how large the files are, and not their size.
+func packLen(n int) int {
+	if n <= minPack {
+		return minPack
 	}
-	out, err := r.Git.Run(ctx, tree.String(), "mktree")
+	e := bits.Len(uint(n)) - 1 // floor(log2 n)
+	z := e - bits.Len(uint(e)) // the low bits a length may not use
+	mask := 1<<z - 1
+	return (n + mask) &^ mask
+}
+
+// PackFiles joins a message's sealed files, in order, into the one blob its files ref holds, and
+// fills it out with random bytes to a length that hides how many files there are and their sizes
+// (packLen). A reader finds each file by the sizes its event gives.
+func PackFiles(sealed [][]byte) ([]byte, error) {
+	n := 0
+	for _, b := range sealed {
+		n += len(b)
+	}
+	pack := make([]byte, 0, packLen(n))
+	for _, b := range sealed {
+		pack = append(pack, b...)
+	}
+	pack = pack[:cap(pack)]
+	if _, err := rand.Read(pack[n:]); err != nil {
+		return nil, err
+	}
+	return pack, nil
+}
+
+// ErrNoFile is a file that isn't on its message's files ref.
+var ErrNoFile = errors.New("not on the message's files ref")
+
+// PackedFile returns the index'th sealed file of a pack, by the sizes files gives. A file after
+// one whose size isn't known (see cleanFiles) can't be found.
+func PackedFile(pack []byte, files []File, index int) ([]byte, error) {
+	if index < 0 || index >= len(files) {
+		return nil, ErrNoFile
+	}
+	off := int64(0)
+	for _, f := range files[:index] {
+		if !f.Readable() {
+			return nil, ErrNoFile
+		}
+		off += f.Size + fileOverhead
+	}
+	end := off + files[index].Size + fileOverhead
+	if !files[index].Readable() || end > int64(len(pack)) {
+		return nil, ErrNoFile
+	}
+	return pack[off:end], nil
+}
+
+// NewFilesCommit writes a pack as a commit with no parent, whose tree holds it as "0", and returns
+// the commit. Like NewCommit it writes objects and nothing else, with plumbing that never reads the
+// index or the working tree. The commit says nothing of its writer or of when: one name and one
+// date for every device.
+func (r *Repo) NewFilesCommit(ctx context.Context, pack []byte) (string, error) {
+	out, err := r.Git.Run(ctx, string(pack), "hash-object", "-t", "blob", "-w", "--stdin")
 	if err != nil {
 		return "", err
 	}
-	out, err = r.Git.Run(ctx, "files\n", "-c", "user.name="+r.Name, "-c", "user.email="+r.Email,
+	out, err = r.Git.Run(ctx, "100644 blob "+strings.TrimSpace(out)+"\t0\n", "mktree")
+	if err != nil {
+		return "", err
+	}
+	g := r.Git
+	g.Env = append(slices.Clone(g.Env), "GIT_AUTHOR_DATE="+filesDate, "GIT_COMMITTER_DATE="+filesDate)
+	out, err = g.Run(ctx, "files\n", "-c", "user.name="+brand.Name, "-c", "user.email=files@"+brand.Name+".invalid",
 		"commit-tree", "--no-gpg-sign", strings.TrimSpace(out), "-F", "-")
 	if err != nil {
 		return "", err
@@ -209,14 +288,14 @@ func (r *Repo) NewFilesCommit(ctx context.Context, blobs [][]byte) (string, erro
 	return strings.TrimSpace(out), nil
 }
 
-// ErrNoFile is a file's blob that isn't in the commit on its message's files ref.
-var ErrNoFile = errors.New("not on the message's files ref")
+// filesDate is the date on every files commit.
+const filesDate = "2000-01-01T00:00:00Z"
 
-// ReadFileBlob returns the index'th blob of the files commit at rev (a SHA or a ref), which was
-// fetched. One over max bytes isn't read: git stores a blob compressed, so a small fetch can hold
-// one of any size (see MaxRecord).
-func (r *Repo) ReadFileBlob(ctx context.Context, rev string, index int, max int64) ([]byte, error) {
-	name := rev + ":" + strconv.Itoa(index)
+// ReadPack returns the pack of the files commit at rev, which was fetched. One over max bytes
+// isn't read: git stores a blob compressed, so a small fetch can hold one of any size (see
+// MaxRecord).
+func (r *Repo) ReadPack(ctx context.Context, rev string, max int64) ([]byte, error) {
+	name := rev + ":0"
 	out, err := r.Git.Run(ctx, name+"\n", "cat-file", "--batch-check=%(objecttype) %(objectsize)")
 	if err != nil {
 		return nil, err
@@ -230,7 +309,7 @@ func (r *Repo) ReadFileBlob(ctx context.Context, rev string, index int, max int6
 		return nil, ErrNoFile
 	}
 	if size > max {
-		return nil, fmt.Errorf("%w: a file of %d bytes, over %d", ErrTooLarge, size, max)
+		return nil, fmt.Errorf("%w: files of %d bytes, over %d", ErrTooLarge, size, max)
 	}
 	out, err = r.Git.Run(ctx, "", "cat-file", "blob", name)
 	if err != nil {
@@ -260,9 +339,6 @@ func (r *Repo) FetchFiles(ctx context.Context, ref string) (string, error) {
 	}
 	return sha, nil
 }
-
-// MaxFileBlob is the largest blob a file within MaxFile makes.
-const MaxFileBlob = MaxFile + fileOverhead
 
 // DeleteLocal removes a local ref, if it is there.
 func (r *Repo) DeleteLocal(ctx context.Context, ref string) error {

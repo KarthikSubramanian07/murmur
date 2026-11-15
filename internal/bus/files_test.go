@@ -81,7 +81,7 @@ func TestCleanFiles(t *testing.T) {
 	named := func(name string) bus.File { f := good; f.Name = name; return f }
 	huge := named("huge.bin")
 	huge.Size = bus.MaxFile + 1
-	e := bus.Event{Type: bus.Message, Files: []bus.File{
+	e := bus.Event{Type: bus.Message, FilesAt: bus.NewFilesAt(), Files: []bus.File{
 		named("a.txt"), named("../A.TXT"), {Name: "nokey.txt", Size: 1}, huge, named("a.txt"),
 	}}
 	for range bus.MaxFiles {
@@ -101,44 +101,122 @@ func TestCleanFiles(t *testing.T) {
 	if e.Files[3].Size != 0 {
 		t.Errorf("a file over the limit kept its size: %+v", e.Files[3])
 	}
-	started := bus.Event{Type: bus.SessionStarted, Files: []bus.File{named("a.txt")}}
+	if e.FilesAt == "" {
+		t.Error("a files ref's name didn't survive")
+	}
+	started := bus.Event{Type: bus.SessionStarted, FilesAt: bus.NewFilesAt(), Files: []bus.File{named("a.txt")}}
 	started.Clean()
-	if len(started.Files) != 0 {
-		t.Errorf("an event that isn't a message kept files: %+v", started.Files)
+	if len(started.Files) != 0 || started.FilesAt != "" {
+		t.Errorf("an event that isn't a message kept files: %+v", started)
+	}
+	// A ref's name is what NewFilesAt makes, so no event can point a reader at another ref.
+	for _, at := range []string{"", "mesh/some-device", "../heads/main", strings.Repeat("g", 32), strings.Repeat("A", 32), strings.Repeat("a", 31)} {
+		forged := bus.Event{Type: bus.Message, FilesAt: at, Files: []bus.File{named("a.txt")}}
+		forged.Clean()
+		if forged.FilesAt != "" {
+			t.Errorf("a files ref called %q was kept", at)
+		}
 	}
 }
 
-// Blobs go through git as they are, whatever their bytes, and come back by their place. A blob
-// over the limit it is read with isn't read.
+// A pack's length hides how many files it holds and their sizes: it is one of a few lengths near
+// what it holds, never under 4 KB, and each file is found in it by the sizes the event gives.
+func TestPackFiles(t *testing.T) {
+	var sealed [][]byte
+	var files []bus.File
+	for i, plain := range [][]byte{[]byte("one"), bytes.Repeat([]byte("two"), 3000), {}} {
+		blob, f, err := bus.SealFile(plain, "0123456789abcdef", i)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sealed, files = append(sealed, blob), append(files, f)
+	}
+	pack, err := bus.PackFiles(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pack) != 9216 { // 3+9000+0 and 28 each is 9087, which rounds up to a multiple of 512
+		t.Errorf("a pack of %d bytes", len(pack))
+	}
+	for i, want := range sealed {
+		got, err := bus.PackedFile(pack, files, i)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Errorf("file %d: %d bytes, %v; want %d", i, len(got), err, len(want))
+		}
+	}
+	if _, err := bus.PackedFile(pack, files, 3); !errors.Is(err, bus.ErrNoFile) {
+		t.Errorf("a place past the last: %v", err)
+	}
+	// A file after one whose size isn't known can't be found, and one that would end past the
+	// pack isn't there.
+	files[0] = bus.File{Name: "unreadable"}
+	if _, err := bus.PackedFile(pack, files, 1); !errors.Is(err, bus.ErrNoFile) {
+		t.Errorf("a file after an unreadable one: %v", err)
+	}
+	if _, err := bus.PackedFile(pack[:100], files[1:], 0); !errors.Is(err, bus.ErrNoFile) {
+		t.Errorf("a file longer than its pack: %v", err)
+	}
+	for _, n := range []int{0, 1, 4096} {
+		if pack, _ := bus.PackFiles([][]byte{make([]byte, n)}); len(pack) != 4096 {
+			t.Errorf("%d bytes made a pack of %d", n, len(pack))
+		}
+	}
+	for _, n := range []int{4097, 70_000, 1 << 20, 3<<20 + 17, 20 << 20} {
+		pack, _ := bus.PackFiles([][]byte{make([]byte, n)})
+		if len(pack) < n || len(pack) > n+n/8 {
+			t.Errorf("%d bytes made a pack of %d", n, len(pack))
+		}
+	}
+	if a, _ := bus.PackFiles([][]byte{make([]byte, 70_000)}); true {
+		b, _ := bus.PackFiles([][]byte{make([]byte, 30_000), make([]byte, 40_100)})
+		if len(a) != len(b) {
+			t.Errorf("one file and two of about the same size made packs of %d and %d", len(a), len(b))
+		}
+		if bytes.Equal(a[70_000:], make([]byte, len(a)-70_000)) {
+			t.Error("the filling is zeros, which would show where the files end")
+		}
+	}
+}
+
+// A pack goes through git as it is, whatever its bytes. One over the limit it is read with isn't
+// read, and the commit says nothing of who wrote it or when.
 func TestFilesCommit(t *testing.T) {
 	dir := t.TempDir()
 	if out, err := exec.Command("git", "init", "-q", "--bare", dir).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	ctx := context.Background()
-	r := &bus.Repo{Git: gitx.Git{Dir: dir}, Name: "test", Email: "test@example.invalid"}
-	every := make([]byte, 0, 512)
+	r := &bus.Repo{Git: gitx.Git{Dir: dir}, Name: "a-device", Email: "a-device@example.invalid"}
+	pack := []byte("text\r\nwith both\nline ends\r\n\x00\x1a")
 	for range 2 {
 		for b := range 256 {
-			every = append(every, byte(b))
+			pack = append(pack, byte(b))
 		}
 	}
-	blobs := [][]byte{[]byte("text\r\nwith both\nline ends\r\n"), every, bytes.Repeat([]byte{0}, 3000)}
-	sha, err := r.NewFilesCommit(ctx, blobs)
+	sha, err := r.NewFilesCommit(ctx, pack)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, want := range blobs {
-		got, err := r.ReadFileBlob(ctx, sha, i, 4000)
-		if err != nil || !bytes.Equal(got, want) {
-			t.Errorf("blob %d: %d bytes, %v; want %d", i, len(got), err, len(want))
-		}
+	if got, err := r.ReadPack(ctx, sha, int64(len(pack))); err != nil || !bytes.Equal(got, pack) {
+		t.Errorf("the pack: %d bytes, %v; want %d", len(got), err, len(pack))
 	}
-	if _, err := r.ReadFileBlob(ctx, sha, 3, 4000); !errors.Is(err, bus.ErrNoFile) {
-		t.Errorf("a place with no blob: %v", err)
+	if _, err := r.ReadPack(ctx, sha, int64(len(pack))-1); !errors.Is(err, bus.ErrTooLarge) {
+		t.Errorf("a pack over the limit: %v", err)
 	}
-	if _, err := r.ReadFileBlob(ctx, sha, 2, 2999); !errors.Is(err, bus.ErrTooLarge) {
-		t.Errorf("a blob over the limit: %v", err)
+	empty, err := r.NewCommit(ctx, "", "no files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReadPack(ctx, empty, 1000); !errors.Is(err, bus.ErrNoFile) {
+		t.Errorf("a commit with no pack: %v", err)
+	}
+	again, err := r.NewFilesCommit(ctx, pack)
+	if err != nil || again != sha {
+		t.Errorf("the same pack made another commit, %s and %s (%v): something in it changes", sha, again, err)
+	}
+	out, err := exec.Command("git", "--git-dir="+dir, "cat-file", "commit", sha).Output()
+	if err != nil || strings.Contains(string(out), "a-device") {
+		t.Errorf("the commit names its writer: %v\n%s", err, out)
 	}
 	if got, err := exec.Command("git", "--git-dir="+dir, "for-each-ref").Output(); err != nil || len(got) != 0 {
 		t.Errorf("writing files left refs: %q, %v", got, err)

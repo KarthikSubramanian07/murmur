@@ -19,7 +19,7 @@ import (
 )
 
 // Files a message carries (#570, docs/design/files.md). The sender's daemon encrypts each and
-// pushes them as one commit to the message's own ref (bus.FilesRef) before it writes the event. A
+// pushes them as one blob to a ref of the message's own (bus.FilesRef) before it writes the event. A
 // receiving daemon fetches that ref only for a message that is for one of its sessions, saves the
 // files under its state directory, and queues the message once they are there, so the paths the
 // agent is given work by the time it reads them.
@@ -89,54 +89,58 @@ func readSendFiles(paths []string) ([][]byte, []bus.File, error) {
 	return data, files, nil
 }
 
-// putFiles encrypts the files a send names and pushes them to the files ref of the message with
-// that ID, and returns what the event says of them. It keeps a copy of each where a receiver's
-// would be, so a session on this device, and the page, have them without a fetch.
-func (d *Daemon) putFiles(ctx context.Context, msgID string, paths []string) ([]bus.File, error) {
+// putFiles encrypts the files a send names and pushes them to a new files ref, for the message
+// with that ID, and returns what the event says of them and the ref's name. It keeps a copy of each
+// where a receiver's would be, so a session on this device, and the page, have them without a fetch.
+func (d *Daemon) putFiles(ctx context.Context, msgID string, paths []string) (files []bus.File, at string, err error) {
 	data, files, err := readSendFiles(paths)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	blobs := make([][]byte, len(data))
+	sealed := make([][]byte, len(data))
 	for i, b := range data {
 		blob, f, err := bus.SealFile(b, msgID, i)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		f.Name = files[i].Name
-		blobs[i], files[i] = blob, f
+		sealed[i], files[i] = blob, f
 	}
 	files = bus.CleanFiles(files) // the names a receiver will save them under
-	sha, err := d.repo.NewFilesCommit(ctx, blobs)
+	pack, err := bus.PackFiles(sealed)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	ref := bus.FilesRef(d.device, msgID)
+	sha, err := d.repo.NewFilesCommit(ctx, pack)
+	if err != nil {
+		return nil, "", err
+	}
+	at = bus.NewFilesAt()
 	d.mu.Lock()
-	d.st.FileRefs[msgID] = time.Now().Round(0)
+	d.st.FileRefs[at] = time.Now().Round(0)
 	d.saveLocked()
 	d.mu.Unlock()
-	if err := d.push(ctx, sha, ref, bus.FastForward, ""); err != nil {
-		d.dropFileRef(msgID, false)
-		return nil, fmt.Errorf("its files didn't go out: %w", err)
+	if err := d.push(ctx, sha, bus.FilesRef(at), bus.FastForward, ""); err != nil {
+		d.dropFileRef(at, false)
+		return nil, "", fmt.Errorf("its files didn't go out: %w", err)
 	}
 	for i, f := range files {
 		if err := d.saveFile(msgID, f.Name, data[i]); err != nil {
 			d.log.Printf("keeping a copy of %s, sent with message %s: %v", f.Name, msgID, err)
 		}
 	}
-	return files, nil
+	return files, at, nil
 }
 
-// dropFileRef forgets the files ref of a message this device sent, or with due set leaves it to
-// the next prune to delete from the remote: the message never went out.
-func (d *Daemon) dropFileRef(msgID string, due bool) {
+// dropFileRef forgets a files ref this device pushed, or with due set leaves it to the next prune
+// to delete from the remote: its message never went out.
+func (d *Daemon) dropFileRef(at string, due bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if due {
-		d.st.FileRefs[msgID] = time.Now().Add(-d.opt.FileKeep).Round(0)
+		d.st.FileRefs[at] = time.Now().Add(-d.opt.FileKeep).Round(0)
 	} else {
-		delete(d.st.FileRefs, msgID)
+		delete(d.st.FileRefs, at)
 	}
 	d.saveLocked()
 }
@@ -249,15 +253,17 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 	}
 }
 
-// fetchFiles brings the files of message e from its sender's files ref and saves them. A fetch
-// that fails is tried again, as the network may be why; a ref that isn't there, or holds something
-// else, is not.
+// fetchFiles brings the files of message e from its files ref and saves them. A fetch that fails
+// is tried again, as the network may be why; a ref that isn't there, or holds something else, is
+// not.
 func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
 	if d.filesHere(e) {
 		return nil
 	}
-	dev, _ := bus.SplitAddr(e.From)
-	ref := bus.FilesRef(dev, e.ID)
+	if e.FilesAt == "" {
+		return bus.ErrNoFile
+	}
+	ref := bus.FilesRef(e.FilesAt)
 	var sha string
 	var err error
 	for try := 1; ; try++ {
@@ -276,12 +282,16 @@ func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
 	if err != nil {
 		return err
 	}
+	pack, err := d.repo.ReadPack(ctx, sha, bus.MaxPack)
+	if err != nil {
+		return err
+	}
 	var failed []string
 	for i, f := range e.Files {
 		if !f.Readable() {
 			continue
 		}
-		blob, err := d.repo.ReadFileBlob(ctx, sha, i, bus.MaxFileBlob)
+		blob, err := bus.PackedFile(pack, e.Files, i)
 		var plain []byte
 		if err == nil {
 			plain, err = bus.OpenFile(blob, f, e.ID, i)
@@ -313,24 +323,24 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 	}
 	d.mu.Lock()
 	var due []string
-	for id, at := range d.st.FileRefs {
-		if time.Since(at) > d.opt.FileKeep {
-			due = append(due, id)
+	for at, sent := range d.st.FileRefs {
+		if time.Since(sent) > d.opt.FileKeep {
+			due = append(due, at)
 		}
 	}
 	d.mu.Unlock()
 	slices.Sort(due)
-	for _, id := range due {
+	for _, at := range due {
 		// Deleting a ref that is already gone succeeds: the look after a refused push finds it at
 		// "", which is what was asked for.
-		if err := d.push(ctx, "", bus.FilesRef(d.device, id), bus.Force, ""); err != nil {
-			d.log.Printf("deleting the files of message %s from the remote: %v", id, err)
+		if err := d.push(ctx, "", bus.FilesRef(at), bus.Force, ""); err != nil {
+			d.log.Printf("deleting files ref %s from the remote: %v", at, err)
 			if ctx.Err() != nil {
 				return
 			}
 			continue
 		}
-		d.dropFileRef(id, false)
+		d.dropFileRef(at, false)
 	}
 }
 

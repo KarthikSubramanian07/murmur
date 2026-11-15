@@ -933,11 +933,11 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	if len(req.Files) > 0 {
 		// The files go out first, on a ref of the message's own, so a daemon that reads the event
 		// finds them there (files.go).
-		files, err := d.putFiles(ctx, e.ID, req.Files)
+		files, at, err := d.putFiles(ctx, e.ID, req.Files)
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}
-		e.Files = files
+		e.Files, e.FilesAt = files, at
 		d.mu.Lock()
 		note = strings.TrimSpace(note + " " + d.noFilesNoteLocked(e))
 		d.mu.Unlock()
@@ -972,7 +972,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	}
 	if err := d.appendEvent(ctx, e); err != nil {
 		if len(e.Files) > 0 {
-			d.dropFileRef(e.ID, true) // nothing names them: off the remote at the next prune
+			d.dropFileRef(e.FilesAt, true) // nothing names them: off the remote at the next prune
 		}
 		if e.Receipts {
 			d.mu.Lock()

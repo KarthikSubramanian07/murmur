@@ -137,6 +137,9 @@ type Event struct {
 	// Files is the files a message carries (#570). A daemon from before files ignores them and gives
 	// its sessions the text alone.
 	Files []File `json:"files,omitempty"`
+	// FilesAt names the ref the message's files are on (FilesRef). It is random and inside the
+	// encrypted event, so the ref itself says nothing of the message or its sender.
+	FilesAt string `json:"filesAt,omitempty"`
 
 	// tags: the tags the human added and removed. To is the session. group.add: Add is the groups
 	// an agent added the session to.
@@ -230,6 +233,9 @@ func (e *Event) Clean() {
 	}
 	e.Marks = cleanMarks(e.Type, e.Marks)
 	e.Files = cleanFiles(e.Type, e.Files)
+	if len(e.Files) == 0 || !validFilesAt(e.FilesAt) {
+		e.FilesAt = "" // with files, they read as files that can't be had
+	}
 }
 
 // cleanMarks holds a receipt's marks to what Murmur writes: the first MaxMarks, each with a message's

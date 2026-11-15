@@ -39,7 +39,7 @@ func inboxMessage(t *testing.T, d *device, sess string) proto.MessageView {
 
 // A message's files reach a session on another device as files on its own machine, byte for byte,
 // saved inside the git directory, and the turn it reads gives their paths (#570). On the remote
-// they sit encrypted on a ref of the message's own, which the receiver keeps no copy of.
+// they sit encrypted in one blob on a ref of the message's own, which the receiver keeps no copy of.
 func TestFilesTravelWithAMessage(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
@@ -94,16 +94,23 @@ func TestFilesTravelWithAMessage(t *testing.T) {
 		t.Errorf("inbox:\n%s", inbox)
 	}
 
-	// On the remote: one ref for the message, holding neither file in the clear, and the names
-	// only inside the encrypted event.
-	ref := "refs/murmur/files/" + a.self() + "/" + id
-	if git(t, remote, "rev-parse", "--verify", "-q", ref) == "" {
-		t.Fatalf("no %s on the remote", ref)
+	// On the remote: one ref, whose name says neither the message nor the device, holding one
+	// blob longer than the files, with nothing in the clear. The names are inside the encrypted
+	// event.
+	refs := strings.Fields(git(t, remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files"))
+	if len(refs) != 1 || strings.Contains(refs[0], a.self()) || strings.Contains(refs[0], id) {
+		t.Fatalf("files refs on the remote: %v", refs)
 	}
-	if tree := git(t, remote, "ls-tree", "--name-only", ref); tree != "0\n1" && tree != "0\r\n1" {
+	if tree := git(t, remote, "ls-tree", "--name-only", refs[0]); tree != "0" {
 		t.Errorf("the files commit's tree: %q", tree)
 	}
-	if blob := git(t, remote, "cat-file", "blob", ref+":1"); strings.Contains(blob, "first line") {
+	if commit := git(t, remote, "cat-file", "commit", refs[0]); strings.Contains(commit, a.self()) || !strings.Contains(commit, " 946684800 +0000") {
+		t.Errorf("the files commit says who or when:\n%s", commit)
+	}
+	if size := git(t, remote, "cat-file", "-s", refs[0]+":0"); size != "20480" { // 20009+24 and 28 each is 20089
+		t.Errorf("the pack is %s bytes", size)
+	}
+	if blob := git(t, remote, "cat-file", "blob", refs[0]+":0"); strings.Contains(blob, "first line") {
 		t.Error("the remote holds a file in the clear")
 	}
 	if log := git(t, remote, "log", "--format=%B", "refs/murmur/mesh/"+a.self()); strings.Contains(log, "notes.txt") {
@@ -195,7 +202,7 @@ func TestMessageArrivesWithoutFilesThatCannotBeHad(t *testing.T) {
 	f.Name = "gone.txt"
 	forger := "forger-0001"
 	pushEvent(t, remote, "refs/murmur/mesh/"+forger, bus.Event{V: bus.Version, ID: "00000000000000aa", Type: bus.Message,
-		From: forger + "/cccccc", At: time.Now().UTC(), To: bob, Subject: "no ref", Files: []bus.File{f}})
+		From: forger + "/cccccc", At: time.Now().UTC(), To: bob, Subject: "no ref", Files: []bus.File{f}, FilesAt: bus.NewFilesAt()})
 	m := inboxMessage(t, b, "bbbbbb")
 	if m.Subject != "no ref" || len(m.Files) != 1 || m.Files[0].Path != "" {
 		t.Fatalf("message: %+v", m)
@@ -204,16 +211,17 @@ func TestMessageArrivesWithoutFilesThatCannotBeHad(t *testing.T) {
 		t.Errorf("turn:\n%s", turn)
 	}
 
-	// A ref that holds another blob at the file's place.
+	// A ref that holds something else where the file should be.
+	at := bus.NewFilesAt()
 	work := t.TempDir()
 	git(t, work, "init", "-q")
-	blob := gitIn(t, work, "not the file", "hash-object", "-w", "--stdin")
+	blob := gitIn(t, work, strings.Repeat("not the file ", 400), "hash-object", "-w", "--stdin")
 	tree := gitIn(t, work, "100644 blob "+blob+"\t0\n", "mktree")
 	commit := gitIn(t, work, "files", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit-tree", tree)
-	git(t, work, "push", "-q", remote, commit+":refs/murmur/files/"+forger+"/00000000000000bb")
+	git(t, work, "push", "-q", remote, commit+":refs/murmur/files/"+at)
 	f.Name = "swapped.txt"
 	pushEvent(t, remote, "refs/murmur/mesh/"+forger, bus.Event{V: bus.Version, ID: "00000000000000bb", Type: bus.Message,
-		From: forger + "/cccccc", At: time.Now().UTC(), To: bob, Subject: "wrong blob", Files: []bus.File{f}})
+		From: forger + "/cccccc", At: time.Now().UTC(), To: bob, Subject: "wrong blob", Files: []bus.File{f}, FilesAt: at})
 	m = inboxMessage(t, b, "bbbbbb")
 	if m.Subject != "wrong blob" || len(m.Files) != 1 || m.Files[0].Path != "" {
 		t.Fatalf("message: %+v", m)
@@ -234,17 +242,15 @@ func TestFilesLeaveTheRemote(t *testing.T) {
 	if r.Error != "" {
 		t.Fatalf("send: %s", r.Error)
 	}
-	ref := "refs/murmur/files/" + a.self() + "/" + r.Messages[0].ID
+	listed := func() string { return gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files") }
 	copies := filepath.Join(a.gitDir, "murmur", "files", r.Messages[0].ID)
-	if _, err := os.Stat(copies); err != nil || gitOK(remote, "rev-parse", "--verify", "-q", ref) == "" {
-		t.Fatalf("after the send: the copies %v, the ref %q", err, gitOK(remote, "rev-parse", "--verify", "-q", ref))
+	if _, err := os.Stat(copies); err != nil || listed() == "" {
+		t.Fatalf("after the send: the copies %v, the files refs %q", err, listed())
 	}
 	// The same device, with a time to keep files that has already passed.
 	a.fileKeep, a.filePrune = time.Millisecond, 300*time.Millisecond
 	a.restart()
-	eventually(t, "the files ref to leave the remote", func() bool {
-		return gitOK(remote, "rev-parse", "--verify", "-q", ref) == ""
-	})
+	eventually(t, "the files ref to leave the remote", func() bool { return listed() == "" })
 	eventually(t, "the sender's copy to go", func() bool {
 		_, err := os.Stat(copies)
 		return os.IsNotExist(err)

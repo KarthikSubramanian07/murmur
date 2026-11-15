@@ -830,9 +830,9 @@ type state struct {
 	Marks []bus.Mark             `json:"marks,omitempty"`
 	Sent  map[string]*sentRecord `json:"sent,omitempty"`
 
-	// FileRefs is the messages this device sent with files, by ID, and when (#570, files.go): each
-	// has a files ref on the remote, deleted FileKeep after. FilesWait is the messages for sessions
-	// here that wait for their files to be fetched before they are queued.
+	// FileRefs is the files refs this device pushed, by name (bus.FilesRef), and when (#570,
+	// files.go): each is deleted from the remote FileKeep after. FilesWait is the messages for
+	// sessions here that wait for their files to be fetched before they are queued, by ID.
 	FileRefs  map[string]time.Time `json:"fileRefs,omitempty"`
 	FilesWait map[string]*fileWait `json:"filesWait,omitempty"`
 	// AwaitingRead is, by session ID, the messages handed to it as a turn that asked for receipts,
