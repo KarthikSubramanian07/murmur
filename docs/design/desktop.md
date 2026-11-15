@@ -99,7 +99,8 @@ The app is someone waiting for messages, so its page marks every call as the app
 and the daemon doesn't exit while the window is open, minimized or not. That is all the mark does: a
 minimized app's calls are still marked hidden, as a background tab's are, so the person isn't shown
 as active, a daemon still restarts onto an update, and it polls the remote at the quiet rate, as it
-would for a hidden tab. A first version left the hidden mark off instead, which did all three (Opus
+would for a hidden tab. A notification then takes up to about 45 seconds: the daemon's 30-second
+quiet poll, then the hidden page's 15-second one. A first version left the hidden mark off instead, which did all three (Opus
 review, 2026-11-15).
 
 A daemon can still go: a crash, `mur stop`. Every 10 seconds the window asks for its clone's page,
