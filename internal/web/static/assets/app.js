@@ -3531,8 +3531,9 @@ function markOpenRead() {
   if (arriving) ui.newMark = { key: ui.conversation, id: ids[0] };
   for (const id of ids) ui.readLocal.add(id);
   api("/api/read", { method: "POST", body: JSON.stringify({ ids }) }).catch((e) => {
-    if (e instanceof AuthError) deny(e.token);
-    else for (const id of ids) ui.readLocal.delete(id);
+    if (e instanceof AuthError) return deny(e.token);
+    for (const id of ids) ui.readLocal.delete(id);
+    render(); // unread again, and no poll shows it: a state that hasn't changed rebuilds nothing
   });
   render();
 }
@@ -4919,6 +4920,22 @@ function hasUnsent() {
   return ui.outbox.length > 0 || [...composers.values()].some((el) => el.value.trim());
 }
 
+// The state as far as the page shows it, for poll's signature. This device's lastSeen and its
+// person's lastActive move on every poll, so with them in the signature the page rebuilt on every
+// poll, with nothing on it changed (#618). Neither kind of time is shown as a time, on any device:
+// a lastSeen only for a device that is unreachable, and of a person's lastActive only whether they
+// are here now. So a reachable device's lastSeen is left out, and every person's lastActive is
+// reduced to here or not.
+function shownState(state) {
+  if (!state) return state;
+  const devices = (state.devices || []).map((d) => ({
+    ...d,
+    lastSeen: d.reachable ? null : d.lastSeen,
+    person: d.person && { ...d.person, lastActive: personOnline({ ...d.person, device: d }) },
+  }));
+  return { ...state, devices };
+}
+
 async function poll() {
   if (inflight) return;
   inflight = true;
@@ -4985,7 +5002,9 @@ async function poll() {
   inflight = false;
   // Rebuild only when something changed, and leave alone a minutes field being typed in, text being
   // selected, and a pane being scrolled: a rebuild would drop the selection or stop the scroll.
-  const sig = JSON.stringify([ui.state, ui.cursor, ui.actCursor, ui.github, ui.conn, ui.restarting > 0, restartStuck(), ui.outbox.length, Math.floor(Date.now() / 15000)]);
+  // A tag chip waits for a state asked for after its change was answered (tagsOf), which can be
+  // one that differs in nothing from the state before it: while any waits, each new state counts.
+  const sig = JSON.stringify([shownState(ui.state), ui.cursor, ui.actCursor, ui.github, ui.conn, ui.restarting > 0, restartStuck(), ui.outbox.length, Math.floor(Date.now() / 15000), tagWanted.size ? stateAskedAt : 0]);
   // A composer keeps its own element, so what is being typed there survives a rebuild, unless an
   // input method is partway through a character. On a phone it wouldn't: refocusing it isn't a tap,
   // so the keyboard would drop. There the thread catches up when the composer loses focus.
