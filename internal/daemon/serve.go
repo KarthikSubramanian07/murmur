@@ -696,10 +696,10 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	return resp
 }
 
-// subjectOnly says message m has no body, as its reader sees it (view.Turn): its subject is all of
-// it, and so is the hook's notice of it.
+// subjectOnly says message m has no body and no files, as its reader sees it (view.Turn): its
+// subject is all of it, and so is the hook's notice of it.
 func subjectOnly(m *inMsg) bool {
-	return strings.TrimSpace(bus.Text(m.Event.Body, bus.MaxBody)) == ""
+	return len(m.Event.Files) == 0 && strings.TrimSpace(bus.Text(m.Event.Body, bus.MaxBody)) == ""
 }
 
 // hookReq says req is from the hook, which names its session by its client's ID for it: Claude
@@ -898,6 +898,18 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, At: time.Now().UTC(),
 		To: to, Subject: subject, Body: body}
+	if len(req.Files) > 0 {
+		// The files go out first, on a ref of the message's own, so a daemon that reads the event
+		// finds them there (files.go).
+		files, err := d.putFiles(ctx, e.ID, req.Files)
+		if err != nil {
+			return refuse(proto.RefusedSend, "not sent: "+err.Error())
+		}
+		e.Files = files
+		d.mu.Lock()
+		note = strings.TrimSpace(note + " " + d.noFilesNoteLocked(e))
+		d.mu.Unlock()
+	}
 	if bus.IsPerson(from) {
 		// A person's message asks for receipts, which the page shows (#26). It is kept with its
 		// recipients before it is written, as one on this device marks it while it is.
@@ -907,6 +919,9 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		d.mu.Unlock()
 	}
 	if err := d.appendEvent(ctx, e); err != nil {
+		if len(e.Files) > 0 {
+			d.dropFileRef(e.ID, true) // nothing names them: off the remote at the next prune
+		}
 		if e.Receipts {
 			d.mu.Lock()
 			delete(d.st.Sent, e.ID)
@@ -1024,6 +1039,7 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 		}
 		v := proto.MessageView{ID: e.ID, From: e.From, FromName: name, FromAgent: agent, FromBranch: branch,
 			FromOwner: d.ownerOfLocked(e.From), FromDevice: device, To: e.To, Subject: e.Subject, At: e.At}
+		v.Files = d.fileViewsLocked(e)
 		if withBody {
 			v.Body = e.Body
 			v.Told = m.NoticedAt

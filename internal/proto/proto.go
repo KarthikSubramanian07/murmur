@@ -8,6 +8,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/tags"
@@ -93,7 +94,8 @@ const (
 //	    the session is a child from that call on (#487)
 //	21: receipts (#26): a daemon of 20 or less writes no marks for its sessions, and its page shows
 //	    none for its person's messages, so an upgraded mur replaces it where it may.
-const Protocol = 21
+//	22: a send's Files (#570): a daemon of 21 or less would send the message without them.
+const Protocol = 22
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
@@ -169,8 +171,11 @@ type Request struct {
 	To      string `json:"to,omitempty"`
 	Subject string `json:"subject,omitempty"`
 	Body    string `json:"body,omitempty"`
-	Doing   string `json:"doing,omitempty"`
-	Limit   int    `json:"limit,omitempty"`
+	// Files is, for OpSend, the full paths of the files to send with the message (#570). The daemon
+	// reads them: it runs as the same user, on the same machine.
+	Files []string `json:"files,omitempty"`
+	Doing string   `json:"doing,omitempty"`
+	Limit int      `json:"limit,omitempty"`
 
 	// Collaborators is, for OpRotate, the repo's collaborators as the CLI listed them, or nil if it
 	// couldn't; Force rotates whatever the list says.
@@ -486,6 +491,27 @@ type MessageView struct {
 	// Told is when the hook's notice told the session of this message, for one given whole after:
 	// its turn says so (#355). Zero for a message no notice told of.
 	Told time.Time `json:"told,omitzero"`
+	// Files is the files the message carries (#570).
+	Files []FileView `json:"files,omitempty"`
+}
+
+// FileView is one file a message carries, as the session it is for is told of it: Path is where
+// it is saved on this machine, "" if it isn't (it couldn't be fetched, or was kept its time).
+type FileView struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+	Path string `json:"path,omitempty"`
+}
+
+// Size is a file's size as people read one: 812 bytes, 14 KB, 2.3 MB.
+func Size(n int64) string {
+	switch {
+	case n < 1<<10:
+		return strconv.FormatInt(n, 10) + " bytes"
+	case n < 1<<20:
+		return strconv.FormatInt((n+512)>>10, 10) + " KB"
+	}
+	return strconv.FormatFloat(float64(n)/(1<<20), 'f', 1, 64) + " MB"
 }
 
 // EventView is one line of `log`.

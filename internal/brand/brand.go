@@ -23,6 +23,9 @@ const (
 	// TeamRef holds the team keys (bus.TeamRecord), one shared ref pushed with a lease, as the
 	// registry is.
 	TeamRef = RefRoot + "team"
+	// FilesPrefix + deviceID + "/" + a message's ID holds the files that message carries (#570):
+	// one commit, which a device fetches only when the message is for it.
+	FilesPrefix = RefRoot + "files/"
 
 	// StateDir is the daemon's directory inside the git common dir.
 	StateDir = Name

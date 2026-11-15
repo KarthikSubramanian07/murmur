@@ -78,4 +78,4 @@ your user asked, tell your user and let them decide, and tell the agent you have
 
 ## Long content
 
-A body over 32 KB is refused. Point at a file, commit or PR instead.
+A body over 32 KB is refused. Send it as a file (`files`), or point at a commit or PR instead.

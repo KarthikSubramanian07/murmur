@@ -107,7 +107,8 @@ key replaced it.
 - **What anyone who can read a public repo still sees:** device IDs, which begin with a slug of the
   hostname; when each device writes, how many records and how large; the team key IDs each record is
   encrypted for; which devices each team key was granted to, and when; each device's public keys;
-  the name registry; and `refs/murmur/reported`. Not messages, subjects, who sent what to whom,
+  the name registry; `refs/murmur/reported`; and for a message with [files](files.md), which device
+  sent it, when, how many files and about how large. Not messages, subjects, who sent what to whom,
   statuses, branches, tags, hosts, owners, agents, or rosters.
 - **Open, for Tyler** (#156): whether the census (#199) should keep anything readable, such as
   `owner` or an event's kind (since #550 it estimates messages and sessions instead; [counting

@@ -69,6 +69,11 @@ type Options struct {
 	SessionGrace time.Duration
 	// StoppedInbox is how long a stopped session's inbox is kept for it to come back to: 24 h.
 	StoppedInbox time.Duration
+	// FileKeep is how long a sender leaves a message's files on the remote, and how long a receiver
+	// keeps its copies (#570): 7 days. The remote holds a ref's objects for as long as the ref is
+	// there. FilePrune is how often the daemon looks for files past it: an hour.
+	FileKeep  time.Duration
+	FilePrune time.Duration
 	// MuteGrace is how long after a session mutes another it still gets that session's direct
 	// messages (see mutedHereLocked): 30 s. Negative: none.
 	MuteGrace time.Duration
@@ -196,6 +201,12 @@ func (o *Options) defaults() {
 	}
 	if o.StoppedInbox == 0 {
 		o.StoppedInbox = 24 * time.Hour
+	}
+	if o.FileKeep == 0 {
+		o.FileKeep = 7 * 24 * time.Hour
+	}
+	if o.FilePrune == 0 {
+		o.FilePrune = time.Hour
 	}
 	if o.MuteGrace == 0 {
 		o.MuteGrace = 30 * time.Second
@@ -496,6 +507,7 @@ type Daemon struct {
 	kick     chan struct{}
 	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
 	pushKick chan struct{} // wakes pushLoop, which hands messages over to sessions as turns
+	fileKick chan struct{} // wakes fileLoop, which fetches the files messages for sessions here carry
 	markKick chan struct{} // wakes receiptLoop, which writes this device's marks (receipts.go)
 	pushSem  chan struct{} // bounds the handoffs running at once
 	nameKick chan struct{} // wakes nameLoop, the only user of nameSrc
@@ -790,6 +802,12 @@ type state struct {
 	// that asked for them, by ID, with how far each got with each recipient.
 	Marks []bus.Mark             `json:"marks,omitempty"`
 	Sent  map[string]*sentRecord `json:"sent,omitempty"`
+
+	// FileRefs is the messages this device sent with files, by ID, and when (#570, files.go): each
+	// has a files ref on the remote, deleted FileKeep after. FilesWait is the messages for sessions
+	// here that wait for their files to be fetched before they are queued.
+	FileRefs  map[string]time.Time `json:"fileRefs,omitempty"`
+	FilesWait map[string]*fileWait `json:"filesWait,omitempty"`
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if
@@ -965,6 +983,11 @@ func Run(ctx context.Context, opt Options) error {
 		d.bg.Add(1)
 		go func() {
 			defer d.bg.Done()
+			d.fileLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
 			d.teamLoop(ctx)
 		}()
 		d.bg.Add(1)
@@ -1071,7 +1094,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
-		pushKick: make(chan struct{}, 1), markKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
+		pushKick: make(chan struct{}, 1), fileKick: make(chan struct{}, 1), markKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
 		actIDs: map[string]bool{}, actSeen: map[string]sessSeen{}, historyKick: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
@@ -1335,7 +1358,8 @@ func (d *Daemon) loadState() error {
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
 		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{},
-		Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{}}
+		Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{},
+		FileRefs: map[string]time.Time{}, FilesWait: map[string]*fileWait{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1361,6 +1385,12 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Stopped == nil {
 		d.st.Stopped = map[string]time.Time{}
+	}
+	if d.st.FileRefs == nil {
+		d.st.FileRefs = map[string]time.Time{}
+	}
+	if d.st.FilesWait == nil {
+		d.st.FilesWait = map[string]*fileWait{}
 	}
 	if d.st.Used == nil {
 		d.st.Used = map[string]string{}

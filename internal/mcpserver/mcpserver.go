@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -699,7 +700,7 @@ func recipients(to string) []string {
 // this session (no subject, a key in the body, not registered, no daemon) and would be the same for
 // the rest, so the rest aren't tried: a session waiting to register would otherwise wait once per
 // recipient.
-func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []string, subject, body string) (*mcp.CallToolResult, any, error) {
+func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []string, subject, body string, files []string) (*mcp.CallToolResult, any, error) {
 	if len(to) > maxRecipients {
 		r := text(fmt.Sprintf("Not sent: a send can name at most %d recipients, and this one names %d.", maxRecipients, len(to)))
 		r.IsError = true
@@ -732,7 +733,7 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 			rs[i].Same = first
 			continue
 		}
-		resp, err := s.callFrom(ctx, mreq, proto.Request{Op: proto.OpSend, To: r, Subject: subject, Body: body})
+		resp, err := s.callFrom(ctx, mreq, proto.Request{Op: proto.OpSend, To: r, Subject: subject, Body: body, Files: files})
 		if err != nil {
 			rs[i].Err = err.Error()
 			if !refusedRecipient(resp, rs[i].Err, r, subject) {
@@ -790,6 +791,24 @@ func text(s string) *mcp.CallToolResult {
 // longer than it keeps could otherwise make a send of a full body too long to be read at all.
 func oneLine(s string) string { return bus.OneLine(s, 120) }
 
+// fullPaths makes each path a send names a full one, from this server's working directory, which
+// is the agent's: the daemon that reads the files runs somewhere else. On Windows an agent in Git
+// Bash writes C:\Users as /c/Users, which Windows would read as \c\Users on the current drive.
+func fullPaths(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if runtime.GOOS == "windows" && len(p) >= 3 && p[0] == '/' && p[2] == '/' &&
+			(p[1] >= 'a' && p[1] <= 'z' || p[1] >= 'A' && p[1] <= 'Z') {
+			p = p[1:2] + ":" + p[2:]
+		}
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 func result(render func(proto.Response) string, resp proto.Response, err error) (*mcp.CallToolResult, any, error) {
 	if err != nil {
 		r := text(err.Error())
@@ -821,9 +840,10 @@ type (
 		Messages int    `json:"messages,omitempty" jsonschema:"how many of its latest messages to show, 10 if not given"`
 	}
 	sendIn struct {
-		To      string `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"`
-		Subject string `json:"subject" jsonschema:"one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"`
-		Body    string `json:"body,omitempty" jsonschema:"the rest of the message"`
+		To      string   `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"`
+		Subject string   `json:"subject" jsonschema:"one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"`
+		Body    string   `json:"body,omitempty" jsonschema:"the rest of the message"`
+		Files   []string `json:"files,omitempty" jsonschema:"paths of files to send with it, such as a screenshot or a log: at most 8, 10 MB each, 20 MB together"`
 	}
 )
 
@@ -871,16 +891,18 @@ func (s *server) tools(srv *mcp.Server) {
 		"with your subject and then your body. A recipient that is at work, or that " + brand.Product + " can't start a turn in, gets a one-line notice with " +
 		"your subject after its next tool call and reads the body with inbox; what it hasn't read when it finishes is usually given to it then, and its turn goes on. " +
 		"To send the same message to several sessions, name them all, separated by commas: each gets an ordinary message from you, " +
-		"not told who else got it, and the result says what became of each. Message to coordinate, not to chat."},
+		"not told who else got it, and the result says what became of each. files sends files along, which the recipient gets as paths on its own machine: " +
+		"a text file is checked for secrets as the body is, and an image or other binary can't be. Message to coordinate, not to chat."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, any, error) {
 			to := recipients(in.To)
+			files := fullPaths(in.Files)
 			if len(to) > 1 {
-				return s.sendEach(ctx, req, to, oneLine(in.Subject), in.Body)
+				return s.sendEach(ctx, req, to, oneLine(in.Subject), in.Body, files)
 			}
 			if len(to) == 1 {
 				in.To = to[0]
 			}
-			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpSend, To: in.To, Subject: oneLine(in.Subject), Body: in.Body})
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpSend, To: in.To, Subject: oneLine(in.Subject), Body: in.Body, Files: files})
 			return result(view.Sent, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "inbox", Description: "Read your unread messages from other agents, with the name of who sent them. " +
