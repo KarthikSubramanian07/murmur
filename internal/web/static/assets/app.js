@@ -162,8 +162,9 @@ async function api(path, init = {}) {
   const token = ui.token;
   const headers = { Authorization: "Bearer " + token };
   if (init.body) headers["Content-Type"] = "application/json";
-  // A tab nobody can see still polls, but mustn't keep the daemon running for good.
-  if (document.hidden) headers["X-Page-Hidden"] = "1";
+  // A tab nobody can see still polls, but mustn't keep the daemon running for good. The desktop
+  // app's window is someone waiting for messages, minimized or not, so it keeps the daemon up.
+  if (document.hidden && !inApp()) headers["X-Page-Hidden"] = "1";
   const res = await fetch(path, { ...init, headers, cache: "no-store" });
   if (res.status === 401) throw new AuthError(token);
   if (!res.ok) {
@@ -503,7 +504,8 @@ function render() {
   fitComposers();
   placeLive();
   announceShown();
-  document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME;
+  document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME; // tellApp says the same
+  tellApp();
   refreshTip();
   queueMicrotask(markOpenRead);
 }
@@ -4947,6 +4949,7 @@ async function poll() {
     ui.outbox = ui.outbox.filter((item) => !(item.id && ui.ids.has(item.id)));
     ui.conn = "ok";
     announceArrivals(arrived);
+    tellApp(appNotes(arrived));
     if (wasConn === "down") announce("Connected to the daemon again.");
   } catch (e) {
     if (era !== tokenEra) return;
@@ -4988,6 +4991,35 @@ function announceArrivals(list) {
   if (!say.length) return;
   const m = say[say.length - 1];
   announce(say.length === 1 ? "New message from " + fromName(m) + ": " + m.subject : say.length + " new messages, the newest from " + fromName(m) + ": " + m.subject);
+}
+
+// The desktop app (`mur app`, #23) is this page in a window of its own, which gives it murmurApp.
+// The window is told the unread count, for its title and icon, and the messages to the person as
+// they arrive, which it shows as notifications when it isn't in front. A browser has no murmurApp.
+function inApp() {
+  return typeof window.murmurApp === "function";
+}
+
+let toldApp = "";
+function tellApp(notes = []) {
+  if (!inApp()) return;
+  const unread = unreadCount();
+  const title = (unread ? "(" + unread + ") " : "") + NAME;
+  // The window's frame follows the theme's color scheme.
+  const dark = getComputedStyle(document.documentElement).colorScheme === "dark";
+  const said = [location.host, title, dark].join(" ");
+  if (said === toldApp && !notes.length) return;
+  toldApp = said;
+  const seen = !document.hidden && document.hasFocus();
+  window.murmurApp({ host: location.host, title, unread, notes, seen, dark }).catch(() => {});
+}
+
+function appNotes(list) {
+  if (!inApp()) return [];
+  const unread = new Set(ui.state?.account?.unread || []);
+  const mine = list.filter((m) => unread.has(m.id) && fromName(m) !== myName());
+  if (mine.length > 3) return [{ title: NAME, body: mine.length + " new messages" }];
+  return mine.map((m) => ({ title: fromName(m), body: m.subject || "" }));
 }
 
 // A fresh link pasted into a tab already showing the page changes only the fragment, so the
