@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/tags"
 )
 
@@ -134,5 +135,32 @@ func TestAGroupAddFromAMutedSessionIsNotApplied(t *testing.T) {
 	add(other, "group:api")
 	if st := d.st.Tags[muter]; st == nil || len(st.Self) != 1 || st.Self[0] != "group:api" {
 		t.Errorf("an add from a session that isn't muted wasn't applied: %+v", st)
+	}
+}
+
+// A session that mutes another while its name is pending, sets no tags, and stops before the
+// name lands still has the mute while its inbox is kept (#503): its mutes are kept by its ID, and
+// so found by it, as its tags are.
+func TestAMuteMadeWhileTheNameWasPendingHoldsAfterTheSessionStops(t *testing.T) {
+	t.Parallel()
+	d := tagsDaemon(t)
+	d.opt.MuteGrace = -1
+	d.mu.Lock()
+	d.sessions["aaaaaa"].name = ""
+	d.sessions["bbbbbb"].name = "brave-heron"
+	d.mu.Unlock()
+	if r := d.mute("aaaaaa", proto.Request{Name: "brave-heron"}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.sessions, "aaaaaa")
+	d.st.Stopped["aaaaaa"] = time.Now()
+	if got := d.mutesOfLocked("aaaaaa"); len(got) != 1 || got[0] != "brave-heron" {
+		t.Errorf("the stopped session has muted %v; want brave-heron", got)
+	}
+	d.queueLocked(bus.Event{V: bus.Version, ID: "m1", Type: bus.Message, From: "dev/bbbbbb", To: "dev/aaaaaa", At: time.Now()}, modeNormal)
+	if box := d.st.Inbox["aaaaaa"]; len(box) != 0 {
+		t.Errorf("the stopped session was given %d message(s) from the session it muted", len(box))
 	}
 }

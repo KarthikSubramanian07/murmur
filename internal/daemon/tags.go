@@ -194,10 +194,10 @@ func (d *Daemon) putTagStateLocked(key string, st *tags.State) {
 	d.saveLocked()
 }
 
-// tagKeyLocked is what session id's tags are kept by: a running session's own, else the name it
-// took last, so a change for a session that isn't registered at the moment (its daemon restarted,
-// and reads what was sent meanwhile before the session is back) waits for it. "" for a session
-// this device knows nothing of. Caller holds mu.
+// tagKeyLocked is what session id's tags and mutes are kept by: a running session's own, else the
+// name it took last, so a change for a session that isn't registered at the moment (its daemon
+// restarted, and reads what was sent meanwhile before the session is back) waits for it. "" for a
+// session this device knows nothing of. Caller holds mu.
 func (d *Daemon) tagKeyLocked(id string) string {
 	if s := d.sessions[id]; s != nil {
 		return tagKeyOf(s.name, s.id)
@@ -205,8 +205,11 @@ func (d *Daemon) tagKeyLocked(id string) string {
 	if name := d.st.SessionNames[id]; name != "" {
 		return name
 	}
-	// One that stopped before its name landed keeps what it set by its ID.
-	if pending := tagKeyOf("", id); d.st.Tags[pending] != nil {
+	// One whose name never landed keeps what it has by its ID: one that stopped, whose inbox is
+	// kept in case it comes back, and one that set tags or muted someone before it stopped or the
+	// daemon restarted. Its mutes count as much as its tags (#503).
+	pending := tagKeyOf("", id)
+	if _, stopped := d.st.Stopped[id]; stopped || d.st.Tags[pending] != nil || d.st.Mutes[pending] != nil {
 		return pending
 	}
 	return ""

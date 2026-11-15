@@ -297,3 +297,28 @@ func TestTheDaemonStaysUpForAThreadOnDoNotDisturb(t *testing.T) {
 		t.Fatal("the daemon would exit, and never read the tag's removal or hand over what waited")
 	}
 }
+
+// A session that stopped before its name landed, having set no tags and muted nobody, is still
+// this device's while its inbox is kept: a person's change and an agent's add made meanwhile are
+// kept by its ID for it, as for one that had tags already, and it has them if it comes back.
+func TestAChangeForAStoppedSessionWhoseNameNeverLandedIsKept(t *testing.T) {
+	t.Parallel()
+	d := tagsDaemon(t)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.sessions, "aaaaaa")
+	d.st.Stopped["aaaaaa"] = time.Now()
+	d.applyTagsEventLocked(bus.Event{V: bus.Version, ID: "abcdef12", Type: bus.Tags, From: "far/cli",
+		To: "dev/aaaaaa", At: time.Now(), Add: []string{"release"}})
+	d.applyGroupAddLocked(bus.Event{V: bus.Version, ID: "abcdef13", Type: bus.GroupAdd, From: "far/xxxxxx",
+		To: "dev/aaaaaa", At: time.Now(), Add: []string{"group:ui"}}, modeNormal)
+	if !d.hasTagLocked("aaaaaa", "release") || !d.hasTagLocked("aaaaaa", "group:ui") {
+		t.Fatalf("the stopped session's tags are %+v; want the person's change and the add kept", d.st.Tags)
+	}
+	inT3(d, "aaaaaa", 0) // back, its name still pending
+	s := d.sessions["aaaaaa"]
+	s.name = ""
+	if got := tagNames(d.tagsOfLocked(s)); got != "group:ui release" {
+		t.Errorf("back, it has %q", got)
+	}
+}
