@@ -312,7 +312,7 @@ func routeFromEnv(agent string) proto.Route {
 	case agent == "codex" && r.T3CLI == "":
 		r.CodexCLI = clientProgram("codex")
 	case agent == "opencode" && r.T3CLI == "":
-		r.OpenCodeCLI = openCodeService()
+		r.OpenCodeCLI, r.OpenCodeState = openCodeService()
 	}
 	return r
 }
@@ -349,36 +349,41 @@ func programNamed(exe, name string) string {
 }
 
 // openCodeService is the OpenCode that started this server, if it is the background server every
-// OpenCode 2 client shares, which is the one `opencode api` asks. OpenCode 2 registers that
-// server's process in service.json in its state directory ($XDG_STATE_HOME/opencode, else
-// ~/.local/state/opencode, on Windows too; {"pid": ...}, seen on 2.2.0, 2026-11-11). A session of
-// any other server gets "": one started with --standalone or --server, where `opencode api` would
-// start the shared server only to be told it has no such session, and OpenCode 1, which has no
-// `api` command. If a later OpenCode keeps the file elsewhere, its sessions are back to the inbox.
-func openCodeService() string {
+// OpenCode 2 client shares, which is the one `opencode api` asks, and the state directory that
+// server is registered in. OpenCode 2 registers that server's process in service.json in its state
+// directory ($XDG_STATE_HOME/opencode, else ~/.local/state/opencode, on Windows too; {"pid": ...},
+// seen on 2.2.0, 2026-11-11), and `opencode api` looks for it there, in the XDG_STATE_HOME it is
+// run with (read in 2.3.0's source, 2026-11-15). The server keeps the state directory it started
+// with, and this process has its environment, so the directory is the one to run the command
+// with: the daemon's may be another session's (#486). It is named in full where XDG_STATE_HOME is
+// unset, for the same reason. A session of any other server gets "": one started with
+// --standalone or --server, where `opencode api` would start the shared server only to be told it
+// has no such session, and OpenCode 1, which has no `api` command. If a later OpenCode keeps the
+// file elsewhere, its sessions are back to the inbox.
+func openCodeService() (exe, state string) {
 	pid, exe := parentProgram()
 	if exe = programNamed(exe, "opencode"); exe == "" {
-		return ""
+		return "", ""
 	}
-	dir := os.Getenv("XDG_STATE_HOME")
-	if dir == "" || !filepath.IsAbs(dir) {
+	state = os.Getenv("XDG_STATE_HOME")
+	if state == "" || !filepath.IsAbs(state) {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return ""
+			return "", ""
 		}
-		dir = filepath.Join(home, ".local", "state")
+		state = filepath.Join(home, ".local", "state")
 	}
-	b, err := os.ReadFile(filepath.Join(dir, "opencode", "service.json"))
+	b, err := os.ReadFile(filepath.Join(state, "opencode", "service.json"))
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	var reg struct {
 		PID int `json:"pid"`
 	}
 	if json.Unmarshal(b, &reg) != nil || reg.PID == 0 || reg.PID != pid {
-		return ""
+		return "", ""
 	}
-	return exe
+	return exe, state
 }
 
 // sessionID derives the session's ID from Claude Code's, when there is one, so the ID stays
@@ -695,9 +700,10 @@ func recipients(to string) []string {
 // Names go first, and addresses after, so that an address of a session already sent to by its name
 // is known for one and skipped: the daemon says which address a name reached. Two names for the
 // same session (one it had before a move, #36) would each send, as would a device and one of its
-// sessions. A refusal that doesn't name the recipient is about the message or this session (no
-// subject, a key in the body, not registered, no daemon) and would be the same for the rest, so the
-// rest aren't tried: a session waiting to register would otherwise wait once per recipient.
+// sessions. A refusal that isn't the recipient's alone (refusedRecipient) is about the message or
+// this session (no subject, a key in the body, not registered, no daemon) and would be the same for
+// the rest, so the rest aren't tried: a session waiting to register would otherwise wait once per
+// recipient.
 func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []string, subject, body string) (*mcp.CallToolResult, any, error) {
 	if len(to) > maxRecipients {
 		r := text(fmt.Sprintf("Not sent: a send can name at most %d recipients, and this one names %d.", maxRecipients, len(to)))
@@ -734,7 +740,7 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 		resp, err := s.callFrom(ctx, mreq, proto.Request{Op: proto.OpSend, To: r, Subject: subject, Body: body})
 		if err != nil {
 			rs[i].Err = err.Error()
-			if !strings.Contains(rs[i].Err, r) {
+			if !refusedRecipient(resp, rs[i].Err, r, subject) {
 				stopped = "the send to " + r + " failed for a reason that isn't about " + r
 			}
 			continue
@@ -747,6 +753,37 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 	res := text(view.SentEach(rs))
 	res.IsError = !sent
 	return res, nil, nil
+}
+
+// refusedRecipient says whether the refusal why, of the send of subject to r, is r's alone, so
+// that the rest of a list can still be sent to. The daemon says so (resp.Refused, #541); one from
+// before that is judged by its words. Its refusals for a recipient name it as it was given, but
+// for a recipient that isn't a name or an address at all (its "a message needs a recipient ...
+// and a subject", which with a subject given is about the recipient), a mute or an offline
+// session at an address whose messages go on to another (forwardLocked), which it names by that
+// one, and a recipient whose device has no key to encrypt to, which it names by its device. A call
+// no daemon answered (no daemon, or a session not yet registered) is about the sender, and its
+// words, which may hold a short recipient by chance, aren't looked at.
+func refusedRecipient(resp proto.Response, why, r, subject string) bool {
+	switch resp.Refused {
+	case proto.RefusedRecipient:
+		return true
+	case proto.RefusedSend:
+		return false
+	}
+	if resp.Error == "" {
+		return false
+	}
+	if strings.Contains(why, r) || subject != "" && strings.HasPrefix(why, "a message needs a recipient (") {
+		return true
+	}
+	for _, words := range []string{" has muted you.", " is offline and takes no messages", " is a T3 thread that is settled",
+		" is a delegate that another thread started", " from before the bus was encrypted", " so there is no key to encrypt to"} {
+		if strings.Contains(why, words) {
+			return true
+		}
+	}
+	return false
 }
 
 func text(s string) *mcp.CallToolResult {
@@ -789,7 +826,7 @@ type (
 		Messages int    `json:"messages,omitempty" jsonschema:"how many of its latest messages to show, 10 if not given"`
 	}
 	sendIn struct {
-		To      string `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"`
+		To      string `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device's ID for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"`
 		Subject string `json:"subject" jsonschema:"one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"`
 		Body    string `json:"body,omitempty" jsonschema:"the rest of the message"`
 	}
@@ -835,7 +872,7 @@ func (s *server) tools(srv *mcp.Server) {
 			return result(view.Tags, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "send", Description: "Send a message to another agent by its name (quiet-otter, from who), to a group (group:ui: " +
-		"every session with that tag), to all sessions on a device, or to everyone. It usually reaches the recipient as a turn of its own, headed \"Message from <your name> (...) via " + brand.Product + "\", " +
+		"every session with that tag), to all sessions on a device by its ID, or to everyone. It usually reaches the recipient as a turn of its own, headed \"Message from <your name> (...) via " + brand.Product + "\", " +
 		"with your subject and then your body. A recipient that is at work, or that " + brand.Product + " can't start a turn in, gets a one-line notice with " +
 		"your subject after its next tool call and reads the body with inbox; what it hasn't read when it finishes is usually given to it then, and its turn goes on. " +
 		"To send the same message to several sessions, name them all, separated by commas: each gets an ordinary message from you, " +

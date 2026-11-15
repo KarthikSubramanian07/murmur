@@ -34,6 +34,22 @@ no tag carries behavior but `do-not-disturb`, which he asked for the same day.
   it, and a change more than a minute older does nothing (#251); by the senders' clocks, so a clock
   over a minute behind can lose a change, which beat an old change undoing a new one. At the cap of
   12, a person's tags are kept first, then the session's, then derived ones.
+- **A session with no name yet** keeps its tags and mutes by its ID. One that stops before its name
+  lands still has them while its inbox is kept, and they go with the inbox (#503). One whose daemon
+  stopped with it is never recorded as stopped, so they go as its inbox does, if it isn't back two
+  minutes after the restart. The cost: one resumed later than that has lost its mutes too, so the
+  sessions it muted reach it again. After a restart, a person's change to the tags of a session the
+  daemon knows nothing of, or an agent's add of it to a group, read in the first 30 s, waits in
+  memory for a session of that ID to reconnect in that time, as a message does (#524): one whose
+  name was pending and that kept nothing here would otherwise lose it. It is applied before the
+  messages that waited, so the group's message read with an add reaches the session, and a held add
+  is checked again as one read in a catch-up. A daemon back after more than 10 minutes refuses such
+  an add when it reads it, as it does any add from history it passes over that it can't show was
+  sent since the session started; a person's change still waits, unless the daemon has nothing the
+  log could be for (no session, kept inbox, person's account, name or tags) and passes it over
+  unread. Nothing is written to disk for it, as the daemon can't tell the ID from a made-up one. The
+  cost: what waited is lost by a session that reconnects after the 30 s, as the messages are, and by
+  one whose daemon restarts again within them.
 - **Search.** `who` takes tags and lists only the sessions with all of them; `-tag` leaves out those
   with it, and a `*` at the end matches any tag that starts so (`model:opus*`).
 - **`human`** marks a person's account (#267, Tyler, 2026-11-09), so an agent reading `who`,
@@ -69,8 +85,27 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   it; a `tags` event wouldn't do, as every daemon applies one as a person's choice. An add over an
   hour old when read isn't applied, nor one from history a daemon passes over unless it was sent
   since the session started: an add carries no order against the session's own changes, so an old
-  one read late could put back a member who has left. An add that would take a session past its 12
-  tags is refused to the adder.
+  one read late could put back a member who has left. The session's device leaves out a group a
+  person took the session out of, and logs it: the person's mark stands over the add, and kept as
+  the session's own the tag would only take one of its 12 places.
+- **The adder refuses what it can tell will fail** (#524, #543, 2026-11-15). For a session on its
+  own device it applies the same rule to the same state, so it refuses every add the device would
+  refuse or leave a group out of: past 12 tags of the session's own (those a person took off still
+  count), or a group a person took the session out of. An add of several groups is refused whole
+  then, though the device would give the rest: an add is all or nothing, and the reply names the
+  group. For a session on another device it has only presence, which shows the tags a session set
+  itself but not those a person took off, nor a person's marks on groups: it refuses an add only
+  past 12 tags presence shows as the session's own, and the reply says that device can still refuse
+  it, and that `who` with the group shows who is in. That count can be one too many in a narrow
+  case: a session a person took out of a group, which then dropped that tag itself, keeps the
+  person's mark but no longer holds the tag, so an add of that group with others counts it, where
+  the device would leave it out and might have room for the rest. It also refuses an add to a
+  device whose clock it can tell runs over an hour ahead, as that device would take the add as too
+  old. It measures the earlier of the presence's own time and its commit's (git's, from the
+  writer's clock as it wrote) against when the presence was read here: the presence time alone can
+  be pinned ahead after a clock went back, and the gap can only understate the difference.
+  Publishing a person's marks in presence would let the adder see more, but it would put the names
+  of tags a person removed back on the bus, and change its format.
 - **Each receiving device decides who is in.** A group message goes on the bus addressed to the tag,
   and each daemon gives it to those of its sessions that have the tag when it reads it. A device is
   the only authority on its sessions' tags, so no sender's view of the members can be out of date,
@@ -101,11 +136,27 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   who else got it, and a reply goes to the sender alone (Tyler, 2026-11-13). So a group or `*` can't
   be in a list: a message there is one conversation that all its members see.
 - **The MCP server expands it**, sending to each recipient as a single `send` would, so the daemon
-  and the wire format are unchanged and an older daemon takes one too. The cost is a push per
-  recipient, one after another, so a list holds at most 10: twenty pushes could outlast a client's
-  wait for the tool call, which would leave the sender with no result and some recipients with the
-  message.
+  needs nothing new for it and an older daemon takes one too. The cost is a push per recipient, one
+  after another, so a list holds at most 10: twenty pushes could outlast a client's wait for the
+  tool call, which would leave the sender with no result and some recipients with the message.
 - **Each recipient once.** Names are sent before addresses, and the daemon's answer gives the
   address a name reached, so the same session named again by address is skipped. Two names for one
   session, and a device beside one of its sessions, still each send. A device's ID looks like a
   person's name, so a list can't tell one apart to refuse it.
+- **One recipient's refusal doesn't stop the rest; a refusal of the message does** (#541, 2026-11-15).
+  The daemon's reply says which a refusal is (`Refused`): one for the recipient alone (a name that
+  isn't one or that nobody has, a group that isn't one, offline, muted the sender, a device with no
+  key to encrypt to), or one for the message or the sender (no subject, too long, a key, not
+  registered, a delegate, no team key yet, a push that failed), which would be the same for the
+  rest, so they aren't tried. A call no daemon answered is the second kind too. Before, the server
+  took any refusal that didn't quote the recipient for the second kind, so a name with a capital in
+  it stopped the whole list: the daemon's refusal of it quoted nobody.
+  - *Mixed versions.* mur updates the daemon while running MCP servers keep their binary until their
+    sessions end, so an older server beside a newer daemon is the common pairing. Such a server
+    still goes by whether the refusal quotes the recipient, and the daemon's refusals for a
+    recipient now all quote it as it was given, but for a mute or an offline session at an address
+    whose messages go on to another session, which they name by that one, and a device with no key
+    to encrypt to, which they name by its device. A newer server beside an older daemon goes by the
+    words too: a refusal that quotes the recipient, and the few of that daemon's refusals for a
+    recipient that don't. Neither side needs the other's version, so there is no new protocol
+    number.

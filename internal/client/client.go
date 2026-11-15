@@ -116,6 +116,14 @@ func (c *Client) PageKeyURL(ctx context.Context) (string, error) {
 	return "http://" + info.Web + "/#key=" + resp.PageKey, nil
 }
 
+// PageHost is the host and port daemon.json says the clone's page is served at, without asking
+// the daemon, so it may be a daemon's that has gone; "" if the file names none. The desktop app
+// uses it to tell which clone's page its window is showing.
+func PageHost(gitDir string) string {
+	info, _ := (&Client{GitDir: gitDir}).load()
+	return info.Web
+}
+
 // Running reports whether a daemon answers for gitDir, without starting one or sending it the
 // token: what answers at its port is asked only to prove itself.
 func Running(ctx context.Context, gitDir string) bool {

@@ -349,6 +349,7 @@ type Daemon struct {
 	lastActive time.Time
 	mode       syncMode
 	pending    []bus.Event     // what arrived while down, for sessions that reconnect
+	heldTags   []bus.Event     // changes to tags read then for sessions not known yet (holdForLocked)
 	caughtUp   map[string]bool // sessions already given pending
 	// backlog lists the mesh refs the first listing showed that haven't been read yet: they are
 	// read under the mode the daemon started in, and the mode turns normal once all have been.
@@ -383,9 +384,12 @@ type Daemon struct {
 	// lastPage is when a page someone can see last called its API, zero if none has. msgs is the
 	// page's messages, oldest first, msgSeq the number of the newest and msgIDs the IDs in msgs.
 	lastPage time.Time
-	msgs     []pageMsg
-	msgSeq   uint64
-	msgIDs   map[string]bool
+	// lastApp is when the desktop app's page last called, seen or not: it keeps the daemon from
+	// exiting, and does nothing else lastPage does (docs/design/desktop.md).
+	lastApp time.Time
+	msgs    []pageMsg
+	msgSeq  uint64
+	msgIDs  map[string]bool
 	// ownMsgs is how many of msgs are to or from this device's person, which PageMessages doesn't
 	// count (see keepMessageLocked).
 	ownMsgs int
@@ -615,6 +619,9 @@ type peer struct {
 	// machines' clocks.
 	listed     string
 	lastChange time.Time
+	// written is the committer time of the presence read: the writer's clock when git wrote it
+	// (groupAddWhyLocked).
+	written time.Time
 	// sealed says the presence read was sealed: only such a one earns a grant of the team keys
 	// (grantsDueLocked). locked says it was encrypted for a team key this device doesn't hold yet, to
 	// read again once it does.
@@ -877,6 +884,14 @@ func Run(ctx context.Context, opt Options) error {
 	d.firstSync = make(chan struct{})
 	// Before the page is served: its calls read these (awaitHistory).
 	d.historyRead, d.historyWant = make(chan struct{}), make(chan struct{})
+	// On the record of this machine's clones before the daemon answers, not after: whoever finds it
+	// answering, `mur join` that started it or another clone's page, then finds the record as this
+	// daemon leaves it, and not the join's version being replaced (#479).
+	if d.opt.Clones != "" {
+		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName}); err != nil {
+			d.log.Printf("this clone isn't on the record of this machine's clones, so other clones' pages can't switch to it: %v", err)
+		}
+	}
 	if pageLn != nil {
 		d.servePage(ctx, pageLn) // first, so a page key asked for at once finds the page
 	}
@@ -905,12 +920,6 @@ func Run(ctx context.Context, opt Options) error {
 		d.historyLoop(ctx)
 	}()
 	d.kickHistory()
-
-	if d.opt.Clones != "" {
-		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName}); err != nil {
-			d.log.Printf("this clone isn't on the record of this machine's clones, so other clones' pages can't switch to it: %v", err)
-		}
-	}
 
 	// Sync once before sessions register (they wait for it), so whatever this sync finds was sent
 	// before any of them registered: it is the backlog, and nothing a new session should get. A stop
@@ -1260,8 +1269,10 @@ func (d *Daemon) idleLoop(ctx context.Context) {
 		// An open page keeps the daemon up as a session does: the idle time counts from the last
 		// session going, or from the page no longer counting as open.
 		quiet := d.lastActive
-		if gone := d.lastPage.Add(d.opt.PageOpen); gone.After(quiet) {
-			quiet = gone
+		for _, last := range []time.Time{d.lastPage, d.lastApp} {
+			if gone := last.Add(d.opt.PageOpen); gone.After(quiet) {
+				quiet = gone
+			}
 		}
 		idle := len(d.sessions) == 0 && !d.holdsRouteLocked(wake) && time.Since(quiet) > d.opt.Idle
 		d.mu.Unlock()
@@ -1293,8 +1304,12 @@ func (d *Daemon) holdsRouteLocked(wake pageSettings) bool {
 	return false
 }
 
-// loadDevice reads this clone's device ID, creating it on first run: the hostname plus four
-// random hex digits, so two clones on one machine are two devices.
+// loadDevice reads this clone's device ID, creating it on first run: "device-" and eight random hex
+// digits, so two clones on one machine are two devices. The ID names the device's ref and authors
+// its commits, so anyone who can read the repo sees it, and on a public repo a hostname in it would
+// often show its owner's full name (#330). Teammates tell devices apart by what the encrypted
+// presence says (owner, host, nickname), not by the ID. A clone made before keeps its ID, which
+// began with its hostname.
 func loadDevice(dir string) (string, error) {
 	path := filepath.Join(dir, "device")
 	if b, err := os.ReadFile(path); err == nil {
@@ -1302,30 +1317,8 @@ func loadDevice(dir string) (string, error) {
 			return id, nil
 		}
 	}
-	host, _ := os.Hostname()
-	id := slug(host) + "-" + bus.RandHex(4)
+	id := "device-" + bus.RandHex(8)
 	return id, os.WriteFile(path, []byte(id+"\n"), 0o600)
-}
-
-// slug makes a hostname safe as a ref component and short enough to read.
-func slug(host string) string {
-	host, _, _ = strings.Cut(strings.ToLower(host), ".")
-	var b strings.Builder
-	for _, r := range host {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		} else if b.Len() > 0 && !strings.HasSuffix(b.String(), "-") {
-			b.WriteByte('-')
-		}
-	}
-	s := strings.Trim(b.String(), "-")
-	if len(s) > 24 {
-		s = strings.Trim(s[:24], "-")
-	}
-	if s == "" {
-		s = "device"
-	}
-	return s
 }
 
 func validName(s string) bool { return bus.ValidName(s) }

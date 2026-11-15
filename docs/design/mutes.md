@@ -25,12 +25,15 @@ on: not a message to it, to its device, to a group it is in, or to everyone.
 - **A mute names a session by its name**, which the registry never gives out twice, so it can't land
   on another session, and it follows the conversation across session IDs until it is undone. A
   person can't be muted, nor a session with no name yet. Mutes a session makes before its own name
-  lands carry over to the name (#483).
+  lands carry over to the name (#483), and hold while its inbox is kept if it stops before then
+  (#503).
 - **A sender that has left presence is known by every name its address has held** (#483,
   2026-11-12), as after Claude Code's `/clear`: a message carries no name and the registry keeps no
-  order, so a mute of any of them holds. The cost: a later conversation nobody muted, at that
-  address, has what it sends dropped once it has left presence, and isn't told. Remembering the last
-  name each address showed would narrow that; it isn't built.
+  order, so a mute of any of them holds. For one of this device's sessions that includes the name it
+  took last, which the registry may have down for another session ID after a resume, so the name the
+  inbox shows for it is always one a mute holds against (#502). The cost: a later conversation
+  nobody muted, at that address, has what it sends dropped once it has left presence, and isn't
+  told. Remembering the last name each address showed would narrow that; it isn't built.
 - **A muted session can't add the session that muted it to a group** (#483), since each add used one
   of the muting session's 12 tags.
 - **A person can undo one, on the page of the muting session's device**, so an agent can't silence a

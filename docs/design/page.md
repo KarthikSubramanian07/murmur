@@ -101,7 +101,9 @@ from it is in [a person on the page](people.md).
   the token from a page someone can see counts as an open page for 2 minutes and stops the 10-minute
   idle countdown, so a daemon with nothing else to do exits about 12 minutes after its page is
   closed or hidden. A hidden page marks its calls, so a tab forgotten in the background doesn't keep
-  the daemon, and its polling of GitHub, up for good (Opus review, 2026-10-29).
+  the daemon, and its polling of GitHub, up for good (Opus review, 2026-10-29). The desktop app's
+  page also says it is the app's, which keeps the daemon running, minimized too, without counting as
+  someone looking ([desktop](desktop.md)).
 - **This device's health** (`GET /api/health`, 2026-11-10; where the page shows it is Tyler's call).
   Peers are judged stale against this daemon's last successful sync, so a device that has lost the
   remote shows every peer as it was, and nothing said so: #141's refused pushes, a 52-minute DNS

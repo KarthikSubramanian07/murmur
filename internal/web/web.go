@@ -67,13 +67,13 @@ func New(src Source, token, repoDir string) *Server {
 
 // NewWithPRs is New with another way to look up pull requests, such as a test's, and no listing
 // of GitHub's events.
-func NewWithPRs(src Source, token string, prs LookupPR) *Server {
+func NewWithPRs(src Source, token string, prs LookupPRs) *Server {
 	return NewWithGitHub(src, token, prs, nil)
 }
 
 // NewWithGitHub is New with other ways to ask GitHub, such as the dev server's fixtures. A nil
 // events lists none.
-func NewWithGitHub(src Source, token string, prs LookupPR, events LookupGitHub) *Server {
+func NewWithGitHub(src Source, token string, prs LookupPRs, events LookupGitHub) *Server {
 	s := &Server{src: src, token: token, prs: newPRCache(prs), gh: newGHCache(events), mux: http.NewServeMux()}
 	var page bytes.Buffer
 	if err := index.Execute(&page, struct{ Name, Command string }{brand.Product, brand.Command}); err != nil {
@@ -150,6 +150,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(hiddenHeader) != "" {
 			r = r.WithContext(context.WithValue(r.Context(), hiddenKey{}, true))
 		}
+		if r.Header.Get(appHeader) != "" {
+			r = r.WithContext(context.WithValue(r.Context(), appKey{}, true))
+		}
 	}
 	s.mux.ServeHTTP(w, r)
 }
@@ -163,6 +166,19 @@ const keyPath = "/api/key"
 const hiddenHeader = "X-Page-Hidden"
 
 type hiddenKey struct{}
+
+// appHeader marks a call from the page in the desktop app's window (`mur app`, #23), seen or not.
+// Someone who keeps the app open is waiting for messages, as someone who closes a tab isn't.
+const appHeader = "X-Page-App"
+
+type appKey struct{}
+
+// InApp says whether the call ctx belongs to came from the desktop app's page. A daemon lets it
+// keep it running, though not count as someone watching: a minimized app is no one looking.
+func InApp(ctx context.Context) bool {
+	in, _ := ctx.Value(appKey{}).(bool)
+	return in
+}
 
 // Watched says whether the call ctx belongs to came from a page someone can see. The Source's
 // methods get that ctx, so a daemon can let only a watched page keep it running.
@@ -463,7 +479,10 @@ func (s *Server) postSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a message needs a recipient and some text")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), sendTimeout)
+	// Not cut short by the page going: a person who closes or reloads it while the push is on its
+	// way has sent the message, and the page told them so (#613). Cut short, git's push was killed
+	// and the message was lost without a word.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), sendTimeout)
 	defer cancel()
 	sent, err := s.src.Send(ctx, m.To, m.Text)
 	if err != nil {
