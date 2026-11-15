@@ -1226,7 +1226,14 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	if sealed {
 		d.newPresenceLocked(dev, pres.At) // the high-water mark of its presence times
 	}
-	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, sealed: sealed, locked: locked}
+	next := &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, sealed: sealed, locked: locked}
+	if p != nil {
+		next.skew, next.skewKnown = p.skew, p.skewKnown
+		if p.listed != sha && !pres.At.IsZero() && !d.lastPollOK.IsZero() && time.Since(d.lastPollOK) <= skewWindow {
+			next.skew, next.skewKnown = pres.At.Sub(time.Now()), true
+		}
+	}
+	d.peers[dev] = next
 	if !locked {
 		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
 	}

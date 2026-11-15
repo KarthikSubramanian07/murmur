@@ -33,6 +33,11 @@ const maxGroupAdd = 12
 // changes, so one from long ago is taken as done with.
 const groupAddMaxAge = time.Hour
 
+// skewWindow is how soon after the last listing a presence first shown in the next must be read for
+// its time to measure its writer's clock (peer.skew): it was written in between, so the measure is
+// off by no more than this, little against groupAddMaxAge.
+const skewWindow = 2 * time.Minute
+
 // groupMembersLocked is who a message to group would reach, as far as this device can see, less the
 // session at except: the names (or addresses) of its sessions here and in live peers' presence that
 // have the tag. old lists those of them on a device whose daemon is from before groups, which won't
@@ -246,18 +251,34 @@ func (d *Daemon) offLocked(s *session) []string {
 	return off
 }
 
+// sentAgoLocked is how long ago e was sent: by this device's clock, less how far its sender's
+// device's clock is ahead of it where this device has measured that (peer.skew). So a clock that is
+// behind or ahead doesn't age an add or keep it young (#543). Until a sender's presence has been read
+// as it changed, as just after this daemon starts, this device's clock alone decides. Caller holds
+// mu.
+func (d *Daemon) sentAgoLocked(e bus.Event) time.Duration {
+	ago := time.Since(e.At)
+	dev, _ := bus.SplitAddr(e.From)
+	if p := d.peers[dev]; dev != d.device && p != nil && p.skewKnown {
+		ago += p.skew
+	}
+	return ago
+}
+
 // applyGroupAddLocked applies an agent's add of a session here to groups, read in a sync of this
 // mode: the tags become the session's own, so it can take them off again. A group a person took
 // the session out of on the page isn't added: a human's mark would stand over the tag. An add older
-// than groupAddMaxAge isn't applied, and from history a skip passes over, only one sent since the
-// session started, as a message from there would be queued for it. Caller holds mu.
+// than groupAddMaxAge, by its sender's clock (sentAgoLocked), isn't applied, and from history a skip
+// passes over, only one sent since the session started, as a message from there would be queued for
+// it. Caller holds mu.
 func (d *Daemon) applyGroupAddLocked(e bus.Event, mode syncMode) {
 	dev, sess := bus.SplitAddr(e.To)
 	if dev != d.device {
 		return
 	}
-	if time.Since(e.At) > groupAddMaxAge || mode == modeSkip && !d.sentSinceLocked(e, sess, mode) {
-		d.log.Printf("%s added %s to %s at %s, too long ago to apply", e.From, e.To, strings.Join(e.Add, ", "), e.At.Format(time.RFC3339))
+	if ago := d.sentAgoLocked(e); ago > groupAddMaxAge || mode == modeSkip && !d.sentSinceLocked(e, sess, mode) {
+		d.log.Printf("%s added %s to %s at %s by its clock, %s ago, too long ago to apply",
+			e.From, e.To, strings.Join(e.Add, ", "), e.At.Format(time.RFC3339), ago.Round(time.Second))
 		return
 	}
 	key := d.tagKeyLocked(sess)

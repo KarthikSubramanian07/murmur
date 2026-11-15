@@ -616,6 +616,12 @@ type peer struct {
 	// machines' clocks.
 	listed     string
 	lastChange time.Time
+	// skew is how far its writer's clock is ahead of this machine's (behind, if negative), as last
+	// measured, and skewKnown says it has been: by a presence read in the first listing to show it,
+	// a moment after the listing before, so written in between (see skewWindow). It is kept across
+	// reads, so a device gone quiet, or a read after this one slept, still has it (sentAgoLocked).
+	skew      time.Duration
+	skewKnown bool
 	// sealed says the presence read was sealed: only such a one earns a grant of the team keys
 	// (grantsDueLocked). locked says it was encrypted for a team key this device doesn't hold yet, to
 	// read again once it does.

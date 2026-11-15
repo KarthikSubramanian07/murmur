@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/tags"
 )
@@ -239,6 +241,43 @@ func TestAnAddPastTagsAPersonHidIsRefusedToTheAdder(t *testing.T) {
 	holds(t, "bob and dave out of the group", time.Second, func() bool {
 		return !b.inGroup("bbbbbb", bob, "group:bus") && !a.inGroup("aaaaaa", dave, "group:bus")
 	})
+}
+
+// An add is as old as its sender's clock says, against that clock's own later reading in the
+// sender's presence (#543): a device whose clock is two hours behind adds a session at once, and
+// one whose clock is right still can't add with an add two hours old.
+func TestAGroupAddGoesByItsSendersOwnClock(t *testing.T) {
+	remote := newRemote(t)
+	b := newDevice(t, remote)
+	bob, _ := b.session("bbbbbb", "")
+	now := time.Now().UTC()
+	for _, dev := range []struct {
+		id    string
+		clock time.Time // the device's clock now
+		group string
+	}{{"lag-0001", now.Add(-2 * time.Hour), "group:lag"}, {"right-0002", now, "group:old"}} {
+		// Its presence twice, as its heartbeat writes it: b reads the second as it changes, which
+		// dates the device's clock by b's.
+		for _, doing := range []string{"first", "second"} {
+			pres := bus.Presence{V: bus.Version, Device: dev.id, Host: "test", At: dev.clock, Groups: true,
+				Sessions: []bus.SessionInfo{{ID: "xxxxxx", Agent: "test", Doing: doing, Started: dev.clock}}}
+			msg, err := bus.Encode(pres, dev.id+": 1 sessions")
+			if err != nil {
+				t.Fatal(err)
+			}
+			pushMessage(t, remote, brand.PresencePrefix+dev.id, msg)
+			eventually(t, dev.id+"'s presence", func() bool { got, _ := b.doing(dev.id + "/xxxxxx"); return got == doing })
+		}
+		// lag-0001's add is a moment old; right-0002's was made two hours ago and read only now.
+		pushEvent(t, remote, brand.MeshPrefix+dev.id, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.GroupAdd,
+			From: dev.id + "/xxxxxx", At: now.Add(-2 * time.Hour), To: bob, Add: []string{dev.group}})
+	}
+	eventually(t, "bob in the group a device with its clock behind added him to", func() bool {
+		return b.inGroup("bbbbbb", bob, "group:lag")
+	})
+	if b.inGroup("bbbbbb", bob, "group:old") {
+		t.Error("an add two hours old by its sender's own clock was applied")
+	}
 }
 
 // The first message a session is given from a group says in full that it is in the group, how to
