@@ -451,3 +451,31 @@ func TestASessionLeavesAGroupAHumanPutItIn(t *testing.T) {
 		t.Error("a human's add after the session left didn't put it back")
 	}
 }
+
+// A device's group (#463) is Murmur's to give: nobody sets or removes it, a presence can't claim
+// one, and a reader adds the one for the device a session is on.
+func TestADevicesGroupIsGivenOnlyByWhereTheSessionRuns(t *testing.T) {
+	if _, err := Clean([]string{"group:device-laptop-1a2b"}); err == nil {
+		t.Error("Clean took a device's group")
+	}
+	if _, err := Groups([]string{"group:device-laptop-1a2b"}); err == nil {
+		t.Error("Groups took a device's group, to add to")
+	}
+	read := CleanRead([]Tag{{Name: "reviewing"}, {Name: "group:device-other-9f9f", Src: SrcDerived}})
+	if !slices.Equal(Names(read), []string{"reviewing"}) {
+		t.Errorf("a presence's claim was read: %v", read)
+	}
+	got := WithDevice(read, "laptop-1a2b")
+	if !slices.Equal(Names(got), []string{"reviewing", "group:device-laptop-1a2b"}) || got[1].Src != SrcDerived {
+		t.Errorf("WithDevice gave %+v", got)
+	}
+	if again := WithDevice(got, "laptop-1a2b"); len(again) != 2 {
+		t.Errorf("a second WithDevice gave %+v", again)
+	}
+	if dev, ok := DeviceOfGroup(" Group:Device-Laptop-1A2B "); !ok || dev != "laptop-1a2b" {
+		t.Errorf("DeviceOfGroup: %q, %v", dev, ok)
+	}
+	if _, ok := DeviceOfGroup("group:ui"); ok {
+		t.Error("group:ui read as a device's group")
+	}
+}

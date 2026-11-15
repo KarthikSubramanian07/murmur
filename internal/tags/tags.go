@@ -74,6 +74,30 @@ func IsGroup(name string) bool {
 	return len(name) > len(GroupPrefix) && strings.HasPrefix(name, GroupPrefix) && Valid(name) && !strings.Contains(name, "/")
 }
 
+// DevicePrefix starts the tag of a device's group (#463): every agent's session on device d has
+// group:device-d, so a device is one more group, and a message to the tag is a message to the
+// device. Murmur gives it from where the session runs, as each reader shows the session: it is
+// never kept, nor carried in presence, so no session or person can set it or take it off, and no
+// device can claim another's. A device ID can be up to 40 long, so the tag can be longer than
+// MaxLen.
+const DevicePrefix = GroupPrefix + "device-"
+
+// DeviceGroup is the tag of device's group.
+func DeviceGroup(device string) string { return DevicePrefix + device }
+
+// DeviceOfGroup is the device whose group's tag name is, if it is one.
+func DeviceOfGroup(name string) (device string, ok bool) {
+	device, ok = strings.CutPrefix(Normalize(name), DevicePrefix)
+	return device, ok && device != ""
+}
+
+// WithDevice is ts with the tag of device's group added, as a derived tag: what a reader shows of
+// an agent's session on device.
+func WithDevice(ts []Tag, device string) []Tag {
+	out := slices.DeleteFunc(slices.Clone(ts), func(t Tag) bool { return strings.HasPrefix(t.Name, DevicePrefix) })
+	return append(out, Tag{Name: DeviceGroup(device), Src: SrcDerived})
+}
+
 // Groups reads tags as typed, as Clean does, and fails unless every one is a group's.
 func Groups(in []string) ([]string, error) {
 	names, err := Clean(in)
@@ -277,6 +301,9 @@ func Clean(in []string) (names []string, err error) {
 		t := Normalize(raw)
 		if t == "" {
 			continue
+		}
+		if strings.HasPrefix(t, DevicePrefix) {
+			return nil, fmt.Errorf("%s is %s's to give: each session on a device is in that device's group, and nobody sets or removes it", t, brand.Product)
 		}
 		if !Valid(t) {
 			return nil, fmt.Errorf("%q isn't a tag: a tag is up to %d lowercase letters, digits and . _ : / -, starting with a letter or a digit", raw, MaxLen)
@@ -504,7 +531,8 @@ func Sort(ts []Tag) {
 func CleanRead(in []Tag) []Tag {
 	var out []Tag
 	for _, t := range in {
-		if !Valid(t.Name) || t.Name == Human || Has(out, t.Name) || len(out) >= MaxPerSession {
+		// A device's group is each reader's to give (DevicePrefix): one in presence is a claim.
+		if !Valid(t.Name) || t.Name == Human || strings.HasPrefix(t.Name, DevicePrefix) || Has(out, t.Name) || len(out) >= MaxPerSession {
 			continue
 		}
 		switch t.Src {

@@ -54,7 +54,7 @@ judgment.
 
 ## Messaging many
 
-A device name reaches every session on that device; `*` reaches everyone. Each recipient pays a
+A device's group, `group:device-<its ID>`, reaches every session on that device; `*` reaches everyone. Each recipient pays a
 turn. Use `*` only for what changes everyone's work: main is broken, a shared migration landed, a
 history rewrite. Routine progress belongs in `status`.
 
