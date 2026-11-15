@@ -463,7 +463,10 @@ func (s *Server) postSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a message needs a recipient and some text")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), sendTimeout)
+	// Not cut short by the page going: a person who closes or reloads it while the push is on its
+	// way has sent the message, and the page told them so (#613). Cut short, git's push was killed
+	// and the message was lost without a word.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), sendTimeout)
 	defer cancel()
 	sent, err := s.src.Send(ctx, m.To, m.Text)
 	if err != nil {

@@ -3191,11 +3191,15 @@ function messageText(m) {
   return [m.subject && h("div", { class: "chat-msg-subject" }, m.subject), m.body && h("div", { class: "chat-msg-body rich" }, rich(m.body))];
 }
 
+// A message the person wrote that isn't among the messages yet. It looks written at once, as a
+// chat app's does (#613): a clock while its push to the remote is on its way, which took 2.4 to
+// 4.7 s from a Windows laptop on 2026-11-15, then the tick for sent. The daemon finishes the push
+// if the page closes meanwhile.
 function pendingMessage(item, head) {
   const failed = item.status === "failed";
   return h(
     "article",
-    { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : "") + (failed ? " chat-msg-failed" : " chat-msg-sending"), "data-cid": item.cid },
+    { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : "") + (failed ? " chat-msg-failed" : ""), "data-cid": item.cid },
     h("div", { class: "chat-bubble rich" }, rich(item.text)),
     failed
       ? h(
@@ -3205,8 +3209,16 @@ function pendingMessage(item, head) {
           h("button", { class: "btn btn-ghost btn-xs", "data-key": "retry-" + item.cid, onclick: () => deliver(item) }, icon("retry"), "Try again"),
           h("button", { class: "btn btn-ghost btn-xs", "data-key": "edit-" + item.cid, onclick: () => editFailed(item) }, icon("pencil"), "Edit"),
         )
-      : item.status === "sending" && h("div", { class: "chat-msg-meta msg-sending" }, "Sending…"),
+      : h("div", { class: "chat-msg-meta" }, sendingMark(item)),
   );
+}
+
+// The mark under a message on its way: a clock until it is on the remote, then one tick, as
+// receiptMark shows it once the message is listed.
+function sendingMark(item) {
+  const sent = item.status === "sent";
+  const tip = sent ? "Sent" : "Sending: it goes out even if you close this page";
+  return h("span", { class: "receipt-mark", "data-state": sent ? "sent" : "sending", role: "img", "aria-label": tip, "data-tip": tip }, icon(sent ? "check" : "clock"));
 }
 
 function dayLabel(t) {

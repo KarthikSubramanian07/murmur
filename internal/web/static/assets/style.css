@@ -2951,13 +2951,9 @@ a.g-pr:hover {
 .receipt-mark[data-state="read"] {
   color: var(--primary);
 }
-.chat-msg-sending > .chat-bubble {
-  opacity: 0.64;
-}
-.chat-msg-sending > .msg-sending {
-  opacity: 1;
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
+/* A message on its way (#613): a mark, not a button, until it is listed. */
+.receipt-mark[data-state="sending"] {
+  cursor: default;
 }
 .chat-msg-failed > .chat-bubble {
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--destructive) 45%, transparent);
