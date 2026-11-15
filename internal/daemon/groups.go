@@ -225,8 +225,11 @@ func (d *Daemon) applyGroupAddLocked(e bus.Event, mode syncMode) {
 	if dev != d.device {
 		return
 	}
-	if time.Since(e.At) > groupAddMaxAge || mode == modeSkip && !d.sentSinceLocked(e, sess, mode) {
-		d.log.Printf("%s added %s to %s at %s, too long ago to apply", e.From, e.To, strings.Join(e.Add, ", "), e.At.Format(time.RFC3339))
+	if ago := time.Since(e.At); ago > groupAddMaxAge || mode == modeSkip && !d.sentSinceLocked(e, sess, mode) {
+		// The add's time is by its sender's clock and the age by this one's, so a clock far off
+		// on either side shows in the line (#543).
+		d.log.Printf("%s added %s to %s at %s by its clock, %s ago by this device's, too long ago to apply",
+			e.From, e.To, strings.Join(e.Add, ", "), e.At.Format(time.RFC3339), ago.Round(time.Second))
 		return
 	}
 	key := d.tagKeyLocked(sess)
