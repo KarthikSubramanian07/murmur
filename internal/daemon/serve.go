@@ -310,7 +310,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 			s.unlogged = true
 			d.mu.Unlock()
 		} else {
-			d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStarted, From: addr,
+			d.owe(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStarted, From: addr,
 				At: time.Now().UTC(), Agent: agent, Branch: branch})
 		}
 	}
@@ -361,7 +361,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	d.log.Printf("session %s stopped", addr)
 	d.kickPresence()
 	if !unlogged {
-		d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStopped, From: addr,
+		d.owe(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStopped, From: addr,
 			At: time.Now().UTC()})
 	}
 }

@@ -99,8 +99,8 @@ func TestSessionStartPushesPresenceFirst(t *testing.T) {
 // A presence push that fails still lets the rest of a session's start go: its start on the log and
 // its name's assignment wait for the presence to have been tried, not for it to have landed. A gate
 // opened only by a push that landed would leave the assigner waiting for good, with the pool
-// never filled again, and drop every line appendSoon writes. The remote's pre-receive hook here
-// refuses every presence push.
+// never filled again, and hold back every start and stop owedLoop writes. The remote's pre-receive
+// hook here refuses every presence push.
 func TestARefusedPresenceDoesNotHoldBackTheStartOrTheName(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)

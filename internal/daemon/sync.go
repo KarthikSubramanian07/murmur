@@ -1415,27 +1415,6 @@ func (d *Daemon) clearOwnJunk(listed map[string]string) {
 	}()
 }
 
-// appendSoon appends an event in the background, for events nobody waits on. It goes after the
-// presence of a session just started (see awaitPresence).
-func (d *Daemon) appendSoon(e bus.Event) {
-	if d.bgCtx.Err() != nil {
-		return
-	}
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		ctx, cancel := context.WithTimeout(d.bgCtx, time.Minute)
-		defer cancel()
-		err := d.awaitPresence(ctx)
-		if err == nil {
-			err = d.appendEvent(ctx, e)
-		}
-		if err != nil {
-			d.log.Printf("writing %s: %v", logged(e), err)
-		}
-	}()
-}
-
 // awaitPresence waits, if a session has started since the last presence was made, until a presence
 // that lists it has been pushed or has failed. A device pushes one ref at a time, and a session's
 // start sets off three pushes: its start on the log and its name's assignment are ready within
@@ -1534,6 +1513,9 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 			retry.Reset(15 * time.Second)
 		case err == nil && failing:
 			d.log.Printf("presence pushed again")
+		}
+		if err == nil {
+			d.kickOwed() // the remote takes pushes: a start or stop that failed to land can go now
 		}
 		failing = err != nil
 		d.pruneInboxes()

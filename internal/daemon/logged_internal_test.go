@@ -16,15 +16,19 @@ import (
 // out of the log, which is sent to whoever helps debug a device.
 func TestAFailedWriteLogsNoSubject(t *testing.T) {
 	var out bytes.Buffer
-	d := &Daemon{log: log.New(&out, "", 0), device: "here-0001", bgCtx: context.Background(),
+	d := &Daemon{log: log.New(&out, "", 0), device: "here-0001", dir: t.TempDir(),
 		repo: &bus.Repo{Git: gitx.Git{Dir: filepath.Join(t.TempDir(), "no-such-git-dir")}}}
 	// With a team key, so the write gets as far as git, and fails there.
 	d.boxKey, d.teamKeys = bus.NewBoxKey(), bus.Keyring{}
 	withEpoch(d, true)
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "here-0001/aaaaaa",
 		To: "peer-0001/bbbbbb", Subject: "the launch moves to Friday"}
-	d.appendSoon(e)
-	d.bg.Wait()
+	d.st.Owed = []owedEvent{{Event: e}}
+	err := d.writeOwed(context.Background())
+	if err == nil {
+		t.Fatal("the write didn't fail")
+	}
+	d.log.Printf("%v", err) // as owedLoop logs it
 	got := out.String()
 	if !strings.Contains(got, "writing message "+e.ID+" from here-0001/aaaaaa to peer-0001/bbbbbb: ") {
 		t.Fatalf("the failed write wasn't logged by type, ID and addresses:\n%s", got)
