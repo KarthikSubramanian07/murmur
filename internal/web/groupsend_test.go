@@ -73,8 +73,15 @@ async function run(name, sessions, failing, then) {
     console.log(label + ": " + item.status + " | " + (item.error || "") + " | " + (note ? (note.warn ? "warn " : "") + note.text : "") + " | " + calls.join(", "));
     calls.length = 0;
   };
+  const settled = () => Promise.all([...(ctx.groupJoins.get("group:x") || [])]);
   const item = newItem("hello");
   ctx.tagSessions(sessions, "group:x", true); // as startGroup does, without waiting
+  if (then === "added by hand first") {
+    // The add fails and the member is added by hand before the first message.
+    await settled();
+    failing.clear();
+    await ctx.tagSessions([sessions[0]], "group:x", true);
+  }
   if (then === "started again") {
     // Both adds fail with nothing sent; tags are freed, and the group is started again.
     await Promise.all([...ctx.groupJoins.get("group:x")]);
@@ -112,6 +119,7 @@ async function run(name, sessions, failing, then) {
   const s = (name) => ({ name, addr: "laptop/" + name, tags: [] });
   await run("all join", [s("a"), s("b")], new Set(), "two at once");
   await run("one fails", [s("a"), s("b")], new Set(["laptop/a"]), "added by hand");
+  await run("one fails, added by hand first", [s("a"), s("b")], new Set(["laptop/a"]), "added by hand first");
   await run("all fail", [s("a"), s("b")], new Set(["laptop/a", "laptop/b"]), "edit and send");
   await run("all fail", [s("a"), s("b")], new Set(["laptop/a", "laptop/b"]), "try again");
   await run("one fails, two at once", [s("a"), s("b")], new Set(["laptop/a"]), "two at once");
@@ -148,6 +156,7 @@ func TestGroupSendSaysWhoWasntAdded(t *testing.T) {
 		"all join: sent |  | group:x has 1 other member(s) right now. | /api/tags laptop/a, /api/tags laptop/b, /api/send group:x, /api/send group:x hello2, announce Sent., announce Sent.",
 		"one fails: sent |  | warn Couldn't add a to group:x, so they didn't get this: a session has at most 12 tags | /api/tags laptop/a, /api/tags laptop/b, /api/send group:x, announce Sent, but not to a.",
 		"one fails, added by hand: sent |  | group:x has 1 other member(s) right now. | /api/tags laptop/a, /api/send group:x hello2, announce Sent.",
+		"one fails, added by hand first: sent |  | group:x has 1 other member(s) right now. | /api/tags laptop/a, /api/tags laptop/b, /api/tags laptop/a, /api/send group:x, announce Sent.",
 		"all fail: failed | Not sent: couldn't add a, b to group:x: a session has at most 12 tags |  | /api/tags laptop/a, /api/tags laptop/b",
 		"all fail, sent anew: failed | Not sent: couldn't add a, b to group:x: a session has at most 12 tags |  | ",
 		"all fail: failed | Not sent: couldn't add a, b to group:x: a session has at most 12 tags |  | /api/tags laptop/a, /api/tags laptop/b",
