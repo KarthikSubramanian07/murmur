@@ -53,8 +53,6 @@ since it wasn't installed). The details, and where each came from, are in the co
     of `who`. Not tried: a thread T3 started, and whether T3's sidebar shows a child session as a
     thread of its own (Tyler's rule, #452, keeps such a one on the mesh; the plugin would take it
     off).
-  - *Not covered.* `opencode run` exits when its turn ends, so what the hook hands over there is
-    marked read and never acted on.
 - **OpenCode 1's plugin** (2026-11-15, #446, #205). OpenCode 1 loads the same `plugins/` folder, but
   a plugin of another shape (`server(input)` where OpenCode 2 has `setup(ctx)`), and each version
   refuses the other's or, with both in one file, 1.19.5 runs both. So join writes the one `opencode
@@ -81,9 +79,11 @@ since it wasn't installed). The details, and where each came from, are in the co
     as Pi's extension does, and gives its address and token to the MCP server beside the ID, so the
     daemon hands an idle session its message as it does Pi's. The plugin puts it in as a prompt the
     terminal UI shows.
-  - *Children.* A session the `task` tool started has a `parentID`. Its Murmur calls go through its
-    parent's server, as its parent's, so it runs no hook and gets no turn: it was never on the mesh
-    (read in the source, not tried).
+  - *Children.* A session the `task` tool started has a `parentID`. It runs no hook and gets no
+    turn, so it never shows as a session of its own (read in the source, not tried). Its Murmur
+    calls still go through its parent's server, as its parent's: it sends as the parent and reads
+    the parent's inbox, as before the plugin. `tool.execute.before` has the call's session, so the
+    plugin could refuse them there (not tried).
   - *Under T3* the plugin does nothing (`T3CODE_CLI_PATH` in OpenCode's environment): no ID, socket
     or hook, so an OpenCode 1 thread is as it was before, and T3 hands it a message as a turn when
     its turn ends. Nobody has tried the plugin in T3, where its turn at an idle session's Stop would
@@ -98,6 +98,8 @@ since it wasn't installed). The details, and where each came from, are in the co
     two clients) share one session's messages, and a turn goes to the one at work last. A server
     killed by a signal leaves the socket's file in the temporary directory. Not tried on Windows,
     where the socket is a named pipe opened by OpenCode's runtime, Bun.
+- **`opencode run` without `--attach`**, in either version, exits when its turn ends, so what the
+  hook hands over at the turn's end is marked read and never acted on.
 - **Titles and approval.** Outside T3 no title is read for these agents. OpenCode and Grok have a
   rule for tool approval, which join writes; Muse and Pi have none, so in T3 outside full-access
   mode they ask before each call.

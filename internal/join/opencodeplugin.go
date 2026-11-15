@@ -83,14 +83,16 @@ import (
 //     turn is shown.
 //   - A session another one started (the `task` tool's) has a parentID, in session.created and
 //     client.session.get. Its tool calls reach Murmur through its parent's server, as its
-//     parent's, so it runs no hook of its own and is never given a turn: it is never on the mesh.
+//     parent's, so it runs no hook of its own and is never given a turn: it never shows as a
+//     session of its own.
 //   - Under T3 (T3CODE_CLI_PATH in OpenCode's environment, as for the MCP server's route) the
 //     plugin does nothing, so an OpenCode 1 thread is as it was before the plugin: T3 hands it a
 //     message as a turn when its turn ends. Nobody has tried the plugin in T3, where its turn at an
 //     idle session's Stop would be one T3 didn't start.
 //
 // Not covered: two sessions at work at once in one OpenCode 1 process (`opencode serve` with two
-// clients) share one session's messages, and a turn goes to the one at work last.
+// clients) share one session's messages, and a turn goes to the one at work last. A `task` child's
+// Murmur calls are its parent's.
 
 // openCodePlugin is OpenCode 2's plugin's text for the mur at exe.
 func openCodePlugin(exe string) string { return fillOpenCode(openCodeTemplate, exe) }
