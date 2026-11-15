@@ -390,3 +390,91 @@ func TestWhatAStoppedSessionKeptByItsIDGoesWithItsInbox(t *testing.T) {
 			d.st.Tags[tagKeyOf("", "bbbbbb")], d.st.Mutes[tagKeyOf("", "bbbbbb")])
 	}
 }
+
+// keepByID gives session id, as one whose name never landed, a tag and a mute kept by its ID.
+// Caller holds mu.
+func keepByID(t *testing.T, d *Daemon, id string) {
+	t.Helper()
+	st := &tags.State{}
+	if err := st.SetSelf([]string{"release"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	d.st.Tags[tagKeyOf("", id)] = st
+	if d.st.Mutes == nil {
+		d.st.Mutes = map[string]map[string]time.Time{}
+	}
+	d.st.Mutes[tagKeyOf("", id)] = map[string]time.Time{"brave-heron": time.Now()}
+}
+
+// A session back after its stop ran out, before pruneInboxes got to it, gets none of what it kept
+// by its ID, as it gets no inbox: the same as had the prune come first.
+func TestASessionBackAfterItsStopRanOutGetsNoneOfWhatItKeptByItsID(t *testing.T) {
+	t.Parallel()
+	d := tagsDaemon(t)
+	d.opt.StoppedInbox = time.Hour
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, id := range []string{"aaaaaa", "bbbbbb"} {
+		delete(d.sessions, id)
+		keepByID(t, d, id)
+		d.st.Inbox[id] = []*inMsg{{}}
+	}
+	d.st.Stopped["aaaaaa"] = time.Now().Add(-2 * time.Hour)
+	d.st.Stopped["bbbbbb"] = time.Now()
+	d.newSessionLocked(&proto.Hello{ID: "aaaaaa"}, "claude-code", "", "aaaaaa")
+	d.newSessionLocked(&proto.Hello{ID: "bbbbbb"}, "claude-code", "", "bbbbbb")
+	if d.st.Inbox["aaaaaa"] != nil || d.st.Tags[tagKeyOf("", "aaaaaa")] != nil || d.st.Mutes[tagKeyOf("", "aaaaaa")] != nil {
+		t.Errorf("back past StoppedInbox, it kept: inbox %d, tags %+v, mutes %v", len(d.st.Inbox["aaaaaa"]),
+			d.st.Tags[tagKeyOf("", "aaaaaa")], d.st.Mutes[tagKeyOf("", "aaaaaa")])
+	}
+	if d.st.Inbox["bbbbbb"] == nil || d.st.Tags[tagKeyOf("", "bbbbbb")] == nil || d.st.Mutes[tagKeyOf("", "bbbbbb")] == nil {
+		t.Errorf("back within StoppedInbox, it lost: inbox %d, tags %+v, mutes %v", len(d.st.Inbox["bbbbbb"]),
+			d.st.Tags[tagKeyOf("", "bbbbbb")], d.st.Mutes[tagKeyOf("", "bbbbbb")])
+	}
+}
+
+// A session whose name never landed and that went down with its daemon is never recorded as
+// stopped. Two minutes after the start, when its inbox is taken for gone, so is what it kept by
+// its ID; a session that is back, or stopped within StoppedInbox, keeps it.
+func TestWhatASessionNotBackAfterARestartKeptByItsIDGoesWithItsInbox(t *testing.T) {
+	t.Parallel()
+	d := tagsDaemon(t)
+	d.opt.StoppedInbox = time.Hour
+	d.mu.Lock()
+	d.started = time.Now()
+	for _, id := range []string{"aaaaaa", "bbbbbb", "cccccc", "dddddd"} {
+		keepByID(t, d, id)
+	}
+	d.sessions["aaaaaa"].name = "" // back, its name still pending
+	delete(d.sessions, "bbbbbb")   // never back
+	d.st.Stopped["cccccc"] = time.Now()
+	delete(d.st.Tags, tagKeyOf("", "dddddd")) // never back, with only a mute
+	d.mu.Unlock()
+
+	kept := func(id string) bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return d.st.Tags[tagKeyOf("", id)] != nil || d.st.Mutes[tagKeyOf("", id)] != nil
+	}
+	d.pruneInboxes()
+	if !kept("bbbbbb") || !kept("dddddd") {
+		t.Fatal("dropped within two minutes of the start, while the session may still reconnect")
+	}
+	d.mu.Lock()
+	d.started = time.Now().Add(-3 * time.Minute)
+	d.mu.Unlock()
+	d.pruneInboxes()
+	for _, id := range []string{"bbbbbb", "dddddd"} {
+		if kept(id) {
+			t.Errorf("%s, not back after the restart, still has what it kept by its ID", id)
+		}
+	}
+	for _, id := range []string{"aaaaaa", "cccccc"} {
+		d.mu.Lock()
+		tagged, muted := d.st.Tags[tagKeyOf("", id)] != nil, d.st.Mutes[tagKeyOf("", id)] != nil
+		d.mu.Unlock()
+		if !tagged || !muted {
+			t.Errorf("%s lost what it kept by its ID: tags %v, mutes %v", id, tagged, muted)
+		}
+	}
+}

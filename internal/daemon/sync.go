@@ -1697,17 +1697,7 @@ func (d *Daemon) pruneInboxes() {
 	}
 	for id, at := range d.st.Stopped {
 		if time.Since(at) > d.opt.StoppedInbox {
-			delete(d.st.Stopped, id)
-			delete(d.st.Inbox, id)
-			delete(d.st.Commits, id)
-			delete(d.st.T3Routes, id)
-			// One whose name never landed kept its tags and mutes by its ID while it could come
-			// back to its inbox (tagKeyLocked). They go with the inbox, as nothing else would
-			// ever drop them; a name's are kept for good.
-			if d.sessions[id] == nil {
-				delete(d.st.Tags, tagKeyOf("", id))
-				delete(d.st.Mutes, tagKeyOf("", id))
-			}
+			d.dropStoppedLocked(id)
 			d.saveLocked()
 		}
 	}
@@ -1740,6 +1730,43 @@ func (d *Daemon) pruneInboxes() {
 			d.saveLocked()
 		}
 	}
+	// The tags and mutes it kept by its ID, if its name never landed, go with its inbox as well.
+	gone := func(key string) {
+		id, pending := strings.CutPrefix(key, tagKeyOf("", ""))
+		if _, stopped := d.st.Stopped[id]; pending && d.sessions[id] == nil && !stopped {
+			d.dropPendingKeyLocked(id)
+			d.saveLocked()
+		}
+	}
+	for key := range d.st.Tags {
+		gone(key)
+	}
+	for key := range d.st.Mutes {
+		gone(key)
+	}
+}
+
+// dropStoppedLocked lets go of what is kept for session id, stopped past StoppedInbox: its inbox,
+// the commits credited to it and its thread, and the tags and mutes it kept by its ID if its name
+// never landed. The stop runs out in pruneInboxes, or in newSessionLocked if the session comes back
+// first; both come here, so what it gets back doesn't depend on which ran first. Caller holds mu.
+func (d *Daemon) dropStoppedLocked(id string) {
+	delete(d.st.Stopped, id)
+	delete(d.st.Inbox, id)
+	delete(d.st.Commits, id)
+	delete(d.st.T3Routes, id)
+	d.dropPendingKeyLocked(id)
+}
+
+// dropPendingKeyLocked drops the tags and mutes session id kept by its ID while its name was
+// pending (tagKeyLocked), once it has no inbox to come back to: nothing else would ever drop them.
+// A name's are kept for good. Caller holds mu.
+func (d *Daemon) dropPendingKeyLocked(id string) {
+	if d.sessions[id] != nil {
+		return
+	}
+	delete(d.st.Tags, tagKeyOf("", id))
+	delete(d.st.Mutes, tagKeyOf("", id))
 }
 
 func (d *Daemon) sortedSessionsLocked() []*session {

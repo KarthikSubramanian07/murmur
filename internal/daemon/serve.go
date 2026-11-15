@@ -1061,12 +1061,10 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession, branch: branch,
 		started: now, lastActive: now, reconnect: h.Reconnect, key: key, clientPID: h.ClientPID}
 	if at, ok := d.st.Stopped[h.ID]; ok {
-		delete(d.st.Stopped, h.ID)
 		if time.Since(at) > d.opt.StoppedInbox {
-			delete(d.st.Inbox, h.ID)
-			delete(d.st.Commits, h.ID)
-			delete(d.st.T3Routes, h.ID)
+			d.dropStoppedLocked(h.ID)
 		} else {
+			delete(d.st.Stopped, h.ID)
 			s.since = at
 		}
 		d.saveLocked()
