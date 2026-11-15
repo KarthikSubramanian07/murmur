@@ -1,7 +1,10 @@
 package daemon_test
 
 import (
+	"fmt"
 	"net/url"
+	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -152,5 +155,49 @@ func TestThePageIsToldOfCommits(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("%d commit activities on the session's own page, want 1: %+v", n, acts)
+	}
+}
+
+// An issue the hook says a session's call filed or closed (#510) shows on the session's own page as
+// its own, by number: only one in the clone's repository on GitHub, and once however often it is
+// said. A clone whose remote isn't on GitHub keeps none.
+func TestThePageIsToldOfIssuesASessionFiled(t *testing.T) {
+	remote := newRemote(t)
+	dir := filepath.Join(t.TempDir(), "clone")
+	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
+	// The clone's remote reads as a repository on GitHub, and git fetches it from the bare one.
+	const github = "https://github.com/a-Fig/feed.git"
+	git(t, dir, "config", "remote.origin.url", github)
+	git(t, dir, "config", "url."+remote+".insteadOf", github)
+	a := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond}
+	a.start()
+	off := newDevice(t, remote)
+
+	alice, _ := a.claudeSession("aaaaaa", "claude-feed-id", procP, dir)
+	bob, _ := off.claudeSession("bbbbbb", "claude-off-id", procP+1, dir)
+	aliceName := a.named(alice)
+	call := proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-feed-id", ClientPID: procP, Issues: []proto.Issue{
+		{Repo: "A-Fig/Feed", Number: 37}, {Repo: "someone/else", Number: 38}, {Repo: "a-Fig/feed", Number: 12, Closed: true}}}
+	a.do(call)
+	a.do(call) // a hook that told it twice
+	call.ClaudeSession, call.ClientPID = "claude-off-id", procP+1
+	off.do(call)
+
+	issues := func(acts []web.Activity) (out []string) {
+		for _, x := range acts {
+			if x.Kind == web.ActIssue {
+				out = append(out, fmt.Sprintf("%s %s #%d %s", x.Addr, x.Who, x.Issue, x.What))
+			}
+		}
+		return out
+	}
+	acts, _ := a.page().activity("")
+	want := []string{alice + " " + aliceName + " #37 opened", alice + " " + aliceName + " #12 closed"}
+	if got := issues(acts); !slices.Equal(got, want) {
+		t.Errorf("the session's page has the issues %q, want %q", got, want)
+	}
+	acts, _ = off.page().activity("")
+	if got := issues(acts); len(got) != 0 {
+		t.Errorf("a clone off GitHub kept the issues %q of %s", got, bob)
 	}
 }

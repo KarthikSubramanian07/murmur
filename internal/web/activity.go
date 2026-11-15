@@ -36,6 +36,11 @@ type Activity struct {
 	// Commits is how many commits the session made in one tool call, and Subject the last one's.
 	Commits int    `json:"commits,omitempty"`
 	Subject string `json:"subject,omitempty"`
+	// Issue is the number of a GitHub issue in this clone's repository that the session filed, or
+	// closed, as What says (GHOpened or GHClosed): the page names the session on GitHub's event
+	// for it (#510).
+	Issue int    `json:"issue,omitempty"`
+	What  string `json:"what,omitempty"`
 }
 
 // Activity.Kind values.
@@ -45,6 +50,7 @@ const (
 	ActStatus  = "status"
 	ActTags    = "tags"
 	ActCommits = "commits"
+	ActIssue   = "issue"
 )
 
 // GitHubEvent is one thing that happened to a pull request or an issue: it was opened, merged or
@@ -58,7 +64,8 @@ type GitHubEvent struct {
 	Title  string    `json:"title"`
 	URL    string    `json:"url,omitempty"`
 	// Author is the GitHub login that opened it. Agents on one machine share their user's login,
-	// so the page names the session whose branch Branch is, where it knows one.
+	// so the page names the session whose branch Branch is, or for an issue the one whose hook saw
+	// it file or close it (ActIssue), where it knows one.
 	Author string `json:"author,omitempty"`
 	Branch string `json:"branch,omitempty"` // a pull request's head
 }
