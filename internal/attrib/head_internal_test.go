@@ -199,13 +199,16 @@ func TestDetachedHeadsOfEveryWorktreeAreTips(t *testing.T) {
 	}
 }
 
-// A new worktree's HEAD holds the all-zero ID for a moment under git before 2.44; it is no
-// commit, and as a tip it would make NewCommits's git log fail.
-func TestAddTipsSkipsTheZeroID(t *testing.T) {
+// A tip goes to NewCommits's git log as a revision, so only a full object ID is kept: not the
+// all-zero ID a new worktree's HEAD holds for a moment under git before 2.44, and not a short or
+// malformed line, which git would read as an expression or refuse.
+func TestAddTipsKeepsOnlyObjectIDs(t *testing.T) {
+	sha1, sha256 := strings.Repeat("a", 40), strings.Repeat("b", 64)
 	var ref Ref
-	addTips(&ref, []string{strings.Repeat("0", 40), strings.Repeat("a", 40)})
-	if len(ref.tips) != 1 || ref.tips[0] != strings.Repeat("a", 40) {
-		t.Fatalf("tips = %v, want only the real one", ref.tips)
+	addTips(&ref, []string{strings.Repeat("0", 40), strings.Repeat("0", 64), sha256, "abc1234",
+		strings.Repeat("A", 40), sha1 + "^!", "HEAD~1", "", sha1[:39] + "g", sha1})
+	if want := []string{sha1, sha256}; !slices.Equal(ref.tips, want) {
+		t.Fatalf("tips = %v, want %v", ref.tips, want)
 	}
 }
 
