@@ -31,7 +31,7 @@ const base = sig(state());
 const changed = (name, edit) => { const s = state(); edit(s.devices); console.log(name + ": " + (sig(s) === base ? "same" : "changed")); };
 changed("this device seen again", (d) => { d[0].lastSeen = at(-3); });
 changed("this device's person polled again", (d) => { d[0].person.lastActive = at(0); });
-changed("another device's heartbeat", (d) => { d[1].lastSeen = at(1); });
+changed("another device seen again", (d) => { d[1].lastSeen = at(1); });
 changed("a person away came back", (d) => { d[1].person.lastActive = at(2); });
 changed("a person here went away", (d) => { d[0].person.lastActive = at(600); });
 changed("a session did something", (d) => { d[0].sessions[0].lastActive = at(1); });
@@ -64,7 +64,7 @@ func TestPageSignatureLeavesOutWhatIsNotShown(t *testing.T) {
 	want := strings.Join([]string{
 		"this device seen again: same",
 		"this device's person polled again: same",
-		"another device's heartbeat: same",
+		"another device seen again: same",
 		"a person away came back: changed",
 		"a person here went away: changed",
 		"a session did something: changed",
