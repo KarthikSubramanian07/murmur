@@ -88,7 +88,10 @@ tool calls for them.
   presence was written it was. An agent without the hook moves it by MCP calls only. Only Claude
   Code has commits credited: other agents' hooks bracket no tool call.
 - **Messages in `lookup`** are the page's: the last 500, read back from the bus past a restart
-  (#138).
+  (#138). A group's messages count for the sessions in it now, by their tags (#485, #445), so one a
+  session got before it left the group isn't listed. That is the page's filter for a running
+  session. For a stopped one the page counts none, and lookup on its own device counts them by the
+  tags kept for its name.
 
 ## Device nicknames
 
