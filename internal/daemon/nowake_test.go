@@ -132,8 +132,9 @@ func TestSendSaysWakingIsOffForTheRecipient(t *testing.T) {
 }
 
 // Under the default, within 3 minutes, a thread idle for longer isn't woken by an agent's message,
-// and the sender is told. A person's message wakes it however long it has been idle, so a person
-// isn't, and once it has, presence says it may be woken again.
+// and the sender is told. A person's message to it alone wakes it however long it has been idle, so
+// a person sending to it isn't told, and once it has, presence says it may be woken again; one to
+// its device doesn't, so a person sending there is.
 func TestSendSaysTheRecipientHasBeenIdleTooLong(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
@@ -163,8 +164,16 @@ func TestSendSaysTheRecipientHasBeenIdleTooLong(t *testing.T) {
 	}
 	holds(t, "no handoff to a thread idle 10 minutes", 500*time.Millisecond, func() bool { return len(calls()) == 0 })
 
+	// A person's message to bob's device doesn't wake an idle thread (only one to bob alone does), so
+	// the person is told.
 	pg := a.page()
 	pg.choose("ada-lovelace")
+	if note := pg.sendNote(b.self(), "to the device from a person"); !strings.Contains(note, bobName+" "+wontBeWoken) {
+		t.Errorf("a person's message to the device was told %q", note)
+	}
+	eventually(t, "the message to the device to reach b", func() bool { return logHas(b, "to the device from a person") })
+	holds(t, "no handoff for a person's message to the device", 500*time.Millisecond, func() bool { return len(calls()) == 0 })
+
 	if note := pg.sendNote(bobName, "from a person"); strings.Contains(note, wontBeWoken) {
 		t.Errorf("a person's message wakes an idle thread, but the person was told %q", note)
 	}

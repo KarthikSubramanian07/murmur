@@ -70,13 +70,13 @@ func (d *Daemon) wakeChangedLocked(wake pageSettings) bool {
 
 // unwokenLocked names the sessions a message from from to many won't wake (#545): those on device
 // dev, or on every device if dev is "", and of a group only its members, by name as
-// groupMembersLocked gives them. A person's message wakes a session however long it has been idle,
-// so for a person only a setting of never counts. Caller holds mu.
+// groupMembersLocked gives them. A person's message to one session wakes it however long it has
+// been idle (serve.go); one to many doesn't (personAsks), so idle counts here as for an agent.
+// Caller holds mu.
 func (d *Daemon) unwokenLocked(from, dev string, group bool, members []string, wake pageSettings) []string {
-	person := bus.IsPerson(from)
 	var out []string
 	add := func(name, why string) {
-		if why == "" || why == bus.NoWakeIdle && person || group && !slices.Contains(members, name) {
+		if why == "" || group && !slices.Contains(members, name) {
 			return
 		}
 		out = append(out, name)

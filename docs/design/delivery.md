@@ -168,15 +168,18 @@ the turn took, so nothing waits for good.
   what its device would do with an agent's message now (`noWake`: `off` for never, `idle` for idle
   past the setting's minutes), and `send` and `lookup` say "won't be woken", and why, on every
   device. A message to a group, a device or everyone names the sessions it won't wake, five at
-  most and the rest counted. A person is told only of `off`, as their message wakes a session
-  however long it has been idle.
+  most and the rest counted. A person sending to one session is told only of `off`, as their
+  message wakes it however long it has been idle; their message to many doesn't (`personAsks`), so
+  there they are told of `idle` too.
   - `idle` changes with time, so the daemon looks every 5 s (`TitleEvery`, with the threads) and
     writes presence when a session's answer changes, rather than leaving it to the 2-minute
     heartbeat: about two pushes more each time a session stays idle past its limit, one as it
     crosses it and one as it gets to work again.
-  - Not counted: a session with no way in at all (Muse or Grok outside T3), which `who`'s agent
-    shows; do not disturb, which says so itself; and a session of this device that has stopped,
-    which `send` already calls stopped.
+  - A session with no way in at all (Muse or Grok outside T3, OpenCode 1 in a terminal) is
+    judged as any other: under the default nothing is said for its first 3 idle minutes, and
+    `idle` after, with that reason, though it would not be woken at any time. `who`'s agent column shows it. Not counted:
+    do not disturb, which says so itself, and a session of this device that has stopped, which
+    `send` already calls stopped.
   - No protocol bump. An older daemon ignores the field and writes none, so a sender is told
     nothing of its sessions, as before.
 - **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
