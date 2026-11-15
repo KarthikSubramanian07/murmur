@@ -102,7 +102,7 @@ Each client keeps and changes that ID at different moments. Researched 2026-10-2
 | Client | The ID | Kept across | New on | Where Murmur can read it |
 |---|---|---|---|---|
 | Claude Code | session ID | compaction, every kind of resume, a killed process resumed | `/clear`, `--fork-session`, `/branch`, switching with `/resume` | A hook's `session_id` on stdin, always current |
-| T3 Code | thread ID | everything, for good | a fork, which is a new thread | `T3CODE_THREAD_ID`, for Claude Code and ACP agents; else T3's database ([handoff](handoff.md)) |
+| T3 Code | thread ID | everything, for good | a fork, which is a new thread | `T3CODE_THREAD_ID`, for Claude Code; else T3's database ([handoff](handoff.md)) |
 | Codex | `threadId` | compaction, every kind of resume | `/new`, `/clear`, a fork | `_meta.threadId` on every MCP `tools/call`, and a hook's `session_id` |
 
 - **Claude Code's MCP servers can't be trusted with the ID.** `CLAUDE_CODE_SESSION_ID` is set once
@@ -151,27 +151,32 @@ the old session stopped, other devices showed its messages under a bare address,
 conversation: the registry has a name at the first address that took it, and only the owning device
 knew the rest.
 
-- **The ID comes from the thread.** T3 sets `T3CODE_THREAD_ID` for the Claude Code process and an
-  ACP agent's (read in T3 0.1.x's server, 2026-11-15), and their MCP servers inherit it. Inside T3
-  (`T3CODE_CLI_PATH` set too) the server's ID is a hash of the thread, and its hello carries the
+- **The ID comes from the thread.** T3 sets `T3CODE_THREAD_ID` for the Claude Code process it runs
+  (read in T3 0.1.x's server, 2026-11-15), and Claude Code's MCP servers inherit it. Inside T3
+  (`T3CODE_CLI_PATH` set too) such a server's ID is a hash of the thread, and its hello carries the
   thread, so it never looks in T3's database. A switch is then a takeover of the same session, in
-  its grace or after it stopped, with its inbox, name and address. Codex's MCP servers don't get the
-  variable, and an OpenCode server serves many sessions, so both find their thread as before.
+  its grace or after it stopped, with its inbox, name and address. T3 sets the variable for ACP
+  agents too, but Muse passes on only what `join` lists, and Pi and Grok weren't tried; they and
+  Codex, whose servers get a bare environment, find their thread as before.
+- **Not the thread's own.** Every process under a thread inherits the variable, so a `claude` run
+  from the thread's shell, perhaps in another clone, would pass for the thread. The server ignores
+  the variable when an agent's program (`claude`, `codex` and the like) runs above its client;
+  T3 runs the thread's client itself. An agent run through `node` isn't seen. On the thread's own
+  daemon the hello is refused anyway while the thread's session is live, as any ID in use is, and
+  after three refusals, about 7 s, the server registers as before #642: an ID from its Claude
+  session, its thread looked up in T3's database.
 - **Threads named before #642** have their name in the registry at the address of the session that
   first had it, made from a Claude session ID. A hello that says it was made from the thread
-  (`ByThread`) is registered at that address when it is this device's, and the server goes by the
-  ID its reply names. A hello without it, from a server started before an update, is never moved.
-- **A thread whose address is in use** is refused, as any ID in use is. That is a process inside the
-  thread that isn't the thread's own, such as `claude` run from the thread's shell, which inherits
-  the variable; or a provider session T3 hasn't let go of yet (in the switch seen for #636 it had:
-  the old session stopped at the end of its 1-minute grace, 19 s after the new one started). After three refusals, about 7 s, the server registers as before
-  #642: an ID from its Claude session, its thread looked up in T3's database.
-- **Hooks** still find a session by `CLAUDE_PID`, then by Claude session ID, never by thread: a
-  `claude` run inside a thread would otherwise move the thread's session. A hook of the new
-  instance's process finds the session once its server has registered. One of the old process, if
-  any runs after that, finds nothing and changes nothing.
+  (`ByThread`, protocol 22) is registered at that address when it is this device's and still goes
+  by that name, and the server goes by the ID its reply names. A hello without it, from a server
+  started before an update, is never moved.
+- **Hooks** still find a session by `CLAUDE_PID`, then by Claude session ID, never by thread. A hook
+  of the new instance's process finds the session once its server has registered; one of the old
+  process, if any runs after that, finds nothing and changes nothing.
 - **Published.** The address is 24 bits of a SHA-256 of the thread ID, which stays on the device, in
   place of 24 bits of the Claude session ID (#51). A keyed hash, as #51 proposes, would replace both
   the same way.
-- **Not covered:** a conversation moved between the Claude Code CLI and T3 still changes its name
-  and address (#643).
+- **Not covered.** If T3 started the new instance's process before letting the old one go, the new
+  server would give up the thread's address after 7 s, for good, and the thread would split as
+  before #642. In the switch seen for #636 the old one had gone about 40 s before. A conversation moved
+  between the Claude Code CLI and T3 still changes its name and address (#643).

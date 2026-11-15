@@ -52,6 +52,9 @@ func (d *Daemon) threadIDLocked(h *proto.Hello) string {
 	if dev != d.device || !validName(id) || id == proto.CLISession || id == bus.PersonSession {
 		return h.ID
 	}
+	if last, ok := d.st.SessionNames[id]; ok && last != name {
+		return h.ID // that session went on to another conversation, whose inbox it may hold
+	}
 	return id
 }
 

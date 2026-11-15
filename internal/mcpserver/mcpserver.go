@@ -272,17 +272,41 @@ func helloFor(agent, cwd string) proto.Hello {
 			h.ID, h.Native = nativeID(native), native
 		}
 	}
-	if thread := os.Getenv(threadEnv); thread != "" && h.T3CLI != "" && !sharedAgent(agent) {
+	if thread := os.Getenv(threadEnv); thread != "" && h.T3CLI != "" && isClaude(agent) && !agentAbove() {
 		h.ID, h.T3Thread, h.ByThread = threadID(thread), thread, true
 	}
 	return h
 }
 
-// threadEnv is where T3 puts the thread's ID for the agents it runs, and so for their MCP servers:
-// Claude Code's process, and an ACP agent's (read in T3 0.1.x's server, 2026-11-15). Codex's MCP
-// servers start with a bare environment and don't get it. An OpenCode server serves every session
-// in its directory, so the one thread in its environment isn't theirs: it is left out (sharedAgent).
+// threadEnv is where T3 puts the thread's ID for the Claude Code process it runs, and so for its MCP
+// servers (read in T3 0.1.x's server, 2026-11-15). Only Claude Code's servers take it: Codex's start
+// with a bare environment, Muse passes on only what join lists, and Pi and Grok weren't tried.
 const threadEnv = "T3CODE_THREAD_ID"
+
+// agentAbove says whether an agent's program runs above the client that started this server. Every
+// process under a T3 thread inherits threadEnv, so a claude run from the thread's shell, perhaps in
+// another clone, has the thread's variable without being the thread: its own client has an agent
+// above it (the thread's), where T3 runs the thread's client itself. A variable, for tests: their
+// own process runs under whatever agent started them. An agent run through node, as an npm install
+// is, isn't seen; on one daemon the thread's address being in use catches it.
+var agentAbove = func() bool {
+	pids := proc.Ancestors(os.Getppid(), 8)
+	for _, pid := range pids[min(1, len(pids)):] {
+		if exe, err := proc.Exe(pid); err == nil && agentPrograms[programName(exe)] {
+			return true
+		}
+	}
+	return false
+}
+
+// agentPrograms are the agents' programs agentAbove looks for, by name.
+var agentPrograms = map[string]bool{"claude": true, "codex": true, "grok": true, "muse": true,
+	"opencode": true, "pi": true, "gemini": true}
+
+// programName is exe's file name, lower case, without .exe or Linux's " (deleted)".
+func programName(exe string) string {
+	return strings.TrimSuffix(strings.ToLower(filepath.Base(strings.TrimSuffix(exe, " (deleted)"))), ".exe")
+}
 
 // threadID is the session's Murmur ID inside T3, made from its thread (#642). A thread keeps its ID
 // for good, while the client's session under it changes when T3 moves the thread to another
@@ -291,15 +315,6 @@ const threadEnv = "T3CODE_THREAD_ID"
 // a move, at the same address, and other devices never see an address they can't name. Hashed, as
 // nativeID is, and kept apart from it.
 func threadID(thread string) string { return nativeID("t3:" + thread) }
-
-// ownID is the ID the session has when it isn't registered by its thread: made from its client's
-// own ID, as helloFor makes it.
-func ownID(h proto.Hello) string {
-	if h.Native != "" {
-		return nativeID(h.Native)
-	}
-	return sessionID(h.ClaudeSession)
-}
 
 // isClaude says whether the server runs for Claude Code: `mcp` with no agent, as join registers it
 // there, or with claude-code.
@@ -368,8 +383,7 @@ func clientProgram(name string) string {
 // say; the path without it is the program that replaced it.
 func programNamed(exe, name string) string {
 	exe = strings.TrimSuffix(exe, " (deleted)")
-	base := strings.TrimSuffix(strings.ToLower(filepath.Base(exe)), ".exe")
-	if exe == "" || !filepath.IsAbs(exe) || base != name {
+	if exe == "" || !filepath.IsAbs(exe) || programName(exe) != name {
 		return ""
 	}
 	return exe
@@ -1311,7 +1325,7 @@ func (l *link) run(ctx context.Context) {
 						// go. It is a session of its own, whose thread T3's database may name,
 						// as before #642.
 						l.hello.ByThread, l.hello.T3Thread = false, ""
-						l.hello.ID = ownID(l.hello)
+						l.hello.ID = sessionID(l.hello.ClaudeSession)
 					} else {
 						l.hello.ID = bus.RandHex(6)
 					}

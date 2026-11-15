@@ -36,8 +36,9 @@ func threadHello(d *device, id, claude string, pid int, t3cli, thread string, by
 }
 
 // The manager's case (#642): a thread on instance P, switched to W, where it sends, then back to
-// P. Every server registers at the thread's address, so W's message is the thread's on the other
-// device too, after W's server has gone, and its address is still found.
+// P. Every server registers at the thread's address (the server makes it, see package mcpserver),
+// so W's message is the thread's on the other device too, after W's server has gone, and its
+// address is still found.
 func TestAProviderSwitchKeepsTheThreadsAddress(t *testing.T) {
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)

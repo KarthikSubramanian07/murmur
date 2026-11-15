@@ -32,10 +32,19 @@ func TestTheThreadGivesTheSessionItsID(t *testing.T) {
 		t.Error("two threads share an ID")
 	}
 
-	// An agent whose server serves many sessions (OpenCode) can't say which thread is whose.
+	// Only Claude Code's servers take it: an OpenCode server serves many sessions, say, and can't
+	// tell which thread is whose.
 	if h := helloFor("opencode", "/work"); h.ByThread || h.T3Thread != "" {
 		t.Errorf("opencode: %+v", h)
 	}
+	// A claude run from a thread's shell has the thread's variable and an agent above it: it isn't
+	// the thread.
+	agentAbove = func() bool { return true }
+	t.Cleanup(func() { agentAbove = func() bool { return false } })
+	if h := helloFor("claude-code", "/work"); h.ByThread || h.T3Thread != "" || h.ID != "a4ca6b" {
+		t.Errorf("under another agent: %+v", h)
+	}
+	agentAbove = func() bool { return false }
 	// Outside T3 (no T3 command line) the variable is someone else's, and the session is as before.
 	t.Setenv("T3CODE_CLI_PATH", "")
 	if h := helloFor("claude-code", "/work"); h.ByThread || h.T3Thread != "" || h.ID != "a4ca6b" {

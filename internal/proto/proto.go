@@ -93,7 +93,9 @@ const (
 //	    the session is a child from that call on (#487)
 //	21: receipts (#26): a daemon of 20 or less writes no marks for its sessions, and its page shows
 //	    none for its person's messages, so an upgraded mur replaces it where it may.
-const Protocol = 21
+//	22: a hello's ByThread (#642): the daemon may register a T3 thread at the address its name
+//	    already has. One of 21 or less would register it at a new one.
+const Protocol = 22
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12

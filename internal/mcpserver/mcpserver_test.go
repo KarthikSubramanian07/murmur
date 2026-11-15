@@ -45,6 +45,8 @@ func TestMain(m *testing.M) {
 	for _, k := range []string{"T3CODE_CLI_PATH", "T3CODE_HOME", "T3CODE_THREAD_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN"} {
 		os.Unsetenv(k)
 	}
+	// And under an agent, perhaps: the tests of T3's thread variable say whether one is above.
+	agentAbove = func() bool { return false }
 	// Servers publish their records here, not in the real user's config directory.
 	dir, err := os.MkdirTemp("", "murmur-sessions-")
 	if err != nil {
