@@ -851,7 +851,8 @@ func (d *Daemon) logEventWaitLocked(c bus.Commit, dev, ref string) (bus.Event, b
 
 // tagsKnownLocked says whether this device has a name or tags for any session: a tags event applies
 // only to a session it has (see tagKeyLocked), so with neither, as on a new clone, nothing in a
-// log's history is for it. Caller holds mu.
+// log's history is for it but a change for a session still reconnecting (holdForLocked), which a
+// skip with nothing else to read the log for lets go. Caller holds mu.
 func (d *Daemon) tagsKnownLocked() bool {
 	return len(d.st.SessionNames) > 0 || len(d.st.Tags) > 0
 }
