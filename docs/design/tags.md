@@ -69,8 +69,23 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   it; a `tags` event wouldn't do, as every daemon applies one as a person's choice. An add over an
   hour old when read isn't applied, nor one from history a daemon passes over unless it was sent
   since the session started: an add carries no order against the session's own changes, so an old
-  one read late could put back a member who has left. An add that would take a session past its 12
-  tags is refused to the adder.
+  one read late could put back a member who has left. The hour is by the reader's clock, less how far
+  ahead of it the adder's device's clock is, so a clock hours behind doesn't make every add from it
+  old (#543). The reader measures that from a presence first shown in a listing that came within 2
+  minutes of the one before, so written in between, and keeps it, for a device gone quiet too. Until
+  it has read one so, as just after it starts, its own clock decides.
+- **The adder is refused what the session's device would refuse**, so it isn't told "Added" for an
+  add that never takes (#524, #543): a session that has muted it, one a person took out of the group
+  on the page (a person's choice stands over the tag), and one past its 12 tags. A tag of its own a
+  person hid on the page is still one of the 12. The adder sees these in presence, where a session's
+  device lists the tags a person turned off that bear on an add (`off`: its own that are hidden, and
+  the groups it was taken out of). The cost is a little more in presence; an adder's daemon from
+  before this, or a target's that doesn't publish `off`, still says "Added" for those two.
+- **A session with no name yet** keeps its tags and mutes by its ID, so one that stopped before its
+  name landed still has them while its inbox is kept (#503). After a restart, a change to the tags of
+  a session the daemon knows nothing of, or an add of it, read in the first 30 s, waits for a session
+  of that ID to reconnect in that time, as a message does, and is applied before the messages that
+  waited (#524): one whose name was pending and that kept nothing here would otherwise lose it.
 - **Each receiving device decides who is in.** A group message goes on the bus addressed to the tag,
   and each daemon gives it to those of its sessions that have the tag when it reads it. A device is
   the only authority on its sessions' tags, so no sender's view of the members can be out of date,
