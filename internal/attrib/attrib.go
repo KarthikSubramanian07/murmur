@@ -34,7 +34,7 @@ type Ref struct {
 	SHA    string
 	Branch string
 	Time   time.Time
-	tips   []string // commit and annotated-tag object names, then detached HEADs, deduplicated
+	tips   []string // every ref's object name, then detached HEADs, deduplicated
 	gitDir string   // the worktree's git directory where Head found it itself, "" where git did
 }
 
@@ -108,8 +108,12 @@ func objectID(s string) bool {
 
 // headFromFile completes a Ref from what the HEAD file said, with one for-each-ref: the tips, and
 // the commit HEAD's branch is at. A branch that isn't among the refs is unborn, as headByGit has
-// it; a branch at anything but a commit, or one that is itself a symbolic ref (git names the branch
-// at the end of the chain), is left to git to read.
+// it; one that is itself a symbolic ref (git names the branch at the end of the chain) is left to
+// git to read. HEAD's ref is taken as a commit unchecked, as a detached HEAD file's ID is: both ref
+// backends refuse to write anything else to a branch, and checking would mean reading the object,
+// which scanRefs avoids (#540). HEAD can name any ref under refs/, so one pointed by hand at an
+// annotated tag gives the tag object here where headByGit gives its commit. Nothing is credited
+// differently: git log peels a tag on either side, and nothing can be committed on such a HEAD.
 func headFromFile(ctx context.Context, worktree, gitDir, commonDir, symref, sha string, ref Ref) (Ref, error) {
 	head, err := scanRefs(ctx, worktree, symref, &ref)
 	if err != nil {
@@ -123,14 +127,7 @@ func headFromFile(ctx context.Context, worktree, gitDir, commonDir, symref, sha 
 		if head.symref != "" {
 			return headByGit(ctx, worktree, Ref{Time: ref.Time})
 		}
-		switch head.objectType {
-		case "":
-			// Unborn: a symbolic HEAD whose branch does not exist yet.
-		case "commit":
-			ref.SHA = head.objectName
-		default:
-			return headByGit(ctx, worktree, Ref{Time: ref.Time})
-		}
+		ref.SHA = head.objectName // "" when unborn: a symbolic HEAD whose branch does not exist yet
 	}
 	ref.gitDir = gitDir
 	return ref, nil
@@ -247,7 +244,7 @@ func headByGit(ctx context.Context, worktree string, ref Ref) (Ref, error) {
 	addTips(&ref, detached)
 	sha, err := gitx.RunIn(ctx, worktree, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
 	if err != nil {
-		if exitCode(err, 1) && branch != "" && head.objectType == "" {
+		if exitCode(err, 1) && branch != "" && head.objectName == "" {
 			return ref, nil // A symbolic HEAD whose branch does not exist yet is unborn.
 		}
 		return Ref{}, err
@@ -258,12 +255,18 @@ func headByGit(ctx context.Context, worktree string, ref Ref) (Ref, error) {
 
 // refLine is one ref as for-each-ref lists it. symref is the ref it names, if it is a symbolic ref;
 // its object is then the one at the end of the chain.
-type refLine struct{ objectType, objectName, symref string }
+type refLine struct{ objectName, symref string }
 
 // scanRefs records every ref tip in ref, and returns the line of the ref named branch, if there is
 // one (empty when branch is "" or doesn't exist).
+//
+// The format asks only for what the refs themselves hold. A field such as %(objecttype) has git
+// read every ref's object, and one ref at an object the clone lacks, such as a branch whose commit
+// was lost, then fails the whole scan with "missing object", so Head failed in every worktree of
+// the clone (#540). Reading no object also makes the scan cheaper. So every ref's object is a tip,
+// whatever it is: git log passes over a tree, a blob and an object the clone lacks.
 func scanRefs(ctx context.Context, worktree, branch string, ref *Ref) (refLine, error) {
-	out, err := gitx.RunIn(ctx, worktree, "for-each-ref", "--format=%(refname)%00%(objecttype)%00%(objectname)%00%(symref)")
+	out, err := gitx.RunIn(ctx, worktree, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)")
 	if err != nil {
 		return refLine{}, err
 	}
@@ -274,21 +277,18 @@ func scanRefs(ctx context.Context, worktree, branch string, ref *Ref) (refLine, 
 			continue
 		}
 		fields := strings.Split(strings.TrimSuffix(line, "\r"), "\x00")
-		if len(fields) != 4 {
+		if len(fields) != 3 {
 			return refLine{}, fmt.Errorf("unexpected git for-each-ref output: %q", line)
 		}
 		if branch != "" && fields[0] == branch {
-			head = refLine{fields[1], fields[2], fields[3]}
+			head = refLine{fields[1], fields[2]}
 		}
-		switch fields[1] {
-		case "commit", "tag":
-			// An annotated tag is kept as the tag object, not peeled here: git log peels it,
-			// tags of tags included, and ignores one that ends at a tree or blob. Peeling each
-			// with rev-parse cost a process per tag, over a minute for 1,000 release tags.
-			if !seen[fields[2]] {
-				seen[fields[2]] = true
-				ref.tips = append(ref.tips, fields[2])
-			}
+		// An annotated tag is kept as the tag object, not peeled here: git log peels it, tags of
+		// tags included, and ignores one that ends at a tree or blob. Peeling each with rev-parse
+		// cost a process per tag, over a minute for 1,000 release tags.
+		if objectID(fields[1]) && !seen[fields[1]] {
+			seen[fields[1]] = true
+			ref.tips = append(ref.tips, fields[1])
 		}
 	}
 	return head, nil
