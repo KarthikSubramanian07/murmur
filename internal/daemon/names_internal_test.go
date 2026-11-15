@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
@@ -282,5 +283,85 @@ func TestKnownNameWithNoDeviceGainsItsReservation(t *testing.T) {
 		if got := d.st.Used[name]; got != "" {
 			t.Errorf("whole history %v: %s is taken as %s's", whole, name, got)
 		}
+	}
+}
+
+// shownName is the name one place shows for a sender.
+type shownName struct{ where, name string }
+
+// shownNames is the name each place shows for the sender of e, a session that isn't in presence:
+// the inbox, activity, lookup's detail and its list of messages, and the name a mute check goes by.
+// The order is fixed, so a failing test reports the same place every run.
+func shownNames(d *Daemon, e bus.Event) []shownName {
+	d.msgs = []pageMsg{{seq: 1, e: e}}
+	det := d.detailLocked(e.From, "", 10)
+	return []shownName{
+		{"inbox", d.messageViewsLocked([]*inMsg{{Event: e}}, false)[0].FromName},
+		{"activity", d.labelerLocked()(e.From)},
+		{"lookup", det.Name},
+		{"lookup's messages", det.Messages[0].FromName},
+		{"nameOfLocked", d.nameOfLocked(e.From)},
+	}
+}
+
+// An address that has held many names, as after Claude Code's /clear, and has left presence is
+// shown by one of them, the same every time and in every place: the first by spelling, as
+// nameOfLocked gives it. A map's order chose it before (#502).
+func TestADepartedSenderIsShownByOneNameEverywhere(t *testing.T) {
+	from := bus.Addr("there-0002", "aaaaaa")
+	used := map[string]string{"other-name": bus.Addr("there-0002", "cccccc")}
+	for _, n := range []string{"brave-heron", "calm-zebra", "dusty-crane", "eager-lynx", "fond-otter",
+		"glad-raven", "hazy-moose", "icy-finch", "jolly-newt", "keen-quail", "lucky-shrew", "mild-stoat"} {
+		used[n] = from
+	}
+	d := &Daemon{device: "here-0001", st: state{Used: used}}
+	e := bus.Event{ID: "m1", From: from, To: "*", Subject: "hi"}
+	for i := 0; i < 50; i++ {
+		for _, got := range shownNames(d, e) {
+			if got.name != "brave-heron" {
+				t.Fatalf("try %d: %s shows the sender as %q; want brave-heron, the first by spelling, every time", i, got.where, got.name)
+			}
+		}
+	}
+}
+
+// One of this device's sessions that has stopped is shown by the name it took last, which this
+// device knows, wherever that falls in spelling among the names its address has held (#502).
+func TestADepartedLocalSessionIsShownByTheNameItTookLast(t *testing.T) {
+	const me = "here-0001"
+	from := bus.Addr(me, "aaaaaa")
+	used := map[string]string{}
+	for _, n := range []string{"brave-heron", "calm-zebra", "dusty-crane", "eager-lynx", "fond-otter"} {
+		used[n] = from
+	}
+	d := &Daemon{device: me, st: state{Used: used, SessionNames: map[string]string{"aaaaaa": "dusty-crane"},
+		Stopped: map[string]time.Time{"aaaaaa": time.Now()}}}
+	e := bus.Event{ID: "m1", From: from, To: me, Subject: "hi"}
+	for i := 0; i < 50; i++ {
+		for _, got := range shownNames(d, e) {
+			if got.name != "dusty-crane" {
+				t.Fatalf("try %d: %s shows the sender as %q; want dusty-crane, the name it took last", i, got.where, got.name)
+			}
+		}
+	}
+}
+
+// The name shown for a departed sender is one a mute holds against: here a session of this device
+// that took the name of a conversation it resumed, which the registry has down for another session
+// ID (#502).
+func TestAMuteOfADepartedLocalSendersShownNameHolds(t *testing.T) {
+	const me, muter = "here-0001", "quiet-otter"
+	from := bus.Addr(me, "aaaaaa")
+	d := &Daemon{device: me, opt: Options{MuteGrace: -1},
+		sessions: map[string]*session{"bbbbbb": {id: "bbbbbb", name: muter}},
+		st: state{Used: map[string]string{"brave-heron": bus.Addr(me, "zzzzzz")},
+			SessionNames: map[string]string{"aaaaaa": "brave-heron", "zzzzzz": "brave-heron"},
+			Mutes:        map[string]map[string]time.Time{muter: {"brave-heron": time.Now()}}}}
+	e := bus.Event{From: from, To: me}
+	if got := d.nameOfLocked(from); got != "brave-heron" {
+		t.Errorf("the sender is shown as %q; want brave-heron", got)
+	}
+	if !d.mutedHereLocked("bbbbbb", e) {
+		t.Error("a mute of the name the sender is shown by let its message through")
 	}
 }

@@ -103,17 +103,19 @@ your COO. Their source is in [`internal/skills`](internal/skills).
 | OpenCode 1, Muse Code   | T3 Code               | turn      | waits for the turn to end, then a turn |
 | OpenCode 1, Muse Code   | a terminal            | inbox     | inbox                                  |
 
-A **turn** means the message starts a new turn in the agent's conversation, and wakes an idle T3
-thread. A **notice** is one line with the sender and subject, added after the agent's next tool
-call; the agent reads the message with `inbox`, and anything still unread when its turn ends is
-given to it then. An **inbox** message waits until the agent reads it. Codex and OpenCode in a
-terminal take a turn once the session has used one of Murmur's tools.
+A **turn** means the message starts a new turn in the agent's conversation, and wakes a T3 thread
+idle less than its wake setting allows (3 minutes by default). A **notice** is one line with the
+sender and subject, added after the agent's next tool call; the agent reads the message with
+`inbox`, and anything still unread when its turn ends is given to it then. An **inbox** message
+waits until the agent reads it. Codex and OpenCode in a terminal take a turn once the session has
+used one of Murmur's tools.
 
 ## For humans
 
 | Command                | What it does |
 | ---------------------- | ------------ |
 | `mur ui`               | Opens a page in your browser with every session, the messages between them, and what the agents have been doing lately. Pick a name there to message any agent and read its answers; the repo's name at the top switches to your other repos. |
+| `mur app`              | Opens the same page in a window of its own, with your unread count on its icon and a notification when an agent messages you. On Linux, only in a build made with `-tags desktop`. |
 | `mur init [--no-push]` | Turns Murmur on for the repo (once per repo). |
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |

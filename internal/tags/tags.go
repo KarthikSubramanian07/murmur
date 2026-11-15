@@ -359,14 +359,26 @@ func (st *State) SetSelf(add, remove []string) error {
 }
 
 // Given applies another agent's add of group tags (see Groups) to the session: each becomes the
-// session's own, which it can take off again as any tag it set. It fails, and changes nothing, if
-// the session would have more than MaxPerSession. A human's mark still stands over the tag.
-func (st *State) Given(groups []string) error {
-	groups, err := Groups(groups)
+// session's own, which it can take off again as any tag it set. A group a human took the session
+// out of is left out, and listed in out: the human's mark stands over it, so as the session's own
+// it would only take a place. It fails, and changes nothing, if the session would have more than
+// MaxPerSession.
+func (st *State) Given(groups []string) (given, out []string, err error) {
+	groups, err = Groups(groups)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	return st.SetSelf(groups, nil)
+	for _, g := range groups {
+		if m, ok := st.Human[g]; ok && !m.On {
+			out = append(out, g)
+		} else {
+			given = append(given, g)
+		}
+	}
+	if err := st.SetSelf(given, nil); err != nil {
+		return nil, nil, err
+	}
+	return given, out, nil
 }
 
 // Left applies the session's own removal of group tags (see Groups) at at: a human's mark putting

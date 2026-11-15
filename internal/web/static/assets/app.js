@@ -162,8 +162,11 @@ async function api(path, init = {}) {
   const token = ui.token;
   const headers = { Authorization: "Bearer " + token };
   if (init.body) headers["Content-Type"] = "application/json";
-  // A tab nobody can see still polls, but mustn't keep the daemon running for good.
+  // A tab nobody can see still polls, but mustn't keep the daemon running for good. The desktop
+  // app's window is someone waiting for messages, minimized or not: it keeps the daemon running,
+  // though hidden it doesn't count as someone looking.
   if (document.hidden) headers["X-Page-Hidden"] = "1";
+  if (inApp()) headers["X-Page-App"] = "1";
   const res = await fetch(path, { ...init, headers, cache: "no-store" });
   if (res.status === 401) throw new AuthError(token);
   if (!res.ok) {
@@ -503,7 +506,8 @@ function render() {
   fitComposers();
   placeLive();
   announceShown();
-  document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME;
+  document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME; // tellApp says the same
+  tellApp();
   refreshTip();
   queueMicrotask(markOpenRead);
 }
@@ -2586,10 +2590,13 @@ function repoMenu() {
 // A session's changes go one after another, in the order they were clicked: the daemon times a
 // change when it gets it, so two in flight at once could land the other way round.
 const tagQueues = new Map();
-// The adds this page made to each group, which a message sent to it waits for: each resolves to the
-// sessions whose add failed, with why. A tag change that fails resolves its place in tagQueues all
-// the same. They are kept, and a session counts as missed only while it is still out of the group.
-const groupJoins = new Map(); // a group's tag → [Promise<[{ s, msg }]>]
+// The adds this page made to each group still on their way, which a message sent to it waits for.
+// A tag change that fails resolves its place in tagQueues all the same, so groupMisses keeps each
+// session whose add to a group failed, with why, while that is the latest word on it: until the
+// session is in the group, by anyone's hand, the page changes its tag there again, or it isn't
+// running. One out of the group after that is out for a reason the page doesn't know (#538).
+const groupJoins = new Map(); // a group's tag → [Promise]
+const groupMisses = new Map(); // a group's tag → Map<addr, { s, msg }>
 
 function queueTagChange(addr, fn) {
   const run = (tagQueues.get(addr) || Promise.resolve()).then(fn);
@@ -2621,16 +2628,30 @@ async function tagSessions(targets, name, on) {
           api("/api/tags", { method: "POST", body: JSON.stringify({ addr: s.addr, add: on ? [name] : [], remove: on ? [] : [name] }) }),
         );
         wishes.get(s.addr).done = Date.now();
+        groupMisses.get(name)?.delete(s.addr);
       } catch (e) {
         // A later click on the same tag has its own wish; only this one's is dropped.
         const w = tagWanted.get(s.addr);
         if (w?.get(name) === wishes.get(s.addr)) w.delete(name);
-        if (e instanceof AuthError) denied = e;
-        else failed.push({ s, msg: e.message });
+        if (e instanceof AuthError) {
+          denied = e;
+        } else {
+          failed.push({ s, msg: e.message });
+          if (on && isGroupTag(name)) {
+            if (!groupMisses.has(name)) groupMisses.set(name, new Map());
+            groupMisses.get(name).set(s.addr, { s, msg: e.message });
+          }
+        }
       }
     }),
   );
-  if (on && isGroupTag(name) && todo.length) groupJoins.set(name, [...(groupJoins.get(name) || []), all.then(() => failed)]);
+  if (on && isGroupTag(name) && todo.length) {
+    groupJoins.set(name, [...(groupJoins.get(name) || []), all]);
+    all.then(() => {
+      const left = (groupJoins.get(name) || []).filter((p) => p !== all);
+      left.length ? groupJoins.set(name, left) : groupJoins.delete(name);
+    });
+  }
   await all;
   if (denied) return deny(denied.token);
   if (failed.length) {
@@ -2640,6 +2661,17 @@ async function tagSessions(targets, name, on) {
   }
   render();
   poll();
+}
+
+// Drops each failed add to a group whose session is in it now or no longer running.
+function forgetJoins() {
+  for (const [group, misses] of groupMisses) {
+    for (const addr of [...misses.keys()]) {
+      const s = sessionByAddr(addr);
+      if (!s || inGroup(s, group)) misses.delete(addr);
+    }
+    if (!misses.size) groupMisses.delete(group);
+  }
 }
 
 // Messages.
@@ -3191,11 +3223,15 @@ function messageText(m) {
   return [m.subject && h("div", { class: "chat-msg-subject" }, m.subject), m.body && h("div", { class: "chat-msg-body rich" }, rich(m.body))];
 }
 
+// A message the person wrote that isn't among the messages yet. It looks written at once, as a
+// chat app's does (#613): a clock while its push to the remote is on its way, which took 2.4 to
+// 4.7 s from a Windows laptop on 2026-11-15, then the tick for sent. The daemon finishes the push
+// if the page closes meanwhile.
 function pendingMessage(item, head) {
   const failed = item.status === "failed";
   return h(
     "article",
-    { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : "") + (failed ? " chat-msg-failed" : " chat-msg-sending"), "data-cid": item.cid },
+    { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : "") + (failed ? " chat-msg-failed" : ""), "data-cid": item.cid },
     h("div", { class: "chat-bubble rich" }, rich(item.text)),
     failed
       ? h(
@@ -3205,7 +3241,29 @@ function pendingMessage(item, head) {
           h("button", { class: "btn btn-ghost btn-xs", "data-key": "retry-" + item.cid, onclick: () => deliver(item) }, icon("retry"), "Try again"),
           h("button", { class: "btn btn-ghost btn-xs", "data-key": "edit-" + item.cid, onclick: () => editFailed(item) }, icon("pencil"), "Edit"),
         )
-      : item.status === "sending" && h("div", { class: "chat-msg-meta msg-sending" }, "Sending…"),
+      : h("div", { class: "chat-msg-meta" }, sendingMark(item)),
+  );
+}
+
+// The mark under a message on its way: a clock until it is on the remote, then one tick, as
+// receiptMark shows it once the message is listed. Its tip promises the message goes out only
+// once the daemon has it (item.posted): a new group's message waits here first for its members'
+// tags (deliver). A button, as receiptMark's is, so the keyboard and a tap reach the tip.
+function sendingMark(item) {
+  const sent = item.status === "sent";
+  const tip = sent ? "Sent" : item.posted ? "Sending: it goes out even if you close this page" : "Sending";
+  return h(
+    "button",
+    {
+      class: "receipt-mark",
+      "data-state": sent ? "sent" : "sending",
+      "data-key": "sending-" + item.cid,
+      "data-tip": tip,
+      "data-tip-labelled": "1",
+      "aria-label": tip,
+      onclick: (e) => showTipNow(e.currentTarget, e.pointerType === "mouse" ? "hover" : "tap"),
+    },
+    icon(sent ? "check" : "clock"),
   );
 }
 
@@ -3503,8 +3561,9 @@ function markOpenRead() {
   if (arriving) ui.newMark = { key: ui.conversation, id: ids[0] };
   for (const id of ids) ui.readLocal.add(id);
   api("/api/read", { method: "POST", body: JSON.stringify({ ids }) }).catch((e) => {
-    if (e instanceof AuthError) deny(e.token);
-    else for (const id of ids) ui.readLocal.delete(id);
+    if (e instanceof AuthError) return deny(e.token);
+    for (const id of ids) ui.readLocal.delete(id);
+    render(); // unread again, and no poll shows it: a state that hasn't changed rebuilds nothing
   });
   render();
 }
@@ -4099,6 +4158,7 @@ function sendFrom(c, target, el, big) {
 async function deliver(item) {
   item.status = "sending";
   item.error = "";
+  item.posted = false;
   render();
   try {
     // A group just started here reaches its members only once they have its tag: the tag changes
@@ -4110,18 +4170,21 @@ async function deliver(item) {
       if (item.missed?.length) tagSessions(item.missed.map((f) => f.s), item.to, true); // Try again tries them again
       const joins = [...(groupJoins.get(item.to) || [])];
       await Promise.all([...tagQueues.values()]);
-      const seen = new Set();
-      for (const f of (await Promise.all(joins)).flat()) {
-        const s = sessionByAddr(f.s.addr) || f.s;
-        if (!seen.has(s.addr) && !inGroup(s, item.to)) missed.push({ s, msg: f.msg });
-        seen.add(s.addr);
-      }
+      await Promise.all(joins);
+      forgetJoins();
+      missed = [...(groupMisses.get(item.to)?.values() || [])].map((f) => ({ s: sessionByAddr(f.s.addr), msg: f.msg }));
       item.missed = missed;
       if (missed.length && !devices().some((d) => d.sessions.some((s) => inGroup(s, item.to)))) {
         throw new Error("not sent: couldn't add " + namesOf(missed) + " to " + item.to + ": " + missed[0].msg);
       }
     }
-    const sent = await api("/api/send", { method: "POST", body: JSON.stringify({ to: item.to, text: item.text }) });
+    // keepalive: a page closed just as it sends still hands the message to the daemon, which then
+    // finishes it whatever the page does (#613). A browser refuses keepalive past 64 KiB in flight,
+    // and a UTF-16 unit is at most 3 bytes of UTF-8.
+    item.posted = true;
+    render();
+    const body = JSON.stringify({ to: item.to, text: item.text });
+    const sent = await api("/api/send", { method: "POST", body, keepalive: body.length * 3 < 60000 });
     item.id = sent.id;
     if (missed.length) ui.notes.set(item.key, { id: sent.id, text: "Couldn't add " + namesOf(missed) + " to " + item.to + ", so they didn't get this: " + missed[0].msg, warn: true });
     else if (sent.note) ui.notes.set(item.key, { id: sent.id, text: sent.note });
@@ -4613,7 +4676,9 @@ function settingsPage() {
   const sections = [ui.state ? accountSection() : null, themeSection()];
   if (ui.settings) {
     const set = ui.settings;
-    const local = (ui.state?.devices || []).find((d) => d.self)?.sessions || [];
+    // A session is shown by its address until its name lands, and the daemon keeps these settings
+    // by name: one saved under the address would never apply, so the session isn't offered (#43).
+    const local = ((ui.state?.devices || []).find((d) => d.self)?.sessions || []).filter((s) => !s.name.includes("/"));
     const overrides = set.sessionWake || {};
     const wakeOwn = local.filter((s) => overrides[s.name]).length;
     const rows = [
@@ -4892,6 +4957,22 @@ function hasUnsent() {
   return ui.outbox.length > 0 || [...composers.values()].some((el) => el.value.trim());
 }
 
+// The state as far as the page shows it, for poll's signature. This device's lastSeen and its
+// person's lastActive move on every poll, so with them in the signature the page rebuilt on every
+// poll, with nothing on it changed (#618). Neither kind of time is shown as a time, on any device:
+// a lastSeen only for a device that is unreachable, and of a person's lastActive only whether they
+// are here now. So a reachable device's lastSeen is left out, and every person's lastActive is
+// reduced to here or not.
+function shownState(state) {
+  if (!state) return state;
+  const devices = (state.devices || []).map((d) => ({
+    ...d,
+    lastSeen: d.reachable ? null : d.lastSeen,
+    person: d.person && { ...d.person, lastActive: personOnline({ ...d.person, device: d }) },
+  }));
+  return { ...state, devices };
+}
+
 async function poll() {
   if (inflight) return;
   inflight = true;
@@ -4936,6 +5017,7 @@ async function poll() {
     }
     ui.state = state;
     stateAskedAt = asked;
+    forgetJoins();
     // Someone else claimed this name first (#268): ask for another, once per page, unless something
     // is already being asked.
     if (state.account?.taken && !ui.takenAsked && !ui.setup && !ui.picker && !ui.tagMenu) {
@@ -4947,6 +5029,7 @@ async function poll() {
     ui.outbox = ui.outbox.filter((item) => !(item.id && ui.ids.has(item.id)));
     ui.conn = "ok";
     announceArrivals(arrived);
+    tellApp(appNotes(arrived));
     if (wasConn === "down") announce("Connected to the daemon again.");
   } catch (e) {
     if (era !== tokenEra) return;
@@ -4957,7 +5040,9 @@ async function poll() {
   inflight = false;
   // Rebuild only when something changed, and leave alone a minutes field being typed in, text being
   // selected, and a pane being scrolled: a rebuild would drop the selection or stop the scroll.
-  const sig = JSON.stringify([ui.state, ui.cursor, ui.actCursor, ui.github, ui.conn, ui.restarting > 0, restartStuck(), ui.outbox.length, Math.floor(Date.now() / 15000)]);
+  // A tag chip waits for a state asked for after its change was answered (tagsOf), which can be
+  // one that differs in nothing from the state before it: while any waits, each new state counts.
+  const sig = JSON.stringify([shownState(ui.state), ui.cursor, ui.actCursor, ui.github, ui.conn, ui.restarting > 0, restartStuck(), ui.outbox.length, Math.floor(Date.now() / 15000), tagWanted.size ? stateAskedAt : 0]);
   // A composer keeps its own element, so what is being typed there survives a rebuild, unless an
   // input method is partway through a character. On a phone it wouldn't: refocusing it isn't a tap,
   // so the keyboard would drop. There the thread catches up when the composer loses focus.
@@ -4988,6 +5073,35 @@ function announceArrivals(list) {
   if (!say.length) return;
   const m = say[say.length - 1];
   announce(say.length === 1 ? "New message from " + fromName(m) + ": " + m.subject : say.length + " new messages, the newest from " + fromName(m) + ": " + m.subject);
+}
+
+// The desktop app (`mur app`, #23) is this page in a window of its own, which gives it murmurApp.
+// The window is told the unread count, for its title and icon, and the messages to the person as
+// they arrive, which it shows as notifications when it isn't in front. A browser has no murmurApp.
+function inApp() {
+  return typeof window.murmurApp === "function";
+}
+
+let toldApp = "";
+function tellApp(notes = []) {
+  if (!inApp()) return;
+  const unread = unreadCount();
+  const title = (unread ? "(" + unread + ") " : "") + NAME;
+  // The window's frame follows the theme's color scheme.
+  const dark = getComputedStyle(document.documentElement).colorScheme === "dark";
+  const said = [location.host, title, dark].join(" ");
+  if (said === toldApp && !notes.length) return;
+  toldApp = said;
+  const seen = !document.hidden && document.hasFocus();
+  window.murmurApp({ host: location.host, title, unread, notes, seen, dark }).catch(() => {});
+}
+
+function appNotes(list) {
+  if (!inApp()) return [];
+  const unread = new Set(ui.state?.account?.unread || []);
+  const mine = list.filter((m) => unread.has(m.id) && fromName(m) !== myName());
+  if (mine.length > 3) return [{ title: NAME, body: mine.length + " new messages" }];
+  return mine.map((m) => ({ title: fromName(m), body: m.subject || "" }));
 }
 
 // A fresh link pasted into a tab already showing the page changes only the fragment, so the

@@ -51,7 +51,8 @@ func viewSubjects(ms []proto.MessageView) []string {
 
 // While the hook has the session at work, a message is a notice with the count, not a T3 turn. The
 // count isn't repeated after every tool call, only when it changes. When the turn ends, both
-// messages, still unread, go in as turns, in order.
+// messages, still unread, go in as turns, in order: the second once the turn the first started has
+// ended, not queued behind it in T3 (#607).
 func TestABusySessionIsToldAndGetsTheTurnWhenIdle(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
@@ -86,7 +87,10 @@ func TestABusySessionIsToldAndGetsTheTurnWhenIdle(t *testing.T) {
 	holds(t, "nothing handed to T3 while at work", time.Second, func() bool { return len(calls()) == 0 })
 
 	b.turnEnd("claude-bob")
-	eventually(t, "both as turns", func() bool { return len(calls()) == 2 })
+	eventually(t, "the first as a turn", func() bool { return len(calls()) == 1 })
+	holds(t, "the second not queued behind it", time.Second, func() bool { return len(calls()) == 1 })
+	b.finishedATurn("claude-bob") // the turn the first started
+	eventually(t, "the second as a turn", func() bool { return len(calls()) == 2 })
 	if !strings.Contains(calls()[0].Stdin, "first") || !strings.Contains(calls()[1].Stdin, "second") {
 		t.Errorf("the turns: %q, %q", calls()[0].Stdin, calls()[1].Stdin)
 	}
@@ -190,6 +194,39 @@ func TestAnInterruptedTurnInT3EndsByT3sDatabase(t *testing.T) {
 	// The run ended a minute ago by T3's clock, before the hook's last call: a late hook.
 	threads.set("thread-bob", t3db.State{LastRun: time.Now().Add(-time.Minute)})
 	eventually(t, "the turn once a read finds no run", func() bool { return len(calls()) == 1 })
+}
+
+// T3 has a run going from when it takes a prompt, and Claude Code fires UserPromptSubmit only when
+// it starts the turn, at times minutes later (#607). A message that comes in between waits for the
+// hook, as in any turn, not in T3's queue as a turn of its own.
+func TestARunTheHookHasntSeenStartHoldsTheMessage(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	threads := &fakeThreads{st: map[string]t3db.State{"thread-bob": {LastRun: time.Now()}}}
+	a, b := newDevice(t, remote), newT3Device(t, remote, threads)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+
+	b.finishedATurn("claude-bob")
+	// The user types in the thread: T3 has the run going, and Claude Code hasn't started the turn.
+	// Not at once: a read within a second of Stop may find the run Stop ended still open.
+	time.Sleep(1200 * time.Millisecond)
+	threads.set("thread-bob", t3db.State{Busy: true, LastRun: time.Now()})
+	n := threads.reads()
+	eventually(t, "a read that began after the run started", func() bool { return threads.reads() >= n+2 })
+	a.send("aaaaaa", bob, "before the prompt's hook", "its body")
+	eventually(t, "the message to reach b", func() bool { return logHas(b, "before the prompt's hook") })
+	holds(t, "no turn while the run goes", time.Second, func() bool { return len(calls()) == 0 })
+
+	// The turn starts, and the hook tells of it.
+	if got := viewSubjects(b.hookNotices("claude-bob").Messages); len(got) != 1 {
+		t.Fatalf("the prompt's hook told of %q, want the message", got)
+	}
+	threads.set("thread-bob", t3db.State{LastRun: time.Now()})
+	b.turnEnd("claude-bob")
+	eventually(t, "the turn after the run", func() bool { return len(calls()) == 1 })
 }
 
 // A subagent working in the background after the session's turn ended doesn't hold the session's

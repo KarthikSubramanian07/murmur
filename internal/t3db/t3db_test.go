@@ -407,12 +407,15 @@ func TestStateOfReadsSettledAndTheLatestRun(t *testing.T) {
 			('deleted', 't', NULL, '2026-11-07T20:00:00.000Z', '{}'),
 			('busy', 't', NULL, NULL, '{"modelSelection":{"instanceId":"claude_personal","model":"claude-opus-5-5"}}'),
 			('new', 't', NULL, NULL, 'not json'),
-			('child', 't', NULL, NULL, '{"lineage":{"parentThreadId":"idle","relationshipToParent":"subagent","rootThreadId":"idle"}}')`,
+			('child', 't', NULL, NULL, '{"lineage":{"parentThreadId":"idle","relationshipToParent":"subagent","rootThreadId":"idle"}}'),
+			('left', 't', NULL, NULL, '{}')`,
 		`INSERT INTO orchestration_v2_projection_runs VALUES
 			('r1', 'idle', 'completed', '2026-11-07T22:00:00.000Z', '2026-11-07T22:05:00.000Z'),
 			('r2', 'idle', 'interrupted', '2026-11-07T22:28:36.290Z', '2026-11-07T22:29:10.318Z'),
 			('r3', 'busy', 'completed', '2026-11-07T21:00:00.000Z', '2026-11-07T21:01:00.000Z'),
-			('r4', 'busy', 'running', '2026-11-07T22:30:00.000Z', NULL)`,
+			('r4', 'busy', 'running', '2026-11-07T22:30:00.000Z', NULL),
+			('r5', 'left', 'queued', '2026-11-03T06:10:16.275Z', NULL),
+			('r6', 'left', 'completed', '2026-11-07T21:00:00.000Z', '2026-11-07T21:01:00.000Z')`,
 	} {
 		if _, err := db.Exec(s); err != nil {
 			t.Fatal(err)
@@ -434,6 +437,7 @@ func TestStateOfReadsSettledAndTheLatestRun(t *testing.T) {
 		"busy":     {Busy: true, LastRun: at("2026-11-07T22:30:00.000Z"), Model: "claude-opus-5-5"},
 		"new":      {},
 		"child":    {Parent: "idle"},
+		"left":     {Busy: true, Left: true, LastRun: at("2026-11-07T21:01:00.000Z")},
 	}
 	ctx := context.Background()
 	for thread, w := range want {

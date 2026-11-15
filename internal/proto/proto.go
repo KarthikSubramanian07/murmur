@@ -93,10 +93,28 @@ const (
 //	    the session is a child from that call on (#487)
 //	21: receipts (#26): a daemon of 20 or less writes no marks for its sessions, and its page shows
 //	    none for its person's messages, so an upgraded mur replaces it where it may.
-const Protocol = 21
+//	22: a hello's ByThread (#642): the daemon may register a T3 thread at the address its name
+//	    already has. One of 21 or less would register it at a new one.
+const Protocol = 22
+
+// MaxPrompt is how much of a prompt a hook sends as Request.Prompt: a turn Murmur hands over
+// begins with its sender and subject, well within it.
+const MaxPrompt = 4096
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
+
+// What a send's refusal is about (Response.Refused).
+const (
+	// RefusedRecipient is a refusal for the recipient alone: its name isn't one, nobody has it, it
+	// is offline, it has muted the sender, its device has no key to encrypt to. Another recipient
+	// might be sent the same message.
+	RefusedRecipient = "recipient"
+	// RefusedSend is a refusal of the message or the sender: no subject, a key in the body, a
+	// session that isn't registered or is a delegate, a push that failed. Every recipient would be
+	// refused the same.
+	RefusedSend = "send"
+)
 
 // Proof is what the daemon whose token is token, listening at addr, answers to a ping carrying
 // nonce: an HMAC of the address and the nonce, keyed by the token. Only that daemon and the clients
@@ -157,8 +175,12 @@ type Request struct {
 	To      string `json:"to,omitempty"`
 	Subject string `json:"subject,omitempty"`
 	Body    string `json:"body,omitempty"`
-	Doing   string `json:"doing,omitempty"`
-	Limit   int    `json:"limit,omitempty"`
+	// TellMe is, on OpSend, the state the sender asks to be told its message reached: "delivered"
+	// or "read" (#276), or "" for nothing. A daemon from before it ignores it, and its reply has no
+	// Telling, which is how the sender learns it won't be told.
+	TellMe string `json:"tellMe,omitempty"`
+	Doing  string `json:"doing,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
 
 	// Collaborators is, for OpRotate, the repo's collaborators as the CLI listed them, or nil if it
 	// couldn't; Force rotates whatever the list says.
@@ -195,6 +217,10 @@ type Request struct {
 	// inbox, even where the page says to give it whole (#229). An older daemon ignores it, and gives
 	// messages whole to a hook that sends it, which prints them: no new Protocol number.
 	Whole bool `json:"whole,omitempty"`
+	// Prompt is, on OpNotices from a hook's UserPromptSubmit, the start of the prompt the turn
+	// began with (MaxPrompt bytes at most). A message handed over as a turn is read once a prompt
+	// holds it (#611). An older daemon ignores it.
+	Prompt string `json:"prompt,omitempty"`
 	// Agent is, on a hook's request, the agent it runs for where that isn't Claude Code: "codex" or
 	// "grok", from the hook's command line (#225). ClaudeSession then holds that agent's own ID for the
 	// conversation (Codex's thread ID, Grok's session ID), which its MCP server reports as the route's
@@ -272,6 +298,12 @@ type Route struct {
 	// client. At most one of the two is set.
 	CodexCLI    string `json:"codexCli,omitempty"`
 	OpenCodeCLI string `json:"openCodeCli,omitempty"`
+	// OpenCodeState is where OpenCodeCLI's command looks for the shared server (XDG_STATE_HOME):
+	// the state directory the session's server found that server registered in, ~/.local/state
+	// where it has no XDG_STATE_HOME. As with CodexHome, one daemon serves every client, and its own
+	// XDG_STATE_HOME is that of whichever session started it (#486). Only a server from before #486
+	// leaves it empty, and the command then has the daemon's.
+	OpenCodeState string `json:"openCodeState,omitempty"`
 	// Child says the client started the conversation Native names for another of its own: Codex
 	// marks a tool call of a thread it spawned as a subagent's (thread_source "subagent" in
 	// x-codex-turn-metadata), and ParentNative is the thread that spawned it, as the call names
@@ -292,6 +324,11 @@ type Hello struct {
 	// Reconnect says the session was registered with a daemon that went away, so it should get
 	// what that daemon would have queued for it.
 	Reconnect bool `json:"reconnect,omitempty"`
+	// ByThread says ID was made from Route.T3Thread, which T3 gave the server in its environment
+	// (#642), and that the server takes the session ID the reply's Self names: the daemon may
+	// register the thread at the address its name already has. A server from before it, still
+	// running after an update, sends the thread it found too, but keeps its own ID.
+	ByThread bool `json:"byThread,omitempty"`
 	// Route says how to hand a message over to the session as a turn.
 	Route
 }
@@ -310,6 +347,17 @@ type Response struct {
 	Name        string `json:"name,omitempty"`
 	NamePending bool   `json:"namePending,omitempty"`
 	Note        string `json:"note,omitempty"`
+	// Telling says, in a reply to OpSend with TellMe, that the sender will be told how far the
+	// message got (#276). TellKnown says the daemon knows TellMe at all, telling or not (the note
+	// says why not), so a client can tell an older daemon, which passes over it, from one with
+	// nobody to wait for.
+	Telling   bool `json:"telling,omitempty"`
+	TellKnown bool `json:"tellKnown,omitempty"`
+	// Refused says what a send's refusal is about (#541): RefusedRecipient or RefusedSend. A send
+	// to a list goes on past the first and stops at the second. A daemon from before it says
+	// neither, and an MCP server goes by the refusal's words (refusedRecipient), so it needed no
+	// new Protocol number.
+	Refused string `json:"refused,omitempty"`
 	// ClaudeSession is the Claude Code session ID the daemon holds for the calling session, which
 	// a hook may have corrected since the MCP server started. The server sends it in any later
 	// hello, in place of its environment's.
@@ -418,6 +466,9 @@ type SessionDetail struct {
 	// or says that thread isn't on the mesh here.
 	Offline    bool   `json:"offline,omitempty"`
 	DelegateOf string `json:"delegateOf,omitempty"`
+	// NoWake says a message from an agent wouldn't go into the session as a turn now, by its
+	// device's wake setting (#545): bus.NoWakeOff or bus.NoWakeIdle, "" if it would or isn't known.
+	NoWake string `json:"noWake,omitempty"`
 
 	// Local says the session is on the daemon's own device, which is what gives it the rest.
 	Local         bool         `json:"local,omitempty"`
@@ -469,6 +520,9 @@ type MessageView struct {
 	// Told is when the hook's notice told the session of this message, for one given whole after:
 	// its turn says so (#355). Zero for a message no notice told of.
 	Told time.Time `json:"told,omitzero"`
+	// Receipt says this is a notice from Murmur itself, not a message from anyone: how far one of
+	// the session's messages got, which it asked to be told (#276). Nobody can be answered.
+	Receipt bool `json:"receipt,omitempty"`
 }
 
 // EventView is one line of `log`.

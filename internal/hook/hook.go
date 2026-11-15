@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/gitx"
@@ -72,6 +73,9 @@ type input struct {
 	// this one, whose OpenCode session ID ParentNative is (#455).
 	Child        bool   `json:"child"`
 	ParentNative string `json:"parent_native"`
+	// Prompt is, on UserPromptSubmit, what the turn begins with (Claude Code, and Codex, whose
+	// payload takes Claude Code's shape). Pi's and OpenCode's extensions send none.
+	Prompt string `json:"prompt"`
 }
 
 type output struct {
@@ -331,6 +335,11 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 		nctx, ncancel := context.WithTimeout(ctx, NoticeTimeout)
 		r := who
 		r.Op, r.Whole = proto.OpNotices, true
+		if in.Event == "UserPromptSubmit" {
+			// What the turn began with, so a message handed over as a turn is marked read once
+			// the turn holding it starts (#611).
+			r.Prompt = promptStart(in.Prompt)
+		}
 		if agent == "" {
 			r.Transcript = in.TranscriptPath
 		}
@@ -399,3 +408,15 @@ func identify(agent string, in input) proto.Request {
 // maxAncestors bounds how far up identify looks: the agent is the hook's grandparent where it runs
 // the hook through a shell, and a wrapper or two (a login shell, T3's launcher) may come between.
 const maxAncestors = 6
+
+// promptStart is the start of a prompt, proto.MaxPrompt bytes at most, cut at a character's start.
+func promptStart(p string) string {
+	if len(p) <= proto.MaxPrompt {
+		return p
+	}
+	cut := proto.MaxPrompt
+	for cut > 0 && !utf8.RuneStart(p[cut]) {
+		cut--
+	}
+	return p[:cut]
+}
