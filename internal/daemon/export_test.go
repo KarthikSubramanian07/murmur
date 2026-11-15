@@ -6,3 +6,7 @@ func SetMaxWholeReply(n int) func() {
 	maxWholeReply = n
 	return func() { maxWholeReply = was }
 }
+
+// CatchUpWindow is catchUpWindow, how long after the start what is read for a reconnecting session
+// is held for it.
+const CatchUpWindow = catchUpWindow

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/daemon"
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
@@ -365,15 +366,21 @@ func TestTagsReadBeforeANamelessSessionReconnectsReachIt(t *testing.T) {
 	pushEvent(t, remote, far, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "far-0001/xxxxxx",
 		At: now, To: "group:ui", Subject: "to the group"})
 	b.offline(remote, false)
+	started := time.Now()
 	b.start()
 	eventually(t, "b reads them", read("to the group"))
-
 	b.helloAgain("bbbbbb", true)
+	// What is read is held only for CatchUpWindow from the start, so a runner too slow to read the
+	// log and say hello within it fails here without a bug: the line says how long they took.
+	took := time.Since(started).Round(time.Millisecond)
+
 	if !b.inGroup("bbbbbb", bob, "group:ui") || !b.inGroup("bbbbbb", bob, "release") {
-		t.Errorf("back, bob has %v; want release and group:ui", b.do(proto.Request{Op: proto.OpTags, Session: "bbbbbb"}).Tags)
+		t.Errorf("back, bob has %v; want release and group:ui (the first read after the restart, and the hello, took %s; the hold lasts %s)",
+			b.do(proto.Request{Op: proto.OpTags, Session: "bbbbbb"}).Tags, took, daemon.CatchUpWindow)
 	}
 	got := b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages
 	if len(got) != 1 || got[0].Subject != "to the group" {
-		t.Errorf("back, bob's inbox: %+v; want the group's message", got)
+		t.Errorf("back, bob's inbox: %+v; want the group's message (the first read after the restart, and the hello, took %s; the hold lasts %s)",
+			got, took, daemon.CatchUpWindow)
 	}
 }
