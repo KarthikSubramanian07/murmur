@@ -113,7 +113,8 @@ func objectID(s string) bool {
 // backends refuse to write anything else to a branch, and checking would mean reading the object,
 // which scanRefs avoids (#540). HEAD can name any ref under refs/, so one pointed by hand at an
 // annotated tag gives the tag object here where headByGit gives its commit. Nothing is credited
-// differently: git log peels a tag on either side, and nothing can be committed on such a HEAD.
+// differently: git log peels a tag on either side, and git commit on such a HEAD fails ("cannot
+// lock ref 'HEAD'"), finding the tag object where it expected the commit it peeled to.
 func headFromFile(ctx context.Context, worktree, gitDir, commonDir, symref, sha string, ref Ref) (Ref, error) {
 	head, err := scanRefs(ctx, worktree, symref, &ref)
 	if err != nil {
