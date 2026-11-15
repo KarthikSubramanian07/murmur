@@ -147,9 +147,10 @@ the turn took, so nothing waits for good.
   from before the turn is held only if it is still within them.
 - **Why not hand it to T3 as well:** T3 can't take back a queued message, so the agent could read it
   with `inbox` mid-turn and then get it again as a turn.
-- **Where the hook doesn't run** (OpenCode 1 and Muse in T3, as of 2026-11-12), nothing says the
-  session is at work, so a message goes to T3 as before; without the handoff the session would hear
-  nothing at all. Codex and Grok have the hook since #225, Pi since #205, and OpenCode 2 since #431.
+- **Where the hook doesn't run** (Muse in T3, as of 2026-11-15), nothing says the session is at
+  work, so a message goes to T3 as before; without the handoff the session would hear nothing at
+  all. Codex and Grok have the hook since #225, Pi since #205, OpenCode 2 since #431, and OpenCode 1
+  since #446 (seen in a terminal, not in T3).
 - **Subagents.** A subagent's tool call carries its parent's `session_id`, with `agent_id` set
   (Claude Code 2.1.312, 2026-10-29). The hook tells it nothing, as the notice would land in the
   subagent's context and not the session's (inferred, not seen; #188), and doesn't mark the session
