@@ -33,8 +33,9 @@ over.
   thread in the last 30 minutes (up to 200 a thread, in memory only). A new session that registers
   before the daemon has seen the old one's connection close leaves the old one its route, as it was
   still running, so both copies can be taken for a handoff at once (#99). The daemon also knows what
-  is on its way into each thread, and the second copy waits: once the first has been handed over it
-  is taken out, and if that handoff failed it goes in (2026-11-15). Handing the route over when the
+  is on its way into each thread, and the second copy waits, with the hook leaving it alone: once
+  the first has been handed over it is taken out, and if that handoff failed it goes in
+  (2026-11-15). Handing the route over when the
   drop is seen was tried (2026-10-30) and dropped: in three review rounds each version could strand
   a message to the old session's name. A daemon restart forgets what was handed, and a repeat in
   that window is what there was before.

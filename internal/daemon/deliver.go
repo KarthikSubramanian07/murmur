@@ -320,9 +320,10 @@ func (d *Daemon) wayInLocked(id string, wake pageSettings) bool {
 // queuedForPushLocked says message m of session id is on its way in as a turn, or will be: the
 // hook's notice leaves it alone, as it would be a second telling of what the turn says, and
 // would take the message out of the handoff for good. A session the hook has at work gets the
-// notice instead (#202). Caller holds mu.
+// notice instead (#202), unless another session's copy of m is on its way into its T3 thread
+// (#99): that turn carries it. Caller holds mu.
 func (d *Daemon) queuedForPushLocked(id string, m *inMsg, wake pageSettings) bool {
-	if m.Pushing {
+	if r := d.routeOfLocked(id); m.Pushing || r.T3Thread != "" && d.handing[handing{threadKey{r.T3Home, r.T3Thread}, m.Event.ID}] {
 		return true
 	}
 	return !d.hookBusyLocked(id) && d.turnableLocked(id, m, wake)
@@ -1100,7 +1101,9 @@ func (d *Daemon) hadCopyLocked(s *session, m *inMsg) bool {
 // can then be taken for a handoff at once, before either has been handed over. So the daemon also
 // knows what is on its way into each thread (handing), and a session whose next message is on its
 // way in through another session's copy waits: once that copy has been handed over, its own is
-// taken out as above, and if that handoff failed, its own goes in, as it would have. The route isn't
+// taken out as above, and if that handoff failed, its own goes in, as it would have. That is a second
+// try after a failure that may have reached T3, which handOver doesn't make, but the failed copy may
+// be the old session's, back in an inbox no hook reads now its connection is gone. The route isn't
 // taken from the old session when its drop is seen: tried for #99 (2026-10-30), that could leave a
 // message to the old session's name or address with no way in.
 //
