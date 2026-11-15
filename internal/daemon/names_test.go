@@ -668,7 +668,7 @@ func TestV1PeerWithoutNamesStillWorks(t *testing.T) {
 	// refused rather than sent where it can't be read.
 	for _, to := range []string{"old-0001/x", "old-0001"} {
 		r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: to, Subject: "hello old"})
-		if !strings.Contains(r.Error, "before the bus was encrypted") {
+		if !strings.Contains(r.Error, "before the bus was encrypted") || r.Refused != proto.RefusedRecipient {
 			t.Fatalf("send to %s: %+v", to, r)
 		}
 	}

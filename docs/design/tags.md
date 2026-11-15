@@ -101,11 +101,27 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   who else got it, and a reply goes to the sender alone (Tyler, 2026-11-13). So a group or `*` can't
   be in a list: a message there is one conversation that all its members see.
 - **The MCP server expands it**, sending to each recipient as a single `send` would, so the daemon
-  and the wire format are unchanged and an older daemon takes one too. The cost is a push per
-  recipient, one after another, so a list holds at most 10: twenty pushes could outlast a client's
-  wait for the tool call, which would leave the sender with no result and some recipients with the
-  message.
+  needs nothing new for it and an older daemon takes one too. The cost is a push per recipient, one
+  after another, so a list holds at most 10: twenty pushes could outlast a client's wait for the
+  tool call, which would leave the sender with no result and some recipients with the message.
 - **Each recipient once.** Names are sent before addresses, and the daemon's answer gives the
   address a name reached, so the same session named again by address is skipped. Two names for one
   session, and a device beside one of its sessions, still each send. A device's ID looks like a
   person's name, so a list can't tell one apart to refuse it.
+- **One recipient's refusal doesn't stop the rest; a refusal of the message does** (#541, 2026-11-15).
+  The daemon's reply says which a refusal is (`Refused`): one for the recipient alone (a name that
+  isn't one or that nobody has, a group that isn't one, offline, muted the sender, a device with no
+  key to encrypt to), or one for the message or the sender (no subject, too long, a key, not
+  registered, a delegate, no team key yet, a push that failed), which would be the same for the
+  rest, so they aren't tried. A call no daemon answered is the second kind too. Before, the server
+  took any refusal that didn't quote the recipient for the second kind, so a name with a capital in
+  it stopped the whole list: the daemon's refusal of it quoted nobody.
+  - *Mixed versions.* mur updates the daemon while running MCP servers keep their binary until their
+    sessions end, so an older server beside a newer daemon is the common pairing. Such a server
+    still goes by whether the refusal quotes the recipient, and the daemon's refusals for a
+    recipient now all quote it as it was given, but for a mute or an offline session at an address
+    whose messages go on to another session, which they name by that one, and a device with no key
+    to encrypt to, which they name by its device. A newer server beside an older daemon goes by the
+    words too: a refusal that quotes the recipient, and the few of that daemon's refusals for a
+    recipient that don't. Neither side needs the other's version, so there is no new protocol
+    number.

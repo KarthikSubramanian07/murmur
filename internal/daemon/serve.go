@@ -51,6 +51,10 @@ func readLine(r *bufio.Reader, max int) ([]byte, error) {
 
 func fail(msg string) proto.Response { return proto.Response{Error: msg} }
 
+// refuse is fail for a send, saying what the refusal is about (proto.RefusedRecipient or
+// proto.RefusedSend).
+func refuse(about, msg string) proto.Response { return proto.Response{Error: msg, Refused: about} }
+
 func (d *Daemon) serve(ctx context.Context, ln net.Listener) {
 	var wait time.Duration
 	for {
@@ -139,6 +143,9 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 		d.awaitHistory(ctx) // its messages are the page's, earlier ones included
 	}
 	resp := d.handle(ctx, req)
+	if req.Op == proto.OpSend && resp.Error != "" && resp.Refused == "" {
+		resp.Refused = proto.RefusedSend // refused before send: the session isn't registered, or is a delegate
+	}
 	resp.ClaudeSession = d.claudeSessionOf(req.Session)
 	writeResp(conn, resp)
 }
@@ -763,14 +770,36 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		to = g
 	}
 	subject := bus.OneLine(req.Subject, 120)
-	if !bus.ValidTo(to) || subject == "" {
-		if strings.HasPrefix(tags.Normalize(to), tags.GroupPrefix) {
-			return fail(fmt.Sprintf("not sent: %q isn't a group. A group's tag is %s and a name of lowercase letters, digits and . _ : -, such as %sui", to, tags.GroupPrefix, tags.GroupPrefix))
+	// Each refusal says whether it is the recipient's alone (#541), so that a send to a list goes on
+	// to the rest only past those. One for the recipient quotes it as it was given, which is what an
+	// MCP server from before Refused looks for; only a mute or an offline session at an address that
+	// is forwarded (queuedAtLocked) names the session it is forwarded to instead, and a device with
+	// no key to encrypt to (encryptEventLocked) is named by its device.
+	switch valid := bus.ValidTo(to); {
+	case !valid && strings.HasPrefix(tags.Normalize(to), tags.GroupPrefix):
+		return refuse(proto.RefusedRecipient, fmt.Sprintf("not sent: %q isn't a group. A group's tag is %s and a name of lowercase letters, digits and . _ : -, such as %sui", to, tags.GroupPrefix, tags.GroupPrefix))
+	case subject == "":
+		return refuse(proto.RefusedSend, "a message needs a recipient (a session's name, device/session, a device, a group such as group:ui, or * for everyone; see who) and a subject")
+	case !valid && to != "":
+		why := fmt.Sprintf("not sent: %q isn't a recipient. A recipient is a session's name (see who), device/session, a device, a group such as group:ui, or * for everyone", to)
+		if l := strings.ToLower(to); bus.ValidTo(l) {
+			// Suggested only if it is someone: a session's name, a person's, a device or an address
+			// this device knows.
+			d.mu.Lock()
+			_, isName := d.resolveNameLocked(l)
+			_, isPerson := d.resolvePersonLocked(l)
+			known := names.Valid(l) && isName || bus.ValidPerson(l) && isPerson || d.addressKnownLocked(bus.SplitAddr(l))
+			d.mu.Unlock()
+			if known {
+				why += fmt.Sprintf("; recipients are lowercase, so did you mean %s?", l)
+			}
 		}
-		return fail("a message needs a recipient (a session's name, device/session, a device, a group such as group:ui, or * for everyone; see who) and a subject")
+		return refuse(proto.RefusedRecipient, why)
+	case !valid:
+		return refuse(proto.RefusedRecipient, "a message needs a recipient (a session's name, device/session, a device, a group such as group:ui, or * for everyone; see who)")
 	}
 	if len(req.Body) > maxBody {
-		return fail(fmt.Sprintf("not sent: the body is over %d KB, and the bus keeps everything forever", maxBody>>10))
+		return refuse(proto.RefusedSend, fmt.Sprintf("not sent: the body is over %d KB, and the bus keeps everything forever", maxBody>>10))
 	}
 	// The body goes on the bus as readers will show it, so what the sender sent is what everyone
 	// reads, and it is cleaned before scrub looks: a key with a zero-width space in it is still a
@@ -778,7 +807,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	// can join a key to the next word, and AKIA…EXAMPLE<U+200B>note then ends in no word boundary.
 	body := bus.Text(req.Body, maxBody)
 	if err := scrub.Check(subject, body, req.Subject, req.Body); err != nil {
-		return fail(err.Error())
+		return refuse(proto.RefusedSend, err.Error())
 	}
 	// A name is an address: it is turned into the session's device/session here, and that is what
 	// goes on the bus, so a daemon that doesn't know names queues the message all the same.
@@ -806,7 +835,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 			d.mu.Lock()
 			why := d.noSuchNameLocked(to)
 			d.mu.Unlock()
-			return fail(why)
+			return refuse(proto.RefusedRecipient, why)
 		}
 	} else if bus.ValidPerson(to) {
 		// A person's name is an address too. A device with that ID stands first: it was there before
@@ -845,9 +874,9 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		switch {
 		case muted:
 			// The words are Tyler's (2026-11-11).
-			return fail(fmt.Sprintf("your message to %[1]s was not delivered. %[1]s has muted you. Nothing you send can reach them until they unmute you.", nameOr(toName, at)))
+			return refuse(proto.RefusedRecipient, fmt.Sprintf("your message to %[1]s was not delivered. %[1]s has muted you. Nothing you send can reach them until they unmute you.", nameOr(toName, at)))
 		case offline:
-			return fail("not sent: " + why)
+			return refuse(proto.RefusedRecipient, "not sent: "+why)
 		case known && dnd:
 			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox until it reads its inbox or turns do not disturb off, with no notice or turn."
 		case known && hookOff:
@@ -884,7 +913,13 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 			d.saveLocked()
 			d.mu.Unlock()
 		}
-		return fail("not sent: " + err.Error())
+		// No key for the recipient's device is that recipient's alone. Anything else here, a team
+		// key not yet made or a push that failed, would refuse every recipient the same.
+		about := proto.RefusedSend
+		if errors.As(err, new(noKeyError)) {
+			about = proto.RefusedRecipient
+		}
+		return refuse(about, "not sent: "+err.Error())
 	}
 	note = strings.TrimSpace(renamed + " " + note)
 	// To everyone, to a device or to a group: it went out, and the sender is told which of the
