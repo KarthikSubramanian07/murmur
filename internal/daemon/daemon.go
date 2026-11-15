@@ -581,6 +581,9 @@ type session struct {
 	// unlogged says the session was a child when it registered, so neither its start nor its stop
 	// goes on the bus (#487).
 	unlogged bool
+	// noWake is what the last presence written said of whether a message would wake the session
+	// (bus.SessionInfo.NoWake), so that a change is published (see wakeChangedLocked).
+	noWake string
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its

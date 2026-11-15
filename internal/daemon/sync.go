@@ -1628,6 +1628,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		branches[id] = branchOf(ctx, cwd)
 	}
 
+	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	for id, b := range branches {
 		if s := d.sessions[id]; s != nil && b != "" {
@@ -1645,7 +1646,8 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	pres.Offline = d.offlineIDsLocked()
 	for _, s := range d.sortedSessionsLocked() {
 		if d.offMeshLocked(s.id) {
-			continue // offline: listed in Offline instead
+			s.noWake = "" // as noWakeLocked says of it
+			continue      // offline: listed in Offline instead
 		}
 		name := s.name
 		if !s.dropped.IsZero() && live[name] {
@@ -1653,7 +1655,8 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 		info := bus.SessionInfo{ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(),
 			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s), HookOff: d.hookOffLocked(s),
-			Muted: d.mutesOfLocked(s.id)}
+			Muted: d.mutesOfLocked(s.id), NoWake: d.noWakeLocked(s.id, wake)}
+		s.noWake = info.NoWake
 		if !s.lastActive.IsZero() {
 			info.LastActive = s.lastActive.UTC()
 		}

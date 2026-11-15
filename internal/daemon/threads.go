@@ -52,8 +52,9 @@ func (d *Daemon) threadLoop(ctx context.Context) {
 }
 
 // refreshThreads reads the state of every thread a session here is in, or a stopped session whose
-// inbox is kept was in. A change to whether a thread is settled is published, and any change lets
-// the handoffs look again.
+// inbox is kept was in. A change to whether a thread is settled is published, as is one to whether
+// a message would wake a session (see wakeChangedLocked), and any change lets the handoffs look
+// again.
 func (d *Daemon) refreshThreads(ctx context.Context) {
 	kids := d.refreshKids(ctx) // before the inboxes and commits of delegates are seen to, below
 	d.mu.Lock()
@@ -163,6 +164,7 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 			settled = settled || off
 		}
 	}
+	settled = settled || d.wakeChangedLocked(wake)
 	d.mu.Unlock()
 	if settled || kids {
 		d.kickPresence()
