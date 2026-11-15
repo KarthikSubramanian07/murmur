@@ -223,7 +223,7 @@ func (d *Daemon) applyMarkLocked(msg, addr, state string, at time.Time) {
 		rec.Marks = map[string]markRecord{}
 	}
 	rec.Marks[addr] = markRecord{State: state, At: at}
-	d.tellLocked(rec, false)
+	d.tellLocked(msg, rec, false)
 }
 
 // recordSentLocked keeps message e, which this device's person is sending with receipts asked for,

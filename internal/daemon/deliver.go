@@ -255,6 +255,12 @@ func pushable(m *inMsg) bool {
 	if m.Pushing || m.PushFailed || m.Attempted {
 		return false
 	}
+	if _, sess := bus.SplitAddr(m.Event.From); sess == bus.ReceiptFrom && !m.Held {
+		// Murmur's notice of how far a message got (#276): the sender asked to be told, not woken.
+		// Only that comes from a receipts address to an inbox. One the hook told of while the
+		// session worked goes in at the turn's end, as any message does.
+		return false
+	}
 	return m.Held || !m.Noticed && time.Since(waitedSince(m)) <= pushMaxAge
 }
 
@@ -272,9 +278,6 @@ func waitedSince(m *inMsg) time.Time {
 // at work now: it is pushable, the page's wake setting lets it through, and there is a way in.
 // Caller holds mu.
 func (d *Daemon) turnableLocked(id string, m *inMsg, wake pageSettings) bool {
-	if d.isTellNotice(m.Event) && !m.Held {
-		return false // the sender asked to be told, not woken (#276); one told of while at work goes in at the turn's end
-	}
 	return pushable(m) && d.wayInLocked(id, wake)
 }
 

@@ -40,8 +40,9 @@ is what the page shows. The states are defined in [delivery](delivery.md).
 - **An agent can ask to be told** (#276, built 2026-11-15). `send`'s `tell_me` is `read` or
   `delivered`; it is off unless asked, per message, and refused for a message to everyone, which
   would draw a mark from every session on the mesh. The message asks for receipts, and the sender's
-  daemon keeps it in `Sent` like a person's (sharing the cap of 200), with the state asked about and
-  who asked. The page shows no ticks for it. The sender is told once: when every recipient whose
+  daemon keeps it in `Sent` like a person's, with the state asked about and who asked, until the
+  sender has been told; meanwhile it counts toward the cap of 200. The page shows no ticks for it.
+  The sender is told once: when every recipient whose
   device writes marks has got that far, or after `TellWait` (30 minutes) with where it is with each.
   A message handed over as a turn counts as got that far: the turn holds it whole, and it is how an
   idle session in T3 gets a message, but its mark never goes past handed over, so asking for read

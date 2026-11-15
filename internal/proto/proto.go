@@ -315,8 +315,11 @@ type Response struct {
 	NamePending bool   `json:"namePending,omitempty"`
 	Note        string `json:"note,omitempty"`
 	// Telling says, in a reply to OpSend with TellMe, that the sender will be told how far the
-	// message got (#276).
-	Telling bool `json:"telling,omitempty"`
+	// message got (#276). TellKnown says the daemon knows TellMe at all, telling or not (the note
+	// says why not), so a client can tell an older daemon, which passes over it, from one with
+	// nobody to wait for.
+	Telling   bool `json:"telling,omitempty"`
+	TellKnown bool `json:"tellKnown,omitempty"`
 	// ClaudeSession is the Claude Code session ID the daemon holds for the calling session, which
 	// a hook may have corrected since the MCP server started. The server sends it in any later
 	// hello, in place of its environment's.

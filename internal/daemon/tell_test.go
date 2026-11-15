@@ -1,6 +1,7 @@
 package daemon_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -76,13 +77,15 @@ func TestASenderIsToldOnceItsMessageIsRead(t *testing.T) {
 }
 
 // A message handed to an idle T3 thread as a turn is never marked read, as Murmur can't see the turn
-// start, so being handed over is enough, and the notice says how it got there.
+// start, so being handed over is enough, and the notice says how it got there. The sender is an
+// idle T3 thread too, and the notice waits in its inbox rather than starting a turn: it asked to be
+// told, not woken.
 func TestASenderIsToldItsMessageWasHandedOverAsATurn(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
-	a.session("aaaaaa", "claude-ada")
+	a.sessionRoute("aaaaaa", "claude-ada", proto.Route{T3CLI: exe, T3Thread: "thread-ada"})
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
 	bobName := b.named(bob)
 	eventually(t, "a knows bob's name", func() bool { return a.seesSession(bob) && a.nameOf(bob) == bobName })
@@ -97,6 +100,11 @@ func TestASenderIsToldItsMessageWasHandedOverAsATurn(t *testing.T) {
 	}
 	if !strings.HasPrefix(told.Body, "- "+bobName+": handed over as a turn") {
 		t.Errorf("the notice's body is %q", told.Body)
+	}
+	for _, c := range calls() {
+		if slices.Contains(c.Args, "thread-ada") {
+			t.Errorf("the notice was handed to the sender's thread as a turn: %+v", c)
+		}
 	}
 }
 

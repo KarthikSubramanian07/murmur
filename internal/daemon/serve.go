@@ -897,6 +897,9 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		d.recordSentLocked(e)
 		rec := d.st.Sent[e.ID]
 		rec.Tell, rec.Asker, rec.Subject = tellMe, from, subject
+		// The sender's own reading of a message to itself tells it nothing, and the notice would go
+		// in the inbox that reading is emptying.
+		rec.To = slices.DeleteFunc(rec.To, func(a string) bool { return a == from })
 		if len(waitedFor(rec)) == 0 {
 			delete(d.st.Sent, e.ID)
 			e.Receipts, tellMe = false, ""
@@ -935,7 +938,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		tellNote = fmt.Sprintf("You'll be told, in your inbox, once it is %s, or in %s with where it is then.", tellMe, minutes(d.opt.TellWait))
 	}
 	note = strings.TrimSpace(note + " " + tellNote)
-	return proto.Response{OK: true, Self: from, Note: note, Telling: tellMe != "",
+	return proto.Response{OK: true, Self: from, Note: note, Telling: tellMe != "", TellKnown: req.TellMe != "",
 		Messages: []proto.MessageView{{ID: e.ID, From: from, To: to, ToName: toName, Subject: subject, At: e.At}}}
 }
 

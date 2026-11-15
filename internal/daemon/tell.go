@@ -38,9 +38,10 @@ func waitedFor(rec *sentRecord) []string {
 // tellLocked tells the sender of rec, if it asked to be told (#276) and hasn't been: once every
 // recipient whose device writes marks has got as far as it asked, or, with late, wherever they have
 // got to. The notice goes in the sender's inbox, from Murmur, and never starts a turn of its own
-// (pushable): the sender asked to know, not to be woken. The caller saves the state. Caller holds
-// mu.
-func (d *Daemon) tellLocked(rec *sentRecord, late bool) {
+// (pushable): the sender asked to know, not to be woken. Message msg is then let go of, as nothing
+// reads its record again, and it would take a place among the person's 200. The caller saves the
+// state. Caller holds mu.
+func (d *Daemon) tellLocked(msg string, rec *sentRecord, late bool) {
 	if rec.Tell == "" || rec.Told {
 		return
 	}
@@ -55,6 +56,7 @@ func (d *Daemon) tellLocked(rec *sentRecord, late bool) {
 		return
 	}
 	rec.Told = true
+	delete(d.st.Sent, msg)
 	dev, sess := bus.SplitAddr(rec.Asker)
 	if dev != d.device || sess == "" {
 		return
@@ -160,9 +162,9 @@ func (d *Daemon) tellLoop(ctx context.Context) {
 		}
 		d.mu.Lock()
 		told := false
-		for _, rec := range d.st.Sent {
+		for id, rec := range d.st.Sent { // tellLocked deletes as it goes, which a range allows
 			if rec.Tell != "" && !rec.Told && time.Since(rec.At) >= d.opt.TellWait {
-				d.tellLocked(rec, true)
+				d.tellLocked(id, rec, true)
 				told = true
 			}
 		}

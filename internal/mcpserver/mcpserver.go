@@ -753,7 +753,7 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 // untold adds to a sent message's note that its sender won't be told how far it got, though it
 // asked (#276): the daemon is older than tell_me, and passed over it.
 func untold(resp proto.Response, err error, tell string) proto.Response {
-	if err == nil && tell != "" && !resp.Telling && resp.Error == "" {
+	if err == nil && tell != "" && !resp.TellKnown && resp.Error == "" {
 		resp.Note = strings.TrimSpace(resp.Note + " You won't be told how far it gets: this device's " + brand.Product +
 			" is too old for tell_me, and updates itself within the hour.")
 	}
