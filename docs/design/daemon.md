@@ -26,6 +26,18 @@ daemon is started through WMI so it outlives that session (2026-10-29).
   the same session ID in that time takes it over with its inbox and unread notices, writing nothing
   to the bus. Only when the grace runs out does the daemon announce `session.stopped`, even after a
   crash.
+- **A start or stop that fails to push is written later** (2026-11-15, #434). Until then one was
+  logged and dropped, and later writes built on the last commit that landed, so nothing carried it.
+  Presence lists the session either way, so `who`, `lookup` and the session list never needed it.
+  What reads them is the page's Recent view ("joined", "left"), from the bus and from the history a
+  daemon reads back as it starts, and the census, which counts a session from its start where the
+  record isn't encrypted and estimates it from the name registry where it is or the start is
+  missing ([counting](counting.md)). So they wait in the state, oldest first, and go one at a time,
+  so a stop never lands before its start: tried again after 15 s, doubling to 5 minutes, at every
+  presence pushed, and by the next daemon. At most 100 wait, a busy day's sessions started and
+  stopped; past that the oldest go. A push reported as failed can have landed (the check `bus.Push`
+  makes after an error can fail too), so the commit it pushed is kept with the event, and the
+  retry looks for it on the remote's log before writing the event again.
 - **A stopped session's inbox is kept 24 hours**, across daemon restarts, and given back if the
   session returns. Before 2026-10-30 (#30) a laptop shut overnight lost every message sent to its
   stopped sessions. A daemon back after more than 10 minutes skips what it missed, except for
