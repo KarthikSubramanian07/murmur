@@ -66,7 +66,7 @@ const ui = {
   conn: "connecting", // connecting, ok, down, denied
   state: null,
   messages: [], // oldest first
-  ids: new Set(),
+  ids: new Set(), // msgKey of each
   cursor: "",
   // What sessions did other than send messages (#448): the daemon's, oldest first, and GitHub's.
   acts: [],
@@ -3469,7 +3469,8 @@ function personOnline(p) {
 // Unread: what the daemon has down as unread, less what this page has just opened, of the messages
 // it holds.
 function unreadIds() {
-  return (ui.state?.account?.unread || []).filter((id) => ui.ids.has(id) && !ui.readLocal.has(id));
+  const held = idsInHand();
+  return (ui.state?.account?.unread || []).filter((id) => held.has(id) && !ui.readLocal.has(id));
 }
 
 function unreadCount() {
@@ -4797,6 +4798,19 @@ function deny(token) {
 
 let arrivedAt = 0; // the sort time of the message before
 
+// msgKey tells messages apart: by sender as well as ID, since each device picks its own messages'
+// IDs, so another device's can repeat one, and with the ID alone that one would hide the first
+// (#43). The same message twice, as when the daemon has read it back from its log, has both the same.
+function msgKey(m) {
+  return m.fromAddr + " " + m.id;
+}
+
+// idsInHand is the IDs of the messages in hand, for what goes by ID alone: the daemon's list of
+// unread messages, and a message this page sent.
+function idsInHand() {
+  return new Set(ui.messages.map((m) => m.id));
+}
+
 // era is the tokenEra the poll started in: an answer that comes after the page has taken a token
 // since is an old daemon's, and is dropped (#523).
 async function fetchMessages(era) {
@@ -4809,8 +4823,8 @@ async function fetchMessages(era) {
       if (m.toKind === "session") learn(m.toAddr, m.to);
       if (m.fromPerson) personNames.add(m.from);
       if (m.toPerson) personNames.add(m.to);
-      if (ui.ids.has(m.id)) continue;
-      ui.ids.add(m.id);
+      if (ui.ids.has(msgKey(m))) continue;
+      ui.ids.add(msgKey(m));
       // A clock can be wrong. A message with no time goes where it arrived, and one from the future
       // counts as arriving now, so it can't hold its conversation at the top of the list or stay
       // below the replies to it.
@@ -4839,7 +4853,7 @@ function trimMessages() {
     if ((mine ? overOwn : overRest) <= 0) return true;
     if (mine) overOwn--;
     else overRest--;
-    ui.ids.delete(m.id);
+    ui.ids.delete(msgKey(m));
     return false;
   });
 }
@@ -4884,7 +4898,7 @@ let tokenEra = 0;
 let polled = false;
 let loaded = false; // the messages have been fetched once, so what comes after is new
 let loadedAt = 0; // when that first fetch came
-let heldIds = null; // see poll
+let heldKeys = null; // see poll
 let scrolledAt = 0;
 let stateAskedAt = 0; // when the state in hand was asked for
 
@@ -4899,7 +4913,7 @@ async function poll() {
   const wasConn = ui.conn;
   // The messages in hand before any not yet announced. A poll that brings messages but not the
   // state fails before it announces them, so this outlasts it, and the next poll still does.
-  if (!heldIds) heldIds = new Set(ui.messages.map((m) => m.id));
+  if (!heldKeys) heldKeys = new Set(ui.messages.map(msgKey));
   // A poll that the page took a new token during (start) belongs to the old daemon: it ends without
   // touching the page, and leaves inflight and the timer to the poll start began (#523).
   const era = tokenEra;
@@ -4907,8 +4921,8 @@ async function poll() {
     const asked = Date.now();
     const [state] = await Promise.all([api("/api/state"), fetchMessages(era), fetchActivity(era)]);
     if (era !== tokenEra) return;
-    const arrived = loaded ? ui.messages.filter((m) => !heldIds.has(m.id)) : []; // the first fetch brings the history
-    heldIds = null;
+    const arrived = loaded ? ui.messages.filter((m) => !heldKeys.has(msgKey(m))) : []; // the first fetch brings the history
+    heldKeys = null;
     if (!loaded) loadedAt = Date.now();
     loaded = true;
     // Another daemon is serving: it restarted onto an update, or a reinstall of the same version,
@@ -4944,7 +4958,8 @@ async function poll() {
     }
     trimMessages();
     for (const id of ui.readLocal) if (!state.account?.unread?.includes(id)) ui.readLocal.delete(id);
-    ui.outbox = ui.outbox.filter((item) => !(item.id && ui.ids.has(item.id)));
+    const held = idsInHand();
+    ui.outbox = ui.outbox.filter((item) => !(item.id && held.has(item.id)));
     ui.conn = "ok";
     announceArrivals(arrived);
     if (wasConn === "down") announce("Connected to the daemon again.");
@@ -5009,7 +5024,7 @@ async function start() {
     for (const key of [...minuteEdits.keys()]) cancelMinutes(key);
     confirmed = null;
     arrivedAt = 0;
-    heldIds = null;
+    heldKeys = null;
     last = "";
     polled = false;
     loaded = false;

@@ -381,7 +381,7 @@ type Daemon struct {
 	// started, logged once each (see notePersonLocked).
 	personClashes map[string]bool
 	// lastPage is when a page someone can see last called its API, zero if none has. msgs is the
-	// page's messages, oldest first, msgSeq the number of the newest and msgIDs the IDs in msgs.
+	// page's messages, oldest first, msgSeq the number of the newest and msgIDs the msgKey of each.
 	lastPage time.Time
 	msgs     []pageMsg
 	msgSeq   uint64

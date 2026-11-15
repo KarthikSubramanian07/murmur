@@ -277,11 +277,17 @@ type pageMsg struct {
 	e   bus.Event
 }
 
+// msgKey tells the page's messages apart: by sender as well as ID, since each device picks its own
+// messages' IDs, so another device's can repeat one, and with the ID alone that one would hide
+// the first (#43). The same message read twice, as it was sent and back from its log, has both
+// the same.
+func msgKey(e bus.Event) string { return e.From + " " + e.ID }
+
 // recordMessageLocked keeps a message for the page. Every message this daemon reads goes in,
 // whoever it is for: every record is encrypted for the whole team, which could read them all
 // before encryption too. One to or from this device's person goes on disk too. Caller holds mu.
 func (d *Daemon) recordMessageLocked(e bus.Event) {
-	if d.msgIDs[e.ID] {
+	if d.msgIDs[msgKey(e)] {
 		return
 	}
 	d.keepMessageLocked(e)
@@ -303,7 +309,7 @@ func (d *Daemon) keepMessageLocked(e bus.Event) {
 		if i < 0 {
 			return
 		}
-		delete(d.msgIDs, d.msgs[i].e.ID)
+		delete(d.msgIDs, msgKey(d.msgs[i].e))
 		d.msgs = slices.Delete(d.msgs, i, i+1)
 		if mine {
 			d.ownMsgs--
@@ -317,7 +323,7 @@ func (d *Daemon) keepMessageLocked(e bus.Event) {
 	}
 	d.msgSeq++
 	d.msgs = append(d.msgs, pageMsg{d.msgSeq, e})
-	d.msgIDs[e.ID] = true
+	d.msgIDs[msgKey(e)] = true
 }
 
 // A cursor is this run of the daemon and the number of the last message returned. Numbers only go

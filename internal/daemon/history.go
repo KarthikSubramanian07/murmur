@@ -242,8 +242,8 @@ func (d *Daemon) mergeMessagesLocked(events []bus.Event) {
 		seen = map[string]bool{}
 	}
 	for _, e := range events {
-		if !seen[e.ID] {
-			seen[e.ID] = true
+		if !seen[msgKey(e)] {
+			seen[msgKey(e)] = true
 			all = append(all, e)
 		}
 	}
@@ -258,7 +258,7 @@ func (d *Daemon) mergeMessagesLocked(events []bus.Event) {
 	}
 	// Everything read back was older than what the page keeps: as it was, numbers and all, so no
 	// page is given again what it has.
-	if len(d.msgs) == len(was) && !slices.ContainsFunc(d.msgs, func(m pageMsg) bool { return !wasIDs[m.e.ID] }) {
+	if len(d.msgs) == len(was) && !slices.ContainsFunc(d.msgs, func(m pageMsg) bool { return !wasIDs[msgKey(m.e)] }) {
 		d.msgs, d.msgIDs, d.ownMsgs, d.msgSeq = was, wasIDs, wasOwn, wasSeq
 	}
 }

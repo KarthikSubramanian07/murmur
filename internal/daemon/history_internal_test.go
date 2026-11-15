@@ -54,7 +54,7 @@ func TestHistoryMergesByTimeAndRenumbers(t *testing.T) {
 			t.Fatalf("numbers %v: each must pass %d and the one before, or a cursor from before misses it", seqs, before)
 		}
 	}
-	if len(d.msgIDs) != 4 || d.msgIDs["m1"] || !d.msgIDs["m4"] {
+	if len(d.msgIDs) != 4 || d.msgIDs[msgKey(sentAt("m1", 1))] || !d.msgIDs[msgKey(sentAt("m4", 4))] {
 		t.Errorf("the IDs known are %v", d.msgIDs)
 	}
 }
@@ -80,7 +80,7 @@ func TestHistoryWithNothingToAddChangesNothing(t *testing.T) {
 		if !slices.Equal(got, []string{"m3", "m4", "m5"}) || !slices.Equal(seqs, was) || d.msgSeq != was[2] {
 			t.Fatalf("after reading back %d: %q numbered %v up to %d, want them as they were, %v", len(read), got, seqs, d.msgSeq, was)
 		}
-		if len(d.msgIDs) != 3 || d.msgIDs["m1"] {
+		if len(d.msgIDs) != 3 || d.msgIDs[msgKey(sentAt("m1", 1))] {
 			t.Fatalf("the IDs known are %v", d.msgIDs)
 		}
 	}
@@ -200,5 +200,30 @@ func TestHistoryMergesActivity(t *testing.T) {
 	}
 	if !slices.Equal(kinds, []string{web.ActStarted + " 1m0s", web.ActStarted + " 2m0s", web.ActStarted + " 3m0s", web.ActStatus + " 4m0s"}) {
 		t.Errorf("the activity is %q, want the three starts and then the status", kinds)
+	}
+}
+
+// Each device picks its own messages' IDs, so another device's message can carry an ID the page
+// already has. Neither hides the other, as it comes in and when the logs are read back (#43); the
+// same message read twice is still kept once.
+func TestAnIDAnotherDeviceRepeatsHidesNoMessage(t *testing.T) {
+	d := historyDaemon(10)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	first := sentAt("m1", 1)
+	again := first
+	again.From, again.Subject = "else-0003/bbbbbb", "the same ID from another device"
+	for _, e := range []bus.Event{first, again, first, again} {
+		d.recordMessageLocked(e)
+	}
+	if got, _ := d.pageSubjects(); !slices.Equal(got, []string{"m1", again.Subject}) {
+		t.Errorf("as they came in, the page holds %q, want both messages once each", got)
+	}
+
+	third := first
+	third.From, third.Subject, third.At = "far-0004/cccccc", "the same ID again, read back", historyBase
+	d.mergeMessagesLocked([]bus.Event{third, first, again})
+	if got, _ := d.pageSubjects(); !slices.Equal(got, []string{third.Subject, "m1", again.Subject}) {
+		t.Errorf("read back, the page holds %q, want all three once each", got)
 	}
 }
