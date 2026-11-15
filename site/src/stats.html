@@ -163,6 +163,7 @@
   .tip .row { display: flex; align-items: center; gap: 8px; }
   .tip .row b { font-size: 13px; font-variant-numeric: tabular-nums; min-width: 24px; }
   .tip .row i { width: 10px; height: 10px; border-radius: 3px; }
+  .tip .row i.line { height: 2.5px; border-radius: 2px; }
   .tip .row span { color: var(--text-secondary); }
   /* Progress over time: one big chart, a measure and a way of counting it picked above it. */
   .progress .controls { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
@@ -487,9 +488,9 @@ function tooltip(box) {
     show(x, y, when, rows) {
       tip.replaceChildren();
       if (when) tip.appendChild(el('div', { class: 'when' }, when));
-      for (const [color, value, name] of rows) {
+      for (const [color, value, name, shape] of rows) {
         const row = el('div', { class: 'row' });
-        const key = el('i'); key.style.background = color;
+        const key = el('i', shape === 'line' ? { class: 'line' } : {}); key.style.background = color;
         row.append(key, el('b', {}, value), el('span', {}, name));
         tip.appendChild(row);
       }
@@ -924,7 +925,9 @@ function cumulativeBands(days, byRepo, repoList, value, colors) {
 // repo by repo, is in the tooltip rather than in the marks, so the shape reads at a glance.
 function progressChart(box, days, values, { mode, show = fmt, what, rowsAt = () => [] }) {
   box.replaceChildren();
-  const n = days.length, H = 300, c = css('--series-1');
+  // Ink, not a series color: the tooltip lists repos in their colors under it, and series-1 is
+  // the oldest repo's.
+  const n = days.length, H = 300, c = css('--text-primary'), soft = `color-mix(in srgb, ${c} 18%, transparent)`;
   const f = frame(box, n, Math.max(1, ...values), H, `${what}, ${mode === 'cumulative' ? 'in all' : 'per day'}`, show === size ? sizeTick : fmt);
   const pt = i => [f.x(i), f.y(values[i])];
   let lineAt = i => f.y(values[i]);
@@ -937,15 +940,16 @@ function progressChart(box, days, values, { mode, show = fmt, what, rowsAt = () 
     values.forEach((v, i) => {
       if (!v) return;
       const y1 = f.y(v), h = Math.max(1, f.y(0) - y1), r = Math.min(3, h, bw / 2), x0 = f.x(i) - bw / 2;
-      f.svg.append(grow(el('path', { d: `M${x0},${y1 + h}V${y1 + r}Q${x0},${y1} ${x0 + r},${y1}H${x0 + bw - r}Q${x0 + bw},${y1} ${x0 + bw},${y1 + r}V${y1 + h}Z`, fill: c, opacity: 0.22 }), i * 400 / n));
+      f.svg.append(grow(el('path', { d: `M${x0},${y1 + h}V${y1 + r}Q${x0},${y1} ${x0 + r},${y1}H${x0 + bw - r}Q${x0 + bw},${y1} ${x0 + bw},${y1 + r}V${y1 + h}Z`, fill: soft }), i * 400 / n));
     });
     // The average ends at yesterday (FULL): today is only partly counted.
     const avg = rolling(values);
     const pts = [];
     avg.forEach((v, i) => { if (v != null && i < n - FULL) pts.push([f.x(i), f.y(v)]); });
     if (pts.length > 1) f.svg.append(draw(el('path', { d: smoothPath(pts), fill: 'none', stroke: c, 'stroke-width': 2.5, 'stroke-linecap': 'round' })));
-    lineAt = i => (avg[i] != null && i < n - FULL ? f.y(avg[i]) : f.y(values[i]));
-    rowsAt = (rows => i => [[c, show(values[i]), 'that day'], ...(avg[i] != null && i < n - FULL ? [[c + '88', show(Math.round(avg[i] * 10) / 10), '7-day average']] : []), ...rows(i)])(rowsAt);
+    const onLine = i => pts.length > 1 && avg[i] != null && i < n - FULL;
+    lineAt = i => (onLine(i) ? f.y(avg[i]) : f.y(values[i]));
+    rowsAt = (rows => i => [[soft, show(values[i]), 'that day'], ...(onLine(i) ? [[c, show(Math.round(avg[i])), '7-day average', 'line']] : []), ...rows(i)])(rowsAt);
   }
   const last = mode === 'cumulative' ? n - 1 : null;
   if (last !== null) {
@@ -958,7 +962,7 @@ function progressChart(box, days, values, { mode, show = fmt, what, rowsAt = () 
     when: mode === 'cumulative' ? `${long(days[i])} · ${show(values[i])} in all` : long(days[i]),
     rows: rowsAt(i),
   }));
-  if (!values.some(Boolean)) box.append(el('div', { class: 'empty' }, `No ${what.toLowerCase()} in these days.`));
+  if (!values.some(Boolean)) box.append(el('div', { class: 'empty' }, `No ${what.toLowerCase()} ${mode === 'cumulative' ? 'yet' : 'in these days'}.`));
 }
 
 // What the progress card can show. A total kind (repos, users, contributors) is a running total
@@ -983,13 +987,14 @@ function progress(d, colors) {
   for (const b of document.querySelectorAll('#prog-mode button')) {
     b.setAttribute('aria-pressed', String(b.dataset.m === mode));
     b.disabled = b.dataset.m === 'cumulative' && !!m.dailyOnly;
+    b.title = b.disabled ? 'Per day only: the data has each day’s active devices, not when each first ran Murmur' : '';
   }
   const box = $('c-prog');
   const tail = m.note ? `; ${m.note}` : '';
   if (m.total) {
     // New on a day is the change in the running total. The range's first day has no day before it
     // in the data, except for repos, whose start days are all there; for users and contributors
-    // that day is left blank, and the change is counted from the end of it.
+    // that day counts 0, and the change is counted from the end of it.
     const first = progKey === 'repos' ? d.repoList.filter(r => r.start === days[0]).length : null;
     const news = S.map((s, i) => (i ? Math.max(0, s[m.total] - S[i - 1][m.total]) : first || 0));
     const added = S[n - 1][m.total] - S[0][m.total] + (first || 0);
