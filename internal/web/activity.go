@@ -2,11 +2,8 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -89,30 +86,15 @@ const (
 // thirty issues updated most recently, in any state, each made into its events. Nothing of the
 // page's goes on gh's command line.
 func GHEvents(dir string) LookupGitHub {
-	run := func(ctx context.Context, v any, args ...string) error {
-		cmd := exec.CommandContext(ctx, "gh", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "NO_COLOR=1")
-		cmd.WaitDelay = 2 * time.Second
-		hideWindow(cmd)
-		out, err := cmd.Output()
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(out, v); err != nil {
-			return fmt.Errorf("gh %s list: %w", args[0], err)
-		}
-		return nil
-	}
 	return func(ctx context.Context) ([]GitHubEvent, error) {
 		limit := fmt.Sprint(ghLimit)
 		var prs, issues []ghItem
-		if err := run(ctx, &prs, "pr", "list", "--state", "all", "--limit", limit, "--search", "sort:updated-desc",
+		if err := ghJSON(ctx, dir, &prs, "pr", "list", "--state", "all", "--limit", limit, "--search", "sort:updated-desc",
 			"--json", "number,title,url,author,headRefName,createdAt,mergedAt,closedAt"); err != nil {
 			return nil, err
 		}
 		// A repository with issues turned off fails here, and still has its pull requests.
-		_ = run(ctx, &issues, "issue", "list", "--state", "all", "--limit", limit, "--search", "sort:updated-desc",
+		_ = ghJSON(ctx, dir, &issues, "issue", "list", "--state", "all", "--limit", limit, "--search", "sort:updated-desc",
 			"--json", "number,title,url,author,createdAt,closedAt")
 		return append(ghEvents(GHPullRequest, prs), ghEvents(GHIssue, issues)...), nil
 	}
