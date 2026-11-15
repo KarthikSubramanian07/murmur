@@ -356,7 +356,7 @@ func isClaude(agent string) bool { return agent == "" || agent == "claude-code" 
 // ID in: the ID T3 Code keeps for the thread's provider session, and so how the thread is found.
 // Muse sets MUSE_SESSION_ID, which T3 makes when it starts the thread (seen on Muse 1.4.14,
 // 2026-11-01); Grok sets GROK_SESSION_ID (read in its source, not seen run); Antigravity sets
-// ANTIGRAVITY_CONVERSATION_ID in what it runs (seen in a T3 thread, 2026-11-15). Pi has no such
+// ANTIGRAVITY_CONVERSATION_ID in what it runs (seen in a T3 thread's shell, 2026-11-15). Pi has no such
 // variable: the extension join writes for it registers the server with the session's file in
 // MURMUR_PI_SESSION_FILE, and the file's path is what T3 records (internal/join/pi.go).
 var nativeEnv = map[string]string{"muse": "MUSE_SESSION_ID", "pi": "MURMUR_PI_SESSION_FILE", "grok": "GROK_SESSION_ID",

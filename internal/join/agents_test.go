@@ -256,6 +256,9 @@ func TestRegisterAntigravity(t *testing.T) {
 	withAgents(sb)
 	mcp := filepath.Join(sb.GeminiHome, "config", "mcp_config.json")
 	hooks := filepath.Join(sb.GeminiHome, "config", "hooks.json")
+	if err := os.MkdirAll(filepath.Join(sb.GeminiHome, "antigravity"), 0o755); err != nil { // what Antigravity makes there
+		t.Fatal(err)
+	}
 	write(t, mcp, "{\n  \"mcpServers\": {\"other\": {\"command\": \"o\"}}\n}\n")
 	write(t, hooks, "{\n  \"lint\": {\"PostToolUse\": []}\n}\n")
 	h := sb.defaultHome(agents[agentIndex("antigravity")])
@@ -300,6 +303,18 @@ func TestRegisterAntigravity(t *testing.T) {
 	}
 	if r := antigravityRemoval(sb.Env, h); !strings.Contains(r, mcp) || !strings.Contains(r, hooks) {
 		t.Errorf("removal: %q", r)
+	}
+}
+
+// ~/.gemini alone is Gemini CLI's too: without the agy command or a folder only Antigravity makes,
+// join tells no one Antigravity was set up, and writes nothing there.
+func TestGeminiCLIsHomeIsNoAntigravity(t *testing.T) {
+	sb := newSandbox(t, false)
+	withAgents(sb)
+	write(t, filepath.Join(sb.GeminiHome, "settings.json"), "{}")
+	did, fresh, err := sb.registerAntigravityAt(sb.defaultHome(agents[agentIndex("antigravity")]))
+	if err != nil || fresh || len(did) != 0 || exists(filepath.Join(sb.GeminiHome, "config")) {
+		t.Errorf("did=%q fresh=%v err=%v", did, fresh, err)
 	}
 }
 

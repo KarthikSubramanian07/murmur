@@ -56,6 +56,9 @@ func TestAntigravitysHook(t *testing.T) {
 		t.Errorf("PreInvocation gave %q, want %q", got, notice)
 	}
 
+	// Later calls in the turn carry the same lastUserInput, and send no prompt.
+	agy("PreInvocation", map[string]any{"invocationNum": 2})
+
 	var stop struct{ Decision, Reason string }
 	out = agy("Stop", map[string]any{"terminationReason": "NO_TOOL_CALL", "fullyIdle": true})
 	if err := json.Unmarshal([]byte(out), &stop); err != nil {
@@ -80,12 +83,16 @@ func TestAntigravitysHook(t *testing.T) {
 			ops = append(ops, r)
 		}
 	}
-	if len(ops) != 3 {
+	if len(ops) != 4 {
 		t.Fatalf("requests: %+v", ops)
 	}
 	if r := ops[0]; r.Op != proto.OpNotices || r.Agent != hook.Antigravity || r.ClaudeSession != "conv-1" || r.Prompt != "fix the test" || r.Transcript != "" {
 		t.Errorf("PreInvocation's request: %+v", r)
 	}
+	if r := ops[1]; r.Op != proto.OpNotices || r.Prompt != "" {
+		t.Errorf("the second PreInvocation's request: %+v", r)
+	}
+	ops = ops[1:]
 	if r := ops[1]; r.Op != proto.OpTurnEnd || !r.Continues || r.ClaudeSession != "conv-1" {
 		t.Errorf("Stop's request: %+v", r)
 	}

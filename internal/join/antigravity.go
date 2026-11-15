@@ -24,8 +24,9 @@ import (
 // instance's ID, in hex> (T3's resolveAntigravityInstanceDirectories, seen on T3 0.1.x). Nothing in
 // T3's settings moves it, so join registers there for each instance, as well as in the default.
 //
-// Antigravity gives every process it runs ANTIGRAVITY_CONVERSATION_ID, the ID T3 keeps for the
-// thread's session (seen in a T3 thread, 2026-11-15), which is how Murmur's server finds its thread.
+// Antigravity gives the commands it runs ANTIGRAVITY_CONVERSATION_ID, the ID T3 keeps for the
+// thread's session (seen in a T3 thread's shell, 2026-11-15; not yet seen in an MCP server's), which
+// is how Murmur's server finds its thread.
 
 // antigravityArgs are the server's arguments in Antigravity's config.
 var antigravityArgs = []string{"mcp", "--agent", "antigravity"}
@@ -44,13 +45,11 @@ func antigravityHomeOf(t3Settings, id string) string {
 }
 
 // registerAntigravityAt puts Murmur's server and hook in Antigravity's config in h. Antigravity isn't
-// touched where neither its command nor the directory is there: T3 makes an instance's home when it
-// first runs it.
+// touched where it isn't there: T3 makes an instance's home when it first runs it, and ~/.gemini
+// alone is Gemini CLI's too, so the default home counts only with the agy command or a folder only
+// Antigravity makes there.
 func (e Env) registerAntigravityAt(h agentHome) (did []string, fresh bool, err error) {
-	if h.Dir == "" {
-		return nil, false, nil
-	}
-	if _, lerr := e.look("agy"); lerr != nil && h.Bin == "" && !isDir(h.Dir) {
+	if h.Dir == "" || !e.hasAntigravity(h) {
 		return nil, false, nil
 	}
 	path := filepath.Join(h.Dir, "config", "mcp_config.json")
@@ -73,6 +72,17 @@ func (e Env) registerAntigravityAt(h agentHome) (did []string, fresh bool, err e
 		did = append(did, h.Label+": added "+brand.Product+"'s hook, in every project ("+hooks+")")
 	}
 	return did, changed, nil
+}
+
+// hasAntigravity says Antigravity is installed for home h.
+func (e Env) hasAntigravity(h agentHome) bool {
+	if h.Bin != "" || h.T3Own && isDir(h.Dir) {
+		return true
+	}
+	if _, err := e.look("agy"); err == nil {
+		return true
+	}
+	return !h.T3Own && (isDir(filepath.Join(h.Dir, "antigravity")) || isDir(filepath.Join(h.Dir, "antigravity-cli")))
 }
 
 // setJSONIn sets path in the JSON file at path to v, making the file, and its directory, if they

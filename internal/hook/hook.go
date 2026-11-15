@@ -83,6 +83,7 @@ type input struct {
 	WorkspacePaths    []string `json:"workspacePaths"`
 	LastUserInput     string   `json:"lastUserInput"`
 	TerminationReason string   `json:"terminationReason"`
+	InvocationNum     int      `json:"invocationNum"`
 }
 
 type output struct {

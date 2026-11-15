@@ -21,6 +21,8 @@ type agentHome struct {
 	// Named says a variable names Dir (CODEX_HOME) rather than Dir being the agent's default, which
 	// Codex spells differently in its hooks' trust keys (codexKeyPath).
 	Named bool
+	// T3Own says T3 made Dir for one instance and manages what is in it (Antigravity's).
+	T3Own bool
 }
 
 // agent is one of the coding agents join registers the server with.
@@ -97,7 +99,7 @@ func (e Env) t3Home(a agent, in t3Instance) (agentHome, bool) {
 	h := agentHome{Label: a.label + " (" + in.Name + " in T3 Code)", Bin: in.binary()}
 	if a.driver == "antigravity" {
 		// A home of T3's own for each instance, which nothing in its settings moves.
-		h.Dir = antigravityHomeOf(e.T3Settings, in.ID)
+		h.Dir, h.T3Own = antigravityHomeOf(e.T3Settings, in.ID), true
 		return h, h.Dir != ""
 	}
 	dir := in.homeOf(a.t3Var, e.Home)

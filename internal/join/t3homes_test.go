@@ -152,6 +152,9 @@ func TestJoinRegistersInEveryHomeT3Runs(t *testing.T) {
 	if got := read(t, filepath.Join(agyHome, "config", "mcp_config.json")); !strings.Contains(got, `"murmur"`) {
 		t.Errorf("T3's Antigravity home's mcp_config.json:\n%s", got)
 	}
+	if exists(filepath.Join(agyHome, "config", "skills")) {
+		t.Error("join made T3's Antigravity home's skills folder, which T3 links to the user's")
+	}
 	if got := read(t, filepath.Join(agyHome, "config", "hooks.json")); !strings.Contains(got, "--event Stop antigravity") {
 		t.Errorf("T3's Antigravity home's hooks.json:\n%s", got)
 	}

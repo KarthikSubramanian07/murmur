@@ -6,15 +6,16 @@ import "io"
 // installs it on two:
 //
 //   - PreInvocation, before each call of the model: at a turn's start and after each tool call. It
-//     stands for both UserPromptSubmit and PostToolUse, whose answer Antigravity ignores. Its
-//     lastUserInput is the turn's prompt, which marks a message handed over as the turn read
-//     (#611). What it gives back goes in as a system message, which stays in the conversation as
+//     stands for both UserPromptSubmit and PostToolUse, whose answer Antigravity ignores. On the
+//     turn's first call its lastUserInput is the prompt, which marks a message handed over as the
+//     turn read (#611). What it gives back goes in as a system message, which stays in the conversation as
 //     Claude Code's additionalContext does.
 //   - Stop, at the end of the work, with why it ended: only NO_TOOL_CALL, a turn's ordinary end,
 //     can be kept going, by the answer "continue" and the messages as its reason.
 //
-// The session is the conversation, whose ID Antigravity also gives its MCP servers' environment
-// (ANTIGRAVITY_CONVERSATION_ID). The hook runs in the folder of hooks.json, so the workspace it
+// The session is the conversation, whose ID Antigravity puts in what it runs
+// (ANTIGRAVITY_CONVERSATION_ID; seen in its shell, not yet in an MCP server, where the daemon
+// otherwise pairs the hook with the server among its ancestors). The hook runs in the folder of hooks.json, so the workspace it
 // names stands for the working directory.
 
 // fromAntigravity puts what Antigravity's payload says for event in Claude Code's fields, and says
@@ -26,7 +27,10 @@ func fromAntigravity(in *input, event string) bool {
 	}
 	switch event {
 	case "PreInvocation":
-		in.Event, in.Prompt = "UserPromptSubmit", in.LastUserInput
+		in.Event = "UserPromptSubmit"
+		if in.InvocationNum <= 1 {
+			in.Prompt = in.LastUserInput
+		}
 	case "Stop":
 		in.Event, in.Reason = stop, "end_turn"
 		if in.TerminationReason != "" && in.TerminationReason != "NO_TOOL_CALL" {

@@ -35,7 +35,7 @@ func TestUninstallRemovesWhatJoinWrote(t *testing.T) {
 	sb, _ := uninstallSandbox(t)
 	withOpenCode(t, sb, "opencode v2.2.0")
 	ctx := context.Background()
-	for _, d := range []string{sb.ClaudeDir, sb.CodexHome, sb.OpenCodeDir, sb.MuseDir, sb.PiDir, sb.GrokHome, sb.GeminiHome} {
+	for _, d := range []string{sb.ClaudeDir, sb.CodexHome, sb.OpenCodeDir, sb.MuseDir, sb.PiDir, sb.GrokHome, filepath.Join(sb.GeminiHome, "antigravity")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
