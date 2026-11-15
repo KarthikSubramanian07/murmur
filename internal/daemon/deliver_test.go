@@ -90,9 +90,9 @@ type t3Call struct {
 }
 
 // fakeT3 is the stand-in `t3`, run from dir: it records its arguments, standard input, T3CODE_HOME,
-// CODEX_HOME and XDG_STATE_HOME, and takes its time or fails if told to. It reads what it is told before it records
-// the call, as a process reads its environment when it starts, so a test that changes the settings
-// once it has seen the call changes only the calls after it.
+// CODEX_HOME and XDG_STATE_HOME, and takes its time or fails if told to. It reads what it is told
+// before it records the call, as a process reads its environment when it starts, so a test that
+// changes the settings once it has seen the call changes only the calls after it.
 func fakeT3(dir string) int {
 	var sleep time.Duration
 	if s, err := os.ReadFile(filepath.Join(dir, fakeT3Sleep)); err == nil {

@@ -121,8 +121,8 @@ hook runs). Each has a command that does what `t3 thread send` does, so the daem
   waits behind a running turn, where the default, `"steer"`, goes into it. Seen on OpenCode 2.2.0
   the same day, with the terminal UI showing the message and the answer. `session.synthetic`
   starts a turn too, but the terminal UI then shows the answer and not what was asked, so it isn't
-  used. Since 2026-11-12 OpenCode's plugin runs the hook (#431), so a busy
-  session gets the notice, as Codex does.
+  used. Since 2026-11-12 OpenCode's plugin runs the hook (#431), so a busy session gets the notice,
+  as Codex does.
 - *Which program.* The one that started the session's MCP server, if that is a `codex` or an
   `opencode`. Neither command takes the text on standard input, so it goes on the command line, and
   the name on `PATH` won't do: on Windows it is npm's `.cmd` shim, which can't carry a newline. On
