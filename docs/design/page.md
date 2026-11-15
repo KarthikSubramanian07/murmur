@@ -97,6 +97,10 @@ from it is in [a person on the page](people.md).
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
   `.git/murmur/settings.json`; [delivery](delivery.md) says what they do. Settings also lists every
   mute ([mutes](mutes.md)), with a button to undo those of this device's sessions.
+- **The colour row** (#573) holds back a colour a reachable device picked, named for whose it is.
+  One picked by a device that is offline is offered, named as theirs and offline (#581): a device
+  that died without a goodbye would hold it for good. The daemon decides whether the pick takes it
+  ([presence](presence.md), "Device colours"); in the rare case it refuses, the row says who has it.
 - **An open page keeps the daemon up.** The page polls every 3 s, 15 s in a hidden tab. A call with
   the token from a page someone can see counts as an open page for 2 minutes and stops the 10-minute
   idle countdown, so a daemon with nothing else to do exits about 12 minutes after its page is

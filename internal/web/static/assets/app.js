@@ -4491,15 +4491,24 @@ function accountSection() {
 // The palette's names, in the order of the dev-c classes in style.css.
 const COLORS = ["Rose", "Clay", "Ochre", "Olive", "Sage", "Sea green", "Teal", "Steel blue", "Violet", "Plum", "Berry", "Cocoa"];
 
-// This device's color (#573): Auto, or one of the palette's that no other device has picked. A pick
-// that lost to another device's is given up, and the row says whose it is now until Auto is pressed
-// or another color picked. Buttons, not radios: each press is written to the remote, so the arrow
-// keys mustn't pick.
+// The colors other devices picked, by their place in the palette: taken, to who has it, for a
+// device that is reachable; offline, to who had it, for one that isn't, whose color a pick takes
+// (#581), as one that died without a goodbye would otherwise hold it for good.
+function colorHolders(devices) {
+  const taken = new Map();
+  const offline = new Map();
+  for (const d of devices || []) if (!d.self && d.picked) (d.reachable ? taken : offline).set(d.color, d.nick || d.owner || d.id);
+  return { taken, offline };
+}
+
+// This device's color (#573): Auto, or one of the palette's that no reachable device has picked. A
+// pick that lost to another device's is given up, and the row says whose it is now until Auto is
+// pressed or another color picked. Buttons, not radios: each press is written to the remote, so the
+// arrow keys mustn't pick.
 function colorRow() {
   const acct = ui.state?.account;
   const pick = acct?.color || 0;
-  const taken = new Map(); // a place in the palette, to who picked it
-  for (const d of ui.state?.devices || []) if (!d.self && d.picked) taken.set(d.color, d.nick || d.owner || d.id);
+  const { taken, offline } = colorHolders(ui.state?.devices);
   const swatch = (c, props, ...kids) => {
     const who = c ? taken.get(c - 1) : null;
     return h(
@@ -4524,7 +4533,9 @@ function colorRow() {
       swatch(0, { class: "swatch-auto" }, "Auto"),
       COLORS.map((name, i) => {
         const who = taken.get(i);
-        return swatch(i + 1, { class: "swatch dev-c" + i, "aria-label": who ? name + ", " + who + "'s" : name, title: who ? who + "'s" : name });
+        const was = offline.get(i);
+        const whose = who ? who + "'s" : was ? was + "'s, offline" : "";
+        return swatch(i + 1, { class: "swatch dev-c" + i, "aria-label": whose ? name + ", " + whose : name, title: whose || name });
       }),
     ),
     "row-stack",
