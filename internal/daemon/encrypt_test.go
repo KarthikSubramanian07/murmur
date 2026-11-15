@@ -169,7 +169,9 @@ func TestOlderDevice(t *testing.T) {
 	})
 	before := git(t, remote, "rev-parse", "refs/murmur/mesh/"+a.self())
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: old + "/oooooo", Subject: "can't be read there"})
-	if !strings.Contains(r.Error, "not sent") || !strings.Contains(r.Error, "before the bus was encrypted") {
+	// It is that recipient's alone (#541): a send to a list goes on past it.
+	if !strings.Contains(r.Error, "not sent") || !strings.Contains(r.Error, "before the bus was encrypted") ||
+		r.Refused != proto.RefusedRecipient {
 		t.Fatalf("send to an older device: %+v", r)
 	}
 	if after := git(t, remote, "rev-parse", "refs/murmur/mesh/"+a.self()); after != before {
