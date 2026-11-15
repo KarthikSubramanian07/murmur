@@ -230,6 +230,9 @@ func (d *Daemon) applyGroupAddLocked(e bus.Event, mode syncMode) {
 		return
 	}
 	key := d.tagKeyLocked(sess)
+	if key == "" && d.holdForLocked(e) {
+		return
+	}
 	if key == "" || d.offMeshLocked(sess) {
 		d.log.Printf("%s added %s to %s, but that session isn't known here; not applied", e.From, e.To, strings.Join(e.Add, ", "))
 		return

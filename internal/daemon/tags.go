@@ -215,6 +215,48 @@ func (d *Daemon) tagKeyLocked(id string) string {
 	return ""
 }
 
+// holdForLocked keeps e, a person's change to the tags of a session of this device that it knows
+// nothing of, or an agent's add of one to a group, if the daemon has just started (#524): the
+// session may be one whose name is pending and that kept nothing here, and is still reconnecting.
+// It is applied when the session is back (catchUpLocked), before the messages that waited, so a
+// group's message read with its add reaches it. Past catchUpWindow nothing is held, as no message
+// is: a session back later isn't caught up. It says whether e was kept. Caller holds mu.
+func (d *Daemon) holdForLocked(e bus.Event) bool {
+	if time.Since(d.started) > catchUpWindow {
+		return false
+	}
+	d.heldTags = append(d.heldTags, e)
+	return true
+}
+
+// applyHeldLocked applies what holdForLocked kept for session id, now that it is back. Caller
+// holds mu.
+func (d *Daemon) applyHeldLocked(id string) {
+	addr := bus.Addr(d.device, id)
+	held, kept := d.heldTags, []bus.Event(nil)
+	for _, e := range held {
+		switch {
+		case e.To != addr:
+			kept = append(kept, e)
+		case e.Type == bus.GroupAdd:
+			d.applyGroupAddLocked(e, modeCatchUp)
+		default:
+			d.applyTagsEventLocked(e)
+		}
+	}
+	d.heldTags = kept
+}
+
+// dropHeldLocked lets go of what holdForLocked kept for sessions that didn't come back within the
+// catch-up window. Caller holds mu.
+func (d *Daemon) dropHeldLocked() {
+	for _, e := range d.heldTags {
+		d.log.Printf("%s's %s for %s, read as this daemon started, wasn't applied: that session isn't known here, and didn't come back",
+			e.From, e.Type, e.To)
+	}
+	d.heldTags = nil
+}
+
 // humanTagsLocked applies a human's change to the tags of session id on this device. by is the
 // person, or their device. Caller holds mu.
 func (d *Daemon) humanTagsLocked(id string, add, remove []string, by string, at time.Time) error {
@@ -274,6 +316,9 @@ func (d *Daemon) applyTagsEventLocked(e bus.Event) {
 	by := from
 	if p := d.peers[from]; p != nil && p.pres.Owner != "" {
 		by = p.pres.Owner + " on " + from
+	}
+	if d.tagKeyLocked(sess) == "" && d.holdForLocked(e) {
+		return
 	}
 	if err := d.humanTagsLocked(sess, e.Add, e.Remove, by, e.At); err != nil {
 		d.log.Printf("tags from %s for %s not applied: %v", e.From, e.To, err)
