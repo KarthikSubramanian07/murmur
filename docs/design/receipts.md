@@ -20,8 +20,18 @@ is what the page shows. The states are defined in [delivery](delivery.md).
 - **The recipient's daemon marks each state as it sees it**: queued when the message goes in a
   session's inbox, handed over when the client took it, delivered when the hook's notice told the
   session, read when the session had it whole. For a person, being in their inbox is delivered, and
-  opening the conversation is read. A turn handed to T3, the socket or a client's command line stays
-  handed over, since the daemon can't see the turn start.
+  opening the conversation is read. A turn handed to T3, the socket or a client's command line is
+  handed over, since the daemon can't see the turn start. It becomes read when the hook's
+  `UserPromptSubmit` sends a prompt that is that turn (#611, below); clients whose hook sends no
+  prompt (Pi, OpenCode) leave it handed over.
+- **A turn's prompt marks it read** (#611, 2026-11-15). The hook sends the first 4 KB of each
+  prompt with `UserPromptSubmit` to its own daemon, which keeps none of it. The daemon remembers each
+  message that asked for receipts as its handoff begins (the turn can start before the client's
+  command returns), and marks read the oldest whose turn the prompt is: Murmur's header line, then
+  the subject on a line of its own. Matching the turn, not just taking the next prompt, keeps a
+  prompt the user typed while T3 held Murmur's turn in its queue from counting, and the header keeps
+  a short subject such as "test" from matching the user's own words. At most 20 a session are
+  remembered, for a day.
 - **Marks are batched.** They wait 3 s (`ReceiptGather`) and go out as one `receipt` event on the
   recipient's own log, at most one per device every 15 s (`ReceiptGap`), keeping only each message's
   furthest state. Without the gap, a message to ten sessions on five devices could cost twenty

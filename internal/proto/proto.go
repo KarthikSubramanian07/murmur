@@ -95,6 +95,10 @@ const (
 //	    none for its person's messages, so an upgraded mur replaces it where it may.
 const Protocol = 21
 
+// MaxPrompt is how much of a prompt a hook sends as Request.Prompt: a turn Murmur hands over
+// begins with its sender and subject, well within it.
+const MaxPrompt = 4096
+
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
 
@@ -207,6 +211,10 @@ type Request struct {
 	// inbox, even where the page says to give it whole (#229). An older daemon ignores it, and gives
 	// messages whole to a hook that sends it, which prints them: no new Protocol number.
 	Whole bool `json:"whole,omitempty"`
+	// Prompt is, on OpNotices from a hook's UserPromptSubmit, the start of the prompt the turn
+	// began with (MaxPrompt bytes at most). A message handed over as a turn is read once a prompt
+	// holds it (#611). An older daemon ignores it.
+	Prompt string `json:"prompt,omitempty"`
 	// Agent is, on a hook's request, the agent it runs for where that isn't Claude Code: "codex" or
 	// "grok", from the hook's command line (#225). ClaudeSession then holds that agent's own ID for the
 	// conversation (Codex's thread ID, Grok's session ID), which its MCP server reports as the route's

@@ -20,7 +20,8 @@ meets them:
 - *Queued:* the recipient's daemon has put it in the session's inbox.
 - *Handed over:* the daemon has passed it to the session's client (`t3 thread send`, the messaging
   socket, or the client's command line), and it is out of the daemon's inbox. Still queued, in the
-  client now.
+  client now. It is read once the turn starts, where the hook's prompt shows it (#611,
+  [receipts](receipts.md)).
 - *Delivered:* for an agent, the hook's notice (sender and subject) is in its context. For a person,
   it is in their inbox on the page, counted as unread.
 - *Read:* for an agent, the body is in its context. For a person, they opened the conversation (a

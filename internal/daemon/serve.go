@@ -615,6 +615,9 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		if req.Subagent {
 			continue // the notice would go to the subagent (#188)
 		}
+		if d.readOnPromptLocked(id, req.Prompt) {
+			d.saveLocked() // a turn handed over has started (#611)
+		}
 		if d.dndLocked(id) {
 			// Do not disturb (#198): its messages stay queued in its inbox, with no notice, no
 			// whole message and no hold for the turn's end, and don't count as unread for the hook.
