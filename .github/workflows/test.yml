@@ -91,6 +91,9 @@ jobs:
           if [ -n "$out" ]; then echo "$out"; exit 1; fi
       - if: env.GO == 'true'
         run: go vet ./...
+      # The desktop app is in a Linux build only with -tags desktop (docs/design/desktop.md).
+      - if: env.GO == 'true'
+        run: go vet -tags desktop ./internal/desktop ./cmd/mur
       # The site's Worker and the files machines read on it (site/test), with the runner's own node,
       # before the Go tests, which take most of the job. A change to site/ alone stops here.
       - run: node --test --import ./site/test/register.mjs site/test/*.test.mjs
@@ -120,6 +123,18 @@ jobs:
           if [ -n "$out" ]; then echo "$out"; exit 1; fi
       - run: go vet ./...
       - run: go list ./... | grep -v '/internal/daemon$' | xargs bash scripts/go-test-retry.sh -race -count=1 -timeout 50m
+      # Releases are built without cgo, which on macOS puts purego's runtime shim (fakecgo) under
+      # every command, since the desktop app's web view comes through purego. -race turns cgo on and
+      # hides it, so the commands' own packages run again as releases are built, and a release-built
+      # mur starts and runs the hook (docs/design/desktop.md).
+      - name: go test, built as releases are
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          bash scripts/go-test-retry.sh -count=1 -timeout 30m ./cmd/mur ./internal/client ./internal/hook ./internal/desktop
+          go build -trimpath -o "$RUNNER_TEMP/mur" ./cmd/mur
+          "$RUNNER_TEMP/mur" help > /dev/null
+          echo '{}' | "$RUNNER_TEMP/mur" hook
 
   # gofmt runs on the other two: a Windows checkout turns line endings into CRLF, which gofmt reports.
   # `internal/daemon` alone ran past the 50-minute limit on 2026-11-12 (#496) while the other

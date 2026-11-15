@@ -19,21 +19,24 @@ Only what a browser tab can't do:
   macOS uses `osascript`, so the banner is Script Editor's: a binary outside an app bundle has no
   bundle identifier, which `UNUserNotificationCenter` needs. Linux uses `notify-send` where it is
   installed.
-- **Links to other sites open in the browser**, never in the window.
+- **Links to other sites open in the browser**, never in the window. A window that ends up on
+  another page anyway (a file dropped on it) goes back to the clone's page within 10 seconds.
 
 ## How the page and the window talk
 
-The window gives the page two functions. `murmurApp` takes what the page shows (its host, the unread
-count, the theme) and the messages to the person as they arrive; the page calls it only when one of
-those changes (`tellApp` in `app.js`). `murmurOpen` opens a link in the browser; a script the window
-runs in every document sends it every link to another origin. Any page in the window could call
-either, so neither does anything a page shouldn't: they set a title and a count, show a
-notification, and open an http or https address in the browser.
+The window gives the page three functions. `murmurApp` takes what the page shows (its host, the
+unread count, the theme) and the messages to the person as they arrive; the page calls it only when
+one of those changes (`tellApp` in `app.js`). A script the window runs in every document sends
+`murmurOpen` every link to another origin, which opens it in the browser, and `murmurHere` the
+document's host. Any page in the window could call them, so none does anything a page shouldn't: they
+set a title and a count, show a notification, open an http or https address in the browser, and
+record a host, which can take the window only to a joined clone's page.
 
 The page decides what is news, as it does for its screen reader announcements. The window decides
-whether the person is looking, because a web view keeps its focus when its window is minimized:
-`document.hasFocus()` stayed true in a minimized WebView2 (2026-11-15). Only Linux takes the page's
-guess.
+whether the person is looking, from the system: whether it is the window in front on Windows, the
+active app on macOS. The page's own guess (`document.hasFocus()`) is taken only on Linux. One run on
+2026-11-15 saw it stay true in a minimized WebView2 and another saw it go false, so it isn't relied
+on where the system can say.
 
 ## The web view: glaze
 
@@ -59,14 +62,24 @@ purego, so there is no cgo.
 ## In `mur`, except on Linux
 
 The app is a command of `mur`, not a second binary, so the installers, the self-update and the
-release stay as they are, and the app is always the daemon's version.
+release stay as they are, and the app is always the daemon's version. What that costs each other
+command differs by platform:
 
-On Linux it is left out unless `mur` is built with `-tags desktop`. purego makes the Go runtime link
-glibc dynamically there: a `mur` built with it is no longer static, and would fail to start where
-glibc isn't at the usual path (Alpine, NixOS, a distroless container), for every command, the hook
-included. On macOS a Go binary links the system's libraries anyway, and on Windows purego makes
-plain system calls, so neither changes: `mur help` took 20 to 26 ms on the macOS server before and
-after (2026-11-15).
+- **Windows:** nothing. purego makes plain system calls there, and glaze does nothing until a window
+  is made.
+- **macOS:** without cgo, as releases are built, purego puts a shim of its own (`fakecgo`) under the
+  Go runtime, which then starts threads through the system's C library, for every command: the hook,
+  the daemon and the MCP server too. A Go binary links that library on macOS anyway, and `mur help`
+  took 20 to 26 ms on the macOS server before and after (2026-11-15), but the shim is code no release
+  ran before, and `-race`, which every macOS CI test used, turns cgo on and leaves it out. So the
+  macOS job also runs the commands' packages without cgo, on Apple silicon, and starts a
+  release-built `mur` and its hook (Opus review, 2026-11-15). Only `mur app` keeps its main goroutine
+  on the process's first thread, which AppKit needs.
+- **Linux:** left out unless `mur` is built with `-tags desktop`, which a CI job vets. There the shim
+  makes the Go runtime link glibc dynamically: a `mur` built with it is no longer static, and would
+  fail to start where glibc isn't at the usual path (Alpine, NixOS, a distroless container), for
+  every command, the hook included.
+- **Elsewhere** (FreeBSD and the like): left out, and `mur app` says so.
 
 ## Which repo
 
@@ -82,17 +95,25 @@ is the one remembered.
 
 ## Keeping its daemon
 
-The app is someone waiting for messages, so its page doesn't mark its calls hidden when the window
-is minimized, and its daemon doesn't exit while the window is open. A daemon can still go: a crash,
-`mur stop`. Every 10 seconds the window asks for its clone's page, starting the daemon if it isn't
-running, and goes to the new address when the daemon came back on another port. So `mur stop` with
-the app open is undone within 10 seconds; leaving the repo isn't, as a clone that left is never
-started again.
+The app is someone waiting for messages, so its page marks every call as the app's (`X-Page-App`),
+and the daemon doesn't exit while the window is open, minimized or not. That is all the mark does: a
+minimized app's calls are still marked hidden, as a background tab's are, so the person isn't shown
+as active, a daemon still restarts onto an update, and it polls the remote at the quiet rate, as it
+would for a hidden tab. A first version left the hidden mark off instead, which did all three (Opus
+review, 2026-11-15).
+
+A daemon can still go: a crash, `mur stop`. Every 10 seconds the window asks for its clone's page,
+starting the daemon if it isn't running, and goes to the new address when the daemon came back on
+another port. So `mur stop` with the app open is undone within 10 seconds; leaving the repo isn't,
+as a clone that left is never started again. A daemon that keeps failing to start is logged once,
+not every 10 seconds.
 
 ## Starting it
 
-`mur app` starts the window as a process of its own and prints "Opened.", so the terminal can be
-closed. The window's output goes to `app.log` beside `last.json`. `--wait` keeps it in the
+`mur app` starts the window as a process of its own, watches it for 2 seconds and prints
+"Opened.", so the terminal can be closed. A window that can't be made (no WebView2 runtime, no screen
+to draw on) ends in that time, and `mur app` prints the reason instead. The window's output goes to
+`app.log` beside `last.json`, which moves to `app.log.old` past 4 MB. `--wait` keeps it in the
 foreground, `--devtools` lets the web view open its developer tools, and `--page ADDR` shows that
 address and no clone's, for working on the app against the devserver
 (`go run ./internal/web/devserver`).
@@ -116,7 +137,9 @@ and on the macOS server (macOS 12, Intel).
   was about 120 MB in all (mur 39 MB, WebKit's content process 69 MB, its network process 13 MB).
 - **One flag.** The app runs WebView2's GPU work in its browser process (`--in-process-gpu`, unless
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` is already set). It took the app from 470 MB of working set
-  and 310 MB private to 400 MB and 190 MB; a page of text needs no GPU process of its own.
+  and 310 MB private to 400 MB and 190 MB; a page of text needs no GPU process of its own. The
+  variable is set only while the web view is made, so the daemons and browsers the app starts don't
+  inherit it.
 
 ## Unsigned
 
@@ -136,8 +159,9 @@ would take:
 
 ## What it doesn't do
 
-- No launcher: it starts from a terminal. A Start menu shortcut, an app bundle and a `.desktop` file
-  would let it start like an app, and a bundle would make macOS's notifications Murmur's.
+- No launcher (#616): it starts from a terminal. A Start menu shortcut, an app bundle and a
+  `.desktop` file would let it start like an app, and a bundle would make macOS's notifications
+  Murmur's.
 - One window per `mur app`: a second one opens a second window, with a second icon in the
   notification area.
 - A notification brings the window up, on Windows, but doesn't open its conversation.
