@@ -13,3 +13,6 @@ func Holds(prompt, subject string) bool { return holds(prompt, subject) }
 // CatchUpWindow is catchUpWindow, how long after the start what is read for a reconnecting session
 // is held for it.
 const CatchUpWindow = catchUpWindow
+
+// RefFileOK is refFileOK, for a test of what counts as a broken bus ref (#644).
+func RefFileOK(b []byte) bool { return refFileOK(b) }
