@@ -944,7 +944,7 @@ func Run(ctx context.Context, opt Options) error {
 	// Sync once before sessions register (they wait for it), so whatever this sync finds was sent
 	// before any of them registered: it is the backlog, and nothing a new session should get. A stop
 	// asked for meanwhile cuts it short.
-	clearBrokenRefs(d.opt.GitDir, d.log) // a ref a crash left unreadable would fail this sync (#644)
+	d.repairRefs() // a ref a crash left unreadable would fail this sync (#644)
 	sctx, scancel := context.WithTimeout(ctx, d.opt.FirstSyncLimit)
 	go func() {
 		select {
@@ -1270,7 +1270,7 @@ func clearStaleLocks(gitDir string, l *log.Logger) (removed bool) {
 // next sync writes again, so nothing is lost. The file is removed directly, as git may refuse to
 // delete a ref it can't read. A complete ref file is an object ID, or "ref: " for a symbolic one;
 // git writes it under a .lock and renames it into place, so a half-written one isn't seen here.
-func clearBrokenRefs(gitDir string, l *log.Logger) (removed bool) {
+func clearBrokenRefs(gitDir string, l *log.Logger) (removed []string) {
 	root := filepath.Join(gitDir, filepath.FromSlash(brand.RefRoot))
 	filepath.WalkDir(root, func(path string, e os.DirEntry, err error) error {
 		if err != nil || e.IsDir() || strings.HasSuffix(path, ".lock") {
@@ -1282,11 +1282,29 @@ func clearBrokenRefs(gitDir string, l *log.Logger) (removed bool) {
 		}
 		if os.Remove(path) == nil {
 			l.Printf("removed %s, which held no object ID (%d bytes); the next sync writes it again", path, len(b))
-			removed = true
+			if rel, err := filepath.Rel(gitDir, path); err == nil {
+				removed = append(removed, filepath.ToSlash(rel))
+			}
 		}
 		return nil
 	})
 	return removed
+}
+
+// repairRefs removes the bus refs clearBrokenRefs finds, and forgets what was fetched into them,
+// so the next sync fetches each again even if the remote's hasn't moved. It says whether it
+// removed any. Takes mu.
+func (d *Daemon) repairRefs() bool {
+	removed := clearBrokenRefs(d.opt.GitDir, d.log)
+	if len(removed) == 0 {
+		return false
+	}
+	d.mu.Lock()
+	for _, ref := range removed {
+		delete(d.known, ref)
+	}
+	d.mu.Unlock()
+	return true
 }
 
 // refFileOK says b is what git writes for a loose ref: an object ID (SHA-1 or SHA-256, in hex) or a
