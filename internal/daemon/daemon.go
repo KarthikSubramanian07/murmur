@@ -512,6 +512,9 @@ type Daemon struct {
 	// have; bgCtx is cancelled when the daemon starts shutting down.
 	bg    sync.WaitGroup
 	bgCtx context.Context
+	// unwriting says writeUnwritten is writing st.Unwritten; unwrittenWarned that a write of it
+	// has failed since the last that landed, and was logged.
+	unwriting, unwrittenWarned bool
 
 	// firstSync is closed once Run's first sync is over, done or not (see awaitFirstSync). Nil for
 	// a daemon Run didn't start, which has no first sync to wait for.
@@ -578,6 +581,9 @@ type session struct {
 	// unlogged says the session was a child when it registered, so neither its start nor its stop
 	// goes on the bus (#487).
 	unlogged bool
+	// noWake is what the last presence written said of whether a message would wake the session
+	// (bus.SessionInfo.NoWake), so that a change is published (see wakeChangedLocked).
+	noWake string
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its
@@ -696,6 +702,9 @@ type state struct {
 	Stopped map[string]time.Time `json:"stopped,omitempty"`
 	// LastSync tells the next daemon how long this one was down.
 	LastSync time.Time `json:"lastSync"`
+	// Unwritten holds this device's sessions' starts and stops not yet on its log, oldest first
+	// (appendSoon, #434).
+	Unwritten []bus.Event `json:"unwritten,omitempty"`
 
 	// Person is the name this device's human chose on the page, "" until they do, and PersonSince
 	// is when (#242). People is the address of every person's name this daemon has seen in a presence
@@ -1301,8 +1310,12 @@ func (d *Daemon) holdsRouteLocked(wake pageSettings) bool {
 	return false
 }
 
-// loadDevice reads this clone's device ID, creating it on first run: the hostname plus four
-// random hex digits, so two clones on one machine are two devices.
+// loadDevice reads this clone's device ID, creating it on first run: "device-" and eight random hex
+// digits, so two clones on one machine are two devices. The ID names the device's ref and authors
+// its commits, so anyone who can read the repo sees it, and on a public repo a hostname in it would
+// often show its owner's full name (#330). Teammates tell devices apart by what the encrypted
+// presence says (owner, host, nickname), not by the ID. A clone made before keeps its ID, which
+// began with its hostname.
 func loadDevice(dir string) (string, error) {
 	path := filepath.Join(dir, "device")
 	if b, err := os.ReadFile(path); err == nil {
@@ -1310,30 +1323,8 @@ func loadDevice(dir string) (string, error) {
 			return id, nil
 		}
 	}
-	host, _ := os.Hostname()
-	id := slug(host) + "-" + bus.RandHex(4)
+	id := "device-" + bus.RandHex(8)
 	return id, os.WriteFile(path, []byte(id+"\n"), 0o600)
-}
-
-// slug makes a hostname safe as a ref component and short enough to read.
-func slug(host string) string {
-	host, _, _ = strings.Cut(strings.ToLower(host), ".")
-	var b strings.Builder
-	for _, r := range host {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		} else if b.Len() > 0 && !strings.HasSuffix(b.String(), "-") {
-			b.WriteByte('-')
-		}
-	}
-	s := strings.Trim(b.String(), "-")
-	if len(s) > 24 {
-		s = strings.Trim(s[:24], "-")
-	}
-	if s == "" {
-		s = "device"
-	}
-	return s
 }
 
 func validName(s string) bool { return bus.ValidName(s) }
