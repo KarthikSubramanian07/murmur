@@ -36,9 +36,10 @@ type Activity struct {
 	// Commits is how many commits the session made in one tool call, and Subject the last one's.
 	Commits int    `json:"commits,omitempty"`
 	Subject string `json:"subject,omitempty"`
-	// Issue is the number of a GitHub issue in this clone's repository that the session filed, or
-	// closed, as What says (GHOpened or GHClosed): the page names the session on GitHub's event
-	// for it (#510).
+	// Issue is the number of a GitHub issue that the session filed, or closed, as What says
+	// (GHOpened or GHClosed), and Repo its repository's owner/name, lowercased: the page names the
+	// session on GitHub's event for it, where the event's address is in that repository (#510).
+	Repo  string `json:"repo,omitempty"`
 	Issue int    `json:"issue,omitempty"`
 	What  string `json:"what,omitempty"`
 }

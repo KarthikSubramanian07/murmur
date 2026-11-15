@@ -11,6 +11,7 @@ import (
 	"github.com/a-Fig/murmur/internal/attrib"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/publicrepo"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -176,11 +177,12 @@ func (d *Daemon) recordCommitsLocked(id string, commits []attrib.Commit, at time
 
 // recordIssuesLocked keeps the GitHub issues a tool call of sessions filed or closed, as the hook
 // read them from the call (#510), for the page to name the session on GitHub's event for each: the
-// number and which it was, and nothing else of the call. An issue in another repository than this
-// clone's is dropped, as the page lists only this one's. They are credited as commits are, a
-// delegate's to its parent. Caller holds mu.
+// issue's repository and number and which it was, and nothing else of the call. Issues of any
+// repository on GitHub are kept, since the page lists the issues of the one gh picks in the clone,
+// which needn't be the remote's (a clone's upstream comes first), and it matches by repository.
+// They are credited as commits are, a delegate's to its parent. Caller holds mu.
 func (d *Daemon) recordIssuesLocked(sessions []*session, issues []proto.Issue) {
-	if d.repoAddr == "" || len(sessions) == 0 {
+	if len(sessions) == 0 {
 		return
 	}
 	now := time.Now()
@@ -188,7 +190,8 @@ func (d *Daemon) recordIssuesLocked(sessions []*session, issues []proto.Issue) {
 		if i == maxIssues {
 			break
 		}
-		if is.Number <= 0 || strings.ToLower("github.com/"+is.Repo) != d.repoAddr {
+		repo := strings.TrimPrefix(publicrepo.Address("https://github.com/"+is.Repo), "github.com/")
+		if is.Number <= 0 || repo == "" {
 			continue
 		}
 		what := web.GHOpened
@@ -197,8 +200,8 @@ func (d *Daemon) recordIssuesLocked(sessions []*session, issues []proto.Issue) {
 		}
 		for _, id := range d.creditedLocked(sessions) {
 			// One ID per session and issue, so a hook that reports the same call twice shows it once.
-			d.recordActLocked(web.Activity{ID: "issue-" + what + "-" + strconv.Itoa(is.Number) + "-" + id, Kind: web.ActIssue,
-				At: now, Addr: bus.Addr(d.device, id), Issue: is.Number, What: what})
+			d.recordActLocked(web.Activity{ID: "issue-" + what + "-" + repo + "#" + strconv.Itoa(is.Number) + "-" + id, Kind: web.ActIssue,
+				At: now, Addr: bus.Addr(d.device, id), Repo: repo, Issue: is.Number, What: what})
 		}
 	}
 }

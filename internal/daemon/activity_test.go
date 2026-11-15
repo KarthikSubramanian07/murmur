@@ -159,45 +159,29 @@ func TestThePageIsToldOfCommits(t *testing.T) {
 }
 
 // An issue the hook says a session's call filed or closed (#510) shows on the session's own page as
-// its own, by number: only one in the clone's repository on GitHub, and once however often it is
-// said. A clone whose remote isn't on GitHub keeps none.
+// its own, with its repository, which the page matches to GitHub's events: an issue in any
+// repository on GitHub, as gh in a clone lists its upstream's before its origin's, and once however
+// often it is said. A repository that couldn't be one on GitHub is dropped.
 func TestThePageIsToldOfIssuesASessionFiled(t *testing.T) {
-	remote := newRemote(t)
-	dir := filepath.Join(t.TempDir(), "clone")
-	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
-	// The clone's remote reads as a repository on GitHub, and git fetches it from the bare one.
-	const github = "https://github.com/a-Fig/feed.git"
-	git(t, dir, "config", "remote.origin.url", github)
-	git(t, dir, "config", "url."+remote+".insteadOf", github)
-	a := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond}
-	a.start()
-	off := newDevice(t, remote)
-
-	alice, _ := a.claudeSession("aaaaaa", "claude-feed-id", procP, dir)
-	bob, _ := off.claudeSession("bbbbbb", "claude-off-id", procP+1, dir)
+	a := newDevice(t, newRemote(t))
+	alice, _ := a.claudeSession("aaaaaa", "claude-feed-id", procP, filepath.Dir(a.gitDir))
 	aliceName := a.named(alice)
 	call := proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-feed-id", ClientPID: procP, Issues: []proto.Issue{
-		{Repo: "A-Fig/Feed", Number: 37}, {Repo: "someone/else", Number: 38}, {Repo: "a-Fig/feed", Number: 12, Closed: true}}}
+		{Repo: "A-Fig/Feed", Number: 37}, {Repo: "someone/else", Number: 37}, {Repo: "a-Fig/feed", Number: 12, Closed: true},
+		{Repo: "a-Fig/feed?token=x", Number: 13}, {Repo: "../feed", Number: 14}}}
 	a.do(call)
 	a.do(call) // a hook that told it twice
-	call.ClaudeSession, call.ClientPID = "claude-off-id", procP+1
-	off.do(call)
 
-	issues := func(acts []web.Activity) (out []string) {
-		for _, x := range acts {
-			if x.Kind == web.ActIssue {
-				out = append(out, fmt.Sprintf("%s %s #%d %s", x.Addr, x.Who, x.Issue, x.What))
-			}
-		}
-		return out
-	}
+	var got []string
 	acts, _ := a.page().activity("")
-	want := []string{alice + " " + aliceName + " #37 opened", alice + " " + aliceName + " #12 closed"}
-	if got := issues(acts); !slices.Equal(got, want) {
-		t.Errorf("the session's page has the issues %q, want %q", got, want)
+	for _, x := range acts {
+		if x.Kind == web.ActIssue {
+			got = append(got, fmt.Sprintf("%s %s %s#%d %s", x.Addr, x.Who, x.Repo, x.Issue, x.What))
+		}
 	}
-	acts, _ = off.page().activity("")
-	if got := issues(acts); len(got) != 0 {
-		t.Errorf("a clone off GitHub kept the issues %q of %s", got, bob)
+	want := []string{alice + " " + aliceName + " a-fig/feed#37 opened", alice + " " + aliceName + " someone/else#37 opened",
+		alice + " " + aliceName + " a-fig/feed#12 closed"}
+	if !slices.Equal(got, want) {
+		t.Errorf("the session's page has the issues %q, want %q", got, want)
 	}
 }
