@@ -69,8 +69,20 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   it; a `tags` event wouldn't do, as every daemon applies one as a person's choice. An add over an
   hour old when read isn't applied, nor one from history a daemon passes over unless it was sent
   since the session started: an add carries no order against the session's own changes, so an old
-  one read late could put back a member who has left. An add that would take a session past its 12
-  tags is refused to the adder.
+  one read late could put back a member who has left. The session's device leaves out a group a
+  person took the session out of, and logs it: the person's mark stands over the add, and kept as
+  the session's own the tag would only take one of its 12 places.
+- **The adder refuses what it can tell will fail** (#524, #543, 2026-11-15). For a session on its
+  own device it applies the same rule to the same state, so it refuses exactly: past 12 tags of the
+  session's own (those a person took off still count), or a group a person took the session out of.
+  For one on another device it has only presence, which shows the tags a session set itself but not
+  those a person took off, nor a person's marks on groups: it refuses an add only past 12 tags
+  presence shows as the session's own, and the reply says that device can still refuse it, and that
+  `who` with the group shows who is in. It also refuses an add to a device whose clock runs about an
+  hour or more ahead, by that device's presence time against when it was read here, a gap that can
+  only understate the difference: such a device would take the add as too old. Publishing a
+  person's marks in presence would let the adder see more, but it would put the names of tags a
+  person removed back on the bus, and change its format.
 - **Each receiving device decides who is in.** A group message goes on the bus addressed to the tag,
   and each daemon gives it to those of its sessions that have the tag when it reads it. A device is
   the only authority on its sessions' tags, so no sender's view of the members can be out of date,
