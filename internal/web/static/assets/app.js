@@ -101,6 +101,7 @@ const ui = {
   outbox: [], // what the person sent that isn't among the messages yet, or that failed
   notes: new Map(), // a conversation's key → what the daemon said of the last message sent in it
   readLocal: new Set(), // messages marked read that the state doesn't know of yet
+  readHeld: false, // a mark that failed is waiting a poll's time before it is asked for again (#652)
   reading: null, // the conversation someone was last seen looking at, null if nobody is looking
   newMark: null, // the open conversation's first unread message: { key, id }
   armed: null, // the group chat whose next send goes: its key
@@ -3559,11 +3560,27 @@ function markOpenRead() {
     .map((m) => m.id);
   if (!ids.length) return;
   if (arriving) ui.newMark = { key: ui.conversation, id: ids[0] };
+  if (ui.readHeld) {
+    // A mark failed a moment ago: the held timer asks again. "New" still shows where they came to.
+    if (arriving) render();
+    return;
+  }
   for (const id of ids) ui.readLocal.add(id);
   api("/api/read", { method: "POST", body: JSON.stringify({ ids }) }).catch((e) => {
     if (e instanceof AuthError) return deny(e.token);
     for (const id of ids) ui.readLocal.delete(id);
-    render(); // unread again, and no poll shows it: a state that hasn't changed rebuilds nothing
+    // Unread again, and no poll shows it: a state that hasn't changed rebuilds nothing. The render
+    // asks for it at once, so it is held a poll's time first: a daemon that is down or failing
+    // would otherwise be asked, and the page redrawn, without pause (#652). One timer at a time,
+    // so two failures close together don't end each other's wait early.
+    if (!ui.readHeld) {
+      ui.readHeld = true;
+      setTimeout(() => {
+        ui.readHeld = false;
+        markOpenRead();
+      }, POLL_MS);
+    }
+    render();
   });
   render();
 }
