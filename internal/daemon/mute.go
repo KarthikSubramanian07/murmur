@@ -62,10 +62,9 @@ func (d *Daemon) adoptMutesLocked(s *session) {
 	d.saveLocked()
 }
 
-// nameOfLocked is the name of the session at addr: the one it has now, else one the registry gave
-// that address. Where it gave several, that is the first by spelling, which is the same every
-// time and says nothing of which is the latest: the registry keeps no order. "" for an address
-// with none, as the CLI's or a person's. Caller holds mu.
+// nameOfLocked is the name of the session at addr: the one it has now, else the one shown for it
+// once it has left presence (lastNameLocked). "" for an address with none, as the CLI's or a
+// person's. Caller holds mu.
 func (d *Daemon) nameOfLocked(addr string) string {
 	if bus.IsPerson(addr) {
 		return ""
@@ -73,19 +72,40 @@ func (d *Daemon) nameOfLocked(addr string) string {
 	if name, _, _ := d.sessionInfoLocked(addr); name != "" {
 		return name
 	}
-	if names := d.usedNamesLocked(addr); len(names) > 0 {
+	return d.lastNameLocked(addr)
+}
+
+// lastNameLocked is the name a session that has left presence is shown by, the same every time and
+// in every place: the inbox, activity, lookup and the mute checks (#502), so the name an agent
+// replies to or mutes is the one it was shown. One of this device's goes by the name it took last
+// (SessionNames), which this device knows. Another device's goes by the first by spelling of the
+// names the registry gave its address, which says nothing of which is the latest: neither the
+// registry nor presence keeps an order of them. namesByAddrLocked gives the same for every address
+// at once. "" for an address with none. Caller holds mu.
+func (d *Daemon) lastNameLocked(addr string) string {
+	if dev, id := bus.SplitAddr(addr); dev == d.device && d.st.SessionNames[id] != "" {
+		return d.st.SessionNames[id]
+	}
+	if names := d.heldNamesLocked(addr); len(names) > 0 {
 		return names[0]
 	}
 	return ""
 }
 
-// usedNamesLocked is every name the registry has given the session at addr, sorted by spelling.
-// An address holds more than one when its client started a new conversation in the same session
+// heldNamesLocked is every name the session at addr is known to have held, sorted by spelling:
+// those the registry gave the address, and for one of this device's, the name it took last, which
+// the registry may have down for another session ID (a conversation resumed under a new one). An
+// address holds more than one when its client started a new conversation in the same session
 // (Claude Code's /clear). Caller holds mu.
-func (d *Daemon) usedNamesLocked(addr string) []string {
+func (d *Daemon) heldNamesLocked(addr string) []string {
 	var names []string
 	for name, a := range d.st.Used {
 		if a == addr {
+			names = append(names, name)
+		}
+	}
+	if dev, id := bus.SplitAddr(addr); dev == d.device {
+		if name := d.st.SessionNames[id]; name != "" && !slices.Contains(names, name) {
 			names = append(names, name)
 		}
 	}
@@ -108,7 +128,7 @@ func (d *Daemon) mutedAtLocked(id, addr string) (at time.Time, muted bool) {
 		at, muted = m[name]
 		return at, muted
 	}
-	for _, name := range d.usedNamesLocked(addr) {
+	for _, name := range d.heldNamesLocked(addr) {
 		// The latest mute of them, so the grace is that one's.
 		if t, ok := m[name]; ok && (!muted || t.After(at)) {
 			at, muted = t, true

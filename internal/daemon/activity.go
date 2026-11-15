@@ -171,10 +171,10 @@ func (d *Daemon) recordCommitsLocked(id string, commits []attrib.Commit, at time
 }
 
 // labelerLocked gives the name to show for an address: the session's or the person's, as known
-// now, else the name the registry last had for it, else the address. Caller holds mu, for as
-// long as it uses what this returns.
+// now, else the one a session that has left presence is shown by (lastNameLocked), else the
+// address. Caller holds mu, for as long as it uses what this returns.
 func (d *Daemon) labelerLocked() func(addr string) string {
-	var byAddr map[string]string // the registry's names, for a session no longer in presence
+	var byAddr map[string]string // the names of sessions no longer in presence
 	return func(addr string) string {
 		if name, _, _ := d.sessionInfoLocked(addr); name != "" {
 			return name
