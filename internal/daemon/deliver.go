@@ -805,6 +805,7 @@ func (d *Daemon) outOfInboxLocked(id string, m *inMsg, verb, how string) {
 	switch verb {
 	case "handed":
 		d.markLocked(id, m.Event, bus.MarkHanded) // Murmur can't see the turn start (#325)
+		d.awaitReadLocked(id, m.Event)            // but the hook may, in its prompt (#611)
 	case "gave":
 		d.markLocked(id, m.Event, bus.MarkRead)
 	}

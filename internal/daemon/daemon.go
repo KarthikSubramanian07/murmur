@@ -790,6 +790,9 @@ type state struct {
 	// that asked for them, by ID, with how far each got with each recipient.
 	Marks []bus.Mark             `json:"marks,omitempty"`
 	Sent  map[string]*sentRecord `json:"sent,omitempty"`
+	// AwaitingRead is, by session ID, the messages handed to it as a turn that asked for receipts,
+	// until a prompt shows the turn started (#611, turnread.go).
+	AwaitingRead map[string][]awaitingRead `json:"awaitingRead,omitempty"`
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if

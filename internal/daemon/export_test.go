@@ -6,3 +6,6 @@ func SetMaxWholeReply(n int) func() {
 	maxWholeReply = n
 	return func() { maxWholeReply = was }
 }
+
+// Holds is holds, for a test of how a prompt is matched to a turn (#611).
+func Holds(prompt, subject string) bool { return holds(prompt, subject) }
