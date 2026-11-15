@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/a-Fig/murmur/internal/brand"
 )
 
 // openCode1Harness loads OpenCode 1's plugin the way OpenCode 1 does, a default export's
@@ -145,7 +147,7 @@ func TestOpenCode1PluginRunsTheHook(t *testing.T) {
 	write(t, plugin, text)
 	write(t, harness, openCode1Harness)
 	cmd := exec.Command(node, harness, plugin, repo, log)
-	cmd.Env = append(os.Environ(), "MUR_FAKE_LOG="+log)
+	cmd.Env = append(withoutT3(os.Environ()), "MUR_FAKE_LOG="+log)
 	if runtime.GOOS != "windows" {
 		cmd.Env = append(cmd.Env, "TMPDIR=/tmp")
 	}
@@ -178,5 +180,78 @@ func TestOpenCode1PluginRunsTheHook(t *testing.T) {
 	}
 	if _, err := os.Stat(second); runtime.GOOS != "windows" && !os.IsNotExist(err) {
 		t.Errorf("the socket's file outlived its process: %s (%v)", second, err)
+	}
+}
+
+// withoutT3 is env without T3CODE_CLI_PATH, which a test run inside T3 Code has.
+func withoutT3(env []string) []string {
+	var out []string
+	for _, kv := range env {
+		if !strings.HasPrefix(strings.ToUpper(kv), "T3CODE_CLI_PATH=") {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// openCode1T3Harness loads OpenCode 1's plugin in a joined clone, as OpenCode 1 under T3 Code
+// would, and prints the hooks it gave and whether it ran mur or touched the config.
+const openCode1T3Harness = `
+import fs from "node:fs";
+import { pathToFileURL } from "node:url";
+const [plugin, repo, log] = process.argv.slice(2);
+const { default: p } = await import(pathToFileURL(plugin).href);
+const h = await p.server({ client: {}, directory: repo, worktree: repo, project: {}, serverUrl: new URL("http://localhost:4096") });
+const cfg = { mcp: { murmur: { type: "local", command: ["mur"] } } };
+await h.config?.(cfg);
+await h["tool.execute.after"]?.({ tool: "read", sessionID: "ses_a", callID: "c", args: {} }, { title: "", output: "x", metadata: {} });
+await h.event?.({ event: { type: "session.idle", properties: { sessionID: "ses_a" } } });
+console.log("hooks:", JSON.stringify(Object.keys(h)));
+console.log("config:", JSON.stringify(cfg));
+console.log("ran mur:", fs.existsSync(log));
+process.exit(0);
+`
+
+// Under T3 Code OpenCode 1's plugin does nothing (#446): no ID or socket for Murmur's server, no
+// hook, so an OpenCode 1 thread is as it was before the plugin, and T3 hands it its messages.
+func TestOpenCode1PluginIsOffInT3(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("no node")
+	}
+	if node, err = filepath.Abs(node); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".git", brand.StateDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(repo, ".git", brand.StateDir, consentFile), "{}")
+	write(t, filepath.Join(repo, "hook"), openCode1FakeMur)
+	text := openCodePluginFor(t, "1.19.5", node)
+	if text == "" {
+		t.Fatal("join wrote no plugin for OpenCode 1")
+	}
+	plugin := filepath.Join(dir, "murmur.mjs")
+	harness := filepath.Join(dir, "harness.mjs")
+	log := filepath.Join(dir, "calls.jsonl")
+	write(t, plugin, text)
+	write(t, harness, openCode1T3Harness)
+	cmd := exec.Command(node, harness, plugin, repo, log)
+	cmd.Env = append(withoutT3(os.Environ()), "MUR_FAKE_LOG="+log, "T3CODE_CLI_PATH="+filepath.Join(dir, "t3"))
+	b, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("the harness: %v\n%s", err, b)
+	}
+	got := string(b)
+	for _, want := range []string{
+		"hooks: []",
+		`config: {"mcp":{"murmur":{"type":"local","command":["mur"]}}}`,
+		"ran mur: false",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the harness didn't say %q:\n%s", want, got)
+		}
 	}
 }

@@ -11,8 +11,9 @@ description: Only in a repo whose AGENTS.md or CLAUDE.md has a Murmur section. C
 
 - Messages travel through the repo's git remote: seconds, sometimes up to about half a minute.
 - A message usually arrives as a turn of the recipient's conversation; in T3 Code it also wakes an
-  idle thread. A Claude Code, Codex, Grok, OpenCode or Pi session at work gets a notice after its
-  next tool call instead, and what it hasn't read when its turn ends is given to it then.
+  idle thread. A Claude Code, Codex, Grok, OpenCode or Pi session at work (OpenCode 1 outside T3
+  Code only) gets a notice after its next tool call instead, and what it hasn't read when its turn
+  ends is given to it then.
 - Otherwise it waits in `inbox`: for Grok and Muse Code outside T3 Code, for a message that waited
   more than 15 minutes (the session was away), where the user turned waking off on `mur ui`, and
   for a session idle longer than its wake setting allows (5 minutes by default). `send` and

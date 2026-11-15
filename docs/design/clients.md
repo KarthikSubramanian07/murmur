@@ -84,6 +84,10 @@ since it wasn't installed). The details, and where each came from, are in the co
   - *Children.* A session the `task` tool started has a `parentID`. Its Murmur calls go through its
     parent's server, as its parent's, so it runs no hook and gets no turn: it was never on the mesh
     (read in the source, not tried).
+  - *Under T3* the plugin does nothing (`T3CODE_CLI_PATH` in OpenCode's environment): no ID, socket
+    or hook, so an OpenCode 1 thread is as it was before, and T3 hands it a message as a turn when
+    its turn ends. Nobody has tried the plugin in T3, where its turn at an idle session's Stop would
+    be one T3 didn't start.
   - *Tried* on OpenCode 1.19.5 (2026-11-15), `opencode serve` in a scratch clone joined with a local
     remote, a free model, and turns started with `opencode run --attach`. In the session's first
     turn a message sent during a `sleep` came in whole through the socket, since the daemon hadn't
@@ -92,8 +96,8 @@ since it wasn't installed). The details, and where each came from, are in the co
     after that call, and the model read it with `inbox` and answered. Not tried: the terminal UI.
   - *Not covered.* Two sessions at work at once in one OpenCode 1 process (`opencode serve` with
     two clients) share one session's messages, and a turn goes to the one at work last. A server
-    killed by a signal leaves the socket's file in the temporary directory. Not tried in T3 or on
-    Windows, where the socket is a named pipe opened by OpenCode's runtime, Bun.
+    killed by a signal leaves the socket's file in the temporary directory. Not tried on Windows,
+    where the socket is a named pipe opened by OpenCode's runtime, Bun.
 - **Titles and approval.** Outside T3 no title is read for these agents. OpenCode and Grok have a
   rule for tool approval, which join writes; Muse and Pi have none, so in T3 outside full-access
   mode they ask before each call.

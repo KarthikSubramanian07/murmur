@@ -84,6 +84,10 @@ import (
 //   - A session another one started (the `task` tool's) has a parentID, in session.created and
 //     client.session.get. Its tool calls reach Murmur through its parent's server, as its
 //     parent's, so it runs no hook of its own and is never given a turn: it is never on the mesh.
+//   - Under T3 (T3CODE_CLI_PATH in OpenCode's environment, as for the MCP server's route) the
+//     plugin does nothing, so an OpenCode 1 thread is as it was before the plugin: T3 hands it a
+//     message as a turn when its turn ends. Nobody has tried the plugin in T3, where its turn at an
+//     idle session's Stop would be one T3 didn't start.
 //
 // Not covered: two sessions at work at once in one OpenCode 1 process (`opencode serve` with two
 // clients) share one session's messages, and a turn goes to the one at work last.
@@ -272,7 +276,7 @@ const openCode1Template = `// Written by ` + "`{{command}} join`" + ` ({{product
 ` + openCode1Line + `
 // It brings an OpenCode session its {{product}} messages: a notice after a tool call while it works,
 // what it hasn't read when its turn ends, and a turn when it is idle, through a socket it opens.
-// Delete this file to take it out of OpenCode.
+// Under T3 Code it does nothing. Delete this file to take it out of OpenCode.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -318,6 +322,8 @@ const sockPath = (id) => {
 export default {
   id: "{{server}}",
   async server(input) {
+    // In T3 Code an OpenCode 1 thread is as it was before this plugin: T3 hands it its messages.
+    if (process.env.T3CODE_CLI_PATH) return {};
     const dir = String(input?.directory ?? process.cwd());
     const client = input?.client;
     // OpenCode 1 names no session in a call to an MCP server, so the sessions of this directory are
