@@ -870,6 +870,10 @@ func Run(ctx context.Context, opt Options) error {
 	if !d.consented() {
 		return ErrNoConsent
 	}
+	// From here the daemon's reads of commits share a git (#623). Deferred first, so it is closed
+	// last: the goodbye and whatever else runs on the way out can still read.
+	d.repo.KeepReader()
+	defer d.repo.Close()
 	clearStaleTemp(d.opt.GitDir, d.log) // a daemon stopped mid-fetch leaves no one else to do it
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
