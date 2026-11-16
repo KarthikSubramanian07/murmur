@@ -147,9 +147,10 @@ the turn took, so nothing waits for good.
   from before the turn is held only if it is still within them.
 - **Why not hand it to T3 as well:** T3 can't take back a queued message, so the agent could read it
   with `inbox` mid-turn and then get it again as a turn.
-- **Where the hook doesn't run** (OpenCode 1 and Muse in T3, as of 2026-11-12), nothing says the
+- **Where the hook doesn't run** (Muse and OpenCode 1 in T3, as of 2026-11-15), nothing says the
   session is at work, so a message goes to T3 as before; without the handoff the session would hear
-  nothing at all. Codex and Grok have the hook since #225, Pi since #205, and OpenCode 2 since #431.
+  nothing at all. Codex and Grok have the hook since #225, Pi since #205, OpenCode 2 since #431, and
+  OpenCode 1 outside T3 since #446 (its plugin does nothing in T3).
 - **Subagents.** A subagent's tool call carries its parent's `session_id`, with `agent_id` set
   (Claude Code 2.1.312, 2026-10-29). The hook tells it nothing, as the notice would land in the
   subagent's context and not the session's (inferred, not seen; #188), and doesn't mark the session
@@ -204,11 +205,11 @@ the turn took, so nothing waits for good.
     writes presence when a session's answer changes, rather than leaving it to the 2-minute
     heartbeat: about two pushes more each time a session stays idle past its limit, one as it
     crosses it and one as it gets to work again.
-  - A session with no way in at all (Muse or Grok outside T3, OpenCode 1 in a terminal) is
-    judged as any other: under the default nothing is said for its first 3 idle minutes, and
-    `idle` after, with that reason, though it would not be woken at any time. `who`'s agent column shows it. Not counted:
-    do not disturb, which says so itself, and a session of this device that has stopped, which
-    `send` already calls stopped.
+  - A session with no way in at all (Muse or Grok outside T3) is judged as any other: under the
+    default nothing is said for its first 3 idle minutes, and `idle` after, with that reason, though
+    it would not be woken at any time. `who`'s agent column shows it. Not counted: do not disturb,
+    which says so itself, and a session of this device that has stopped, which `send` already calls
+    stopped.
   - No protocol bump. An older daemon ignores the field and writes none, so a sender is told
     nothing of its sessions, as before.
 - **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
