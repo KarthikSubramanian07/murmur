@@ -1123,7 +1123,7 @@ function quietFold(d) {
               },
               presence(s.name, d),
               h("span", { class: "settled-name truncate" }, s.name),
-              tagChips(s, 2, true),
+              tagChips(s, 1),
               h("span", { class: "settled-when" }, isHidden(s) ? "hidden" : t ? ago(t).replace(" ago", "") : ""),
             ),
             s.addr && tagButton(s),
@@ -1328,7 +1328,7 @@ function sideSessionBody(d, s) {
     h(
       "span",
       { class: "side-session-text" },
-      h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate" }, s.name), tagChips(s, 2, true)),
+      h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate" }, s.name), tagChips(s, 1)),
       h("span", { class: "side-session-doing truncate" }, s.doing || s.agent || ""),
     ),
     pr && prBadge(pr, false),
@@ -1587,12 +1587,12 @@ function sessionCard(d, s) {
           "span",
           { class: "s-line name-line" },
           h("span", { class: "s-name truncate" }, s.name),
-          h("span", { class: "s-agent truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · ")),
+          tagChips(s, 2),
           // The hook never reported after a tool call, so the session isn't told of messages while it
           // works (#225). It sits in the name line: the meta columns are a fixed grid, and an extra
           // cell there shifted chats, state and Message one column over (#546).
           s.hookOff && h("span", { class: "badge badge-warning", title: "Isn't told of messages while it works" }, "hook not running"),
-          tagChips(s, 3, true),
+          h("span", { class: "s-agent truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · ")),
         ),
         h("span", { class: "s-doing truncate" + (s.doing ? "" : " none") }, s.doing || "No status set"),
       ),
@@ -2095,6 +2095,21 @@ function tagsLine(s) {
   );
 }
 
+// Under a session's name in its view: its device, its state, when it started, and the branches it
+// has committed to besides the one it is on (#631).
+function profileLine(d, s) {
+  const started = when(s.started);
+  const others = (s.committed || []).filter((b) => b && b !== s.branch);
+  return h(
+    "p",
+    { class: "g-head-meta" },
+    h("span", { class: "truncate", title: "Device " + d.id }, d.self ? "This device" : d.nick || d.owner || host(d.id)),
+    h("span", null, stateWord(d, s)),
+    started && agoEl("span", null, started, "Started "),
+    others.length > 0 && h("span", { class: "truncate", title: "Also committed to " + others.join(", ") }, "Also on " + others.join(", ")),
+  );
+}
+
 function tagField(addr, key) {
   const close = () => {
     ui.tagInput = null;
@@ -2207,21 +2222,22 @@ function tagCounts() {
   return counts;
 }
 
-// A session's tags as small chips, the one the lists are filtered by first; past max, a count of
-// the rest. In a sidebar row they share a line with the branch, and those that don't fit drop off
-// whole, so the line's tooltip names them all.
-function tagChips(s, max = Infinity, line = false) {
+// A session's tags as small chips, the one the lists are filtered by first; past max, "+N", whose
+// tip names the rest (#631). Each chip is whole: in the sessions list the row's width decides
+// whether two show, one or none (style.css), so each count is drawn and the width picks one.
+function tagChips(s, max = Infinity) {
   const { names, waiting } = tagsOf(s);
   if (!names.length) return null;
   if (ui.tagFilter && names.includes(ui.tagFilter)) names.sort((a, b) => (b === ui.tagFilter) - (a === ui.tagFilter));
-  const shown = names.slice(0, max);
+  const more = (from, cls) => names.length > from && h("span", { class: "stag-more " + cls, title: names.slice(from).join(", ") }, "+" + (names.length - from));
   return h(
     "span",
-    { class: "stags", title: line ? names.join(", ") : null },
-    shown.map((n) =>
+    { class: "stags" },
+    names.slice(0, max).map((n) =>
       h("span", { class: "stag" + (n === ui.tagFilter ? " on" : "") + (waiting.has(n) ? " waiting" : ""), title: waiting.has(n) ? n + ": waiting for its device" : n }, n),
     ),
-    names.length > shown.length && h("span", { class: "stag-more", title: names.slice(max).join(", ") }, "+" + (names.length - shown.length)),
+    max >= 2 && more(1, "more-after-1"),
+    more(max, "more-after-max"),
   );
 }
 
@@ -2992,6 +3008,8 @@ function conversationList(list) {
                 f.session.branch && h("span", { class: "g-branch", title: "Branch " + f.session.branch }, icon("branch"), h("span", { class: "truncate" }, f.session.branch)),
                 prFor(f.session) && prBadge(prFor(f.session), true, "pr-head-" + f.session.name),
               ),
+            // Its profile (#631): where it runs, how it is now, and since when.
+            f && profileLine(f.device, f.session),
             f && tagsLine(f.session),
             !f && h("p", { class: "g-head-doing" }, "Settled · " + ago(settledSessions().find((r) => r.name === name)?.last || 0)),
           ]
