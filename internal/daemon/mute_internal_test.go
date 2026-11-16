@@ -164,3 +164,25 @@ func TestAMuteMadeWhileTheNameWasPendingHoldsAfterTheSessionStops(t *testing.T) 
 		t.Errorf("the stopped session was given %d message(s) from the session it muted", len(box))
 	}
 }
+
+// A device marks a message it drops for a mute whether or not the message asked for receipts, so its
+// sender can be told (#466), but not one from a sender on this device, whose daemon is this one and
+// knew, nor a person's, as a person can't be muted.
+func TestADropForAMuteIsMarked(t *testing.T) {
+	d := receiptDaemon(t)
+	from := bus.Event{ID: "0123456789abcdef", Type: bus.Message, From: "there-0002/aaaaaa", To: "*"}
+	d.markMutedLocked("bbbbbb", from)
+	d.markMutedLocked("bbbbbb", from) // read twice, as a catch-up can
+	d.markMutedLocked("bbbbbb", bus.Event{ID: "00000000000000aa", Type: bus.Message, From: "here-0001/cccccc", To: "*"})
+	d.markMutedLocked("bbbbbb", bus.Event{ID: "00000000000000bb", Type: bus.Message, From: "there-0002/human", To: "*"})
+	d.markMutedLocked(proto.CLISession, from)
+	if len(d.st.Marks) != 1 || d.st.Marks[0].Msg != from.ID || d.st.Marks[0].To != "bbbbbb" || d.st.Marks[0].State != bus.MarkMuted {
+		t.Errorf("the marks waiting: %+v, want one, muted", d.st.Marks)
+	}
+	// What a reader keeps of a receipt: the muted mark, which a daemon from before it drops as a state
+	// it doesn't know.
+	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Receipt, From: "here-0001/receipts", Marks: d.st.Marks}
+	if e.Clean(); !e.Valid() || len(e.Marks) != 1 {
+		t.Errorf("a receipt of a muted mark, as read: valid %v, marks %+v", e.Valid(), e.Marks)
+	}
+}

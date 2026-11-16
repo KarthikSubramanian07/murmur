@@ -60,6 +60,13 @@ const (
 	MarkRead      = "read"
 )
 
+// MarkMuted says a message was dropped for the session, which has muted its sender (#466). It is
+// the last mark that message gets from that session, and no step on the way to read, so MarkRank
+// gives it 0. A device writes it for any message a mute drops, whether or not it asked for
+// receipts: the sender's daemon may not have known of the mute when it sent, and this is how its
+// session learns the message didn't arrive. A daemon from before it drops the mark (cleanMarks).
+const MarkMuted = "muted"
+
 // MarkRank orders the states a mark can say, from 1; a state this version doesn't know is 0.
 func MarkRank(state string) int {
 	switch state {
@@ -229,16 +236,16 @@ func (e *Event) Clean() {
 }
 
 // cleanMarks holds a receipt's marks to what Murmur writes: the first MaxMarks, each with a message's
-// ID, a session's ID and a state this version knows. A mark with a state from a newer version is
-// dropped, not the receipt, and so are marks past the cap, which a newer version might raise. Any
-// other event carries none.
+// ID, a session's ID and a state this version knows, MarkMuted among them. A mark with a state from
+// a newer version is dropped, not the receipt, and so are marks past the cap, which a newer version
+// might raise. Any other event carries none.
 func cleanMarks(typ string, in []Mark) []Mark {
 	if typ != Receipt {
 		return nil
 	}
 	var out []Mark
 	for _, m := range in[:min(len(in), MaxMarks)] {
-		if validID(m.Msg) && ValidName(m.To) && MarkRank(m.State) > 0 {
+		if validID(m.Msg) && ValidName(m.To) && (MarkRank(m.State) > 0 || m.State == MarkMuted) {
 			out = append(out, m)
 		}
 	}

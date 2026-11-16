@@ -90,8 +90,29 @@ func (d *Daemon) markLocked(id string, e bus.Event, state string) {
 		d.applyMarkLocked(e.ID, bus.Addr(d.device, id), state, now)
 		return
 	}
+	d.holdMarkLocked(e.ID, id, state, now)
+}
+
+// markMutedLocked records that message e, from a session on another device, was dropped for session
+// id of this device, which has muted its sender (#466). Unlike markLocked it marks a message that
+// didn't ask for receipts: its sender's daemon may not have known of the mute when it sent, and the
+// mark is how its session is told the message didn't arrive. A sender on this device isn't marked
+// for, as its daemon is this one, which knew. Callers save the state. Caller holds mu.
+func (d *Daemon) markMutedLocked(id string, e bus.Event) {
+	if e.Type != bus.Message || id == "" || id == proto.CLISession || id == bus.PersonSession || bus.IsPerson(e.From) {
+		return
+	}
+	if dev, _ := bus.SplitAddr(e.From); dev == d.device {
+		return
+	}
+	d.holdMarkLocked(e.ID, id, bus.MarkMuted, time.Now().UTC())
+}
+
+// holdMarkLocked keeps the mark that message msg reached state with session id of this device until
+// a receipt carries it, as one mark per message and session at its furthest. Caller holds mu.
+func (d *Daemon) holdMarkLocked(msg, id, state string, now time.Time) {
 	for i, m := range d.st.Marks {
-		if m.Msg == e.ID && m.To == id {
+		if m.Msg == msg && m.To == id {
 			if bus.MarkRank(state) > bus.MarkRank(m.State) {
 				d.st.Marks[i].State, d.st.Marks[i].At = state, now
 				d.kickMarks()
@@ -99,7 +120,7 @@ func (d *Daemon) markLocked(id string, e bus.Event, state string) {
 			return
 		}
 	}
-	d.st.Marks = append(d.st.Marks, bus.Mark{Msg: e.ID, To: id, State: state, At: now})
+	d.st.Marks = append(d.st.Marks, bus.Mark{Msg: msg, To: id, State: state, At: now})
 	if over := len(d.st.Marks) - maxMarksHeld; over > 0 {
 		d.st.Marks = slices.Delete(d.st.Marks, 0, over)
 	}

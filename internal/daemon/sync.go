@@ -1001,14 +1001,17 @@ func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
 			}
 			continue
 		}
+		if !d.inTimeLocked(e, id, mode) &&
+			!(fwd == bus.Addr(d.device, id) && d.receivesLocked(sess) && d.inTimeLocked(e, sess, mode)) {
+			continue
+		}
 		if d.mutedHereLocked(id, e) {
 			if mode == modeNormal && !held {
 				d.log.Printf("message %s is from %s, which session %s has muted; dropped", e.ID, e.From, id)
 			}
-			continue
-		}
-		if !d.inTimeLocked(e, id, mode) &&
-			!(fwd == bus.Addr(d.device, id) && d.receivesLocked(sess) && d.inTimeLocked(e, sess, mode)) {
+			// Marked for its sender, whose daemon may not have known of the mute (#466). Only what
+			// would have been queued: history a session would never have had is nobody's news.
+			d.markMutedLocked(id, e)
 			continue
 		}
 		d.addInboxLocked(id, e)
@@ -1145,9 +1148,14 @@ func (d *Daemon) catchUpLocked(id string) {
 	d.caughtUp[id] = true
 	d.applyHeldLocked(id) // first: a group's message waiting for it goes by the tags they give it
 	for _, e := range d.pending {
-		if d.addressedLocked(e, id) && !d.offMeshLocked(id) && !d.mutedHereLocked(id, e) {
-			d.addInboxLocked(id, e)
+		if !d.addressedLocked(e, id) || d.offMeshLocked(id) {
+			continue
 		}
+		if d.mutedHereLocked(id, e) {
+			d.markMutedLocked(id, e) // as queueLocked does (#466)
+			continue
+		}
+		d.addInboxLocked(id, e)
 	}
 	d.saveLocked()
 }
