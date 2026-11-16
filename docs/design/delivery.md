@@ -49,11 +49,11 @@ has the session at work (below).
 
 | Where the session runs | Handed over by | Starts a turn in an idle session |
 |---|---|---|
-| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if busy, interrupting nothing | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
+| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi, Grok and Antigravity, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if busy, interrupting nothing | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
 | Claude Code outside T3 | the session's messaging socket | Unverified: a message written to the socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle session hasn't been tried |
 | Pi outside T3 | the socket Murmur's extension opens in the session | Yes (2026-11-09, Pi 1.5.0 in RPC mode with a stand-in model) |
 | Codex or OpenCode 2 outside T3 | the client's own command line | Yes (2026-11-11) |
-| Muse or Grok outside T3, or any handoff that fails | the hook's notice where the hook runs, and `inbox` | No |
+| Muse, Grok or Antigravity outside T3, or any handoff that fails | the hook's notice where the hook runs, and `inbox` | No |
 
 What the agent reads:
 
@@ -134,7 +134,9 @@ the turn took, so nothing waits for good.
     T3 can leave a run queued for good (one from 2026-11-03 was still queued on 11-15), and no hook
     would ever tell the session of them.
   - A run counts only while the thread's newest run is queued or running. One T3 left queued
-    behind later runs would otherwise start the 15 minutes again at every turn's end.
+    behind later runs would otherwise start the 15 minutes again at every turn's end. The same
+    holds wherever T3's database says a session is at work: a session that reconnected after a
+    restart, a turn the hook saw start, and how long a session has been idle (#655).
 - **Subject or whole message** (#204), the page's busy setting, per device or session (Tyler,
   2026-11-08). "Subject", the default, leaves the agent's focus to the agent, at the cost that it
   may pass over a line it needed; "Whole message" puts each message in front of it mid-task at full
@@ -180,7 +182,7 @@ the turn took, so nothing waits for good.
   isn't sprung on the agent as a turn; it stays a notice. The 15 minutes count from when the daemon
   queues it, so one read after a long outage (#30, 2026-10-30) is young and wakes its thread.
 - **The wake setting** (#22, #25), for the device or for one session, decides the rest. "Never"
-  keeps the notice. "Always" hands over at once. "Within N minutes", the default with N = 3, hands
+  keeps the notice. "Always" hands over at once. "Within N minutes", the default with N = 5, hands
   over only to a session that is busy or was last at work within N minutes; one idle longer gets the
   notice, and the message is handed over after all if the session gets to work again while it is
   young. The reason for the limit: a session idle that briefly still has its prompt cache, and a
