@@ -2467,27 +2467,7 @@ function tagMenu() {
 // to it, as a chat app shows when someone's name is clicked. It says who the session or person is,
 // how it is now, what you have in common, and has a box that sends a direct message without
 // leaving the card. Everything on it comes from presence and the messages the page already has.
-// It comes in two looks while Tyler picks one (Settings, Appearance): Banner, with the device's
-// colour across the top, and Compact, a denser card with the colour as a ring round the face.
-const CARD_KEY = NAME + ":profile-card";
-const CARD_STYLES = [
-  ["banner", "Banner"],
-  ["compact", "Compact"],
-];
-let cardStyle = "banner";
-try {
-  const c = localStorage.getItem(CARD_KEY);
-  if (CARD_STYLES.some(([id]) => id === c)) cardStyle = c;
-} catch {}
-
-function setCardStyle(c) {
-  cardStyle = c;
-  try {
-    localStorage.setItem(CARD_KEY, c);
-  } catch {}
-  render();
-}
-
+// The device's colour runs across its top, as a banner.
 const CARD_WIDTH = 320;
 
 // A face inside a control (a sidebar row, a session's row) opens the card rather than the control:
@@ -2536,7 +2516,7 @@ function openProfile(name, anchor) {
 
 function focusProfile() {
   const card = root.querySelector(".profile-card");
-  (card?.querySelector('[data-key="pc-msg"]') || card?.querySelector('[data-key="pc-full"]'))?.focus({ preventScroll: true });
+  (card?.querySelector('[data-key="pc-msg"]') || card)?.focus({ preventScroll: true }); // your own has no box
 }
 
 function closeProfile() {
@@ -2628,15 +2608,10 @@ function profileCard() {
   const section = (label, ...kids) => h("div", { class: "pc-section" }, h("p", { class: "pc-label" }, label), ...kids);
   const face = avatar(name, false);
   face.classList.add("pc-avatar");
-  const full = () => {
-    ui.profile = null;
-    if (own) go("settings");
-    else pickSession(s?.addr || name);
-  };
   const card = h(
     "div",
-    { class: "profile-card pc-style-" + cardStyle + " " + deviceColor(d), role: "dialog", "aria-modal": "true", "aria-label": name },
-    cardStyle === "banner" && h("div", { class: "pc-banner", "aria-hidden": "true" }),
+    { class: "profile-card " + deviceColor(d), role: "dialog", "aria-modal": "true", "aria-label": name, tabindex: -1 },
+    h("div", { class: "pc-banner", "aria-hidden": "true" }),
     h(
       "div",
       { class: "pc-head" },
@@ -2698,7 +2673,6 @@ function profileCard() {
           h("button", { class: "pc-go", "aria-label": "Send", disabled: !p.draft.trim(), "data-key": "pc-go", onclick: sendFromCard }, icon("arrowUp")),
         ),
       ),
-    h("button", { class: "pc-full", "data-key": "pc-full", onclick: full }, h("span", null, own ? "Your settings" : s ? "Open full view" : "Open conversations"), icon("chevronRight")),
   );
   return h(
     "div",
@@ -4967,36 +4941,6 @@ function themeSection() {
                   const next = THEMES[(i + step + THEMES.length) % THEMES.length][0];
                   setTheme(next);
                   root.querySelector(`[data-key="theme-${next}"]`)?.focus();
-                },
-              },
-              label,
-            ),
-          ),
-        ),
-      ),
-      // Two looks for the profile card while Tyler picks one (#689).
-      settingsRow(
-        "profile-card",
-        "Profile card",
-        null,
-        h(
-          "div",
-          { class: "segmented", role: "radiogroup", "aria-label": "Profile card" },
-          CARD_STYLES.map(([id, label]) =>
-            h(
-              "button",
-              {
-                role: "radio",
-                "aria-checked": cardStyle === id ? "true" : "false",
-                tabindex: cardStyle === id ? 0 : -1,
-                "data-key": "card-style-" + id,
-                onclick: () => setCardStyle(id),
-                onkeydown: (e) => {
-                  if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(e.key)) return;
-                  e.preventDefault();
-                  const next = CARD_STYLES.find(([c]) => c !== cardStyle)[0];
-                  setCardStyle(next);
-                  root.querySelector(`[data-key="card-style-${next}"]`)?.focus();
                 },
               },
               label,

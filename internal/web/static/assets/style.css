@@ -4327,7 +4327,7 @@ a.g-pr:hover {
 
 /* The profile card (#689): a face or a sender's name opens it, beside what was clicked. It is a
  * popover in the page's own surfaces, with the device's colour (--dev, from its dev-c class) as its
- * only accent: across the top in Banner, round the face in Compact. Placed through the CSSOM. */
+ * only accent, across its top. Placed through the CSSOM. */
 .avatar[data-profile],
 button.chat-msg-from {
   cursor: pointer;
@@ -4351,8 +4351,12 @@ button.chat-msg-from:hover {
   border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
   border-radius: var(--radius-xl);
   background: var(--popover);
+  padding-bottom: 1rem;
   box-shadow: var(--shadow-dialog);
   animation: pop-in 0.15s var(--ease);
+}
+.profile-card:focus {
+  outline: none; /* focused only so the keyboard starts inside it */
 }
 .profile-card.pc-still {
   animation: none;
@@ -4565,80 +4569,4 @@ button.chat-msg-from:hover {
 .pc-go .icon {
   width: 1rem;
   height: 1rem;
-}
-.pc-full {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: calc(100% - 1rem);
-  margin: 0.5rem 0.5rem 0.5rem;
-  padding: 0.5rem;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  font: inherit;
-  font-size: 0.8125rem;
-  color: var(--muted-foreground);
-  cursor: pointer;
-}
-.pc-full:hover,
-.pc-full:focus-visible {
-  background: var(--row-hover);
-  color: var(--foreground);
-}
-.pc-full .icon {
-  width: 1rem;
-  height: 1rem;
-}
-
-/* Compact: no banner; the face sits beside the name with a ring in the device's colour, and each
- * section is a label and its value on one line. */
-.pc-style-compact {
-  border-top: 3px solid var(--dev);
-}
-.pc-style-compact .pc-head {
-  flex-direction: row;
-  align-items: center;
-  gap: 0.875rem;
-  padding: 1rem 1rem 0;
-}
-.pc-style-compact .pc-face > .avatar.pc-avatar {
-  width: 3.5rem;
-  height: 3.5rem;
-  font-size: 1.375rem;
-  box-shadow:
-    0 0 0 2px var(--popover),
-    0 0 0 4px var(--dev);
-}
-.pc-style-compact .pc-face > .pres {
-  right: -0.125rem;
-  bottom: -0.125rem;
-  width: 0.875rem;
-  height: 0.875rem;
-  box-shadow: 0 0 0 3px var(--popover);
-}
-.pc-style-compact .pc-section {
-  display: grid;
-  grid-template-columns: 4.75rem minmax(0, 1fr);
-  align-items: baseline;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-  padding-top: 0;
-  border-top: 0;
-}
-.pc-style-compact .pc-badges + .pc-section,
-.pc-style-compact .pc-head + .pc-section {
-  margin-top: 0.875rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border);
-}
-.pc-style-compact .pc-label {
-  margin: 0;
-}
-.pc-style-compact .pc-doing {
-  margin-bottom: 0.25rem;
-  font-size: 0.8125rem;
-}
-.pc-style-compact .pc-section > .pc-meta {
-  grid-column: 2;
 }
