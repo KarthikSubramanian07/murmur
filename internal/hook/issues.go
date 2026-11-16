@@ -30,10 +30,10 @@ var shellTools = map[string]bool{"Bash": true, "run_terminal_command": true}
 const maxIssues = 10
 
 var (
-	// gh issue create (or new) or close where a command starts, in a command whose quoted text is
-	// masked (unquoted): at its start, or after ;, &, |, (, or a newline, past assignments like
-	// GH_REPO=x and words like do, then or env that run what follows.
-	ghIssueCmd = regexp.MustCompile(`(?m)(?:^|[;&|(\n])[ \t]*(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S*|do|then|else|time|command|exec|env|!|\{)[ \t]+)*gh[ \t]+issue[ \t]+(create|new|close)\b`)
+	// gh issue create (or new) or close where a command starts, in a command whose quoted text and
+	// comments are masked (unquoted): at its start, or after ;, &, |, (, or a newline, past
+	// assignments like GH_REPO=x and words like if, do, then or env that run what follows.
+	ghIssueCmd = regexp.MustCompile(`(?m)(?:^|[;&|(\n])[ \t]*(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S*|if|elif|while|until|do|then|else|time|command|exec|env|!|\{)[ \t]+)*gh[ \t]+issue[ \t]+(create|new|close)\b`)
 	// What gh prints (cli/cli's pkg/cmd/issue, read 2026-11-15): `create` the new issue's address
 	// on a line of its own, and `close` "✓ Closed issue owner/name#37 (title)", on stderr whether
 	// or not that is a terminal. An issue that was closed already is "! Issue ... is already closed".
@@ -142,7 +142,8 @@ func ghIssueCalls(command string) (creates, closes int) {
 
 // unquoted is command with what is inside quotes, or escaped by a backslash, replaced by '_', except
 // a $( ) or backtick substitution inside double quotes, which runs as a command does. A backtick is
-// written as ( or ), so that what follows one starts a command.
+// written as ( or ), so that what follows one starts a command. A comment (a # that starts a word,
+// to the end of its line) is masked too, so that an apostrophe in it (# don't) opens no quote.
 func unquoted(command string) string {
 	const (
 		plain = iota
@@ -184,6 +185,11 @@ func unquoted(command string) string {
 			continue
 		}
 		switch {
+		case r == '#' && (i == 0 || strings.ContainsRune(" \t\n;&|()<>", rs[i-1])):
+			for ; i+1 < len(rs) && rs[i+1] != '\n'; i++ {
+				b.WriteByte('_')
+			}
+			b.WriteByte('_')
 		case r == '\\' && i+1 < len(rs) && rs[i+1] == '\n':
 			i++
 			b.WriteByte(' ') // a line continued
