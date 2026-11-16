@@ -213,7 +213,8 @@ func TestAReplacedSenderIsToldInItsNewSession(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	exe, _ := useFakeT3(t)
-	a := newDeviceWith(t, remote, func(d *device) { d.tellWait = 3 * time.Second })
+	// Long enough for the new session to take the name first on a loaded runner.
+	a := newDeviceWith(t, remote, func(d *device) { d.tellWait = 10 * time.Second })
 	b := newDevice(t, remote)
 	route := proto.Route{T3CLI: exe, T3Thread: "thread-ada"}
 	ada, conn := a.sessionRoute("aaaaaa", "claude-1", route)
