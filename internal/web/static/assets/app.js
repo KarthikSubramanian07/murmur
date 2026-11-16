@@ -101,6 +101,7 @@ const ui = {
   outbox: [], // what the person sent that isn't among the messages yet, or that failed
   notes: new Map(), // a conversation's key → what the daemon said of the last message sent in it
   readLocal: new Set(), // messages marked read that the state doesn't know of yet
+  readHeld: false, // a mark that failed is waiting a poll's time before it is asked for again (#652)
   reading: null, // the conversation someone was last seen looking at, null if nobody is looking
   newMark: null, // the open conversation's first unread message: { key, id }
   armed: null, // the group chat whose next send goes: its key
@@ -158,6 +159,22 @@ async function takeKey() {
   } catch {}
 }
 
+// Whether nobody is looking at the page. A browser says so when its tab is in the background or
+// its window minimized. The desktop app's window under another window stays visible to the page
+// (#638), so the window itself says whether it is in front (appSaysFront), and while it isn't, the
+// page counts as hidden: an app left open behind the editor doesn't keep the person active.
+function pageHidden() {
+  return document.hidden || ui.appFront === false;
+}
+
+// The desktop app's window saying whether it is in front, each time that changes. Back in front, the
+// page polls at once, as a tab shown again does, so the person is active again without a wait.
+function appSaysFront(front) {
+  const back = front && ui.appFront === false;
+  ui.appFront = !!front;
+  if (back && ui.token && ui.conn !== "denied") poll();
+}
+
 async function api(path, init = {}) {
   const token = ui.token;
   const headers = { Authorization: "Bearer " + token };
@@ -165,7 +182,7 @@ async function api(path, init = {}) {
   // A tab nobody can see still polls, but mustn't keep the daemon running for good. The desktop
   // app's window is someone waiting for messages, minimized or not: it keeps the daemon running,
   // though hidden it doesn't count as someone looking.
-  if (document.hidden) headers["X-Page-Hidden"] = "1";
+  if (pageHidden()) headers["X-Page-Hidden"] = "1";
   if (inApp()) headers["X-Page-App"] = "1";
   const res = await fetch(path, { ...init, headers, cache: "no-store" });
   if (res.status === 401) throw new AuthError(token);
@@ -3559,11 +3576,27 @@ function markOpenRead() {
     .map((m) => m.id);
   if (!ids.length) return;
   if (arriving) ui.newMark = { key: ui.conversation, id: ids[0] };
+  if (ui.readHeld) {
+    // A mark failed a moment ago: the held timer asks again. "New" still shows where they came to.
+    if (arriving) render();
+    return;
+  }
   for (const id of ids) ui.readLocal.add(id);
   api("/api/read", { method: "POST", body: JSON.stringify({ ids }) }).catch((e) => {
     if (e instanceof AuthError) return deny(e.token);
     for (const id of ids) ui.readLocal.delete(id);
-    render(); // unread again, and no poll shows it: a state that hasn't changed rebuilds nothing
+    // Unread again, and no poll shows it: a state that hasn't changed rebuilds nothing. The render
+    // asks for it at once, so it is held a poll's time first: a daemon that is down or failing
+    // would otherwise be asked, and the page redrawn, without pause (#652). One timer at a time,
+    // so two failures close together don't end each other's wait early.
+    if (!ui.readHeld) {
+      ui.readHeld = true;
+      setTimeout(() => {
+        ui.readHeld = false;
+        markOpenRead();
+      }, POLL_MS);
+    }
+    render();
   });
   render();
 }
@@ -4268,7 +4301,7 @@ function cancelMinutes(key) {
 }
 
 function wakeControl(key, wake, onChange, withDefault) {
-  const def = ui.settings.defaultMinutes || 3;
+  const def = ui.settings.defaultMinutes || 5;
   const choices = withDefault ? [["default", "Default"], ...WAKE_CHOICES] : WAKE_CHOICES;
   const current = wake ? wake.when : "default";
   const seg = h(
@@ -5160,6 +5193,7 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("focus", () => {
   if (ui.token && ui.conn !== "denied") markOpenRead();
 });
+window.murmurFront = appSaysFront; // what the desktop app's window calls
 window.addEventListener("blur", markOpenRead); // nobody is looking now, so what comes next is new
 document.addEventListener("scroll", () => (scrolledAt = Date.now()), { capture: true, passive: true });
 NARROW.addEventListener("change", () => {
