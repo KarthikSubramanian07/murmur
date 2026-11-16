@@ -83,13 +83,76 @@ func TestSendFilesSentAsAString(t *testing.T) {
 }
 
 func TestWhoTagsSentAsAString(t *testing.T) {
-	f := &fakeDaemon{}
-	res := callListTool(t, f, "who", map[string]any{"tags": `["bees"]`})
-	if res.IsError {
-		t.Fatalf("who with tags as a string is an error: %+v", res.Content[0].(*mcp.TextContent).Text)
+	for _, c := range []struct {
+		name string
+		tags any
+	}{
+		{"a JSON array in a string", `["bees"]`},
+		{"a real array", []string{"bees"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeDaemon{}
+			res := callListTool(t, f, "who", map[string]any{"tags": c.tags})
+			if res.IsError {
+				t.Fatalf("who with tags as %s is an error: %+v", c.name, res.Content[0].(*mcp.TextContent).Text)
+			}
+			got := f.requestsOf(proto.OpWho)
+			if len(got) != 1 || !slices.Equal(got[0].Tags, []string{"bees"}) {
+				t.Errorf("the daemon was asked for %+v, want one who request for [bees]", got)
+			}
+		})
 	}
-	got := f.requestsOf(proto.OpWho)
-	if len(got) != 1 || !slices.Equal(got[0].Tags, []string{"bees"}) {
-		t.Errorf("the daemon was asked for %+v, want one who request for [bees]", got)
+}
+
+// An explicit null was allowed by the generated schema and reads as no list (#700 review).
+func TestTagsNullIsNoList(t *testing.T) {
+	f := &fakeDaemon{}
+	res := callListTool(t, f, "tags", map[string]any{"add": nil})
+	if res.IsError {
+		t.Fatalf("tags with add null is an error: %+v", res.Content[0].(*mcp.TextContent).Text)
+	}
+	got := f.requestsOf(proto.OpTags)
+	if len(got) != 1 || got[0].Add != nil {
+		t.Errorf("the daemon was asked for %+v, want one tags request adding nothing", got)
+	}
+}
+
+// A path may hold a comma, so send's files sent as one string are one path (#700 review),
+// as a real array or as a JSON array in a string too.
+func TestSendFilesWithACommaInThePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run,1.log")
+	for _, c := range []struct {
+		name  string
+		files any
+	}{
+		{"one path as a plain string", path},
+		{"a real array", []string{path}},
+		{"a JSON array in a string", fmt.Sprintf("[%q]", path)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeDaemon{}
+			res := callListTool(t, f, "send", map[string]any{
+				"to": "quiet-otter", "subject": "a file", "files": c.files})
+			if res.IsError {
+				t.Fatalf("send with files as %s is an error: %+v", c.name, res.Content[0].(*mcp.TextContent).Text)
+			}
+			got := f.requestsOf(proto.OpSend)
+			if len(got) != 1 || !slices.Equal(got[0].Files, []string{path}) {
+				t.Errorf("the daemon was asked for %+v, want one send carrying [%s]", got, path)
+			}
+		})
+	}
+}
+
+// The hand-written schemas refuse a property they don't name, as the generated ones do
+// (#700 review): a typo is an error, not quietly dropped.
+func TestAnUnknownArgumentIsRefused(t *testing.T) {
+	f := &fakeDaemon{}
+	res := callListTool(t, f, "who", map[string]any{"tag": "bees"})
+	if !res.IsError {
+		t.Errorf("who with an unknown argument isn't an error: %+v", res.Content[0].(*mcp.TextContent).Text)
+	}
+	if got := f.requestsOf(proto.OpWho); len(got) != 0 {
+		t.Errorf("the daemon was asked for %+v, want nothing", got)
 	}
 }
