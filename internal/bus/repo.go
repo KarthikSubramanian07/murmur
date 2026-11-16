@@ -642,7 +642,7 @@ func (r *Repo) readCommits(ctx context.Context, shas []string, sizes map[string]
 	}
 	if len(byLog) > 0 {
 		out, err := r.Git.Run(ctx, strings.Join(byLog, "\n")+"\n", "log", "--stdin", "--no-walk=unsorted",
-			"--no-show-signature", "--no-color", "--format=%H%x00%ct%x00%B%x1e", "--")
+			"--no-show-signature", "--no-color", "--encoding=UTF-8", "--format=%H%x00%ct%x00%B%x1e", "--")
 		if err != nil {
 			return nil, err
 		}
@@ -678,9 +678,14 @@ func (r *Repo) readCommits(ctx context.Context, shas []string, sizes map[string]
 // Two kinds of commit git log reads differently, and for them ok is false, so that the caller asks
 // git log: one that names an encoding, which log converts its message from (a record written by
 // hand in Latin-1 still decodes, to other text, if it isn't converted), and one with a NUL in it,
-// which log cuts the message at. Murmur writes neither.
+// which log cuts the message at, as readCommits does at the byte it parts log's records with.
+// Murmur writes none of these.
+//
+// git log is asked for UTF-8 (--encoding), which is what it gives unless the user's
+// i18n.logOutputEncoding says otherwise: with that set to Latin-1, a message read by log came
+// converted to it, and one read here didn't.
 func parseCommit(raw []byte) (at time.Time, message string, ok bool) {
-	if bytes.IndexByte(raw, 0) >= 0 {
+	if bytes.IndexByte(raw, 0) >= 0 || bytes.Contains(raw, []byte(recordSep)) {
 		return time.Time{}, "", false
 	}
 	head, body, _ := strings.Cut(string(raw), "\n\n")

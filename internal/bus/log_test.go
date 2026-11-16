@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/gitx"
@@ -417,6 +418,9 @@ func TestAKeptGitReadsWhatGitLogDid(t *testing.T) {
 			"\ncommitter c <c@example.invalid> 1700000001 +0000\nencoding ISO-8859-1\n\ncaf\xe9\n\n{\"body\":\"\xe9t\xe9\"}\n",
 		"tree " + emptyTree(t, each) + "\nauthor a <a@example.invalid> 1700000000 +0000" +
 			"\ncommitter c <c@example.invalid> 1700000002 +0000\n\nbefore\x00after\n",
+		// And one with the byte readCommits parts git log's records with, where it cuts too.
+		"tree " + emptyTree(t, each) + "\nauthor a <a@example.invalid> 1700000000 +0000" +
+			"\ncommitter c <c@example.invalid> 1700000003 +0000\n\nbefore\x1eafter\n",
 	} {
 		cmd := exec.Command("git", "--git-dir="+each.Git.Dir, "hash-object", "-t", "commit", "-w", "--literally", "--stdin")
 		cmd.Stdin = strings.NewReader(raw)
@@ -427,6 +431,8 @@ func TestAKeptGitReadsWhatGitLogDid(t *testing.T) {
 		shas = append(shas, strings.TrimSpace(string(out)))
 	}
 
+	// A user whose git log prints Latin-1 reads the same bytes as anyone, either way.
+	each.Git.Env = []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=i18n.logOutputEncoding", "GIT_CONFIG_VALUE_0=ISO-8859-1"}
 	kept := &bus.Repo{Git: each.Git, Name: each.Name, Email: each.Email, Page: 4}
 	kept.KeepReader()
 	t.Cleanup(kept.Close)
@@ -440,7 +446,7 @@ func TestAKeptGitReadsWhatGitLogDid(t *testing.T) {
 		if err != nil {
 			t.Fatalf("commit %d, a git for each read: %v", i, err)
 		}
-		if want.Time.IsZero() || want.Time.Unix() == 0 || want.Size == 0 {
+		if want.Time.IsZero() || want.Time.Unix() == 0 || want.Size == 0 || !utf8.ValidString(want.Message) {
 			t.Fatalf("commit %d read as %+v", i, want)
 		}
 		for name, r := range map[string]*bus.Repo{"a kept git": kept, "a closed one": closed} {
