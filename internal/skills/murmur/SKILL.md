@@ -45,6 +45,8 @@ It usually comes as a turn headed `Message from quiet-otter (...) via Murmur:`.
 - `subject` is one line that stands alone; often it is all the recipient reads. Put the fact or the
   question in it: "Renaming User.id to User.uuid on main in ~10 min. Does that break you?"
 - `body` only when needed: paths, branch, exactly what you need back.
+- `files` when the thing itself says it better: a screenshot, a log, a diff. The recipient gets
+  each as a path on its own machine. At most 8, 10 MB each.
 - One complete message beats a back-and-forth.
 - Not for thanks, progress chatter, or secrets: teammates' devices can read messages and statuses,
   and they stay in the repo's history for good.
