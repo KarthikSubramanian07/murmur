@@ -206,3 +206,33 @@ func TestTellMeRefusalsAndNobodyToWaitFor(t *testing.T) {
 		t.Errorf("the send to an empty device: %+v", r)
 	}
 }
+
+// A sender replaced before it is told, as a T3 thread's session is when T3 starts a new one for it,
+// is told in the session that holds its name now (#659): the old one's inbox is never read again.
+func TestAReplacedSenderIsToldInItsNewSession(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, _ := useFakeT3(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.tellWait = 3 * time.Second })
+	b := newDevice(t, remote)
+	route := proto.Route{T3CLI: exe, T3Thread: "thread-ada"}
+	ada, conn := a.sessionRoute("aaaaaa", "claude-1", route)
+	adaName := a.named(ada)
+	bob, _ := b.session("bbbbbb", "claude-bob")
+	bobName := b.named(bob)
+	eventually(t, "a knows bob's name", func() bool { return a.seesSession(bob) && a.nameOf(bob) == bobName })
+
+	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bobName, Subject: "Review #9?", TellMe: bus.MarkRead})
+	if r.Error != "" || !r.Telling {
+		t.Fatalf("the send: %+v", r)
+	}
+	conn.Close()
+	time.Sleep(500 * time.Millisecond) // the daemon has seen it go
+	a.sessionRoute("cccccc", "claude-2", route)
+	eventually(t, "the new session holds ada's name", func() bool { return a.nameOf(a.self()+"/cccccc") == adaName })
+
+	told := a.awaitTold("cccccc")
+	if !strings.Contains(told.Subject, "Review #9?") {
+		t.Errorf("the notice: %+v", told)
+	}
+}
