@@ -770,7 +770,30 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 
 func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto.Response {
 	to := strings.TrimSpace(req.To)
-	if g := tags.Normalize(to); bus.IsGroup(g) {
+	// A device's group is the device (#463): the message goes on the bus to the device, as one sent
+	// to its ID does, so every daemon delivers it, older ones too, and only to that device's
+	// sessions. It isn't read as a name after, as a device ID can be shaped like one.
+	toDevice := false
+	if devs := tags.DevicesOfGroup(to); devs != nil {
+		// Two devices can share a group's tag, device-x and x; the message is then sent to neither,
+		// rather than to whichever comes first, and the sender is told to use the device's ID.
+		var found []string
+		d.mu.Lock()
+		for _, dev := range devs {
+			if _, known := d.peers[dev]; known || dev == d.device {
+				found = append(found, dev)
+			}
+		}
+		d.mu.Unlock()
+		switch len(found) {
+		case 0:
+			return fail(fmt.Sprintf("not sent: no device in presence has the group %s. who lists each device's group", tags.Normalize(to)))
+		case 1:
+			to, toDevice = found[0], true
+		default:
+			return fail(fmt.Sprintf("not sent: devices %s and %s both have the group %s. Send to the one you mean by its ID", found[0], found[1], tags.Normalize(to)))
+		}
+	} else if g := tags.Normalize(to); bus.IsGroup(g) {
 		to = g
 	}
 	subject := bus.OneLine(req.Subject, 120)
@@ -827,7 +850,9 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	// A name is an address: it is turned into the session's device/session here, and that is what
 	// goes on the bus, so a daemon that doesn't know names queues the message all the same.
 	var toName, renamed string
-	if names.Valid(to) {
+	if toDevice {
+		// Sent to the device, as above.
+	} else if names.Valid(to) {
 		d.mu.Lock()
 		addr, ok := d.resolveNameLocked(to)
 		_, isDevice := d.peers[to]
@@ -1115,7 +1140,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 		if d.offMeshLocked(s.id) && s.id != you {
 			continue // offline (#189)
 		}
-		ts := d.tagsOfLocked(s)
+		ts := tags.WithDevice(d.tagsOfLocked(s), d.device)
 		if !filter.Match(ts) {
 			continue
 		}
@@ -1139,7 +1164,11 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 			if s.ID == proto.CLISession {
 				continue // V1 daemons list their CLI, which only claims needed
 			}
-			if !filter.Match(s.Tags) {
+			ts := s.Tags
+			if s.ID != bus.PersonSession {
+				ts = tags.WithDevice(ts, id) // a person isn't in their device's group, as they get none of its messages
+			}
+			if !filter.Match(ts) {
 				continue
 			}
 			name := s.Name
@@ -1148,7 +1177,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 			}
 			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: bus.Addr(id, s.ID), Name: name,
 				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: peerStarted(p, s), LastActive: peerActive(p, s),
-				Tags: s.Tags, HookOff: s.HookOff})
+				Tags: ts, HookOff: s.HookOff})
 		}
 		if !filter.Empty() && len(dv.Sessions) == 0 {
 			continue // nothing on it matches
