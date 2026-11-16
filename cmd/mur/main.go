@@ -600,7 +600,7 @@ func runStop(ctx context.Context, args []string, out io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	stopped, err := client.Stop(ctx, gitDir)
+	stopped, err := client.StopWaiting(ctx, gitDir)
 	if err != nil {
 		return err
 	}
