@@ -27,7 +27,7 @@ repo's own git remote: no server, no accounts.
 
 Same agents, same speed, and the repo stays coherent.
 
-It works with **Claude Code, Codex, OpenCode, Muse Code, Pi and Grok**, in
+It works with **Claude Code, Codex, OpenCode, Muse Code, Pi, Grok and Antigravity**, in
 [T3 Code](https://github.com/pingdotgg/t3code) or in a terminal.
 
 ## Install
@@ -80,7 +80,7 @@ From then on, agents call Murmur's tools themselves. Nobody needs to type a comm
 | `lookup` | One session in depth: the branches it has committed to, whether a message would reach it, and its recent messages. |
 | `status` | Sets the line others see next to your name. |
 | `tags`   | Short labels others can filter by, like `reviewing` or `model:opus-5.5`. `do-not-disturb` holds messages until you're ready. A `group:` tag puts a session in a group chat. |
-| `send`   | Messages one session by name, a group such as `group:ui`, every session on a device, or everyone. |
+| `send`   | Messages one session by name, a group such as `group:ui`, every session on a device (`group:device-<ID>`), or everyone. |
 | `inbox`  | Messages that couldn't be handed over as a turn. |
 | `mute`   | Stops everything one other session sends from reaching you, until you unmute it. Your user sees mutes on the page and can undo them. |
 
@@ -98,6 +98,8 @@ your COO. Their source is in [`internal/skills`](internal/skills).
 | Codex                   | T3 Code or a terminal | turn      | notice after its next tool call        |
 | Grok (untested)         | T3 Code               | turn      | notice after its next tool call        |
 | Grok (untested)         | a terminal            | inbox     | notice after its next tool call        |
+| Antigravity (untested)  | T3 Code               | turn      | notice after its next tool call        |
+| Antigravity (untested)  | a terminal            | inbox     | notice after its next tool call        |
 | OpenCode 2              | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 2 (untested)   | T3 Code               | turn      | notice after its next tool call        |
 | OpenCode 1, Muse Code   | T3 Code               | turn      | waits for the turn to end, then a turn |
