@@ -817,6 +817,9 @@ type state struct {
 	// sender asked to be told (#276).
 	Marks []bus.Mark             `json:"marks,omitempty"`
 	Sent  map[string]*sentRecord `json:"sent,omitempty"`
+	// Sends is this device's sessions' newest messages that a mute on another device could drop, by
+	// ID, so that a mark saying one was dropped is told to its sender (#466, mute.go).
+	Sends map[string]*sendRecord `json:"sends,omitempty"`
 	// AwaitingRead is, by session ID, the messages handed to it as a turn that asked for receipts,
 	// until a prompt shows the turn started (#611, turnread.go).
 	AwaitingRead map[string][]awaitingRead `json:"awaitingRead,omitempty"`

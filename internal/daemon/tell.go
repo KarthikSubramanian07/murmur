@@ -23,8 +23,8 @@ import (
 func ValidTell(s string) bool { return s == bus.MarkDelivered || s == bus.MarkRead }
 
 // isTellNotice says e is a notice this device wrote for one of its sessions about how far a message
-// got (#276). It comes from this device's receipts address, which no session holds, and is never on
-// the bus.
+// got (#276), or that a mute dropped one (#466). It comes from this device's receipts address, which
+// no session holds, and is never on the bus.
 func (d *Daemon) isTellNotice(e bus.Event) bool {
 	return e.Type == bus.Message && e.From == bus.Addr(d.device, bus.ReceiptFrom)
 }

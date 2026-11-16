@@ -1,12 +1,14 @@
 package daemon_test
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
 )
@@ -216,4 +218,130 @@ func TestAMutedSessionCantAddItsMuterToAGroup(t *testing.T) {
 	}
 	eventually(t, "alice's add to go through", func() bool { return add().Error == "" })
 	eventually(t, "bob in the group", func() bool { return b.inGroup("bbbbbb", bob, "group:ui") })
+}
+
+// toldOf reads session sess's inbox until it holds n notices from Murmur, and returns them. Anything
+// else in the inbox fails the test.
+func (d *device) toldOf(sess string, n int) []proto.MessageView {
+	d.t.Helper()
+	var told []proto.MessageView
+	eventually(d.t, fmt.Sprintf("%d notice(s) from %s", n, brand.Product), func() bool {
+		for _, m := range d.do(proto.Request{Op: proto.OpInbox, Session: sess}).Messages {
+			if !m.Receipt {
+				d.t.Fatalf("%s's inbox holds a message that isn't a notice: %+v", sess, m)
+			}
+			told = append(told, m)
+		}
+		return len(told) >= n
+	})
+	return told
+}
+
+// A direct message from a session whose daemon hadn't read of the mute, sent after the grace, is
+// dropped by the muting device, and its sender is told so once, by Murmur, about that message,
+// without a turn (#466). Here the muting device can't reach the remote while its session mutes, so
+// its presence with the mute can't be read by anyone until the message has gone out.
+func TestAMutedSenderIsToldItsDirectMessageWasDropped(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.sessionRoute("aaaaaa", "claude-ada", proto.Route{T3CLI: exe, T3Thread: "thread-ada"})
+	bob, _ := b.session("bbbbbb", "")
+	aliceName, bobName := b.named(alice), a.named(bob)
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && a.nameOf(bob) == bobName })
+
+	b.offline(remote, true)
+	if r := b.mute("bbbbbb", aliceName, false); r.Error != "" {
+		t.Fatalf("bob mutes alice: %+v", r)
+	}
+	r := a.send("aaaaaa", bobName, "Take #12 over?", "Branch fix-12.")
+	b.offline(remote, false)
+
+	told := a.toldOf("aaaaaa", 1)[0]
+	t.Logf("send's result:\n%s\nthe inbox:\n%s\nthe hook's notice:\n%s", view.Sent(r),
+		view.Inbox(proto.Response{Messages: []proto.MessageView{told}}), view.Notices([]proto.MessageView{told}, 1))
+	if want := bobName + ` did not get your message "Take #12 over?": they have muted you`; told.Subject != want {
+		t.Errorf("the notice's subject is %q, want %q", told.Subject, want)
+	}
+	if want := "Nothing you send can reach them until they unmute you."; told.Body != want {
+		t.Errorf("the notice's body is %q, want %q", told.Body, want)
+	}
+	if told.FromName != brand.Product || told.FromOwner != "" {
+		t.Errorf("the notice is from %q (%q), want %s", told.FromName, told.FromOwner, brand.Product)
+	}
+	if got := b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages; len(got) != 0 {
+		t.Errorf("bob got a message from the session he muted: %+v", got)
+	}
+	if log := git(t, remote, "log", "--format=%s", "refs/murmur/mesh/"+a.self()); strings.Contains(log, told.ID) {
+		t.Errorf("the notice went on the bus:\n%s", log)
+	}
+	// Once, and nobody is woken: not the sender's thread, which the notice waits for.
+	holds(t, "no second notice", 2*time.Second, func() bool {
+		return len(a.do(proto.Request{Op: proto.OpInbox, Session: "aaaaaa"}).Messages) == 0
+	})
+	for _, c := range calls() {
+		if slices.Contains(c.Args, "thread-ada") {
+			t.Errorf("the notice was handed to the sender's thread as a turn: %+v", c)
+		}
+	}
+}
+
+// A message to everyone or to a device, sent before the sender's daemon had read of the mute, is
+// dropped for the session that muted it from the first moment, and send's result can't name it.
+// The sender is told by a notice for each message (#466). Once its daemon has read the mute, send
+// names the muter, and the drop's mark tells it nothing more.
+func TestAMutedSenderIsToldItsMessageToManyWasDropped(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	dave, _ := b.session("dddddd", "")
+	aliceName, bobName := b.named(alice), a.named(bob)
+	a.named(dave)
+	b.named(dave)
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && a.seesSession(dave) })
+
+	b.offline(remote, true)
+	if r := b.mute("bbbbbb", aliceName, false); r.Error != "" {
+		t.Fatalf("bob mutes alice: %+v", r)
+	}
+	for _, to := range []string{"*", b.self()} {
+		if r := a.send("aaaaaa", to, "to "+to, ""); strings.Contains(r.Note, "muted") {
+			t.Errorf("a send to %s, before alice's daemon could know of the mute, says %q", to, r.Note)
+		}
+	}
+	b.offline(remote, false)
+
+	told := a.toldOf("aaaaaa", 2)
+	t.Logf("the inbox:\n%s", view.Inbox(proto.Response{Messages: told}))
+	var subjects []string
+	for _, m := range told {
+		subjects = append(subjects, m.Subject)
+	}
+	slices.Sort(subjects)
+	want := []string{
+		bobName + ` did not get your message "to *": they have muted you`,
+		bobName + ` did not get your message "to ` + b.self() + `": they have muted you`,
+	}
+	slices.Sort(want)
+	if !slices.Equal(subjects, want) {
+		t.Errorf("the notices say %q, want %q", subjects, want)
+	}
+	if got := inboxWant(b, "dddddd", 2); len(got) != 2 {
+		t.Errorf("dave, who muted nobody, has %v", got)
+	}
+
+	// Now alice's daemon knows: send says bob didn't get it, and that is all she is told.
+	eventually(t, "alice's daemon to read the mute", func() bool {
+		l := a.do(proto.Request{Op: proto.OpLookup, Session: "aaaaaa", Name: bobName}).Lookup
+		return l != nil && slices.Contains(l.Muted, aliceName)
+	})
+	if r := a.send("aaaaaa", "*", "to everyone, again", ""); r.Note != bobName+" did not get this message: they have muted you." {
+		t.Errorf("a send to everyone says %q", r.Note)
+	}
+	holds(t, "no notice of a mute send named", 3*time.Second, func() bool {
+		return len(a.do(proto.Request{Op: proto.OpInbox, Session: "aaaaaa"}).Messages) == 0
+	})
 }

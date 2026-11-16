@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,7 +21,8 @@ import (
 // bus for anyone on the team to see, a human on the page among them. The muted session isn't
 // told when it happens. It learns of it when it next sends to the session that muted it: its own
 // daemon, which has read that presence, refuses the send and says why. That is the tool's answer,
-// from Murmur and no agent, so it starts no turn anywhere.
+// from Murmur and no agent, so it starts no turn anywhere. One whose daemon hadn't read of the mute
+// yet is told afterwards that its message was dropped (#466, below).
 //
 // Mutes are kept as tags are, by the muting session's name, which stays the same while its
 // conversation does, and name the muted session by its name, which the registry never gives out
@@ -179,17 +181,22 @@ func (d *Daemon) hasMutedLocked(dev, sess, name string) bool {
 	return false
 }
 
-// mutersLocked lists, by name, the sessions that have muted the session called name: on device
-// dev, or on every device this daemon knows if dev is "". Caller holds mu.
-func (d *Daemon) mutersLocked(name, dev string) []string {
+// muter is a session that has muted another: its address, and its name, or its address where it
+// has none.
+type muter struct{ addr, name string }
+
+// mutersLocked lists the sessions that have muted the session called name: on device dev, or on
+// every device this daemon knows if dev is "". Caller holds mu.
+func (d *Daemon) mutersLocked(name, dev string) []muter {
 	if name == "" {
 		return nil
 	}
-	var out []string
+	var out []muter
 	if dev == "" || dev == d.device {
 		for _, s := range d.sortedSessionsLocked() {
 			if _, muted := d.st.Mutes[tagKeyOf(s.name, s.id)][name]; muted {
-				out = append(out, nameOr(s.name, bus.Addr(d.device, s.id)))
+				addr := bus.Addr(d.device, s.id)
+				out = append(out, muter{addr, nameOr(s.name, addr)})
 			}
 		}
 	}
@@ -199,7 +206,8 @@ func (d *Daemon) mutersLocked(name, dev string) []string {
 		}
 		for _, s := range d.peers[id].pres.Sessions {
 			if slices.Contains(s.Muted, name) {
-				out = append(out, nameOr(s.Name, bus.Addr(id, s.ID)))
+				addr := bus.Addr(id, s.ID)
+				out = append(out, muter{addr, nameOr(s.Name, addr)})
 			}
 		}
 	}
@@ -208,14 +216,135 @@ func (d *Daemon) mutersLocked(name, dev string) []string {
 
 // mutersNote tells the sender of a message to many which of them didn't get it, "" if all did.
 func mutersNote(muters []string) string {
-	switch len(muters) {
-	case 0:
+	if len(muters) == 0 {
 		return ""
-	case 1:
-		return muters[0] + " did not get this message: they have muted you."
 	}
-	return strings.Join(muters[:len(muters)-1], ", ") + " and " + muters[len(muters)-1] +
-		" did not get this message: they have muted you."
+	return andList(muters) + " did not get this message: they have muted you."
+}
+
+// andList is names as a list in words: "a", "a and b", "a, b and c".
+func andList(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
+// Telling a sender its message was dropped for a mute (#466). The muted session's daemon refuses a
+// send to the session that muted it once it has read the mute, and names that session in the result
+// of a send to many. One it hadn't read of yet, as when the muting device couldn't push its
+// presence for longer than MuteGrace, or was down, sent the message, and the muting device dropped
+// it. That device marks the drop (markMutedLocked), and the mark comes back in a receipt like any
+// other. This device keeps its sessions' newest messages (Sends) so the mark finds its sender, which
+// is told once, by a notice from Murmur in its inbox, about that message, and woken by nothing.
+
+// maxSends is how many of this device's sessions' messages are kept for that, the newest.
+const maxSends = 100
+
+// sendRecord is one of this device's sessions' messages that a mute on another device could drop.
+type sendRecord struct {
+	At      time.Time `json:"at"`
+	From    string    `json:"from"`
+	To      string    `json:"to"`
+	Subject string    `json:"subject"`
+	// Told is the sessions, by address, that its sender knows didn't get it, as they have muted it:
+	// those send's result named, and those a notice has told of since. Each is told of once.
+	Told []string `json:"told,omitempty"`
+}
+
+// recordSendLocked keeps message e, which session e.From of this device has sent, for a mark saying
+// a mute dropped it; told is the sessions send's result named as having muted the sender. Only a
+// message that can reach another device is kept, from a session with a name, as a mute names one.
+// Caller holds mu.
+func (d *Daemon) recordSendLocked(e bus.Event, told []string) {
+	if bus.IsPerson(e.From) || d.nameOfLocked(e.From) == "" {
+		return
+	}
+	if dev, _ := bus.SplitAddr(e.To); dev == d.device {
+		return // its own sessions' mutes are this daemon's, which refused it or named them
+	}
+	if d.st.Sends == nil {
+		d.st.Sends = map[string]*sendRecord{}
+	}
+	d.st.Sends[e.ID] = &sendRecord{At: e.At, From: e.From, To: e.To, Subject: bus.OneLine(e.Subject, 60), Told: told}
+	if over := len(d.st.Sends) - maxSends; over > 0 {
+		ids := sortedKeys(d.st.Sends)
+		slices.SortStableFunc(ids, func(a, b string) int { return d.st.Sends[a].At.Compare(d.st.Sends[b].At) })
+		for _, id := range ids[:over] {
+			delete(d.st.Sends, id)
+		}
+	}
+	d.saveLocked()
+}
+
+// tellMutedLocked takes in marks, from a receipt on device dev's log, saying messages were dropped
+// for sessions there that have muted their senders. The sender of each message of this device's
+// is told, in one notice per message, of those it didn't know of. A mark from a device the message
+// couldn't have reached is dropped: any device can write marks, but only for its own sessions. The
+// caller saves the state. Caller holds mu.
+func (d *Daemon) tellMutedLocked(dev string, marks []bus.Mark) {
+	byMsg := map[string][]string{}
+	var order []string
+	for _, m := range marks {
+		rec := d.st.Sends[m.Msg]
+		if rec == nil {
+			continue
+		}
+		addr := bus.Addr(dev, m.To)
+		if to, sess := bus.SplitAddr(rec.To); sess != "" {
+			if to != dev {
+				continue
+			}
+			addr = rec.To // the session that holds the recipient's name now (forwardLocked) dropped it
+		} else if rec.To != "*" && !bus.IsGroup(rec.To) && rec.To != dev {
+			continue
+		}
+		d.untellLocked(m.Msg, addr)
+		if slices.Contains(rec.Told, addr) || slices.Contains(byMsg[m.Msg], addr) {
+			continue
+		}
+		if byMsg[m.Msg] == nil {
+			order = append(order, m.Msg)
+		}
+		byMsg[m.Msg] = append(byMsg[m.Msg], addr)
+	}
+	label := d.labelerLocked()
+	for _, msg := range order {
+		rec, addrs := d.st.Sends[msg], byMsg[msg]
+		rec.Told = append(rec.Told, addrs...)
+		dev, sess := bus.SplitAddr(rec.From)
+		if _, stopped := d.st.Stopped[sess]; dev != d.device || d.sessions[sess] == nil && !stopped {
+			continue // gone, with its inbox
+		}
+		names := make([]string, 0, len(addrs))
+		for _, addr := range sortedBy(addrs, label) {
+			names = append(names, label(addr))
+		}
+		// The words are those of the refusal a send to the session gets once the mute is known.
+		subject := andList(names) + " did not get your message " + strconv.Quote(rec.Subject) + ": they have muted you"
+		d.addInboxLocked(sess, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
+			From: bus.Addr(d.device, bus.ReceiptFrom), To: rec.From, At: time.Now().UTC(), Subject: subject,
+			Body: "Nothing you send can reach them until they unmute you."})
+	}
+}
+
+// untellLocked takes the session at addr, which has muted the sender, off what message msg's
+// sender asked to be told of (#276), if it did: it will never get further. With nobody left to wait
+// for, the sender isn't told how far it got, as the notice of the mute said all there was. Caller
+// holds mu.
+func (d *Daemon) untellLocked(msg, addr string) {
+	rec := d.st.Sent[msg]
+	if rec == nil || rec.Tell == "" || rec.Told {
+		return
+	}
+	drop := func(a string) bool { return a == addr }
+	rec.To, rec.Old = slices.DeleteFunc(rec.To, drop), slices.DeleteFunc(rec.Old, drop)
+	delete(rec.Marks, addr)
+	if len(waitedFor(rec)) == 0 {
+		delete(d.st.Sent, msg)
+		return
+	}
+	d.tellLocked(msg, rec, false)
 }
 
 // mute is OpMute: session id mutes the session called req.Name, or with Unmute undoes that. With

@@ -212,12 +212,19 @@ func (d *Daemon) writeMarks(ctx context.Context) error {
 }
 
 // applyReceiptLocked takes in the marks of receipt e, from another device's log. Only marks on this
-// device's person's messages are kept. Caller holds mu.
+// device's messages that asked for receipts are kept, and those saying a mute dropped one of its
+// sessions' messages. Caller holds mu.
 func (d *Daemon) applyReceiptLocked(e bus.Event) {
 	dev, _ := bus.SplitAddr(e.From)
+	var muted []bus.Mark
 	for _, m := range e.Marks {
+		if m.State == bus.MarkMuted {
+			muted = append(muted, m) // any of this device's sessions' messages (#466)
+			continue
+		}
 		d.applyMarkLocked(m.Msg, bus.Addr(dev, m.To), m.State, m.At)
 	}
+	d.tellMutedLocked(dev, muted)
 }
 
 // applyMarkLocked keeps the mark that message msg reached state with the session at addr, if msg is

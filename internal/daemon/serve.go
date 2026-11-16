@@ -987,6 +987,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	// To everyone, to a device or to a group: it went out, and the sender is told which of the
 	// sessions it was for won't get it, as they have muted it (#27), and which won't be woken by it
 	// (#545).
+	var named []string // the muters' addresses
 	if dev, sess := bus.SplitAddr(to); to == "*" || sess == "" {
 		group := bus.IsGroup(to)
 		if to == "*" || group {
@@ -998,13 +999,22 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		var members []string
 		if group {
 			members, _ = d.groupMembersLocked(to, from)
-			muters = slices.DeleteFunc(muters, func(m string) bool { return !slices.Contains(members, m) })
+			muters = slices.DeleteFunc(muters, func(m muter) bool { return !slices.Contains(members, m.name) })
+		}
+		var names []string
+		for _, m := range muters {
+			names, named = append(names, m.name), append(named, m.addr)
 		}
 		unwoken := d.unwokenLocked(from, dev, group, members, wake)
-		unwoken = slices.DeleteFunc(unwoken, func(m string) bool { return slices.Contains(muters, m) })
+		unwoken = slices.DeleteFunc(unwoken, func(m string) bool { return slices.Contains(names, m) })
 		d.mu.Unlock()
-		note = sentences(note, mutersNote(muters), unwokenNote(unwoken))
+		note = sentences(note, mutersNote(names), unwokenNote(unwoken))
 	}
+	// Kept so that a mute this daemon hadn't read of, which dropped it on another device, is told of
+	// (#466). The muters just named are told of already.
+	d.mu.Lock()
+	d.recordSendLocked(e, named)
+	d.mu.Unlock()
 	if tellMe != "" {
 		tellNote = fmt.Sprintf("You'll be told, in your inbox, once it is %s, or in %s with where it is then.", tellMe, minutes(d.opt.TellWait))
 	}

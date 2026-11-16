@@ -439,7 +439,8 @@ func Turn(m proto.MessageView) string {
 }
 
 // receipt renders a notice from Murmur itself of how far one of the session's messages got, which
-// it asked to be told (#276): no sender to describe or to answer.
+// it asked to be told (#276), or that one was dropped as a recipient had muted it (#466): no sender
+// to describe or to answer.
 func receipt(m proto.MessageView) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: %s\n", brand.Product, m.Subject)

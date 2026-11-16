@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"slices"
 	"testing"
 	"time"
 
@@ -184,5 +185,122 @@ func TestADropForAMuteIsMarked(t *testing.T) {
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Receipt, From: "here-0001/receipts", Marks: d.st.Marks}
 	if e.Clean(); !e.Valid() || len(e.Marks) != 1 {
 		t.Errorf("a receipt of a muted mark, as read: valid %v, marks %+v", e.Valid(), e.Marks)
+	}
+}
+
+// muteNoticeDaemon is a daemon whose session aaaaaa, brave-heron, sends, and knows the names of
+// sessions on two other devices.
+func muteNoticeDaemon(t *testing.T) *Daemon {
+	d := receiptDaemon(t)
+	d.savesHeld = true
+	d.st.Inbox = map[string][]*inMsg{}
+	d.sessions["aaaaaa"] = &session{id: "aaaaaa", name: "brave-heron"}
+	d.st.Used = map[string]string{"brave-heron": "here-0001/aaaaaa", "quiet-otter": "new-0002/bbbbbb",
+		"calm-zebra": "new-0002/cccccc", "lazy-ibis": "old-0003/dddddd"}
+	return d
+}
+
+// takeNotices takes what is in session id's inbox, as subjects, and empties it.
+func (d *Daemon) takeNotices(t *testing.T, id string) []string {
+	var out []string
+	for _, m := range d.st.Inbox[id] {
+		if !d.isTellNotice(m.Event) || pushable(m) {
+			t.Errorf("%q is in the inbox as a message that can start a turn, not a notice from Murmur", m.Event.Subject)
+		}
+		out = append(out, m.Event.Subject)
+	}
+	d.st.Inbox[id] = nil
+	return out
+}
+
+func mutedMark(msg, to string) bus.Mark {
+	return bus.Mark{Msg: msg, To: to, State: bus.MarkMuted, At: time.Now()}
+}
+
+// A mark that a mute dropped a message tells its sender once, by a notice from Murmur, of the muters
+// it didn't know of (#466): not those send's result named, and not twice. A mark from a device the
+// message couldn't have reached, or on a message that isn't this device's, tells nothing.
+func TestAMutedMarkTellsItsSenderOnce(t *testing.T) {
+	d := muteNoticeDaemon(t)
+	send := func(to, subject string, told ...string) string {
+		e := bus.Event{ID: bus.NewID(), Type: bus.Message, From: "here-0001/aaaaaa", To: to, Subject: subject, At: time.Now()}
+		d.recordSendLocked(e, told)
+		return e.ID
+	}
+	receipt := func(dev string, marks ...bus.Mark) {
+		d.applyReceiptLocked(bus.Event{Type: bus.Receipt, From: dev + "/receipts", Marks: marks})
+	}
+	said := func(names, subject string) string {
+		return names + ` did not get your message "` + subject + `": they have muted you`
+	}
+	check := func(what string, want ...string) {
+		t.Helper()
+		if got := d.takeNotices(t, "aaaaaa"); !slices.Equal(got, want) {
+			t.Errorf("%s: told %q, want %q", what, got, want)
+		}
+	}
+
+	direct := send("new-0002/bbbbbb", "Take #12 over?")
+	receipt("old-0003", mutedMark(direct, "dddddd"))
+	receipt("new-0002", mutedMark("ffffffffffffffff", "bbbbbb"))
+	check("a mark from another device, and one on a message that isn't ours")
+	receipt("new-0002", mutedMark(direct, "eeeeee")) // the session holding the name now
+	receipt("new-0002", mutedMark(direct, "bbbbbb"))
+	check("a direct message", said("quiet-otter", "Take #12 over?"))
+
+	all := send("*", "to everyone", "new-0002/cccccc")
+	receipt("new-0002", mutedMark(all, "bbbbbb"), mutedMark(all, "cccccc"))
+	receipt("old-0003", mutedMark(all, "dddddd"))
+	check("a message to everyone", said("quiet-otter", "to everyone"), said("lazy-ibis", "to everyone"))
+
+	dev := send("new-0002", "to the device")
+	receipt("old-0003", mutedMark(dev, "dddddd"))
+	receipt("new-0002", mutedMark(dev, "cccccc"), mutedMark(dev, "bbbbbb"))
+	check("a message to a device", said("calm-zebra and quiet-otter", "to the device"))
+
+	// Nothing is kept that a mute elsewhere couldn't drop.
+	for _, e := range []bus.Event{
+		{From: "here-0001/aaaaaa", To: "here-0001/cccccc"},
+		{From: "here-0001/aaaaaa", To: "here-0001"},
+		{From: "here-0001/human", To: "new-0002/bbbbbb"},
+		{From: "here-0001/ffffff", To: "*"}, // no name, so nobody can have muted it
+	} {
+		e.ID, e.Type, e.Subject = bus.NewID(), bus.Message, "hi"
+		if d.recordSendLocked(e, nil); d.st.Sends[e.ID] != nil {
+			t.Errorf("kept %s to %s", e.From, e.To)
+		}
+	}
+}
+
+// A sender that asked to be told how far its message got (#276) waits no more for a recipient that
+// has muted it: the notice of the mute said all there is.
+func TestATellWaitsForNoRecipientThatMutedTheSender(t *testing.T) {
+	d := muteNoticeDaemon(t)
+	d.opt.StaleAfter = time.Hour
+	d.lastPollOK = time.Now()
+	d.peers["new-0002"] = &peer{pres: bus.Presence{Receipts: true, Sessions: []bus.SessionInfo{
+		{ID: "bbbbbb", Name: "quiet-otter"}, {ID: "cccccc", Name: "calm-zebra"}}}, lastChange: time.Now()}
+	send := func(to string) string {
+		e := bus.Event{ID: bus.NewID(), Type: bus.Message, From: "here-0001/aaaaaa", To: to, Subject: "Review #9?", At: time.Now(), Receipts: true}
+		d.recordSentLocked(e)
+		rec := d.st.Sent[e.ID]
+		rec.Tell, rec.Asker, rec.Subject = bus.MarkRead, e.From, e.Subject
+		d.recordSendLocked(e, nil)
+		return e.ID
+	}
+	both := send("new-0002")
+	d.applyReceiptLocked(bus.Event{Type: bus.Receipt, From: "new-0002/receipts", Marks: []bus.Mark{mutedMark(both, "bbbbbb")}})
+	d.applyReceiptLocked(bus.Event{Type: bus.Receipt, From: "new-0002/receipts", Marks: []bus.Mark{
+		{Msg: both, To: "cccccc", State: bus.MarkRead, At: time.Now()}}})
+	want := []string{`quiet-otter did not get your message "Review #9?": they have muted you`,
+		`calm-zebra has read your message "Review #9?"`}
+	if got := d.takeNotices(t, "aaaaaa"); !slices.Equal(got, want) {
+		t.Errorf("told %q, want %q", got, want)
+	}
+	// To the muter alone: the notice of the mute is the only one, and nothing is left waiting.
+	one := send("new-0002/bbbbbb")
+	d.applyReceiptLocked(bus.Event{Type: bus.Receipt, From: "new-0002/receipts", Marks: []bus.Mark{mutedMark(one, "bbbbbb")}})
+	if got := d.takeNotices(t, "aaaaaa"); len(got) != 1 || d.st.Sent[one] != nil {
+		t.Errorf("told %q, and still waiting: %+v", got, d.st.Sent[one])
 	}
 }
