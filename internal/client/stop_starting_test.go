@@ -22,12 +22,12 @@ func TestStopWaitsForADaemonStillStarting(t *testing.T) {
 		t.Fatal(err)
 	}
 	lockPath := filepath.Join(StateDir(gitDir), "daemon.lock")
-	held, err := proc.Lock(lockPath)
+	starting, err := proc.Lock(lockPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	const hold = 400 * time.Millisecond
-	go func() { time.Sleep(hold); held.Close() }()
+	go func() { time.Sleep(hold); starting.Close() }()
 	start := time.Now()
 	stopped, err := StopWaiting(context.Background(), gitDir)
 	if err != nil || stopped {
@@ -37,7 +37,7 @@ func TestStopWaitsForADaemonStillStarting(t *testing.T) {
 		t.Errorf("Stop returned after %v, before the starting daemon let go of the lock", took)
 	}
 
-	held, err = proc.Lock(lockPath)
+	held, err := proc.Lock(lockPath)
 	if err != nil {
 		t.Fatal(err)
 	}
