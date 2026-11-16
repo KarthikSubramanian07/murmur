@@ -571,8 +571,15 @@ func StartDaemon(exe, gitDir string, page *os.File, flags ...string) error {
 
 // Stop asks the clone's daemon to exit and waits for it to go. It reports whether there was one.
 // A daemon from before proof can't be asked, and is ended by its process (see endOlder).
+//
+// A daemon still starting holds the clone's lock before it writes daemon.json, and can't be asked
+// yet: Stop waits, up to startWait, for it to be reachable, and stops it then (#668). Without that,
+// `mur stop` said no daemon was running, and the daemon went on to run.
 func Stop(ctx context.Context, gitDir string) (bool, error) {
 	c, err := Connect(ctx, gitDir, false)
+	if errors.Is(err, ErrNoDaemon) {
+		c, err = awaitStarting(ctx, gitDir, startWait)
+	}
 	if errors.Is(err, ErrNoDaemon) {
 		return false, nil
 	}
@@ -594,6 +601,40 @@ func Stop(ctx context.Context, gitDir string) (bool, error) {
 	// more requests.
 	WaitGone(ctx, gitDir, 10*time.Second)
 	return true, nil
+}
+
+// startWait is how long Stop waits for a daemon that holds the clone's lock to become reachable: its
+// start, which reads the bus before it writes daemon.json. A variable, for the test.
+var startWait = 30 * time.Second
+
+// awaitStarting connects to the clone's daemon once one that is starting can be reached. It is
+// ErrNoDaemon where no daemon holds the lock, or one let go of it without being reached.
+func awaitStarting(ctx context.Context, gitDir string, d time.Duration) (*Client, error) {
+	for end := time.Now().Add(d); ; time.Sleep(100 * time.Millisecond) {
+		l, lerr := proc.LockShared(filepath.Join(StateDir(gitDir), "daemon.lock"))
+		if lerr == nil {
+			l.Close()
+		}
+		if !errors.Is(lerr, proc.ErrLocked) {
+			// No daemon holds the lock: none was starting, or it went. One that wrote daemon.json
+			// and is now stopping can't be asked either.
+			c, err := Connect(ctx, gitDir, false)
+			if err == nil || !errors.Is(err, ErrNoDaemon) {
+				return c, err
+			}
+			return nil, ErrNoDaemon
+		}
+		c, err := Connect(ctx, gitDir, false)
+		if err == nil || !errors.Is(err, ErrNoDaemon) {
+			return c, err
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if time.Now().After(end) {
+			return nil, fmt.Errorf("a daemon is starting here and couldn't be reached within %v to be stopped: %w", d, ErrStillRunning)
+		}
+	}
 }
 
 // ErrStillRunning is what WaitGone returns when a daemon still holds the clone's lock at the deadline.
