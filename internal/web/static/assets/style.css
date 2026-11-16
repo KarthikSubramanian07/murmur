@@ -4354,6 +4354,9 @@ button.chat-msg-from:hover {
   box-shadow: var(--shadow-dialog);
   animation: pop-in 0.15s var(--ease);
 }
+.profile-card.pc-still {
+  animation: none;
+}
 .pc-banner {
   height: 4.5rem;
   background: linear-gradient(135deg, var(--dev), color-mix(in oklab, var(--dev) 55%, var(--popover)));

@@ -2496,7 +2496,10 @@ document.addEventListener(
   "click",
   (e) => {
     const t = e.target.closest?.("[data-profile]");
-    if (!t || !root.contains(t) || ui.selecting) return;
+    // Not where a face is the whole control (the collapsed sidebar's), nor under another dialog (the
+    // pickers, whose rows pick), nor while sessions are being picked to tag.
+    if (!t || !root.contains(t) || t.closest(".mini-face") || ui.setup || ui.picker || ui.tagMenu || ui.repoMenu) return;
+    if (ui.selecting && ui.view === "sessions") return;
     e.preventDefault();
     e.stopPropagation();
     openProfile(t.dataset.profile, t);
@@ -2520,8 +2523,13 @@ function openProfile(name, anchor) {
     x = right + 8 + CARD_WIDTH <= window.innerWidth - 8 ? right + 8 : Math.max(8, r.left - 8 - CARD_WIDTH);
     top = r.top - 8;
   }
-  const from = inCard ? was.from : anchor.closest("[data-key]")?.dataset.key || null;
-  ui.profile = { name, x, top, from, draft: "", sent: null };
+  // Closing gives the focus back to what opened it: the element, or its counterpart by key once a
+  // render has replaced it.
+  const opener = anchor.closest("button, a, [tabindex]") || anchor;
+  const from = inCard ? was.from : opener.closest("[data-key]")?.dataset.key || null;
+  const fromEl = inCard ? was.fromEl : opener;
+  ui.membersOpen = false; // the card takes the click the members panel would have closed on
+  ui.profile = { name, x, top, from, fromEl, draft: "", sent: null, shown: false };
   render();
   focusProfile();
 }
@@ -2532,15 +2540,18 @@ function focusProfile() {
 }
 
 function closeProfile() {
-  const from = ui.profile?.from;
+  const { from, fromEl } = ui.profile || {};
   ui.profile = null;
   render();
-  if (from) root.querySelector(`[data-key="${CSS.escape(from)}"]`)?.focus({ preventScroll: true });
+  const back = fromEl?.isConnected ? fromEl : from ? root.querySelector(`[data-key="${CSS.escape(from)}"]`) : null;
+  back?.focus({ preventScroll: true });
 }
 
 function placeProfile() {
   const card = ui.profile && root.querySelector(".profile-card");
   if (!card) return;
+  if (ui.profile.shown) card.classList.add("pc-still"); // it pops in once, not on every render
+  ui.profile.shown = true;
   card.style.left = Math.max(8, Math.min(ui.profile.x, window.innerWidth - card.offsetWidth - 8)) + "px";
   card.style.top = Math.max(8, Math.min(ui.profile.top, window.innerHeight - card.offsetHeight - 8)) + "px";
 }
@@ -2588,6 +2599,9 @@ function sendFromCard() {
   ui.outbox.push(item);
   p.draft = "";
   p.sent = item;
+  // The field keeps its node while it has the focus, so it is emptied here, as the composer's is.
+  const field = root.querySelector('[data-key="pc-msg"]');
+  if (field) field.value = "";
   deliver(item);
 }
 
@@ -2657,8 +2671,8 @@ function profileCard() {
         sent &&
           h(
             "p",
-            { class: "pc-sent" + (sent.status === "failed" ? " failed" : ""), "data-announce": "" },
-            h("span", { class: "truncate" }, sent.status === "failed" ? "Not sent: " + sent.error : sent.status === "sent" ? "Sent" : "Sending…"),
+            { class: "pc-sent" + (sent.status === "failed" ? " failed" : "") },
+            h("span", { class: "truncate", "data-announce": sent.status === "failed" ? "" : null }, sent.status === "failed" ? "Not sent: " + sent.error : sent.status === "sent" ? "Sent" : "Sending…"),
             h("button", { class: "pc-link", "data-key": "pc-open-dm", onclick: () => ((ui.profile = null), startChat(name)) }, "Open conversation"),
           ),
         h(
@@ -3616,7 +3630,7 @@ function chatMessage(m, from, at, head) {
     h(
       "div",
       { class: "chat-msg-main" },
-      head && h("div", { class: "chat-msg-head" }, h("button", { type: "button", class: "chat-msg-from truncate", "data-profile": from, "aria-haspopup": "dialog" }, from), m.fromPerson && humanTag(), via && h("span", { class: "chat-msg-via truncate" }, via), time),
+      head && h("div", { class: "chat-msg-head" }, h("button", { type: "button", class: "chat-msg-from truncate", "data-profile": from, "aria-haspopup": "dialog", "data-key": "from-" + m.id }, from), m.fromPerson && humanTag(), via && h("span", { class: "chat-msg-via truncate" }, via), time),
       messageText(m),
     ),
     h("div", { class: "msg-tools" }, copyButton(copy)),
@@ -5470,6 +5484,9 @@ document.addEventListener("keydown", (e) => {
   } else if (e.key === "Escape" && ui.repoMenu && !e.defaultPrevented) {
     e.preventDefault(); // the drawer under it stays open, as under the tag menu
     closeRepoMenu();
+  } else if (e.key === "Escape" && ui.profile && !e.defaultPrevented) {
+    e.preventDefault(); // as for the menus
+    closeProfile();
   }
 });
 window.addEventListener("hashchange", () => {
@@ -5490,7 +5507,7 @@ NARROW.addEventListener("change", () => {
   render();
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !e.defaultPrevented && ui.drawer && !ui.setup && !ui.picker && !ui.tagMenu) setDrawer(false);
+  if (e.key === "Escape" && !e.defaultPrevented && ui.drawer && !ui.setup && !ui.picker && !ui.tagMenu && !ui.profile) setDrawer(false);
 });
 // Tooltips, drawn by the page rather than the browser: a browser's title waits about a second and
 // can't be styled. The page's tip is only for what a person can't already read: a button that is
