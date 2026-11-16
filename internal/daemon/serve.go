@@ -871,7 +871,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 			if len(called) == 1 {
 				dev = called[0]
 			}
-			return fail(fmt.Sprintf("not sent: %s Send to a session's name from who, or to %s for every session on the device.", nickNoAddress(to, called), dev))
+			return refuse(proto.RefusedRecipient, fmt.Sprintf("not sent: %s Send to a session's name from who, or to %s for every session on the device.", nickNoAddress(to, called), dev))
 		}
 	}
 	var note string
