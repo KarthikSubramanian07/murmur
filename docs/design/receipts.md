@@ -67,6 +67,12 @@ is what the page shows. The states are defined in [delivery](delivery.md).
   call, or at the end of a turn, or when it reads its inbox; one the hook told of while the agent
   worked goes in at the turn's end, as any message does (#202). An older daemon passes over
   `tell_me`; its reply then has no `Telling`, and the MCP server tells the sender it won't be told.
+- **A drop for a mute is a mark too** (#466, 2026-11-15). A device that drops a message because
+  the recipient muted its sender marks it `muted`, the message's last mark from that session and no
+  step towards read. It is the one mark written for a message that didn't ask: the sender's daemon
+  turns it into a notice for the session that sent it ([mutes](mutes.md)). For a message whose
+  sender asked to be told, that recipient is no longer waited for. A daemon from before it drops the
+  mark as a state it doesn't know, and a receipt holding only such marks as one it can't read.
 - **Left for later.** Receipts in an agent's `send` result, `lookup` and `who`, on demand (#605; Tyler,
   #26, 2026-11-09). Delivered is marked where the daemon sees the hook fetch a notice, as far as it
   can see, and whether the agent's context took it is unknown. A recipient idle, on do not disturb or

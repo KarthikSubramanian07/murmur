@@ -19,9 +19,21 @@ on: not a message to it, to its device, to a group it is in, or to everyone.
 - **A mute takes 30 seconds to hold against direct messages** (Tyler, 2026-11-11). A message sent
   before the sender's daemon has read the mute would be dropped with its sender sure it had arrived,
   so for 30 s, by the muting device's clock, direct messages still get through; that is longer than
-  a presence takes to be pushed and read. The cost is a message or two after muting. Left open
-  (#466): a sender whose daemon stays ignorant longer (an older version, or cut off) is never told.
-  A muted session's message to everyone or to a device goes out, and `send` names who didn't get it.
+  a presence takes to be pushed and read. The cost is a message or two after muting. A muted
+  session's message to everyone or to a device goes out, and `send` names who didn't get it.
+- **A sender whose daemon didn't know is told afterwards** (#466, 2026-11-15), as Tyler suggested
+  there: by a receipt. The muting device marks each message it drops for a mute (`muted`, a mark of
+  its own, [receipts](receipts.md)), whether or not the message asked for receipts, and the mark
+  comes back like any other. The sender's daemon keeps its sessions' newest 100 messages that could
+  reach another device (`Sends`), so the mark finds the session that sent it, which gets one notice
+  from Murmur in its inbox: who didn't get which message, in the words of the refusal. It starts no
+  turn. This covers a direct message after the grace from a daemon that hadn't read the mute (the
+  muting device couldn't push for a while, or was down), and a message to everyone, a device or a
+  group sent before the mute was read; a muter `send` already named isn't told of again. Only what
+  would have been queued is marked: a backlog passed over as history marks nothing. A daemon from
+  before this drops the mark unread, so its sessions still aren't told, and a muting device from
+  before it writes none. The cost: a muted session's message to many costs a mark from each device
+  that drops it, even once its daemon knows, as the receiver can't tell what the sender knew.
 - **A mute names a session by its name**, which the registry never gives out twice, so it can't land
   on another session, and it follows the conversation across session IDs until it is undone. A
   person can't be muted, nor a session with no name yet. Mutes a session makes before its own name
