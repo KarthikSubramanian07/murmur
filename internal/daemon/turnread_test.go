@@ -1,6 +1,7 @@
 package daemon_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -125,4 +126,38 @@ func TestAPromptIsMatchedToItsTurn(t *testing.T) {
 			t.Errorf("%s: the prompt is taken for turn %d, want %d:\n%s", c.name, got, c.want, c.prompt)
 		}
 	}
+}
+
+// A daemon that restarts holds a session in its grace until the session's MCP server reconnects,
+// and a turn handed over before the restart can start in that time. Its prompt still marks its
+// message read (#658): it was passed over with the session's notices, and the message stayed
+// handed over, its sender's tell_me waiting out its 30 minutes.
+func TestATurnThatStartsWhileItsDaemonRestartsIsRead(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	bobName := b.named(bob)
+	pa := a.page()
+	pa.choose("ada")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) })
+
+	id := pa.sendText(bobName, "Can you rerun CI?")
+	eventually(t, "the handoff", func() bool { return len(calls()) > 0 })
+	eventually(t, "handed over", pa.stateIs(id, bob, bus.MarkHanded))
+	turn := calls()[0].Stdin
+
+	b.restart()
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Whole: true, Prompt: turn})
+	if !pa.stateIs(id, bob, bus.MarkHanded)() {
+		t.Fatal("marked before bob was back")
+	}
+	conn, _, err := b.c.Hello(context.Background(), proto.Hello{ID: "bbbbbb", Agent: "test",
+		ClaudeSession: "claude-bob", Route: proto.Route{T3CLI: exe, T3Thread: "thread-bob"}, Reconnect: true})
+	if err != nil {
+		t.Fatalf("bob's hello after the restart: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	eventually(t, "read: the turn started while bob reconnected", pa.stateIs(id, bob, bus.MarkRead))
 }

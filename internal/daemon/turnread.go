@@ -96,6 +96,50 @@ func (d *Daemon) readOnPromptLocked(id, prompt string) bool {
 	return true
 }
 
+// heldPrompt is a prompt the hook sent while no session of its client was connected, and when.
+type heldPrompt struct {
+	claude, prompt string
+	pid            int
+	at             time.Time
+}
+
+// holdPromptLocked keeps a prompt that found no connected session of its client. A daemon that
+// restarts knows a session only once its MCP server says hello again, and one in its grace isn't
+// connected; a turn handed over before can start in that time, and its prompt would be lost, the
+// message left handed over (#658). It is kept for SessionGrace, as long as a session has to come
+// back, and matched when one of its client does (readHeldPromptsLocked). Caller holds mu.
+func (d *Daemon) holdPromptLocked(req proto.Request) {
+	if req.Prompt == "" || req.Subagent || (req.ClaudeSession == "" && req.ClientPID == 0) {
+		return
+	}
+	d.heldPrompts = slices.DeleteFunc(d.heldPrompts, func(h heldPrompt) bool {
+		return time.Since(h.at) > d.opt.SessionGrace
+	})
+	d.heldPrompts = append(d.heldPrompts, heldPrompt{claude: req.ClaudeSession, prompt: req.Prompt,
+		pid: req.ClientPID, at: time.Now()})
+	if over := len(d.heldPrompts) - maxAwaiting; over > 0 {
+		d.heldPrompts = d.heldPrompts[over:]
+	}
+}
+
+// readHeldPromptsLocked matches the prompts held for session s's client, now it is connected,
+// against what s waits on, and lets them go. It says whether it marked one read; the caller saves
+// the state then. Caller holds mu.
+func (d *Daemon) readHeldPromptsLocked(s *session) bool {
+	read := false
+	d.heldPrompts = slices.DeleteFunc(d.heldPrompts, func(h heldPrompt) bool {
+		if time.Since(h.at) > d.opt.SessionGrace {
+			return true
+		}
+		if !(h.claude != "" && h.claude == s.claudeSession) && !(h.pid != 0 && h.pid == s.clientPID) {
+			return false
+		}
+		read = d.readOnPromptLocked(s.id, h.prompt) || read
+		return true
+	})
+	return read
+}
+
 // whichTurn is where in list the turn that prompt is stands, or -1. A prompt is one turn, so it is
 // one entry at most: the oldest it holds whole, as the client takes turns in the order they were
 // handed over. The hook cuts a prompt at proto.MaxPrompt bytes, and a client may put lines before
