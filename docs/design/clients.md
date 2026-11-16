@@ -58,10 +58,15 @@ since it wasn't installed). The details, and where each came from, are in the co
   refuses the other's or, with both in one file, 1.19.5 runs both. So join writes the one `opencode
   --version` names, at the same path, and none where it can't learn the version. The refresh as
   Murmur's server starts asks the OpenCode that started the server for its version and rewrites
-  the file for it, so after an upgrade from 1 to 2 (or with both installed, sharing one config
-  folder, where join asked the other) the file is the one that loads; where it can't learn the
-  version, the file keeps its own (its line `// For OpenCode 1.` says which). OpenCode 2 loads the
-  new file at once, OpenCode 1 at its next start.
+  the file for it, so after an upgrade from 1 to 2 the file is the one that loads. With both
+  installed, sharing one config folder, each server start rewrites the file for its own version,
+  and it suits the one started last: OpenCode 2 loads the new file at once, so a running OpenCode 2
+  loses its plugin when an OpenCode 1 starts (before OpenCode 1 had a plugin, an OpenCode 2 there
+  had none at all), and OpenCode 1 loads it at its next start. Where it can't learn the version,
+  the file keeps its own (its line `// For OpenCode 1.` says which). The refresh only rewrites a
+  plugin join wrote and never adds one where there is none, since adding one is join's to do:
+  after a join that couldn't learn the version (`opencode --version` took over 10 s, as under
+  heavy load), rerunning `mur join` adds it.
   - *Who the session is.* OpenCode 1 names no session in a call to an MCP server, so its one server
     process per directory was always one session to Murmur. The plugin's `config` hook, which
     OpenCode runs before it starts any MCP server, gives Murmur's server an ID for that session
