@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -620,6 +621,7 @@ func (r *Repo) readCommits(ctx context.Context, shas []string, sizes map[string]
 		}
 	}
 	read := map[string]Commit{}
+	var byLog []string // those git log is asked for
 	objs, kept, err := r.ask(ctx, small, true, max)
 	if err != nil {
 		return nil, err
@@ -628,11 +630,18 @@ func (r *Repo) readCommits(ctx context.Context, shas []string, sizes map[string]
 		if o.Type != "commit" {
 			return nil, fmt.Errorf("unreadable commit %s", o.Name)
 		}
-		at, message := parseCommit(o.Data)
+		at, message, ok := parseCommit(o.Data)
+		if !ok {
+			byLog = append(byLog, o.Name)
+			continue
+		}
 		read[o.Name] = Commit{SHA: o.Name, Time: at, Message: message}
 	}
-	if len(small) > 0 && !kept {
-		out, err := r.Git.Run(ctx, strings.Join(small, "\n")+"\n", "log", "--stdin", "--no-walk=unsorted",
+	if !kept {
+		byLog = small
+	}
+	if len(byLog) > 0 {
+		out, err := r.Git.Run(ctx, strings.Join(byLog, "\n")+"\n", "log", "--stdin", "--no-walk=unsorted",
 			"--no-show-signature", "--no-color", "--format=%H%x00%ct%x00%B%x1e", "--")
 		if err != nil {
 			return nil, err
@@ -666,22 +675,28 @@ func (r *Repo) readCommits(ctx context.Context, shas []string, sizes map[string]
 // when it was committed by its writer's clock (the Unix epoch if it doesn't say), and its message,
 // which is everything after the first empty line.
 //
-// It differs from git log for commits Murmur doesn't write, each of which is junk to every caller:
-// a message with a NUL in it comes whole where log cut it there, and one that names an encoding
-// isn't converted from it.
-func parseCommit(raw []byte) (at time.Time, message string) {
+// Two kinds of commit git log reads differently, and for them ok is false, so that the caller asks
+// git log: one that names an encoding, which log converts its message from (a record written by
+// hand in Latin-1 still decodes, to other text, if it isn't converted), and one with a NUL in it,
+// which log cuts the message at. Murmur writes neither.
+func parseCommit(raw []byte) (at time.Time, message string, ok bool) {
+	if bytes.IndexByte(raw, 0) >= 0 {
+		return time.Time{}, "", false
+	}
 	head, body, _ := strings.Cut(string(raw), "\n\n")
 	var secs int64
 	for _, line := range strings.Split(head, "\n") {
-		if who, ok := strings.CutPrefix(line, "committer "); ok {
+		if strings.HasPrefix(line, "encoding ") {
+			return time.Time{}, "", false
+		}
+		if who, found := strings.CutPrefix(line, "committer "); found && secs == 0 {
 			// "Name <email> 1794789106 -0800", and a name can hold anything but '<', '>' and a newline.
 			if f := strings.Fields(who[strings.LastIndex(who, ">")+1:]); len(f) > 0 {
 				secs, _ = strconv.ParseInt(f[0], 10, 64)
 			}
-			break
 		}
 	}
-	return time.Unix(secs, 0), body
+	return time.Unix(secs, 0), body, true
 }
 
 // Roots returns the commits with no parent in sha's history that aren't in not's ("" for none).

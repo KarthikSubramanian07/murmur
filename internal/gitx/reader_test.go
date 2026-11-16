@@ -197,9 +197,9 @@ func TestReaderReplacesAGitThatDied(t *testing.T) {
 	if _, err := r.Info(ctx, []string{commit}); err != nil {
 		t.Fatal(err)
 	}
-	r.mu.Lock()
+	r.turn <- struct{}{}
 	p := r.p
-	r.mu.Unlock()
+	<-r.turn
 	p.cancel()
 	<-p.done
 	if objs, err := r.Info(ctx, []string{commit}); err != nil || objs[0].Type != "commit" {
@@ -215,18 +215,21 @@ func TestReaderReplacesAGitThatDied(t *testing.T) {
 // process with a file of it open would stop.
 func TestReaderEndsItsGitWhenIdleAndWhenClosed(t *testing.T) {
 	g, commit, starts := readerRepo(t)
-	r := g.NewReader(50 * time.Millisecond)
+	r := keep(t, g, 50*time.Millisecond)
 	ctx := context.Background()
 	if _, err := r.Info(ctx, []string{commit}); err != nil {
 		t.Fatal(err)
 	}
-	r.mu.Lock()
-	p := r.p
-	r.mu.Unlock()
-	select {
-	case <-p.done:
-	case <-time.After(30 * time.Second):
-		t.Fatal("the git was still running long after the linger")
+	for began := time.Now(); ; time.Sleep(10 * time.Millisecond) {
+		r.turn <- struct{}{}
+		kept := r.p != nil
+		<-r.turn
+		if !kept {
+			break
+		}
+		if time.Since(began) > 30*time.Second {
+			t.Fatal("the git was still kept long after the linger")
+		}
 	}
 	if _, err := r.Info(ctx, []string{commit}); err != nil {
 		t.Fatal(err)
@@ -238,7 +241,7 @@ func TestReaderEndsItsGitWhenIdleAndWhenClosed(t *testing.T) {
 	// Packed, so that the git holds a file open.
 	git(t, g, "", "update-ref", "refs/heads/main", commit)
 	git(t, g, "", "repack", "-a", "-d", "-q")
-	long := g.NewReader(time.Hour)
+	long := keep(t, g, time.Hour)
 	if _, err := long.Contents(ctx, []string{commit}, 1<<20); err != nil {
 		t.Fatal(err)
 	}
@@ -279,5 +282,55 @@ func TestReaderOnABrokenRepository(t *testing.T) {
 	var gerr *Error
 	if err == nil || errors.Is(err, ErrNoReader) || !errors.As(err, &gerr) {
 		t.Errorf("%v, want git's own error", err)
+	}
+}
+
+// A question waits its turn only as long as its own context lasts: one with a short deadline isn't
+// held behind another's stalled git.
+func TestReaderQuestionGivesUpItsTurnWhenItsContextEnds(t *testing.T) {
+	g, commit, _ := readerRepo(t)
+	r := keep(t, g, time.Minute)
+	r.turn <- struct{}{} // another question's turn, which doesn't end
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := r.Info(ctx, []string{commit})
+	<-r.turn
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("%v, want its deadline", err)
+	}
+	if objs, err := r.Info(context.Background(), []string{commit}); err != nil || objs[0].Type != "commit" {
+		t.Errorf("the question after: %+v, %v", objs, err)
+	}
+}
+
+// Close waits for a git that was already told to go, by the linger or to confirm a missing object,
+// as well as the one kept: neither may outlive it.
+func TestReaderCloseWaitsForAGitAlreadyToldToGo(t *testing.T) {
+	g, commit, _ := readerRepo(t)
+	r := keep(t, g, time.Minute)
+	ctx := context.Background()
+	if _, err := r.Info(ctx, []string{commit}); err != nil {
+		t.Fatal(err)
+	}
+	r.turn <- struct{}{}
+	first := r.p
+	<-r.turn
+	// Asking for what isn't here retires the first git and starts a second.
+	if _, err := r.Info(ctx, []string{strings.Repeat("0", len(commit)-1) + "1"}); err != nil {
+		t.Fatal(err)
+	}
+	r.turn <- struct{}{}
+	second := r.p
+	<-r.turn
+	if second == nil || second == first {
+		t.Fatal("no second git was started to confirm what was missing")
+	}
+	r.Close()
+	for i, p := range []*readerProc{first, second} {
+		select {
+		case <-p.done:
+		default:
+			t.Errorf("git %d was still running when Close returned", i+1)
+		}
 	}
 }

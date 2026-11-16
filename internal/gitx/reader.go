@@ -40,17 +40,22 @@ type Object struct {
 // another process holds asks its user whether to try again. Git 2.53 for Windows deleted packs
 // under a live reader (2026-11-15); older ones weren't tried.
 //
-// A Reader is safe for concurrent use; questions wait their turn.
+// A Reader is safe for concurrent use; questions wait their turn, each for no longer than its own
+// context lasts.
 type Reader struct {
 	git    Git
 	linger time.Duration
 
-	mu     sync.Mutex
-	p      *readerProc
-	idle   *time.Timer
-	asks   int  // how many questions have been put, so an idle timer can tell it is out of date
-	none   bool // this git has no --batch-command
-	closed bool
+	// turn holds one token, taken by whoever is using the fields below. It is a channel, not a
+	// mutex, so that a question can give up waiting when its context ends: with a git each, a
+	// read with 30 s to spare never waited behind one that had a minute.
+	turn     chan struct{}
+	retiring sync.WaitGroup // gits told to go, not yet gone
+	p        *readerProc
+	idle     *time.Timer
+	asks     int  // how many questions have been put, so an idle timer can tell it is out of date
+	none     bool // this git has no --batch-command
+	closed   bool
 }
 
 type readerProc struct {
@@ -67,7 +72,7 @@ type readerProc struct {
 
 // NewReader returns a Reader on g's repository. Close it when done with it.
 func (g Git) NewReader(linger time.Duration) *Reader {
-	return &Reader{git: g, linger: linger}
+	return &Reader{git: g, linger: linger, turn: make(chan struct{}, 1)}
 }
 
 // Info says, for each name, whether an object is here, and its type and size, without reading it.
@@ -85,10 +90,11 @@ func (r *Reader) Contents(ctx context.Context, names []string, max int64) ([]Obj
 // Close ends the Reader's git, and waits for it to be gone, so that nothing of the repository is
 // held open after it returns. A Reader that is closed answers ErrNoReader.
 func (r *Reader) Close() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.turn <- struct{}{}
+	defer func() { <-r.turn }()
 	r.closed = true
-	r.end(true)
+	r.end()
+	r.retiring.Wait() // and those an idle timer, or a confirming of what was missing, had told to go
 }
 
 func (r *Reader) ask(ctx context.Context, verb string, names []string, max int64) ([]Object, error) {
@@ -101,8 +107,12 @@ func (r *Reader) ask(ctx context.Context, verb string, names []string, max int64
 	if len(names) == 0 {
 		return nil, nil
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	select {
+	case r.turn <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { <-r.turn }()
 	objs, fresh, err := r.askOnce(ctx, verb, names, max)
 	if err != nil && (!fresh || errors.Is(err, proc.ErrStartHung)) && ctx.Err() == nil && !errors.Is(err, ErrNoReader) {
 		// The git that was kept had gone (killed, or its repository moved), or a new one's start
@@ -127,7 +137,7 @@ func (r *Reader) ask(ctx context.Context, verb string, names []string, max int64
 	if len(missing) == 0 {
 		return objs, nil
 	}
-	r.end(false)
+	r.end()
 	again, _, err := r.askOnce(ctx, verb, missing, max)
 	if err != nil {
 		return nil, err
@@ -164,7 +174,12 @@ func (r *Reader) askOnce(ctx context.Context, verb string, names []string, max i
 		}
 		r.p = p
 	}
-	stop := context.AfterFunc(ctx, p.cancel)
+	// Killing git isn't enough to end a read of its output: in a partial clone, cat-file can start
+	// a fetch, whose processes hold the pipe open after it. So the pipe is closed here too.
+	stop := context.AfterFunc(ctx, func() {
+		p.cancel()
+		p.outEnd.Close()
+	})
 	objs, err = p.ask(verb, names, max)
 	if !stop() && err == nil {
 		err = ctx.Err() // answered, but the git is being killed
@@ -193,10 +208,10 @@ func (r *Reader) askOnce(ctx context.Context, verb string, names []string, max i
 	}
 	p.asked = true
 	r.idle = time.AfterFunc(r.linger, func() {
-		r.mu.Lock()
-		defer r.mu.Unlock()
+		r.turn <- struct{}{}
+		defer func() { <-r.turn }()
 		if r.p == p && r.asks == asks {
-			r.end(false)
+			r.end()
 		}
 	})
 	return objs, fresh, nil
@@ -271,8 +286,8 @@ func (p *readerProc) stop(grace time.Duration) {
 }
 
 // end stops the git that is kept, if there is one. It asks it to go by closing its input, and
-// kills it if that takes long. With wait, it returns once the process is gone.
-func (r *Reader) end(wait bool) {
+// kills it if that takes long. It doesn't wait for it: Close does, through retiring.
+func (r *Reader) end() {
 	if r.idle != nil {
 		r.idle.Stop()
 	}
@@ -282,11 +297,11 @@ func (r *Reader) end(wait bool) {
 	}
 	r.p = nil
 	p.in.Close() // cat-file ends when its input does
-	if wait {
+	r.retiring.Add(1)
+	go func() {
+		defer r.retiring.Done()
 		p.stop(endGrace)
-	} else {
-		go p.stop(endGrace)
-	}
+	}()
 }
 
 // ask writes the questions and reads the answers. The writing has a goroutine of its own: git

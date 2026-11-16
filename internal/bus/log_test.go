@@ -410,6 +410,22 @@ func TestAKeptGitReadsWhatGitLogDid(t *testing.T) {
 		t.Fatalf("writing a commit by hand: %v", err)
 	}
 	shas = append(shas, strings.TrimSpace(string(out)))
+	// Two that git log reads differently from what the object holds: a message in another
+	// encoding, which it converts, and one with a NUL in it, which it cuts there.
+	for _, raw := range []string{
+		"tree " + emptyTree(t, each) + "\nauthor a <a@example.invalid> 1700000000 +0000" +
+			"\ncommitter c <c@example.invalid> 1700000001 +0000\nencoding ISO-8859-1\n\ncaf\xe9\n\n{\"body\":\"\xe9t\xe9\"}\n",
+		"tree " + emptyTree(t, each) + "\nauthor a <a@example.invalid> 1700000000 +0000" +
+			"\ncommitter c <c@example.invalid> 1700000002 +0000\n\nbefore\x00after\n",
+	} {
+		cmd := exec.Command("git", "--git-dir="+each.Git.Dir, "hash-object", "-t", "commit", "-w", "--literally", "--stdin")
+		cmd.Stdin = strings.NewReader(raw)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("writing a commit by hand: %v", err)
+		}
+		shas = append(shas, strings.TrimSpace(string(out)))
+	}
 
 	kept := &bus.Repo{Git: each.Git, Name: each.Name, Email: each.Email, Page: 4}
 	kept.KeepReader()
